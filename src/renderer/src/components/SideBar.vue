@@ -52,10 +52,20 @@
     </nav>
     <!-- User Profile Section -->
     <div class="mt-auto pb-4 relative flex flex-col items-center">
-      <Button variant="ghost" size="icon" class="w-9 h-9 rounded-lg" @click="toggleDark()">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="w-9 h-9 rounded-lg text-muted-foreground"
+        @click="toggleDark()"
+      >
         <Icon :icon="isDark ? 'lucide:sun' : 'lucide:moon'" class="w-4 h-4" />
       </Button>
-      <Button variant="ghost" size="icon" class="rounded-lg w-9 h-9" @click="handleProfileClick">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="rounded-lg w-9 h-9 text-muted-foreground"
+        @click="handleProfileClick"
+      >
         <Icon icon="lucide:user" class="h-5 w-5" />
         <span
           v-if="settings.hasUpdate"
