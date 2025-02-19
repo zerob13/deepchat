@@ -32,7 +32,7 @@ export class UpgradePresenter implements IUpgradePresenter {
   constructor() {
     const feedUrl = getUpdateFeedBaseUrl()
     autoUpdater.setFeedURL(feedUrl)
-    autoUpdater.checkForUpdatesAndNotify()
+    // autoUpdater.checkForUpdatesAndNotify()
     autoUpdater.autoDownload = true
     autoUpdater.allowDowngrade = false
     autoUpdater.autoInstallOnAppQuit = true

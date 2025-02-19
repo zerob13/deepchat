@@ -79,7 +79,6 @@ export class WindowPresenter implements IWindowPresenter {
       if (mainWindow.isMinimized()) {
         mainWindow.restore()
       }
-      mainWindow.show()
     })
 
     if (is.dev) {
