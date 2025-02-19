@@ -115,10 +115,10 @@ export class UpgradePresenter implements IUpgradePresenter {
     } catch (error: Error | unknown) {
       this._status = 'error'
       this._error = error instanceof Error ? error.message : String(error)
-      eventBus.emit('update-status-changed', {
-        status: this._status,
-        error: this._error
-      })
+      // eventBus.emit('update-status-changed', {
+      //   status: this._status,
+      //   error: this._error
+      // })
     }
   }
   startDownloadUpdate() {
