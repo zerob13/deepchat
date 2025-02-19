@@ -2,7 +2,7 @@
   <li
     :class="[
       'px-2 py-2 rounded-md text-accent-foreground text-xs cursor-pointer group flex items-center justify-between',
-      isActive ? 'bg-slate-200 dark:bg-slate-800' : 'hover:bg-accent'
+      isActive ? 'bg-slate-200 dark:bg-accent' : 'hover:bg-accent'
     ]"
     @click="$emit('select', thread)"
   >
@@ -15,7 +15,7 @@
           size="icon"
           class="h-4 w-4 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
         >
-          <Icon icon="lucide:more-horizontal" class="h-3 w-3" />
+          <Icon icon="lucide:more-horizontal" class="h-3 w-3 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent>

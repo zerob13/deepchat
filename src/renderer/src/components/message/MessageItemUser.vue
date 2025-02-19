@@ -14,7 +14,7 @@
         :timestamp="message.timestamp"
       />
       <!-- 消息内容 -->
-      <div class="text-sm bg-[#EFF6FF] rounded-lg p-2 border flex flex-col gap-1.5">
+      <div class="text-sm bg-[#EFF6FF] dark:bg-muted rounded-lg p-2 border flex flex-col gap-1.5">
         <div v-show="message.content.files.length > 0" class="flex flex-wrap gap-1.5">
           <FileItem
             v-for="file in message.content.files"

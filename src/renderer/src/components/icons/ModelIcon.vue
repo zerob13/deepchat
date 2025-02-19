@@ -99,5 +99,5 @@ const iconKey = computed(() => {
 </script>
 
 <template>
-  <img :src="icons[iconKey]" :alt="iconKey" :class="customClass" />
+  <img :src="icons[iconKey]" :alt="iconKey" :class="customClass" class="rounded-md dark:bg-white" />
 </template>

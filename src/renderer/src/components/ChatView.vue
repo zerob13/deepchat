@@ -9,7 +9,7 @@
     />
 
     <!-- 输入框区域 -->
-    <div class="flex-none p-2 bg-gradient-to-t from-white/80 to-transparent backdrop-blur-sm">
+    <div class="flex-none p-2">
       <ChatInput
         @send="handleSend"
         @file-upload="handleFileUpload"

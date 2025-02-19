@@ -13,7 +13,7 @@
             v-for="model in provider.models"
             :key="model.id"
             :class="{ 'bg-muted': isSelected(provider.id, model.id) }"
-            class="flex flex-row items-center gap-1 p-2 hover:bg-muted rounded-md cursor-pointer"
+            class="flex flex-row items-center gap-1 p-2 hover:bg-muted dark:hover:bg-accent rounded-md cursor-pointer"
             @click="handleModelSelect(provider.id, model)"
           >
             <ModelIcon :model-id="model.id"></ModelIcon>

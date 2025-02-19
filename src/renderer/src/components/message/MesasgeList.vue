@@ -3,6 +3,7 @@
     <div
       ref="messagesContainer"
       class="relative flex-1 overflow-y-auto scroll-smooth w-full h-full"
+      @scroll="handleScroll"
     >
       <div
         ref="messageList"
@@ -14,21 +15,47 @@
           <MessageItemUser v-if="msg.role === 'user'" :key="index" :message="msg" />
         </template>
       </div>
-      <div ref="scrollAnchor" class="h-4" />
+      <div ref="scrollAnchor" class="h-8" />
     </div>
-    <div v-if="showCancelButton" class="absolute bottom-4 left-1/2 -translate-x-1/2">
+    <div v-if="showCancelButton" class="absolute bottom-2 left-1/2 -translate-x-1/2">
       <Button variant="outline" size="sm" class="rounded-lg" @click="handleCancel">
-        <!-- <Icon
-          icon="lucide:loader-circle"
-          class="w-6 h-6 bg-primary p-0.5 text-primary-foreground rounded-full animate-spin group-hover:hidden"
-        /> -->
         <Icon
           icon="lucide:square"
           class="w-6 h-6 bg-red-500 p-1 text-primary-foreground rounded-full"
         />
-        <!-- <span class="block group-hover:hidden">正在生成...</span> -->
         <span class="">取消生成</span>
       </Button>
+    </div>
+    <div
+      v-else
+      class="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center"
+      :class="[aboveThreshold ? 'w-36' : ' w-24']"
+      :style="{
+        transition: 'width 300ms ease-in-out'
+      }"
+    >
+      <Button variant="outline" size="sm" class="rounded-lg shrink-0" @click="createNewThread">
+        <Icon icon="lucide:plus" class="w-6 h-6 text-muted-foreground" />
+        <span class="">新建会话</span>
+      </Button>
+      <transition
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 translate-y-2"
+        enter-to-class="opacity-100 translate-y-0"
+        leave-active-class="transition-all duration-300 ease-in"
+        leave-from-class="opacity-100 translate-y-0"
+        leave-to-class="opacity-0 translate-y-2"
+      >
+        <Button
+          v-if="aboveThreshold"
+          variant="outline"
+          size="icon"
+          class="w-8 h-8 ml-2 shrink-0 rounded-lg"
+          @click="scrollToBottom"
+        >
+          <Icon icon="lucide:arrow-down" class="w-5 h-5 text-muted-foreground" />
+        </Button>
+      </transition>
     </div>
   </div>
 </template>
@@ -38,10 +65,13 @@ import { ref, onMounted, nextTick, watch, computed } from 'vue'
 import MessageItemAssistant from './MessageItemAssistant.vue'
 import MessageItemUser from './MessageItemUser.vue'
 import { AssistantMessage, UserMessage } from '@shared/chat'
-import { useElementBounding } from '@vueuse/core'
+import { useElementBounding, useDebounceFn } from '@vueuse/core'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import { useChatStore } from '@/stores/chat'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 const props = defineProps<{
   messages: UserMessage[] | AssistantMessage[]
 }>()
@@ -58,6 +88,26 @@ const scrollToBottom = (smooth = true) => {
       block: 'end'
     })
   })
+}
+
+const aboveThreshold = ref(false)
+const SCROLL_THRESHOLD = 100
+const handleScroll = useDebounceFn((event) => {
+  const rect = messageList.value?.getBoundingClientRect()
+  const container = event.target
+  if (rect?.height) {
+    const scrollBottom = container.scrollHeight - (container.scrollTop + container.clientHeight)
+    aboveThreshold.value = scrollBottom > SCROLL_THRESHOLD
+  }
+}, 100)
+
+// 创建新会话
+const createNewThread = async () => {
+  try {
+    await chatStore.clearActiveThread()
+  } catch (error) {
+    console.error(t('common.error.createChatFailed'), error)
+  }
 }
 
 const showCancelButton = computed(() => {

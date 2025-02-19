@@ -1,5 +1,5 @@
 <template>
-  <div class="h-full bg-muted">
+  <div class="h-full bg-muted dark:bg-background">
     <div class="w-full h-full p-2">
       <div class="w-full h-full flex flex-row bg-card rounded-lg border border-border">
         <div class="w-52 h-full border-r border-border p-2 space-y-2 flex-shrink-0 overflow-y-auto">
