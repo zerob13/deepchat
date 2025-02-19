@@ -45,7 +45,8 @@ export class WindowPresenter implements IWindowPresenter {
         preload: join(__dirname, '../preload/index.mjs'),
         sandbox: false,
         devTools: is.dev
-      }
+      },
+      frame: false
     })
 
     mainWindow.on('ready-to-show', () => {
