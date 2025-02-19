@@ -2,10 +2,6 @@ import { app, BrowserWindow } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { presenter } from './presenter'
 
-const gotTheLock = app.requestSingleInstanceLock()
-if (!gotTheLock) {
-  app.exit()
-}
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100')
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096')

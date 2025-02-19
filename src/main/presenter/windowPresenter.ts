@@ -6,26 +6,56 @@ import { is } from '@electron-toolkit/utils'
 import { IWindowPresenter } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
 import { ConfigPresenter } from './configPresenter'
+import { TrayPresenter } from './trayPresenter'
 
 export const MAIN_WIN = 'main'
 export class WindowPresenter implements IWindowPresenter {
   windows: Map<string, BrowserWindow>
   private configPresenter: ConfigPresenter
   private isQuitting: boolean = false
+  private trayPresenter: TrayPresenter | null = null
 
   constructor(configPresenter: ConfigPresenter) {
     this.windows = new Map()
     this.configPresenter = configPresenter
+
+    // 检查是否为第二个实例
+    const gotTheLock = app.requestSingleInstanceLock()
+    if (!gotTheLock) {
+      app.quit()
+      return
+    }
+
+    // 处理第二个实例的启动
+    app.on('second-instance', () => {
+      const mainWindow = this.mainWindow
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore()
+        }
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    })
+
     // 监听应用退出事件
     app.on('before-quit', () => {
       console.log('before-quit')
       this.isQuitting = true
+      if (this.trayPresenter) {
+        this.trayPresenter.destroy()
+      }
     })
+
     // 监听强制退出事件
     eventBus.on('force-quit-app', () => {
       console.log('force-quit-app')
       this.isQuitting = true
+      if (this.trayPresenter) {
+        this.trayPresenter.destroy()
+      }
     })
+
     console.log('WindowPresenter constructor', this.configPresenter)
   }
 
@@ -94,6 +124,12 @@ export class WindowPresenter implements IWindowPresenter {
       mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
     }
     this.windows.set(MAIN_WIN, mainWindow)
+
+    // 初始化托盘
+    if (!this.trayPresenter) {
+      this.trayPresenter = new TrayPresenter(this)
+    }
+
     return mainWindow
   }
   getWindow(windowName: string): BrowserWindow | undefined {
