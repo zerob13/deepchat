@@ -36,6 +36,8 @@
         :usage="message.usage"
         :loading="false"
         :is-assistant="false"
+        @delete="handleAction('delete')"
+        @copy="handleAction('copy')"
       />
     </div>
   </div>
@@ -47,12 +49,23 @@ import { Icon } from '@iconify/vue'
 import MessageInfo from './MessageInfo.vue'
 import FileItem from '../FileItem.vue'
 import MessageToolbar from './MessageToolbar.vue'
+import { useChatStore } from '@/stores/chat'
 
-defineProps<{
+const chatStore = useChatStore()
+
+const props = defineProps<{
   message: UserMessage
 }>()
 
 defineEmits<{
   fileClick: [fileName: string]
 }>()
+
+const handleAction = (action: 'delete' | 'copy') => {
+  if (action === 'delete') {
+    chatStore.deleteMessage(props.message.id)
+  } else if (action === 'copy') {
+    window.api.copyText(props.message.content.text)
+  }
+}
 </script>
