@@ -66,7 +66,6 @@
             {{ t('chat.features.deepThinking') }}
           </Button>
           <Button
-            v-show="false"
             variant="outline"
             size="xs"
             :class="[
@@ -103,7 +102,7 @@ import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import FileItem from './FileItem.vue'
 import { useChatStore } from '@/stores/chat'
-
+import { UserMessageContent } from '@shared/chat'
 const { t } = useI18n()
 
 const chatStore = useChatStore()
@@ -134,7 +133,15 @@ const handleFileSelect = (e: Event) => {
 
 const emitSend = () => {
   if (inputText.value.trim()) {
-    emit('send', inputText.value.trim())
+    const messageContent: UserMessageContent = {
+      text: inputText.value.trim(),
+      files: [],
+      links: [],
+      search: settings.value.webSearch,
+      think: settings.value.deepThinking
+    }
+
+    emit('send', messageContent)
     inputText.value = ''
   }
 }

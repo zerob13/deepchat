@@ -11,6 +11,7 @@ import { ConfigPresenter } from './configPresenter'
 import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
+import { SearchPresenter } from './searchPresenter'
 
 export class Presenter implements IPresenter {
   windowPresenter: WindowPresenter
@@ -21,6 +22,7 @@ export class Presenter implements IPresenter {
   devicePresenter: DevicePresenter
   upgradePresenter: UpgradePresenter
   shortcutPresenter: ShortcutPresenter
+  searchPresenter: SearchPresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -35,6 +37,7 @@ export class Presenter implements IPresenter {
     this.threadPresenter = new ThreadPresenter(this.sqlitePresenter, this.llmproviderPresenter)
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
+    this.searchPresenter = new SearchPresenter()
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }
@@ -83,6 +86,7 @@ export class Presenter implements IPresenter {
   init() {
     if (this.windowPresenter.mainWindow) {
       // this.llamaCppPresenter.setMainwindow(this.windowPresenter.mainWindow)
+      this.searchPresenter.init() // 在主窗口准备好后初始化 SearchPresenter
     }
     // 持久化 LLMProviderPresenter 的 Providers 数据
     const providers = this.configPresenter.getProviders()
@@ -114,6 +118,7 @@ export class Presenter implements IPresenter {
   destroy() {
     this.sqlitePresenter.close()
     this.shortcutPresenter.destroy()
+    this.searchPresenter.destroy()
   }
 }
 

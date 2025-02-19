@@ -78,6 +78,11 @@ export interface ISQLitePresenter {
   ): Promise<void>
   deleteMessage(messageId: string): Promise<void>
   getMaxOrderSeq(conversationId: string): Promise<number>
+  addMessageAttachment(
+    messageId: string,
+    attachmentType: string,
+    attachmentData: string
+  ): Promise<void>
 }
 
 export interface IPresenter {
@@ -88,6 +93,7 @@ export interface IPresenter {
   threadPresenter: IThreadPresenter
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
+  searchPresenter: ISearchPresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -381,4 +387,16 @@ export interface UpdateProgress {
   percent: number
   transferred: number
   total: number
+}
+
+export interface SearchResult {
+  title: string
+  url: string
+  rank: number
+  content?: string
+}
+
+export interface ISearchPresenter {
+  init(): void
+  search(query: string, engine: 'google' | 'baidu'): Promise<SearchResult[]>
 }

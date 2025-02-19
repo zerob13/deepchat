@@ -658,4 +658,23 @@ export class SQLitePresenter implements ISQLitePresenter {
   public async runTransaction(operations: () => void): Promise<void> {
     await this.db.transaction(operations)
   }
+
+  // 添加消息附件
+  public async addMessageAttachment(
+    messageId: string,
+    attachmentType: string,
+    attachmentData: string
+  ): Promise<void> {
+    const insert = this.db.prepare(
+      `
+      INSERT INTO message_attachments (
+        msg_id,
+        attachment_type,
+        attachment_data
+      )
+      VALUES (?, ?, ?)
+    `
+    )
+    insert.run(messageId, attachmentType, attachmentData)
+  }
 }

@@ -58,4 +58,19 @@ export type AssistantMessageBlock = {
   extra?: Record<string, string | number | object[]>
   status: 'success' | 'loading' | 'cancel' | 'error'
   timestamp: number
+  extra?: Record<string, string | number | object[]>
+}
+// 搜索相关的消息块类型
+export type SearchBlock = {
+  type: 'search'
+  status: 'loading' | 'success' | 'error'
+  timestamp: number
+  extra: {
+    total?: number
+    pages?: Array<{
+      title: string
+      url: string
+      content?: string
+    }>
+  }
 }

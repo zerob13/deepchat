@@ -468,8 +468,6 @@ export const useChatStore = defineStore('chat', () => {
       } else {
         if (activeThreadId.value) generatingThreadIds.value.delete(activeThreadId.value)
       }
-    } else {
-      if (activeThreadId.value) generatingThreadIds.value.delete(activeThreadId.value)
     }
   }
 
@@ -580,6 +578,7 @@ export const useChatStore = defineStore('chat', () => {
     loadMessages()
     loadChatConfig() // 加载对话配置
   })
+
   return {
     renameThread,
     // 状态

@@ -24,6 +24,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import MessageList from './message/MesasgeList.vue'
 import ChatInput from './ChatInput.vue'
 import { useRoute } from 'vue-router'
+import { UserMessageContent } from '@shared/chat'
 const route = useRoute()
 
 const messageList = ref()
@@ -36,15 +37,8 @@ const scrollToBottom = (smooth = true) => {
   messageList.value?.scrollToBottom(smooth)
 }
 
-const handleSend = async (text: string) => {
-  if (!text.trim()) return
-  await chatStore.sendMessage({
-    files: [],
-    links: [],
-    think: false,
-    search: false,
-    text: text
-  })
+const handleSend = async (msg: UserMessageContent) => {
+  await chatStore.sendMessage(msg)
   scrollToBottom()
 }
 

@@ -13,6 +13,7 @@ import { eventBus } from '@/eventbus'
 import { AssistantMessage, Message, AssistantMessageBlock } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
+import { SearchResult } from '@shared/presenter'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -32,6 +33,42 @@ interface GeneratingMessageState {
   reasoningStartTime: number | null
   reasoningEndTime: number | null
   lastReasoningTime: number | null
+}
+const SEARCH_PROMPT_TEMPLATE = `You are an expert in organizing search results.Write an accurate answer concisely for a given question, citing the search results as needed. Your answer must be correct, high-quality, and written by an expert using an unbiased and journalistic tone. Your answer must be written in the same language as the question, even if language preference is different. Cite search results using [index] at the end of sentences when needed, for example "Ice is less dense than water.[1][2]" NO SPACE between the last word and the citation. Cite the most relevant results that answer the question. Avoid citing irrelevant results. Write only the response. Use markdown for formatting.
+
+- Use markdown to format paragraphs, lists, tables, and quotes whenever possible.
+- Use markdown code blocks to write code, including the language for syntax highlighting.
+- Use LaTeX to wrap ALL math expression. Always use double dollar signs $$, for example $$x^4 = x - 3$$.
+- DO NOT include any URL's, only include citations with numbers, eg [1].
+- DO NOT include references (URL's at the end, sources).
+- Use footnote citations at the end of applicable sentences(e.g, [1][2]).
+- Write more than 100 words (2 paragraphs).
+- In the response avoid referencing the citation directly
+- Print just the response text.
+<search_results>
+{{SEARCH_RESULTS}}
+</search_results>
+<user_query>
+{{USER_QUERY}}
+</user_query>
+  `
+// 格式化搜索结果的函数
+export function formatSearchResults(results: SearchResult[]): string {
+  return results
+    .map(
+      (result, index) => `source ${index + 1}：${result.title}
+URL: ${result.url}
+content：${result.content || '无法获取内容'}
+---`
+    )
+    .join('\n\n')
+}
+// 生成带搜索结果的提示词
+export function generateSearchPrompt(query: string, results: SearchResult[]): string {
+  return SEARCH_PROMPT_TEMPLATE.replace('{{SEARCH_RESULTS}}', formatSearchResults(results)).replace(
+    '{{USER_QUERY}}',
+    query
+  )
 }
 
 export class ThreadPresenter implements IThreadPresenter {
@@ -528,17 +565,26 @@ export class ThreadPresenter implements IThreadPresenter {
     type FormattedMessage = {
       role: 'user' | 'assistant'
       content: string
+      files: File[]
+      links: string[]
+      search: boolean
+      think: boolean
     }
 
     const messagesWithLength = contextMessages
       .map((msg) => {
         if (msg.role === 'user') {
+          const userContent = msg.content
           return {
             message: msg,
-            length: msg.content.text.length,
+            length: userContent.text.length,
             formattedMessage: {
               role: 'user' as const,
-              content: msg.content.text
+              content: userContent.text,
+              files: userContent.files,
+              links: userContent.links,
+              search: userContent.search,
+              think: userContent.think
             } satisfies FormattedMessage
           }
         } else {
@@ -551,7 +597,11 @@ export class ThreadPresenter implements IThreadPresenter {
             length: content.length,
             formattedMessage: {
               role: 'assistant' as const,
-              content: content
+              content: content,
+              files: [],
+              links: [],
+              search: false,
+              think: false
             } satisfies FormattedMessage
           }
         }
@@ -585,6 +635,42 @@ export class ThreadPresenter implements IThreadPresenter {
 
       totalLength += currentMsg.length
       selectedMessages.unshift(currentMsg.formattedMessage)
+    }
+
+    // 获取最后一条用户消息的内容
+    const lastUserMessage = messagesWithLength.reverse().find((msg) => msg.message.role === 'user')
+    if (lastUserMessage) {
+      const userContent = lastUserMessage.message.content
+      // 如果需要搜索，发送搜索事件并等待搜索结果
+      if (userContent.search) {
+        // 发送搜索事件
+        eventBus.emit('search-requested', {
+          messageId: state.message.id,
+          query: userContent.text,
+          files: userContent.files,
+          links: userContent.links
+        })
+
+        // 等待搜索结果
+        const searchResults = await new Promise<SearchResult[]>((resolve) => {
+          const handleSearchResults = (results: { messageId: string; results: SearchResult[] }) => {
+            if (results.messageId === state.message.id) {
+              eventBus.off('search-results', handleSearchResults)
+              resolve(results.results)
+            }
+          }
+          eventBus.on('search-results', handleSearchResults)
+        })
+
+        // 生成搜索提示词
+        const searchPrompt = generateSearchPrompt(userContent.text, searchResults)
+
+        // 将搜索提示词添加到系统消息中
+        formattedMessages.unshift({
+          role: 'system',
+          content: searchPrompt
+        })
+      }
     }
 
     formattedMessages.push(...selectedMessages)

@@ -46,7 +46,7 @@ import { useChatStore } from '@/stores/chat'
 import { MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
 import { ref, watch } from 'vue'
-import { UserMessageContent } from '@shared/chat'
+import { UserMessageContent, UserMessage } from '@shared/chat'
 
 const { t } = useI18n()
 
@@ -107,8 +107,8 @@ const handleModelUpdate = (model: MODEL_META) => {
   modelSelectOpen.value = false
 }
 
-const handleSend = async (content: string) => {
-  const threadId = await chatStore.createThread(content, {
+const handleSend = async (content: UserMessageContent) => {
+  const threadId = await chatStore.createThread(content.text, {
     modelId: activeModel.value.id,
     systemPrompt: '',
     temperature: 0.7,
@@ -116,13 +116,7 @@ const handleSend = async (content: string) => {
     maxTokens: 2000
   })
   await chatStore.setActiveThread(threadId)
-  chatStore.sendMessage({
-    files: [],
-    links: [],
-    think: false,
-    search: false,
-    text: content
-  } as UserMessageContent)
+  chatStore.sendMessage(content)
 }
 </script>
 

@@ -7,6 +7,7 @@ import {
   SQLITE_MESSAGE
 } from '@shared/presenter'
 import { Message } from '@shared/chat'
+
 export class MessageManager implements IMessageManager {
   private sqlitePresenter: ISQLitePresenter
 
@@ -53,13 +54,12 @@ export class MessageManager implements IMessageManager {
     content: string,
     role: MESSAGE_ROLE,
     parentId: string,
-    isVariant: boolean = false,
-    metadata: MESSAGE_METADATA
+    isVariant: boolean,
+    metadata: MESSAGE_METADATA,
+    searchResults?: string
   ): Promise<Message> {
-    // 获取当前会话的最大序号
     const maxOrderSeq = await this.sqlitePresenter.getMaxOrderSeq(conversationId)
-
-    const messageId = await this.sqlitePresenter.insertMessage(
+    const msgId = await this.sqlitePresenter.insertMessage(
       conversationId,
       content,
       role,
@@ -72,12 +72,13 @@ export class MessageManager implements IMessageManager {
       isVariant ? 1 : 0
     )
 
-    const message = await this.getMessage(messageId)
-
+    if (searchResults) {
+      await this.sqlitePresenter.addMessageAttachment(msgId, 'search_results', searchResults)
+    }
+    const message = await this.getMessage(msgId)
     if (!message) {
       throw new Error('Failed to create message')
     }
-
     return message
   }
 
