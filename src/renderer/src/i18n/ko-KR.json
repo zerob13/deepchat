@@ -1,0 +1,202 @@
+{
+  "common": {
+    "loading": "로딩 중...",
+    "copySuccess": "복사 완료!",
+    "copyCode": "코드 복사",
+    "newChat": "새 채팅",
+    "newTopic": "새 주제",
+    "error": {
+      "requestFailed": "요청 실패...",
+      "createChatFailed": "채팅 생성 실패",
+      "selectChatFailed": "채팅 선택 실패",
+      "renameChatFailed": "채팅 이름 변경 실패",
+      "deleteChatFailed": "채팅 삭제 실패",
+      "userCanceledGeneration": "사용자가 생성을 취소했습니다",
+      "sessionInterrupted": "세션이 중단되었습니다. 생성이 완료되지 않았습니다"
+    },
+    "resetDataConfirmTitle": "모든 데이터를 초기화하시겠습니까?",
+    "resetDataConfirmDescription": "모든 데이터가 기본 설정으로 초기화됩니다. 이 작업은 취소할 수 없습니다."
+  },
+  "routes": {
+    "chat": "채팅",
+    "welcome": "환영합니다",
+    "settings": "설정",
+    "settings-common": "일반 설정",
+    "settings-provider": "제공자 설정",
+    "settings-about": "정보"
+  },
+  "chat": {
+    "input": {
+      "placeholder": "메시지 입력...",
+      "fileArea": "파일 영역",
+      "inputArea": "입력 영역",
+      "functionSwitch": "기능 전환",
+      "fileSelect": "파일 선택 버튼"
+    },
+    "features": {
+      "deepThinking": "심층 사고",
+      "webSearch": "웹 검색",
+      "deepThinkingProgress": "심층 사고 중...",
+      "thinkingDuration": "(소요 {0}초)"
+    },
+    "search": {
+      "results": "{0}개의 웹페이지가 검색되었습니다",
+      "searching": "검색 중..."
+    }
+  },
+  "model": {
+    "search": {
+      "placeholder": "모델 검색..."
+    },
+    "error": {
+      "loadFailed": "모델 로드 실패"
+    },
+    "type": {
+      "custom": "사용자 정의 모델",
+      "official": "공식 모델"
+    },
+    "add": {
+      "namePlaceholder": "모델 이름",
+      "idPlaceholder": "모델 ID",
+      "contextLengthPlaceholder": "문맥 길이",
+      "maxTokensPlaceholder": "최대 토큰 수"
+    },
+    "actions": {
+      "add": "모델 추가"
+    },
+    "tags": {
+      "reasoning": "추론",
+      "chat": "대화",
+      "code": "코드",
+      "writing": "작문",
+      "analysis": "분석"
+    }
+  },
+  "thread": {
+    "actions": {
+      "rename": "이름 변경",
+      "delete": "삭제"
+    }
+  },
+  "dialog": {
+    "cancel": "취소",
+    "confirm": "확인",
+    "close": "닫기",
+    "delete": {
+      "title": "이 채팅을 삭제하시겠습니까?",
+      "description": "이 작업은 되돌릴 수 없으니 신중하게 진행하세요.",
+      "confirm": "삭제"
+    },
+    "rename": {
+      "title": "채팅 이름 변경",
+      "description": "새 채팅 이름을 입력하세요."
+    },
+    "error": {
+      "title": "오류"
+    }
+  },
+  "settings": {
+    "title": "설정",
+    "common": {
+      "title": "일반 설정",
+      "resetData": "데이터 초기화",
+      "language": "언어",
+      "languageSelect": "언어 선택"
+    },
+    "model": {
+      "title": "모델 설정",
+      "systemPrompt": {
+        "label": "시스템 프롬프트",
+        "placeholder": "시스템 프롬프트를 입력하세요...",
+        "description": "AI 도우미의 시스템 프롬프트를 설정하여 행동과 역할을 정의합니다"
+      },
+      "temperature": {
+        "label": "모델 온도",
+        "description": "출력의 무작위성을 제어합니다. 높은 값은 더 창의적인 응답을 생성합니다"
+      },
+      "contextLength": {
+        "label": "문맥 길이",
+        "description": "대화 문맥의 최대 길이를 설정합니다"
+      },
+      "responseLength": {
+        "label": "응답 텍스트 길이",
+        "description": "AI 응답의 최대 길이를 설정합니다"
+      }
+    },
+    "provider": {
+      "enable": "서비스 활성화",
+      "urlPlaceholder": "API URL을 입력하세요",
+      "keyPlaceholder": "API Key를 입력하세요",
+      "verifyKey": "키 검증",
+      "howToGet": "획득 방법",
+      "getKeyTip": "다음으로 이동하세요",
+      "getKeyTipEnd": "API Key를 획득하세요",
+      "modelList": "모델 목록",
+      "enableModels": "모델 활성화",
+      "modelsEnabled": "모델이 활성화되었습니다",
+      "verifyLink": "검증 링크",
+      "syncModelsFailed": "모델 동기화 실패...",
+      "dialog": {
+        "disableModel": {
+          "title": "모델 비활성화 확인",
+          "content": "모델 \"{name}\"을 비활성화하시겠습니까?",
+          "confirm": "비활성화"
+        },
+        "configModels": {
+          "title": "모델 목록 구성"
+        },
+        "verify": {
+          "missingFields": "API Key와 API URL을 입력해주세요",
+          "failed": "검증 실패",
+          "success": "검증 성공"
+        }
+      }
+    }
+  },
+  "welcome": {
+    "steps": {
+      "welcome": {
+        "title": "환영합니다",
+        "description": "DeepChat 설정을 시작하겠습니다"
+      },
+      "provider": {
+        "title": "모델 제공자",
+        "description": "선호하는 모델 제공자를 선택하세요"
+      },
+      "configuration": {
+        "title": "모델 구성",
+        "description": "사용하고 싶은 모델을 구성하세요"
+      },
+      "complete": {
+        "title": "완료",
+        "description": "모든 준비가 완료되었습니다!"
+      }
+    },
+    "title": "DeepChat에 오신 것을 환영합니다",
+    "description": "설정 과정을 완료해 보겠습니다",
+    "provider": {
+      "select": "제공자 선택",
+      "apiUrl": "API URL",
+      "apiKey": "API 키",
+      "verifyLink": "링크 확인"
+    },
+    "complete": {
+      "title": "모두 완료!",
+      "description": "설정 과정이 완료되었습니다. 시작해볼까요!"
+    },
+    "buttons": {
+      "getStarted": "시작하기",
+      "next": "다음",
+      "back": "이전"
+    }
+  },
+  "newThread": {
+    "greeting": "안녕하세요",
+    "prompt": "오늘은 무엇을 물어보시겠습니까?"
+  },
+  "about": {
+    "title": "DeepChat",
+    "description": "DeepChat은 크로스 플랫폼 AI 클라이언트입니다. 더 많은 사람들이 AI의 편리함을 누릴 수 있도록 노력하고 있습니다.",
+    "website": "deepchat.thinkinai.xyz"
+  }
+}

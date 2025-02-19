@@ -1,0 +1,202 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "copySuccess": "Copied!",
+    "copyCode": "Copy Code",
+    "newChat": "New Chat",
+    "newTopic": "New Topic",
+    "error": {
+      "requestFailed": "Request failed...",
+      "createChatFailed": "Failed to create chat",
+      "selectChatFailed": "Failed to select chat",
+      "renameChatFailed": "Failed to rename chat",
+      "deleteChatFailed": "Failed to delete chat",
+      "userCanceledGeneration": "User canceled generation",
+      "sessionInterrupted": "Session interrupted, generation not completed"
+    },
+    "resetDataConfirmTitle": "Reset All Data?",
+    "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone."
+  },
+  "routes": {
+    "chat": "Chat",
+    "welcome": "Welcome",
+    "settings": "Settings",
+    "settings-common": "Common Settings",
+    "settings-provider": "Provider Settings",
+    "settings-about": "About"
+  },
+  "chat": {
+    "input": {
+      "placeholder": "Type a message...",
+      "fileArea": "File Area",
+      "inputArea": "Input Area",
+      "functionSwitch": "Function Switch",
+      "fileSelect": "File Select Button"
+    },
+    "features": {
+      "deepThinking": "Deep Thinking",
+      "webSearch": "Web Search",
+      "deepThinkingProgress": "Deep Thinking in progress...",
+      "thinkingDuration": "(Took {0} seconds)"
+    },
+    "search": {
+      "results": "Found {0} web pages",
+      "searching": "Searching..."
+    }
+  },
+  "model": {
+    "search": {
+      "placeholder": "Search models..."
+    },
+    "error": {
+      "loadFailed": "Failed to load model"
+    },
+    "type": {
+      "custom": "Custom Model",
+      "official": "Official Model"
+    },
+    "add": {
+      "namePlaceholder": "Model Name",
+      "idPlaceholder": "Model ID",
+      "contextLengthPlaceholder": "Context Length",
+      "maxTokensPlaceholder": "Max Tokens"
+    },
+    "actions": {
+      "add": "Add Model"
+    },
+    "tags": {
+      "reasoning": "Reasoning",
+      "chat": "Chat",
+      "code": "Code",
+      "writing": "Writing",
+      "analysis": "Analysis"
+    }
+  },
+  "thread": {
+    "actions": {
+      "rename": "Rename",
+      "delete": "Delete"
+    }
+  },
+  "dialog": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "delete": {
+      "title": "Are you sure you want to delete this chat?",
+      "description": "This action cannot be undone, please proceed with caution.",
+      "confirm": "Delete"
+    },
+    "rename": {
+      "title": "Rename Chat",
+      "description": "Please enter a new chat name."
+    },
+    "error": {
+      "title": "Error"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "common": {
+      "title": "Common Settings",
+      "resetData": "Reset Data",
+      "language": "Language",
+      "languageSelect": "Select Language"
+    },
+    "model": {
+      "title": "Model Settings",
+      "systemPrompt": {
+        "label": "System Prompt",
+        "placeholder": "Please enter the system prompt...",
+        "description": "Set the system prompt for the AI assistant to define its behavior and role"
+      },
+      "temperature": {
+        "label": "Model Temperature",
+        "description": "Controls the randomness of the output; higher values produce more creative responses"
+      },
+      "contextLength": {
+        "label": "Context Length",
+        "description": "Set the maximum length of the conversation context"
+      },
+      "responseLength": {
+        "label": "Response Length",
+        "description": "Set the maximum length of the AI response"
+      }
+    },
+    "provider": {
+      "enable": "Enable Service",
+      "urlPlaceholder": "Please enter API URL",
+      "keyPlaceholder": "Please enter API Key",
+      "verifyKey": "Verify Key",
+      "howToGet": "How to get",
+      "getKeyTip": "Please go to",
+      "getKeyTipEnd": "to get the API Key",
+      "modelList": "Model List",
+      "enableModels": "Enable Models",
+      "modelsEnabled": "Models have been enabled",
+      "verifyLink": "Verify Link",
+      "syncModelsFailed": "Failed to sync models...",
+      "dialog": {
+        "disableModel": {
+          "title": "Confirm Disable Model",
+          "content": "Are you sure you want to disable the model \"{name}\"?",
+          "confirm": "Disable"
+        },
+        "configModels": {
+          "title": "Configure Model List"
+        },
+        "verify": {
+          "missingFields": "Please enter API Key and API URL",
+          "failed": "Verification failed",
+          "success": "Verification successful"
+        }
+      }
+    }
+  },
+  "welcome": {
+    "steps": {
+      "welcome": {
+        "title": "Welcome",
+        "description": "Let's start setting up DeepChat"
+      },
+      "provider": {
+        "title": "Model Provider",
+        "description": "Choose your preferred model provider"
+      },
+      "configuration": {
+        "title": "Model Configuration",
+        "description": "Configure the models you want to use"
+      },
+      "complete": {
+        "title": "Complete",
+        "description": "All set and ready to go!"
+      }
+    },
+    "title": "Welcome to DeepChat",
+    "description": "Let's complete the setup process",
+    "provider": {
+      "select": "Select Provider",
+      "apiUrl": "API URL",
+      "apiKey": "API Key",
+      "verifyLink": "Verify Link"
+    },
+    "complete": {
+      "title": "All Done!",
+      "description": "You've completed the setup process, let's get started!"
+    },
+    "buttons": {
+      "getStarted": "Get Started",
+      "next": "Next",
+      "back": "Back"
+    }
+  },
+  "newThread": {
+    "greeting": "Hello",
+    "prompt": "What would you like to ask today?"
+  },
+  "about": {
+    "title": "DeepChat",
+    "description": "DeepChat is a cross-platform AI client. We are committed to making AI accessible to more people.",
+    "website": "deepchat.thinkinai.xyz"
+  }
+}

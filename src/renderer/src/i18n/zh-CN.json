@@ -1,0 +1,202 @@
+{
+  "common": {
+    "loading": "加载中...",
+    "copySuccess": "已复制!",
+    "copyCode": "复制代码",
+    "newChat": "新会话",
+    "newTopic": "新话题",
+    "error": {
+      "requestFailed": "请求失败...",
+      "createChatFailed": "创建会话失败",
+      "selectChatFailed": "选择会话失败",
+      "renameChatFailed": "重命名会话失败",
+      "deleteChatFailed": "删除会话失败",
+      "userCanceledGeneration": "用户取消了生成",
+      "sessionInterrupted": "会话意外中断，生成未完成"
+    },
+    "resetDataConfirmTitle": "确定要重置所有数据吗？",
+    "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。"
+  },
+  "routes": {
+    "chat": "聊天",
+    "welcome": "欢迎",
+    "settings": "设置",
+    "settings-common": "通用设置",
+    "settings-provider": "服务商设置",
+    "settings-about": "关于"
+  },
+  "chat": {
+    "input": {
+      "placeholder": "输入消息...",
+      "fileArea": "文件区域",
+      "inputArea": "输入区域",
+      "functionSwitch": "功能开关",
+      "fileSelect": "文件选择按钮"
+    },
+    "features": {
+      "deepThinking": "深度思考",
+      "webSearch": "联网搜索",
+      "deepThinkingProgress": "深度思考中...",
+      "thinkingDuration": "（用时 {0} 秒）"
+    },
+    "search": {
+      "results": "已搜索到{0}个网页",
+      "searching": "搜索中..."
+    }
+  },
+  "model": {
+    "search": {
+      "placeholder": "搜索模型..."
+    },
+    "error": {
+      "loadFailed": "加载模型失败"
+    },
+    "type": {
+      "custom": "自定义模型",
+      "official": "官方模型"
+    },
+    "add": {
+      "namePlaceholder": "模型名称",
+      "idPlaceholder": "模型ID",
+      "contextLengthPlaceholder": "上下文长度",
+      "maxTokensPlaceholder": "最大token"
+    },
+    "actions": {
+      "add": "添加模型"
+    },
+    "tags": {
+      "reasoning": "推理",
+      "chat": "对话",
+      "code": "代码",
+      "writing": "写作",
+      "analysis": "分析"
+    }
+  },
+  "thread": {
+    "actions": {
+      "rename": "重命名",
+      "delete": "删除"
+    }
+  },
+  "dialog": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "close": "关闭",
+    "delete": {
+      "title": "确定要删除这个会话吗？",
+      "description": "此操作无法撤销，请谨慎操作。",
+      "confirm": "删除"
+    },
+    "rename": {
+      "title": "重命名会话",
+      "description": "请输入新的会话名称。"
+    },
+    "error": {
+      "title": "错误"
+    }
+  },
+  "settings": {
+    "title": "设置",
+    "common": {
+      "title": "通用设置",
+      "resetData": "重置数据",
+      "language": "语言",
+      "languageSelect": "选择语言"
+    },
+    "model": {
+      "title": "模型设置",
+      "systemPrompt": {
+        "label": "系统提示词",
+        "placeholder": "请输入系统提示词...",
+        "description": "设置AI助手的系统提示词，用于定义其行为和角色"
+      },
+      "temperature": {
+        "label": "模型温度",
+        "description": "控制输出的随机性，较高的值会产生更具创造性的响应"
+      },
+      "contextLength": {
+        "label": "上下文长度",
+        "description": "设置对话上下文的最大长度"
+      },
+      "responseLength": {
+        "label": "返回文本长度",
+        "description": "设置AI响应的最大长度"
+      }
+    },
+    "provider": {
+      "enable": "开启服务",
+      "urlPlaceholder": "请输入API URL",
+      "keyPlaceholder": "请输入API Key",
+      "verifyKey": "验证密钥",
+      "howToGet": "如何获取",
+      "getKeyTip": "请前往",
+      "getKeyTipEnd": "获取API Key",
+      "modelList": "模型列表",
+      "enableModels": "启用模型",
+      "modelsEnabled": "模型已经启用",
+      "verifyLink": "验证链接",
+      "syncModelsFailed": "同步模型失败...",
+      "dialog": {
+        "disableModel": {
+          "title": "确认禁用模型",
+          "content": "是否确认禁用模型 \"{name}\"？",
+          "confirm": "禁用"
+        },
+        "configModels": {
+          "title": "配置模型列表"
+        },
+        "verify": {
+          "missingFields": "请输入 API Key 和 API URL",
+          "failed": "验证失败",
+          "success": "验证成功"
+        }
+      }
+    }
+  },
+  "welcome": {
+    "steps": {
+      "welcome": {
+        "title": "欢迎",
+        "description": "让我们开始设置 DeepChat"
+      },
+      "provider": {
+        "title": "模型服务商",
+        "description": "选择您偏好的模型服务商"
+      },
+      "configuration": {
+        "title": "模型配置",
+        "description": "配置您想要使用的模型"
+      },
+      "complete": {
+        "title": "完成",
+        "description": "一切就绪，可以开始使用了！"
+      }
+    },
+    "title": "欢迎使用 DeepChat",
+    "description": "让我们一起完成设置过程",
+    "provider": {
+      "select": "选择服务商",
+      "apiUrl": "API 地址",
+      "apiKey": "API 密钥",
+      "verifyLink": "验证链接"
+    },
+    "complete": {
+      "title": "全部完成！",
+      "description": "您已完成设置过程，让我们开始吧！"
+    },
+    "buttons": {
+      "getStarted": "开始使用",
+      "next": "下一步",
+      "back": "返回"
+    }
+  },
+  "newThread": {
+    "greeting": "你好呀",
+    "prompt": "今天你想问点什么？"
+  },
+  "about": {
+    "title": "DeepChat",
+    "description": "DeepChat 是一个支持多平台的 AI 客户端，我们致力于让更多人能享受到 AI 带来的便利。",
+    "website": "deepchat.thinkinai.xyz"
+  }
+}

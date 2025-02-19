@@ -1,0 +1,202 @@
+{
+  "common": {
+    "loading": "読み込み中...",
+    "copySuccess": "コピーしました!",
+    "copyCode": "コードをコピー",
+    "newChat": "新しいチャット",
+    "newTopic": "新しいトピック",
+    "error": {
+      "requestFailed": "リクエストに失敗しました...",
+      "createChatFailed": "チャットの作成に失敗しました",
+      "selectChatFailed": "チャットの選択に失敗しました",
+      "renameChatFailed": "チャットの名前変更に失敗しました",
+      "deleteChatFailed": "チャットの削除に失敗しました",
+      "userCanceledGeneration": "ユーザーが生成をキャンセルしました",
+      "sessionInterrupted": "セッションが中断され、生成が完了しませんでした"
+    },
+    "resetDataConfirmTitle": "すべてのデータをリセットしますか？",
+    "resetDataConfirmDescription": "すべてのデータがデフォルト設定にリセットされます。この操作は元に戻せません。"
+  },
+  "routes": {
+    "chat": "チャット",
+    "welcome": "ようこそ",
+    "settings": "設定",
+    "settings-common": "一般設定",
+    "settings-provider": "プロバイダー設定",
+    "settings-about": "について"
+  },
+  "chat": {
+    "input": {
+      "placeholder": "メッセージを入力...",
+      "fileArea": "ファイルエリア",
+      "inputArea": "入力エリア",
+      "functionSwitch": "機能スイッチ",
+      "fileSelect": "ファイル選択ボタン"
+    },
+    "features": {
+      "deepThinking": "深い思考",
+      "webSearch": "ウェブ検索",
+      "deepThinkingProgress": "深い思考中...",
+      "thinkingDuration": "({0}秒かかりました)"
+    },
+    "search": {
+      "results": "{0}件のウェブページが見つかりました",
+      "searching": "検索中..."
+    }
+  },
+  "model": {
+    "search": {
+      "placeholder": "モデルを検索..."
+    },
+    "error": {
+      "loadFailed": "モデルの読み込みに失敗しました"
+    },
+    "type": {
+      "custom": "カスタムモデル",
+      "official": "公式モデル"
+    },
+    "add": {
+      "namePlaceholder": "モデル名",
+      "idPlaceholder": "モデルID",
+      "contextLengthPlaceholder": "コンテキストの長さ",
+      "maxTokensPlaceholder": "最大トークン数"
+    },
+    "actions": {
+      "add": "モデルを追加"
+    },
+    "tags": {
+      "reasoning": "推論",
+      "chat": "チャット",
+      "code": "コード",
+      "writing": "執筆",
+      "analysis": "分析"
+    }
+  },
+  "thread": {
+    "actions": {
+      "rename": "名前を変更",
+      "delete": "削除"
+    }
+  },
+  "dialog": {
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "close": "閉じる",
+    "delete": {
+      "title": "このチャットを削除してもよろしいですか？",
+      "description": "この操作は元に戻せませんので、慎重に行ってください。",
+      "confirm": "削除"
+    },
+    "rename": {
+      "title": "チャットの名前を変更",
+      "description": "新しいチャット名を入力してください。"
+    },
+    "error": {
+      "title": "エラー"
+    }
+  },
+  "settings": {
+    "title": "設定",
+    "common": {
+      "title": "一般設定",
+      "resetData": "データをリセット",
+      "language": "言語",
+      "languageSelect": "言語を選択"
+    },
+    "model": {
+      "title": "モデル設定",
+      "systemPrompt": {
+        "label": "システムプロンプト",
+        "placeholder": "システムプロンプトを入力してください...",
+        "description": "AIアシスタントのシステムプロンプトを設定し、その行動と役割を定義します"
+      },
+      "temperature": {
+        "label": "モデルの温度",
+        "description": "出力のランダム性を制御します。高い値はより創造的な応答を生成します"
+      },
+      "contextLength": {
+        "label": "コンテキストの長さ",
+        "description": "会話のコンテキストの最大長を設定します"
+      },
+      "responseLength": {
+        "label": "応答の長さ",
+        "description": "AIの応答の最大長を設定します"
+      }
+    },
+    "provider": {
+      "enable": "サービスを有効にする",
+      "urlPlaceholder": "API URLを入力してください",
+      "keyPlaceholder": "API Keyを入力してください",
+      "verifyKey": "キーを検証",
+      "howToGet": "取得方法",
+      "getKeyTip": "次の場所に移動してください",
+      "getKeyTipEnd": "API Keyを取得する",
+      "modelList": "モデルリスト",
+      "enableModels": "モデルを有効にする",
+      "modelsEnabled": "モデルが有効になりました",
+      "verifyLink": "検証リンク",
+      "syncModelsFailed": "モデルの同期に失敗しました...",
+      "dialog": {
+        "disableModel": {
+          "title": "モデルを無効にする確認",
+          "content": "モデル \"{name}\" を無効にしてもよろしいですか？",
+          "confirm": "無効にする"
+        },
+        "configModels": {
+          "title": "モデルリストを構成"
+        },
+        "verify": {
+          "missingFields": "API KeyとAPI URLを入力してください",
+          "failed": "検証に失敗しました",
+          "success": "検証に成功しました"
+        }
+      }
+    }
+  },
+  "welcome": {
+    "steps": {
+      "welcome": {
+        "title": "ようこそ",
+        "description": "DeepChatの設定を始めましょう"
+      },
+      "provider": {
+        "title": "モデルプロバイダー",
+        "description": "お好みのモデルプロバイダーを選択してください"
+      },
+      "configuration": {
+        "title": "モデル設定",
+        "description": "使用したいモデルを設定してください"
+      },
+      "complete": {
+        "title": "完了",
+        "description": "すべての準備が整いました！"
+      }
+    },
+    "title": "DeepChatへようこそ",
+    "description": "セットアップを完了しましょう",
+    "provider": {
+      "select": "プロバイダーを選択",
+      "apiUrl": "API URL",
+      "apiKey": "API キー",
+      "verifyLink": "リンクを検証"
+    },
+    "complete": {
+      "title": "すべて完了！",
+      "description": "セットアップが完了しました。始めましょう！"
+    },
+    "buttons": {
+      "getStarted": "始める",
+      "next": "次へ",
+      "back": "戻る"
+    }
+  },
+  "newThread": {
+    "greeting": "こんにちは",
+    "prompt": "今日は何を聞きたいですか？"
+  },
+  "about": {
+    "title": "DeepChat",
+    "description": "DeepChatはマルチプラットフォーム対応のAIクライアントです。より多くの人々にAIの利便性を提供することを目指しています。",
+    "website": "deepchat.thinkinai.xyz"
+  }
+}

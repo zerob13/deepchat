@@ -1,0 +1,71 @@
+name: Build Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: '选择构建平台'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - windows-x64
+          - windows-arm64
+          - linux-x64
+          - linux-arm64
+
+jobs:
+  build-windows:
+    if: github.event.inputs.platform == 'all' || contains(github.event.inputs.platform, 'windows')
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            platform: win-x64
+          - arch: arm64
+            platform: win-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Build Windows
+        run: npm run build:win:${{ matrix.arch }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepchat-${{ matrix.platform }}
+          path: dist/*
+
+  build-linux:
+    if: github.event.inputs.platform == 'all' || contains(github.event.inputs.platform, 'linux')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            platform: linux-x64
+          - arch: arm64
+            platform: linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Build Linux
+        run: npm run build:linux:${{ matrix.arch }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepchat-${{ matrix.platform }}
+          path: dist/*
