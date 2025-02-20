@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
+import { SearchEngineTemplate } from '@shared/chat'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
@@ -23,6 +24,8 @@ export const useSettingsStore = defineStore('settings', () => {
     releaseNotes: string | undefined
   } | null>(null)
   const isChecking = ref(false)
+  const searchEngines = ref<SearchEngineTemplate[]>([])
+  const activeSearchEngine = ref<string>('google')
 
   // 获取系统语言
   const getSystemLanguage = (): string => {
@@ -50,6 +53,17 @@ export const useSettingsStore = defineStore('settings', () => {
     providers.value = await configP.getProviders()
     theme.value = (await configP.getSetting<string>('theme')) || 'system'
     language.value = (await configP.getSetting<string>('language')) || 'system'
+
+    // 初始化搜索引擎配置
+    searchEngines.value = await threadP.getSearchEngines()
+    const savedEngine = await configP.getSetting<string>('searchEngine')
+    if (savedEngine && searchEngines.value.find((e) => e.name === savedEngine)) {
+      activeSearchEngine.value = savedEngine
+      threadP.setActiveSearchEngine(savedEngine)
+    } else {
+      activeSearchEngine.value = searchEngines.value[0]?.name || 'google'
+      threadP.setActiveSearchEngine(activeSearchEngine.value)
+    }
 
     // 如果语言设置为 system，则使用系统语言
     if (language.value === 'system') {
@@ -454,9 +468,12 @@ export const useSettingsStore = defineStore('settings', () => {
       console.error(`Failed to fetch models for provider ${providerId}:`, error)
     }
   }
-  const setSearchEngine = (engineName: string) => {
-    console.log('setSearchEngine', engineName)
-    threadP.setActiveSearchEngine(engineName)
+  const setSearchEngine = async (engineName: string) => {
+    if (searchEngines.value.find((e) => e.name === engineName)) {
+      activeSearchEngine.value = engineName
+      await configP.setSetting('searchEngine', engineName)
+      threadP.setActiveSearchEngine(engineName)
+    }
   }
   // 在 store 创建时初始化
   onMounted(() => {
@@ -493,6 +510,8 @@ export const useSettingsStore = defineStore('settings', () => {
     updateProviderApi,
     updateProviderStatus,
     refreshProviderModels,
-    setSearchEngine
+    setSearchEngine,
+    searchEngines,
+    activeSearchEngine
   }
 })

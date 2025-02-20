@@ -23,7 +23,7 @@ const defaultEngines: SearchEngineTemplate[] = [
             url: linkEl.href,
             rank: index + 1,
             description: descEl ? descEl.textContent : '',
-            icon: faviconEl ? faviconEl.src: ''
+            icon: faviconEl?.src ? faviconEl.src : ''
           })
         }
       })

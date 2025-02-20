@@ -100,8 +100,8 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
     }
   },
   {
-    id: 'ppinfra',
-    name: 'Ppinfra',
+    id: 'ppio',
+    name: 'PPIO',
     apiType: 'openai',
     apiKey: '',
     baseUrl: 'https://api.ppinfra.com/v3/openai',

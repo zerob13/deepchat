@@ -30,7 +30,11 @@
               <SelectValue :placeholder="t('settings.common.searchEngineSelect')" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="engine in searchEngines" :key="engine.name" :value="engine.name">
+              <SelectItem
+                v-for="engine in settingsStore.searchEngines"
+                :key="engine.name"
+                :value="engine.name"
+              >
                 {{ engine.name }}
               </SelectItem>
             </SelectContent>
@@ -92,13 +96,11 @@ import {
 import { Button } from '@/components/ui/button'
 
 const devicePresenter = usePresenter('devicePresenter')
-const threadPresenter = usePresenter('threadPresenter')
 const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 const selectedLanguage = ref('system')
-const selectedSearchEngine = ref('')
-const searchEngines = ref([])
+const selectedSearchEngine = ref(settingsStore.activeSearchEngine)
 
 const languageOptions = [
   { value: 'system', label: '🌐 跟随系统' },
@@ -111,18 +113,15 @@ const languageOptions = [
 
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language
-  const engines = await threadPresenter.getSearchEngines()
-  searchEngines.value = engines
-  const activeEngine = await threadPresenter.getActiveSearchEngine()
-  selectedSearchEngine.value = activeEngine.name
+  selectedSearchEngine.value = settingsStore.activeSearchEngine
 })
 
 watch(selectedLanguage, async (newValue) => {
   await settingsStore.updateLanguage(newValue)
 })
 
-watch(selectedSearchEngine, (newValue) => {
-  settingsStore.setSearchEngine(newValue)
+watch(selectedSearchEngine, async (newValue) => {
+  await settingsStore.setSearchEngine(newValue)
 })
 
 const isDialogOpen = ref(false)
