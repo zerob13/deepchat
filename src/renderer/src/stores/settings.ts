@@ -8,6 +8,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
   const llmP = usePresenter('llmproviderPresenter')
   const upgradeP = usePresenter('upgradePresenter')
+  const threadP = usePresenter('threadPresenter')
   const { locale } = useI18n()
   const providers = ref<LLM_PROVIDER[]>([])
   const theme = ref<string>('system')
@@ -453,7 +454,10 @@ export const useSettingsStore = defineStore('settings', () => {
       console.error(`Failed to fetch models for provider ${providerId}:`, error)
     }
   }
-
+  const setSearchEngine = (engineName: string) => {
+    console.log('setSearchEngine', engineName)
+    threadP.setActiveSearchEngine(engineName)
+  }
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -488,6 +492,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateProviderConfig,
     updateProviderApi,
     updateProviderStatus,
-    refreshProviderModels
+    refreshProviderModels,
+    setSearchEngine
   }
 })

@@ -6,7 +6,7 @@
       <div v-if="block.extra.pages" class="flex flex-row ml-1.5">
         <img
           v-for="(page, index) in block.extra.pages"
-          :key="page.url"
+          :key="index"
           :src="page.icon"
           :style="{
             zIndex: 100 - index

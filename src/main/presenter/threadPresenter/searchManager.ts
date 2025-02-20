@@ -1,13 +1,68 @@
 import { app, BrowserWindow } from 'electron'
 import { eventBus } from '@/eventbus'
 import path from 'path'
-import { SearchResult } from '@shared/presenter'
+import { SearchResult, SearchEngineTemplate } from '@shared/chat'
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
+
+const defaultEngines: SearchEngineTemplate[] = [
+  {
+    name: 'google',
+    selector: '#search',
+    searchUrl: 'https://www.google.com/search?q={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('#search .g')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('h3')
+        const linkEl = item.querySelector('a')
+        const descEl = item.querySelector('.VwiC3b')
+        const faviconEl = item.querySelector('img.XNo5Ab')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: faviconEl ? faviconEl.src : ''
+          })
+        }
+      })
+      return results
+    `
+  },
+  {
+    name: 'baidu',
+    selector: '#content_left',
+    searchUrl: 'https://www.baidu.com/s?wd={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('#content_left .result')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('.t')
+        const linkEl = item.querySelector('a')
+        const descEl = item.querySelector('.c-abstract')
+        const faviconEl = item.querySelector('.c-img')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: faviconEl ? faviconEl.getAttribute('src') : ''
+          })
+        }
+      })
+      return results
+    `
+  }
+]
 
 export class SearchManager {
   private searchWindows: Map<string, BrowserWindow> = new Map()
   private isDevelopment = process.env.NODE_ENV === 'development'
   private maxConcurrentSearches = 3
+  private engines: SearchEngineTemplate[] = defaultEngines
+  private activeEngine: SearchEngineTemplate = this.engines[0]
 
   constructor() {
     this.setupEventListeners()
@@ -17,6 +72,37 @@ export class SearchManager {
     eventBus.on('search-window-cleanup', (conversationId: string) => {
       this.destroySearchWindow(conversationId)
     })
+
+    eventBus.on('search-engine-change', (engineName: string) => {
+      const engine = this.engines.find((e) => e.name === engineName)
+      if (engine) {
+        this.activeEngine = engine
+      }
+    })
+  }
+
+  getEngines(): SearchEngineTemplate[] {
+    return this.engines
+  }
+
+  getActiveEngine(): SearchEngineTemplate {
+    return this.activeEngine
+  }
+
+  setActiveEngine(engineName: string): boolean {
+    const engine = this.engines.find((e) => e.name === engineName)
+    if (engine) {
+      this.activeEngine = engine
+      return true
+    }
+    return false
+  }
+
+  updateEngines(newEngines: SearchEngineTemplate[]): void {
+    this.engines = newEngines
+    if (!this.engines.find((e) => e.name === this.activeEngine.name)) {
+      this.activeEngine = this.engines[0]
+    }
   }
 
   private initSearchWindow(conversationId: string): BrowserWindow {
@@ -60,17 +146,13 @@ export class SearchManager {
     }
   }
 
-  async search(
-    conversationId: string,
-    query: string,
-    engine: 'google' | 'baidu' = 'google'
-  ): Promise<SearchResult[]> {
+  async search(conversationId: string, query: string): Promise<SearchResult[]> {
     let searchWindow = this.searchWindows.get(conversationId)
     if (!searchWindow) {
       searchWindow = this.initSearchWindow(conversationId)
     }
 
-    const searchUrl = this.getSearchUrl(query, engine)
+    const searchUrl = this.activeEngine.searchUrl.replace('{query}', encodeURIComponent(query))
     console.log('开始加载搜索URL:', searchUrl)
 
     const loadTimeout = setTimeout(() => {
@@ -86,10 +168,10 @@ export class SearchManager {
       clearTimeout(loadTimeout)
     }
 
-    await this.waitForSelector(searchWindow, engine === 'google' ? '#search' : '#content_left')
+    await this.waitForSelector(searchWindow, this.activeEngine.selector)
     console.log('搜索结果加载完成')
 
-    const results = await this.extractSearchResults(searchWindow, engine)
+    const results = await this.extractSearchResults(searchWindow)
     console.log('搜索结果提取完成:', results)
 
     const enrichedResults = await this.enrichResults(searchWindow, results.slice(0, 3))
@@ -106,13 +188,6 @@ export class SearchManager {
         this.destroySearchWindow(conversationId)
       })
     return [...enrichedResults, ...results.slice(3)]
-  }
-
-  private getSearchUrl(query: string, engine: 'google' | 'baidu'): string {
-    const encodedQuery = encodeURIComponent(query)
-    return engine === 'google'
-      ? `https://www.google.com/search?q=${encodedQuery}`
-      : `https://www.baidu.com/s?wd=${encodedQuery}`
   }
 
   private async waitForSelector(window: BrowserWindow, selector: string): Promise<void> {
@@ -133,49 +208,10 @@ export class SearchManager {
     `)
   }
 
-  private async extractSearchResults(
-    window: BrowserWindow,
-    engine: 'google' | 'baidu'
-  ): Promise<SearchResult[]> {
+  private async extractSearchResults(window: BrowserWindow): Promise<SearchResult[]> {
     return await window.webContents.executeJavaScript(`
       (function() {
-        const results = []
-        if ('${engine}' === 'google') {
-          const items = document.querySelectorAll('#search .g')
-          items.forEach((item, index) => {
-            const titleEl = item.querySelector('h3')
-            const linkEl = item.querySelector('a')
-            const descEl = item.querySelector('.VwiC3b')
-            const faviconEl = item.querySelector('img.XNo5Ab')
-            if (titleEl && linkEl) {
-              results.push({
-                title: titleEl.textContent,
-                url: linkEl.href,
-                rank: index + 1,
-                description: descEl ? descEl.textContent : '',
-                icon: faviconEl ? faviconEl.src : ''
-              })
-            }
-          })
-        } else {
-          const items = document.querySelectorAll('#content_left .result')
-          items.forEach((item, index) => {
-            const titleEl = item.querySelector('.t')
-            const linkEl = item.querySelector('a')
-            const descEl = item.querySelector('.c-abstract')
-            const faviconEl = item.querySelector('.c-img')
-            if (titleEl && linkEl) {
-              results.push({
-                title: titleEl.textContent,
-                url: linkEl.href,
-                rank: index + 1,
-                description: descEl ? descEl.textContent : '',
-                icon: faviconEl ? faviconEl.getAttribute('src') : ''
-              })
-            }
-          })
-        }
-        return results
+        ${this.activeEngine.extractorScript}
       })()
     `)
   }

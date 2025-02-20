@@ -19,6 +19,24 @@
           </Select>
         </div>
       </div>
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:search" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">{{ t('settings.common.searchEngine') }}</span>
+        </span>
+        <div class="flex-shrink-0 min-w-64 max-w-96">
+          <Select v-model="selectedSearchEngine" class="">
+            <SelectTrigger>
+              <SelectValue :placeholder="t('settings.common.searchEngineSelect')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="engine in searchEngines" :key="engine.name" :value="engine.name">
+                {{ engine.name }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
       <Dialog v-model:open="isDialogOpen">
         <DialogTrigger as-child>
           <div
@@ -74,10 +92,13 @@ import {
 import { Button } from '@/components/ui/button'
 
 const devicePresenter = usePresenter('devicePresenter')
+const threadPresenter = usePresenter('threadPresenter')
 const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 const selectedLanguage = ref('system')
+const selectedSearchEngine = ref('')
+const searchEngines = ref([])
 
 const languageOptions = [
   { value: 'system', label: '🌐 跟随系统' },
@@ -90,10 +111,18 @@ const languageOptions = [
 
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language
+  const engines = await threadPresenter.getSearchEngines()
+  searchEngines.value = engines
+  const activeEngine = await threadPresenter.getActiveSearchEngine()
+  selectedSearchEngine.value = activeEngine.name
 })
 
 watch(selectedLanguage, async (newValue) => {
   await settingsStore.updateLanguage(newValue)
+})
+
+watch(selectedSearchEngine, (newValue) => {
+  settingsStore.setSearchEngine(newValue)
 })
 
 const isDialogOpen = ref(false)

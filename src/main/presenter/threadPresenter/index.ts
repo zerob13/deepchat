@@ -11,7 +11,12 @@ import { ISQLitePresenter } from '../../../shared/presenter'
 import { MessageManager } from './messageManager'
 import { ILlmProviderPresenter } from '../../../shared/presenter'
 import { eventBus } from '@/eventbus'
-import { AssistantMessage, Message, AssistantMessageBlock } from '@shared/chat'
+import {
+  AssistantMessage,
+  Message,
+  AssistantMessageBlock,
+  SearchEngineTemplate
+} from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
@@ -192,6 +197,15 @@ export class ThreadPresenter implements IThreadPresenter {
         this.generatingMessages.delete(eventId)
       }
     })
+  }
+  getSearchEngines(): SearchEngineTemplate[] {
+    return this.searchManager.getEngines()
+  }
+  getActiveSearchEngine(): SearchEngineTemplate {
+    return this.searchManager.getActiveEngine()
+  }
+  setActiveSearchEngine(engineName: string) {
+    this.searchManager.setActiveEngine(engineName)
   }
 
   /**
@@ -614,10 +628,13 @@ export class ThreadPresenter implements IThreadPresenter {
         console.error('找不到触发消息，parentId:', queryMessage.parentId)
         throw new Error('找不到指定的消息')
       }
+      // 获取触发消息之前的历史消息
+      contextMessages = await this.getMessageHistory(userMessage.id, contextLength)
     } else {
       // 获取最后一条用户消息
       const { list: messages } = await this.getMessages(conversationId, 1, 10)
       userMessage = messages.reverse().find((msg) => msg.role === 'user') || null
+      contextMessages = await this.getContextMessages(conversationId)
     }
 
     if (!userMessage) {
@@ -647,8 +664,7 @@ export class ThreadPresenter implements IThreadPresenter {
 
     // 获取历史消息，优先考虑上下文边界
     if (remainingContextLength > 0) {
-      const { list: allMessages } = await this.getMessages(conversationId, 1, 1000)
-      const messages = allMessages
+      const messages = contextMessages
         .filter((msg) => msg.id !== userMessage?.id) // 排除当前用户消息
         .reverse() // 从新到旧排序
 

@@ -8,7 +8,7 @@
   ],
   "compilerOptions": {
     "composite": true,
-    "resolveJsonModule":false,
+    "resolveJsonModule": false,
     "types": ["electron-vite/node"],
     "baseUrl": ".",
     "paths": {
@@ -17,8 +17,7 @@
       ],
       "@shared/*": [
         "src/shared/*"
-      ],
-
+      ]
     }
   }
 }

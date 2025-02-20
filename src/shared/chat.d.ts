@@ -73,3 +73,19 @@ export type SearchBlock = {
     }>
   }
 }
+
+export interface SearchEngineTemplate {
+  name: string
+  selector: string
+  searchUrl: string
+  extractorScript: string
+}
+
+export interface SearchResult {
+  title: string
+  url: string
+  rank: number
+  description: string
+  icon: string
+  content?: string
+}

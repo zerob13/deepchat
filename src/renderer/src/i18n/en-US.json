@@ -101,7 +101,9 @@
       "title": "Common Settings",
       "resetData": "Reset Data",
       "language": "Language",
-      "languageSelect": "Select Language"
+      "languageSelect": "Select Language",
+      "searchEngine": "Search Engine",
+      "searchEngineSelect": "Select Search Engine"
     },
     "model": {
       "title": "Model Settings",

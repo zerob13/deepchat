@@ -271,6 +271,9 @@ export interface IThreadPresenter {
   summaryTitles(modelId?: string): Promise<string>
   clearActiveThread(): Promise<void>
   stopMessageGeneration(messageId: string): Promise<void>
+  getSearchEngines(): SearchEngineTemplate[]
+  getActiveSearchEngine(): SearchEngineTemplate
+  setActiveSearchEngine(engineName: string): void
 }
 
 export type MESSAGE_STATUS = 'sent' | 'pending' | 'error'
