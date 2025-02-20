@@ -18,6 +18,7 @@
           v-model="apiHost"
           :placeholder="t('settings.provider.urlPlaceholder')"
           @blur="handleApiHostChange(String($event.target.value))"
+          @keyup.enter="handleApiHostChange(apiHost)"
         />
         <div class="text-xs text-secondary-foreground">
           {{ `${apiHost ?? ''}/chat/completions` }}
@@ -31,6 +32,7 @@
           type="password"
           :placeholder="t('settings.provider.keyPlaceholder')"
           @blur="handleApiKeyChange(String($event.target.value))"
+          @keyup.enter="handleApiKeyEnter(apiKey)"
         />
         <div class="flex flex-row gap-2">
           <Button
@@ -221,17 +223,13 @@ const getProviderUrl = (providerId: string) => {
 
 const validateApiKey = async () => {
   try {
-    const updatedProvider = {
-      ...props.provider,
-      apiKey: apiKey.value,
-      baseUrl: apiHost.value
-    }
-    await settingsStore.updateProvider(props.provider.id, updatedProvider)
     const resp = await settingsStore.checkProvider(props.provider.id)
     if (resp.isOk) {
       console.log('验证成功')
       checkResult.value = true
       showCheckModelDialog.value = true
+      // 验证成功后刷新当前provider的模型列表
+      await settingsStore.refreshProviderModels(props.provider.id)
     } else {
       console.log('验证失败', resp.errorMsg)
       checkResult.value = false
@@ -239,6 +237,8 @@ const validateApiKey = async () => {
     }
   } catch (error) {
     console.error('Failed to validate API key:', error)
+    checkResult.value = false
+    showCheckModelDialog.value = true
   }
 }
 
@@ -266,33 +266,23 @@ watch(
 )
 
 const handleProviderEnableChange = async (value: boolean) => {
-  const updatedProvider = {
-    ...props.provider,
-    enable: value,
-    apiKey: apiKey.value,
-    baseUrl: apiHost.value
-  }
-  await settingsStore.updateProvider(props.provider.id, updatedProvider)
+  await settingsStore.updateProviderStatus(props.provider.id, value)
 }
 
-const handleApiKeyChange = async (value: string) => {
-  const updatedProvider = {
-    ...props.provider,
-    apiKey: value,
-    enable: isEnabled.value ?? false,
-    baseUrl: apiHost.value
+const handleApiKeyEnter = async (value: string) => {
+  const inputElement = document.getElementById(`${props.provider.id}-apikey`)
+  if (inputElement) {
+    inputElement.blur()
   }
-  await settingsStore.updateProvider(props.provider.id, updatedProvider)
+  await settingsStore.updateProviderApi(props.provider.id, value, undefined)
+  await validateApiKey()
+}
+const handleApiKeyChange = async (value: string) => {
+  await settingsStore.updateProviderApi(props.provider.id, value, undefined)
 }
 
 const handleApiHostChange = async (value: string) => {
-  const updatedProvider = {
-    ...props.provider,
-    baseUrl: value,
-    enable: isEnabled.value ?? false,
-    apiKey: apiKey.value
-  }
-  await settingsStore.updateProvider(props.provider.id, updatedProvider)
+  await settingsStore.updateProviderApi(props.provider.id, undefined, value)
 }
 
 const handleModelEnabledChange = async (

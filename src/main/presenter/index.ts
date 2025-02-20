@@ -74,8 +74,10 @@ export class Presenter implements IPresenter {
       // 当模型列表更新时，保存自定义模型
       const customModels = msg.models.filter((model) => model.isCustom)
       this.configPresenter.setCustomModels(msg.providerId, customModels)
+      const providerModels = msg.models.filter((model) => !model.isCustom)
+      this.configPresenter.setProviderModels(msg.providerId, providerModels)
       // 转发事件到渲染进程
-      this.windowPresenter.mainWindow?.webContents.send('provider-models-updated', msg)
+      this.windowPresenter.mainWindow?.webContents.send('provider-models-updated')
     })
     eventBus.on('update-status-changed', (msg) => {
       console.log('update-status-changed', msg)

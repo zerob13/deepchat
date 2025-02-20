@@ -84,7 +84,6 @@ export const useSettingsStore = defineStore('settings', () => {
               isCustom: meta.isCustom,
               providerId: provider.id
             }))
-            await configP.setProviderModels(provider.id, models)
           }
         }
 
@@ -349,6 +348,112 @@ export const useSettingsStore = defineStore('settings', () => {
     })
   }
 
+  // 原子化的配置更新方法
+  const updateProviderConfig = async (
+    providerId: string,
+    updates: Partial<LLM_PROVIDER>
+  ): Promise<void> => {
+    const currentProvider = providers.value.find((p) => p.id === providerId)
+    if (!currentProvider) {
+      throw new Error(`Provider ${providerId} not found`)
+    }
+
+    const updatedProvider = {
+      ...currentProvider,
+      ...updates
+    }
+
+    await configP.setProviderById(providerId, updatedProvider)
+
+    // 只在特定字段变化时刷新providers
+    const needRefreshProviders = ['name', 'enable'].some((key) => key in updates)
+    if (needRefreshProviders) {
+      providers.value = await configP.getProviders()
+    } else {
+      // 只更新当前provider
+      const index = providers.value.findIndex((p) => p.id === providerId)
+      if (index !== -1) {
+        providers.value[index] = updatedProvider
+      }
+    }
+
+    // 只在特定条件下刷新模型列表
+    const needRefreshModels = ['enable', 'apiKey', 'baseUrl'].some((key) => key in updates)
+    if (needRefreshModels && updatedProvider.enable) {
+      await refreshAllModels()
+    }
+  }
+
+  // 更新provider的API配置
+  const updateProviderApi = async (
+    providerId: string,
+    apiKey?: string,
+    baseUrl?: string
+  ): Promise<void> => {
+    const updates: Partial<LLM_PROVIDER> = {}
+    if (apiKey !== undefined) updates.apiKey = apiKey
+    if (baseUrl !== undefined) updates.baseUrl = baseUrl
+    await updateProviderConfig(providerId, updates)
+  }
+
+  // 更新provider的启用状态
+  const updateProviderStatus = async (providerId: string, enable: boolean): Promise<void> => {
+    await updateProviderConfig(providerId, { enable })
+  }
+
+  // 优化刷新模型列表的逻辑
+  const refreshProviderModels = async (providerId: string): Promise<void> => {
+    const provider = providers.value.find((p) => p.id === providerId)
+    if (!provider || !provider.enable) return
+
+    try {
+      // 获取在线模型
+      let models = await configP.getProviderModels(providerId)
+      if (!models || models.length === 0) {
+        const modelMetas = await llmP.getModelList(providerId)
+        if (modelMetas) {
+          models = modelMetas.map((meta) => ({
+            id: meta.id,
+            name: meta.name,
+            contextLength: meta.contextLength || 4096,
+            maxTokens: meta.maxTokens || 2048,
+            provider: providerId,
+            group: meta.group,
+            enabled: meta.enabled,
+            isCustom: meta.isCustom,
+            providerId
+          }))
+        }
+      }
+
+      // 更新模型列表
+      const existingIndex = allProviderModels.value.findIndex(
+        (item) => item.providerId === providerId
+      )
+      if (existingIndex !== -1) {
+        allProviderModels.value[existingIndex].models = models
+      } else {
+        allProviderModels.value.push({
+          providerId,
+          models
+        })
+      }
+
+      // 更新已启用的模型列表
+      const enabledIndex = enabledModels.value.findIndex((item) => item.providerId === providerId)
+      if (enabledIndex !== -1) {
+        enabledModels.value[enabledIndex].models = models.filter((model) => model.enabled !== false)
+      } else {
+        enabledModels.value.push({
+          providerId,
+          models: models.filter((model) => model.enabled !== false)
+        })
+      }
+    } catch (error) {
+      console.error(`Failed to fetch models for provider ${providerId}:`, error)
+    }
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -379,6 +484,10 @@ export const useSettingsStore = defineStore('settings', () => {
     isChecking,
     checkUpdate,
     startUpdate,
-    restartAndUpdate
+    restartAndUpdate,
+    updateProviderConfig,
+    updateProviderApi,
+    updateProviderStatus,
+    refreshProviderModels
   }
 })

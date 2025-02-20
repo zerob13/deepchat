@@ -52,6 +52,10 @@ export abstract class BaseLLMProvider {
       const models = await this.fetchOpenAIModels()
       console.log('Fetched models:', models?.length)
       this.models = models
+      eventBus.emit('provider-models-updated', {
+        providerId: this.provider.id,
+        models: this.getModels()
+      })
       return models
     } catch (e) {
       console.error('Failed to fetch models:', e)
@@ -133,8 +137,8 @@ export abstract class BaseLLMProvider {
     return messages
   }
 
-  protected async fetchOpenAIModels(): Promise<MODEL_META[]> {
-    const response = await this.openai.models.list()
+  protected async fetchOpenAIModels(options?: { timeout: number }): Promise<MODEL_META[]> {
+    const response = await this.openai.models.list(options)
     return response.data.map((model) => ({
       id: model.id,
       name: model.id,
@@ -398,7 +402,14 @@ export abstract class BaseLLMProvider {
   public async check(): Promise<{ isOk: boolean; errorMsg: string | null }> {
     try {
       if (!this.isNoModelsApi) {
-        await this.fetchOpenAIModels()
+        const models = await this.fetchOpenAIModels({
+          timeout: 3000
+        })
+        this.models = models
+        eventBus.emit('provider-models-updated', {
+          providerId: this.provider.id,
+          models: this.getModels()
+        })
       }
       return {
         isOk: true,
