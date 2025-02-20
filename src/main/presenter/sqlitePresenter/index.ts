@@ -682,4 +682,21 @@ export class SQLitePresenter implements ISQLitePresenter {
     )
     insert.run(attachmentId, messageId, attachmentType, attachmentData, Date.now())
   }
+
+  // 获取消息附件
+  public async getMessageAttachments(
+    messageId: string,
+    type: string
+  ): Promise<{ content: string }[]> {
+    return this.db
+      .prepare(
+        `
+        SELECT content
+        FROM message_attachments
+        WHERE message_id = ? AND type = ?
+        ORDER BY created_at ASC
+      `
+      )
+      .all(messageId, type) as { content: string }[]
+  }
 }

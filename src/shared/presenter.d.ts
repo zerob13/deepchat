@@ -83,6 +83,7 @@ export interface ISQLitePresenter {
     attachmentType: string,
     attachmentData: string
   ): Promise<void>
+  getMessageAttachments(messageId: string, type: string): Promise<{ content: string }[]>
 }
 
 export interface IPresenter {

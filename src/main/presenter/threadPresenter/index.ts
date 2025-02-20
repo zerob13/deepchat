@@ -560,16 +560,8 @@ export class ThreadPresenter implements IThreadPresenter {
 
     // 处理搜索
     if (userMessage.content.search) {
-      // 发送搜索事件
-      eventBus.emit('search-requested', {
-        messageId: state.message.id,
-        query: userMessage.content.text,
-        files: userMessage.content.files,
-        links: userMessage.content.links
-      })
-
-      // 等待搜索结果
-      searchResults = await new Promise<SearchResult[]>((resolve) => {
+      // 发送搜索事件并等待结果
+      const searchResultPromise = new Promise<SearchResult[]>((resolve) => {
         const handleSearchResults = (results: { messageId: string; results: SearchResult[] }) => {
           if (results.messageId === state.message.id) {
             eventBus.off('search-results', handleSearchResults)
@@ -579,22 +571,32 @@ export class ThreadPresenter implements IThreadPresenter {
         eventBus.on('search-results', handleSearchResults)
       })
 
+      // 发送搜索请求
+      eventBus.emit('search-requested', {
+        messageId: state.message.id,
+        query: userMessage.content.text,
+        files: userMessage.content.files,
+        links: userMessage.content.links
+      })
+
+      // 等待搜索结果
+      searchResults = await searchResultPromise
+
       // 生成搜索提示词
       searchPrompt = generateSearchPrompt(userMessage.content.text, searchResults)
 
-      // 保存搜索结果到 MessageAttachmentsTable
-      const searchResultsData = searchResults.map((result) => ({
-        title: result.title,
-        url: result.url,
-        content: result.content || ''
-      }))
-
-      // 将搜索结果添加到当前生成的 AI 消息中
-      await this.sqlitePresenter.addMessageAttachment(
-        state.message.id,
-        'search_results',
-        JSON.stringify(searchResultsData)
-      )
+      // 逐条保存搜索结果到 MessageAttachmentsTable
+      for (const result of searchResults) {
+        await this.sqlitePresenter.addMessageAttachment(
+          state.message.id,
+          'search_result',
+          JSON.stringify({
+            title: result.title,
+            url: result.url,
+            content: result.content || ''
+          })
+        )
+      }
 
       // 更新 AI 消息的内容，添加搜索块
       const currentContent = state.message.content
@@ -604,8 +606,7 @@ export class ThreadPresenter implements IThreadPresenter {
         status: 'success',
         timestamp: Date.now(),
         extra: {
-          total: searchResults.length,
-          pages: searchResultsData
+          total: searchResults.length
         }
       })
       await this.messageManager.editMessage(state.message.id, JSON.stringify(currentContent))
@@ -874,5 +875,10 @@ export class ThreadPresenter implements IThreadPresenter {
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null
     eventBus.emit('active-conversation-cleared')
+  }
+
+  async getMessageExtraInfo(messageId: string, type: string): Promise<Record<string, unknown>[]> {
+    const attachments = await this.sqlitePresenter.getMessageAttachments(messageId, type)
+    return attachments.map((attachment) => JSON.parse(attachment.content))
   }
 }
