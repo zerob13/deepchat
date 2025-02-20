@@ -81,6 +81,32 @@ const defaultEngines: SearchEngineTemplate[] = [
       })
       return results
     `
+  },
+  {
+    name: 'sougou',
+    selector: '.news-list',
+    searchUrl:
+      'https://weixin.sogou.com/weixin?ie=utf8&s_from=input&_sug_=y&_sug_type_=&type=2&query={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('.news-list li')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('h3 a')
+        const linkEl = item.querySelector('h3 a')
+        const descEl = item.querySelector('p.txt-info')
+        const faviconEl = item.querySelector('a[data-z="art"] img')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: faviconEl ? faviconEl.src : ''
+          })
+        }
+      })
+      return results
+    `
   }
 ]
 
@@ -313,24 +339,25 @@ export class SearchManager {
           .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 3000)
+        let icon: string | undefined = result.icon
+        if (!result.icon) {
+          // 尝试获取网站图标
+          icon = $('link[rel="icon"]').attr('href') || $('link[rel="shortcut icon"]').attr('href')
 
-        // 尝试获取网站图标
-        let icon = $('link[rel="icon"]').attr('href') || $('link[rel="shortcut icon"]').attr('href')
+          // 如果找到了相对路径的图标，转换为绝对路径
+          if (icon && !icon.startsWith('http')) {
+            const urlObj = new URL(result.url)
+            icon = icon.startsWith('/')
+              ? `${urlObj.protocol}//${urlObj.host}${icon}`
+              : `${urlObj.protocol}//${urlObj.host}/${icon}`
+          }
 
-        // 如果找到了相对路径的图标，转换为绝对路径
-        if (icon && !icon.startsWith('http')) {
-          const urlObj = new URL(result.url)
-          icon = icon.startsWith('/')
-            ? `${urlObj.protocol}//${urlObj.host}${icon}`
-            : `${urlObj.protocol}//${urlObj.host}/${icon}`
+          // 如果没有找到图标，使用默认的 favicon.ico
+          if (!icon) {
+            const urlObj = new URL(result.url)
+            icon = `${urlObj.protocol}//${urlObj.host}/favicon.ico`
+          }
         }
-
-        // 如果没有找到图标，使用默认的 favicon.ico
-        if (!icon) {
-          const urlObj = new URL(result.url)
-          icon = `${urlObj.protocol}//${urlObj.host}/favicon.ico`
-        }
-
         enrichedResults.push({
           ...result,
           content: mainContent || result.description || '',
