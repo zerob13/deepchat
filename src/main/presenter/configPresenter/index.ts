@@ -32,6 +32,15 @@ export class ConfigPresenter implements IConfigPresenter {
       name: 'app-settings',
       watch: true
     })
+    const existingProviders = this.getSetting<LLM_PROVIDER[]>(PROVIDERS_STORE_KEY) || []
+    const newProviders = defaultProviders.filter(
+      (defaultProvider) =>
+        !existingProviders.some((existingProvider) => existingProvider.id === defaultProvider.id)
+    )
+
+    if (newProviders.length > 0) {
+      this.setProviders([...existingProviders, ...newProviders])
+    }
   }
 
   getSetting<T>(key: string): T | undefined {

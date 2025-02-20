@@ -98,6 +98,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
       docs: 'https://docs.fireworks.ai/getting-started/introduction',
       models: 'https://fireworks.ai/dashboard/models'
     }
+  },
+  {
+    id: 'ppinfra',
+    name: 'Ppinfra',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: 'https://api.ppinfra.com/v3/openai',
+    enable: false,
+    websites: {
+      official: 'https://ppinfra.com/',
+      apiKey: 'https://ppinfra.com/settings/key-management',
+      docs: 'https://ppinfra.com/docs/get-started/quickstart.html',
+      models: 'https://ppinfra.com/model-api/console'
+    }
   }
 
   // {

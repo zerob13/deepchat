@@ -6,6 +6,31 @@ const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
   {
+    name: 'bing',
+    selector: '#b_tween_searchResults',
+    searchUrl: 'https://www.bing.com/search?q={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('#b_content .b_algo')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('h2 a')
+        const linkEl = item.querySelector('h2 a')
+        const descEl = item.querySelector('.b_caption p')
+        const faviconEl = item.querySelector('.wr_fav img')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: faviconEl ? faviconEl.src: ''
+          })
+        }
+      })
+      return results
+    `
+  },
+  {
     name: 'google',
     selector: '#search',
     searchUrl: 'https://www.google.com/search?q={query}',
@@ -191,21 +216,39 @@ export class SearchManager {
   }
 
   private async waitForSelector(window: BrowserWindow, selector: string): Promise<void> {
-    await window.webContents.executeJavaScript(`
-      new Promise((resolve) => {
-        if (document.querySelector('${selector}')) {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve() // 5秒后自动返回
+      }, 5000)
+
+      window.webContents
+        .executeJavaScript(
+          `
+        new Promise((innerResolve) => {
+          if (document.querySelector('${selector}')) {
+            innerResolve();
+          } else {
+            const observer = new MutationObserver(() => {
+              if (document.querySelector('${selector}')) {
+                observer.disconnect();
+                innerResolve();
+              }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+          }
+        })
+      `
+        )
+        .then(() => {
           resolve()
-        } else {
-          const observer = new MutationObserver(() => {
-            if (document.querySelector('${selector}')) {
-              observer.disconnect()
-              resolve()
-            }
-          })
-          observer.observe(document.body, { childList: true, subtree: true })
-        }
-      })
-    `)
+        })
+        .catch(() => {
+          resolve()
+        })
+
+      clearTimeout(timeout)
+      resolve()
+    })
   }
 
   private async extractSearchResults(window: BrowserWindow): Promise<SearchResult[]> {
