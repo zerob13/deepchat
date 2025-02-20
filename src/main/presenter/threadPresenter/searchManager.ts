@@ -2,6 +2,8 @@ import { app, BrowserWindow } from 'electron'
 import { eventBus } from '@/eventbus'
 import path from 'path'
 import { SearchResult, SearchEngineTemplate } from '@shared/chat'
+import axios from 'axios'
+import * as cheerio from 'cheerio'
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
@@ -199,7 +201,7 @@ export class SearchManager {
     const results = await this.extractSearchResults(searchWindow)
     console.log('搜索结果提取完成:', results)
 
-    const enrichedResults = await this.enrichResults(searchWindow, results.slice(0, 3))
+    const enrichedResults = await this.enrichResults(results)
     console.log('详细内容获取完成')
 
     searchWindow
@@ -212,7 +214,7 @@ export class SearchManager {
         console.error('加载空白页失败:', error)
         this.destroySearchWindow(conversationId)
       })
-    return [...enrichedResults, ...results.slice(3)]
+    return enrichedResults
   }
 
   private async waitForSelector(window: BrowserWindow, selector: string): Promise<void> {
@@ -259,69 +261,89 @@ export class SearchManager {
     `)
   }
 
-  private async enrichResults(
-    window: BrowserWindow,
-    results: SearchResult[]
-  ): Promise<SearchResult[]> {
+  private async enrichResults(results: SearchResult[]): Promise<SearchResult[]> {
     const enrichedResults: SearchResult[] = []
+    const timeout = 5000 // 5秒超时
 
     for (const result of results) {
       try {
-        const loadTimeout = setTimeout(() => {
-          window?.webContents.stop()
-        }, 5000)
-
-        try {
-          await window.loadURL(result.url)
-        } catch (error) {
-          console.error(`加载页面失败 ${result.url}:`, error)
-        } finally {
-          clearTimeout(loadTimeout)
-        }
-
-        let content = await this.extractMainContent(window)
-        if (!content) {
-          content = result.description ?? ''
-        }
-        enrichedResults.push({
-          ...result,
-          content
+        // 使用 axios 获取页面内容
+        const response = await axios.get(result.url, {
+          timeout,
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
         })
 
-        await window.loadURL('about:blank')
+        const $ = cheerio.load(response.data)
+
+        // 移除不需要的元素
+        $('script, style, nav, header, footer, iframe, .ad, #ad, .advertisement').remove()
+
+        // 尝试获取主要内容
+        let mainContent = ''
+        const possibleSelectors = [
+          'article',
+          'main',
+          '.content',
+          '#content',
+          '.post-content',
+          '.article-content',
+          '.entry-content',
+          '[role="main"]'
+        ]
+
+        for (const selector of possibleSelectors) {
+          const element = $(selector)
+          if (element.length > 0) {
+            mainContent = element.text()
+            break
+          }
+        }
+
+        // 如果没有找到主要内容，使用 body
+        if (!mainContent) {
+          mainContent = $('body').text()
+        }
+
+        // 清理文本内容
+        mainContent = mainContent
+          .replace(/[\r\n]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 3000)
+
+        // 尝试获取网站图标
+        let icon = $('link[rel="icon"]').attr('href') || $('link[rel="shortcut icon"]').attr('href')
+
+        // 如果找到了相对路径的图标，转换为绝对路径
+        if (icon && !icon.startsWith('http')) {
+          const urlObj = new URL(result.url)
+          icon = icon.startsWith('/')
+            ? `${urlObj.protocol}//${urlObj.host}${icon}`
+            : `${urlObj.protocol}//${urlObj.host}/${icon}`
+        }
+
+        // 如果没有找到图标，使用默认的 favicon.ico
+        if (!icon) {
+          const urlObj = new URL(result.url)
+          icon = `${urlObj.protocol}//${urlObj.host}/favicon.ico`
+        }
+
+        enrichedResults.push({
+          ...result,
+          content: mainContent || result.description || '',
+          icon: icon || ''
+        })
       } catch (error) {
         console.error(`Error fetching content for ${result.url}:`, error)
+        // 如果获取失败，保留原始结果
         enrichedResults.push(result)
       }
     }
 
     return enrichedResults
-  }
-
-  private async extractMainContent(window: BrowserWindow): Promise<string> {
-    const result = await window.webContents.executeJavaScript(`
-      (function() {
-        const elementsToRemove = document.querySelectorAll('script, style, nav, header, footer, iframe, .ad, #ad, .advertisement')
-        elementsToRemove.forEach(el => el.remove())
-
-        const mainContent =
-          document.querySelector('article') ||
-          document.querySelector('main') ||
-          document.querySelector('.content') ||
-          document.querySelector('#content') ||
-          document.body
-
-        let icon = document.querySelector('link[rel="icon"]')?.href ||
-                  document.querySelector('link[rel="shortcut icon"]')?.href ||
-                  new URL('/favicon.ico', window.location.origin).href
-
-        return {
-          content: mainContent.textContent.trim().replace(/\\s+/g, ' ').slice(0, 3000),
-          icon
-        }
-      })()
-    `)
-    return result.content
   }
 
   destroy() {
