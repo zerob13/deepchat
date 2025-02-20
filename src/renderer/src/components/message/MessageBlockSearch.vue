@@ -4,15 +4,21 @@
   >
     <template v-if="block.status === 'success'">
       <div v-if="block.extra.pages" class="flex flex-row ml-1.5">
-        <img
-          v-for="(page, index) in block.extra.pages"
-          :key="index"
-          :src="page.icon"
-          :style="{
-            zIndex: 100 - index
-          }"
-          class="w-6 h-6 -ml-1.5 border-card rounded-full bg-card border-2 box-border"
-        />
+        <template v-for="(page, index) in block.extra.pages" :key="index">
+          <img
+            v-if="page.icon"
+            :src="page.icon"
+            :style="{
+              zIndex: 100 - index
+            }"
+            class="w-6 h-6 -ml-1.5 border-card rounded-full bg-card border-2 box-border"
+          />
+          <Icon
+            v-else
+            icon="lucide:compass"
+            class="w-6 h-6 -ml-1.5 border-card rounded-full bg-card border-2 box-border"
+          />
+        </template>
       </div>
       <span>{{ t('chat.search.results', [block.extra.total]) }}</span>
       <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" />
@@ -31,7 +37,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
-
 const { t } = useI18n()
 
 defineProps<{
