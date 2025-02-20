@@ -1,7 +1,7 @@
 <template>
   <span
     ref="cursor"
-    class="absolute w-2 h-[1em] rounded-[2px] bg-muted-foreground align-middle animate-pulse"
+    class="absolute w-2 h-[1.1em] rounded-[2px] bg-muted-foreground align-middle animate-pulse"
     :style="{
       left: `${position.x}px`,
       top: `${position.y}px`,

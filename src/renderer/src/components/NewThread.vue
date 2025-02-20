@@ -8,8 +8,8 @@
       <template #addon-buttons>
         <Popover v-model:open="modelSelectOpen">
           <PopoverTrigger as-child>
-            <Button variant="outline" class="flex items-center gap-1.5 px-2" size="sm">
-              <ModelIcon class="w-5 h-5" :model-id="activeModel.id"></ModelIcon>
+            <Button variant="outline" class="flex items-center gap-1.5 px-2 h-auto py-1" size="sm">
+              <ModelIcon class="w-4 h-4" :model-id="activeModel.id"></ModelIcon>
               <!-- <Icon icon="lucide:message-circle" class="w-5 h-5 text-muted-foreground" /> -->
               <h2 class="text-xs font-bold">{{ activeModel.name }}</h2>
               <Badge

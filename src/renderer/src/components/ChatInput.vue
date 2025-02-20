@@ -57,10 +57,10 @@
             :class="[
               'rounded-lg text-xs font-normal',
               settings.deepThinking
-                ? 'bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                ? '!bg-primary dark:!bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
                 : 'text-muted-foreground'
             ]"
-            @click="settings.deepThinking = !settings.deepThinking"
+            @click="onDeepThinkingClick"
           >
             <Icon icon="lucide:sparkles" class="w-4 h-4" />
             {{ t('chat.features.deepThinking') }}
@@ -71,10 +71,10 @@
             :class="[
               'rounded-lg text-xs font-normal',
               settings.webSearch
-                ? 'bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                ? 'dark:!bg-primary bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
                 : 'text-muted-foreground'
             ]"
-            @click="settings.webSearch = !settings.webSearch"
+            @click="onWebSearchClick"
           >
             <Icon icon="lucide:globe" class="w-4 h-4" />
             {{ t('chat.features.webSearch') }}
@@ -103,8 +103,10 @@ import { Icon } from '@iconify/vue'
 import FileItem from './FileItem.vue'
 import { useChatStore } from '@/stores/chat'
 import { UserMessageContent } from '@shared/chat'
-const { t } = useI18n()
+import { usePresenter } from '@/composables/usePresenter'
 
+const { t } = useI18n()
+const configPresenter = usePresenter('configPresenter')
 const chatStore = useChatStore()
 const inputText = ref('')
 const fileInput = ref<HTMLInputElement>()
@@ -166,9 +168,25 @@ const handleEnterKey = (e: KeyboardEvent) => {
   }
 }
 
+const onWebSearchClick = async () => {
+  settings.value.webSearch = !settings.value.webSearch
+  await configPresenter.setSetting('input_webSearch', settings.value.webSearch)
+}
+
+const onDeepThinkingClick = async () => {
+  settings.value.deepThinking = !settings.value.deepThinking
+  await configPresenter.setSetting('input_deepThinking', settings.value.deepThinking)
+}
+
+const initSettings = async () => {
+  settings.value.deepThinking = Boolean(await configPresenter.getSetting('input_deepThinking'))
+  settings.value.webSearch = Boolean(await configPresenter.getSetting('input_webSearch'))
+}
+
 onMounted(() => {
+  initSettings()
+
   nextTick(() => {
-    console.log(textareaRef.value)
     textareaRef.value?.focus()
   })
 })
