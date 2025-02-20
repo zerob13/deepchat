@@ -12,6 +12,7 @@ import {
   CONVERSATION,
   CONVERSATION_SETTINGS
 } from '@shared/presenter'
+import { MessageAttachmentsTable } from './tables/messageAttachments'
 
 type ConversationRow = {
   id: string
@@ -141,7 +142,8 @@ export class SQLitePresenter implements ISQLitePresenter {
     this.tables = [
       new ConversationsTable(this.db),
       new MessagesTable(this.db),
-      new AttachmentsTable(this.db)
+      new AttachmentsTable(this.db),
+      new MessageAttachmentsTable(this.db)
     ]
 
     // 创建所有表
@@ -665,16 +667,19 @@ export class SQLitePresenter implements ISQLitePresenter {
     attachmentType: string,
     attachmentData: string
   ): Promise<void> {
+    const attachmentId = nanoid()
     const insert = this.db.prepare(
       `
       INSERT INTO message_attachments (
-        msg_id,
-        attachment_type,
-        attachment_data
+        attachment_id,
+        message_id,
+        type,
+        content,
+        created_at
       )
-      VALUES (?, ?, ?)
+      VALUES (?, ?, ?, ?, ?)
     `
     )
-    insert.run(messageId, attachmentType, attachmentData)
+    insert.run(attachmentId, messageId, attachmentType, attachmentData, Date.now())
   }
 }

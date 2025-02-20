@@ -21,7 +21,7 @@ export class MessageAttachmentsTable extends BaseTable {
         FOREIGN KEY(message_id) REFERENCES messages(msg_id) ON DELETE CASCADE
       );
       CREATE INDEX idx_message_attachments ON message_attachments(message_id, type);
-      CREATE INDEX idx_attachment_type ON message_attachments(type);
+      CREATE INDEX idx_message_attachment_type ON message_attachments(type);
     `
   }
 

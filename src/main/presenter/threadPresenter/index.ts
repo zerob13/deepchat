@@ -396,6 +396,7 @@ export class ThreadPresenter implements IThreadPresenter {
   ): Promise<AssistantMessage | null> {
     const conversation = await this.getConversation(conversationId)
     const { providerId, modelId } = conversation.settings
+    console.log('sendMessage', conversation)
     const message = await this.messageManager.sendMessage(
       conversationId,
       content,
@@ -527,11 +528,14 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     const conversation = await this.getConversation(conversationId)
-
     const { systemPrompt, providerId, modelId, temperature, contextLength, maxTokens } =
       conversation.settings
 
     let contextMessages: Message[] = []
+    let userMessage: Message | null = null
+    let searchResults: SearchResult[] | null = null
+    let searchPrompt = ''
+
     if (queryMsgId) {
       console.log('有queryMsgId，从该消息开始获取历史消息')
       const queryMessage = await this.getMessage(queryMsgId)
@@ -539,16 +543,107 @@ export class ThreadPresenter implements IThreadPresenter {
         console.error('找不到指定的消息，queryMsgId:', queryMsgId)
         throw new Error('找不到指定的消息')
       }
-      const triggerMessage = await this.getMessage(queryMessage.parentId)
-      if (!triggerMessage) {
+      userMessage = await this.getMessage(queryMessage.parentId)
+      if (!userMessage) {
         console.error('找不到触发消息，parentId:', queryMessage.parentId)
         throw new Error('找不到指定的消息')
       }
-      // 获取触发消息之前的历史消息
-      contextMessages = await this.getMessageHistory(triggerMessage.id, contextLength)
     } else {
-      console.log('没有queryMsgId，获取常规的上下文消息')
-      contextMessages = await this.getContextMessages(conversationId)
+      // 获取最后一条用户消息
+      const { list: messages } = await this.getMessages(conversationId, 1, 10)
+      userMessage = messages.reverse().find((msg) => msg.role === 'user') || null
+    }
+
+    if (!userMessage) {
+      throw new Error('找不到用户消息')
+    }
+
+    // 处理搜索
+    if (userMessage.content.search) {
+      // 发送搜索事件
+      eventBus.emit('search-requested', {
+        messageId: state.message.id,
+        query: userMessage.content.text,
+        files: userMessage.content.files,
+        links: userMessage.content.links
+      })
+
+      // 等待搜索结果
+      searchResults = await new Promise<SearchResult[]>((resolve) => {
+        const handleSearchResults = (results: { messageId: string; results: SearchResult[] }) => {
+          if (results.messageId === state.message.id) {
+            eventBus.off('search-results', handleSearchResults)
+            resolve(results.results)
+          }
+        }
+        eventBus.on('search-results', handleSearchResults)
+      })
+
+      // 生成搜索提示词
+      searchPrompt = generateSearchPrompt(userMessage.content.text, searchResults)
+
+      // 保存搜索结果到 MessageAttachmentsTable
+      const searchResultsData = searchResults.map((result) => ({
+        title: result.title,
+        url: result.url,
+        content: result.content || ''
+      }))
+
+      // 将搜索结果添加到当前生成的 AI 消息中
+      await this.sqlitePresenter.addMessageAttachment(
+        state.message.id,
+        'search_results',
+        JSON.stringify(searchResultsData)
+      )
+
+      // 更新 AI 消息的内容，添加搜索块
+      const currentContent = state.message.content
+      currentContent.unshift({
+        type: 'search',
+        content: '',
+        status: 'success',
+        timestamp: Date.now(),
+        extra: {
+          total: searchResults.length,
+          pages: searchResultsData
+        }
+      })
+      await this.messageManager.editMessage(state.message.id, JSON.stringify(currentContent))
+    }
+
+    // 计算搜索提示词的token数量
+    const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
+    const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
+    const userMessageTokens = approximateTokenSize(userMessage.content.text)
+
+    // 计算剩余可用的上下文长度
+    const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
+    const remainingContextLength = contextLength - reservedTokens
+
+    // 获取历史消息，优先考虑上下文边界
+    if (remainingContextLength > 0) {
+      const { list: allMessages } = await this.getMessages(conversationId, 1, 1000)
+      const messages = allMessages
+        .filter((msg) => msg.id !== userMessage?.id) // 排除当前用户消息
+        .reverse() // 从新到旧排序
+
+      let currentLength = 0
+      const selectedMessages: Message[] = []
+
+      for (const msg of messages) {
+        const msgTokens = approximateTokenSize(
+          msg.role === 'user' ? msg.content.text : JSON.stringify(msg.content)
+        )
+
+        if (currentLength + msgTokens <= remainingContextLength) {
+          selectedMessages.unshift(msg)
+          currentLength += msgTokens
+        } else {
+          break
+        }
+      }
+
+      contextMessages = selectedMessages
     }
 
     const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
@@ -561,119 +656,19 @@ export class ThreadPresenter implements IThreadPresenter {
       })
     }
 
-    // 计算每条消息的内容长度并从后往前选择消息
-    type FormattedMessage = {
-      role: 'user' | 'assistant'
-      content: string
-      files: File[]
-      links: string[]
-      search: boolean
-      think: boolean
-    }
+    // 添加上下文消息
+    formattedMessages.push(
+      ...contextMessages.map((msg) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.role === 'user' ? msg.content.text : JSON.stringify(msg.content)
+      }))
+    )
 
-    const messagesWithLength = contextMessages
-      .map((msg) => {
-        if (msg.role === 'user') {
-          const userContent = msg.content
-          return {
-            message: msg,
-            length: userContent.text.length,
-            formattedMessage: {
-              role: 'user' as const,
-              content: userContent.text,
-              files: userContent.files,
-              links: userContent.links,
-              search: userContent.search,
-              think: userContent.think
-            } satisfies FormattedMessage
-          }
-        } else {
-          const content = msg.content
-            .filter((block) => block.type === 'content')
-            .map((block) => block.content)
-            .join('\n')
-          return {
-            message: msg,
-            length: content.length,
-            formattedMessage: {
-              role: 'assistant' as const,
-              content: content,
-              files: [],
-              links: [],
-              search: false,
-              think: false
-            } satisfies FormattedMessage
-          }
-        }
-      })
-      .filter((item) => item.formattedMessage.content.length > 0)
-
-    let totalLength = 0
-    const selectedMessages: FormattedMessage[] = []
-
-    // 从后往前遍历消息
-    for (let i = messagesWithLength.length - 1; i >= 0; i--) {
-      const currentMsg = messagesWithLength[i]
-
-      // 如果是最后一条消息且是assistant，且不是重生成模式，则跳过
-      if (
-        !queryMsgId &&
-        i === messagesWithLength.length - 1 &&
-        currentMsg.message.role === 'assistant'
-      ) {
-        continue
-      }
-
-      // 如果加入当前消息后总长度超过限制
-      if (totalLength + currentMsg.length > contextLength) {
-        // 如果还没有选择任何消息，则只选择这一条
-        if (selectedMessages.length === 0) {
-          selectedMessages.push(currentMsg.formattedMessage)
-        }
-        break
-      }
-
-      totalLength += currentMsg.length
-      selectedMessages.unshift(currentMsg.formattedMessage)
-    }
-
-    // 获取最后一条用户消息的内容
-    const lastUserMessage = messagesWithLength.reverse().find((msg) => msg.message.role === 'user')
-    if (lastUserMessage) {
-      const userContent = lastUserMessage.message.content
-      // 如果需要搜索，发送搜索事件并等待搜索结果
-      if (userContent.search) {
-        // 发送搜索事件
-        eventBus.emit('search-requested', {
-          messageId: state.message.id,
-          query: userContent.text,
-          files: userContent.files,
-          links: userContent.links
-        })
-
-        // 等待搜索结果
-        const searchResults = await new Promise<SearchResult[]>((resolve) => {
-          const handleSearchResults = (results: { messageId: string; results: SearchResult[] }) => {
-            if (results.messageId === state.message.id) {
-              eventBus.off('search-results', handleSearchResults)
-              resolve(results.results)
-            }
-          }
-          eventBus.on('search-results', handleSearchResults)
-        })
-
-        // 生成搜索提示词
-        const searchPrompt = generateSearchPrompt(userContent.text, searchResults)
-
-        // 将搜索提示词添加到系统消息中
-        formattedMessages.unshift({
-          role: 'system',
-          content: searchPrompt
-        })
-      }
-    }
-
-    formattedMessages.push(...selectedMessages)
+    // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
+    formattedMessages.push({
+      role: 'user',
+      content: searchPrompt || userMessage.content.text
+    })
 
     // 计算prompt tokens
     let promptTokens = 0

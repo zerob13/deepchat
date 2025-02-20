@@ -46,7 +46,7 @@ import { useChatStore } from '@/stores/chat'
 import { MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
 import { ref, watch } from 'vue'
-import { UserMessageContent, UserMessage } from '@shared/chat'
+import { UserMessageContent } from '@shared/chat'
 
 const { t } = useI18n()
 
@@ -55,10 +55,12 @@ const settingsStore = useSettingsStore()
 const activeModel = ref({
   name: '',
   id: '',
+  providerId: '',
   tags: []
 } as {
   name: string
   id: string
+  providerId: string
   tags: string[]
 })
 
@@ -75,6 +77,7 @@ watch(
               activeModel.value = {
                 name: model.name,
                 id: model.id,
+                providerId: provider.providerId,
                 tags: []
               }
               return
@@ -90,6 +93,7 @@ watch(
       activeModel.value = {
         name: model.name,
         id: model.id,
+        providerId: settingsStore.enabledModels[0].providerId,
         tags: []
       }
     }
@@ -98,10 +102,11 @@ watch(
 )
 
 const modelSelectOpen = ref(false)
-const handleModelUpdate = (model: MODEL_META) => {
+const handleModelUpdate = (model: MODEL_META, providerId: string) => {
   activeModel.value = {
     name: model.name,
     id: model.id,
+    providerId: providerId,
     tags: []
   }
   modelSelectOpen.value = false
@@ -109,12 +114,14 @@ const handleModelUpdate = (model: MODEL_META) => {
 
 const handleSend = async (content: UserMessageContent) => {
   const threadId = await chatStore.createThread(content.text, {
+    providerId: activeModel.value.providerId,
     modelId: activeModel.value.id,
     systemPrompt: '',
     temperature: 0.7,
     contextLength: 1000,
     maxTokens: 2000
   })
+  console.log('threadId', threadId, activeModel.value)
   await chatStore.setActiveThread(threadId)
   chatStore.sendMessage(content)
 }

@@ -49,7 +49,7 @@ const configP = usePresenter('configPresenter')
 
 const providers = ref<{ id: string; name: string; models: MODEL_META[] }[]>([])
 const emit = defineEmits<{
-  (e: 'update:model', model: MODEL_META): void
+  (e: 'update:model', model: MODEL_META, providerId: string): void
 }>()
 const filteredProviders = computed(() => {
   if (!keyword.value) return providers.value
@@ -74,7 +74,7 @@ const handleModelSelect = async (providerId: string, model: MODEL_META) => {
     contextLength: model.contextLength,
     maxTokens: model.maxTokens
   })
-  emit('update:model', model)
+  emit('update:model', model, providerId)
 }
 
 const getModelTags = (model: MODEL_META) => {
