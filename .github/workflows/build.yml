@@ -32,7 +32,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+      - name: Remove lockfile
+        run: rm package-lock.json yarn.lock
       - name: Install dependencies
         run: npm install
       - name: Build Windows
@@ -59,7 +61,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+      - name: Remove lockfile
+        run: rm package-lock.json yarn.lock
       - name: Install dependencies
         run: npm install
       - name: Build Linux

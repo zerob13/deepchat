@@ -42,9 +42,9 @@ dmg:
   artifactName: ${name}-${version}-${arch}.${ext}
 linux:
   target:
-    - AppImage
-    - snap
     - deb
+    - rpm
+    - tar.gz
   maintainer: ThinkInAIXYZ
   category: Utility
 appImage:
