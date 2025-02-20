@@ -94,7 +94,6 @@ export interface IPresenter {
   threadPresenter: IThreadPresenter
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
-  searchPresenter: ISearchPresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -263,6 +262,7 @@ export interface IThreadPresenter {
   getMessageVariants(messageId: string): Promise<MESSAGE[]>
   updateMessageStatus(messageId: string, status: MESSAGE_STATUS): Promise<void>
   updateMessageMetadata(messageId: string, metadata: Partial<MESSAGE_METADATA>): Promise<void>
+  getMessageExtraInfo(messageId: string, type: string): Promise<Record<string, unknown>[]>
 
   // 上下文控制
   getContextMessages(conversationId: string): Promise<MESSAGE[]>
@@ -395,6 +395,8 @@ export interface SearchResult {
   url: string
   rank: number
   content?: string
+  icon?: string
+  description?: string
 }
 
 export interface ISearchPresenter {

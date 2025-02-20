@@ -1,64 +1,42 @@
 import { app, BrowserWindow } from 'electron'
 import { eventBus } from '@/eventbus'
 import path from 'path'
-
-interface SearchResult {
-  title: string
-  url: string
-  rank: number
-  content?: string
-  description?: string
-  icon?: string
-}
-
+import { SearchResult } from '@shared/presenter'
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
-export class SearchPresenter {
-  private searchWindow: BrowserWindow | null = null
+
+export class SearchManager {
+  private searchWindows: Map<string, BrowserWindow> = new Map()
   private isDevelopment = process.env.NODE_ENV === 'development'
+  private maxConcurrentSearches = 3
 
   constructor() {
-    // 构造函数中不再初始化窗口
     this.setupEventListeners()
   }
 
   private setupEventListeners() {
-    eventBus.on('search-requested', async (data: { messageId: string; query: string }) => {
-      try {
-        const results = await this.search(data.query)
-        eventBus.emit('search-results', {
-          messageId: data.messageId,
-          results
-        })
-      } catch (error) {
-        console.error('搜索失败:', error)
-        eventBus.emit('search-results', {
-          messageId: data.messageId,
-          results: []
-        })
-      }
+    eventBus.on('search-window-cleanup', (conversationId: string) => {
+      this.destroySearchWindow(conversationId)
     })
   }
 
-  init() {
-    this.initSearchWindow()
-  }
-
-  private initSearchWindow() {
-    if (this.searchWindow) {
-      return
+  private initSearchWindow(conversationId: string): BrowserWindow {
+    if (this.searchWindows.size >= this.maxConcurrentSearches) {
+      // 找到最早创建的窗口并销毁
+      const [oldestConversationId] = this.searchWindows.keys()
+      this.destroySearchWindow(oldestConversationId)
     }
-    this.searchWindow = new BrowserWindow({
+
+    const searchWindow = new BrowserWindow({
       width: 800,
       height: 600,
-      show: this.isDevelopment, // 开发模式下显示窗口
+      show: this.isDevelopment,
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false
       }
     })
 
-    // 拦截请求，可以用来处理跨域等问题
-    this.searchWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    searchWindow.webContents.session.webRequest.onBeforeSendHeaders(
       { urls: ['*://*/*'] },
       (details, callback) => {
         const headers = {
@@ -69,23 +47,38 @@ export class SearchPresenter {
         callback({ requestHeaders: headers })
       }
     )
+
+    this.searchWindows.set(conversationId, searchWindow)
+    return searchWindow
   }
 
-  async search(query: string, engine: 'google' | 'baidu' = 'google'): Promise<SearchResult[]> {
-    if (!this.searchWindow) {
-      throw new Error('SearchPresenter not initialized')
+  private destroySearchWindow(conversationId: string) {
+    const window = this.searchWindows.get(conversationId)
+    if (window) {
+      window.destroy()
+      this.searchWindows.delete(conversationId)
+    }
+  }
+
+  async search(
+    conversationId: string,
+    query: string,
+    engine: 'google' | 'baidu' = 'google'
+  ): Promise<SearchResult[]> {
+    let searchWindow = this.searchWindows.get(conversationId)
+    if (!searchWindow) {
+      searchWindow = this.initSearchWindow(conversationId)
     }
 
     const searchUrl = this.getSearchUrl(query, engine)
     console.log('开始加载搜索URL:', searchUrl)
 
-    // 设置页面加载超时
     const loadTimeout = setTimeout(() => {
-      this.searchWindow?.webContents.stop()
+      searchWindow?.webContents.stop()
     }, 8000)
 
     try {
-      await this.searchWindow!.loadURL(searchUrl)
+      await searchWindow.loadURL(searchUrl)
       console.log('搜索URL加载成功')
     } catch (error) {
       console.error('加载URL失败:', error)
@@ -93,31 +86,26 @@ export class SearchPresenter {
       clearTimeout(loadTimeout)
     }
 
-    // 等待搜索结果加载完成
-    console.log('等待搜索结果加载完成...')
-    await this.waitForSelector(engine === 'google' ? '#search' : '#content_left')
+    await this.waitForSelector(searchWindow, engine === 'google' ? '#search' : '#content_left')
     console.log('搜索结果加载完成')
 
-    // 提取搜索结果
-    console.log('开始提取搜索结果...')
-    const results = await this.extractSearchResults(engine)
+    const results = await this.extractSearchResults(searchWindow, engine)
     console.log('搜索结果提取完成:', results)
 
-    // 获取详细内容
-    console.log('开始获取详细内容...')
-    const enrichedResults = await this.enrichResults(results.slice(0, 3))
+    const enrichedResults = await this.enrichResults(searchWindow, results.slice(0, 3))
     console.log('详细内容获取完成')
 
-    // 清理：加载空白页
-    this.searchWindow!.loadFile(helperPage)
+    searchWindow
+      .loadFile(helperPage)
       .then(() => {
         console.log('空白页加载完成')
+        this.destroySearchWindow(conversationId)
       })
       .catch((error) => {
         console.error('加载空白页失败:', error)
+        this.destroySearchWindow(conversationId)
       })
-
-    return enrichedResults
+    return [...enrichedResults, ...results.slice(3)]
   }
 
   private getSearchUrl(query: string, engine: 'google' | 'baidu'): string {
@@ -127,8 +115,8 @@ export class SearchPresenter {
       : `https://www.baidu.com/s?wd=${encodedQuery}`
   }
 
-  private async waitForSelector(selector: string): Promise<void> {
-    await this.searchWindow!.webContents.executeJavaScript(`
+  private async waitForSelector(window: BrowserWindow, selector: string): Promise<void> {
+    await window.webContents.executeJavaScript(`
       new Promise((resolve) => {
         if (document.querySelector('${selector}')) {
           resolve()
@@ -145,8 +133,11 @@ export class SearchPresenter {
     `)
   }
 
-  private async extractSearchResults(engine: 'google' | 'baidu'): Promise<SearchResult[]> {
-    return await this.searchWindow!.webContents.executeJavaScript(`
+  private async extractSearchResults(
+    window: BrowserWindow,
+    engine: 'google' | 'baidu'
+  ): Promise<SearchResult[]> {
+    return await window.webContents.executeJavaScript(`
       (function() {
         const results = []
         if ('${engine}' === 'google') {
@@ -189,35 +180,38 @@ export class SearchPresenter {
     `)
   }
 
-  private async enrichResults(results: SearchResult[]): Promise<SearchResult[]> {
+  private async enrichResults(
+    window: BrowserWindow,
+    results: SearchResult[]
+  ): Promise<SearchResult[]> {
     const enrichedResults: SearchResult[] = []
 
     for (const result of results) {
       try {
-        // 设置页面加载超时
         const loadTimeout = setTimeout(() => {
-          this.searchWindow?.webContents.stop()
+          window?.webContents.stop()
         }, 5000)
 
         try {
-          await this.searchWindow!.loadURL(result.url)
+          await window.loadURL(result.url)
         } catch (error) {
           console.error(`加载页面失败 ${result.url}:`, error)
         } finally {
           clearTimeout(loadTimeout)
         }
 
-        const content = await this.extractMainContent()
+        let content = await this.extractMainContent(window)
+        if (!content) {
+          content = result.description ?? ''
+        }
         enrichedResults.push({
           ...result,
           content
         })
 
-        // 清理：加载空白页
-        await this.searchWindow!.loadURL('about:blank')
+        await window.loadURL('about:blank')
       } catch (error) {
         console.error(`Error fetching content for ${result.url}:`, error)
-        // 如果获取内容失败，仍然添加结果，但不包含内容
         enrichedResults.push(result)
       }
     }
@@ -225,14 +219,12 @@ export class SearchPresenter {
     return enrichedResults
   }
 
-  private async extractMainContent(): Promise<string> {
-    const result = await this.searchWindow!.webContents.executeJavaScript(`
+  private async extractMainContent(window: BrowserWindow): Promise<string> {
+    const result = await window.webContents.executeJavaScript(`
       (function() {
-        // 移除不需要的元素
         const elementsToRemove = document.querySelectorAll('script, style, nav, header, footer, iframe, .ad, #ad, .advertisement')
         elementsToRemove.forEach(el => el.remove())
 
-        // 尝试找到主要内容
         const mainContent =
           document.querySelector('article') ||
           document.querySelector('main') ||
@@ -240,7 +232,6 @@ export class SearchPresenter {
           document.querySelector('#content') ||
           document.body
 
-        // 如果没有找到 favicon，尝试从 head 中获取
         let icon = document.querySelector('link[rel="icon"]')?.href ||
                   document.querySelector('link[rel="shortcut icon"]')?.href ||
                   new URL('/favicon.ico', window.location.origin).href
@@ -255,9 +246,8 @@ export class SearchPresenter {
   }
 
   destroy() {
-    if (this.searchWindow) {
-      this.searchWindow.destroy()
-      this.searchWindow = null
+    for (const [conversationId] of this.searchWindows) {
+      this.destroySearchWindow(conversationId)
     }
   }
 }

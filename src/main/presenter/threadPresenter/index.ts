@@ -4,7 +4,8 @@ import {
   CONVERSATION_SETTINGS,
   MESSAGE_ROLE,
   MESSAGE_STATUS,
-  MESSAGE_METADATA
+  MESSAGE_METADATA,
+  SearchResult
 } from '../../../shared/presenter'
 import { ISQLitePresenter } from '../../../shared/presenter'
 import { MessageManager } from './messageManager'
@@ -13,7 +14,7 @@ import { eventBus } from '@/eventbus'
 import { AssistantMessage, Message, AssistantMessageBlock } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
-import { SearchResult } from '@shared/presenter'
+import { SearchManager } from './searchManager'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -76,12 +77,14 @@ export class ThreadPresenter implements IThreadPresenter {
   private sqlitePresenter: ISQLitePresenter
   private messageManager: MessageManager
   private llmProviderPresenter: ILlmProviderPresenter
+  private searchManager: SearchManager
   private generatingMessages: Map<string, GeneratingMessageState> = new Map()
 
   constructor(sqlitePresenter: ISQLitePresenter, llmProviderPresenter: ILlmProviderPresenter) {
     this.sqlitePresenter = sqlitePresenter
     this.messageManager = new MessageManager(sqlitePresenter)
     this.llmProviderPresenter = llmProviderPresenter
+    this.searchManager = new SearchManager()
 
     // 初始化时处理所有未完成的消息
     this.initializeUnfinishedMessages()
@@ -516,6 +519,70 @@ export class ThreadPresenter implements IThreadPresenter {
     return messages.slice(Math.max(0, targetIndex - limit + 1), targetIndex + 1)
   }
 
+  private async startStreamSearch(
+    conversationId: string,
+    messageId: string,
+    query: string
+  ): Promise<SearchResult[]> {
+    const state = this.generatingMessages.get(messageId)
+    if (!state) {
+      throw new Error('找不到生成状态')
+    }
+
+    // 添加搜索加载状态
+    const searchBlock: AssistantMessageBlock = {
+      type: 'search',
+      content: '',
+      status: 'loading',
+      timestamp: Date.now(),
+      extra: {
+        total: 0
+      }
+    }
+    state.message.content.unshift(searchBlock)
+    await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+
+    try {
+      // 开始搜索
+      const results = await this.searchManager.search(conversationId, query)
+
+      // 更新搜索状态为阅读中
+      searchBlock.status = 'reading'
+      searchBlock.extra = {
+        total: results.length
+      }
+      await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+
+      // 保存搜索结果
+      for (const result of results) {
+        console.log('保存搜索结果', result)
+        await this.sqlitePresenter.addMessageAttachment(
+          messageId,
+          'search_result',
+          JSON.stringify({
+            title: result.title,
+            url: result.url,
+            content: result.content || '',
+            description: result.description || '',
+            icon: result.icon || ''
+          })
+        )
+      }
+
+      // 更新搜索状态为成功
+      searchBlock.status = 'success'
+      await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+
+      return results
+    } catch (error) {
+      // 更新搜索状态为错误
+      searchBlock.status = 'error'
+      searchBlock.content = String(error)
+      await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+      return []
+    }
+  }
+
   async startStreamCompletion(conversationId: string, queryMsgId?: string) {
     console.log('开始流式完成，conversationId:', conversationId, 'queryMsgId:', queryMsgId)
 
@@ -534,7 +601,6 @@ export class ThreadPresenter implements IThreadPresenter {
     let contextMessages: Message[] = []
     let userMessage: Message | null = null
     let searchResults: SearchResult[] | null = null
-    let searchPrompt = ''
 
     if (queryMsgId) {
       console.log('有queryMsgId，从该消息开始获取历史消息')
@@ -560,59 +626,17 @@ export class ThreadPresenter implements IThreadPresenter {
 
     // 处理搜索
     if (userMessage.content.search) {
-      // 发送搜索事件并等待结果
-      const searchResultPromise = new Promise<SearchResult[]>((resolve) => {
-        const handleSearchResults = (results: { messageId: string; results: SearchResult[] }) => {
-          if (results.messageId === state.message.id) {
-            eventBus.off('search-results', handleSearchResults)
-            resolve(results.results)
-          }
-        }
-        eventBus.on('search-results', handleSearchResults)
-      })
-
-      // 发送搜索请求
-      eventBus.emit('search-requested', {
-        messageId: state.message.id,
-        query: userMessage.content.text,
-        files: userMessage.content.files,
-        links: userMessage.content.links
-      })
-
-      // 等待搜索结果
-      searchResults = await searchResultPromise
-
-      // 生成搜索提示词
-      searchPrompt = generateSearchPrompt(userMessage.content.text, searchResults)
-
-      // 逐条保存搜索结果到 MessageAttachmentsTable
-      for (const result of searchResults) {
-        await this.sqlitePresenter.addMessageAttachment(
-          state.message.id,
-          'search_result',
-          JSON.stringify({
-            title: result.title,
-            url: result.url,
-            content: result.content || ''
-          })
-        )
-      }
-
-      // 更新 AI 消息的内容，添加搜索块
-      const currentContent = state.message.content
-      currentContent.unshift({
-        type: 'search',
-        content: '',
-        status: 'success',
-        timestamp: Date.now(),
-        extra: {
-          total: searchResults.length
-        }
-      })
-      await this.messageManager.editMessage(state.message.id, JSON.stringify(currentContent))
+      searchResults = await this.startStreamSearch(
+        conversationId,
+        state.message.id,
+        userMessage.content.text
+      )
     }
 
     // 计算搜索提示词的token数量
+    const searchPrompt = searchResults
+      ? generateSearchPrompt(userMessage.content.text, searchResults)
+      : ''
     const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
     const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
     const userMessageTokens = approximateTokenSize(userMessage.content.text)
@@ -880,5 +904,9 @@ export class ThreadPresenter implements IThreadPresenter {
   async getMessageExtraInfo(messageId: string, type: string): Promise<Record<string, unknown>[]> {
     const attachments = await this.sqlitePresenter.getMessageAttachments(messageId, type)
     return attachments.map((attachment) => JSON.parse(attachment.content))
+  }
+
+  destroy() {
+    this.searchManager.destroy()
   }
 }

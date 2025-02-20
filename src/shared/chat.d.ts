@@ -56,9 +56,8 @@ export type AssistantMessageBlock = {
   type: 'content' | 'search' | 'reasoning_content' | 'error'
   content?: string
   extra?: Record<string, string | number | object[]>
-  status: 'success' | 'loading' | 'cancel' | 'error'
+  status: 'success' | 'loading' | 'cancel' | 'error' | 'reading'
   timestamp: number
-  extra?: Record<string, string | number | object[]>
 }
 // 搜索相关的消息块类型
 export type SearchBlock = {

@@ -7,6 +7,7 @@ import {
   SQLITE_MESSAGE
 } from '@shared/presenter'
 import { Message } from '@shared/chat'
+import { eventBus } from '@/eventbus'
 
 export class MessageManager implements IMessageManager {
   private sqlitePresenter: ISQLitePresenter
@@ -88,7 +89,9 @@ export class MessageManager implements IMessageManager {
     if (!message) {
       throw new Error(`Message ${messageId} not found`)
     }
-    return this.convertToMessage(message)
+    const msg = this.convertToMessage(message)
+    eventBus.emit('message-edited', messageId)
+    return msg
   }
 
   async deleteMessage(messageId: string): Promise<void> {
