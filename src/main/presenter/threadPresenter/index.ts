@@ -548,7 +548,7 @@ export class ThreadPresenter implements IThreadPresenter {
     if (!conversation) {
       return query
     }
-    console.log('rewriteUserSearchQuery', query, contextMessages, conversation.id)
+    // console.log('rewriteUserSearchQuery', query, contextMessages, conversation.id)
     const { providerId, modelId } = conversation.settings
     try {
       const rewrittenQuery = await this.llmProviderPresenter.generateCompletion(
@@ -625,7 +625,7 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 保存搜索结果
       for (const result of results) {
-        console.log('保存搜索结果', result)
+        // console.log('保存搜索结果', result)
         await this.sqlitePresenter.addMessageAttachment(
           messageId,
           'search_result',
@@ -654,7 +654,7 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   async startStreamCompletion(conversationId: string, queryMsgId?: string) {
-    console.log('开始流式完成，conversationId:', conversationId, 'queryMsgId:', queryMsgId)
+    // console.log('开始流式完成，conversationId:', conversationId, 'queryMsgId:', queryMsgId)
 
     const state = Array.from(this.generatingMessages.values()).find(
       (state) => state.conversationId === conversationId
@@ -673,7 +673,7 @@ export class ThreadPresenter implements IThreadPresenter {
     let searchResults: SearchResult[] | null = null
 
     if (queryMsgId) {
-      console.log('有queryMsgId，从该消息开始获取历史消息')
+      // console.log('有queryMsgId，从该消息开始获取历史消息')
       const queryMessage = await this.getMessage(queryMsgId)
       if (!queryMessage || !queryMessage.parentId) {
         console.error('找不到指定的消息，queryMsgId:', queryMsgId)
@@ -772,7 +772,7 @@ export class ThreadPresenter implements IThreadPresenter {
     for (const msg of formattedMessages) {
       promptTokens += approximateTokenSize(msg.content)
     }
-    console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
+    // console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
 
     // 更新生成状态
     this.generatingMessages.set(state.message.id, {
