@@ -225,7 +225,7 @@ export class SearchManager {
     console.log('搜索结果加载完成')
 
     const results = await this.extractSearchResults(searchWindow)
-    console.log('搜索结果提取完成:', results)
+    console.log('搜索结果提取完成:', results?.length)
 
     const enrichedResults = await this.enrichResults(results.slice(0, 5))
     console.log('详细内容获取完成')
@@ -233,7 +233,6 @@ export class SearchManager {
     searchWindow
       .loadFile(helperPage)
       .then(() => {
-        console.log('空白页加载完成')
         this.destroySearchWindow(conversationId)
       })
       .catch((error) => {
