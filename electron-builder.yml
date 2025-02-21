@@ -29,6 +29,7 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 # afterSign: scripts/notarize.js
+afterPack: scripts/afterPack.js
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -47,7 +48,6 @@ linux:
     - tar.gz
   maintainer: ThinkInAIXYZ
   category: Utility
-  afterPack: scripts/linux.js
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: true
