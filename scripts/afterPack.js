@@ -1,14 +1,27 @@
-const fs = require('fs')
-const path = require('path')
+import child_process from 'child_process'
+import fs from 'fs'
+import path from 'path'
 
-module.exports = async (context) => {
-  if (process.platform === 'linux') {
-    const appPath = path.join(context.appOutDir, 'DeepChat')
-    const appExec = path.join(appPath, 'DeepChat')
+const appName = 'DeepChat'
 
-    // 修改启动命令，添加 --no-sandbox 参数
-    const execFile = fs.readFileSync(appExec, 'utf8')
-    const modifiedExecFile = execFile.replace(/"[^"]*"/, '"$& --no-sandbox"')
-    fs.writeFileSync(appExec, modifiedExecFile, 'utf8')
-  }
+function isLinux(targets) {
+  const re = /AppImage|snap|deb|rpm|freebsd|pacman/i
+  return !!targets.find((target) => re.test(target.name))
 }
+
+async function afterPack({ targets, appOutDir }) {
+  if (!isLinux(targets)) return
+  const scriptPath = path.join(appOutDir, appName),
+    script = '#!/bin/bash\n"${BASH_SOURCE%/*}"/' + appName + '.bin "$@" --no-sandbox'
+  new Promise((resolve) => {
+    const child = child_process.exec(`mv ${appName} ${appName}.bin`, { cwd: appOutDir })
+    child.on('exit', () => {
+      resolve()
+    })
+  }).then(() => {
+    fs.writeFileSync(scriptPath, script)
+    child_process.exec(`chmod +x ${appName}`, { cwd: appOutDir })
+  })
+}
+
+export default afterPack
