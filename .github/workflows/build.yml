@@ -31,6 +31,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Remove lockfile
+        run: del package-lock.json && del yarn.lock
       - name: Install dependencies
         run: npm install
       - name: Build Windows
