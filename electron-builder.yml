@@ -47,6 +47,7 @@ linux:
     - tar.gz
   maintainer: ThinkInAIXYZ
   category: Utility
+  afterPack: scripts/linux.js
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: true
