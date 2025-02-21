@@ -8,24 +8,25 @@ const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
   {
-    name: 'bing',
-    selector: '#b_tween_searchResults',
-    searchUrl: 'https://www.bing.com/search?q={query}',
+    name: 'sogou',
+    selector: '.news-list',
+    searchUrl:
+      'https://weixin.sogou.com/weixin?ie=utf8&s_from=input&_sug_=y&_sug_type_=&type=2&query={query}',
     extractorScript: `
       const results = []
-      const items = document.querySelectorAll('#b_content .b_algo')
+      const items = document.querySelectorAll('.news-list li')
       items.forEach((item, index) => {
-        const titleEl = item.querySelector('h2 a')
-        const linkEl = item.querySelector('h2 a')
-        const descEl = item.querySelector('.b_caption p')
-        const faviconEl = item.querySelector('.wr_fav img')
+        const titleEl = item.querySelector('h3 a')
+        const linkEl = item.querySelector('h3 a')
+        const descEl = item.querySelector('p.txt-info')
+        const faviconEl = item.querySelector('a[data-z="art"] img')
         if (titleEl && linkEl) {
           results.push({
             title: titleEl.textContent,
             url: linkEl.href,
             rank: index + 1,
             description: descEl ? descEl.textContent : '',
-            icon: faviconEl?.src ? faviconEl.src : ''
+            icon: faviconEl ? faviconEl.src : ''
           })
         }
       })
@@ -83,25 +84,24 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
-    name: 'sogou',
-    selector: '.news-list',
-    searchUrl:
-      'https://weixin.sogou.com/weixin?ie=utf8&s_from=input&_sug_=y&_sug_type_=&type=2&query={query}',
+    name: 'bing',
+    selector: '',
+    searchUrl: 'https://www.bing.com/search?q={query}',
     extractorScript: `
       const results = []
-      const items = document.querySelectorAll('.news-list li')
+      const items = document.querySelectorAll('#b_content .b_algo')
       items.forEach((item, index) => {
-        const titleEl = item.querySelector('h3 a')
-        const linkEl = item.querySelector('h3 a')
-        const descEl = item.querySelector('p.txt-info')
-        const faviconEl = item.querySelector('a[data-z="art"] img')
+        const titleEl = item.querySelector('h2 a')
+        const linkEl = item.querySelector('h2 a')
+        const descEl = item.querySelector('.b_caption p')
+        const faviconEl = item.querySelector('.wr_fav img')
         if (titleEl && linkEl) {
           results.push({
             title: titleEl.textContent,
             url: linkEl.href,
             rank: index + 1,
             description: descEl ? descEl.textContent : '',
-            icon: faviconEl ? faviconEl.src : ''
+            icon: faviconEl?.src ? faviconEl.src : ''
           })
         }
       })
@@ -250,10 +250,11 @@ export class SearchManager {
       const timeout = setTimeout(() => {
         resolve() // 5秒后自动返回
       }, 5000)
-
-      window.webContents
-        .executeJavaScript(
-          `
+      // 如果selector不为空，就等待selector出现
+      if (selector) {
+        window.webContents
+          .executeJavaScript(
+            `
         new Promise((innerResolve) => {
           if (document.querySelector('${selector}')) {
             innerResolve();
@@ -268,16 +269,17 @@ export class SearchManager {
           }
         })
       `
-        )
-        .then(() => {
-          resolve()
-        })
-        .catch(() => {
-          resolve()
-        })
+          )
+          .then(() => {
+            resolve()
+          })
+          .catch(() => {
+            resolve()
+          })
 
-      clearTimeout(timeout)
-      resolve()
+        clearTimeout(timeout)
+        resolve()
+      }
     })
   }
 
