@@ -64,7 +64,7 @@ export function formatSearchResults(results: SearchResult[]): string {
     .map(
       (result, index) => `source ${index + 1}：${result.title}
 URL: ${result.url}
-content：${result.content || '无法获取内容'}
+content：${result.content || ''}
 ---`
     )
     .join('\n\n')
@@ -533,6 +533,41 @@ export class ThreadPresenter implements IThreadPresenter {
     return messages.slice(Math.max(0, targetIndex - limit + 1), targetIndex + 1)
   }
 
+  private async rewriteUserSearchQuery(
+    query: string,
+    contextMessages: string,
+    conversationId: string
+  ): Promise<string> {
+    const rewritePrompt = `
+    你会收到一段对话和用户最新的提问，你要基于这两部分内容重写用户的查询，以使其更清晰、简洁，并更适合搜索引擎进行查询
+    上下文：${contextMessages}
+    问题：${query}
+    请直接返回重新组织的搜索关键词,不要输出任何解释，也不要带上"调整后的内容"之类的提示
+    `
+    const conversation = await this.getConversation(conversationId)
+    if (!conversation) {
+      return query
+    }
+    console.log('rewriteUserSearchQuery', query, contextMessages, conversation.id)
+    const { providerId, modelId } = conversation.settings
+    try {
+      const rewrittenQuery = await this.llmProviderPresenter.generateCompletion(
+        providerId,
+        [
+          {
+            role: 'user',
+            content: rewritePrompt
+          }
+        ],
+        modelId
+      )
+      return rewrittenQuery.trim() || query
+    } catch (error) {
+      console.error('重写搜索查询失败:', error)
+      return query
+    }
+  }
+
   private async startStreamSearch(
     conversationId: string,
     messageId: string,
@@ -557,8 +592,29 @@ export class ThreadPresenter implements IThreadPresenter {
     await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
 
     try {
+      // 获取历史消息用于上下文
+      const contextMessages = await this.getContextMessages(conversationId)
+      const formattedContext = contextMessages
+        .map((msg) => {
+          if (msg.role === 'user') {
+            return `user: ${msg.content.text}`
+          } else if (msg.role === 'ai') {
+            return `assistant: ${msg.content.blocks.map((block) => block.content).join('')}`
+          } else {
+            return JSON.stringify(msg.content)
+          }
+        })
+        .join('\n')
+
+      // 重写搜索查询
+      const optimizedQuery = await this.rewriteUserSearchQuery(
+        query,
+        formattedContext,
+        conversationId
+      )
+
       // 开始搜索
-      const results = await this.searchManager.search(conversationId, query)
+      const results = await this.searchManager.search(conversationId, optimizedQuery)
 
       // 更新搜索状态为阅读中
       searchBlock.status = 'reading'

@@ -174,6 +174,13 @@ export interface ILlmProviderPresenter {
     temperature?: number,
     maxTokens?: number
   ): Promise<void>
+  generateCompletion(
+    providerId: string,
+    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    modelId: string,
+    temperature?: number,
+    maxTokens?: number
+  ): Promise<string>
   startStreamSummary(
     providerId: string,
     text: string,
@@ -192,17 +199,6 @@ export interface ILlmProviderPresenter {
   ): Promise<void>
   stopStream(eventId: string): Promise<void>
   check(providerId: string): Promise<{ isOk: boolean; errorMsg: string | null }>
-  getCustomModels(providerId: string): Promise<MODEL_META[]>
-  addCustomModel(
-    providerId: string,
-    model: Omit<MODEL_META, 'providerId' | 'isCustom' | 'group'>
-  ): Promise<MODEL_META>
-  removeCustomModel(providerId: string, modelId: string): Promise<boolean>
-  updateCustomModel(
-    providerId: string,
-    modelId: string,
-    updates: Partial<MODEL_META>
-  ): Promise<boolean>
   summaryTitles(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
     providerId: string,

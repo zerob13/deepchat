@@ -11,7 +11,7 @@ on:
         options:
           - all
           - windows
-          - linux
+          # - linux
 
 jobs:
   build-windows:

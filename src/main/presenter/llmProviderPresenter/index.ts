@@ -305,23 +305,14 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   // 非流式方法
   async generateCompletion(
     providerId: string,
-    prompt: string,
+    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
     modelId: string,
     temperature?: number,
     maxTokens?: number
-  ): Promise<LLMResponse> {
+  ): Promise<string> {
     const provider = this.getProviderInstance(providerId)
-    return provider.completions(
-      [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      modelId,
-      temperature,
-      maxTokens
-    )
+    const response = await provider.completions(messages, modelId, temperature, maxTokens)
+    return response.content
   }
 
   async generateSummary(

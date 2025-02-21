@@ -83,7 +83,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
-    name: 'sougou',
+    name: 'sogou',
     selector: '.news-list',
     searchUrl:
       'https://weixin.sogou.com/weixin?ie=utf8&s_from=input&_sug_=y&_sug_type_=&type=2&query={query}',
@@ -227,7 +227,7 @@ export class SearchManager {
     const results = await this.extractSearchResults(searchWindow)
     console.log('搜索结果提取完成:', results)
 
-    const enrichedResults = await this.enrichResults(results)
+    const enrichedResults = await this.enrichResults(results.slice(0, 5))
     console.log('详细内容获取完成')
 
     searchWindow
@@ -240,7 +240,9 @@ export class SearchManager {
         console.error('加载空白页失败:', error)
         this.destroySearchWindow(conversationId)
       })
-    return enrichedResults
+    const remainingResults = results.slice(5) // 获取剩余的结果
+    const combinedResults = [...enrichedResults, ...remainingResults] // 合并enrichedResults和剩余的results
+    return combinedResults
   }
 
   private async waitForSelector(window: BrowserWindow, selector: string): Promise<void> {
