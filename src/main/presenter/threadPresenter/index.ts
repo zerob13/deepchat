@@ -761,12 +761,24 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     // 添加上下文消息
-    formattedMessages.push(
-      ...contextMessages.map((msg) => ({
+    contextMessages.forEach((msg) => {
+      const content =
+        msg.role === 'user'
+          ? msg.content.text
+          : msg.content
+              .filter((block) => block.type === 'content')
+              .map((block) => block.content)
+              .join('\n')
+
+      if (msg.role === 'assistant' && !content) {
+        return // 如果是assistant且content为空，则不加入formattedMessages
+      }
+
+      formattedMessages.push({
         role: msg.role as 'user' | 'assistant',
-        content: msg.role === 'user' ? msg.content.text : JSON.stringify(msg.content)
-      }))
-    )
+        content
+      })
+    })
 
     // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
     formattedMessages.push({
@@ -779,7 +791,7 @@ export class ThreadPresenter implements IThreadPresenter {
     for (const msg of formattedMessages) {
       promptTokens += approximateTokenSize(msg.content)
     }
-    // console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
+    console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
 
     // 更新生成状态
     this.generatingMessages.set(state.message.id, {
