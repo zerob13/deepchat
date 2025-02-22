@@ -84,6 +84,7 @@ export interface ISQLitePresenter {
     attachmentData: string
   ): Promise<void>
   getMessageAttachments(messageId: string, type: string): Promise<{ content: string }[]>
+  getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null>
 }
 
 export interface IPresenter {

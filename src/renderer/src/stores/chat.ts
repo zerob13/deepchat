@@ -489,13 +489,14 @@ export const useChatStore = defineStore('chat', () => {
       generatingMessagesCache.value.delete(msg.eventId)
       generatingThreadIds.value.delete(cached.threadId)
 
-      // 检查是否需要更新标题（第一条消息生成完成后）
+      // 检查是否需要更新标题（仅在对话刚开始时）
       if (cached.threadId === activeThreadId.value) {
         const thread = await threadP.getConversation(cached.threadId)
-        const messages = await threadP.getMessages(cached.threadId, 1, 2)
-        if (messages.list.length === 2 && thread) {
+        const { list: messages } = await threadP.getMessages(cached.threadId, 1, 10)
+        // 只有当对话刚开始（只有一问一答两条消息）时才生成标题
+        if (messages.length === 2 && thread && thread.is_new === 1) {
           try {
-            console.info('自动生成标题 start')
+            console.info('自动生成标题 start', messages.length, thread)
             await threadP.summaryTitles().then(async (title) => {
               if (title) {
                 console.info('自动生成标题', title)

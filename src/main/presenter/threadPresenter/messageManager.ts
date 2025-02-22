@@ -206,4 +206,12 @@ export class MessageManager implements IMessageManager {
 
     return messages
   }
+
+  async getLastUserMessage(conversationId: string): Promise<Message | null> {
+    const sqliteMessage = await this.sqlitePresenter.getLastUserMessage(conversationId)
+    if (!sqliteMessage) {
+      return null
+    }
+    return this.convertToMessage(sqliteMessage)
+  }
 }

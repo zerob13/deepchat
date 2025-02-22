@@ -296,6 +296,7 @@ export class ThreadPresenter implements IThreadPresenter {
     let defaultSettings = DEFAULT_SETTINGS
     if (latestConversation?.settings) {
       defaultSettings = { ...latestConversation.settings }
+      defaultSettings.systemPrompt = ''
     }
     Object.keys(settings).forEach((key) => {
       if (settings[key] === undefined || settings[key] === null || settings[key] === '') {
@@ -653,6 +654,10 @@ export class ThreadPresenter implements IThreadPresenter {
     }
   }
 
+  private async getLastUserMessage(conversationId: string): Promise<Message | null> {
+    return await this.messageManager.getLastUserMessage(conversationId)
+  }
+
   async startStreamCompletion(conversationId: string, queryMsgId?: string) {
     // console.log('开始流式完成，conversationId:', conversationId, 'queryMsgId:', queryMsgId)
 
@@ -673,7 +678,7 @@ export class ThreadPresenter implements IThreadPresenter {
     let searchResults: SearchResult[] | null = null
 
     if (queryMsgId) {
-      // console.log('有queryMsgId，从该消息开始获取历史消息')
+      console.log('有queryMsgId，从该消息开始获取历史消息')
       const queryMessage = await this.getMessage(queryMsgId)
       if (!queryMessage || !queryMessage.parentId) {
         console.error('找不到指定的消息，queryMsgId:', queryMsgId)
@@ -687,9 +692,11 @@ export class ThreadPresenter implements IThreadPresenter {
       // 获取触发消息之前的历史消息
       contextMessages = await this.getMessageHistory(userMessage.id, contextLength)
     } else {
-      // 获取最后一条用户消息
-      const { list: messages } = await this.getMessages(conversationId, 1, 10)
-      userMessage = messages.reverse().find((msg) => msg.role === 'user') || null
+      // 直接从数据库获取最后一条用户消息
+      userMessage = await this.getLastUserMessage(conversationId)
+      if (!userMessage) {
+        throw new Error('找不到用户消息')
+      }
       contextMessages = await this.getContextMessages(conversationId)
     }
 

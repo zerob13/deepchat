@@ -699,4 +699,30 @@ export class SQLitePresenter implements ISQLitePresenter {
       )
       .all(messageId, type) as { content: string }[]
   }
+
+  public async getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null> {
+    return this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ? AND role = 'user'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+      )
+      .get(conversationId) as SQLITE_MESSAGE | null
+  }
 }
