@@ -678,8 +678,6 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   async startStreamCompletion(conversationId: string, queryMsgId?: string) {
-    // console.log('开始流式完成，conversationId:', conversationId, 'queryMsgId:', queryMsgId)
-
     const state = Array.from(this.generatingMessages.values()).find(
       (state) => state.conversationId === conversationId
     )
@@ -696,146 +694,168 @@ export class ThreadPresenter implements IThreadPresenter {
     let userMessage: Message | null = null
     let searchResults: SearchResult[] | null = null
 
-    if (queryMsgId) {
-      console.log('有queryMsgId，从该消息开始获取历史消息')
-      const queryMessage = await this.getMessage(queryMsgId)
-      if (!queryMessage || !queryMessage.parentId) {
-        console.error('找不到指定的消息，queryMsgId:', queryMsgId)
-        throw new Error('找不到指定的消息')
+    try {
+      if (queryMsgId) {
+        console.log('有queryMsgId，从该消息开始获取历史消息')
+        const queryMessage = await this.getMessage(queryMsgId)
+        if (!queryMessage || !queryMessage.parentId) {
+          console.error('找不到指定的消息，queryMsgId:', queryMsgId)
+          throw new Error('找不到指定的消息')
+        }
+        userMessage = await this.getMessage(queryMessage.parentId)
+        if (!userMessage) {
+          console.error('找不到触发消息，parentId:', queryMessage.parentId)
+          throw new Error('找不到指定的消息')
+        }
+        // 获取触发消息之前的历史消息
+        contextMessages = await this.getMessageHistory(userMessage.id, contextLength)
+      } else {
+        // 直接从数据库获取最后一条用户消息
+        userMessage = await this.getLastUserMessage(conversationId)
+        if (!userMessage) {
+          throw new Error('找不到用户消息')
+        }
+        contextMessages = await this.getContextMessages(conversationId)
       }
-      userMessage = await this.getMessage(queryMessage.parentId)
-      if (!userMessage) {
-        console.error('找不到触发消息，parentId:', queryMessage.parentId)
-        throw new Error('找不到指定的消息')
-      }
-      // 获取触发消息之前的历史消息
-      contextMessages = await this.getMessageHistory(userMessage.id, contextLength)
-    } else {
-      // 直接从数据库获取最后一条用户消息
-      userMessage = await this.getLastUserMessage(conversationId)
+
       if (!userMessage) {
         throw new Error('找不到用户消息')
       }
-      contextMessages = await this.getContextMessages(conversationId)
-    }
 
-    if (!userMessage) {
-      throw new Error('找不到用户消息')
-    }
-
-    // 处理搜索
-    if (userMessage.content.search) {
-      searchResults = await this.startStreamSearch(
-        conversationId,
-        state.message.id,
-        userMessage.content.text
-      )
-    }
-
-    // 计算搜索提示词的token数量
-    const searchPrompt = searchResults
-      ? generateSearchPrompt(userMessage.content.text, searchResults)
-      : ''
-    const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
-    const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
-    const userMessageTokens = approximateTokenSize(userMessage.content.text)
-
-    // 计算剩余可用的上下文长度
-    const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
-    const remainingContextLength = contextLength - reservedTokens
-
-    // 获取历史消息，优先考虑上下文边界
-    if (remainingContextLength > 0) {
-      const messages = contextMessages
-        .filter((msg) => msg.id !== userMessage?.id) // 排除当前用户消息
-        .reverse() // 从新到旧排序
-
-      let currentLength = 0
-      const selectedMessages: Message[] = []
-
-      for (const msg of messages) {
-        const msgTokens = approximateTokenSize(
-          msg.role === 'user' ? msg.content.text : JSON.stringify(msg.content)
-        )
-
-        if (currentLength + msgTokens <= remainingContextLength) {
-          selectedMessages.unshift(msg)
-          currentLength += msgTokens
+      // 处理搜索
+      if (userMessage.content.search) {
+        // 检查是否已经有搜索结果
+        const existingSearchBlock = state.message.content.find((block) => block.type === 'search')
+        if (!existingSearchBlock || existingSearchBlock.status === 'error') {
+          // 只有在没有搜索结果或搜索失败时才重新搜索
+          searchResults = await this.startStreamSearch(
+            conversationId,
+            state.message.id,
+            userMessage.content.text
+          )
         } else {
-          break
+          // 如果已经有搜索结果，直接获取
+          const attachments = await this.getMessageExtraInfo(state.message.id, 'search_result')
+          searchResults = attachments.map((attachment) => ({
+            title: attachment.title as string,
+            url: attachment.url as string,
+            content: attachment.content as string,
+            description: attachment.description as string,
+            icon: attachment.icon as string,
+            rank: attachment.rank as number
+          }))
         }
       }
 
-      contextMessages = selectedMessages
-    }
+      // 计算搜索提示词的token数量
+      const searchPrompt = searchResults
+        ? generateSearchPrompt(userMessage.content.text, searchResults)
+        : ''
+      const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
+      const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
+      const userMessageTokens = approximateTokenSize(userMessage.content.text)
 
-    const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
+      // 计算剩余可用的上下文长度
+      const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
+      const remainingContextLength = contextLength - reservedTokens
 
-    // 添加系统提示语
-    if (systemPrompt) {
-      formattedMessages.push({
-        role: 'system',
-        content: systemPrompt
-      })
-    }
+      // 获取历史消息，优先考虑上下文边界
+      if (remainingContextLength > 0) {
+        const messages = contextMessages
+          .filter((msg) => msg.id !== userMessage?.id) // 排除当前用户消息
+          .reverse() // 从新到旧排序
 
-    // 添加上下文消息
-    contextMessages.forEach((msg) => {
-      const content =
-        msg.role === 'user'
-          ? msg.content.text
-          : msg.content
-              .filter((block) => block.type === 'content')
-              .map((block) => block.content)
-              .join('\n')
+        let currentLength = 0
+        const selectedMessages: Message[] = []
 
-      if (msg.role === 'assistant' && !content) {
-        return // 如果是assistant且content为空，则不加入formattedMessages
+        for (const msg of messages) {
+          const msgTokens = approximateTokenSize(
+            msg.role === 'user' ? msg.content.text : JSON.stringify(msg.content)
+          )
+
+          if (currentLength + msgTokens <= remainingContextLength) {
+            selectedMessages.unshift(msg)
+            currentLength += msgTokens
+          } else {
+            break
+          }
+        }
+
+        contextMessages = selectedMessages
       }
 
-      formattedMessages.push({
-        role: msg.role as 'user' | 'assistant',
-        content
+      const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
+
+      // 添加系统提示语
+      if (systemPrompt) {
+        formattedMessages.push({
+          role: 'system',
+          content: systemPrompt
+        })
+      }
+
+      // 添加上下文消息
+      contextMessages.forEach((msg) => {
+        const content =
+          msg.role === 'user'
+            ? msg.content.text
+            : msg.content
+                .filter((block) => block.type === 'content')
+                .map((block) => block.content)
+                .join('\n')
+
+        if (msg.role === 'assistant' && !content) {
+          return // 如果是assistant且content为空，则不加入formattedMessages
+        }
+
+        formattedMessages.push({
+          role: msg.role as 'user' | 'assistant',
+          content
+        })
       })
-    })
 
-    // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
-    formattedMessages.push({
-      role: 'user',
-      content: searchPrompt || userMessage.content.text
-    })
+      // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
+      formattedMessages.push({
+        role: 'user',
+        content: searchPrompt || userMessage.content.text
+      })
 
-    // 计算prompt tokens
-    let promptTokens = 0
-    for (const msg of formattedMessages) {
-      promptTokens += approximateTokenSize(msg.content)
+      // 计算prompt tokens
+      let promptTokens = 0
+      for (const msg of formattedMessages) {
+        promptTokens += approximateTokenSize(msg.content)
+      }
+      console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
+
+      // 更新生成状态
+      this.generatingMessages.set(state.message.id, {
+        ...state,
+        startTime: Date.now(),
+        firstTokenTime: null,
+        promptTokens
+      })
+
+      // 更新消息的usage信息
+      await this.messageManager.updateMessageMetadata(state.message.id, {
+        totalTokens: promptTokens,
+        generationTime: 0,
+        firstTokenTime: 0,
+        tokensPerSecond: 0
+      })
+
+      await this.llmProviderPresenter.startStreamCompletion(
+        providerId,
+        formattedMessages,
+        modelId,
+        state.message.id,
+        temperature,
+        maxTokens
+      )
+    } catch (error) {
+      console.error('流式生成过程中出错:', error)
+      await this.handleMessageError(state.message.id, String(error))
+      throw error
     }
-    console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
-
-    // 更新生成状态
-    this.generatingMessages.set(state.message.id, {
-      ...state,
-      startTime: Date.now(),
-      firstTokenTime: null,
-      promptTokens
-    })
-
-    // 更新消息的usage信息
-    await this.messageManager.updateMessageMetadata(state.message.id, {
-      totalTokens: promptTokens,
-      generationTime: 0,
-      firstTokenTime: 0,
-      tokensPerSecond: 0
-    })
-
-    await this.llmProviderPresenter.startStreamCompletion(
-      providerId,
-      formattedMessages,
-      modelId,
-      state.message.id,
-      temperature,
-      maxTokens
-    )
   }
 
   async editMessage(messageId: string, content: string): Promise<Message> {
@@ -846,7 +866,7 @@ export class ThreadPresenter implements IThreadPresenter {
     await this.messageManager.deleteMessage(messageId)
   }
 
-  async retryMessage(messageId: string): Promise<Message> {
+  async retryMessage(messageId: string): Promise<AssistantMessage> {
     const message = await this.messageManager.getMessage(messageId)
     if (message.role !== 'assistant') {
       throw new Error('只能重试助手消息')
@@ -868,24 +888,20 @@ export class ThreadPresenter implements IThreadPresenter {
       model: modelId,
       provider: providerId
     })
-    try {
-      this.generatingMessages.set(assistantMessage.id, {
-        message: assistantMessage,
-        conversationId: message.conversationId,
-        startTime: Date.now(),
-        firstTokenTime: null,
-        promptTokens: 0,
-        reasoningStartTime: null,
-        reasoningEndTime: null,
-        lastReasoningTime: null
-      })
 
-      return assistantMessage
-    } catch (error) {
-      await this.messageManager.updateMessageStatus(assistantMessage.id, 'error')
-      console.error('生成 AI 响应失败:', error)
-      throw error
-    }
+    // 初始化生成状态
+    this.generatingMessages.set(assistantMessage.id, {
+      message: assistantMessage,
+      conversationId: message.conversationId,
+      startTime: Date.now(),
+      firstTokenTime: null,
+      promptTokens: 0,
+      reasoningStartTime: null,
+      reasoningEndTime: null,
+      lastReasoningTime: null
+    })
+
+    return assistantMessage
   }
 
   async getMessageVariants(messageId: string): Promise<Message[]> {

@@ -247,8 +247,8 @@ export class SearchManager {
   private async waitForSelector(window: BrowserWindow, selector: string): Promise<void> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        resolve() // 5秒后自动返回
-      }, 5000)
+        resolve() // 12秒后自动返回
+      }, 12000)
       // 如果selector不为空，就等待selector出现
       if (selector) {
         window.webContents

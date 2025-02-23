@@ -519,23 +519,40 @@ export const useChatStore = defineStore('chat', () => {
     // 从缓存中获取消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
-      // 如果是当前激活的会话，从数据库获取最新的消息状态
       if (cached.threadId === activeThreadId.value) {
         try {
-          // 获取最新的消息并处理 extra 信息
           const updatedMessage = await threadP.getMessage(msg.eventId)
           const enrichedMessage = await enrichMessageWithExtra(updatedMessage)
 
-          // 在消息列表中找到并更新这条消息
-          const messageIndex = messages.value.findIndex((m) => m.id === msg.eventId)
-          if (messageIndex !== -1) {
-            messages.value[messageIndex] = enrichedMessage
+          if (enrichedMessage.is_variant && enrichedMessage.parentId) {
+            // 处理变体消息的错误状态
+            const parentMsgIndex = messages.value.findIndex(
+              (m) => m.id === enrichedMessage.parentId
+            )
+            if (parentMsgIndex !== -1) {
+              const parentMsg = messages.value[parentMsgIndex] as AssistantMessage
+              if (!parentMsg.variants) {
+                parentMsg.variants = []
+              }
+              const variantIndex = parentMsg.variants.findIndex((v) => v.id === enrichedMessage.id)
+              if (variantIndex !== -1) {
+                parentMsg.variants[variantIndex] = enrichedMessage
+              } else {
+                parentMsg.variants.push(enrichedMessage)
+              }
+              messages.value[parentMsgIndex] = { ...parentMsg }
+            }
+          } else {
+            // 非变体消息的原有错误处理逻辑
+            const messageIndex = messages.value.findIndex((m) => m.id === msg.eventId)
+            if (messageIndex !== -1) {
+              messages.value[messageIndex] = enrichedMessage
+            }
           }
         } catch (error) {
           console.error('加载错误消息失败:', error)
         }
       }
-      // 无论是否是当前激活的会话，都从缓存中移除该消息
       generatingMessagesCache.value.delete(msg.eventId)
     }
   }

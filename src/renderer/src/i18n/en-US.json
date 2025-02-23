@@ -5,6 +5,7 @@
     "copyCode": "Copy Code",
     "newChat": "New Chat",
     "newTopic": "New Topic",
+    "cancel": "Cancel",
     "error": {
       "requestFailed": "Request failed...",
       "createChatFailed": "Failed to create chat",

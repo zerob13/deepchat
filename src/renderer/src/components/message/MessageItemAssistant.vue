@@ -63,34 +63,73 @@ const props = defineProps<{
 const chatStore = useChatStore()
 const currentVariantIndex = ref(0)
 
-const totalVariants = computed(() => {
-  if (!props.message.variants || props.message.variants.length === 0) {
-    return 1
-  }
-  return props.message.variants.length + 1
+// 计算当前消息的所有变体（包括缓存中的）
+const allVariants = computed(() => {
+  const messageVariants = props.message.variants || []
+  const combinedVariants = messageVariants.map((variant) => {
+    const cachedVariant = Array.from(chatStore.generatingMessagesCache.values()).find((cached) => {
+      const msg = cached.message as AssistantMessage
+      return msg.is_variant && msg.id === variant.id
+    })
+    return cachedVariant ? cachedVariant.message : variant
+  })
+  return combinedVariants
 })
 
+// 计算变体总数
+const totalVariants = computed(() => {
+  return allVariants.value.length > 0 ? allVariants.value.length + 1 : 1
+})
+
+// 获取当前显示的内容
 const currentContent = computed(() => {
   if (currentVariantIndex.value === 0) {
     return props.message.content
   }
-  return props.message.variants?.[currentVariantIndex.value - 1]?.content || props.message.content
+
+  // 从合并后的变体列表中获取内容
+  const variant = allVariants.value[currentVariantIndex.value - 1]
+  return variant?.content || props.message.content
 })
+
+// 监听变体变化
 watch(
-  () => props.message.variants,
+  allVariants,
   (newVariants) => {
-    if (newVariants && newVariants.length > 0) {
-      currentVariantIndex.value = newVariants.length
+    if (newVariants.length > 0) {
+      // 如果当前没有选中任何变体，自动切换到最新的变体
+      if (currentVariantIndex.value === 0) {
+        currentVariantIndex.value = newVariants.length
+      }
+      // 如果当前选中的变体超出范围，调整到最后一个变体
+      else if (currentVariantIndex.value > newVariants.length) {
+        currentVariantIndex.value = newVariants.length
+      }
     } else {
-      currentVariantIndex.value = 0 // 如果没有变体，重置索引
+      currentVariantIndex.value = 0
     }
-  }
+  },
+  { immediate: true, deep: true }
+)
+
+// 监听消息本身的变化
+watch(
+  () => props.message,
+  () => {
+    // 当消息发生变化时，检查是否需要更新当前显示的变体
+    const variants = allVariants.value
+    if (variants.length > 0 && currentVariantIndex.value === 0) {
+      currentVariantIndex.value = variants.length
+    }
+  },
+  { deep: true }
 )
 
 onMounted(() => {
   // 默认显示最后一个变体
-  if (props.message.variants && props.message.variants.length > 0) {
-    currentVariantIndex.value = props.message.variants.length
+  const variants = allVariants.value
+  if (variants.length > 0) {
+    currentVariantIndex.value = variants.length
   }
 })
 

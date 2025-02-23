@@ -72,6 +72,7 @@ const handleFileUpload = (files: FileList) => {
 // 监听流式响应
 onMounted(async () => {
   window.electron.ipcRenderer.on('stream-response', (_, msg) => {
+    // console.log('stream-response', msg)
     chatStore.handleStreamResponse(msg)
   })
 
