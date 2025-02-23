@@ -13,14 +13,14 @@
       <ChatInput
         @send="handleSend"
         @file-upload="handleFileUpload"
-        :disabled="!chatStore.activeThreadId || chatStore.isGenerating"
+        :disabled="!chatStore.activeThreadId || isGenerating"
       />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import MessageList from './message/MesasgeList.vue'
 import ChatInput from './ChatInput.vue'
 import { useRoute } from 'vue-router'
@@ -36,7 +36,10 @@ const chatStore = useChatStore()
 const scrollToBottom = (smooth = true) => {
   messageList.value?.scrollToBottom(smooth)
 }
-
+const isGenerating = computed(() => {
+  if (!chatStore.activeThreadId) return false
+  return chatStore.generatingThreadIds.has(chatStore.activeThreadId)
+})
 const handleSend = async (msg: UserMessageContent) => {
   await chatStore.sendMessage(msg)
   scrollToBottom()

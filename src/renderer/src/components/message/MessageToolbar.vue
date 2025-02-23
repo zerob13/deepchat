@@ -75,6 +75,8 @@ const props = defineProps<{
     total_tokens: number
     reasoning_start_time: number
     reasoning_end_time: number
+    input_tokens: number
+    output_tokens: number
   }
   loading: boolean
   isAssistant: boolean

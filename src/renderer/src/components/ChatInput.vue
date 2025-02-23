@@ -163,6 +163,9 @@ const disabledSend = computed(() => {
 })
 
 const handleEnterKey = (e: KeyboardEvent) => {
+  if (disabledSend.value) {
+    return
+  }
   if (!e.isComposing) {
     emitSend()
   }

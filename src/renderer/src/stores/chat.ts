@@ -175,7 +175,6 @@ export const useChatStore = defineStore('chat', () => {
   // messages.value.push(fakeMessage)
   // messages.value.push(fakeUserMessage)
   const isLoading = ref(false)
-  const isGenerating = ref(false)
   const generatingThreadIds = ref(new Set<string>())
   // const currentPage = ref(1)
   const pageSize = ref(20)
@@ -381,7 +380,6 @@ export const useChatStore = defineStore('chat', () => {
     if (!activeThreadId.value || !content) return
 
     try {
-      isGenerating.value = true
       generatingThreadIds.value.add(activeThreadId.value)
       const aiResponseMessage = await threadP.sendMessage(
         activeThreadId.value,
@@ -477,8 +475,6 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const handleStreamEnd = async (msg: { eventId: string }) => {
-    isGenerating.value = false
-
     // 从缓存中移除消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
@@ -542,8 +538,6 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const handleStreamError = async (msg: { eventId: string }) => {
-    isGenerating.value = false
-
     // 从缓存中获取消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
@@ -711,7 +705,6 @@ export const useChatStore = defineStore('chat', () => {
     threads,
     messages,
     isLoading,
-    isGenerating,
     hasMore,
     generatingMessagesCache,
     generatingThreadIds,
