@@ -28,6 +28,10 @@ import qingyanColorIcon from '@/assets/llm-icons/qingyan-color.svg?url'
 import qwenColorIcon from '@/assets/llm-icons/qwen-color.svg?url'
 import deepseekColorIcon from '@/assets/llm-icons/deepseek-color.svg?url'
 import openaiColorIcon from '@/assets/llm-icons/openai.svg?url'
+import ollamaColorIcon from '@/assets/llm-icons/ollama.svg?url'
+import doubaoColorIcon from '@/assets/llm-icons/doubao.svg?url'
+import minimaxColorIcon from '@/assets/llm-icons/minimax.svg?url'
+import fireworksColorIcon from '@/assets/llm-icons/fireworks.svg?url'
 import zerooneColorIcon from '@/assets/llm-icons/zeroone.svg?url'
 import xaiColorIcon from '@/assets/llm-icons/xai.svg?url'
 import vercelColorIcon from '@/assets/llm-icons/vercel.svg?url'
@@ -42,6 +46,10 @@ const icons = {
   deepseek: deepseekColorIcon,
   adobe: adobeColorIcon,
   openai: openaiColorIcon,
+  ollama: ollamaColorIcon,
+  doubao: doubaoColorIcon,
+  minimax: minimaxColorIcon,
+  fireworks: fireworksColorIcon,
   zeabur: zeaburColorIcon,
   zeroone: zerooneColorIcon,
   zhipu: zhipuColorIcon,
