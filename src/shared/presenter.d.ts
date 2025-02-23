@@ -278,6 +278,8 @@ export type MESSAGE_ROLE = 'user' | 'assistant' | 'system' | 'function'
 
 export type MESSAGE_METADATA = {
   totalTokens: number
+  inputTokens: number
+  outputTokens: number
   generationTime: number
   firstTokenTime: number
   tokensPerSecond: number

@@ -50,12 +50,16 @@
         <Icon icon="lucide:trash-2" class="w-4 h-4" />
       </Button>
     </span>
-    <span>
-      <template v-if="hasTokensPerSecond"
-        >{{ usage.tokens_per_second?.toFixed(2) }} tokens/s</template
-      >
-      <template v-if="hasTokensPerSecond && hasTotalTokens"> - </template>
-      <template v-if="hasTotalTokens">{{ usage.total_tokens }} tokens</template>
+    <span class="flex flex-row gap-2">
+      <template v-if="hasTotalTokens">
+        <span class="text-xs flex flex-row items-center">
+          <Icon icon="lucide:arrow-up" class="w-4 h-4" />{{ usage.input_tokens }}
+        </span>
+        <span class="text-xs flex flex-row items-center">
+          <Icon icon="lucide:arrow-down" class="w-4 h-4" />{{ usage.output_tokens }}
+        </span>
+      </template>
+      <template v-if="hasTokensPerSecond">{{ usage.tokens_per_second?.toFixed(2) }}/s</template>
     </span>
   </div>
 </template>

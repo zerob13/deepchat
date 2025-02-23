@@ -165,12 +165,14 @@ export class ThreadPresenter implements IThreadPresenter {
         }
 
         const totalTokens = state.promptTokens + completionTokens
-        const generationTime = Date.now() - state.startTime
+        const generationTime = Date.now() - (state.firstTokenTime ?? state.startTime)
         const tokensPerSecond = completionTokens / (generationTime / 1000)
 
         // 如果有reasoning_content，记录结束时间
         const metadata: Partial<MESSAGE_METADATA> = {
           totalTokens,
+          inputTokens: state.promptTokens,
+          outputTokens: completionTokens,
           generationTime,
           firstTokenTime: state.firstTokenTime ? state.firstTokenTime - state.startTime : 0,
           tokensPerSecond
@@ -426,6 +428,8 @@ export class ThreadPresenter implements IThreadPresenter {
         generationTime: 0,
         firstTokenTime: 0,
         tokensPerSecond: 0,
+        inputTokens: 0,
+        outputTokens: 0,
         model: modelId,
         provider: providerId
       }
@@ -478,6 +482,8 @@ export class ThreadPresenter implements IThreadPresenter {
           generationTime: 0,
           firstTokenTime: 0,
           tokensPerSecond: 0,
+          inputTokens: 0,
+          outputTokens: 0,
           model: modelId,
           provider: providerId
         }
@@ -844,6 +850,8 @@ export class ThreadPresenter implements IThreadPresenter {
       generationTime: 0,
       firstTokenTime: 0,
       tokensPerSecond: 0,
+      inputTokens: 0,
+      outputTokens: 0,
       model: modelId,
       provider: providerId
     })

@@ -19,6 +19,8 @@ export type Message = {
     first_token_time: number
     reasoning_start_time: number
     reasoning_end_time: number
+    input_tokens: number
+    output_tokens: number
   }
   parentId?: string
   conversationId: string
