@@ -319,7 +319,15 @@ export const useChatStore = defineStore('chat', () => {
           return block
         }
       )
+      // 处理变体消息的 extra 信息
+      const assistantMessage = message as AssistantMessage
+      if (assistantMessage.variants && assistantMessage.variants.length > 0) {
+        assistantMessage.variants = await Promise.all(
+          assistantMessage.variants.map((variant) => enrichMessageWithExtra(variant))
+        )
+      }
     }
+
     return message
   }
 

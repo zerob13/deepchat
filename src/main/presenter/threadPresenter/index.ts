@@ -724,27 +724,11 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 处理搜索
       if (userMessage.content.search) {
-        // 检查是否已经有搜索结果
-        const existingSearchBlock = state.message.content.find((block) => block.type === 'search')
-        if (!existingSearchBlock || existingSearchBlock.status === 'error') {
-          // 只有在没有搜索结果或搜索失败时才重新搜索
-          searchResults = await this.startStreamSearch(
-            conversationId,
-            state.message.id,
-            userMessage.content.text
-          )
-        } else {
-          // 如果已经有搜索结果，直接获取
-          const attachments = await this.getMessageExtraInfo(state.message.id, 'search_result')
-          searchResults = attachments.map((attachment) => ({
-            title: attachment.title as string,
-            url: attachment.url as string,
-            content: attachment.content as string,
-            description: attachment.description as string,
-            icon: attachment.icon as string,
-            rank: attachment.rank as number
-          }))
-        }
+        searchResults = await this.startStreamSearch(
+          conversationId,
+          state.message.id,
+          userMessage.content.text
+        )
       }
 
       // 计算搜索提示词的token数量
