@@ -3,7 +3,7 @@
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
     <div
       :id="id"
-      class="markdown-content prose prose-sm dark:prose-invert max-w-full"
+      class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
       @click="handleCopyClick"
       v-html="renderedContent"
     ></div>

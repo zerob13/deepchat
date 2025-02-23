@@ -543,7 +543,8 @@ export class ThreadPresenter implements IThreadPresenter {
   private async rewriteUserSearchQuery(
     query: string,
     contextMessages: string,
-    conversationId: string
+    conversationId: string,
+    searchEngine: string
   ): Promise<string> {
     const rewritePrompt = `
     你是一个搜索优化专家。基于以下内容，生成一个优化的搜索查询：
@@ -551,9 +552,10 @@ export class ThreadPresenter implements IThreadPresenter {
     当前时间：${new Date().toISOString()}
     对话上下文：${contextMessages}
     用户问题：${query}
+    搜索引擎：${searchEngine}
 
     请遵循以下规则重写搜索查询：
-    1. 提取关键词，去除停用词
+    1. 根据用户的问题和上下文，重写应该进行搜索的关键词
     2. 如果需要使用时间，则根据当前时间给出需要查询的具体时间日期信息
     3. 编程相关查询：
        - 加上编程语言或框架名称
@@ -627,7 +629,8 @@ export class ThreadPresenter implements IThreadPresenter {
       const optimizedQuery = await this.rewriteUserSearchQuery(
         query,
         formattedContext,
-        conversationId
+        conversationId,
+        this.searchManager.getActiveEngine().name
       )
 
       // 开始搜索
