@@ -106,6 +106,13 @@ export class WindowPresenter implements IWindowPresenter {
       shell.openExternal(details.url)
       return { action: 'deny' }
     })
+
+    // Add handler for regular link clicks
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      event.preventDefault()
+      shell.openExternal(url)
+    })
+
     mainWindow.on('show', () => {
       if (mainWindow.isMinimized()) {
         mainWindow.restore()
