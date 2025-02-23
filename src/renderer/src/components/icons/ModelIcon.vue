@@ -28,6 +28,10 @@ import qingyanColorIcon from '@/assets/llm-icons/qingyan-color.svg?url'
 import qwenColorIcon from '@/assets/llm-icons/qwen-color.svg?url'
 import deepseekColorIcon from '@/assets/llm-icons/deepseek-color.svg?url'
 import openaiColorIcon from '@/assets/llm-icons/openai.svg?url'
+import ollamaColorIcon from '@/assets/llm-icons/ollama.svg?url'
+import doubaoColorIcon from '@/assets/llm-icons/doubao-color.svg?url'
+import minimaxColorIcon from '@/assets/llm-icons/minimax-color.svg?url'
+import fireworksColorIcon from '@/assets/llm-icons/fireworks-color.svg?url'
 import zerooneColorIcon from '@/assets/llm-icons/zeroone.svg?url'
 import xaiColorIcon from '@/assets/llm-icons/xai.svg?url'
 import vercelColorIcon from '@/assets/llm-icons/vercel.svg?url'
@@ -35,13 +39,17 @@ import viggleColorIcon from '@/assets/llm-icons/viggle.svg?url'
 import sunoColorIcon from '@/assets/llm-icons/suno.svg?url'
 import syncColorIcon from '@/assets/llm-icons/sync.svg?url'
 import rwkvColorIcon from '@/assets/llm-icons/rwkv.svg?url'
-import ppioColorIcon from '@/assets/llm-icons/ppio.svg?url'
+import ppioColorIcon from '@/assets/llm-icons/ppio-color.svg?url'
 
 // 导入所有图标
 const icons = {
   deepseek: deepseekColorIcon,
   adobe: adobeColorIcon,
   openai: openaiColorIcon,
+  ollama: ollamaColorIcon,
+  doubao: doubaoColorIcon,
+  minimax: minimaxColorIcon,
+  fireworks: fireworksColorIcon,
   zeabur: zeaburColorIcon,
   zeroone: zerooneColorIcon,
   zhipu: zhipuColorIcon,
