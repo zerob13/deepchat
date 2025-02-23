@@ -52,15 +52,11 @@ We use GitHub to host code, to track issues and feature requests, as well as acc
 
    **Windows:**
 
-   - Install Windows Build Tools (Two options):
-     1. GUI Installation:
-        - Install [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
-        - Select "Desktop development with C++" workload during installation
-        - Ensure "Windows 10/11 SDK" and "MSVC v143 build tools" components are selected
-     2. Command Line Installation:
-        ```bash
-        npm install --global windows-build-tools
-        ```
+   - Install Windows Build Tools:
+     GUI Installation:
+     - Install [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
+     - Select "Desktop development with C++" workload during installation
+     - Ensure "Windows 10/11 SDK" and "MSVC v143 build tools" components are selected
    - Install Git for Windows
 
    **macOS:**

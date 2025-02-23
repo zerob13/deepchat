@@ -52,15 +52,11 @@
 
    **Windows:**
 
-   - 安装 Windows Build Tools (两种方式):
-     1. 图形化安装:
-        - 安装 [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
-        - 在安装时选择"使用 C++ 的桌面开发"工作负载
-        - 确保选中"Windows 10/11 SDK"和"MSVC v143 生成工具"组件
-     2. 命令行安装:
-        ```bash
-        npm install --global windows-build-tools
-        ```
+   - 安装 Windows Build Tools:
+     图形化安装:
+     - 安装 [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
+     - 在安装时选择"使用 C++ 的桌面开发"工作负载
+     - 确保选中"Windows 10/11 SDK"和"MSVC v143 生成工具"组件
    - 安装 Git for Windows
 
    **macOS:**
