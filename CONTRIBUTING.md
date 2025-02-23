@@ -44,13 +44,54 @@ We use GitHub to host code, to track issues and feature requests, as well as acc
    cd deepchat
    ```
 
-2. Install dependencies:
+2. Install required development tools:
+
+   - Install [Node.js](https://nodejs.org/) (Latest LTS version recommended)
+
+3. Additional setup based on your operating system:
+
+   **Windows:**
+
+   - Install Windows Build Tools (Two options):
+     1. GUI Installation:
+        - Install [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
+        - Select "Desktop development with C++" workload during installation
+        - Ensure "Windows 10/11 SDK" and "MSVC v143 build tools" components are selected
+     2. Command Line Installation:
+        ```bash
+        npm install --global windows-build-tools
+        ```
+   - Install Git for Windows
+
+   **macOS:**
+
+   - Install Xcode Command Line Tools:
+     ```bash
+     xcode-select --install
+     ```
+   - Recommended: Install Homebrew package manager:
+     ```bash
+     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+     ```
+
+   **Linux:**
+
+   - Install required build dependencies:
+     ```bash
+     # Ubuntu/Debian
+     sudo apt-get install build-essential git
+     # Fedora
+     sudo dnf groupinstall "Development Tools"
+     sudo dnf install git
+     ```
+
+4. Install project dependencies:
 
    ```bash
    yarn install
    ```
 
-3. Start the development server:
+5. Start the development server:
    ```bash
    yarn dev
    ```

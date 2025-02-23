@@ -44,13 +44,54 @@
    cd deepchat
    ```
 
-2. 安装依赖：
+2. 安装必要的开发工具:
+
+   - 安装 [Node.js](https://nodejs.org/) (推荐使用最新的 LTS 版本)
+
+3. 根据您的操作系统进行额外设置:
+
+   **Windows:**
+
+   - 安装 Windows Build Tools (两种方式):
+     1. 图形化安装:
+        - 安装 [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
+        - 在安装时选择"使用 C++ 的桌面开发"工作负载
+        - 确保选中"Windows 10/11 SDK"和"MSVC v143 生成工具"组件
+     2. 命令行安装:
+        ```bash
+        npm install --global windows-build-tools
+        ```
+   - 安装 Git for Windows
+
+   **macOS:**
+
+   - 安装 Xcode Command Line Tools:
+     ```bash
+     xcode-select --install
+     ```
+   - 推荐使用 Homebrew 包管理器:
+     ```bash
+     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+     ```
+
+   **Linux:**
+
+   - 安装必要的构建依赖:
+     ```bash
+     # Ubuntu/Debian
+     sudo apt-get install build-essential git
+     # Fedora
+     sudo dnf groupinstall "Development Tools"
+     sudo dnf install git
+     ```
+
+4. 安装项目依赖：
 
    ```bash
    yarn install
    ```
 
-3. 启动开发服务器：
+5. 启动开发服务器：
    ```bash
    yarn dev
    ```
