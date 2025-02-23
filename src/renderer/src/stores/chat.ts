@@ -692,7 +692,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // 注册消息编辑事件处理
   window.electron.ipcRenderer.on('message-edited', (_, msgId: string) => {
-    console.log('message-edited', msgId)
+    // console.log('message-edited', msgId)
     handleMessageEdited(msgId)
   })
 

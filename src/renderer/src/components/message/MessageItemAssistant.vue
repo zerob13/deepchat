@@ -77,9 +77,7 @@ const allVariants = computed(() => {
 })
 
 // 计算变体总数
-const totalVariants = computed(() => {
-  return allVariants.value.length > 0 ? allVariants.value.length + 1 : 1
-})
+const totalVariants = computed(() => allVariants.value.length + 1)
 
 // 获取当前显示的内容
 const currentContent = computed(() => {
@@ -87,7 +85,6 @@ const currentContent = computed(() => {
     return props.message.content
   }
 
-  // 从合并后的变体列表中获取内容
   const variant = allVariants.value[currentVariantIndex.value - 1]
   return variant?.content || props.message.content
 })
@@ -95,42 +92,22 @@ const currentContent = computed(() => {
 // 监听变体变化
 watch(
   () => allVariants.value.length,
-  (newLenth) => {
-    if (newLenth > 0) {
-      // 如果当前没有选中任何变体，自动切换到最新的变体
-      if (currentVariantIndex.value === 0) {
-        currentVariantIndex.value = newLenth - 1
-      }
-      // 如果当前选中的变体超出范围，调整到最后一个变体
-      else if (currentVariantIndex.value > newLenth) {
-        currentVariantIndex.value = newLenth - 1
-      }
-    } else {
-      currentVariantIndex.value = 0
+  (newLength, oldLength) => {
+    // 如果当前没有选中任何变体，或者当前选中的是最后一个变体
+    // 则自动跟随最新的变体
+    if (currentVariantIndex.value === 0 || newLength > oldLength) {
+      currentVariantIndex.value = newLength
     }
-  },
-  { immediate: true }
-)
-
-// 监听消息本身的变化
-watch(
-  () => props.message,
-  () => {
-    // 当消息发生变化时，检查是否需要更新当前显示的变体
-    const variants = allVariants.value
-    if (variants.length > 0 && currentVariantIndex.value === 0) {
-      currentVariantIndex.value = variants.length
+    // 如果当前选中的变体超出范围，调整到最后一个变体
+    else if (currentVariantIndex.value > newLength) {
+      currentVariantIndex.value = newLength
     }
-  },
-  { deep: true }
+  }
 )
 
 onMounted(() => {
   // 默认显示最后一个变体
-  const variants = allVariants.value
-  if (variants.length > 0) {
-    currentVariantIndex.value = variants.length
-  }
+  currentVariantIndex.value = allVariants.value.length
 })
 
 const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next') => {
