@@ -93,6 +93,9 @@ export class MessageManager implements IMessageManager {
     }
     const msg = this.convertToMessage(message)
     eventBus.emit('message-edited', messageId)
+    if (msg.parentId) {
+      eventBus.emit('message-edited', msg.parentId)
+    }
     return msg
   }
 
@@ -130,6 +133,17 @@ export class MessageManager implements IMessageManager {
   async getMessageVariants(messageId: string): Promise<Message[]> {
     const variants = await this.sqlitePresenter.getMessageVariants(messageId)
     return variants.map((variant) => this.convertToMessage(variant))
+  }
+
+  async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<Message | null> {
+    const message = await this.sqlitePresenter.getMainMessageByParentId(conversationId, parentId)
+    if (!message) {
+      return null
+    }
+    return this.convertToMessage(message)
   }
 
   async getMessageThread(

@@ -725,4 +725,66 @@ export class SQLitePresenter implements ISQLitePresenter {
       )
       .get(conversationId) as SQLITE_MESSAGE | null
   }
+
+  public async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<SQLITE_MESSAGE | null> {
+    const mainMessage = this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ?
+        AND parent_id = ?
+        AND is_variant = 0
+        ORDER BY created_at ASC
+        LIMIT 1
+      `
+      )
+      .get(conversationId, parentId) as SQLITE_MESSAGE | null
+
+    if (mainMessage) {
+      const variants = this.db
+        .prepare(
+          `
+          SELECT
+            msg_id as id,
+            conversation_id,
+            parent_id,
+            content,
+            role,
+            created_at,
+            order_seq,
+            token_count,
+            status,
+            metadata,
+            is_context_edge,
+            is_variant
+          FROM messages
+          WHERE conversation_id = ?
+          AND parent_id = ?
+          AND is_variant = 1
+          ORDER BY created_at ASC
+        `
+        )
+        .all(conversationId, parentId) as SQLITE_MESSAGE[]
+
+      mainMessage.variants = variants // 拼凑variants对象
+    }
+
+    return mainMessage
+  }
 }

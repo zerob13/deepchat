@@ -478,16 +478,36 @@ export const useChatStore = defineStore('chat', () => {
       const updatedMessage = await threadP.getMessage(msg.eventId)
       const enrichedMessage = await enrichMessageWithExtra(updatedMessage)
 
-      // 如果是当前激活的会话，更新显示
-      if (cached.threadId === activeThreadId.value) {
-        const msgIndex = messages.value.findIndex((m) => m.id === msg.eventId)
-        if (msgIndex !== -1) {
-          messages.value[msgIndex] = enrichedMessage
-        }
-      }
-
       generatingMessagesCache.value.delete(msg.eventId)
       generatingThreadIds.value.delete(cached.threadId)
+
+      // 如果是变体消息，需要更新主消息
+      if (enrichedMessage.is_variant && enrichedMessage.parentId) {
+        // 获取主消息
+        const mainMessage = await threadP.getMainMessageByParentId(
+          cached.threadId,
+          enrichedMessage.parentId
+        )
+
+        if (mainMessage) {
+          const enrichedMainMessage = await enrichMessageWithExtra(mainMessage)
+          // 如果是当前激活的会话，更新显示
+          if (cached.threadId === activeThreadId.value) {
+            const mainMsgIndex = messages.value.findIndex((m) => m.id === mainMessage.id)
+            if (mainMsgIndex !== -1) {
+              messages.value[mainMsgIndex] = enrichedMainMessage
+            }
+          }
+        }
+      } else {
+        // 如果是当前激活的会话，更新显示
+        if (cached.threadId === activeThreadId.value) {
+          const msgIndex = messages.value.findIndex((m) => m.id === msg.eventId)
+          if (msgIndex !== -1) {
+            messages.value[msgIndex] = enrichedMessage
+          }
+        }
+      }
 
       // 检查是否需要更新标题（仅在对话刚开始时）
       if (cached.threadId === activeThreadId.value) {

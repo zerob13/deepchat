@@ -85,6 +85,7 @@ export interface ISQLitePresenter {
   ): Promise<void>
   getMessageAttachments(messageId: string, type: string): Promise<{ content: string }[]>
   getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null>
+  getMainMessageByParentId(conversationId: string, parentId: string): Promise<SQLITE_MESSAGE | null>
 }
 
 export interface IPresenter {
@@ -271,6 +272,8 @@ export interface IThreadPresenter {
   getSearchEngines(): SearchEngineTemplate[]
   getActiveSearchEngine(): SearchEngineTemplate
   setActiveSearchEngine(engineName: string): void
+  getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
+  destroy(): void
 }
 
 export type MESSAGE_STATUS = 'sent' | 'pending' | 'error'

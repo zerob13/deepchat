@@ -1034,6 +1034,17 @@ export class ThreadPresenter implements IThreadPresenter {
     return attachments.map((attachment) => JSON.parse(attachment.content))
   }
 
+  async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<Message | null> {
+    const message = await this.messageManager.getMainMessageByParentId(conversationId, parentId)
+    if (!message) {
+      return null
+    }
+    return message
+  }
+
   destroy() {
     this.searchManager.destroy()
   }

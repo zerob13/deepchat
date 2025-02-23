@@ -94,22 +94,22 @@ const currentContent = computed(() => {
 
 // 监听变体变化
 watch(
-  allVariants,
-  (newVariants) => {
-    if (newVariants.length > 0) {
+  () => allVariants.value.length,
+  (newLenth) => {
+    if (newLenth > 0) {
       // 如果当前没有选中任何变体，自动切换到最新的变体
       if (currentVariantIndex.value === 0) {
-        currentVariantIndex.value = newVariants.length
+        currentVariantIndex.value = newLenth - 1
       }
       // 如果当前选中的变体超出范围，调整到最后一个变体
-      else if (currentVariantIndex.value > newVariants.length) {
-        currentVariantIndex.value = newVariants.length
+      else if (currentVariantIndex.value > newLenth) {
+        currentVariantIndex.value = newLenth - 1
       }
     } else {
       currentVariantIndex.value = 0
     }
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
 // 监听消息本身的变化
