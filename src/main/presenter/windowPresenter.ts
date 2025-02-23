@@ -109,8 +109,13 @@ export class WindowPresenter implements IWindowPresenter {
 
     // Add handler for regular link clicks
     mainWindow.webContents.on('will-navigate', (event, url) => {
-      event.preventDefault()
-      shell.openExternal(url)
+      // 检查是否为外部链接
+      const isExternal = url.startsWith('http:') || url.startsWith('https:')
+      if (isExternal) {
+        event.preventDefault()
+        shell.openExternal(url)
+      }
+      // 内部路由变化则不阻止
     })
 
     mainWindow.on('show', () => {

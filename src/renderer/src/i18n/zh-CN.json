@@ -5,6 +5,7 @@
     "copyCode": "复制代码",
     "newChat": "新会话",
     "newTopic": "新话题",
+    "cancel": "取消",
     "error": {
       "requestFailed": "请求失败...",
       "createChatFailed": "创建会话失败",

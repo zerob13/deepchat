@@ -5,6 +5,7 @@
     "copyCode": "Скопировать код",
     "newChat": "Новый чат",
     "newTopic": "Новая тема",
+    "cancel": "Отмена",
     "error": {
       "requestFailed": "Ошибка запроса...",
       "createChatFailed": "Не удалось создать чат",

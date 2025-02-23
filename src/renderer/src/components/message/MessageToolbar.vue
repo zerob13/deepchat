@@ -51,7 +51,7 @@
       </Button>
     </span>
     <span class="flex flex-row gap-2">
-      <template v-if="hasTotalTokens">
+      <template v-if="usage.input_tokens > 0 || usage.output_tokens > 0">
         <span class="text-xs flex flex-row items-center">
           <Icon icon="lucide:arrow-up" class="w-4 h-4" />{{ usage.input_tokens }}
         </span>
@@ -90,6 +90,5 @@ const emit = defineEmits<{
 }>()
 
 const hasTokensPerSecond = computed(() => props.usage.tokens_per_second > 0)
-const hasTotalTokens = computed(() => props.usage.total_tokens > 0)
 const hasVariants = computed(() => (props.totalVariants || 0) > 1)
 </script>

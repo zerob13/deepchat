@@ -546,11 +546,21 @@ export class ThreadPresenter implements IThreadPresenter {
     conversationId: string
   ): Promise<string> {
     const rewritePrompt = `
-    你会收到一段对话和用户最新的提问，你要基于这两部分内容重写用户的查询，以使其更清晰、简洁，并更适合搜索引擎进行查询
-    上下文：${contextMessages}
-    问题：${query}
-    请直接返回重新组织的搜索关键词,不要输出任何解释，也不要带上"调整后的内容"之类的提示
-    `
+    你是一个搜索优化专家。基于以下内容，生成一个优化的搜索查询：
+
+    当前时间：${new Date().toISOString()}
+    对话上下文：${contextMessages}
+    用户问题：${query}
+
+    请遵循以下规则重写搜索查询：
+    1. 提取关键词，去除停用词
+    2. 如果需要使用时间，则根据当前时间给出需要查询的具体时间日期信息
+    3. 编程相关查询：
+       - 加上编程语言或框架名称
+       - 指定错误代码或具体版本号
+    4. 保持查询简洁，通常不超过5-6个关键词
+
+    直接返回优化后的搜索词，不要有任何额外说明。`
     const conversation = await this.getConversation(conversationId)
     if (!conversation) {
       return query

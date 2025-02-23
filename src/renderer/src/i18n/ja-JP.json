@@ -5,6 +5,7 @@
     "copyCode": "コードをコピー",
     "newChat": "新しいチャット",
     "newTopic": "新しいトピック",
+    "cancel": "キャンセル",
     "error": {
       "requestFailed": "リクエストに失敗しました...",
       "createChatFailed": "チャットの作成に失敗しました",

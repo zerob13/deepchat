@@ -23,7 +23,7 @@
           icon="lucide:square"
           class="w-6 h-6 bg-red-500 p-1 text-primary-foreground rounded-full"
         />
-        <span class="">取消生成</span>
+        <span class="">{{ t('common.cancel') }}</span>
       </Button>
     </div>
     <div
@@ -36,7 +36,7 @@
     >
       <Button variant="outline" size="sm" class="rounded-lg shrink-0" @click="createNewThread">
         <Icon icon="lucide:plus" class="w-6 h-6 text-muted-foreground" />
-        <span class="">新建会话</span>
+        <span class="">{{ t('common.newChat') }}</span>
       </Button>
       <transition
         enter-active-class="transition-all duration-300 ease-out"
