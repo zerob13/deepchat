@@ -145,9 +145,9 @@ export class ThreadPresenter implements IThreadPresenter {
               }
             }
 
-            // 添加思考内容
+            // 添加思考内容作为 artifact-thinking 类型
             blocks.push({
-              type: 'reasoning_content',
+              type: 'artifact-thinking',
               content: match[1].trim(),
               status: 'loading',
               timestamp: Date.now()
@@ -215,20 +215,13 @@ export class ThreadPresenter implements IThreadPresenter {
         }
 
         if (reasoning_content) {
-          const lastBlock = state.message.content[state.message.content.length - 1]
-          if (lastBlock && lastBlock.type === 'reasoning_content') {
-            lastBlock.content += reasoning_content
-          } else {
-            if (lastBlock) {
-              lastBlock.status = 'success'
-            }
-            state.message.content.push({
-              type: 'reasoning_content',
-              content: reasoning_content,
-              status: 'loading',
-              timestamp: Date.now()
-            })
-          }
+          // 如果有 reasoning_content，直接添加为新的 artifact-thinking block
+          state.message.content.push({
+            type: 'artifact-thinking',
+            content: reasoning_content,
+            status: 'loading',
+            timestamp: Date.now()
+          })
         }
       }
     })

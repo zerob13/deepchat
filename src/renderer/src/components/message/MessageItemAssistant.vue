@@ -19,7 +19,7 @@
         <div v-for="block in currentContent" :key="block.id" class="w-full">
           <MessageBlockContent v-if="block.type === 'content'" :block="block" />
           <MessageBlockThink
-            v-else-if="block.type === 'reasoning_content'"
+            v-else-if="block.type === 'reasoning_content' || block.type === 'artifact-thinking'"
             :block="block"
             :usage="message.usage"
           />
@@ -121,9 +121,10 @@ const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next') => 
     window.api.copyText(
       currentContent.value
         .map((block) => {
-          return block.type === 'reasoning_content'
-            ? `<think>${block.content}</think>`
-            : block.content
+          if (block.type === 'reasoning_content' || block.type === 'artifact-thinking') {
+            return `<think>${block.content}</think>`
+          }
+          return block.content
         })
         .join('\n')
     )
