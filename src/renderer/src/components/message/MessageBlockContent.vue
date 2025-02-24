@@ -9,18 +9,14 @@
         @click="handleCopyClick"
         v-html="renderMarkdown(part.content)"
       ></div>
-      <MessageBlockThink
+      <ArtifactThinking
         v-else-if="part.type === 'thinking'"
-        :usage="{
-          reasoning_start_time: 0,
-          reasoning_end_time: 0
-        }"
         :block="{
-          content: part.content,
-          status: block.status as any
+          content: part.content
         }"
       />
       <ArtifactBlock
+        class="max-h-[500px] overflow-auto"
         v-else-if="part.type === 'artifact' && part.artifact"
         :block="{
           type: 'artifact',
@@ -67,7 +63,7 @@ import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
-import MessageBlockThink from './MessageBlockThink.vue'
+import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
 import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
 import { AssistantMessageBlock } from '@shared/chat'
 

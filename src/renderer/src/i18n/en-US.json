@@ -38,7 +38,8 @@
       "deepThinking": "Deep Thinking",
       "webSearch": "Web Search",
       "deepThinkingProgress": "Deep Thinking in progress...",
-      "thinkingDuration": "(Took {0} seconds)"
+      "thinkingDuration": "(Took {0} seconds)",
+      "artifactThinking": "Artifact Thinking"
     },
     "search": {
       "results": "Found {0} web pages",

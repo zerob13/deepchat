@@ -38,7 +38,8 @@
       "deepThinking": "심층 사고",
       "webSearch": "웹 검색",
       "deepThinkingProgress": "심층 사고 중...",
-      "thinkingDuration": "(소요 {0}초)"
+      "thinkingDuration": "(소요 {0}초)",
+      "artifactThinking": "아티팩트 사고"
     },
     "search": {
       "results": "{0}개의 웹페이지가 검색되었습니다",

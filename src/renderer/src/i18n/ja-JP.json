@@ -38,7 +38,8 @@
       "deepThinking": "深い思考",
       "webSearch": "ウェブ検索",
       "deepThinkingProgress": "深い思考中...",
-      "thinkingDuration": "({0}秒かかりました)"
+      "thinkingDuration": "({0}秒かかりました)",
+      "artifactThinking": "アーティファクト思考"
     },
     "search": {
       "results": "{0}件のウェブページが見つかりました",

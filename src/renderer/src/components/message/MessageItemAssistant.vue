@@ -18,11 +18,7 @@
       <div v-else class="flex flex-col w-full space-y-2">
         <div v-for="block in currentContent" :key="block.id" class="w-full">
           <MessageBlockContent v-if="block.type === 'content'" :block="block" />
-          <MessageBlockThink
-            v-else-if="block.type === 'reasoning_content'"
-            :block="block"
-            :usage="message.usage"
-          />
+          <ArtifactThinking v-else-if="block.type === 'reasoning_content'" :block="block" />
           <MessageBlockSearch v-else-if="block.type === 'search'" :block="block" />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
@@ -47,7 +43,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { AssistantMessage } from '@shared/chat'
 import MessageBlockContent from './MessageBlockContent.vue'
-import MessageBlockThink from './MessageBlockThink.vue'
+import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
 import MessageBlockSearch from './MessageBlockSearch.vue'
 import MessageBlockError from './MessageBlockError.vue'
 import MessageToolbar from './MessageToolbar.vue'
