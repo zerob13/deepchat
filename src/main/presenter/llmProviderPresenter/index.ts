@@ -5,6 +5,7 @@ import { DeepseekProvider } from './providers/deepseekProvider'
 import { SiliconcloudProvider } from './providers/siliconcloudProvider'
 import { eventBus } from '@/eventbus'
 import { OpenAICompatibleProvider } from './providers/openAICompatibleProvider'
+import { PPIOProvider } from './providers/ppioProvider'
 // 导入其他provider...
 
 // 流的状态
@@ -98,6 +99,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           break
         case 'silicon':
           instance = new SiliconcloudProvider(provider)
+          break
+        case 'ppio':
+          instance = new PPIOProvider(provider)
           break
         // 添加其他provider的实例化逻辑
         default:
