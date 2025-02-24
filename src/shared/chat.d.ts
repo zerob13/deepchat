@@ -55,7 +55,7 @@ export type MessageFile = {
 }
 
 export type AssistantMessageBlock = {
-  type: 'content' | 'search' | 'reasoning_content' | 'error'
+  type: 'content' | 'search' | 'reasoning_content' | 'error' | 'artifact'
   content?: string
   extra?: Record<string, string | number | object[]>
   status: 'success' | 'loading' | 'cancel' | 'error' | 'reading'
