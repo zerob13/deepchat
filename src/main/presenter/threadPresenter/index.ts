@@ -98,7 +98,6 @@ export class ThreadPresenter implements IThreadPresenter {
 
     eventBus.on('stream-response', async (msg) => {
       const { eventId, content, reasoning_content } = msg
-      console.log('stream-response', content, reasoning_content)
       const state = this.generatingMessages.get(eventId)
       if (state) {
         // 记录第一个token的时间
@@ -120,108 +119,36 @@ export class ThreadPresenter implements IThreadPresenter {
           state.lastReasoningTime = Date.now()
         }
 
-        // 解析 antThinking 和 antArtifact 标签
-        const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
-        const artifactRegex =
-          /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
-
-        let match
-        let lastIndex = 0
-        const blocks: AssistantMessageBlock[] = []
-
+        const lastBlock = state.message.content[state.message.content.length - 1]
         if (content) {
-          // 处理所有的 antThinking 标签
-          while ((match = thinkingRegex.exec(content)) !== null) {
-            // 添加思考前的普通内容
-            if (match.index > lastIndex) {
-              const text = content.substring(lastIndex, match.index).trim()
-              if (text) {
-                blocks.push({
-                  type: 'content',
-                  content: text,
-                  status: 'loading',
-                  timestamp: Date.now()
-                })
-              }
+          if (lastBlock && lastBlock.type === 'content') {
+            lastBlock.content += content
+          } else {
+            if (lastBlock) {
+              lastBlock.status = 'success'
             }
-
-            // 添加思考内容作为 artifact-thinking 类型
-            blocks.push({
-              type: 'artifact-thinking',
-              content: match[1].trim(),
+            state.message.content.push({
+              type: 'content',
+              content: content,
               status: 'loading',
               timestamp: Date.now()
             })
-
-            lastIndex = match.index + match[0].length
-          }
-
-          // 处理所有的 antArtifact 标签
-          while ((match = artifactRegex.exec(content)) !== null) {
-            // 添加 artifact 前的普通内容
-            if (match.index > lastIndex) {
-              const text = content.substring(lastIndex, match.index).trim()
-              if (text) {
-                blocks.push({
-                  type: 'content',
-                  content: text,
-                  status: 'loading',
-                  timestamp: Date.now()
-                })
-              }
-            }
-
-            // 添加 artifact 内容
-            const artifactType = match[2] as
-              | 'application/vnd.ant.code'
-              | 'text/markdown'
-              | 'text/html'
-              | 'image/svg+xml'
-              | 'application/vnd.ant.mermaid'
-              | 'application/vnd.ant.react'
-            blocks.push({
-              type: 'artifact',
-              content: match[5].trim(),
-              status: 'loading',
-              timestamp: Date.now(),
-              artifact: {
-                identifier: match[1],
-                type: artifactType,
-                title: match[3],
-                language: match[4]
-              }
-            })
-
-            lastIndex = match.index + match[0].length
-          }
-
-          // 添加剩余的普通内容
-          if (lastIndex < content.length) {
-            const text = content.substring(lastIndex).trim()
-            if (text) {
-              blocks.push({
-                type: 'content',
-                content: text,
-                status: 'loading',
-                timestamp: Date.now()
-              })
-            }
-          }
-
-          // 更新消息内容
-          if (blocks.length > 0) {
-            state.message.content = blocks
           }
         }
-
         if (reasoning_content) {
-          // 如果有 reasoning_content，直接添加为新的 artifact-thinking block
-          state.message.content.push({
-            type: 'artifact-thinking',
-            content: reasoning_content,
-            status: 'loading',
-            timestamp: Date.now()
-          })
+          if (lastBlock && lastBlock.type === 'reasoning_content') {
+            lastBlock.content += reasoning_content
+          } else {
+            if (lastBlock) {
+              lastBlock.status = 'success'
+            }
+            state.message.content.push({
+              type: 'reasoning_content',
+              content: reasoning_content,
+              status: 'loading',
+              timestamp: Date.now()
+            })
+          }
         }
       }
     })
