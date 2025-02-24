@@ -598,6 +598,7 @@ export const useChatStore = defineStore('chat', () => {
       if (conversation) {
         chatConfig.value = { ...conversation.settings }
       }
+      console.log('loadChatConfig', chatConfig.value)
     } catch (error) {
       console.error('加载对话配置失败:', error)
       throw error

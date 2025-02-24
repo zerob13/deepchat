@@ -332,7 +332,7 @@ export class ThreadPresenter implements IThreadPresenter {
   ): Promise<void> {
     const conversation = await this.getConversation(conversationId)
     const mergedSettings = { ...conversation.settings, ...settings }
-
+    console.log('updateConversationSettings', mergedSettings)
     // 检查是否有 modelId 的变化
     if (settings.modelId && settings.modelId !== conversation.settings.modelId) {
       console.log('check model default config')

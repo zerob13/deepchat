@@ -122,6 +122,9 @@
       "responseLength": {
         "label": "応答の長さ",
         "description": "AIの応答の最大長を設定します"
+      },
+      "artifacts": {
+        "description": "Artifacts機能を有効にすると、AIはより豊かなコンテンツを生成できます"
       }
     },
     "provider": {

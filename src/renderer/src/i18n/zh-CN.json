@@ -124,6 +124,9 @@
       "responseLength": {
         "label": "返回文本长度",
         "description": "设置AI响应的最大长度"
+      },
+      "artifacts": {
+        "description": "启用 Artifacts 功能可以让 AI 生成更丰富的内容"
       }
     },
     "provider": {

@@ -122,6 +122,9 @@
       "responseLength": {
         "label": "返回文本長度",
         "description": "設置AI響應的最大長度"
+      },
+      "artifacts": {
+        "description": "啟用Artifacts功能允許AI生成更豐富的內容"
       }
     },
     "provider": {

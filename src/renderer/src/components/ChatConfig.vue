@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Icon } from '@iconify/vue'
 import { Textarea } from '@/components/ui/textarea'
-// import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useChatStore } from '@/stores/chat'
 
@@ -60,6 +60,21 @@ watch(
   },
   { deep: true }
 )
+
+const artifactsEnable = computed({
+  get() {
+    return chatStore.chatConfig.artifacts === 1
+  },
+  set(nv: boolean) {
+    chatStore.chatConfig.artifacts = nv ? 1 : 0
+  }
+})
+
+const toggleArtifacts = async (nv: boolean) => {
+  console.log('toggleArtifacts', nv)
+  artifactsEnable.value = !artifactsEnable.value
+  console.log('toggleArtifacts', chatStore.chatConfig.artifacts)
+}
 </script>
 
 <template>
@@ -159,6 +174,29 @@ watch(
           }}</span>
         </div>
         <Slider v-model="maxTokensValue" :min="1024" :max="8192" :step="128" />
+      </div>
+      <!-- Artifacts Toggle -->
+      <div class="space-y-2 px-2">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <Label for="artifacts-mode">Artifacts</Label>
+            <Switch
+              id="artifacts-mode"
+              v-model:checked="artifactsEnable"
+              @update:model-value="toggleArtifacts"
+            />
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <Icon icon="lucide:help-circle" class="w-4 h-4 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{{ t('settings.model.artifacts.description') }}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        </div>
       </div>
     </div>
   </div>

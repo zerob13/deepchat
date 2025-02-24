@@ -214,6 +214,7 @@ export type CONVERSATION_SETTINGS = {
   maxTokens: number
   providerId: string
   modelId: string
+  artifacts: 0 | 1
 }
 
 export type CONVERSATION = {
@@ -223,6 +224,7 @@ export type CONVERSATION = {
   createdAt: number
   updatedAt: number
   is_new?: number
+  artifacts?: number
 }
 
 export interface IThreadPresenter {
