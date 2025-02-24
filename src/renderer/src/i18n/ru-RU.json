@@ -198,6 +198,14 @@
   "about": {
     "title": "DeepChat",
     "description": "DeepChat - это кросс-платформенный AI клиент. Мы стремимся сделать AI доступным для большего числа людей.",
-    "website": "deepchat.thinkinai.xyz"
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "Информация о устройстве",
+      "platform": "Платформа",
+      "arch": "Архитектура",
+      "cpuModel": "Модель процессора",
+      "totalMemory": "Общий объем памяти",
+      "osVersion": "Версия операционной системы"
+    }
   }
 }

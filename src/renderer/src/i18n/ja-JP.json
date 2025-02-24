@@ -197,7 +197,15 @@
   },
   "about": {
     "title": "DeepChat",
-    "description": "DeepChatはマルチプラットフォーム対応のAIクライアントです。より多くの人々にAIの利便性を提供することを目指しています。",
-    "website": "deepchat.thinkinai.xyz"
+    "description": "DeepChatはクロスプラットフォームのAIクライアントで、より多くの人々にAIを利用可能にすることを目指しています。",
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "デバイス情報",
+      "platform": "プラットフォーム",
+      "arch": "アーキテクチャ",
+      "cpuModel": "CPUモデル",
+      "totalMemory": "総メモリ",
+      "osVersion": "OSバージョン"
+    }
   }
 }

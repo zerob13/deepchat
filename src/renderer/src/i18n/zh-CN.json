@@ -200,6 +200,14 @@
   "about": {
     "title": "DeepChat",
     "description": "DeepChat 是一个支持多平台的 AI 客户端，我们致力于让更多人能享受到 AI 带来的便利。",
-    "website": "deepchat.thinkinai.xyz"
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "设备信息",
+      "platform": "平台",
+      "arch": "架构",
+      "cpuModel": "CPU型号",
+      "totalMemory": "总内存",
+      "osVersion": "操作系统版本"
+    }
   }
 }
