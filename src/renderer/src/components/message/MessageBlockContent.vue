@@ -7,7 +7,7 @@
         :id="id"
         class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
         @click="handleCopyClick"
-        v-html="renderMarkdown(part.content)"
+        v-html="renderContent(part.content)"
       ></div>
       <ArtifactThinking
         v-else-if="part.type === 'thinking'"
@@ -34,7 +34,11 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import MarkdownIt from 'markdown-it'
+import {
+  createCodeBlockRenderer,
+  renderMarkdown
+  // enableDebugRendering
+} from '@/lib/markdown.helper'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -65,13 +69,11 @@ import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
 import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
 import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
-import { AssistantMessageBlock } from '@shared/chat'
-
-const props = defineProps<{
-  block: AssistantMessageBlock
-}>()
+// import mk from '@vscode/markdown-it-katex'
+// import 'katex/dist/katex.min.css'
 
 const id = ref(`editor-${uuidv4()}`)
+
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
 const messageBlock = ref<HTMLDivElement>()
 
@@ -103,45 +105,10 @@ const refreshLoadingCursor = () => {
   }
 }
 
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  breaks: true
-})
-
-// 禁用默认的代码高亮
-md.options.highlight = null
-
-// 自定义段落渲染规则
-md.renderer.rules.paragraph_open = () => ''
-md.renderer.rules.paragraph_close = () => ''
-
-// Custom code block rendering
-md.renderer.rules.fence = (tokens, idx) => {
-  const token = tokens[idx]
-  const info = token.info ? token.info.trim() : ''
-  const str = token.content
-
-  const encodedCode = btoa(unescape(encodeURIComponent(str)))
-  const language = info || 'text'
-  const uniqueId = `editor-${Math.random().toString(36).substr(2, 9)}`
-
-  return `<div class="code-block" data-code="${encodedCode}" data-lang="${language}" id="${uniqueId}">
-    <div class="code-header">
-      <span class="code-lang">${language.toUpperCase()}</span>
-      <button class="copy-button" data-code="${encodedCode}">${t('common.copyCode')}</button>
-    </div>
-    <div class="code-editor"></div>
-  </div>`
-}
-
-const renderMarkdown = (content: string) => {
-  refreshLoadingCursor()
-  return md.render(
-    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
-  )
-}
+// Remove all the markdown-it configuration and setup
+// Instead, just configure the code block renderer
+createCodeBlockRenderer(t)
+// enableDebugRendering() // Optional, remove if debug logging is not needed
 
 const processedContent = computed<ProcessedPart[]>(() => {
   if (!props.block.content) return [{ type: 'text', content: '' }]
@@ -409,6 +376,18 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
+const props = defineProps<{
+  block: {
+    content: string
+    status?: 'loading'
+  }
+}>()
+const renderContent = (content: string) => {
+  refreshLoadingCursor()
+  return renderMarkdown(
+    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
+  )
+}
 // 添加 watch 来监听内容变化
 watch(
   processedContent,
@@ -427,6 +406,21 @@ watch(
 <style>
 .prose {
   @apply leading-7;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 添加行内公式样式 */
+.prose .math-inline {
+  @apply inline-block;
+  white-space: nowrap;
+}
+
+/* 确保块级公式正确显示 */
+.prose .math-block {
+  @apply block my-4;
 }
 
 .prose pre {
@@ -475,5 +469,17 @@ watch(
 
 .prose hr + p {
   @apply mt-4;
+}
+
+/* MathJax 容器样式 */
+.prose mjx-container:not([display='true']) {
+  display: inline-block !important;
+  margin: 0 !important;
+  vertical-align: middle !important;
+}
+
+.prose mjx-container[display='true'] {
+  @apply block my-4;
+  text-align: center;
 }
 </style>
