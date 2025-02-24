@@ -14,7 +14,8 @@ const md = new MarkdownIt({
 const mathInline = (state: any, silent: boolean) => {
   const delimiters: [string, string, boolean][] = [
     ['\\(', '\\)', true],
-    ['\\[', '\\]', false]
+    ['\\[', '\\]', false],
+    ['$$', '$$', true]
   ]
 
   for (const [open, close, isInline] of delimiters) {
@@ -27,7 +28,7 @@ const mathInline = (state: any, silent: boolean) => {
     if (!silent) {
       const token = state.push(isInline ? 'math_inline' : 'math_block', 'math', 0)
       token.content = state.src.slice(start + open.length, end)
-      token.markup = isInline ? '\\(\\)' : '\\[\\]'
+      token.markup = isInline ? '\\(\\)' : open === '$$' ? '$$' : '\\[\\]'
     }
 
     state.pos = end + close.length
