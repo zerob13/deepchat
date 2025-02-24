@@ -577,6 +577,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
       generatingMessagesCache.value.delete(msg.eventId)
+      generatingThreadIds.value.delete(cached.threadId)
     }
   }
 
