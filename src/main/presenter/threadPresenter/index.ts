@@ -20,7 +20,7 @@ import {
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
-import { ARTIFACTS_PROMPT } from '../llmProviderPresenter/artifacts/systemPrompt'
+import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -98,6 +98,7 @@ export class ThreadPresenter implements IThreadPresenter {
 
     eventBus.on('stream-response', async (msg) => {
       const { eventId, content, reasoning_content } = msg
+      console.log('stream-response', content, reasoning_content)
       const state = this.generatingMessages.get(eventId)
       if (state) {
         // 记录第一个token的时间
@@ -854,14 +855,23 @@ export class ThreadPresenter implements IThreadPresenter {
       // 添加系统提示语
       if (systemPrompt) {
         if (artifacts === 1) {
+          const artifactsPrompt = await getArtifactsPrompt()
           formattedMessages.push({
             role: 'system',
-            content: `${systemPrompt}\n\n${ARTIFACTS_PROMPT}`
+            content: `${systemPrompt}\n\n${artifactsPrompt}`
           })
         } else {
           formattedMessages.push({
             role: 'system',
             content: systemPrompt
+          })
+        }
+      } else {
+        if (artifacts === 1) {
+          const artifactsPrompt = await getArtifactsPrompt()
+          formattedMessages.push({
+            role: 'system',
+            content: `${artifactsPrompt}`
           })
         }
       }
