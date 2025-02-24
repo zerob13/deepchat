@@ -415,7 +415,8 @@ export class SQLitePresenter implements ISQLitePresenter {
           contextLength: row.contextLength,
           maxTokens: row.maxTokens,
           providerId: row.providerId,
-          modelId: row.modelId
+          modelId: row.modelId,
+          artifacts: row.artifacts as 0 | 1
         }
       }))
     }

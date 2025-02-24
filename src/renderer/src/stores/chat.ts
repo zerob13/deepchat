@@ -198,7 +198,8 @@ export const useChatStore = defineStore('chat', () => {
     contextLength: 32000,
     maxTokens: 8000,
     providerId: '',
-    modelId: ''
+    modelId: '',
+    artifacts: 0
   })
 
   // Getters

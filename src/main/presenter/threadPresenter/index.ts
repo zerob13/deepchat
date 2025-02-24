@@ -20,6 +20,7 @@ import {
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
+import { ARTIFACTS_PROMPT } from '../llmProviderPresenter/artifacts/systemPrompt'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -27,7 +28,8 @@ const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   contextLength: 1000,
   maxTokens: 2000,
   providerId: 'openai',
-  modelId: 'gpt-4'
+  modelId: 'gpt-4',
+  artifacts: 0
 }
 
 interface GeneratingMessageState {
@@ -117,23 +119,102 @@ export class ThreadPresenter implements IThreadPresenter {
           state.lastReasoningTime = Date.now()
         }
 
-        const lastBlock = state.message.content[state.message.content.length - 1]
+        // 解析 antThinking 和 antArtifact 标签
+        const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
+        const artifactRegex =
+          /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
+
+        let match
+        let lastIndex = 0
+        const blocks: AssistantMessageBlock[] = []
+
         if (content) {
-          if (lastBlock && lastBlock.type === 'content') {
-            lastBlock.content += content
-          } else {
-            if (lastBlock) {
-              lastBlock.status = 'success'
+          // 处理所有的 antThinking 标签
+          while ((match = thinkingRegex.exec(content)) !== null) {
+            // 添加思考前的普通内容
+            if (match.index > lastIndex) {
+              const text = content.substring(lastIndex, match.index).trim()
+              if (text) {
+                blocks.push({
+                  type: 'content',
+                  content: text,
+                  status: 'loading',
+                  timestamp: Date.now()
+                })
+              }
             }
-            state.message.content.push({
-              type: 'content',
-              content: content,
+
+            // 添加思考内容
+            blocks.push({
+              type: 'reasoning_content',
+              content: match[1].trim(),
               status: 'loading',
               timestamp: Date.now()
             })
+
+            lastIndex = match.index + match[0].length
+          }
+
+          // 处理所有的 antArtifact 标签
+          while ((match = artifactRegex.exec(content)) !== null) {
+            // 添加 artifact 前的普通内容
+            if (match.index > lastIndex) {
+              const text = content.substring(lastIndex, match.index).trim()
+              if (text) {
+                blocks.push({
+                  type: 'content',
+                  content: text,
+                  status: 'loading',
+                  timestamp: Date.now()
+                })
+              }
+            }
+
+            // 添加 artifact 内容
+            const artifactType = match[2] as
+              | 'application/vnd.ant.code'
+              | 'text/markdown'
+              | 'text/html'
+              | 'image/svg+xml'
+              | 'application/vnd.ant.mermaid'
+              | 'application/vnd.ant.react'
+            blocks.push({
+              type: 'artifact',
+              content: match[5].trim(),
+              status: 'loading',
+              timestamp: Date.now(),
+              artifact: {
+                identifier: match[1],
+                type: artifactType,
+                title: match[3],
+                language: match[4]
+              }
+            })
+
+            lastIndex = match.index + match[0].length
+          }
+
+          // 添加剩余的普通内容
+          if (lastIndex < content.length) {
+            const text = content.substring(lastIndex).trim()
+            if (text) {
+              blocks.push({
+                type: 'content',
+                content: text,
+                status: 'loading',
+                timestamp: Date.now()
+              })
+            }
+          }
+
+          // 更新消息内容
+          if (blocks.length > 0) {
+            state.message.content = blocks
           }
         }
+
         if (reasoning_content) {
+          const lastBlock = state.message.content[state.message.content.length - 1]
           if (lastBlock && lastBlock.type === 'reasoning_content') {
             lastBlock.content += reasoning_content
           } else {
@@ -687,7 +768,7 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     const conversation = await this.getConversation(conversationId)
-    const { systemPrompt, providerId, modelId, temperature, contextLength, maxTokens } =
+    const { systemPrompt, providerId, modelId, temperature, contextLength, maxTokens, artifacts } =
       conversation.settings
 
     let contextMessages: Message[] = []
@@ -772,10 +853,17 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 添加系统提示语
       if (systemPrompt) {
-        formattedMessages.push({
-          role: 'system',
-          content: systemPrompt
-        })
+        if (artifacts === 1) {
+          formattedMessages.push({
+            role: 'system',
+            content: `${systemPrompt}\n\n${ARTIFACTS_PROMPT}`
+          })
+        } else {
+          formattedMessages.push({
+            role: 'system',
+            content: systemPrompt
+          })
+        }
       }
 
       // 添加上下文消息

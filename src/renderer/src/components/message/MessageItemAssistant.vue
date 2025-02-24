@@ -25,6 +25,7 @@
           />
           <MessageBlockSearch v-else-if="block.type === 'search'" :block="block" />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
+          <ArtifactBlock v-else-if="block.type === 'artifact'" :block="block" />
         </div>
       </div>
       <MessageToolbar
@@ -50,6 +51,7 @@ import MessageBlockContent from './MessageBlockContent.vue'
 import MessageBlockThink from './MessageBlockThink.vue'
 import MessageBlockSearch from './MessageBlockSearch.vue'
 import MessageBlockError from './MessageBlockError.vue'
+import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
 import MessageToolbar from './MessageToolbar.vue'
 import MessageInfo from './MessageInfo.vue'
 import { useChatStore } from '@/stores/chat'
