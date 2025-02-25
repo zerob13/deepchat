@@ -60,11 +60,11 @@ import { useSettingsStore } from '@/stores/settings'
 import { useRoute, useRouter } from 'vue-router'
 import ModelProviderSettingsDetail from './ModelProviderSettingsDetail.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
-import { Switch } from '@/components/ui/switch'
 import { Icon } from '@iconify/vue'
 import AddCustomProviderDialog from './AddCustomProviderDialog.vue'
 import { useI18n } from 'vue-i18n'
 import type { LLM_PROVIDER } from '@shared/presenter'
+import { Switch } from '@/components/ui/switch'
 
 const route = useRoute()
 const router = useRouter()
