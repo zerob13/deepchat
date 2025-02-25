@@ -34,13 +34,6 @@
         <Icon icon="lucide:plus" class="w-4 h-4 text-muted-foreground" />
         <span class="text-sm font-medium">{{ t('settings.provider.addCustomProvider') }}</span>
       </div>
-      <div
-        class="flex flex-row items-center gap-2 rounded-lg p-2 cursor-pointer hover:bg-accent"
-        @click="openAddProviderDialog"
-      >
-        <Icon icon="lucide:plus" class="w-4 h-4 text-muted-foreground" />
-        <span class="text-sm font-medium">{{ t('settings.provider.addCustomProvider') }}</span>
-      </div>
     </div>
     <ModelProviderSettingsDetail
       v-if="activeProvider"
