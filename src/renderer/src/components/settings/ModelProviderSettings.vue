@@ -14,7 +14,12 @@
           :model-id="provider.id"
           :custom-class="'w-4 h-4 text-muted-foreground'"
         ></ModelIcon>
-        <span class="text-sm font-medium">{{ provider.name }}</span>
+        <span class="text-sm font-medium flex-1">{{ provider.name }}</span>
+        <Switch
+          :checked="provider.enable"
+          @click.stop="toggleProviderStatus(provider)"
+          class="h-4 w-7"
+        />
       </div>
     </div>
     <ModelProviderSettingsDetail
@@ -31,10 +36,13 @@ import { useSettingsStore } from '@/stores/settings'
 import { useRoute, useRouter } from 'vue-router'
 import ModelProviderSettingsDetail from './ModelProviderSettingsDetail.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
+import { Switch } from '@/components/ui/switch'
+
 const route = useRoute()
 const router = useRouter()
 
-const { providers } = useSettingsStore()
+const settingsStore = useSettingsStore()
+const { providers } = settingsStore
 
 const setActiveProvider = (providerId: string) => {
   router.push({
@@ -44,6 +52,11 @@ const setActiveProvider = (providerId: string) => {
     }
   })
 }
+
+const toggleProviderStatus = async (provider) => {
+  await settingsStore.updateProviderStatus(provider.id, !provider.enable)
+}
+
 const activeProvider = computed(() => {
   return providers.find((p) => p.id === route.params.providerId)
 })
