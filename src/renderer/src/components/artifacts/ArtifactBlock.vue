@@ -31,7 +31,6 @@ import MarkdownArtifact from './MarkdownArtifact.vue'
 import HTMLArtifact from './HTMLArtifact.vue'
 import SvgArtifact from './SvgArtifact.vue'
 import MermaidArtifact from './MermaidArtifact.vue'
-// import ReactArtifact from './ReactArtifact.vue'
 
 const props = defineProps<{
   block: AssistantMessageBlock
@@ -50,8 +49,6 @@ const artifactComponent = computed(() => {
       return SvgArtifact
     case 'application/vnd.ant.mermaid':
       return MermaidArtifact
-    case 'application/vnd.ant.react':
-      return CodeArtifact
     default:
       return null
   }
@@ -69,8 +66,6 @@ const artifactClass = computed(() => {
     case 'image/svg+xml':
       return ''
     case 'application/vnd.ant.mermaid':
-      return ''
-    case 'application/vnd.ant.react':
       return ''
     default:
       return ''

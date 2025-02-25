@@ -94,7 +94,6 @@ interface ProcessedPart {
       | 'text/html'
       | 'image/svg+xml'
       | 'application/vnd.ant.mermaid'
-      | 'application/vnd.ant.react'
     language?: string
   }
 }
@@ -170,8 +169,7 @@ const processedContent = computed<ProcessedPart[]>(() => {
           | 'text/markdown'
           | 'text/html'
           | 'image/svg+xml'
-          | 'application/vnd.ant.mermaid'
-          | 'application/vnd.ant.react',
+          | 'application/vnd.ant.mermaid',
         title: match[3],
         language: match[4]
       }
