@@ -28,8 +28,9 @@ const iframeRef = ref<HTMLIFrameElement>()
 const sanitizedContent = computed(() => {
   if (!props.block.content) return ''
   return DOMPurify.sanitize(props.block.content, {
-    ADD_TAGS: ['script'],
-    ADD_ATTR: ['src'],
+    WHOLE_DOCUMENT: true,
+    ADD_TAGS: ['script', 'style'],
+    ADD_ATTR: ['src', 'style'],
     ALLOWED_URI_REGEXP:
       /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
   })
@@ -44,6 +45,28 @@ onMounted(() => {
       if (height) {
         iframe.style.height = `${height}px`
       }
+      const resetCSS = `
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html, body {
+        height: 100%;
+        font-family: Arial, sans-serif;
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+      a {
+        text-decoration: none;
+        color: inherit;
+      }
+    `
+      const styleElement = document.createElement('style')
+      styleElement.textContent = resetCSS
+      iframeRef.value?.contentDocument?.head.appendChild(styleElement)
     }
   }
 })
