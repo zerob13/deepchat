@@ -72,6 +72,14 @@ import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
 // import mk from '@vscode/markdown-it-katex'
 // import 'katex/dist/katex.min.css'
 
+const props = defineProps<{
+  block: {
+    content: string
+    status?: 'loading' | 'success' | 'error'
+    timestamp: number
+  }
+}>()
+
 const id = ref(`editor-${uuidv4()}`)
 
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
@@ -111,6 +119,14 @@ createCodeBlockRenderer(t)
 
 const processedContent = computed<ProcessedPart[]>(() => {
   if (!props.block.content) return [{ type: 'text', content: '' }]
+  if (props.block.status === 'loading') {
+    return [
+      {
+        type: 'text',
+        content: props.block.content
+      }
+    ]
+  }
 
   const parts: ProcessedPart[] = []
   let content = props.block.content
@@ -374,12 +390,6 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
-const props = defineProps<{
-  block: {
-    content: string
-    status?: 'loading'
-  }
-}>()
 const renderContent = (content: string) => {
   refreshLoadingCursor()
   return renderMarkdown(
