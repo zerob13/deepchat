@@ -38,7 +38,8 @@
       "deepThinking": "深い思考",
       "webSearch": "ウェブ検索",
       "deepThinkingProgress": "深い思考中...",
-      "thinkingDuration": "({0}秒かかりました)"
+      "thinkingDuration": "({0}秒かかりました)",
+      "artifactThinking": "アーティファクト思考"
     },
     "search": {
       "results": "{0}件のウェブページが見つかりました",
@@ -124,6 +125,9 @@
       "responseLength": {
         "label": "応答の長さ",
         "description": "AIの応答の最大長を設定します"
+      },
+      "artifacts": {
+        "description": "Artifacts機能を有効にすると、AIはより豊かなコンテンツを生成できます"
       }
     },
     "provider": {

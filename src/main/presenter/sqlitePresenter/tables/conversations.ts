@@ -42,10 +42,17 @@ export class ConversationsTable extends BaseTable {
         UPDATE conversations SET is_new = 0;
       `
     }
+    if (version === 2) {
+      return `
+        -- 添加 artifacts 开关
+        ALTER TABLE conversations ADD COLUMN artifacts INTEGER DEFAULT 0;
+        UPDATE conversations SET artifacts = 0;
+      `
+    }
     return null
   }
 
   getLatestVersion(): number {
-    return 1
+    return 2
   }
 }

@@ -134,9 +134,10 @@ const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next') => 
     window.api.copyText(
       currentContent.value
         .map((block) => {
-          return block.type === 'reasoning_content'
-            ? `<think>${block.content}</think>`
-            : block.content
+          if (block.type === 'reasoning_content' || block.type === 'artifact-thinking') {
+            return `<think>${block.content}</think>`
+          }
+          return block.content
         })
         .join('\n')
     )

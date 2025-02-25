@@ -1,4 +1,4 @@
-import { BrowserWindow, shell, app } from 'electron'
+import { BrowserWindow, shell, app, nativeImage } from 'electron'
 import { join } from 'path'
 import icon from '../../../resources/icon.png?asset'
 import iconWin from '../../../resources/icon.ico?asset'
@@ -60,12 +60,13 @@ export class WindowPresenter implements IWindowPresenter {
   }
 
   createMainWindow(): BrowserWindow {
+    const iconFile = nativeImage.createFromPath(process.platform === 'win32' ? iconWin : icon)
     const mainWindow = new BrowserWindow({
       width: 1024,
       height: 620,
       show: false,
       autoHideMenuBar: true,
-      icon: process.platform === 'win32' ? iconWin : icon,
+      icon: iconFile,
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: {
         x: 8,

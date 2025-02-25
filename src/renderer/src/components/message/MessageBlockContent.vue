@@ -1,12 +1,32 @@
 <!-- eslint-disable vue/no-v-html -->
 <template>
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
-    <div
-      :id="id"
-      class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
-      @click="handleCopyClick"
-      v-html="renderedContent"
-    ></div>
+    <template v-for="(part, index) in processedContent" :key="index">
+      <div
+        v-if="part.type === 'text'"
+        :id="id"
+        class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
+        @click="handleCopyClick"
+        v-html="renderContent(part.content)"
+      ></div>
+      <ArtifactThinking
+        v-else-if="part.type === 'thinking'"
+        :block="{
+          content: part.content
+        }"
+      />
+      <ArtifactBlock
+        class="max-h-[500px] overflow-auto"
+        v-else-if="part.type === 'artifact' && part.artifact"
+        :block="{
+          type: 'artifact',
+          content: part.content,
+          status: block.status as 'success' | 'loading' | 'cancel' | 'error' | 'reading',
+          timestamp: block.timestamp,
+          artifact: part.artifact
+        }"
+      />
+    </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
     <ReferencePreview :show="showPreview" :content="previewContent" :rect="previewRect" />
   </div>
@@ -42,27 +62,38 @@ import { lua } from '@codemirror/legacy-modes/mode/lua'
 import { haskell } from '@codemirror/legacy-modes/mode/haskell'
 import { erlang } from '@codemirror/legacy-modes/mode/erlang'
 import { clojure } from '@codemirror/legacy-modes/mode/clojure'
-
 import { StreamLanguage } from '@codemirror/language'
 import { php } from '@codemirror/lang-php'
 import { yaml } from '@codemirror/lang-yaml'
-
 import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
+
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
 import ReferencePreview from './ReferencePreview.vue'
-// import mk from '@vscode/markdown-it-katex'
-// import 'katex/dist/katex.min.css'
 
 const threadPresenter = usePresenter('threadPresenter')
 const searchResults = ref<SearchResult[]>([])
 
+import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
+import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
+
+const props = defineProps<{
+  block: {
+    content: string
+    status?: 'loading' | 'success' | 'error'
+    timestamp: number
+  },
+  messageId: string
+  isSearchResult?: boolean
+}>()
+
 const id = ref(`editor-${uuidv4()}`)
 
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
+const messageBlock = ref<HTMLDivElement>()
 
 const previewContent = ref<SearchResult | undefined>()
 const showPreview = ref(false)
@@ -97,7 +128,21 @@ const editorInstances = ref<Map<string, EditorView>>(new Map())
 
 const { t } = useI18n()
 
-const messageBlock = ref<HTMLDivElement>()
+interface ProcessedPart {
+  type: 'text' | 'thinking' | 'artifact'
+  content: string
+  artifact?: {
+    identifier: string
+    title: string
+    type:
+      | 'application/vnd.ant.code'
+      | 'text/markdown'
+      | 'text/html'
+      | 'image/svg+xml'
+      | 'application/vnd.ant.mermaid'
+    language?: string
+  }
+}
 
 const refreshLoadingCursor = () => {
   if (messageBlock.value) {
@@ -113,6 +158,107 @@ initReference({
 // Instead, just configure the code block renderer
 createCodeBlockRenderer(t)
 // enableDebugRendering() // Optional, remove if debug logging is not needed
+
+const processedContent = computed<ProcessedPart[]>(() => {
+  if (!props.block.content) return [{ type: 'text', content: '' }]
+  if (props.block.status === 'loading') {
+    return [
+      {
+        type: 'text',
+        content: props.block.content
+      }
+    ]
+  }
+
+  const parts: ProcessedPart[] = []
+  let content = props.block.content
+  let lastIndex = 0
+
+  // 处理 antThinking 标签
+  const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
+  let match
+  while ((match = thinkingRegex.exec(content)) !== null) {
+    // 添加思考前的普通文本
+    if (match.index > lastIndex) {
+      const text = content.substring(lastIndex, match.index)
+      if (text.trim()) {
+        parts.push({
+          type: 'text',
+          content: text
+        })
+      }
+    }
+
+    // 添加思考内容
+    parts.push({
+      type: 'thinking',
+      content: match[1].trim()
+    })
+
+    lastIndex = match.index + match[0].length
+  }
+
+  // 处理 antArtifact 标签
+  const artifactRegex =
+    /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
+  content = props.block.content
+  lastIndex = 0
+
+  while ((match = artifactRegex.exec(content)) !== null) {
+    // 添加 artifact 前的普通文本
+    if (match.index > lastIndex) {
+      const text = content.substring(lastIndex, match.index)
+      if (text.trim()) {
+        parts.push({
+          type: 'text',
+          content: text
+        })
+      }
+    }
+
+    // 添加 artifact 内容
+    parts.push({
+      type: 'artifact',
+      content: match[5].trim(),
+      artifact: {
+        identifier: match[1],
+        type: match[2] as
+          | 'application/vnd.ant.code'
+          | 'text/markdown'
+          | 'text/html'
+          | 'image/svg+xml'
+          | 'application/vnd.ant.mermaid',
+        title: match[3],
+        language: match[4]
+      }
+    })
+
+    lastIndex = match.index + match[0].length
+  }
+
+  // 添加剩余的普通文本
+  if (lastIndex < content.length) {
+    const text = content.substring(lastIndex)
+    if (text.trim()) {
+      parts.push({
+        type: 'text',
+        content: text
+      })
+    }
+  }
+
+  // 如果没有任何特殊标签，返回原始内容
+  if (parts.length === 0) {
+    return [
+      {
+        type: 'text',
+        content: content
+      }
+    ]
+  }
+
+  return parts
+})
 
 // Initialize code editors
 const initCodeEditors = () => {
@@ -286,14 +432,7 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
-const props = defineProps<{
-  block: {
-    content: string
-    status?: 'loading'
-  }
-  messageId: string
-  isSearchResult?: boolean
-}>()
+
 
 const renderedContent = computed(() => {
   const content = props.block.content
@@ -301,11 +440,10 @@ const renderedContent = computed(() => {
   return renderMarkdown(
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
-})
-
+}
 // 添加 watch 来监听内容变化
 watch(
-  renderedContent,
+  processedContent,
   () => {
     nextTick(() => {
       // 清理现有的编辑器实例

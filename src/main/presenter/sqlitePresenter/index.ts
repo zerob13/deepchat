@@ -25,6 +25,7 @@ type ConversationRow = {
   maxTokens: number
   providerId: string
   modelId: string
+  artifacts: number
 }
 
 export class SQLitePresenter implements ISQLitePresenter {
@@ -129,7 +130,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     const updateStmt = this.db.prepare(
       `
     UPDATE conversations
-    SET title = ?
+    SET title = ?, is_new = 0
     WHERE conv_id = ?
     `
     )
@@ -270,7 +271,8 @@ export class SQLitePresenter implements ISQLitePresenter {
         max_tokens as maxTokens,
         provider_id as providerId,
         model_id as modelId,
-        is_new
+        is_new,
+        artifacts
       FROM conversations
       WHERE conv_id = ?
     `
@@ -293,7 +295,8 @@ export class SQLitePresenter implements ISQLitePresenter {
         contextLength: result.contextLength,
         maxTokens: result.maxTokens,
         providerId: result.providerId,
-        modelId: result.modelId
+        modelId: result.modelId,
+        artifacts: result.artifacts as 0 | 1
       }
     }
   }
@@ -340,6 +343,10 @@ export class SQLitePresenter implements ISQLitePresenter {
       if (data.settings.modelId !== undefined) {
         updates.push('model_id = ?')
         params.push(data.settings.modelId)
+      }
+      if (data.settings.artifacts !== undefined) {
+        updates.push('artifacts = ?')
+        params.push(data.settings.artifacts)
       }
     }
 
@@ -408,7 +415,8 @@ export class SQLitePresenter implements ISQLitePresenter {
           contextLength: row.contextLength,
           maxTokens: row.maxTokens,
           providerId: row.providerId,
-          modelId: row.modelId
+          modelId: row.modelId,
+          artifacts: row.artifacts as 0 | 1
         }
       }))
     }

@@ -38,7 +38,8 @@
       "deepThinking": "Глубокое мышление",
       "webSearch": "Поиск в интернете",
       "deepThinkingProgress": "Глубокое мышление...",
-      "thinkingDuration": "(Заняло {0} секунд)"
+      "thinkingDuration": "(Заняло {0} секунд)",
+      "artifactThinking": "Артефакт мышление"
     },
     "search": {
       "results": "Найдено {0} веб-страниц",
@@ -124,6 +125,9 @@
       "responseLength": {
         "label": "Длина ответа",
         "description": "Установите максимальную длину ответа AI"
+      },
+      "artifacts": {
+        "description": "Включение функции артефактов позволяет AI генерировать более богатый контент"
       }
     },
     "provider": {
