@@ -20,6 +20,12 @@
           @click.stop="toggleProviderStatus(provider)"
           class="h-4 w-7"
         />
+        <span class="text-sm font-medium flex-1">{{ provider.name }}</span>
+        <Switch
+          :checked="provider.enable"
+          @click.stop="toggleProviderStatus(provider)"
+          class="h-4 w-7"
+        />
       </div>
       <div
         class="flex flex-row items-center gap-2 rounded-lg p-2 cursor-pointer hover:bg-accent"
@@ -54,7 +60,8 @@ import { Icon } from '@iconify/vue'
 import AddCustomProviderDialog from './AddCustomProviderDialog.vue'
 import { useI18n } from 'vue-i18n'
 import type { LLM_PROVIDER } from '@shared/presenter'
->>>>>>> 370f66f (support custom provider)
+
+import { Switch } from '@/components/ui/switch'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,7 +73,8 @@ const { providers } = settingsStore
 =======
 
 const isAddProviderDialogOpen = ref(false)
->>>>>>> 370f66f (support custom provider)
+const settingsStore = useSettingsStore()
+const { providers } = settingsStore
 
 const setActiveProvider = (providerId: string) => {
   router.push({
@@ -77,13 +85,11 @@ const setActiveProvider = (providerId: string) => {
   })
 }
 
-<<<<<<< HEAD
+
 const toggleProviderStatus = async (provider) => {
   await settingsStore.updateProviderStatus(provider.id, !provider.enable)
 }
 
-=======
->>>>>>> 370f66f (support custom provider)
 const activeProvider = computed(() => {
   return providers.find((p) => p.id === route.params.providerId)
 })
