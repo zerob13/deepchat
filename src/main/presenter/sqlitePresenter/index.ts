@@ -130,7 +130,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     const updateStmt = this.db.prepare(
       `
     UPDATE conversations
-    SET title = ?
+    SET title = ?, is_new = 0
     WHERE conv_id = ?
     `
     )
