@@ -13,7 +13,8 @@
       "renameChatFailed": "Failed to rename chat",
       "deleteChatFailed": "Failed to delete chat",
       "userCanceledGeneration": "User canceled generation",
-      "sessionInterrupted": "Session interrupted, generation not completed"
+      "sessionInterrupted": "Session interrupted, generation not completed",
+      "noModelResponse": "Model did not return any content, please check the response length settings"
     },
     "resetDataConfirmTitle": "Reset All Data?",
     "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone."

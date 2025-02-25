@@ -163,7 +163,24 @@ export class ThreadPresenter implements IThreadPresenter {
         // 计算completion tokens
         let completionTokens = 0
         for (const block of state.message.content) {
-          completionTokens += approximateTokenSize(block.content)
+          if (block.type === 'content' || block.type === 'reasoning_content') {
+            completionTokens += approximateTokenSize(block.content)
+          }
+        }
+
+        // 检查是否有内容块
+        const hasContentBlock = state.message.content.some(
+          (block) => block.type === 'content' || block.type === 'reasoning_content'
+        )
+
+        // 如果没有内容块，添加错误信息
+        if (!hasContentBlock) {
+          state.message.content.push({
+            type: 'error',
+            content: 'common.error.noModelResponse',
+            status: 'error',
+            timestamp: Date.now()
+          })
         }
 
         const totalTokens = state.promptTokens + completionTokens
@@ -828,6 +845,21 @@ export class ThreadPresenter implements IThreadPresenter {
         role: 'user',
         content: searchPrompt || userMessage.content.text
       })
+
+      const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
+      for (let i = 0; i < formattedMessages.length; i++) {
+        const currentMessage = formattedMessages[i]
+        if (
+          mergedMessages.length > 0 &&
+          mergedMessages[mergedMessages.length - 1].role === currentMessage.role
+        ) {
+          mergedMessages[mergedMessages.length - 1].content += `\n${currentMessage.content}`
+        } else {
+          mergedMessages.push({ ...currentMessage })
+        }
+      }
+      formattedMessages.length = 0 // 清空原数组
+      formattedMessages.push(...mergedMessages) // 将合并后的消息推入原数组
 
       // 计算prompt tokens
       let promptTokens = 0

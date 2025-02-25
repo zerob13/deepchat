@@ -13,7 +13,8 @@
       "renameChatFailed": "重命名会话失败",
       "deleteChatFailed": "删除会话失败",
       "userCanceledGeneration": "用户取消了生成",
-      "sessionInterrupted": "会话意外中断，生成未完成"
+      "sessionInterrupted": "会话意外中断，生成未完成",
+      "noModelResponse": "模型未返回任何内容，请检查返回文本长度设置"
     },
     "resetDataConfirmTitle": "确定要重置所有数据吗？",
     "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。"
