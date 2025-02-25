@@ -756,7 +756,6 @@ export class ThreadPresenter implements IThreadPresenter {
         const messages = contextMessages
           .filter((msg) => msg.id !== userMessage?.id) // 排除当前用户消息
           .reverse() // 从新到旧排序
-
         let currentLength = 0
         const selectedMessages: Message[] = []
 
@@ -774,6 +773,8 @@ export class ThreadPresenter implements IThreadPresenter {
         }
 
         contextMessages = selectedMessages
+      } else {
+        contextMessages = []
       }
 
       const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
@@ -801,7 +802,7 @@ export class ThreadPresenter implements IThreadPresenter {
           })
         }
       }
-
+      console.log('contextMessages:', contextMessages)
       // 添加上下文消息
       contextMessages.forEach((msg) => {
         const content =
