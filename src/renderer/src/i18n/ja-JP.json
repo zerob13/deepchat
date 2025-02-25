@@ -43,7 +43,9 @@
     },
     "search": {
       "results": "{0}件のウェブページが見つかりました",
-      "searching": "検索中..."
+      "searching": "検索中...",
+      "title": "検索結果",
+      "description": "{0}件の関連結果が見つかりました"
     }
   },
   "model": {

@@ -28,14 +28,16 @@
       />
     </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
+    <ReferencePreview :show="showPreview" :content="previewContent" :rect="previewRect" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   createCodeBlockRenderer,
+  initReference,
   renderMarkdown
   // enableDebugRendering
 } from '@/lib/markdown.helper'
@@ -67,23 +69,59 @@ import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
+
+import { usePresenter } from '@/composables/usePresenter'
+import { SearchResult } from '@shared/presenter'
+import ReferencePreview from './ReferencePreview.vue'
+
+const threadPresenter = usePresenter('threadPresenter')
+const searchResults = ref<SearchResult[]>([])
+
 import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
 import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
-// import mk from '@vscode/markdown-it-katex'
-// import 'katex/dist/katex.min.css'
 
 const props = defineProps<{
   block: {
     content: string
     status?: 'loading' | 'success' | 'error'
     timestamp: number
-  }
+  },
+  messageId: string
+  isSearchResult?: boolean
 }>()
 
 const id = ref(`editor-${uuidv4()}`)
 
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
 const messageBlock = ref<HTMLDivElement>()
+
+const previewContent = ref<SearchResult | undefined>()
+const showPreview = ref(false)
+const previewRect = ref<DOMRect>()
+
+const onReferenceClick = (id: string) => {
+  const index = parseInt(id) - 1
+  if (searchResults.value && searchResults.value[index]) {
+    // Handle navigation or content display
+    // console.log('Navigate to:', searchResults.value[index])
+    window.open(searchResults.value[index].url, '_blank')
+  }
+}
+
+const onReferenceHover = (id: string, isHover: boolean, rect: DOMRect) => {
+  const index = parseInt(id) - 1
+  // console.log(id, isHover, rect)
+  if (searchResults.value && searchResults.value[index]) {
+    if (isHover) {
+      previewContent.value = searchResults.value[index]
+      previewRect.value = rect
+      showPreview.value = true
+    } else {
+      previewContent.value = undefined
+      showPreview.value = false
+    }
+  }
+}
 
 // Store editor instances for cleanup
 const editorInstances = ref<Map<string, EditorView>>(new Map())
@@ -112,6 +150,10 @@ const refreshLoadingCursor = () => {
   }
 }
 
+initReference({
+  onClick: onReferenceClick,
+  onHover: onReferenceHover
+})
 // Remove all the markdown-it configuration and setup
 // Instead, just configure the code block renderer
 createCodeBlockRenderer(t)
@@ -390,7 +432,10 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
-const renderContent = (content: string) => {
+
+
+const renderedContent = computed(() => {
+  const content = props.block.content
   refreshLoadingCursor()
   return renderMarkdown(
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
@@ -409,6 +454,12 @@ watch(
   },
   { immediate: true }
 )
+
+onMounted(async () => {
+  if (props.isSearchResult) {
+    searchResults.value = await threadPresenter.getSearchResults(props.messageId)
+  }
+})
 </script>
 
 <style>
@@ -489,5 +540,8 @@ watch(
 .prose mjx-container[display='true'] {
   @apply block my-4;
   text-align: center;
+}
+.prose .reference-link {
+  @apply inline-block text-xs text-muted-foreground bg-muted rounded-md text-center min-w-4 py-0.5 mx-0.5 hover:bg-accent;
 }
 </style>

@@ -43,7 +43,9 @@
     },
     "search": {
       "results": "已搜索到{0}個網頁",
-      "searching": "搜索中..."
+      "searching": "搜索中...",
+      "title": "搜索結果",
+      "description": "共找到 {0} 條相關結果"
     }
   },
   "model": {

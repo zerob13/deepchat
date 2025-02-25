@@ -76,6 +76,7 @@
     "katex": "^0.16.21",
     "lucide-vue-next": "^0.474.0",
     "markdown-it": "^14.1.0",
+    "markdown-it-footnote": "^4.0.0",
     "markdown-it-mathjax3": "^4.3.2",
     "markdown-it-texmath": "^1.0.0",
     "marked": "^15.0.7",
