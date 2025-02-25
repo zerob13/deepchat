@@ -85,7 +85,7 @@ const props = defineProps<{
     content: string
     status?: 'loading' | 'success' | 'error'
     timestamp: number
-  },
+  }
   messageId: string
   isSearchResult?: boolean
 }>()
@@ -432,15 +432,13 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
-
-
-const renderedContent = computed(() => {
-  const content = props.block.content
+const renderContent = (content: string) => {
   refreshLoadingCursor()
   return renderMarkdown(
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
 }
+
 // 添加 watch 来监听内容变化
 watch(
   processedContent,
