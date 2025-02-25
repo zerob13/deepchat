@@ -88,13 +88,14 @@ watch(
     }
     // console.log(settingsStore.enabledModels.length)
     if (settingsStore.enabledModels.length > 0) {
-      console.log('????')
       const model = settingsStore.enabledModels[0].models[0]
-      activeModel.value = {
-        name: model.name,
-        id: model.id,
-        providerId: settingsStore.enabledModels[0].providerId,
-        tags: []
+      if (model) {
+        activeModel.value = {
+          name: model.name,
+          id: model.id,
+          providerId: settingsStore.enabledModels[0].providerId,
+          tags: []
+        }
       }
     }
   },

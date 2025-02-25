@@ -38,7 +38,8 @@
       "deepThinking": "深度思考",
       "webSearch": "联网搜索",
       "deepThinkingProgress": "深度思考中...",
-      "thinkingDuration": "（用时 {0} 秒）"
+      "thinkingDuration": "（用时 {0} 秒）",
+      "artifactThinking": "artifact 思考"
     },
     "search": {
       "results": "已搜索到{0}个网页",
@@ -124,6 +125,9 @@
       "responseLength": {
         "label": "返回文本长度",
         "description": "设置AI响应的最大长度"
+      },
+      "artifacts": {
+        "description": "启用 Artifacts 功能可以让 AI 生成更丰富的内容"
       }
     },
     "provider": {

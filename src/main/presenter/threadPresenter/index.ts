@@ -20,6 +20,7 @@ import {
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
+import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -27,7 +28,8 @@ const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   contextLength: 1000,
   maxTokens: 2000,
   providerId: 'openai',
-  modelId: 'gpt-4'
+  modelId: 'gpt-4',
+  artifacts: 0
 }
 
 interface GeneratingMessageState {
@@ -332,7 +334,7 @@ export class ThreadPresenter implements IThreadPresenter {
   ): Promise<void> {
     const conversation = await this.getConversation(conversationId)
     const mergedSettings = { ...conversation.settings, ...settings }
-
+    console.log('updateConversationSettings', mergedSettings)
     // 检查是否有 modelId 的变化
     if (settings.modelId && settings.modelId !== conversation.settings.modelId) {
       console.log('check model default config')
@@ -687,7 +689,7 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     const conversation = await this.getConversation(conversationId)
-    const { systemPrompt, providerId, modelId, temperature, contextLength, maxTokens } =
+    const { systemPrompt, providerId, modelId, temperature, contextLength, maxTokens, artifacts } =
       conversation.settings
 
     let contextMessages: Message[] = []
@@ -772,10 +774,26 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 添加系统提示语
       if (systemPrompt) {
-        formattedMessages.push({
-          role: 'system',
-          content: systemPrompt
-        })
+        if (artifacts === 1) {
+          const artifactsPrompt = await getArtifactsPrompt()
+          formattedMessages.push({
+            role: 'system',
+            content: `${systemPrompt}\n\n${artifactsPrompt}`
+          })
+        } else {
+          formattedMessages.push({
+            role: 'system',
+            content: systemPrompt
+          })
+        }
+      } else {
+        if (artifacts === 1) {
+          const artifactsPrompt = await getArtifactsPrompt()
+          formattedMessages.push({
+            role: 'system',
+            content: `${artifactsPrompt}`
+          })
+        }
       }
 
       // 添加上下文消息

@@ -38,7 +38,8 @@
       "deepThinking": "Deep Thinking",
       "webSearch": "Web Search",
       "deepThinkingProgress": "Deep Thinking in progress...",
-      "thinkingDuration": "(Took {0} seconds)"
+      "thinkingDuration": "(Took {0} seconds)",
+      "artifactThinking": "Artifact Thinking"
     },
     "search": {
       "results": "Found {0} web pages",
@@ -124,6 +125,9 @@
       "responseLength": {
         "label": "Response Length",
         "description": "Set the maximum length of the AI response"
+      },
+      "artifacts": {
+        "description": "Enabling the Artifacts feature allows the AI to generate richer content"
       }
     },
     "provider": {

@@ -1,44 +1,17 @@
-<!-- eslint-disable vue/no-v-html -->
 <template>
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
-    <template v-for="(part, index) in processedContent" :key="index">
-      <div
-        v-if="part.type === 'text'"
-        :id="id"
-        class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
-        @click="handleCopyClick"
-        v-html="renderContent(part.content)"
-      ></div>
-      <ArtifactThinking
-        v-else-if="part.type === 'thinking'"
-        :block="{
-          content: part.content
-        }"
-      />
-      <ArtifactBlock
-        class="max-h-[500px] overflow-auto"
-        v-else-if="part.type === 'artifact' && part.artifact"
-        :block="{
-          type: 'artifact',
-          content: part.content,
-          status: block.status as 'success' | 'loading' | 'cancel' | 'error' | 'reading',
-          timestamp: block.timestamp,
-          artifact: part.artifact
-        }"
-      />
-    </template>
-    <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
+    <div
+      :id="id"
+      class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
+      v-html="renderedContent"
+    ></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, nextTick, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
-import {
-  createCodeBlockRenderer,
-  renderMarkdown
-  // enableDebugRendering
-} from '@/lib/markdown.helper'
+import { AssistantMessageBlock } from '@shared/chat'
+import MarkdownIt from 'markdown-it'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -66,157 +39,51 @@ import { yaml } from '@codemirror/lang-yaml'
 import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
-import LoadingCursor from '@/components/LoadingCursor.vue'
-import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
-import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
-// import mk from '@vscode/markdown-it-katex'
-// import 'katex/dist/katex.min.css'
+import { useI18n } from 'vue-i18n'
 
-const props = defineProps<{
-  block: {
-    content: string
-    status?: 'loading' | 'success' | 'error'
-    timestamp: number
-  }
-}>()
-
+const { t } = useI18n()
 const id = ref(`editor-${uuidv4()}`)
-
-const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
 const messageBlock = ref<HTMLDivElement>()
 
 // Store editor instances for cleanup
 const editorInstances = ref<Map<string, EditorView>>(new Map())
 
-const { t } = useI18n()
-
-interface ProcessedPart {
-  type: 'text' | 'thinking' | 'artifact'
-  content: string
-  artifact?: {
-    identifier: string
-    title: string
-    type:
-      | 'application/vnd.ant.code'
-      | 'text/markdown'
-      | 'text/html'
-      | 'image/svg+xml'
-      | 'application/vnd.ant.mermaid'
-    language?: string
-  }
-}
-
-const refreshLoadingCursor = () => {
-  if (messageBlock.value) {
-    loadingCursor.value?.updateCursorPosition(messageBlock.value)
-  }
-}
-
-// Remove all the markdown-it configuration and setup
-// Instead, just configure the code block renderer
-createCodeBlockRenderer(t)
-// enableDebugRendering() // Optional, remove if debug logging is not needed
-
-const processedContent = computed<ProcessedPart[]>(() => {
-  if (!props.block.content) return [{ type: 'text', content: '' }]
-  if (props.block.status === 'loading') {
-    return [
-      {
-        type: 'text',
-        content: props.block.content
-      }
-    ]
-  }
-
-  const parts: ProcessedPart[] = []
-  let content = props.block.content
-  let lastIndex = 0
-
-  // 处理 antThinking 标签
-  const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
-  let match
-  while ((match = thinkingRegex.exec(content)) !== null) {
-    // 添加思考前的普通文本
-    if (match.index > lastIndex) {
-      const text = content.substring(lastIndex, match.index)
-      if (text.trim()) {
-        parts.push({
-          type: 'text',
-          content: text
-        })
-      }
-    }
-
-    // 添加思考内容
-    parts.push({
-      type: 'thinking',
-      content: match[1].trim()
-    })
-
-    lastIndex = match.index + match[0].length
-  }
-
-  // 处理 antArtifact 标签
-  const artifactRegex =
-    /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
-  content = props.block.content
-  lastIndex = 0
-
-  while ((match = artifactRegex.exec(content)) !== null) {
-    // 添加 artifact 前的普通文本
-    if (match.index > lastIndex) {
-      const text = content.substring(lastIndex, match.index)
-      if (text.trim()) {
-        parts.push({
-          type: 'text',
-          content: text
-        })
-      }
-    }
-
-    // 添加 artifact 内容
-    parts.push({
-      type: 'artifact',
-      content: match[5].trim(),
-      artifact: {
-        identifier: match[1],
-        type: match[2] as
-          | 'application/vnd.ant.code'
-          | 'text/markdown'
-          | 'text/html'
-          | 'image/svg+xml'
-          | 'application/vnd.ant.mermaid',
-        title: match[3],
-        language: match[4]
-      }
-    })
-
-    lastIndex = match.index + match[0].length
-  }
-
-  // 添加剩余的普通文本
-  if (lastIndex < content.length) {
-    const text = content.substring(lastIndex)
-    if (text.trim()) {
-      parts.push({
-        type: 'text',
-        content: text
-      })
-    }
-  }
-
-  // 如果没有任何特殊标签，返回原始内容
-  if (parts.length === 0) {
-    return [
-      {
-        type: 'text',
-        content: content
-      }
-    ]
-  }
-
-  return parts
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  typographer: true,
+  breaks: true
 })
+
+// 禁用默认的代码高亮
+md.options.highlight = null
+
+// 自定义段落渲染规则
+md.renderer.rules.paragraph_open = () => ''
+md.renderer.rules.paragraph_close = () => ''
+
+// Custom code block rendering
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx]
+  const info = token.info ? token.info.trim() : ''
+  const str = token.content
+
+  const encodedCode = btoa(unescape(encodeURIComponent(str)))
+  const language = info || 'text'
+  const uniqueId = `editor-${Math.random().toString(36).substr(2, 9)}`
+
+  return `<div class="code-block" data-code="${encodedCode}" data-lang="${language}" id="${uniqueId}">
+    <div class="code-header">
+      <span class="code-lang">${language.toUpperCase()}</span>
+      <button class="copy-button" data-code="${encodedCode}">${t('common.copyCode')}</button>
+    </div>
+    <div class="code-editor"></div>
+  </div>`
+}
+
+const props = defineProps<{
+  block: AssistantMessageBlock
+}>()
 
 // Initialize code editors
 const initCodeEditors = () => {
@@ -361,27 +228,6 @@ const initCodeEditors = () => {
   })
 }
 
-// Handle copy functionality
-const handleCopyClick = async (e: MouseEvent) => {
-  const target = e.target as HTMLElement
-  if (target.classList.contains('copy-button')) {
-    const encodedCode = target.getAttribute('data-code')
-    if (encodedCode) {
-      try {
-        const decodedCode = decodeURIComponent(escape(atob(encodedCode)))
-        await navigator.clipboard.writeText(decodedCode)
-        const originalText = target.textContent
-        target.textContent = t('common.copySuccess')
-        setTimeout(() => {
-          target.textContent = originalText
-        }, 2000)
-      } catch (err) {
-        console.error('Failed to copy:', err)
-      }
-    }
-  }
-}
-
 // Cleanup editors on unmount
 const cleanupEditors = () => {
   editorInstances.value.forEach((editor) => {
@@ -390,15 +236,13 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
-const renderContent = (content: string) => {
-  refreshLoadingCursor()
-  return renderMarkdown(
-    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
-  )
-}
+const renderedContent = computed(() => {
+  return md.render(props.block.content || '')
+})
+
 // 添加 watch 来监听内容变化
 watch(
-  processedContent,
+  renderedContent,
   () => {
     nextTick(() => {
       // 清理现有的编辑器实例
@@ -414,21 +258,6 @@ watch(
 <style>
 .prose {
   @apply leading-7;
-  font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* 添加行内公式样式 */
-.prose .math-inline {
-  @apply inline-block;
-  white-space: nowrap;
-}
-
-/* 确保块级公式正确显示 */
-.prose .math-block {
-  @apply block my-4;
 }
 
 .prose pre {
@@ -448,7 +277,7 @@ watch(
 }
 
 .prose .code-block {
-  @apply rounded-lg overflow-hidden mt-2  mb-4 text-xs;
+  @apply rounded-lg overflow-hidden mt-2 mb-4 text-xs;
 }
 
 .prose .code-header {
@@ -477,17 +306,5 @@ watch(
 
 .prose hr + p {
   @apply mt-4;
-}
-
-/* MathJax 容器样式 */
-.prose mjx-container:not([display='true']) {
-  display: inline-block !important;
-  margin: 0 !important;
-  vertical-align: middle !important;
-}
-
-.prose mjx-container[display='true'] {
-  @apply block my-4;
-  text-align: center;
 }
 </style>

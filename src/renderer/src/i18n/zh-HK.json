@@ -38,7 +38,8 @@
       "deepThinking": "深度思考",
       "webSearch": "網絡搜索",
       "deepThinkingProgress": "深度思考中...",
-      "thinkingDuration": "（用時 {0} 秒）"
+      "thinkingDuration": "（用時 {0} 秒）",
+      "artifactThinking": "artifact 思考"
     },
     "search": {
       "results": "已搜索到{0}個網頁",
@@ -122,6 +123,9 @@
       "responseLength": {
         "label": "返回文本長度",
         "description": "設置AI響應的最大長度"
+      },
+      "artifacts": {
+        "description": "啟用Artifacts功能允許AI生成更豐富的內容"
       }
     },
     "provider": {
