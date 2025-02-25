@@ -677,6 +677,12 @@ export class ThreadPresenter implements IThreadPresenter {
     return await this.messageManager.getLastUserMessage(conversationId)
   }
 
+  // 从数据库获取搜索结果
+  async getSearchResults(messageId: string): Promise<SearchResult[]> {
+    const results = await this.sqlitePresenter.getMessageAttachments(messageId, 'search_result')
+    return results.map((result) => JSON.parse(result.content) as SearchResult) ?? []
+  }
+
   async startStreamCompletion(conversationId: string, queryMsgId?: string) {
     const state = Array.from(this.generatingMessages.values()).find(
       (state) => state.conversationId === conversationId

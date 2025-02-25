@@ -245,6 +245,8 @@ export interface IThreadPresenter {
   setActiveConversation(conversationId: string): Promise<void>
   getActiveConversation(): Promise<CONVERSATION | null>
 
+  getSearchResults(messageId: string): Promise<SearchResult[]>
+
   // 消息操作
   getMessages(
     conversationId: string,

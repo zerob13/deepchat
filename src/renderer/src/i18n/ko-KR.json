@@ -42,7 +42,9 @@
     },
     "search": {
       "results": "{0}개의 웹페이지가 검색되었습니다",
-      "searching": "검색 중..."
+      "searching": "검색 중...",
+      "title": "검색 결과",
+      "description": "{0}개의 관련 결과를 찾았습니다"
     }
   },
   "model": {

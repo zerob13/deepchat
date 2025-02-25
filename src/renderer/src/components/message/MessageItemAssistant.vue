@@ -17,13 +17,22 @@
       </div>
       <div v-else class="flex flex-col w-full space-y-2">
         <div v-for="block in currentContent" :key="block.id" class="w-full">
-          <MessageBlockContent v-if="block.type === 'content'" :block="block" />
+          <MessageBlockContent
+            v-if="block.type === 'content'"
+            :block="block"
+            :message-id="message.id"
+            :is-search-result="isSearchResult"
+          />
           <MessageBlockThink
             v-else-if="block.type === 'reasoning_content'"
             :block="block"
             :usage="message.usage"
           />
-          <MessageBlockSearch v-else-if="block.type === 'search'" :block="block" />
+          <MessageBlockSearch
+            v-else-if="block.type === 'search'"
+            :message-id="message.id"
+            :block="block"
+          />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>
@@ -104,6 +113,12 @@ watch(
     }
   }
 )
+
+const isSearchResult = computed(() => {
+  return Boolean(
+    currentContent.value?.some((block) => block.type === 'search' && block.status === 'success')
+  )
+})
 
 onMounted(() => {
   // 默认显示最后一个变体

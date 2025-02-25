@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import mathjax3 from 'markdown-it-mathjax3'
-
+// import footnote from 'markdown-it-footnote'
 // Create markdown-it instance with configuration
 const md = new MarkdownIt({
   html: true,
@@ -100,6 +100,60 @@ export const enableDebugRendering = () => {
     console.log('Final HTML output:', result)
     console.log('=== End Markdown Rendering ===')
     return result
+  }
+}
+
+// Custom reference inline rule
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const referenceInline = (state: any, silent: boolean) => {
+  if (state.src[state.pos] !== '[') return false
+
+  const match = /^\[(\d+)\]/.exec(state.src.slice(state.pos))
+  if (!match) return false
+
+  if (!silent) {
+    const id = match[1]
+    const token = state.push('reference', 'span', 0)
+    token.content = id
+    token.markup = match[0]
+  }
+
+  state.pos += match[0].length
+  return true
+}
+
+// Add rendering rule for references
+md.renderer.rules.reference = (tokens, idx) => {
+  const id = tokens[idx].content
+  return `<span class="reference-link" 
+    data-reference-id="${id}" 
+    role="button" 
+    tabindex="0"
+    title="Click to view reference"
+    onclick="window.handleReferenceClick(${id}, event)"
+    onmouseover="window.handleReferenceHover(${id}, true, event)"
+    onmouseout="window.handleReferenceHover(${id}, false, event)">${id}</span>`
+}
+
+// Register custom rule
+md.inline.ruler.before('escape', 'reference', referenceInline)
+
+export const initReference = ({
+  onClick,
+  onHover
+}: {
+  onClick: (id: string, rect: DOMRect) => void
+  onHover: (id: string, isHover: boolean, rect: DOMRect) => void
+}) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(window as any).handleReferenceClick = (id: string, event: MouseEvent) => {
+    const rect = (event.target as HTMLElement).getBoundingClientRect()
+    onClick(id, rect)
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(window as any).handleReferenceHover = (id: string, isHover: boolean, event: MouseEvent) => {
+    const rect = (event.target as HTMLElement).getBoundingClientRect()
+    onHover(id, isHover, rect)
   }
 }
 

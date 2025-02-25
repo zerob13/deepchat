@@ -42,7 +42,9 @@
     },
     "search": {
       "results": "Found {0} web pages",
-      "searching": "Searching..."
+      "searching": "Searching...",
+      "title": "Search Results",
+      "description": "Found {0} related results"
     }
   },
   "model": {
