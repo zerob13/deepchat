@@ -23,7 +23,6 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AssistantMessageBlock } from '@shared/chat'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import CodeArtifact from './CodeArtifact.vue'
@@ -33,7 +32,13 @@ import SvgArtifact from './SvgArtifact.vue'
 import MermaidArtifact from './MermaidArtifact.vue'
 
 const props = defineProps<{
-  block: AssistantMessageBlock
+  block: {
+    artifact: {
+      type: string
+      title: string
+    }
+    content: string
+  }
 }>()
 
 const artifactComponent = computed(() => {

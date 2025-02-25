@@ -19,10 +19,7 @@
         class="max-h-[500px] overflow-auto"
         v-else-if="part.type === 'artifact' && part.artifact"
         :block="{
-          type: 'artifact',
           content: part.content,
-          status: block.status as 'success' | 'loading' | 'cancel' | 'error' | 'reading',
-          timestamp: block.timestamp,
           artifact: part.artifact
         }"
       />
@@ -73,6 +70,7 @@ import LoadingCursor from '@/components/LoadingCursor.vue'
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
 import ReferencePreview from './ReferencePreview.vue'
+import DOMPurify from 'dompurify'
 
 const threadPresenter = usePresenter('threadPresenter')
 const searchResults = ref<SearchResult[]>([])
@@ -434,9 +432,10 @@ const cleanupEditors = () => {
 
 const renderContent = (content: string) => {
   refreshLoadingCursor()
-  return renderMarkdown(
+  const safeContent = DOMPurify.sanitize(
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
+  return renderMarkdown(safeContent)
 }
 
 // 添加 watch 来监听内容变化

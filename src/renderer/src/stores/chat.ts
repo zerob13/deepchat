@@ -658,6 +658,28 @@ export const useChatStore = defineStore('chat', () => {
       console.error('取消生成失败:', error)
     }
   }
+
+  const clearAllMessages = async (threadId: string) => {
+    if (!threadId) return
+    try {
+      await threadP.clearAllMessages(threadId)
+      // 清空本地消息列表
+      if (threadId === activeThreadId.value) {
+        messages.value = []
+      }
+      // 清空生成缓存中的相关消息
+      for (const [messageId, cached] of generatingMessagesCache.value.entries()) {
+        if (cached.threadId === threadId) {
+          generatingMessagesCache.value.delete(messageId)
+        }
+      }
+      generatingThreadIds.value.delete(threadId)
+    } catch (error) {
+      console.error('清空消息失败:', error)
+      throw error
+    }
+  }
+
   window.electron.ipcRenderer.on('conversation-activated', (_, msg) => {
     console.log('conversation-activated', msg)
     activeThreadId.value = msg.conversationId
@@ -731,6 +753,7 @@ export const useChatStore = defineStore('chat', () => {
     retryMessage,
     deleteMessage,
     clearActiveThread,
-    cancelGenerating
+    cancelGenerating,
+    clearAllMessages
   }
 })

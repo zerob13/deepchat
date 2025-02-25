@@ -86,6 +86,7 @@ export interface ISQLitePresenter {
   getMessageAttachments(messageId: string, type: string): Promise<{ content: string }[]>
   getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null>
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<SQLITE_MESSAGE | null>
+  deleteAllMessagesInConversation(conversationId: string): Promise<void>
 }
 
 export interface IPresenter {
@@ -248,6 +249,7 @@ export interface IThreadPresenter {
   getActiveConversation(): Promise<CONVERSATION | null>
 
   getSearchResults(messageId: string): Promise<SearchResult[]>
+  clearAllMessages(conversationId: string): Promise<void>
 
   // 消息操作
   getMessages(

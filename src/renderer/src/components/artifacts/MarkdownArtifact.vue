@@ -10,7 +10,6 @@
 
 <script setup lang="ts">
 import { computed, ref, nextTick, watch } from 'vue'
-import { AssistantMessageBlock } from '@shared/chat'
 import MarkdownIt from 'markdown-it'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
@@ -82,7 +81,13 @@ md.renderer.rules.fence = (tokens, idx) => {
 }
 
 const props = defineProps<{
-  block: AssistantMessageBlock
+  block: {
+    artifact: {
+      type: string
+      title: string
+    }
+    content: string
+  }
 }>()
 
 // Initialize code editors

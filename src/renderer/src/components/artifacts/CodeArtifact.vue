@@ -9,10 +9,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { AssistantMessageBlock } from '@shared/chat'
 
 const props = defineProps<{
-  block: AssistantMessageBlock
+  block: {
+    artifact: {
+      language: string
+    }
+    content: string
+  }
 }>()
 
 const codeClass = computed(() => {

@@ -11,11 +11,16 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { AssistantMessageBlock } from '@shared/chat'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{
-  block: AssistantMessageBlock
+  block: {
+    artifact: {
+      type: string
+      title: string
+    }
+    content: string
+  }
 }>()
 
 const iframeRef = ref<HTMLIFrameElement>()

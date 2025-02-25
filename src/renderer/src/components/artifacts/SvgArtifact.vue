@@ -4,11 +4,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AssistantMessageBlock } from '@shared/chat'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{
-  block: AssistantMessageBlock
+  block: {
+    artifact: {
+      type: string
+      title: string
+    }
+    content: string
+  }
 }>()
 
 const sanitizedContent = computed(() => {

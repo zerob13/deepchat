@@ -1070,6 +1070,15 @@ export class ThreadPresenter implements IThreadPresenter {
     eventBus.emit('active-conversation-cleared')
   }
 
+  async clearAllMessages(conversationId: string): Promise<void> {
+    await this.messageManager.clearAllMessages(conversationId)
+    // 如果是当前活动会话，需要更新生成状态
+    if (conversationId === this.activeConversationId) {
+      // 停止所有正在生成的消息
+      await this.stopConversationGeneration(conversationId)
+    }
+  }
+
   async getMessageExtraInfo(messageId: string, type: string): Promise<Record<string, unknown>[]> {
     const attachments = await this.sqlitePresenter.getMessageAttachments(messageId, type)
     return attachments.map((attachment) => JSON.parse(attachment.content))

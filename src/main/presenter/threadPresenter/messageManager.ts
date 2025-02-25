@@ -230,4 +230,8 @@ export class MessageManager implements IMessageManager {
     }
     return this.convertToMessage(sqliteMessage)
   }
+
+  async clearAllMessages(conversationId: string): Promise<void> {
+    await this.sqlitePresenter.deleteAllMessagesInConversation(conversationId)
+  }
 }

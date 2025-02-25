@@ -6,11 +6,16 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { AssistantMessageBlock } from '@shared/chat'
 import mermaid from 'mermaid'
 
 const props = defineProps<{
-  block: AssistantMessageBlock
+  block: {
+    artifact: {
+      type: string
+      title: string
+    }
+    content: string
+  }
 }>()
 
 const mermaidRef = ref<HTMLElement>()
