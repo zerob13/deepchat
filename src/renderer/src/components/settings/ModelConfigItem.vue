@@ -7,7 +7,7 @@
       variant="link"
       size="icon"
       class="w-7 h-7 text-xs text-normal rounded-lg"
-      @click="onEnabledChange(false)"
+      @click="onEnabledChange(true)"
     >
       <Icon icon="lucide:circle-minus" class="w-4 h-4 text-destructive" />
     </Button>
@@ -16,7 +16,7 @@
       variant="link"
       size="icon"
       class="w-7 h-7 text-xs text-normal rounded-lg"
-      @click="onEnabledChange(true)"
+      @click="onEnabledChange(false)"
     >
       <Icon icon="lucide:circle-check" class="w-4 h-4 text-green-500" />
     </Button>
