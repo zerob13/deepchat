@@ -57,8 +57,31 @@
     </div>
     <div class="text-xs text-secondary-foreground px-2">{{ t('model.type.official') }}</div>
     <div v-for="provider in filteredProviderModels" :key="provider.providerId" class="mb-4">
-      <div v-show="provider.models.length > 0" class="text-sm font-medium mb-2">
-        {{ getProviderName(provider.providerId) }}
+      <div
+        v-show="provider.models.length > 0"
+        class="flex justify-between items-center text-sm font-medium mb-2"
+      >
+        <span>{{ getProviderName(provider.providerId) }}</span>
+        <div class="flex gap-2">
+          <Button
+            variant="outline"
+            size="xs"
+            class="text-xs text-normal rounded-lg"
+            @click="enableAllModels(provider.providerId)"
+          >
+            <Icon icon="lucide:check-circle" class="w-3.5 h-3.5 mr-1" />
+            {{ t('model.actions.enableAll') }}
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            class="text-xs text-normal rounded-lg"
+            @click="disableAllModels(provider.providerId)"
+          >
+            <Icon icon="lucide:x-circle" class="w-3.5 h-3.5 mr-1" />
+            {{ t('model.actions.disableAll') }}
+          </Button>
+        </div>
       </div>
       <div
         v-show="provider.models.length > 0"
@@ -183,5 +206,15 @@ const confirmAdd = async (idx: number) => {
 
 const handleModelEnabledChange = (model: MODEL_META, enabled: boolean) => {
   emit('enabledChange', model, enabled)
+}
+
+// 启用提供商下所有模型
+const enableAllModels = (providerId: string) => {
+  settingsStore.enableAllModels(providerId)
+}
+
+// 禁用提供商下所有模型
+const disableAllModels = (providerId: string) => {
+  settingsStore.disableAllModels(providerId)
 }
 </script>

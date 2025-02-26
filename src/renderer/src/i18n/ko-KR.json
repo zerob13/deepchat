@@ -67,7 +67,9 @@
       "maxTokensPlaceholder": "최대 토큰 수"
     },
     "actions": {
-      "add": "모델 추가"
+      "add": "모델 추가",
+      "enableAll": "모두 활성화",
+      "disableAll": "모두 비활성화"
     },
     "tags": {
       "reasoning": "추론",

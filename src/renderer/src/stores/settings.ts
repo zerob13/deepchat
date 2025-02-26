@@ -508,7 +508,28 @@ export const useSettingsStore = defineStore('settings', () => {
       throw error
     }
   }
+  const enableAllModels = async (providerId: string): Promise<void> => {
+    try {
+      // 获取提供商的所有模型
+      const providerModelsData = allProviderModels.value.find((p) => p.providerId === providerId)
+      if (!providerModelsData || providerModelsData.models.length === 0) {
+        console.warn(`No models found for provider ${providerId}`)
+        return
+      }
 
+      // 对每个模型执行启用操作
+      for (const model of providerModelsData.models) {
+        if (!model.enabled) {
+          await llmP.updateModelStatus(providerId, model.id, true)
+        }
+      }
+
+      await refreshAllModels()
+    } catch (error) {
+      console.error(`Failed to enable all models for provider ${providerId}:`, error)
+      throw error
+    }
+  }
   // 禁用指定提供商下的所有模型
   const disableAllModels = async (providerId: string): Promise<void> => {
     try {
@@ -592,6 +613,7 @@ export const useSettingsStore = defineStore('settings', () => {
     activeSearchEngine,
     addCustomProvider,
     removeProvider,
-    disableAllModels
+    disableAllModels,
+    enableAllModels
   }
 })

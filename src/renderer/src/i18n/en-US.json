@@ -67,7 +67,9 @@
       "maxTokensPlaceholder": "Max Tokens"
     },
     "actions": {
-      "add": "Add Model"
+      "add": "Add Model",
+      "enableAll": "Enable All",
+      "disableAll": "Disable All"
     },
     "tags": {
       "reasoning": "Reasoning",

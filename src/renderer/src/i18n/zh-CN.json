@@ -69,7 +69,9 @@
       "maxTokensPlaceholder": "最大token"
     },
     "actions": {
-      "add": "添加模型"
+      "add": "添加模型",
+      "enableAll": "全部启用",
+      "disableAll": "全部禁用"
     },
     "tags": {
       "reasoning": "推理",

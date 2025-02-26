@@ -67,7 +67,9 @@
       "maxTokensPlaceholder": "最大トークン数"
     },
     "actions": {
-      "add": "モデルを追加"
+      "add": "モデルを追加",
+      "enableAll": "すべて有効にする",
+      "disableAll": "すべて無効にする"
     },
     "tags": {
       "reasoning": "推論",
