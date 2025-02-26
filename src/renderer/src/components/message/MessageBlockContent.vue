@@ -433,7 +433,13 @@ const cleanupEditors = () => {
 const renderContent = (content: string) => {
   refreshLoadingCursor()
   const safeContent = DOMPurify.sanitize(
-    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
+    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content,
+    {
+      WHOLE_DOCUMENT: false,
+      FORBID_TAGS: ['script', 'style'],
+      ALLOWED_URI_REGEXP:
+        /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
+    }
   )
   return renderMarkdown(safeContent)
 }
