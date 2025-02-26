@@ -361,17 +361,13 @@ export class ThreadPresenter implements IThreadPresenter {
     console.log('updateConversationSettings', mergedSettings)
     // 检查是否有 modelId 的变化
     if (settings.modelId && settings.modelId !== conversation.settings.modelId) {
-      console.log('check model default config')
       // 获取模型配置
-      const modelConfig = getModelConfig(mergedSettings.providerId, mergedSettings.modelId)
+      const modelConfig = getModelConfig(mergedSettings.modelId)
+      console.log('check model default config', modelConfig)
       if (modelConfig) {
         // 如果当前设置小于推荐值，则使用推荐值
-        if (mergedSettings.maxTokens < modelConfig.maxTokens) {
-          mergedSettings.maxTokens = modelConfig.maxTokens
-        }
-        if (mergedSettings.contextLength < modelConfig.contextLength) {
-          mergedSettings.contextLength = modelConfig.contextLength
-        }
+        mergedSettings.maxTokens = modelConfig.maxTokens
+        mergedSettings.contextLength = modelConfig.contextLength
       }
     }
 

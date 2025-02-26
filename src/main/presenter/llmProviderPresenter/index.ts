@@ -6,6 +6,7 @@ import { SiliconcloudProvider } from './providers/siliconcloudProvider'
 import { eventBus } from '@/eventbus'
 import { OpenAICompatibleProvider } from './providers/openAICompatibleProvider'
 import { PPIOProvider } from './providers/ppioProvider'
+import { getModelConfig } from './modelConfigs'
 // 导入其他provider...
 
 // 流的状态
@@ -115,7 +116,16 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
   async getModelList(providerId: string): Promise<MODEL_META[]> {
     const provider = this.getProviderInstance(providerId)
-    return provider.fetchModels()
+    let models = await provider.fetchModels()
+    models = models.map((model) => {
+      const config = getModelConfig(model.id)
+      if (config) {
+        model.maxTokens = config.maxTokens
+        model.contextLength = config.contextLength
+      }
+      return model
+    })
+    return models
   }
 
   async updateModelStatus(providerId: string, modelId: string, enabled: boolean): Promise<void> {

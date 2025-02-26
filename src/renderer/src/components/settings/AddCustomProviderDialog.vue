@@ -194,18 +194,17 @@ const handleSubmit = async () => {
     // 生成唯一ID
     formData.value.id = uuidv4()
 
+    closeDialog()
     // 使用 settingsStore 添加新的提供商
     await settingsStore.addCustomProvider(formData.value)
 
     // 通知父组件添加成功
     emit('provider-added', formData.value)
-
-    // 关闭弹窗
-    closeDialog()
   } catch (error) {
     console.error('添加自定义提供商失败', error)
   } finally {
     isSubmitting.value = false
+    // 关闭弹窗
   }
 }
 </script>
