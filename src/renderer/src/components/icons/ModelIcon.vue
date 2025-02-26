@@ -40,7 +40,8 @@ import sunoColorIcon from '@/assets/llm-icons/suno.svg?url'
 import syncColorIcon from '@/assets/llm-icons/sync.svg?url'
 import rwkvColorIcon from '@/assets/llm-icons/rwkv.svg?url'
 import ppioColorIcon from '@/assets/llm-icons/ppio-color.svg?url'
-
+import moonshotColorIcon from '@/assets/llm-icons/moonshot.svg?url'
+import openrouterColorIcon from '@/assets/llm-icons/openrouter.svg?url'
 // 导入所有图标
 const icons = {
   deepseek: deepseekColorIcon,
@@ -82,7 +83,9 @@ const icons = {
   stability: stabilityColorIcon,
   ppio: ppioColorIcon,
   qingyan: qingyanColorIcon,
-  qwen: qwenColorIcon
+  qwen: qwenColorIcon,
+  moonshot: moonshotColorIcon,
+  openrouter: openrouterColorIcon
 }
 
 interface Props {

@@ -2,7 +2,7 @@
   <div class="w-full h-full flex flex-row">
     <div class="w-52 border-r h-full overflow-y-auto space-y-2 p-2">
       <div
-        v-for="provider in providers"
+        v-for="provider in settingsStore.providers"
         :key="provider.name"
         :class="[
           'flex flex-row items-center hover:bg-accent gap-2 rounded-lg p-2 cursor-pointer',
@@ -58,7 +58,6 @@ const router = useRouter()
 const { t } = useI18n()
 
 const settingsStore = useSettingsStore()
-const { providers } = settingsStore
 
 const isAddProviderDialogOpen = ref(false)
 
@@ -76,7 +75,7 @@ const toggleProviderStatus = async (provider) => {
 }
 
 const activeProvider = computed(() => {
-  return providers.find((p) => p.id === route.params.providerId)
+  return settingsStore.providers.find((p) => p.id === route.params.providerId)
 })
 
 const openAddProviderDialog = () => {
