@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
-import { watch, computed } from 'vue'
+import { watch, computed, ref } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Icon } from '@iconify/vue'
@@ -12,29 +13,60 @@ import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
-// 计算属性用于处理 Slider 的数组值
-const temperatureValue = computed({
-  get: () => [chatStore.chatConfig.temperature],
-  set: ([value]) => {
-    chatStore.updateChatConfig({ temperature: value })
-  }
+
+// 使用本地响应式变量存储滑块数值，以便立即响应UI
+const localTemperature = ref([chatStore.chatConfig.temperature])
+const localContextLength = ref([chatStore.chatConfig.contextLength])
+const localMaxTokens = ref([chatStore.chatConfig.maxTokens])
+
+// 为每个配置项创建独立的防抖函数
+const debouncedUpdateTemperature = useDebounceFn((value: number) => {
+  chatStore.updateChatConfig({ temperature: value })
+}, 500)
+
+const debouncedUpdateContextLength = useDebounceFn((value: number) => {
+  chatStore.updateChatConfig({ contextLength: value })
+}, 500)
+
+const debouncedUpdateMaxTokens = useDebounceFn((value: number) => {
+  chatStore.updateChatConfig({ maxTokens: value })
+}, 500)
+
+// 监听本地变量变化并使用防抖函数更新配置
+watch(localTemperature, (value) => {
+  debouncedUpdateTemperature(value[0])
 })
 
-const contextLengthValue = computed({
-  get: () => [chatStore.chatConfig.contextLength],
-  set: ([value]) => {
-    chatStore.updateChatConfig({ contextLength: value })
-  }
+watch(localContextLength, (value) => {
+  debouncedUpdateContextLength(value[0])
 })
 
-const maxTokensValue = computed({
-  get: () => [chatStore.chatConfig.maxTokens],
-  set: ([value]) => {
-    chatStore.updateChatConfig({ maxTokens: value })
-  }
+watch(localMaxTokens, (value) => {
+  debouncedUpdateMaxTokens(value[0])
 })
 
-// 添加格式化函数
+// 监听store中的值变化并更新本地变量
+watch(
+  () => chatStore.chatConfig.temperature,
+  (value) => {
+    localTemperature.value = [value]
+  }
+)
+
+watch(
+  () => chatStore.chatConfig.contextLength,
+  (value) => {
+    localContextLength.value = [value]
+  }
+)
+
+watch(
+  () => chatStore.chatConfig.maxTokens,
+  (value) => {
+    localMaxTokens.value = [value]
+  }
+)
+
 const formatSize = (size: number): string => {
   if (size >= 1024 * 1024) {
     return `${(size / (1024 * 1024)).toFixed(1)}M`
@@ -44,11 +76,24 @@ const formatSize = (size: number): string => {
   return `${size}`
 }
 
-// 监听系统提示词变化
+// 使用本地响应式变量存储系统提示
+const localSystemPrompt = ref(chatStore.chatConfig.systemPrompt)
+
+// 为系统提示创建独立的防抖函数
+const debouncedUpdateSystemPrompt = useDebounceFn((value: string) => {
+  chatStore.updateChatConfig({ systemPrompt: value })
+}, 500)
+
+// 监听本地系统提示变化并使用防抖函数更新配置
+watch(localSystemPrompt, (value) => {
+  debouncedUpdateSystemPrompt(value)
+})
+
+// 监听store中的系统提示变化并更新本地变量
 watch(
   () => chatStore.chatConfig.systemPrompt,
-  () => {
-    chatStore.updateChatConfig({ systemPrompt: chatStore.chatConfig.systemPrompt })
+  (value) => {
+    localSystemPrompt.value = value
   }
 )
 
@@ -61,19 +106,40 @@ watch(
   { deep: true }
 )
 
+// 使用本地响应式变量存储 artifacts 状态
+const localArtifactsEnabled = ref(chatStore.chatConfig.artifacts === 1)
+
+// 使用独立的防抖函数更新 artifacts 配置
+const debouncedUpdateArtifacts = useDebounceFn((enabled: boolean) => {
+  chatStore.updateChatConfig({ artifacts: enabled ? 1 : 0 })
+}, 500)
+
+// 监听本地 artifacts 状态变化并使用防抖函数更新配置
+watch(localArtifactsEnabled, (value) => {
+  debouncedUpdateArtifacts(value)
+})
+
+// 监听store中的 artifacts 状态变化并更新本地变量
+watch(
+  () => chatStore.chatConfig.artifacts,
+  (value) => {
+    localArtifactsEnabled.value = value === 1
+  }
+)
+
 const artifactsEnable = computed({
   get() {
-    return chatStore.chatConfig.artifacts === 1
+    return localArtifactsEnabled.value
   },
   set(nv: boolean) {
-    chatStore.chatConfig.artifacts = nv ? 1 : 0
+    localArtifactsEnabled.value = nv
   }
 })
 
 const toggleArtifacts = async (nv: boolean) => {
   console.log('toggleArtifacts', nv)
   artifactsEnable.value = !artifactsEnable.value
-  console.log('toggleArtifacts', chatStore.chatConfig.artifacts)
+  console.log('toggleArtifacts', artifactsEnable.value ? 1 : 0)
 }
 </script>
 
@@ -99,7 +165,7 @@ const toggleArtifacts = async (nv: boolean) => {
           </TooltipProvider>
         </div>
         <Textarea
-          v-model="chatStore.chatConfig.systemPrompt"
+          v-model="localSystemPrompt"
           :placeholder="t('settings.model.systemPrompt.placeholder')"
         />
       </div>
@@ -121,9 +187,9 @@ const toggleArtifacts = async (nv: boolean) => {
               </Tooltip>
             </TooltipProvider>
           </div>
-          <span class="text-xs text-muted-foreground">{{ chatStore.chatConfig.temperature }}</span>
+          <span class="text-xs text-muted-foreground">{{ localTemperature[0] }}</span>
         </div>
-        <Slider v-model="temperatureValue" :min="0.1" :max="1.5" :step="0.1" />
+        <Slider v-model="localTemperature" :min="0.1" :max="1.5" :step="0.1" />
       </div>
 
       <!-- Context Length -->
@@ -143,11 +209,9 @@ const toggleArtifacts = async (nv: boolean) => {
               </Tooltip>
             </TooltipProvider>
           </div>
-          <span class="text-xs text-muted-foreground">{{
-            formatSize(chatStore.chatConfig.contextLength)
-          }}</span>
+          <span class="text-xs text-muted-foreground">{{ formatSize(localContextLength[0]) }}</span>
         </div>
-        <Slider v-model="contextLengthValue" :min="2048" :max="65536" :step="1024" />
+        <Slider v-model="localContextLength" :min="2048" :max="65536" :step="1024" />
       </div>
 
       <!-- Response Length -->
@@ -169,11 +233,9 @@ const toggleArtifacts = async (nv: boolean) => {
               </Tooltip>
             </TooltipProvider>
           </div>
-          <span class="text-xs text-muted-foreground">{{
-            formatSize(chatStore.chatConfig.maxTokens)
-          }}</span>
+          <span class="text-xs text-muted-foreground">{{ formatSize(localMaxTokens[0]) }}</span>
         </div>
-        <Slider v-model="maxTokensValue" :min="1024" :max="8192" :step="128" />
+        <Slider v-model="localMaxTokens" :min="1024" :max="8192" :step="128" />
       </div>
       <!-- Artifacts Toggle -->
       <div class="space-y-2 px-2">
