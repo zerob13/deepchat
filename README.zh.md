@@ -11,10 +11,25 @@
   中文 / <a href="./README.md">English</a>
 </div>
 
+### 深度思考
 <p align='center'>
-<img src='./build/screen.zh.png'/>
+<img src='./build/screen.zh.jpg'/>
 </p>
 
+### 支持搜索 (纯本地直接向搜索引擎发起)
+<p align='center'>
+<img src='./build/screen.search.zh.jpg'/>
+</p>
+
+### Latex 公式支持
+<p align='center'>
+<img src='./build/screen.latex.jpg'/>
+</p>
+
+### Artifacts 特性
+<p align='center'>
+<img src='./build/screen.artifacts.zh.jpg'/>
+</p>
 ## 主要特性
 
 - 🌐 支持多个模型云服务：DeepSeek、OpenAI、硅基流动等

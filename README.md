@@ -11,8 +11,24 @@
   <a href="./README.zh.md">中文</a> / English
 </div>
 
+### Reasoning
 <p align='center'>
-<img src='./build/screen.png'/>
+<img src='./build/screen.jpg'/>
+</p>
+
+### Search
+<p align='center'>
+<img src='./build/screen.search.jpg'/>
+</p>
+
+### Latex
+<p align='center'>
+<img src='./build/screen.latex.jpg'/>
+</p>
+
+### Artifacts support
+<p align='center'>
+<img src='./build/screen.artifacts.jpg'/>
 </p>
 
 ## Main Features
