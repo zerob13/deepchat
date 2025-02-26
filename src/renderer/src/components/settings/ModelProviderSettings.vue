@@ -16,6 +16,13 @@
         ></ModelIcon>
         <span class="text-sm font-medium">{{ provider.name }}</span>
       </div>
+      <div
+        class="flex flex-row items-center gap-2 rounded-lg p-2 cursor-pointer hover:bg-accent"
+        @click="openAddProviderDialog"
+      >
+        <Icon icon="lucide:plus" class="w-4 h-4 text-muted-foreground" />
+        <span class="text-sm font-medium">{{ t('settings.provider.addCustomProvider') }}</span>
+      </div>
     </div>
     <ModelProviderSettingsDetail
       v-if="activeProvider"
@@ -23,18 +30,31 @@
       :provider="activeProvider"
       class="flex-1"
     />
+    <AddCustomProviderDialog
+      v-model:open="isAddProviderDialogOpen"
+      @provider-added="handleProviderAdded"
+    />
   </div>
 </template>
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useRoute, useRouter } from 'vue-router'
 import ModelProviderSettingsDetail from './ModelProviderSettingsDetail.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
+import { Icon } from '@iconify/vue'
+import AddCustomProviderDialog from './AddCustomProviderDialog.vue'
+import { useI18n } from 'vue-i18n'
+import type { LLM_PROVIDER } from '@shared/presenter'
+
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
-const { providers } = useSettingsStore()
+const settingsStore = useSettingsStore()
+const { providers } = settingsStore
+
+const isAddProviderDialogOpen = ref(false)
 
 const setActiveProvider = (providerId: string) => {
   router.push({
@@ -44,7 +64,17 @@ const setActiveProvider = (providerId: string) => {
     }
   })
 }
+
 const activeProvider = computed(() => {
   return providers.find((p) => p.id === route.params.providerId)
 })
+
+const openAddProviderDialog = () => {
+  isAddProviderDialogOpen.value = true
+}
+
+const handleProviderAdded = (provider: LLM_PROVIDER) => {
+  // 添加成功后，自动选择新添加的provider
+  setActiveProvider(provider.id)
+}
 </script>

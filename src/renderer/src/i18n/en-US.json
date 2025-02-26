@@ -146,6 +146,7 @@
       "modelsEnabled": "Models have been enabled",
       "verifyLink": "Verify Link",
       "syncModelsFailed": "Failed to sync models...",
+      "addCustomProvider": "Add Custom Provider",
       "dialog": {
         "disableModel": {
           "title": "Confirm Disable Model",
@@ -159,6 +160,19 @@
           "missingFields": "Please enter API Key and API URL",
           "failed": "Verification failed",
           "success": "Verification successful"
+        },
+        "addCustomProvider": {
+          "title": "Add Custom Provider",
+          "description": "Please fill in the necessary information for the provider",
+          "name": "Name",
+          "namePlaceholder": "Please enter the provider name",
+          "apiType": "API Type",
+          "apiTypePlaceholder": "Please select the API type",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "Please enter the API Key",
+          "baseUrl": "Base URL",
+          "baseUrlPlaceholder": "Please enter the base URL",
+          "enable": "Enable Provider"
         }
       }
     }

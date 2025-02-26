@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, markRaw, toRaw } from 'vue'
 import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
@@ -475,6 +475,40 @@ export const useSettingsStore = defineStore('settings', () => {
       threadP.setActiveSearchEngine(engineName)
     }
   }
+
+  // 添加自定义Provider
+  const addCustomProvider = async (provider: LLM_PROVIDER): Promise<void> => {
+    try {
+      const currentProviders = await configP.getProviders()
+      const newProviders = [...currentProviders, toRaw(provider)]
+      await configP.setProviders(newProviders)
+      providers.value = newProviders
+
+      // 如果新provider启用了，刷新模型列表
+      if (provider.enable) {
+        await refreshAllModels()
+      }
+      providers.value = await configP.getProviders()
+    } catch (error) {
+      console.error('Failed to add custom provider:', error)
+      throw error
+    }
+  }
+
+  // 删除Provider
+  const removeProvider = async (providerId: string): Promise<void> => {
+    try {
+      const currentProviders = await configP.getProviders()
+      const filteredProviders = currentProviders.filter((p) => p.id !== providerId)
+      await configP.setProviders(filteredProviders)
+      providers.value = filteredProviders
+      await refreshAllModels()
+    } catch (error) {
+      console.error('Failed to remove provider:', error)
+      throw error
+    }
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -512,6 +546,8 @@ export const useSettingsStore = defineStore('settings', () => {
     refreshProviderModels,
     setSearchEngine,
     searchEngines,
-    activeSearchEngine
+    activeSearchEngine,
+    addCustomProvider,
+    removeProvider
   }
 })
