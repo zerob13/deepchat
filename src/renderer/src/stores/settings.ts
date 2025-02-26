@@ -36,14 +36,14 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 模型匹配字符串数组，按优先级排序
   const assistantModelPriorities = [
-    'gpt-4',
     'gpt-3.5',
-    'claude',
-    'qwen',
-    'wenxin',
-    'ernie',
-    'moonshot',
-    'spark'
+    'Qwen2.5-32B',
+    'Qwen2.5-14B',
+    'Qwen2.5-7B',
+    '14B',
+    '7B',
+    '32B',
+    'deepseek-chat'
   ]
 
   // 获取系统语言
@@ -144,12 +144,12 @@ export const useSettingsStore = defineStore('settings', () => {
       searchAssistantProviderRef.value = priorityModel.providerId
 
       await configP.setSetting('searchAssistantModel', {
-        model: priorityModel.model,
+        model: toRaw(priorityModel.model),
         providerId: priorityModel.providerId
       })
 
       // 通知线程处理器更新搜索助手模型
-      threadP.setSearchAssistantModel(priorityModel.model, priorityModel.providerId)
+      threadP.setSearchAssistantModel(toRaw(priorityModel.model), priorityModel.providerId)
     }
   }
 
