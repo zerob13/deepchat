@@ -144,6 +144,7 @@
       "modelsEnabled": "모델이 활성화되었습니다",
       "verifyLink": "검증 링크",
       "syncModelsFailed": "모델 동기화 실패...",
+      "addCustomProvider": "커스텀 제공자 추가",
       "dialog": {
         "disableModel": {
           "title": "모델 비활성화 확인",
@@ -157,6 +158,19 @@
           "missingFields": "API Key와 API URL을 입력해주세요",
           "failed": "검증 실패",
           "success": "검증 성공"
+        },
+        "addCustomProvider": {
+          "title": "커스텀 제공자 추가",
+          "description": "제공자의 필요한 정보를 입력해주세요",
+          "name": "이름",
+          "namePlaceholder": "제공자 이름을 입력해주세요",
+          "apiType": "API 타입",
+          "apiTypePlaceholder": "API 타입을 선택해주세요",
+          "apiKey": "API 키",
+          "apiKeyPlaceholder": "API 키를 입력해주세요",
+          "baseUrl": "API URL",
+          "baseUrlPlaceholder": "API URL을 입력해주세요",
+          "enable": "제공자 활성화"
         }
       }
     }

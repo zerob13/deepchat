@@ -144,6 +144,7 @@
       "modelsEnabled": "Модели включены",
       "verifyLink": "Проверить ссылку",
       "syncModelsFailed": "Не удалось синхронизировать модели...",
+      "addCustomProvider": "Добавить пользовательский провайдер",
       "dialog": {
         "disableModel": {
           "title": "Подтвердите отключение модели",
@@ -157,6 +158,19 @@
           "missingFields": "Пожалуйста, введите API Key и API URL",
           "failed": "Проверка не удалась",
           "success": "Проверка успешна"
+        },
+        "addCustomProvider": {
+          "title": "Добавить пользовательский провайдер",
+          "description": "Пожалуйста, заполните необходимую информацию для провайдера",
+          "name": "Имя",
+          "namePlaceholder": "Введите имя провайдера",
+          "apiType": "Тип API",
+          "apiTypePlaceholder": "Выберите тип API",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "Введите API Key",
+          "baseUrl": "API URL",
+          "baseUrlPlaceholder": "Введите API URL",
+          "enable": "Включить провайдер"
         }
       }
     }

@@ -6,6 +6,8 @@
     "newChat": "新会话",
     "newTopic": "新话题",
     "cancel": "取消",
+    "enabled": "已启用",
+    "disabled": "已禁用",
     "error": {
       "requestFailed": "请求失败...",
       "createChatFailed": "创建会话失败",
@@ -146,6 +148,7 @@
       "modelsEnabled": "模型已经启用",
       "verifyLink": "验证链接",
       "syncModelsFailed": "同步模型失败...",
+      "addCustomProvider": "添加自定义服务商",
       "dialog": {
         "disableModel": {
           "title": "确认禁用模型",
@@ -159,6 +162,19 @@
           "missingFields": "请输入 API Key 和 API URL",
           "failed": "验证失败",
           "success": "验证成功"
+        },
+        "addCustomProvider": {
+          "title": "添加自定义服务商",
+          "description": "请填写服务商的必要信息",
+          "name": "名称",
+          "namePlaceholder": "请输入服务商名称",
+          "apiType": "API类型",
+          "apiTypePlaceholder": "请选择API类型",
+          "apiKey": "API密钥",
+          "apiKeyPlaceholder": "请输入API密钥",
+          "baseUrl": "API地址",
+          "baseUrlPlaceholder": "请输入API基础地址",
+          "enable": "启用服务商"
         }
       }
     }

@@ -144,6 +144,7 @@
       "modelsEnabled": "モデルが有効になりました",
       "verifyLink": "検証リンク",
       "syncModelsFailed": "モデルの同期に失敗しました...",
+      "addCustomProvider": "カスタムプロバイダーを追加",
       "dialog": {
         "disableModel": {
           "title": "モデルを無効にする確認",
@@ -157,6 +158,19 @@
           "missingFields": "API KeyとAPI URLを入力してください",
           "failed": "検証に失敗しました",
           "success": "検証に成功しました"
+        },
+        "addCustomProvider": {
+          "title": "カスタムプロバイダーを追加",
+          "description": "プロバイダーの必要な情報を入力してください",
+          "name": "名前",
+          "namePlaceholder": "プロバイダー名を入力してください",
+          "apiType": "APIタイプ",
+          "apiTypePlaceholder": "APIタイプを選択してください",
+          "apiKey": "APIキー",
+          "apiKeyPlaceholder": "APIキーを入力してください",
+          "baseUrl": "API URL",
+          "baseUrlPlaceholder": "API URLを入力してください",
+          "enable": "プロバイダーを有効にする"
         }
       }
     }
