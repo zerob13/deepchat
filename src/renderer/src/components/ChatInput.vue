@@ -31,7 +31,7 @@
         :rows="rows"
         :max-rows="maxRows"
         :placeholder="t('chat.input.placeholder')"
-        class="border-none shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
+        class="border-none max-h-[10rem] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
         @keydown.enter.exact.prevent="handleEnterKey"
         @input="adjustHeight"
       ></Textarea>
@@ -170,7 +170,9 @@ const deleteFile = (idx: number) => {
 }
 
 const disabledSend = computed(() => {
-  return chatStore.generatingThreadIds.has(chatStore.activeThreadId ?? '')
+  return (
+    chatStore.generatingThreadIds.has(chatStore.activeThreadId ?? '') || inputText.value.length <= 0
+  )
 })
 
 const handleEnterKey = (e: KeyboardEvent) => {
