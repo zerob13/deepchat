@@ -1,5 +1,7 @@
 {
   "common": {
+    "enabled": "已啟用",
+    "disabled": "已禁用",
     "loading": "加載中...",
     "copySuccess": "已複製!",
     "copyCode": "複製代碼",

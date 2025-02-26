@@ -1,5 +1,7 @@
 {
   "common": {
+    "enabled": "Включено",
+    "disabled": "Выключено",
     "loading": "Загрузка...",
     "copySuccess": "Скопировано!",
     "copyCode": "Скопировать код",

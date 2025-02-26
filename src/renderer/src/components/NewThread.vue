@@ -4,14 +4,20 @@
     <h1 class="text-2xl font-bold px-8 pt-4">{{ t('newThread.greeting') }}</h1>
     <h3 class="text-lg text-muted-foreground px-8 pb-2">{{ t('newThread.prompt') }}</h3>
     <div class="h-12"></div>
-    <ChatInput class="!max-w-2xl flex-shrink-0 px-4" @send="handleSend">
+    <ChatInput
+      key="newThread"
+      class="!max-w-2xl flex-shrink-0 px-4"
+      :rows="3"
+      :max-rows="10"
+      @send="handleSend"
+    >
       <template #addon-buttons>
         <Popover v-model:open="modelSelectOpen">
           <PopoverTrigger as-child>
             <Button variant="outline" class="flex items-center gap-1.5 px-2 h-auto py-1" size="sm">
               <ModelIcon class="w-4 h-4" :model-id="activeModel.id"></ModelIcon>
               <!-- <Icon icon="lucide:message-circle" class="w-5 h-5 text-muted-foreground" /> -->
-              <h2 class="text-xs font-bold">{{ activeModel.name }}</h2>
+              <h2 class="text-xs font-bold max-w-[150px] truncate">{{ name }}</h2>
               <Badge
                 v-for="tag in activeModel.tags"
                 :key="tag"
@@ -45,7 +51,7 @@ import ModelSelect from './ModelSelect.vue'
 import { useChatStore } from '@/stores/chat'
 import { MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { UserMessageContent } from '@shared/chat'
 
 const { t } = useI18n()
@@ -62,6 +68,10 @@ const activeModel = ref({
   id: string
   providerId: string
   tags: string[]
+})
+
+const name = computed(() => {
+  return activeModel.value?.name ? activeModel.value.name.split('/').pop() : ''
 })
 
 watch(

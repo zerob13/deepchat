@@ -1,5 +1,7 @@
 {
   "common": {
+    "enabled": "Enabled",
+    "disabled": "Disabled",
     "loading": "Loading...",
     "copySuccess": "Copied!",
     "copyCode": "Copy Code",

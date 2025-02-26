@@ -1,6 +1,6 @@
 <template>
   <div class="w-full h-full flex flex-row">
-    <div class="w-52 border-r h-full overflow-y-auto space-y-2 p-2">
+    <div class="w-64 border-r h-full overflow-y-auto space-y-2 p-2">
       <div
         v-for="provider in settingsStore.providers"
         :key="provider.name"
@@ -15,11 +15,7 @@
           :custom-class="'w-4 h-4 text-muted-foreground'"
         ></ModelIcon>
         <span class="text-sm font-medium flex-1">{{ provider.name }}</span>
-        <Switch
-          :checked="provider.enable"
-          @click.stop="toggleProviderStatus(provider)"
-          class="h-4 w-7"
-        />
+        <Switch :checked="provider.enable" @click.stop="toggleProviderStatus(provider)" />
       </div>
       <div
         class="flex flex-row items-center gap-2 rounded-lg p-2 cursor-pointer hover:bg-accent"
