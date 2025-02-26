@@ -20,12 +20,6 @@
           @click.stop="toggleProviderStatus(provider)"
           class="h-4 w-7"
         />
-        <span class="text-sm font-medium flex-1">{{ provider.name }}</span>
-        <Switch
-          :checked="provider.enable"
-          @click.stop="toggleProviderStatus(provider)"
-          class="h-4 w-7"
-        />
       </div>
       <div
         class="flex flex-row items-center gap-2 rounded-lg p-2 cursor-pointer hover:bg-accent"
