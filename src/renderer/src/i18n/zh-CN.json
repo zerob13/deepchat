@@ -152,6 +152,7 @@
       "verifyLink": "验证链接",
       "syncModelsFailed": "同步模型失败...",
       "addCustomProvider": "添加自定义服务商",
+      "delete": "删除",
       "dialog": {
         "disableModel": {
           "title": "确认禁用模型",
@@ -183,6 +184,11 @@
           "baseUrl": "API地址",
           "baseUrlPlaceholder": "请输入API基础地址",
           "enable": "启用服务商"
+        },
+        "deleteProvider": {
+          "title": "确认删除服务商",
+          "content": "是否确认删除服务商 \"{name}\"？此操作不可恢复。",
+          "confirm": "删除"
         }
       }
     }

@@ -2,7 +2,18 @@
   <section class="w-full h-full">
     <div class="w-full h-full p-2 flex flex-col gap-2 overflow-y-auto">
       <div class="flex flex-col items-start p-2 gap-2">
-        <Label :for="`${provider.id}-url`" class="flex-1 cursor-pointer">API URL</Label>
+        <div class="flex justify-between items-center w-full">
+          <Label :for="`${provider.id}-url`" class="flex-1 cursor-pointer">API URL</Label>
+          <Button
+            v-if="provider.custom"
+            variant="destructive"
+            size="sm"
+            class="text-xs rounded-lg"
+            @click="showDeleteProviderDialog = true"
+          >
+            <Icon icon="lucide:trash-2" class="w-4 h-4 mr-1" />{{ t('settings.provider.delete') }}
+          </Button>
+        </div>
         <Input
           :id="`${provider.id}-url`"
           v-model="apiHost"
@@ -35,13 +46,18 @@
               t('settings.provider.verifyKey')
             }}
           </Button>
-          <Button variant="outline" size="xs" class="text-xs text-normal rounded-lg">
+          <Button
+            variant="outline"
+            size="xs"
+            class="text-xs text-normal rounded-lg"
+            v-if="!provider.custom"
+          >
             <Icon icon="lucide:hand-helping" class="w-4 h-4 text-muted-foreground" />{{
               t('settings.provider.howToGet')
             }}
           </Button>
         </div>
-        <div class="text-xs text-secondary-foreground">
+        <div class="text-xs text-secondary-foreground" v-if="!provider.custom">
           {{ t('settings.provider.getKeyTip') }}
           <a :href="getProviderUrl(provider.id)" target="_blank" class="text-primary">{{
             provider.name
@@ -167,6 +183,25 @@
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <Dialog v-model:open="showDeleteProviderDialog">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ t('settings.provider.dialog.deleteProvider.title') }}</DialogTitle>
+        </DialogHeader>
+        <div class="py-4">
+          {{ t('settings.provider.dialog.deleteProvider.content', { name: provider.name }) }}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="showDeleteProviderDialog = false">{{
+            t('dialog.cancel')
+          }}</Button>
+          <Button variant="destructive" @click="confirmDeleteProvider">{{
+            t('settings.provider.dialog.deleteProvider.confirm')
+          }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>
 
@@ -206,6 +241,7 @@ const modelToDisable = ref<MODEL_META | null>(null)
 const showConfirmDialog = ref(false)
 const showModelListDialog = ref(false)
 const showDisableAllConfirmDialog = ref(false)
+const showDeleteProviderDialog = ref(false)
 const enabledModels = computed(() => {
   const enabledModelsList = [
     ...customModels.value.filter((m) => m.enabled),
@@ -352,6 +388,15 @@ const confirmDisableAll = async () => {
     showDisableAllConfirmDialog.value = false
   } catch (error) {
     console.error('Failed to disable all models:', error)
+  }
+}
+
+const confirmDeleteProvider = async () => {
+  try {
+    await settingsStore.removeProvider(props.provider.id)
+    showDeleteProviderDialog.value = false
+  } catch (error) {
+    console.error('删除供应商失败:', error)
   }
 }
 

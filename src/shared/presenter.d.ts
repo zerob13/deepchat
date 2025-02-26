@@ -141,6 +141,7 @@ export type LLM_PROVIDER = {
   apiKey: string
   baseUrl: string
   enable: boolean
+  custom?: boolean
 }
 
 export type LLM_PROVIDER_BASE = {

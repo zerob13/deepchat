@@ -150,6 +150,7 @@
       "verifyLink": "Verify Link",
       "syncModelsFailed": "Failed to sync models...",
       "addCustomProvider": "Add Custom Provider",
+      "delete": "Delete",
       "dialog": {
         "disableModel": {
           "title": "Confirm Disable Model",
@@ -181,6 +182,11 @@
           "baseUrl": "Base URL",
           "baseUrlPlaceholder": "Please enter the base URL",
           "enable": "Enable Provider"
+        },
+        "deleteProvider": {
+          "title": "Delete Provider",
+          "content": "Are you sure you want to delete provider \"{name}\"? This action cannot be undone.",
+          "confirm": "Delete"
         }
       }
     }

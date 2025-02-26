@@ -480,7 +480,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const addCustomProvider = async (provider: LLM_PROVIDER): Promise<void> => {
     try {
       const currentProviders = await configP.getProviders()
-      const newProviders = [...currentProviders, toRaw(provider)]
+      const newProivider = {
+        ...toRaw(provider),
+        custom: true
+      }
+      const newProviders = [...currentProviders, newProivider]
       await configP.setProviders(newProviders)
       providers.value = newProviders
 

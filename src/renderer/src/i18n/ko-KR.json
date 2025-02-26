@@ -148,6 +148,7 @@
       "verifyLink": "검증 링크",
       "syncModelsFailed": "모델 동기화 실패...",
       "addCustomProvider": "커스텀 제공자 추가",
+      "delete": "삭제",
       "dialog": {
         "disableModel": {
           "title": "모델 비활성화 확인",
@@ -179,6 +180,11 @@
           "baseUrl": "API URL",
           "baseUrlPlaceholder": "API URL을 입력해주세요",
           "enable": "제공자 활성화"
+        },
+        "deleteProvider": {
+          "title": "공급자 삭제 확인",
+          "content": "공급자 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+          "confirm": "삭제"
         }
       }
     }

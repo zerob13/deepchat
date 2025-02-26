@@ -148,6 +148,7 @@
       "verifyLink": "検証リンク",
       "syncModelsFailed": "モデルの同期に失敗しました...",
       "addCustomProvider": "カスタムプロバイダーを追加",
+      "delete": "削除",
       "dialog": {
         "disableModel": {
           "title": "モデルを無効にする確認",
@@ -179,6 +180,11 @@
           "baseUrl": "API URL",
           "baseUrlPlaceholder": "API URLを入力してください",
           "enable": "プロバイダーを有効にする"
+        },
+        "deleteProvider": {
+          "title": "プロバイダーの削除確認",
+          "content": "プロバイダー \"{name}\" を削除してもよろしいですか？この操作は元に戻せません。",
+          "confirm": "削除"
         }
       }
     }

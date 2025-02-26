@@ -148,6 +148,7 @@
       "syncModelsFailed": "同步模型失敗...",
       "addCustomProvider": "添加自定義服務商",
       "disableAllModels": "禁用全部模型",
+      "delete": "刪除",
       "dialog": {
         "disableModel": {
           "title": "確認禁用模型",
@@ -179,6 +180,11 @@
           "baseUrl": "API基礎地址",
           "baseUrlPlaceholder": "請輸入API基礎地址",
           "enable": "啟用服務商"
+        },
+        "deleteProvider": {
+          "title": "確認刪除服務商",
+          "content": "是否確認刪除服務商 \"{name}\"？此操作不可恢復。",
+          "confirm": "刪除"
         }
       }
     }
