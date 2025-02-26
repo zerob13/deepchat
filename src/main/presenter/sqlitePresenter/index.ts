@@ -96,6 +96,16 @@ export class SQLitePresenter implements ISQLitePresenter {
       this.migrate()
     }
   }
+  async deleteAllMessagesInConversation(conversationId: string): Promise<void> {
+    const deleteStmt = this.db.prepare(
+      `
+    DELETE FROM messages
+    WHERE conversation_id = ?
+    `
+    )
+    deleteStmt.run(conversationId)
+    return
+  }
 
   private backupDatabase(): void {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')

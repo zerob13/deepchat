@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, onMounted, markRaw, toRaw } from 'vue'
+import { ref, onMounted, toRaw } from 'vue'
 import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
