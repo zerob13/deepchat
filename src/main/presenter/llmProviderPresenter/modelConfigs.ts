@@ -16,11 +16,8 @@ export interface ProviderModelConfigs {
  * @returns ModelConfig | undefined 如果找到配置则返回，否则返回undefined
  */
 export function getModelConfig(modelId: string): ModelConfig | undefined {
-  const providerConfigs = defaultModelsSettings.find(
-    (config) =>
-      (config.id.toLowerCase() === modelId.toLowerCase() ||
-        config.name.toLowerCase() === modelId.toLowerCase()) &&
-      config.match.every((matchString) => modelId.toLowerCase().includes(matchString))
+  const providerConfigs = defaultModelsSettings.find((config) =>
+    config.match.every((matchString) => modelId.toLowerCase().includes(matchString.toLowerCase()))
   )
 
   if (!providerConfigs) {
