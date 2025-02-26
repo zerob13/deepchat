@@ -110,7 +110,9 @@
       "language": "Language",
       "languageSelect": "Select Language",
       "searchEngine": "Search Engine",
-      "searchEngineSelect": "Select Search Engine"
+      "searchEngineSelect": "Select Search Engine",
+      "searchAssistantModel": "Search Assistant Model",
+      "selectModel": "Select Model"
     },
     "model": {
       "title": "Model Settings",

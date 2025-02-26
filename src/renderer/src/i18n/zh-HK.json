@@ -108,7 +108,11 @@
       "title": "通用設置",
       "resetData": "重置數據",
       "language": "語言",
-      "languageSelect": "選擇語言"
+      "languageSelect": "選擇語言",
+      "searchEngine": "搜索引擎",
+      "searchEngineSelect": "選擇搜索引擎",
+      "searchAssistantModel": "搜索助手模型",
+      "selectModel": "選擇模型"
     },
     "model": {
       "title": "模型設置",

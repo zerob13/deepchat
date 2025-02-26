@@ -5,7 +5,8 @@ import {
   MESSAGE_ROLE,
   MESSAGE_STATUS,
   MESSAGE_METADATA,
-  SearchResult
+  SearchResult,
+  MODEL_META
 } from '../../../shared/presenter'
 import { ISQLitePresenter } from '../../../shared/presenter'
 import { MessageManager } from './messageManager'
@@ -86,6 +87,8 @@ export class ThreadPresenter implements IThreadPresenter {
   private llmProviderPresenter: ILlmProviderPresenter
   private searchManager: SearchManager
   private generatingMessages: Map<string, GeneratingMessageState> = new Map()
+  private searchAssistantModel: MODEL_META | null = null
+  private searchAssistantProviderId: string | null = null
 
   constructor(sqlitePresenter: ISQLitePresenter, llmProviderPresenter: ILlmProviderPresenter) {
     this.sqlitePresenter = sqlitePresenter
@@ -218,6 +221,10 @@ export class ThreadPresenter implements IThreadPresenter {
         this.generatingMessages.delete(eventId)
       }
     })
+  }
+  setSearchAssistantModel(model: MODEL_META, providerId: string) {
+    this.searchAssistantModel = model
+    this.searchAssistantProviderId = providerId
   }
   getSearchEngines(): SearchEngineTemplate[] {
     return this.searchManager.getEngines()
@@ -590,14 +597,14 @@ export class ThreadPresenter implements IThreadPresenter {
     const { providerId, modelId } = conversation.settings
     try {
       const rewrittenQuery = await this.llmProviderPresenter.generateCompletion(
-        providerId,
+        this.searchAssistantProviderId || providerId,
         [
           {
             role: 'user',
             content: rewritePrompt
           }
         ],
-        modelId
+        this.searchAssistantModel?.id || modelId
       )
       return rewrittenQuery.trim() || query
     } catch (error) {

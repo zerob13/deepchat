@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, onMounted, toRaw } from 'vue'
+import { ref, onMounted, toRaw, computed } from 'vue'
 import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
@@ -27,6 +27,25 @@ export const useSettingsStore = defineStore('settings', () => {
   const searchEngines = ref<SearchEngineTemplate[]>([])
   const activeSearchEngine = ref<string>('google')
 
+  // 搜索助手模型相关
+  const searchAssistantModelRef = ref<MODEL_META | null>(null)
+  const searchAssistantProviderRef = ref<string>('')
+
+  // 搜索助手模型计算属性
+  const searchAssistantModel = computed(() => searchAssistantModelRef.value)
+
+  // 模型匹配字符串数组，按优先级排序
+  const assistantModelPriorities = [
+    'gpt-4',
+    'gpt-3.5',
+    'claude',
+    'qwen',
+    'wenxin',
+    'ernie',
+    'moonshot',
+    'spark'
+  ]
+
   // 获取系统语言
   const getSystemLanguage = (): string => {
     const systemLang = navigator.language
@@ -46,6 +65,92 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 默认返回英文
     return 'en-US'
+  }
+
+  // 查找符合优先级的模型
+  const findPriorityModel = (): { model: MODEL_META; providerId: string } | null => {
+    if (!enabledModels.value || enabledModels.value.length === 0) {
+      return null
+    }
+
+    for (const priorityKey of assistantModelPriorities) {
+      for (const providerModels of enabledModels.value) {
+        for (const model of providerModels.models) {
+          if (
+            model.id.toLowerCase().includes(priorityKey.toLowerCase()) ||
+            model.name.toLowerCase().includes(priorityKey.toLowerCase())
+          ) {
+            return {
+              model,
+              providerId: providerModels.providerId
+            }
+          }
+        }
+      }
+    }
+
+    // 如果没有找到匹配优先级的模型，返回第一个可用的模型
+    if (enabledModels.value[0]?.models.length > 0) {
+      return {
+        model: enabledModels.value[0].models[0],
+        providerId: enabledModels.value[0].providerId
+      }
+    }
+
+    return null
+  }
+
+  // 设置搜索助手模型
+  const setSearchAssistantModel = async (model: MODEL_META, providerId: string) => {
+    const _model = toRaw(model)
+    searchAssistantModelRef.value = _model
+    searchAssistantProviderRef.value = providerId
+
+    await configP.setSetting('searchAssistantModel', {
+      model: _model,
+      providerId
+    })
+
+    // 通知更新搜索助手模型
+    threadP.setSearchAssistantModel(_model, providerId)
+  }
+
+  // 初始化或更新搜索助手模型
+  const initOrUpdateSearchAssistantModel = async () => {
+    // 尝试从配置中加载搜索助手模型
+    let savedModel = await configP.getSetting<{ model: MODEL_META; providerId: string }>(
+      'searchAssistantModel'
+    )
+    savedModel = toRaw(savedModel)
+    if (savedModel) {
+      // 检查保存的模型是否仍然可用
+      const provider = enabledModels.value.find((p) => p.providerId === savedModel.providerId)
+      const modelExists = provider?.models.some((m) => m.id === savedModel.model.id)
+
+      if (modelExists) {
+        searchAssistantModelRef.value = savedModel.model
+        searchAssistantProviderRef.value = savedModel.providerId
+        // 通知线程处理器更新搜索助手模型
+        threadP.setSearchAssistantModel(savedModel.model, savedModel.providerId)
+        return
+      }
+    }
+
+    // 如果没有保存的模型或模型不再可用，查找符合优先级的模型
+    let priorityModel = findPriorityModel()
+    priorityModel = toRaw(priorityModel)
+    if (priorityModel) {
+      searchAssistantModelRef.value = priorityModel.model
+      searchAssistantProviderRef.value = priorityModel.providerId
+
+      await configP.setSetting('searchAssistantModel', {
+        model: priorityModel.model,
+        providerId: priorityModel.providerId
+      })
+
+      // 通知线程处理器更新搜索助手模型
+      threadP.setSearchAssistantModel(priorityModel.model, priorityModel.providerId)
+    }
   }
 
   // 初始化配置
@@ -73,6 +178,9 @@ export const useSettingsStore = defineStore('settings', () => {
     }
 
     await refreshAllModels()
+
+    // 初始化搜索助手模型
+    await initOrUpdateSearchAssistantModel()
   }
 
   // 刷新所有模型列表
@@ -134,6 +242,22 @@ export const useSettingsStore = defineStore('settings', () => {
       } catch (error) {
         console.error(`Failed to fetch models for provider ${provider.id}:`, error)
       }
+    }
+
+    // 刷新模型列表后，检查并更新搜索助手模型
+    if (searchAssistantModelRef.value) {
+      const provider = enabledModels.value.find(
+        (p) => p.providerId === searchAssistantProviderRef.value
+      )
+      const modelExists = provider?.models.some((m) => m.id === searchAssistantModelRef.value?.id)
+
+      if (!modelExists) {
+        // 如果当前搜索助手模型不再可用，重新选择
+        await initOrUpdateSearchAssistantModel()
+      }
+    } else {
+      // 如果还没有设置搜索助手模型，设置一个
+      await initOrUpdateSearchAssistantModel()
     }
   }
 
@@ -618,6 +742,9 @@ export const useSettingsStore = defineStore('settings', () => {
     addCustomProvider,
     removeProvider,
     disableAllModels,
-    enableAllModels
+    enableAllModels,
+    searchAssistantModel,
+    setSearchAssistantModel,
+    initOrUpdateSearchAssistantModel
   }
 })

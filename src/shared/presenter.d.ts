@@ -279,6 +279,8 @@ export interface IThreadPresenter {
   getSearchEngines(): SearchEngineTemplate[]
   getActiveSearchEngine(): SearchEngineTemplate
   setActiveSearchEngine(engineName: string): void
+  // 搜索助手模型设置
+  setSearchAssistantModel(model: MODEL_META, providerId: string): void
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
   destroy(): void
 }

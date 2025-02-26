@@ -108,7 +108,11 @@
       "title": "Общие настройки",
       "resetData": "Сбросить данные",
       "language": "Язык",
-      "languageSelect": "Выбор языка"
+      "languageSelect": "Выбор языка",
+      "searchEngine": "Поисковый движок",
+      "searchEngineSelect": "Выбор поискового движка",
+      "searchAssistantModel": "Поисковый движок",
+      "selectModel": "Выбор модели"
     },
     "model": {
       "title": "Настройки модели",

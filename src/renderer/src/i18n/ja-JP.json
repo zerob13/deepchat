@@ -108,7 +108,11 @@
       "title": "一般設定",
       "resetData": "データをリセット",
       "language": "言語",
-      "languageSelect": "言語を選択"
+      "languageSelect": "言語を選択",
+      "searchEngine": "検索エンジン",
+      "searchEngineSelect": "検索エンジンを選択",
+      "searchAssistantModel": "検索アシスタントモデル",
+      "selectModel": "モデルを選択"
     },
     "model": {
       "title": "モデル設定",
