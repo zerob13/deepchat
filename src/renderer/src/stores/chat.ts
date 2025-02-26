@@ -175,7 +175,6 @@ export const useChatStore = defineStore('chat', () => {
   // messages.value.push(fakeMessage)
   // messages.value.push(fakeUserMessage)
   const isLoading = ref(false)
-  const isGenerating = ref(false)
   const generatingThreadIds = ref(new Set<string>())
   // const currentPage = ref(1)
   const pageSize = ref(20)
@@ -199,7 +198,8 @@ export const useChatStore = defineStore('chat', () => {
     contextLength: 32000,
     maxTokens: 8000,
     providerId: '',
-    modelId: ''
+    modelId: '',
+    artifacts: 0
   })
 
   // Getters
@@ -319,7 +319,15 @@ export const useChatStore = defineStore('chat', () => {
           return block
         }
       )
+      // 处理变体消息的 extra 信息
+      const assistantMessage = message as AssistantMessage
+      if (assistantMessage.variants && assistantMessage.variants.length > 0) {
+        assistantMessage.variants = await Promise.all(
+          assistantMessage.variants.map((variant) => enrichMessageWithExtra(variant))
+        )
+      }
     }
+
     return message
   }
 
@@ -373,7 +381,6 @@ export const useChatStore = defineStore('chat', () => {
     if (!activeThreadId.value || !content) return
 
     try {
-      isGenerating.value = true
       generatingThreadIds.value.add(activeThreadId.value)
       const aiResponseMessage = await threadP.sendMessage(
         activeThreadId.value,
@@ -469,8 +476,6 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const handleStreamEnd = async (msg: { eventId: string }) => {
-    isGenerating.value = false
-
     // 从缓存中移除消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
@@ -478,24 +483,45 @@ export const useChatStore = defineStore('chat', () => {
       const updatedMessage = await threadP.getMessage(msg.eventId)
       const enrichedMessage = await enrichMessageWithExtra(updatedMessage)
 
-      // 如果是当前激活的会话，更新显示
-      if (cached.threadId === activeThreadId.value) {
-        const msgIndex = messages.value.findIndex((m) => m.id === msg.eventId)
-        if (msgIndex !== -1) {
-          messages.value[msgIndex] = enrichedMessage
-        }
-      }
-
       generatingMessagesCache.value.delete(msg.eventId)
       generatingThreadIds.value.delete(cached.threadId)
 
-      // 检查是否需要更新标题（第一条消息生成完成后）
+      // 如果是变体消息，需要更新主消息
+      if (enrichedMessage.is_variant && enrichedMessage.parentId) {
+        // 获取主消息
+        const mainMessage = await threadP.getMainMessageByParentId(
+          cached.threadId,
+          enrichedMessage.parentId
+        )
+
+        if (mainMessage) {
+          const enrichedMainMessage = await enrichMessageWithExtra(mainMessage)
+          // 如果是当前激活的会话，更新显示
+          if (cached.threadId === activeThreadId.value) {
+            const mainMsgIndex = messages.value.findIndex((m) => m.id === mainMessage.id)
+            if (mainMsgIndex !== -1) {
+              messages.value[mainMsgIndex] = enrichedMainMessage
+            }
+          }
+        }
+      } else {
+        // 如果是当前激活的会话，更新显示
+        if (cached.threadId === activeThreadId.value) {
+          const msgIndex = messages.value.findIndex((m) => m.id === msg.eventId)
+          if (msgIndex !== -1) {
+            messages.value[msgIndex] = enrichedMessage
+          }
+        }
+      }
+
+      // 检查是否需要更新标题（仅在对话刚开始时）
       if (cached.threadId === activeThreadId.value) {
         const thread = await threadP.getConversation(cached.threadId)
-        const messages = await threadP.getMessages(cached.threadId, 1, 2)
-        if (messages.list.length === 2 && thread) {
+        const { list: messages } = await threadP.getMessages(cached.threadId, 1, 10)
+        // 只有当对话刚开始（只有一问一答两条消息）时才生成标题
+        if (messages.length === 2 && thread && thread.is_new === 1) {
           try {
-            console.info('自动生成标题 start')
+            console.info('自动生成标题 start', messages.length, thread)
             await threadP.summaryTitles().then(async (title) => {
               if (title) {
                 console.info('自动生成标题', title)
@@ -513,29 +539,45 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const handleStreamError = async (msg: { eventId: string }) => {
-    isGenerating.value = false
-
     // 从缓存中获取消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
-      // 如果是当前激活的会话，从数据库获取最新的消息状态
       if (cached.threadId === activeThreadId.value) {
         try {
-          // 获取最新的消息并处理 extra 信息
           const updatedMessage = await threadP.getMessage(msg.eventId)
           const enrichedMessage = await enrichMessageWithExtra(updatedMessage)
 
-          // 在消息列表中找到并更新这条消息
-          const messageIndex = messages.value.findIndex((m) => m.id === msg.eventId)
-          if (messageIndex !== -1) {
-            messages.value[messageIndex] = enrichedMessage
+          if (enrichedMessage.is_variant && enrichedMessage.parentId) {
+            // 处理变体消息的错误状态
+            const parentMsgIndex = messages.value.findIndex(
+              (m) => m.id === enrichedMessage.parentId
+            )
+            if (parentMsgIndex !== -1) {
+              const parentMsg = messages.value[parentMsgIndex] as AssistantMessage
+              if (!parentMsg.variants) {
+                parentMsg.variants = []
+              }
+              const variantIndex = parentMsg.variants.findIndex((v) => v.id === enrichedMessage.id)
+              if (variantIndex !== -1) {
+                parentMsg.variants[variantIndex] = enrichedMessage
+              } else {
+                parentMsg.variants.push(enrichedMessage)
+              }
+              messages.value[parentMsgIndex] = { ...parentMsg }
+            }
+          } else {
+            // 非变体消息的原有错误处理逻辑
+            const messageIndex = messages.value.findIndex((m) => m.id === msg.eventId)
+            if (messageIndex !== -1) {
+              messages.value[messageIndex] = enrichedMessage
+            }
           }
         } catch (error) {
           console.error('加载错误消息失败:', error)
         }
       }
-      // 无论是否是当前激活的会话，都从缓存中移除该消息
       generatingMessagesCache.value.delete(msg.eventId)
+      generatingThreadIds.value.delete(cached.threadId)
     }
   }
 
@@ -558,6 +600,7 @@ export const useChatStore = defineStore('chat', () => {
       if (conversation) {
         chatConfig.value = { ...conversation.settings }
       }
+      // console.log('loadChatConfig', chatConfig.value)
     } catch (error) {
       console.error('加载对话配置失败:', error)
       throw error
@@ -615,6 +658,28 @@ export const useChatStore = defineStore('chat', () => {
       console.error('取消生成失败:', error)
     }
   }
+
+  const clearAllMessages = async (threadId: string) => {
+    if (!threadId) return
+    try {
+      await threadP.clearAllMessages(threadId)
+      // 清空本地消息列表
+      if (threadId === activeThreadId.value) {
+        messages.value = []
+      }
+      // 清空生成缓存中的相关消息
+      for (const [messageId, cached] of generatingMessagesCache.value.entries()) {
+        if (cached.threadId === threadId) {
+          generatingMessagesCache.value.delete(messageId)
+        }
+      }
+      generatingThreadIds.value.delete(threadId)
+    } catch (error) {
+      console.error('清空消息失败:', error)
+      throw error
+    }
+  }
+
   window.electron.ipcRenderer.on('conversation-activated', (_, msg) => {
     console.log('conversation-activated', msg)
     activeThreadId.value = msg.conversationId
@@ -654,7 +719,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // 注册消息编辑事件处理
   window.electron.ipcRenderer.on('message-edited', (_, msgId: string) => {
-    console.log('message-edited', msgId)
+    // console.log('message-edited', msgId)
     handleMessageEdited(msgId)
   })
 
@@ -665,7 +730,6 @@ export const useChatStore = defineStore('chat', () => {
     threads,
     messages,
     isLoading,
-    isGenerating,
     hasMore,
     generatingMessagesCache,
     generatingThreadIds,
@@ -689,6 +753,7 @@ export const useChatStore = defineStore('chat', () => {
     retryMessage,
     deleteMessage,
     clearActiveThread,
-    cancelGenerating
+    cancelGenerating,
+    clearAllMessages
   }
 })

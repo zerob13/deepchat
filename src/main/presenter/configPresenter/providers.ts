@@ -112,22 +112,21 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
       docs: 'https://ppinfra.com/docs/get-started/quickstart.html',
       models: 'https://ppinfra.com/model-api/console'
     }
-  }
-
-  // {
-  //   id: 'openai',
-  //   name: 'OpenAI',
-  //   apiType: 'openai',
-  //   apiKey: '',
-  //   baseUrl: 'https://api.openai.com',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://openai.com/',
-  //     apiKey: 'https://platform.openai.com/api-keys',
-  //     docs: 'https://platform.openai.com/docs',
-  //     models: 'https://platform.openai.com/docs/models'
-  //   }
-  // },
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: 'https://api.openai.com/v1',
+    enable: false,
+    websites: {
+      official: 'https://openai.com/',
+      apiKey: 'https://platform.openai.com/api-keys',
+      docs: 'https://platform.openai.com/docs',
+      models: 'https://platform.openai.com/docs/models'
+    }
+  },
   // {
   //   id: 'gemini',
   //   name: 'Gemini',
@@ -213,20 +212,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
   //     models: 'https://open.bigmodel.cn/modelcenter/square'
   //   }
   // },
-  // {
-  //   id: 'moonshot',
-  //   name: 'Moonshot',
-  //   apiType: 'moonshot',
-  //   apiKey: '',
-  //   baseUrl: 'https://api.moonshot.cn',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://moonshot.ai/',
-  //     apiKey: 'https://platform.moonshot.cn/console/api-keys',
-  //     docs: 'https://platform.moonshot.cn/docs/',
-  //     models: 'https://platform.moonshot.cn/docs/intro#%E6%A8%A1%E5%9E%8B%E5%88%97%E8%A1%A8'
-  //   }
-  // },
+  {
+    id: 'moonshot',
+    name: 'Moonshot',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    enable: false,
+    websites: {
+      official: 'https://moonshot.ai/',
+      apiKey: 'https://platform.moonshot.cn/console/api-keys',
+      docs: 'https://platform.moonshot.cn/docs/',
+      models: 'https://platform.moonshot.cn/docs/intro#%E6%A8%A1%E5%9E%8B%E5%88%97%E8%A1%A8'
+    }
+  },
   // {
   //   id: 'baichuan',
   //   name: 'Baichuan',
@@ -270,20 +269,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
   //   }
   // }
 
-  // {
-  //   id: 'openrouter',
-  //   name: 'OpenRouter',
-  //   apiType: 'openrouter',
-  //   apiKey: '',
-  //   baseUrl: 'https://openrouter.ai/api/v1/',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://openrouter.ai/',
-  //     apiKey: 'https://openrouter.ai/settings/keys',
-  //     docs: 'https://openrouter.ai/docs/quick-start',
-  //     models: 'https://openrouter.ai/docs/models'
-  //   }
-  // },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: 'https://openrouter.ai/api/v1/',
+    enable: false,
+    websites: {
+      official: 'https://openrouter.ai/',
+      apiKey: 'https://openrouter.ai/settings/keys',
+      docs: 'https://openrouter.ai/docs/quick-start',
+      models: 'https://openrouter.ai/docs/models'
+    }
+  }
   // {
   //   id: 'groq',
   //   name: 'Groq',

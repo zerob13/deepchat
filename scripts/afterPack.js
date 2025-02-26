@@ -1,8 +1,5 @@
-import child_process from 'child_process'
-import fs from 'fs'
+import fs from 'fs/promises'
 import path from 'path'
-
-const appName = 'DeepChat'
 
 function isLinux(targets) {
   const re = /AppImage|snap|deb|rpm|freebsd|pacman/i
@@ -11,17 +8,12 @@ function isLinux(targets) {
 
 async function afterPack({ targets, appOutDir }) {
   if (!isLinux(targets)) return
-  const scriptPath = path.join(appOutDir, appName),
-    script = '#!/bin/bash\n"${BASH_SOURCE%/*}"/' + appName + '.bin "$@" --no-sandbox'
-  new Promise((resolve) => {
-    const child = child_process.exec(`mv ${appName} ${appName}.bin`, { cwd: appOutDir })
-    child.on('exit', () => {
-      resolve()
-    })
-  }).then(() => {
-    fs.writeFileSync(scriptPath, script)
-    child_process.exec(`chmod +x ${appName}`, { cwd: appOutDir })
-  })
+  const appName = 'deepchat'
+  const scriptPath = path.join(appOutDir, appName)
+  const script = `#!/bin/bash\n"\${BASH_SOURCE%/*}"/${appName}.bin --no-sandbox "$@"`
+  await fs.rename(scriptPath, `${scriptPath}.bin`)
+  await fs.writeFile(scriptPath, script)
+  await fs.chmod(scriptPath, 0o755)
 }
 
 export default afterPack

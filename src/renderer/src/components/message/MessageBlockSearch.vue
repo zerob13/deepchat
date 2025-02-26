@@ -1,6 +1,7 @@
 <template>
   <div
-    class="inline-flex flex-row gap-2 items-center cursor-pointer h-9 text-xs text-muted-foreground hover:bg-accent px-2 rounded-md"
+    class="inline-flex z-0 flex-row gap-2 items-center cursor-pointer h-9 text-xs text-muted-foreground hover:bg-accent px-2 rounded-md"
+    @click="openSearchResults"
   >
     <template v-if="block.status === 'success'">
       <div v-if="block.extra.pages" class="flex flex-row ml-1.5">
@@ -9,7 +10,7 @@
             v-if="page.icon"
             :src="page.icon"
             :style="{
-              zIndex: 100 - index
+              zIndex: block.extra.pages.length - index
             }"
             class="w-6 h-6 -ml-1.5 border-card rounded-full bg-card border-2 box-border"
           />
@@ -32,14 +33,24 @@
       }}</span>
     </template>
   </div>
+  <SearchResultsDrawer v-model:open="isDrawerOpen" :search-results="searchResults" />
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
-const { t } = useI18n()
+import { usePresenter } from '@/composables/usePresenter'
+import { SearchResult } from '@shared/presenter'
+import { ref } from 'vue'
+import SearchResultsDrawer from '../SearchResultsDrawer.vue'
 
-defineProps<{
+const { t } = useI18n()
+const threadPresenter = usePresenter('threadPresenter')
+const isDrawerOpen = ref(false)
+const searchResults = ref<SearchResult[]>([])
+
+const props = defineProps<{
+  messageId: string
   block: {
     status: 'success' | 'loading'
     extra: {
@@ -51,4 +62,9 @@ defineProps<{
     }
   }
 }>()
+
+const openSearchResults = async () => {
+  isDrawerOpen.value = true
+  searchResults.value = await threadPresenter.getSearchResults(props.messageId)
+}
 </script>

@@ -1,18 +1,19 @@
 <template>
   <section class="w-full h-full">
     <div class="w-full h-full p-2 flex flex-col gap-2 overflow-y-auto">
-      <div class="flex flex-row items-center p-2">
-        <Label :for="`${provider.id}-switch`" class="flex-1 cursor-pointer">{{
-          t('settings.provider.enable')
-        }}</Label>
-        <Switch
-          :id="`${provider.id}-switch`"
-          v-model:checked="isEnabled"
-          @update:model-value="handleProviderEnableChange"
-        />
-      </div>
       <div class="flex flex-col items-start p-2 gap-2">
-        <Label :for="`${provider.id}-url`" class="flex-1 cursor-pointer">API URL</Label>
+        <div class="flex justify-between items-center w-full">
+          <Label :for="`${provider.id}-url`" class="flex-1 cursor-pointer">API URL</Label>
+          <Button
+            v-if="provider.custom"
+            variant="destructive"
+            size="sm"
+            class="text-xs rounded-lg"
+            @click="showDeleteProviderDialog = true"
+          >
+            <Icon icon="lucide:trash-2" class="w-4 h-4 mr-1" />{{ t('settings.provider.delete') }}
+          </Button>
+        </div>
         <Input
           :id="`${provider.id}-url`"
           v-model="apiHost"
@@ -45,13 +46,18 @@
               t('settings.provider.verifyKey')
             }}
           </Button>
-          <Button variant="outline" size="xs" class="text-xs text-normal rounded-lg">
+          <Button
+            variant="outline"
+            size="xs"
+            class="text-xs text-normal rounded-lg"
+            v-if="!provider.custom"
+          >
             <Icon icon="lucide:hand-helping" class="w-4 h-4 text-muted-foreground" />{{
               t('settings.provider.howToGet')
             }}
           </Button>
         </div>
-        <div class="text-xs text-secondary-foreground">
+        <div class="text-xs text-secondary-foreground" v-if="!provider.custom">
           {{ t('settings.provider.getKeyTip') }}
           <a :href="getProviderUrl(provider.id)" target="_blank" class="text-primary">{{
             provider.name
@@ -72,6 +78,17 @@
           >
             <Icon icon="lucide:list-check" class="w-4 h-4 text-muted-foreground" />{{
               t('settings.provider.enableModels')
+            }}
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            class="text-xs text-normal rounded-lg"
+            @click="disableAllModelsConfirm"
+            :disabled="enabledModels.length === 0"
+          >
+            <Icon icon="lucide:x-circle" class="w-4 h-4 text-muted-foreground" />{{
+              t('settings.provider.disableAllModels')
             }}
           </Button>
           <span class="text-xs text-secondary-foreground">
@@ -147,13 +164,50 @@
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <Dialog v-model:open="showDisableAllConfirmDialog">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ t('settings.provider.dialog.disableAllModels.title') }}</DialogTitle>
+        </DialogHeader>
+        <div class="py-4">
+          {{ t('settings.provider.dialog.disableAllModels.content', { name: provider.name }) }}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="showDisableAllConfirmDialog = false">{{
+            t('dialog.cancel')
+          }}</Button>
+          <Button variant="destructive" @click="confirmDisableAll">{{
+            t('settings.provider.dialog.disableAllModels.confirm')
+          }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="showDeleteProviderDialog">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ t('settings.provider.dialog.deleteProvider.title') }}</DialogTitle>
+        </DialogHeader>
+        <div class="py-4">
+          {{ t('settings.provider.dialog.deleteProvider.content', { name: provider.name }) }}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="showDeleteProviderDialog = false">{{
+            t('dialog.cancel')
+          }}</Button>
+          <Button variant="destructive" @click="confirmDeleteProvider">{{
+            t('settings.provider.dialog.deleteProvider.confirm')
+          }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { computed, ref, watch } from 'vue'
-import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -179,18 +233,6 @@ const props = defineProps<{
 const settingsStore = useSettingsStore()
 const apiKey = ref(props.provider.apiKey || '')
 const apiHost = ref(props.provider.baseUrl || '')
-const isEnabled = computed({
-  get() {
-    const provider = settingsStore.providers.find((p) => p.id === props.provider.id)
-    return provider?.enable
-  },
-  set(nVal: boolean) {
-    settingsStore.updateProvider(props.provider.id, {
-      ...props.provider,
-      enable: nVal
-    })
-  }
-})
 
 const providerModels = ref<MODEL_META[]>([])
 const customModels = ref<MODEL_META[]>([])
@@ -198,6 +240,8 @@ const customModels = ref<MODEL_META[]>([])
 const modelToDisable = ref<MODEL_META | null>(null)
 const showConfirmDialog = ref(false)
 const showModelListDialog = ref(false)
+const showDisableAllConfirmDialog = ref(false)
+const showDeleteProviderDialog = ref(false)
 const enabledModels = computed(() => {
   const enabledModelsList = [
     ...customModels.value.filter((m) => m.enabled),
@@ -216,6 +260,26 @@ const getProviderUrl = (providerId: string) => {
       return 'https://platform.deepseek.com'
     case 'silicon':
       return 'https://platform.siliconcloud.com'
+    case 'moonshot':
+      return 'https://platform.moonshot.cn/console/api-keys'
+    case 'openrouter':
+      return 'https://openrouter.ai/settings/keys'
+    case 'qwenlm':
+      return 'https://chat.qwenlm.ai'
+    case 'doubao':
+      return 'https://ppinfra.com/docs/get-started/quickstart.html'
+    case 'minimax':
+      return 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
+    case 'fireworks':
+      return 'https://platform.fireworks.ai/api-keys'
+    case 'tencentcloud':
+      return 'https://console.cloud.tencent.com/cam/capi'
+    case 'ppio':
+      return 'https://ppinfra.com/docs/get-started/quickstart.html'
+    case 'spark':
+      return 'https://platform.spark.com/api-keys'
+    case 'stability':
+      return 'https://platform.stability.ai/api-keys'
     default:
       return '#'
   }
@@ -265,10 +329,6 @@ watch(
   { immediate: true }
 )
 
-const handleProviderEnableChange = async (value: boolean) => {
-  await settingsStore.updateProviderStatus(props.provider.id, value)
-}
-
 const handleApiKeyEnter = async (value: string) => {
   const inputElement = document.getElementById(`${props.provider.id}-apikey`)
   if (inputElement) {
@@ -315,6 +375,28 @@ const confirmDisable = async () => {
     }
     showConfirmDialog.value = false
     modelToDisable.value = null
+  }
+}
+
+const disableAllModelsConfirm = () => {
+  showDisableAllConfirmDialog.value = true
+}
+
+const confirmDisableAll = async () => {
+  try {
+    await settingsStore.disableAllModels(props.provider.id)
+    showDisableAllConfirmDialog.value = false
+  } catch (error) {
+    console.error('Failed to disable all models:', error)
+  }
+}
+
+const confirmDeleteProvider = async () => {
+  try {
+    await settingsStore.removeProvider(props.provider.id)
+    showDeleteProviderDialog.value = false
+  } catch (error) {
+    console.error('删除供应商失败:', error)
   }
 }
 

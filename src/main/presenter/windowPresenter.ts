@@ -1,4 +1,4 @@
-import { BrowserWindow, shell, app } from 'electron'
+import { BrowserWindow, shell, app, nativeImage } from 'electron'
 import { join } from 'path'
 import icon from '../../../resources/icon.png?asset'
 import iconWin from '../../../resources/icon.ico?asset'
@@ -60,12 +60,13 @@ export class WindowPresenter implements IWindowPresenter {
   }
 
   createMainWindow(): BrowserWindow {
+    const iconFile = nativeImage.createFromPath(process.platform === 'win32' ? iconWin : icon)
     const mainWindow = new BrowserWindow({
       width: 1024,
       height: 620,
       show: false,
       autoHideMenuBar: true,
-      icon: process.platform === 'win32' ? iconWin : icon,
+      icon: iconFile,
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: {
         x: 8,
@@ -106,6 +107,23 @@ export class WindowPresenter implements IWindowPresenter {
       shell.openExternal(details.url)
       return { action: 'deny' }
     })
+
+    // Add handler for regular link clicks
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        if (url.startsWith(process.env['ELECTRON_RENDERER_URL'] || '')) {
+          return
+        }
+      }
+      // 检查是否为外部链接
+      const isExternal = url.startsWith('http:') || url.startsWith('https:')
+      if (isExternal) {
+        event.preventDefault()
+        shell.openExternal(url)
+      }
+      // 内部路由变化则不阻止
+    })
+
     mainWindow.on('show', () => {
       if (mainWindow.isMinimized()) {
         mainWindow.restore()

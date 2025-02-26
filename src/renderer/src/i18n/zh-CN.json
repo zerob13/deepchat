@@ -5,6 +5,9 @@
     "copyCode": "复制代码",
     "newChat": "新会话",
     "newTopic": "新话题",
+    "cancel": "取消",
+    "enabled": "已启用",
+    "disabled": "已禁用",
     "error": {
       "requestFailed": "请求失败...",
       "createChatFailed": "创建会话失败",
@@ -12,7 +15,8 @@
       "renameChatFailed": "重命名会话失败",
       "deleteChatFailed": "删除会话失败",
       "userCanceledGeneration": "用户取消了生成",
-      "sessionInterrupted": "会话意外中断，生成未完成"
+      "sessionInterrupted": "会话意外中断，生成未完成",
+      "noModelResponse": "模型未返回任何内容，请检查返回文本长度设置"
     },
     "resetDataConfirmTitle": "确定要重置所有数据吗？",
     "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。"
@@ -37,11 +41,14 @@
       "deepThinking": "深度思考",
       "webSearch": "联网搜索",
       "deepThinkingProgress": "深度思考中...",
-      "thinkingDuration": "（用时 {0} 秒）"
+      "thinkingDuration": "（用时 {0} 秒）",
+      "artifactThinking": "artifact 思考"
     },
     "search": {
       "results": "已搜索到{0}个网页",
-      "searching": "搜索中..."
+      "searching": "搜索中...",
+      "title": "搜索结果",
+      "description": "共找到 {0} 条相关结果"
     }
   },
   "model": {
@@ -62,7 +69,9 @@
       "maxTokensPlaceholder": "最大token"
     },
     "actions": {
-      "add": "添加模型"
+      "add": "添加模型",
+      "enableAll": "全部启用",
+      "disableAll": "全部禁用"
     },
     "tags": {
       "reasoning": "推理",
@@ -103,7 +112,9 @@
       "language": "语言",
       "languageSelect": "选择语言",
       "searchEngine": "搜索引擎",
-      "searchEngineSelect": "选择搜索引擎"
+      "searchEngineSelect": "选择搜索引擎",
+      "searchAssistantModel": "搜索助手模型",
+      "selectModel": "选择模型"
     },
     "model": {
       "title": "模型设置",
@@ -123,6 +134,9 @@
       "responseLength": {
         "label": "返回文本长度",
         "description": "设置AI响应的最大长度"
+      },
+      "artifacts": {
+        "description": "启用 Artifacts 功能可以让 AI 生成更丰富的内容"
       }
     },
     "provider": {
@@ -135,14 +149,22 @@
       "getKeyTipEnd": "获取API Key",
       "modelList": "模型列表",
       "enableModels": "启用模型",
+      "disableAllModels": "禁用全部",
       "modelsEnabled": "模型已经启用",
       "verifyLink": "验证链接",
       "syncModelsFailed": "同步模型失败...",
+      "addCustomProvider": "添加自定义服务商",
+      "delete": "删除",
       "dialog": {
         "disableModel": {
           "title": "确认禁用模型",
           "content": "是否确认禁用模型 \"{name}\"？",
           "confirm": "禁用"
+        },
+        "disableAllModels": {
+          "title": "确认禁用全部模型",
+          "content": "是否确认禁用 \"{name}\" 的全部模型？",
+          "confirm": "全部禁用"
         },
         "configModels": {
           "title": "配置模型列表"
@@ -151,6 +173,24 @@
           "missingFields": "请输入 API Key 和 API URL",
           "failed": "验证失败",
           "success": "验证成功"
+        },
+        "addCustomProvider": {
+          "title": "添加自定义服务商",
+          "description": "请填写服务商的必要信息",
+          "name": "名称",
+          "namePlaceholder": "请输入服务商名称",
+          "apiType": "API类型",
+          "apiTypePlaceholder": "请选择API类型",
+          "apiKey": "API密钥",
+          "apiKeyPlaceholder": "请输入API密钥",
+          "baseUrl": "API地址",
+          "baseUrlPlaceholder": "请输入API基础地址",
+          "enable": "启用服务商"
+        },
+        "deleteProvider": {
+          "title": "确认删除服务商",
+          "content": "是否确认删除服务商 \"{name}\"？此操作不可恢复。",
+          "confirm": "删除"
         }
       }
     }
@@ -199,6 +239,14 @@
   "about": {
     "title": "DeepChat",
     "description": "DeepChat 是一个支持多平台的 AI 客户端，我们致力于让更多人能享受到 AI 带来的便利。",
-    "website": "deepchat.thinkinai.xyz"
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "设备信息",
+      "platform": "平台",
+      "arch": "架构",
+      "cpuModel": "CPU型号",
+      "totalMemory": "总内存",
+      "osVersion": "操作系统版本"
+    }
   }
 }

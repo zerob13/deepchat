@@ -51,7 +51,7 @@
       </Button> -->
     </nav>
     <!-- User Profile Section -->
-    <div class="mt-auto pb-4 relative flex flex-col items-center">
+    <div class="mt-auto relative flex flex-col items-center">
       <Button
         variant="ghost"
         size="icon"

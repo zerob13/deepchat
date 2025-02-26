@@ -17,13 +17,22 @@
       </div>
       <div v-else class="flex flex-col w-full space-y-2">
         <div v-for="block in currentContent" :key="block.id" class="w-full">
-          <MessageBlockContent v-if="block.type === 'content'" :block="block" />
+          <MessageBlockContent
+            v-if="block.type === 'content'"
+            :block="block"
+            :message-id="message.id"
+            :is-search-result="isSearchResult"
+          />
           <MessageBlockThink
             v-else-if="block.type === 'reasoning_content'"
             :block="block"
             :usage="message.usage"
           />
-          <MessageBlockSearch v-else-if="block.type === 'search'" :block="block" />
+          <MessageBlockSearch
+            v-else-if="block.type === 'search'"
+            :message-id="message.id"
+            :block="block"
+          />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>
@@ -63,35 +72,57 @@ const props = defineProps<{
 const chatStore = useChatStore()
 const currentVariantIndex = ref(0)
 
-const totalVariants = computed(() => {
-  if (!props.message.variants || props.message.variants.length === 0) {
-    return 1
-  }
-  return props.message.variants.length + 1
+// 计算当前消息的所有变体（包括缓存中的）
+const allVariants = computed(() => {
+  const messageVariants = props.message.variants || []
+  const combinedVariants = messageVariants.map((variant) => {
+    const cachedVariant = Array.from(chatStore.generatingMessagesCache.values()).find((cached) => {
+      const msg = cached.message as AssistantMessage
+      return msg.is_variant && msg.id === variant.id
+    })
+    return cachedVariant ? cachedVariant.message : variant
+  })
+  return combinedVariants
 })
 
+// 计算变体总数
+const totalVariants = computed(() => allVariants.value.length + 1)
+
+// 获取当前显示的内容
 const currentContent = computed(() => {
   if (currentVariantIndex.value === 0) {
     return props.message.content
   }
-  return props.message.variants?.[currentVariantIndex.value - 1]?.content || props.message.content
+
+  const variant = allVariants.value[currentVariantIndex.value - 1]
+  return variant?.content || props.message.content
 })
+
+// 监听变体变化
 watch(
-  () => props.message.variants,
-  (newVariants) => {
-    if (newVariants && newVariants.length > 0) {
-      currentVariantIndex.value = newVariants.length
-    } else {
-      currentVariantIndex.value = 0 // 如果没有变体，重置索引
+  () => allVariants.value.length,
+  (newLength, oldLength) => {
+    // 如果当前没有选中任何变体，或者当前选中的是最后一个变体
+    // 则自动跟随最新的变体
+    if (currentVariantIndex.value === 0 || newLength > oldLength) {
+      currentVariantIndex.value = newLength
+    }
+    // 如果当前选中的变体超出范围，调整到最后一个变体
+    else if (currentVariantIndex.value > newLength) {
+      currentVariantIndex.value = newLength
     }
   }
 )
 
+const isSearchResult = computed(() => {
+  return Boolean(
+    currentContent.value?.some((block) => block.type === 'search' && block.status === 'success')
+  )
+})
+
 onMounted(() => {
   // 默认显示最后一个变体
-  if (props.message.variants && props.message.variants.length > 0) {
-    currentVariantIndex.value = props.message.variants.length
-  }
+  currentVariantIndex.value = allVariants.value.length
 })
 
 const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next') => {
@@ -103,9 +134,10 @@ const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next') => 
     window.api.copyText(
       currentContent.value
         .map((block) => {
-          return block.type === 'reasoning_content'
-            ? `<think>${block.content}</think>`
-            : block.content
+          if (block.type === 'reasoning_content' || block.type === 'artifact-thinking') {
+            return `<think>${block.content}</think>`
+          }
+          return block.content
         })
         .join('\n')
     )

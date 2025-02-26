@@ -84,6 +84,9 @@ export interface ISQLitePresenter {
     attachmentData: string
   ): Promise<void>
   getMessageAttachments(messageId: string, type: string): Promise<{ content: string }[]>
+  getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null>
+  getMainMessageByParentId(conversationId: string, parentId: string): Promise<SQLITE_MESSAGE | null>
+  deleteAllMessagesInConversation(conversationId: string): Promise<void>
 }
 
 export interface IPresenter {
@@ -138,6 +141,7 @@ export type LLM_PROVIDER = {
   apiKey: string
   baseUrl: string
   enable: boolean
+  custom?: boolean
 }
 
 export type LLM_PROVIDER_BASE = {
@@ -212,6 +216,7 @@ export type CONVERSATION_SETTINGS = {
   maxTokens: number
   providerId: string
   modelId: string
+  artifacts: 0 | 1
 }
 
 export type CONVERSATION = {
@@ -221,6 +226,7 @@ export type CONVERSATION = {
   createdAt: number
   updatedAt: number
   is_new?: number
+  artifacts?: number
 }
 
 export interface IThreadPresenter {
@@ -242,6 +248,9 @@ export interface IThreadPresenter {
   ): Promise<{ total: number; list: CONVERSATION[] }>
   setActiveConversation(conversationId: string): Promise<void>
   getActiveConversation(): Promise<CONVERSATION | null>
+
+  getSearchResults(messageId: string): Promise<SearchResult[]>
+  clearAllMessages(conversationId: string): Promise<void>
 
   // 消息操作
   getMessages(
@@ -270,6 +279,10 @@ export interface IThreadPresenter {
   getSearchEngines(): SearchEngineTemplate[]
   getActiveSearchEngine(): SearchEngineTemplate
   setActiveSearchEngine(engineName: string): void
+  // 搜索助手模型设置
+  setSearchAssistantModel(model: MODEL_META, providerId: string): void
+  getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
+  destroy(): void
 }
 
 export type MESSAGE_STATUS = 'sent' | 'pending' | 'error'
@@ -277,6 +290,8 @@ export type MESSAGE_ROLE = 'user' | 'assistant' | 'system' | 'function'
 
 export type MESSAGE_METADATA = {
   totalTokens: number
+  inputTokens: number
+  outputTokens: number
   generationTime: number
   firstTokenTime: number
   tokensPerSecond: number

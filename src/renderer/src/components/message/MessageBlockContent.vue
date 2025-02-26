@@ -1,20 +1,43 @@
 <!-- eslint-disable vue/no-v-html -->
 <template>
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
-    <div
-      :id="id"
-      class="markdown-content prose prose-sm dark:prose-invert max-w-full"
-      @click="handleCopyClick"
-      v-html="renderedContent"
-    ></div>
+    <template v-for="(part, index) in processedContent" :key="index">
+      <div
+        v-if="part.type === 'text'"
+        :id="id"
+        class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
+        @click="handleCopyClick"
+        v-html="renderContent(part.content)"
+      ></div>
+      <ArtifactThinking
+        v-else-if="part.type === 'thinking'"
+        :block="{
+          content: part.content
+        }"
+      />
+      <ArtifactBlock
+        class="max-h-[500px] overflow-auto"
+        v-else-if="part.type === 'artifact' && part.artifact"
+        :block="{
+          content: part.content,
+          artifact: part.artifact
+        }"
+      />
+    </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
+    <ReferencePreview :show="showPreview" :content="previewContent" :rect="previewRect" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import MarkdownIt from 'markdown-it'
+import {
+  createCodeBlockRenderer,
+  initReference,
+  renderMarkdown
+  // enableDebugRendering
+} from '@/lib/markdown.helper'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -36,24 +59,88 @@ import { lua } from '@codemirror/legacy-modes/mode/lua'
 import { haskell } from '@codemirror/legacy-modes/mode/haskell'
 import { erlang } from '@codemirror/legacy-modes/mode/erlang'
 import { clojure } from '@codemirror/legacy-modes/mode/clojure'
-
 import { StreamLanguage } from '@codemirror/language'
 import { php } from '@codemirror/lang-php'
 import { yaml } from '@codemirror/lang-yaml'
-
 import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
+
+import { usePresenter } from '@/composables/usePresenter'
+import { SearchResult } from '@shared/presenter'
+import ReferencePreview from './ReferencePreview.vue'
+import DOMPurify from 'dompurify'
+
+const threadPresenter = usePresenter('threadPresenter')
+const searchResults = ref<SearchResult[]>([])
+
+import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
+import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
+
+const props = defineProps<{
+  block: {
+    content: string
+    status?: 'loading' | 'success' | 'error'
+    timestamp: number
+  }
+  messageId: string
+  isSearchResult?: boolean
+}>()
+
 const id = ref(`editor-${uuidv4()}`)
+
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
+const messageBlock = ref<HTMLDivElement>()
+
+const previewContent = ref<SearchResult | undefined>()
+const showPreview = ref(false)
+const previewRect = ref<DOMRect>()
+
+const onReferenceClick = (id: string) => {
+  const index = parseInt(id) - 1
+  if (searchResults.value && searchResults.value[index]) {
+    // Handle navigation or content display
+    // console.log('Navigate to:', searchResults.value[index])
+    window.open(searchResults.value[index].url, '_blank')
+  }
+}
+
+const onReferenceHover = (id: string, isHover: boolean, rect: DOMRect) => {
+  const index = parseInt(id) - 1
+  // console.log(id, isHover, rect)
+  if (searchResults.value && searchResults.value[index]) {
+    if (isHover) {
+      previewContent.value = searchResults.value[index]
+      previewRect.value = rect
+      showPreview.value = true
+    } else {
+      previewContent.value = undefined
+      showPreview.value = false
+    }
+  }
+}
 
 // Store editor instances for cleanup
 const editorInstances = ref<Map<string, EditorView>>(new Map())
 
 const { t } = useI18n()
 
-const messageBlock = ref<HTMLDivElement>()
+interface ProcessedPart {
+  type: 'text' | 'thinking' | 'artifact'
+  content: string
+  artifact?: {
+    identifier: string
+    title: string
+    type:
+      | 'application/vnd.ant.code'
+      | 'text/markdown'
+      | 'text/html'
+      | 'image/svg+xml'
+      | 'application/vnd.ant.mermaid'
+    language?: string
+  }
+}
 
 const refreshLoadingCursor = () => {
   if (messageBlock.value) {
@@ -61,38 +148,115 @@ const refreshLoadingCursor = () => {
   }
 }
 
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  breaks: true
+initReference({
+  onClick: onReferenceClick,
+  onHover: onReferenceHover
 })
+// Remove all the markdown-it configuration and setup
+// Instead, just configure the code block renderer
+createCodeBlockRenderer(t)
+// enableDebugRendering() // Optional, remove if debug logging is not needed
 
-// 禁用默认的代码高亮
-md.options.highlight = null
+const processedContent = computed<ProcessedPart[]>(() => {
+  if (!props.block.content) return [{ type: 'text', content: '' }]
+  if (props.block.status === 'loading') {
+    return [
+      {
+        type: 'text',
+        content: props.block.content
+      }
+    ]
+  }
 
-// 自定义段落渲染规则
-md.renderer.rules.paragraph_open = () => ''
-md.renderer.rules.paragraph_close = () => ''
+  const parts: ProcessedPart[] = []
+  let content = props.block.content
+  let lastIndex = 0
 
-// Custom code block rendering
-md.renderer.rules.fence = (tokens, idx) => {
-  const token = tokens[idx]
-  const info = token.info ? token.info.trim() : ''
-  const str = token.content
+  // 处理 antThinking 标签
+  const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
+  let match
+  while ((match = thinkingRegex.exec(content)) !== null) {
+    // 添加思考前的普通文本
+    if (match.index > lastIndex) {
+      const text = content.substring(lastIndex, match.index)
+      if (text.trim()) {
+        parts.push({
+          type: 'text',
+          content: text
+        })
+      }
+    }
 
-  const encodedCode = btoa(unescape(encodeURIComponent(str)))
-  const language = info || 'text'
-  const uniqueId = `editor-${Math.random().toString(36).substr(2, 9)}`
+    // 添加思考内容
+    parts.push({
+      type: 'thinking',
+      content: match[1].trim()
+    })
 
-  return `<div class="code-block" data-code="${encodedCode}" data-lang="${language}" id="${uniqueId}">
-    <div class="code-header">
-      <span class="code-lang">${language.toUpperCase()}</span>
-      <button class="copy-button" data-code="${encodedCode}">${t('common.copyCode')}</button>
-    </div>
-    <div class="code-editor"></div>
-  </div>`
-}
+    lastIndex = match.index + match[0].length
+  }
+
+  // 处理 antArtifact 标签
+  const artifactRegex =
+    /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
+  content = props.block.content
+  lastIndex = 0
+
+  while ((match = artifactRegex.exec(content)) !== null) {
+    // 添加 artifact 前的普通文本
+    if (match.index > lastIndex) {
+      const text = content.substring(lastIndex, match.index)
+      if (text.trim()) {
+        parts.push({
+          type: 'text',
+          content: text
+        })
+      }
+    }
+
+    // 添加 artifact 内容
+    parts.push({
+      type: 'artifact',
+      content: match[5].trim(),
+      artifact: {
+        identifier: match[1],
+        type: match[2] as
+          | 'application/vnd.ant.code'
+          | 'text/markdown'
+          | 'text/html'
+          | 'image/svg+xml'
+          | 'application/vnd.ant.mermaid',
+        title: match[3],
+        language: match[4]
+      }
+    })
+
+    lastIndex = match.index + match[0].length
+  }
+
+  // 添加剩余的普通文本
+  if (lastIndex < content.length) {
+    const text = content.substring(lastIndex)
+    if (text.trim()) {
+      parts.push({
+        type: 'text',
+        content: text
+      })
+    }
+  }
+
+  // 如果没有任何特殊标签，返回原始内容
+  if (parts.length === 0) {
+    return [
+      {
+        type: 'text',
+        content: content
+      }
+    ]
+  }
+
+  return parts
+})
 
 // Initialize code editors
 const initCodeEditors = () => {
@@ -266,27 +430,23 @@ const cleanupEditors = () => {
   editorInstances.value.clear()
 }
 
-const props = defineProps<{
-  block: {
-    content: string
-    status?: 'loading'
-  }
-}>()
-
-const renderedContent = computed(() => {
-  const content = props.block.content
+const renderContent = (content: string) => {
   refreshLoadingCursor()
-  return md.render(
-    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
+  const safeContent = DOMPurify.sanitize(
+    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content,
+    {
+      WHOLE_DOCUMENT: false,
+      FORBID_TAGS: ['script', 'style'],
+      ALLOWED_URI_REGEXP:
+        /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
+    }
   )
-})
-// const renderedContent = computed(() => {
-//   return md.render(props.block.content)
-// })
+  return renderMarkdown(safeContent)
+}
 
 // 添加 watch 来监听内容变化
 watch(
-  renderedContent,
+  processedContent,
   () => {
     nextTick(() => {
       // 清理现有的编辑器实例
@@ -297,11 +457,32 @@ watch(
   },
   { immediate: true }
 )
+
+onMounted(async () => {
+  if (props.isSearchResult) {
+    searchResults.value = await threadPresenter.getSearchResults(props.messageId)
+  }
+})
 </script>
 
 <style>
 .prose {
   @apply leading-7;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 添加行内公式样式 */
+.prose .math-inline {
+  @apply inline-block;
+  white-space: nowrap;
+}
+
+/* 确保块级公式正确显示 */
+.prose .math-block {
+  @apply block my-4;
 }
 
 .prose pre {
@@ -350,5 +531,20 @@ watch(
 
 .prose hr + p {
   @apply mt-4;
+}
+
+/* MathJax 容器样式 */
+.prose mjx-container:not([display='true']) {
+  display: inline-block !important;
+  margin: 0 !important;
+  vertical-align: middle !important;
+}
+
+.prose mjx-container[display='true'] {
+  @apply block my-4;
+  text-align: center;
+}
+.prose .reference-link {
+  @apply inline-block text-xs text-muted-foreground bg-muted rounded-md text-center min-w-4 py-0.5 mx-0.5 hover:bg-accent;
 }
 </style>

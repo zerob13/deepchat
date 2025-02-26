@@ -5,6 +5,8 @@ import { DeepseekProvider } from './providers/deepseekProvider'
 import { SiliconcloudProvider } from './providers/siliconcloudProvider'
 import { eventBus } from '@/eventbus'
 import { OpenAICompatibleProvider } from './providers/openAICompatibleProvider'
+import { PPIOProvider } from './providers/ppioProvider'
+import { getModelConfig } from './modelConfigs'
 // 导入其他provider...
 
 // 流的状态
@@ -99,6 +101,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         case 'silicon':
           instance = new SiliconcloudProvider(provider)
           break
+        case 'ppio':
+          instance = new PPIOProvider(provider)
+          break
         // 添加其他provider的实例化逻辑
         default:
           instance = new OpenAICompatibleProvider(provider)
@@ -111,7 +116,16 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
   async getModelList(providerId: string): Promise<MODEL_META[]> {
     const provider = this.getProviderInstance(providerId)
-    return provider.fetchModels()
+    let models = await provider.fetchModels()
+    models = models.map((model) => {
+      const config = getModelConfig(model.id)
+      if (config) {
+        model.maxTokens = config.maxTokens
+        model.contextLength = config.contextLength
+      }
+      return model
+    })
+    return models
   }
 
   async updateModelStatus(providerId: string, modelId: string, enabled: boolean): Promise<void> {
@@ -310,6 +324,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     temperature?: number,
     maxTokens?: number
   ): Promise<string> {
+    console.log('generateCompletion', providerId, modelId, temperature, maxTokens)
     const provider = this.getProviderInstance(providerId)
     const response = await provider.completions(messages, modelId, temperature, maxTokens)
     return response.content

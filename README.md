@@ -35,6 +35,8 @@
 
 ## Development
 
+Please read the [Contribution Guidelines](./CONTRIBUTING.md)
+
 ### Install dependencies
 
 ```bash

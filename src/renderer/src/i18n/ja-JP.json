@@ -1,10 +1,13 @@
 {
   "common": {
+    "enabled": "有効",
+    "disabled": "無効",
     "loading": "読み込み中...",
     "copySuccess": "コピーしました!",
     "copyCode": "コードをコピー",
     "newChat": "新しいチャット",
     "newTopic": "新しいトピック",
+    "cancel": "キャンセル",
     "error": {
       "requestFailed": "リクエストに失敗しました...",
       "createChatFailed": "チャットの作成に失敗しました",
@@ -12,7 +15,8 @@
       "renameChatFailed": "チャットの名前変更に失敗しました",
       "deleteChatFailed": "チャットの削除に失敗しました",
       "userCanceledGeneration": "ユーザーが生成をキャンセルしました",
-      "sessionInterrupted": "セッションが中断され、生成が完了しませんでした"
+      "sessionInterrupted": "セッションが中断され、生成が完了しませんでした",
+      "noModelResponse": "モデルが何も返しませんでした。返却テキストの長さ設定を確認してください"
     },
     "resetDataConfirmTitle": "すべてのデータをリセットしますか？",
     "resetDataConfirmDescription": "すべてのデータがデフォルト設定にリセットされます。この操作は元に戻せません。"
@@ -37,11 +41,14 @@
       "deepThinking": "深い思考",
       "webSearch": "ウェブ検索",
       "deepThinkingProgress": "深い思考中...",
-      "thinkingDuration": "({0}秒かかりました)"
+      "thinkingDuration": "({0}秒かかりました)",
+      "artifactThinking": "アーティファクト思考"
     },
     "search": {
       "results": "{0}件のウェブページが見つかりました",
-      "searching": "検索中..."
+      "searching": "検索中...",
+      "title": "検索結果",
+      "description": "{0}件の関連結果が見つかりました"
     }
   },
   "model": {
@@ -62,7 +69,9 @@
       "maxTokensPlaceholder": "最大トークン数"
     },
     "actions": {
-      "add": "モデルを追加"
+      "add": "モデルを追加",
+      "enableAll": "すべて有効にする",
+      "disableAll": "すべて無効にする"
     },
     "tags": {
       "reasoning": "推論",
@@ -101,7 +110,11 @@
       "title": "一般設定",
       "resetData": "データをリセット",
       "language": "言語",
-      "languageSelect": "言語を選択"
+      "languageSelect": "言語を選択",
+      "searchEngine": "検索エンジン",
+      "searchEngineSelect": "検索エンジンを選択",
+      "searchAssistantModel": "検索アシスタントモデル",
+      "selectModel": "モデルを選択"
     },
     "model": {
       "title": "モデル設定",
@@ -121,6 +134,9 @@
       "responseLength": {
         "label": "応答の長さ",
         "description": "AIの応答の最大長を設定します"
+      },
+      "artifacts": {
+        "description": "Artifacts機能を有効にすると、AIはより豊かなコンテンツを生成できます"
       }
     },
     "provider": {
@@ -133,9 +149,12 @@
       "getKeyTipEnd": "API Keyを取得する",
       "modelList": "モデルリスト",
       "enableModels": "モデルを有効にする",
+      "disableAllModels": "すべてのモデルを無効にする",
       "modelsEnabled": "モデルが有効になりました",
       "verifyLink": "検証リンク",
       "syncModelsFailed": "モデルの同期に失敗しました...",
+      "addCustomProvider": "カスタムプロバイダーを追加",
+      "delete": "削除",
       "dialog": {
         "disableModel": {
           "title": "モデルを無効にする確認",
@@ -145,10 +164,33 @@
         "configModels": {
           "title": "モデルリストを構成"
         },
+        "disableAllModels": {
+          "title": "すべてのモデルを無効にする確認",
+          "content": "モデル \"{name}\" のすべてのモデルを無効にしてもよろしいですか？",
+          "confirm": "すべて無効にする"
+        },
         "verify": {
           "missingFields": "API KeyとAPI URLを入力してください",
           "failed": "検証に失敗しました",
           "success": "検証に成功しました"
+        },
+        "addCustomProvider": {
+          "title": "カスタムプロバイダーを追加",
+          "description": "プロバイダーの必要な情報を入力してください",
+          "name": "名前",
+          "namePlaceholder": "プロバイダー名を入力してください",
+          "apiType": "APIタイプ",
+          "apiTypePlaceholder": "APIタイプを選択してください",
+          "apiKey": "APIキー",
+          "apiKeyPlaceholder": "APIキーを入力してください",
+          "baseUrl": "API URL",
+          "baseUrlPlaceholder": "API URLを入力してください",
+          "enable": "プロバイダーを有効にする"
+        },
+        "deleteProvider": {
+          "title": "プロバイダーの削除確認",
+          "content": "プロバイダー \"{name}\" を削除してもよろしいですか？この操作は元に戻せません。",
+          "confirm": "削除"
         }
       }
     }
@@ -196,7 +238,15 @@
   },
   "about": {
     "title": "DeepChat",
-    "description": "DeepChatはマルチプラットフォーム対応のAIクライアントです。より多くの人々にAIの利便性を提供することを目指しています。",
-    "website": "deepchat.thinkinai.xyz"
+    "description": "DeepChatはクロスプラットフォームのAIクライアントで、より多くの人々にAIを利用可能にすることを目指しています。",
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "デバイス情報",
+      "platform": "プラットフォーム",
+      "arch": "アーキテクチャ",
+      "cpuModel": "CPUモデル",
+      "totalMemory": "総メモリ",
+      "osVersion": "OSバージョン"
+    }
   }
 }

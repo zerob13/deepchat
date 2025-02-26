@@ -36,6 +36,8 @@ export class MessageManager implements IMessageManager {
         total_tokens: metadata?.totalTokens ?? 0,
         generation_time: metadata?.generationTime ?? 0,
         first_token_time: metadata?.firstTokenTime ?? 0,
+        input_tokens: metadata?.inputTokens ?? 0,
+        output_tokens: metadata?.outputTokens ?? 0,
         reasoning_start_time: metadata?.reasoningStartTime ?? 0,
         reasoning_end_time: metadata?.reasoningEndTime ?? 0
       },
@@ -91,6 +93,9 @@ export class MessageManager implements IMessageManager {
     }
     const msg = this.convertToMessage(message)
     eventBus.emit('message-edited', messageId)
+    if (msg.parentId) {
+      eventBus.emit('message-edited', msg.parentId)
+    }
     return msg
   }
 
@@ -128,6 +133,17 @@ export class MessageManager implements IMessageManager {
   async getMessageVariants(messageId: string): Promise<Message[]> {
     const variants = await this.sqlitePresenter.getMessageVariants(messageId)
     return variants.map((variant) => this.convertToMessage(variant))
+  }
+
+  async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<Message | null> {
+    const message = await this.sqlitePresenter.getMainMessageByParentId(conversationId, parentId)
+    if (!message) {
+      return null
+    }
+    return this.convertToMessage(message)
   }
 
   async getMessageThread(
@@ -205,5 +221,17 @@ export class MessageManager implements IMessageManager {
       .map((msg) => this.convertToMessage(msg))
 
     return messages
+  }
+
+  async getLastUserMessage(conversationId: string): Promise<Message | null> {
+    const sqliteMessage = await this.sqlitePresenter.getLastUserMessage(conversationId)
+    if (!sqliteMessage) {
+      return null
+    }
+    return this.convertToMessage(sqliteMessage)
+  }
+
+  async clearAllMessages(conversationId: string): Promise<void> {
+    await this.sqlitePresenter.deleteAllMessagesInConversation(conversationId)
   }
 }

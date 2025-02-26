@@ -1,7 +1,7 @@
 <template>
-  <div class="w-full max-w-4xl mx-auto">
+  <div class="w-full max-w-5xl mx-auto">
     <div
-      class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-1.5"
+      class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-2 shadow-sm"
     >
       <!-- {{  t('chat.input.fileArea') }} -->
       <div v-if="selectedFiles.length > 0">
@@ -28,9 +28,10 @@
       <Textarea
         v-model="inputText"
         :auto-focus="true"
-        rows="1"
+        :rows="rows"
+        :max-rows="maxRows"
         :placeholder="t('chat.input.placeholder')"
-        class="border-none min-h-0 shadow-none p-1.5 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none"
+        class="border-none max-h-[10rem] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
         @keydown.enter.exact.prevent="handleEnterKey"
         @input="adjustHeight"
       ></Textarea>
@@ -118,6 +119,16 @@ const settings = ref({
 const textareaRef = ref<HTMLElement>()
 
 const selectedFiles = ref<File[]>([])
+withDefaults(
+  defineProps<{
+    maxRows?: number
+    rows?: number
+  }>(),
+  {
+    maxRows: 10,
+    rows: 1
+  }
+)
 
 const emit = defineEmits(['send', 'file-upload'])
 
@@ -159,10 +170,15 @@ const deleteFile = (idx: number) => {
 }
 
 const disabledSend = computed(() => {
-  return chatStore.generatingThreadIds.has(chatStore.activeThreadId ?? '')
+  return (
+    chatStore.generatingThreadIds.has(chatStore.activeThreadId ?? '') || inputText.value.length <= 0
+  )
 })
 
 const handleEnterKey = (e: KeyboardEvent) => {
+  if (disabledSend.value) {
+    return
+  }
   if (!e.isComposing) {
     emitSend()
   }

@@ -1,10 +1,13 @@
 {
   "common": {
+    "enabled": "Включено",
+    "disabled": "Выключено",
     "loading": "Загрузка...",
     "copySuccess": "Скопировано!",
     "copyCode": "Скопировать код",
     "newChat": "Новый чат",
     "newTopic": "Новая тема",
+    "cancel": "Отмена",
     "error": {
       "requestFailed": "Ошибка запроса...",
       "createChatFailed": "Не удалось создать чат",
@@ -12,7 +15,8 @@
       "renameChatFailed": "Не удалось переименовать чат",
       "deleteChatFailed": "Не удалось удалить чат",
       "userCanceledGeneration": "Пользователь отменил генерацию",
-      "sessionInterrupted": "Сессия прервана, генерация не завершена"
+      "sessionInterrupted": "Сессия прервана, генерация не завершена",
+      "noModelResponse": "Модель не вернула ответ, пожалуйста, проверьте настройки длины ответа"
     },
     "resetDataConfirmTitle": "Сбросить все данные?",
     "resetDataConfirmDescription": "Это сбросит все ваши данные до настроек по умолчанию. Это действие нельзя отменить."
@@ -37,11 +41,14 @@
       "deepThinking": "Глубокое мышление",
       "webSearch": "Поиск в интернете",
       "deepThinkingProgress": "Глубокое мышление...",
-      "thinkingDuration": "(Заняло {0} секунд)"
+      "thinkingDuration": "(Заняло {0} секунд)",
+      "artifactThinking": "Артефакт мышление"
     },
     "search": {
       "results": "Найдено {0} веб-страниц",
-      "searching": "Поиск..."
+      "searching": "Поиск...",
+      "title": "Результаты поиска",
+      "description": "Найдено {0} связанных результатов"
     }
   },
   "model": {
@@ -62,7 +69,9 @@
       "maxTokensPlaceholder": "Максимальное количество токенов"
     },
     "actions": {
-      "add": "Добавить модель"
+      "add": "Добавить модель",
+      "enableAll": "Включить все",
+      "disableAll": "Выключить все"
     },
     "tags": {
       "reasoning": "Рассуждение",
@@ -101,7 +110,11 @@
       "title": "Общие настройки",
       "resetData": "Сбросить данные",
       "language": "Язык",
-      "languageSelect": "Выбор языка"
+      "languageSelect": "Выбор языка",
+      "searchEngine": "Поисковый движок",
+      "searchEngineSelect": "Выбор поискового движка",
+      "searchAssistantModel": "Поисковый движок",
+      "selectModel": "Выбор модели"
     },
     "model": {
       "title": "Настройки модели",
@@ -121,6 +134,9 @@
       "responseLength": {
         "label": "Длина ответа",
         "description": "Установите максимальную длину ответа AI"
+      },
+      "artifacts": {
+        "description": "Включение функции артефактов позволяет AI генерировать более богатый контент"
       }
     },
     "provider": {
@@ -133,9 +149,12 @@
       "getKeyTipEnd": "Получите API Key",
       "modelList": "Список моделей",
       "enableModels": "Включить модели",
+      "disableAllModels": "Отключить все модели",
       "modelsEnabled": "Модели включены",
       "verifyLink": "Проверить ссылку",
       "syncModelsFailed": "Не удалось синхронизировать модели...",
+      "addCustomProvider": "Добавить пользовательский провайдер",
+      "delete": "Удалить",
       "dialog": {
         "disableModel": {
           "title": "Подтвердите отключение модели",
@@ -145,10 +164,33 @@
         "configModels": {
           "title": "Настройка списка моделей"
         },
+        "disableAllModels": {
+          "title": "Подтвердите отключение всех моделей",
+          "content": "Вы уверены, что хотите отключить все модели для \"{name}\"?",
+          "confirm": "Отключить все"
+        },
         "verify": {
           "missingFields": "Пожалуйста, введите API Key и API URL",
           "failed": "Проверка не удалась",
           "success": "Проверка успешна"
+        },
+        "addCustomProvider": {
+          "title": "Добавить пользовательский провайдер",
+          "description": "Пожалуйста, заполните необходимую информацию для провайдера",
+          "name": "Имя",
+          "namePlaceholder": "Введите имя провайдера",
+          "apiType": "Тип API",
+          "apiTypePlaceholder": "Выберите тип API",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "Введите API Key",
+          "baseUrl": "API URL",
+          "baseUrlPlaceholder": "Введите API URL",
+          "enable": "Включить провайдер"
+        },
+        "deleteProvider": {
+          "title": "Подтверждение удаления провайдера",
+          "content": "Вы уверены, что хотите удалить провайдера \"{name}\"? Это действие нельзя отменить.",
+          "confirm": "Удалить"
         }
       }
     }
@@ -197,6 +239,14 @@
   "about": {
     "title": "DeepChat",
     "description": "DeepChat - это кросс-платформенный AI клиент. Мы стремимся сделать AI доступным для большего числа людей.",
-    "website": "deepchat.thinkinai.xyz"
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "Информация о устройстве",
+      "platform": "Платформа",
+      "arch": "Архитектура",
+      "cpuModel": "Модель процессора",
+      "totalMemory": "Общий объем памяти",
+      "osVersion": "Версия операционной системы"
+    }
   }
 }

@@ -31,7 +31,7 @@ export abstract class BaseLLMProvider {
   }
 
   protected async init() {
-    if (this.provider.apiKey) {
+    if (this.provider.enable) {
       try {
         await this.fetchModels()
         this.isInitialized = true

@@ -18,14 +18,14 @@
           >
             <ModelIcon :model-id="model.id"></ModelIcon>
             <span class="text-xs font-bold truncate flex-1">{{ model.name }}</span>
-            <Badge
+            <!-- <Badge
               v-for="tag in getModelTags(model)"
               :key="tag"
               variant="outline"
               class="py-0 rounded-lg"
               size="xs"
               >{{ tag }}</Badge
-            >
+            > -->
           </div>
         </div>
       </div>
@@ -36,7 +36,7 @@
 import { useI18n } from 'vue-i18n'
 import { ref, computed, onMounted } from 'vue'
 import Input from './ui/input/Input.vue'
-import Badge from './ui/badge/Badge.vue'
+// import Badge from './ui/badge/Badge.vue'
 import { useChatStore } from '@/stores/chat'
 import { usePresenter } from '@/composables/usePresenter'
 import type { MODEL_META } from '@shared/presenter'
@@ -77,12 +77,12 @@ const handleModelSelect = async (providerId: string, model: MODEL_META) => {
   emit('update:model', model, providerId)
 }
 
-const getModelTags = (model: MODEL_META) => {
-  const tags: string[] = []
-  if (model.group) tags.push(model.group)
-  if (model.description) tags.push(model.description)
-  return tags
-}
+// const getModelTags = (model: MODEL_META) => {
+//   const tags: string[] = []
+//   if (model.group) tags.push(model.group)
+//   if (model.description) tags.push(model.description)
+//   return tags
+// }
 
 onMounted(async () => {
   try {

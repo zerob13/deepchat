@@ -41,6 +41,30 @@
           </Select>
         </div>
       </div>
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:bot" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">{{ t('settings.common.searchAssistantModel') }}</span>
+        </span>
+        <div class="flex-shrink-0 min-w-64 max-w-96">
+          <Popover v-model:open="modelSelectOpen">
+            <PopoverTrigger as-child>
+              <Button variant="outline" class="w-full justify-between">
+                <div class="flex items-center gap-2">
+                  <ModelIcon :model-id="selectedSearchModel?.id || ''" class="h-4 w-4" />
+                  <span class="truncate">{{
+                    selectedSearchModel?.name || t('settings.common.selectModel')
+                  }}</span>
+                </div>
+                <ChevronDown class="h-4 w-4 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent class="w-80 p-0">
+              <ModelSelect @update:model="handleSearchModelSelect" />
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
       <Dialog v-model:open="isDialogOpen">
         <DialogTrigger as-child>
           <div
@@ -82,7 +106,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import {
   Dialog,
@@ -94,6 +118,11 @@ import {
   DialogTrigger
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ChevronDown } from 'lucide-vue-next'
+import ModelSelect from '@/components/ModelSelect.vue'
+import ModelIcon from '@/components/icons/ModelIcon.vue'
+import type { MODEL_META } from '@shared/presenter'
 
 const devicePresenter = usePresenter('devicePresenter')
 const settingsStore = useSettingsStore()
@@ -101,6 +130,7 @@ const { t } = useI18n()
 
 const selectedLanguage = ref('system')
 const selectedSearchEngine = ref(settingsStore.activeSearchEngine)
+const selectedSearchModel = computed(() => settingsStore.searchAssistantModel)
 
 const languageOptions = [
   { value: 'system', label: '🌐 跟随系统' },
@@ -125,6 +155,7 @@ watch(selectedSearchEngine, async (newValue) => {
 })
 
 const isDialogOpen = ref(false)
+const modelSelectOpen = ref(false)
 
 const closeDialog = () => {
   isDialogOpen.value = false
@@ -133,5 +164,10 @@ const closeDialog = () => {
 const handleResetData = () => {
   devicePresenter.resetData()
   closeDialog()
+}
+
+const handleSearchModelSelect = (model: MODEL_META, providerId: string) => {
+  settingsStore.setSearchAssistantModel(model, providerId)
+  modelSelectOpen.value = false
 }
 </script>

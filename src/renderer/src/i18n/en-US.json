@@ -1,10 +1,13 @@
 {
   "common": {
+    "enabled": "Enabled",
+    "disabled": "Disabled",
     "loading": "Loading...",
     "copySuccess": "Copied!",
     "copyCode": "Copy Code",
     "newChat": "New Chat",
     "newTopic": "New Topic",
+    "cancel": "Cancel",
     "error": {
       "requestFailed": "Request failed...",
       "createChatFailed": "Failed to create chat",
@@ -12,7 +15,8 @@
       "renameChatFailed": "Failed to rename chat",
       "deleteChatFailed": "Failed to delete chat",
       "userCanceledGeneration": "User canceled generation",
-      "sessionInterrupted": "Session interrupted, generation not completed"
+      "sessionInterrupted": "Session interrupted, generation not completed",
+      "noModelResponse": "Model did not return any content, please check the response length settings"
     },
     "resetDataConfirmTitle": "Reset All Data?",
     "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone."
@@ -37,11 +41,14 @@
       "deepThinking": "Deep Thinking",
       "webSearch": "Web Search",
       "deepThinkingProgress": "Deep Thinking in progress...",
-      "thinkingDuration": "(Took {0} seconds)"
+      "thinkingDuration": "(Took {0} seconds)",
+      "artifactThinking": "Artifact Thinking"
     },
     "search": {
       "results": "Found {0} web pages",
-      "searching": "Searching..."
+      "searching": "Searching...",
+      "title": "Search Results",
+      "description": "Found {0} related results"
     }
   },
   "model": {
@@ -62,7 +69,9 @@
       "maxTokensPlaceholder": "Max Tokens"
     },
     "actions": {
-      "add": "Add Model"
+      "add": "Add Model",
+      "enableAll": "Enable All",
+      "disableAll": "Disable All"
     },
     "tags": {
       "reasoning": "Reasoning",
@@ -103,7 +112,9 @@
       "language": "Language",
       "languageSelect": "Select Language",
       "searchEngine": "Search Engine",
-      "searchEngineSelect": "Select Search Engine"
+      "searchEngineSelect": "Select Search Engine",
+      "searchAssistantModel": "Search Assistant Model",
+      "selectModel": "Select Model"
     },
     "model": {
       "title": "Model Settings",
@@ -123,6 +134,9 @@
       "responseLength": {
         "label": "Response Length",
         "description": "Set the maximum length of the AI response"
+      },
+      "artifacts": {
+        "description": "Enabling the Artifacts feature allows the AI to generate richer content"
       }
     },
     "provider": {
@@ -135,14 +149,22 @@
       "getKeyTipEnd": "to get the API Key",
       "modelList": "Model List",
       "enableModels": "Enable Models",
+      "disableAllModels": "Disable All Models",
       "modelsEnabled": "Models have been enabled",
       "verifyLink": "Verify Link",
       "syncModelsFailed": "Failed to sync models...",
+      "addCustomProvider": "Add Custom Provider",
+      "delete": "Delete",
       "dialog": {
         "disableModel": {
           "title": "Confirm Disable Model",
           "content": "Are you sure you want to disable the model \"{name}\"?",
           "confirm": "Disable"
+        },
+        "disableAllModels": {
+          "title": "Confirm Disable All Models",
+          "content": "Are you sure you want to disable all models for \"{name}\"?",
+          "confirm": "Disable All"
         },
         "configModels": {
           "title": "Configure Model List"
@@ -151,6 +173,24 @@
           "missingFields": "Please enter API Key and API URL",
           "failed": "Verification failed",
           "success": "Verification successful"
+        },
+        "addCustomProvider": {
+          "title": "Add Custom Provider",
+          "description": "Please fill in the necessary information for the provider",
+          "name": "Name",
+          "namePlaceholder": "Please enter the provider name",
+          "apiType": "API Type",
+          "apiTypePlaceholder": "Please select the API type",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "Please enter the API Key",
+          "baseUrl": "Base URL",
+          "baseUrlPlaceholder": "Please enter the base URL",
+          "enable": "Enable Provider"
+        },
+        "deleteProvider": {
+          "title": "Delete Provider",
+          "content": "Are you sure you want to delete provider \"{name}\"? This action cannot be undone.",
+          "confirm": "Delete"
         }
       }
     }
@@ -198,7 +238,15 @@
   },
   "about": {
     "title": "DeepChat",
-    "description": "DeepChat is a cross-platform AI client. We are committed to making AI accessible to more people.",
-    "website": "deepchat.thinkinai.xyz"
+    "description": "DeepChat is a cross-platform AI client, dedicated to making AI accessible to more people.",
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "Device Info",
+      "platform": "Platform",
+      "arch": "Architecture",
+      "cpuModel": "CPU Model",
+      "totalMemory": "Total Memory",
+      "osVersion": "OS Version"
+    }
   }
 }

@@ -1,10 +1,13 @@
 {
   "common": {
+    "enabled": "활성화",
+    "disabled": "비활성화",
     "loading": "로딩 중...",
     "copySuccess": "복사 완료!",
     "copyCode": "코드 복사",
     "newChat": "새 채팅",
     "newTopic": "새 주제",
+    "cancel": "취소",
     "error": {
       "requestFailed": "요청 실패...",
       "createChatFailed": "채팅 생성 실패",
@@ -12,7 +15,8 @@
       "renameChatFailed": "채팅 이름 변경 실패",
       "deleteChatFailed": "채팅 삭제 실패",
       "userCanceledGeneration": "사용자가 생성을 취소했습니다",
-      "sessionInterrupted": "세션이 중단되었습니다. 생성이 완료되지 않았습니다"
+      "sessionInterrupted": "세션이 중단되었습니다. 생성이 완료되지 않았습니다",
+      "noModelResponse": "모델이 아무런 응답을 반환하지 않았습니다. 반환 텍스트 길이 설정을 확인하세요."
     },
     "resetDataConfirmTitle": "모든 데이터를 초기화하시겠습니까?",
     "resetDataConfirmDescription": "모든 데이터가 기본 설정으로 초기화됩니다. 이 작업은 취소할 수 없습니다."
@@ -37,11 +41,14 @@
       "deepThinking": "심층 사고",
       "webSearch": "웹 검색",
       "deepThinkingProgress": "심층 사고 중...",
-      "thinkingDuration": "(소요 {0}초)"
+      "thinkingDuration": "(소요 {0}초)",
+      "artifactThinking": "아티팩트 사고"
     },
     "search": {
       "results": "{0}개의 웹페이지가 검색되었습니다",
-      "searching": "검색 중..."
+      "searching": "검색 중...",
+      "title": "검색 결과",
+      "description": "{0}개의 관련 결과를 찾았습니다"
     }
   },
   "model": {
@@ -62,7 +69,9 @@
       "maxTokensPlaceholder": "최대 토큰 수"
     },
     "actions": {
-      "add": "모델 추가"
+      "add": "모델 추가",
+      "enableAll": "모두 활성화",
+      "disableAll": "모두 비활성화"
     },
     "tags": {
       "reasoning": "추론",
@@ -101,7 +110,11 @@
       "title": "일반 설정",
       "resetData": "데이터 초기화",
       "language": "언어",
-      "languageSelect": "언어 선택"
+      "languageSelect": "언어 선택",
+      "searchEngine": "검색 엔진",
+      "searchEngineSelect": "검색 엔진 선택",
+      "searchAssistantModel": "검색 어시스턴트 모델",
+      "selectModel": "모델 선택"
     },
     "model": {
       "title": "모델 설정",
@@ -121,6 +134,9 @@
       "responseLength": {
         "label": "응답 텍스트 길이",
         "description": "AI 응답의 최대 길이를 설정합니다"
+      },
+      "artifacts": {
+        "description": "Artifacts 기능을 활성화하면 AI가 더 풍부한 콘텐츠를 생성할 수 있습니다"
       }
     },
     "provider": {
@@ -133,9 +149,12 @@
       "getKeyTipEnd": "API Key를 획득하세요",
       "modelList": "모델 목록",
       "enableModels": "모델 활성화",
+      "disableAllModels": "모든 모델 비활성화",
       "modelsEnabled": "모델이 활성화되었습니다",
       "verifyLink": "검증 링크",
       "syncModelsFailed": "모델 동기화 실패...",
+      "addCustomProvider": "커스텀 제공자 추가",
+      "delete": "삭제",
       "dialog": {
         "disableModel": {
           "title": "모델 비활성화 확인",
@@ -145,10 +164,33 @@
         "configModels": {
           "title": "모델 목록 구성"
         },
+        "disableAllModels": {
+          "title": "모든 모델 비활성화 확인",
+          "content": "모델 \"{name}\"의 모든 모델을 비활성화하시겠습니까?",
+          "confirm": "모두 비활성화"
+        },
         "verify": {
           "missingFields": "API Key와 API URL을 입력해주세요",
           "failed": "검증 실패",
           "success": "검증 성공"
+        },
+        "addCustomProvider": {
+          "title": "커스텀 제공자 추가",
+          "description": "제공자의 필요한 정보를 입력해주세요",
+          "name": "이름",
+          "namePlaceholder": "제공자 이름을 입력해주세요",
+          "apiType": "API 타입",
+          "apiTypePlaceholder": "API 타입을 선택해주세요",
+          "apiKey": "API 키",
+          "apiKeyPlaceholder": "API 키를 입력해주세요",
+          "baseUrl": "API URL",
+          "baseUrlPlaceholder": "API URL을 입력해주세요",
+          "enable": "제공자 활성화"
+        },
+        "deleteProvider": {
+          "title": "공급자 삭제 확인",
+          "content": "공급자 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+          "confirm": "삭제"
         }
       }
     }
@@ -197,6 +239,14 @@
   "about": {
     "title": "DeepChat",
     "description": "DeepChat은 크로스 플랫폼 AI 클라이언트입니다. 더 많은 사람들이 AI의 편리함을 누릴 수 있도록 노력하고 있습니다.",
-    "website": "deepchat.thinkinai.xyz"
+    "website": "deepchat.thinkinai.xyz",
+    "deviceInfo": {
+      "title": "장치 정보",
+      "platform": "플랫폼",
+      "arch": "아키텍처",
+      "cpuModel": "CPU 모델",
+      "totalMemory": "총 메모리",
+      "osVersion": "운영 체제 버전"
+    }
   }
 }

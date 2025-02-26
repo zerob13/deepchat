@@ -25,6 +25,7 @@ type ConversationRow = {
   maxTokens: number
   providerId: string
   modelId: string
+  artifacts: number
 }
 
 export class SQLitePresenter implements ISQLitePresenter {
@@ -95,6 +96,16 @@ export class SQLitePresenter implements ISQLitePresenter {
       this.migrate()
     }
   }
+  async deleteAllMessagesInConversation(conversationId: string): Promise<void> {
+    const deleteStmt = this.db.prepare(
+      `
+    DELETE FROM messages
+    WHERE conversation_id = ?
+    `
+    )
+    deleteStmt.run(conversationId)
+    return
+  }
 
   private backupDatabase(): void {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -129,7 +140,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     const updateStmt = this.db.prepare(
       `
     UPDATE conversations
-    SET title = ?
+    SET title = ?, is_new = 0
     WHERE conv_id = ?
     `
     )
@@ -270,7 +281,8 @@ export class SQLitePresenter implements ISQLitePresenter {
         max_tokens as maxTokens,
         provider_id as providerId,
         model_id as modelId,
-        is_new
+        is_new,
+        artifacts
       FROM conversations
       WHERE conv_id = ?
     `
@@ -293,7 +305,8 @@ export class SQLitePresenter implements ISQLitePresenter {
         contextLength: result.contextLength,
         maxTokens: result.maxTokens,
         providerId: result.providerId,
-        modelId: result.modelId
+        modelId: result.modelId,
+        artifacts: result.artifacts as 0 | 1
       }
     }
   }
@@ -340,6 +353,10 @@ export class SQLitePresenter implements ISQLitePresenter {
       if (data.settings.modelId !== undefined) {
         updates.push('model_id = ?')
         params.push(data.settings.modelId)
+      }
+      if (data.settings.artifacts !== undefined) {
+        updates.push('artifacts = ?')
+        params.push(data.settings.artifacts)
       }
     }
 
@@ -408,7 +425,8 @@ export class SQLitePresenter implements ISQLitePresenter {
           contextLength: row.contextLength,
           maxTokens: row.maxTokens,
           providerId: row.providerId,
-          modelId: row.modelId
+          modelId: row.modelId,
+          artifacts: row.artifacts as 0 | 1
         }
       }))
     }
@@ -698,5 +716,93 @@ export class SQLitePresenter implements ISQLitePresenter {
       `
       )
       .all(messageId, type) as { content: string }[]
+  }
+
+  public async getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null> {
+    return this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ? AND role = 'user'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+      )
+      .get(conversationId) as SQLITE_MESSAGE | null
+  }
+
+  public async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<SQLITE_MESSAGE | null> {
+    const mainMessage = this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ?
+        AND parent_id = ?
+        AND is_variant = 0
+        ORDER BY created_at ASC
+        LIMIT 1
+      `
+      )
+      .get(conversationId, parentId) as SQLITE_MESSAGE | null
+
+    if (mainMessage) {
+      const variants = this.db
+        .prepare(
+          `
+          SELECT
+            msg_id as id,
+            conversation_id,
+            parent_id,
+            content,
+            role,
+            created_at,
+            order_seq,
+            token_count,
+            status,
+            metadata,
+            is_context_edge,
+            is_variant
+          FROM messages
+          WHERE conversation_id = ?
+          AND parent_id = ?
+          AND is_variant = 1
+          ORDER BY created_at ASC
+        `
+        )
+        .all(conversationId, parentId) as SQLITE_MESSAGE[]
+
+      mainMessage.variants = variants // 拼凑variants对象
+    }
+
+    return mainMessage
   }
 }

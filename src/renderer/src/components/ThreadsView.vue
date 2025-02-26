@@ -8,7 +8,7 @@
         @click="createNewThread"
       >
         <Icon icon="lucide:pen-line" class="h-4 w-4" />
-        <span>{{ t('common.newTopic') }}</span>
+        <span>{{ t('common.newChat') }}</span>
       </Button>
     </div>
 

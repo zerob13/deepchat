@@ -8,7 +8,11 @@ import svgLoader from 'vite-svg-loader'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: ['mermaid', 'dompurify']
+      })
+    ],
     resolve: {
       alias: {
         '@': resolve('src/main/'),
