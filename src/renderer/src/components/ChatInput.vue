@@ -1,7 +1,7 @@
 <template>
-  <div class="w-full max-w-4xl mx-auto">
+  <div class="w-full max-w-5xl mx-auto">
     <div
-      class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-1.5"
+      class="bg-card border border-border rounded-lg focus-within:border-primary p-3 flex flex-col gap-2 shadow-sm"
     >
       <!-- {{  t('chat.input.fileArea') }} -->
       <div v-if="selectedFiles.length > 0">
@@ -28,9 +28,9 @@
       <Textarea
         v-model="inputText"
         :auto-focus="true"
-        rows="1"
+        rows="3"
         :placeholder="t('chat.input.placeholder')"
-        class="border-none min-h-0 shadow-none p-1.5 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none"
+        class="border-none min-h-[80px] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-base"
         @keydown.enter.exact.prevent="handleEnterKey"
         @input="adjustHeight"
       ></Textarea>
@@ -83,7 +83,7 @@
         <Button
           variant="default"
           size="icon"
-          class="w-7 h-7 text-xs"
+          class="w-9 h-9 text-xs"
           :disabled="disabledSend"
           @click="emitSend"
         >
@@ -151,8 +151,7 @@ const emitSend = () => {
 const adjustHeight = (e: Event) => {
   const target = e.target as HTMLTextAreaElement
   target.style.height = 'auto'
-  target.style.height = `${target.scrollHeight}px`
-}
+  target.style.height = `${target.scrollHeight}px`}
 
 const deleteFile = (idx: number) => {
   selectedFiles.value.splice(idx, 1)
@@ -196,3 +195,4 @@ onMounted(() => {
 </script>
 
 <style scoped></style>
+

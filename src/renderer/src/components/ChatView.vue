@@ -9,7 +9,7 @@
     />
 
     <!-- 输入框区域 -->
-    <div class="flex-none p-2">
+    <div class="flex-none p-4 pb-6">
       <ChatInput
         @send="handleSend"
         @file-upload="handleFileUpload"
