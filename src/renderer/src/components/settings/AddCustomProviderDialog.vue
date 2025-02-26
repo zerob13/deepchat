@@ -60,13 +60,18 @@
             <Label for="baseUrl" class="text-right">
               {{ t('settings.provider.dialog.addCustomProvider.baseUrl') }}
             </Label>
-            <Input
-              id="baseUrl"
-              v-model="formData.baseUrl"
-              class="col-span-3"
-              :placeholder="t('settings.provider.dialog.addCustomProvider.baseUrlPlaceholder')"
-              required
-            />
+            <span class="col-span-3 flex flex-col">
+              <Input
+                id="baseUrl"
+                v-model="formData.baseUrl"
+                class="col-span-3"
+                :placeholder="t('settings.provider.dialog.addCustomProvider.baseUrlPlaceholder')"
+                required
+              />
+              <div class="text-xs text-secondary-foreground mt-1">
+                {{ `${formData.baseUrl ?? ''}/chat/completions` }}
+              </div>
+            </span>
           </div>
           <div class="grid grid-cols-4 items-center gap-4">
             <Label for="enable" class="text-right">
