@@ -30,7 +30,7 @@ const sanitizedContent = computed(() => {
   return DOMPurify.sanitize(props.block.content, {
     WHOLE_DOCUMENT: true,
     ADD_TAGS: ['script', 'style'],
-    ADD_ATTR: ['src', 'style'],
+    ADD_ATTR: ['src', 'style', 'onclick'],
     ALLOWED_URI_REGEXP:
       /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
   })
