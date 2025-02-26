@@ -1,16 +1,6 @@
 <template>
   <section class="w-full h-full">
     <div class="w-full h-full p-2 flex flex-col gap-2 overflow-y-auto">
-      <div class="flex flex-row items-center p-2">
-        <Label :for="`${provider.id}-switch`" class="flex-1 cursor-pointer">{{
-          t('settings.provider.enable')
-        }}</Label>
-        <Switch
-          :id="`${provider.id}-switch`"
-          v-model:checked="isEnabled"
-          @update:model-value="handleProviderEnableChange"
-        />
-      </div>
       <div class="flex flex-col items-start p-2 gap-2">
         <Label :for="`${provider.id}-url`" class="flex-1 cursor-pointer">API URL</Label>
         <Input
@@ -153,7 +143,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { computed, ref, watch } from 'vue'
-import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -179,18 +168,6 @@ const props = defineProps<{
 const settingsStore = useSettingsStore()
 const apiKey = ref(props.provider.apiKey || '')
 const apiHost = ref(props.provider.baseUrl || '')
-const isEnabled = computed({
-  get() {
-    const provider = settingsStore.providers.find((p) => p.id === props.provider.id)
-    return provider?.enable
-  },
-  set(nVal: boolean) {
-    settingsStore.updateProvider(props.provider.id, {
-      ...props.provider,
-      enable: nVal
-    })
-  }
-})
 
 const providerModels = ref<MODEL_META[]>([])
 const customModels = ref<MODEL_META[]>([])
@@ -264,10 +241,6 @@ watch(
   },
   { immediate: true }
 )
-
-const handleProviderEnableChange = async (value: boolean) => {
-  await settingsStore.updateProviderStatus(props.provider.id, value)
-}
 
 const handleApiKeyEnter = async (value: string) => {
   const inputElement = document.getElementById(`${props.provider.id}-apikey`)
