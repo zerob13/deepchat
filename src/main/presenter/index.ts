@@ -41,9 +41,6 @@ export class Presenter implements IPresenter {
   setupEventBus() {
     eventBus.on('main-window-ready-to-show', () => {
       this.init()
-      setTimeout(() => {
-        this.upgradePresenter.checkUpdate()
-      }, 30000)
     })
     eventBus.on('provider-setting-changed', () => {
       const providers = this.configPresenter.getProviders()
