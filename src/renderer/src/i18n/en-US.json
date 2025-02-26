@@ -143,6 +143,7 @@
       "getKeyTipEnd": "to get the API Key",
       "modelList": "Model List",
       "enableModels": "Enable Models",
+      "disableAllModels": "Disable All Models",
       "modelsEnabled": "Models have been enabled",
       "verifyLink": "Verify Link",
       "syncModelsFailed": "Failed to sync models...",
@@ -152,6 +153,11 @@
           "title": "Confirm Disable Model",
           "content": "Are you sure you want to disable the model \"{name}\"?",
           "confirm": "Disable"
+        },
+        "disableAllModels": {
+          "title": "Confirm Disable All Models",
+          "content": "Are you sure you want to disable all models for \"{name}\"?",
+          "confirm": "Disable All"
         },
         "configModels": {
           "title": "Configure Model List"

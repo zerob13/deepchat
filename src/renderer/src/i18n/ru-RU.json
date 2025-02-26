@@ -141,6 +141,7 @@
       "getKeyTipEnd": "Получите API Key",
       "modelList": "Список моделей",
       "enableModels": "Включить модели",
+      "disableAllModels": "Отключить все модели",
       "modelsEnabled": "Модели включены",
       "verifyLink": "Проверить ссылку",
       "syncModelsFailed": "Не удалось синхронизировать модели...",
@@ -153,6 +154,11 @@
         },
         "configModels": {
           "title": "Настройка списка моделей"
+        },
+        "disableAllModels": {
+          "title": "Подтвердите отключение всех моделей",
+          "content": "Вы уверены, что хотите отключить все модели для \"{name}\"?",
+          "confirm": "Отключить все"
         },
         "verify": {
           "missingFields": "Пожалуйста, введите API Key и API URL",

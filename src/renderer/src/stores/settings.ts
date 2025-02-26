@@ -509,6 +509,49 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  // 禁用指定提供商下的所有模型
+  const disableAllModels = async (providerId: string): Promise<void> => {
+    try {
+      // 获取提供商的所有模型
+      const providerModelsData = allProviderModels.value.find((p) => p.providerId === providerId)
+      if (!providerModelsData || providerModelsData.models.length === 0) {
+        console.warn(`No models found for provider ${providerId}`)
+        return
+      }
+
+      // 获取自定义模型
+      const customModelsData = customModels.value.find((p) => p.providerId === providerId)
+
+      // 对每个模型执行禁用操作
+      const standardModels = providerModelsData.models
+      for (const model of standardModels) {
+        if (model.enabled) {
+          await llmP.updateModelStatus(providerId, model.id, false)
+        }
+      }
+
+      // 处理自定义模型
+      if (customModelsData) {
+        for (const model of customModelsData.models) {
+          if (model.enabled) {
+            await llmP.updateCustomModel(providerId, model.id, { enabled: false })
+          }
+        }
+      }
+
+      // 更新本地存储的模型状态
+      const providerModels = await configP.getProviderModels(providerId)
+      const updatedModels = providerModels.map((model) => ({ ...model, enabled: false }))
+      await configP.setProviderModels(providerId, updatedModels)
+
+      // 刷新模型列表
+      await refreshAllModels()
+    } catch (error) {
+      console.error(`Failed to disable all models for provider ${providerId}:`, error)
+      throw error
+    }
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -548,6 +591,7 @@ export const useSettingsStore = defineStore('settings', () => {
     searchEngines,
     activeSearchEngine,
     addCustomProvider,
-    removeProvider
+    removeProvider,
+    disableAllModels
   }
 })

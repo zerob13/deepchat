@@ -141,6 +141,7 @@
       "getKeyTipEnd": "API Keyを取得する",
       "modelList": "モデルリスト",
       "enableModels": "モデルを有効にする",
+      "disableAllModels": "すべてのモデルを無効にする",
       "modelsEnabled": "モデルが有効になりました",
       "verifyLink": "検証リンク",
       "syncModelsFailed": "モデルの同期に失敗しました...",
@@ -153,6 +154,11 @@
         },
         "configModels": {
           "title": "モデルリストを構成"
+        },
+        "disableAllModels": {
+          "title": "すべてのモデルを無効にする確認",
+          "content": "モデル \"{name}\" のすべてのモデルを無効にしてもよろしいですか？",
+          "confirm": "すべて無効にする"
         },
         "verify": {
           "missingFields": "API KeyとAPI URLを入力してください",

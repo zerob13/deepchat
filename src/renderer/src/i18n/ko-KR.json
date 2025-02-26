@@ -141,6 +141,7 @@
       "getKeyTipEnd": "API Key를 획득하세요",
       "modelList": "모델 목록",
       "enableModels": "모델 활성화",
+      "disableAllModels": "모든 모델 비활성화",
       "modelsEnabled": "모델이 활성화되었습니다",
       "verifyLink": "검증 링크",
       "syncModelsFailed": "모델 동기화 실패...",
@@ -153,6 +154,11 @@
         },
         "configModels": {
           "title": "모델 목록 구성"
+        },
+        "disableAllModels": {
+          "title": "모든 모델 비활성화 확인",
+          "content": "모델 \"{name}\"의 모든 모델을 비활성화하시겠습니까?",
+          "confirm": "모두 비활성화"
         },
         "verify": {
           "missingFields": "API Key와 API URL을 입력해주세요",

@@ -64,6 +64,17 @@
               t('settings.provider.enableModels')
             }}
           </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            class="text-xs text-normal rounded-lg"
+            @click="disableAllModelsConfirm"
+            :disabled="enabledModels.length === 0"
+          >
+            <Icon icon="lucide:x-circle" class="w-4 h-4 text-muted-foreground" />{{
+              t('settings.provider.disableAllModels')
+            }}
+          </Button>
           <span class="text-xs text-secondary-foreground">
             {{ enabledModels.length }}/{{ providerModels.length + customModels.length }}
             {{ t('settings.provider.modelsEnabled') }}
@@ -137,6 +148,25 @@
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <Dialog v-model:open="showDisableAllConfirmDialog">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ t('settings.provider.dialog.disableAllModels.title') }}</DialogTitle>
+        </DialogHeader>
+        <div class="py-4">
+          {{ t('settings.provider.dialog.disableAllModels.content', { name: provider.name }) }}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="showDisableAllConfirmDialog = false">{{
+            t('dialog.cancel')
+          }}</Button>
+          <Button variant="destructive" @click="confirmDisableAll">{{
+            t('settings.provider.dialog.disableAllModels.confirm')
+          }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>
 
@@ -175,6 +205,7 @@ const customModels = ref<MODEL_META[]>([])
 const modelToDisable = ref<MODEL_META | null>(null)
 const showConfirmDialog = ref(false)
 const showModelListDialog = ref(false)
+const showDisableAllConfirmDialog = ref(false)
 const enabledModels = computed(() => {
   const enabledModelsList = [
     ...customModels.value.filter((m) => m.enabled),
@@ -288,6 +319,19 @@ const confirmDisable = async () => {
     }
     showConfirmDialog.value = false
     modelToDisable.value = null
+  }
+}
+
+const disableAllModelsConfirm = () => {
+  showDisableAllConfirmDialog.value = true
+}
+
+const confirmDisableAll = async () => {
+  try {
+    await settingsStore.disableAllModels(props.provider.id)
+    showDisableAllConfirmDialog.value = false
+  } catch (error) {
+    console.error('Failed to disable all models:', error)
   }
 }
 

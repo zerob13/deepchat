@@ -145,6 +145,7 @@
       "getKeyTipEnd": "获取API Key",
       "modelList": "模型列表",
       "enableModels": "启用模型",
+      "disableAllModels": "禁用全部",
       "modelsEnabled": "模型已经启用",
       "verifyLink": "验证链接",
       "syncModelsFailed": "同步模型失败...",
@@ -154,6 +155,11 @@
           "title": "确认禁用模型",
           "content": "是否确认禁用模型 \"{name}\"？",
           "confirm": "禁用"
+        },
+        "disableAllModels": {
+          "title": "确认禁用全部模型",
+          "content": "是否确认禁用 \"{name}\" 的全部模型？",
+          "confirm": "全部禁用"
         },
         "configModels": {
           "title": "配置模型列表"
