@@ -13,7 +13,6 @@ import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
 import {
   CONFIG_EVENTS,
-  MODEL_EVENTS,
   CONVERSATION_EVENTS,
   STREAM_EVENTS,
   WINDOW_EVENTS,
@@ -82,11 +81,6 @@ export class Presenter implements IPresenter {
       this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.DEACTIVATED, msg)
     })
 
-    // 模型相关事件
-    eventBus.on(MODEL_EVENTS.LIST_UPDATED, (providerId: string) => {
-      // 当模型列表更新时，直接转发事件到渲染进程，并附带providerId参数
-      this.windowPresenter.mainWindow?.webContents.send(MODEL_EVENTS.LIST_UPDATED, providerId)
-    })
     // 处理从ConfigPresenter过来的模型列表更新事件
     eventBus.on(CONFIG_EVENTS.MODEL_LIST_CHANGED, (providerId: string) => {
       // 转发事件到渲染进程
@@ -97,9 +91,9 @@ export class Presenter implements IPresenter {
     })
 
     eventBus.on(
-      MODEL_EVENTS.STATUS_CHANGED,
+      CONFIG_EVENTS.MODEL_STATUS_CHANGED,
       (providerId: string, modelId: string, enabled: boolean) => {
-        this.windowPresenter.mainWindow?.webContents.send(MODEL_EVENTS.STATUS_CHANGED, {
+        this.windowPresenter.mainWindow?.webContents.send(CONFIG_EVENTS.MODEL_STATUS_CHANGED, {
           providerId,
           modelId,
           enabled
@@ -136,6 +130,7 @@ export class Presenter implements IPresenter {
     for (const provider of providers) {
       if (provider.enable) {
         const customModels = this.configPresenter.getCustomModels(provider.id)
+        console.log('syncCustomModels', provider.id, customModels)
         for (const model of customModels) {
           await this.llmproviderPresenter.addCustomModel(provider.id, {
             id: model.id,

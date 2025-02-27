@@ -22,8 +22,7 @@
    - `config:model-list-changed`：配置中的模型列表变更
 
 2. **模型相关事件**：
-   - `model:list-updated`：模型列表更新（替代provider-models-updated）
-   - `model:status-changed`：模型状态变更
+   全部去掉，模型状态和名称事件都有config来发起,和上层settings保持语义一致
 
 3. **会话相关事件**：
    - `conversation:created`
@@ -75,31 +74,19 @@ BaseLLMProvider                ConfigPresenter                  Presenter(Main) 
 ### 重构后的事件流
 
 ```
-BaseLLMProvider                ConfigPresenter                  Presenter(Main)                  Settings(Renderer)
-     |                              |                                 |                                |
-     |--- model:list-updated ------>|                                 |                                |
-     |                              |--- config:model-list-changed--->|                                |
-     |                              |                                 |--- config:model-list-changed-->|
-     |                              |                                 |                                |--- refreshProviderModels()
-     |                              |                                 |                                |
-     |--- model:status-changed----->|                                 |                                |
-     |                              |--- model:status-changed-------->|                                |
-     |                              |                                 |--- model:status-changed------->|
-     |                              |                                 |                                |--- updateLocalModelStatus()
-     |                              |                                 |                                |
-     |                              |--- config:provider-changed----->|                                |
-     |                              |                                 |--- config:provider-changed---->|
-     |                              |                                 |                                |--- refreshAllModels()
+ConfigPresenter                  Presenter(Main)                  Settings(Renderer)
+     |                                 |                                |
+     |                                |
+     |--- config:model-list-changed--->|                                |
+     |                                 |--- config:model-list-changed-->|
+     |                                 |                                |--- refreshProviderModels()
+     |                                 |                                |
+     |                                 |                                |
+     |--- model:status-changed-------->|                                |
+     |                                 |--- model:status-changed------->|
+     |                                 |                                |--- updateLocalModelStatus()
+     |                                 |                                |
+     |--- config:provider-changed----->|                                |
+     |                                 |--- config:provider-changed---->|
+     |                                 |                                |--- refreshAllModels()
 ```
-
-## 实施计划
-
-1. 创建事件常量文件（`src/main/events.ts`），定义所有事件名称
-2. 更新 BaseLLMProvider 中的事件名称
-3. 更新 ConfigPresenter 中的事件名称
-4. 更新主进程 Presenter 中的事件监听和转发
-5. 更新渲染进程中的事件监听
-
-## 兼容性考虑
-
-为确保平滑迁移，可以在一段时间内同时支持新旧事件名称，通过同时触发两个事件来实现向后兼容。随着代码库的更新，可以逐步移除对旧事件的支持。

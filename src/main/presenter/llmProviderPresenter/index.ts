@@ -69,7 +69,6 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     this.currentProviderId = providerId
     // 确保新的 provider 实例已经初始化
     this.getProviderInstance(providerId)
-    eventBus.emit('provider-changed', { providerId })
   }
 
   setProviders(providers: LLM_PROVIDER[]): void {
@@ -152,7 +151,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     if (stream) {
       stream.abortController.abort()
       this.activeStreams.delete(eventId)
-      eventBus.emit('generation-stopped', { eventId })
+      eventBus.emit(STREAM_EVENTS.END, { eventId, userStop: true })
     }
   }
 
@@ -197,9 +196,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
     try {
       await operation()
-      eventBus.emit(`stream-end`, { eventId })
+      eventBus.emit(STREAM_EVENTS.END, { eventId })
     } catch (error) {
-      eventBus.emit(`stream-error`, { error: String(error), eventId })
+      eventBus.emit(STREAM_EVENTS.ERROR, { error: String(error), eventId })
       throw error
     } finally {
       this.activeStreams.delete(eventId)

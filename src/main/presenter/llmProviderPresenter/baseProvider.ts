@@ -1,8 +1,6 @@
 import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@shared/presenter'
 import OpenAI from 'openai'
 import { ChatCompletionMessage } from 'openai/resources'
-import { eventBus } from '@/eventbus'
-import { MODEL_EVENTS } from '@/events'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -85,8 +83,6 @@ export abstract class BaseLLMProvider {
       this.customModels.push(newModel)
     }
 
-    // 触发模型列表更新事件
-    eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
     return newModel
   }
 
@@ -94,7 +90,6 @@ export abstract class BaseLLMProvider {
     const index = this.customModels.findIndex((model) => model.id === modelId)
     if (index !== -1) {
       this.customModels.splice(index, 1)
-      eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
       return true
     }
     return false
@@ -105,8 +100,6 @@ export abstract class BaseLLMProvider {
     if (model) {
       // 应用更新
       Object.assign(model, updates)
-      // 其他更新仍然触发模型列表更新事件
-      eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
       return true
     }
     return false

@@ -14,12 +14,6 @@ export const CONFIG_EVENTS = {
   MODEL_STATUS_CHANGED: 'config:model-status-changed' // 替代 model-status-changed（ConfigPresenter）
 }
 
-// 模型相关事件
-export const MODEL_EVENTS = {
-  LIST_UPDATED: 'model:list-updated', // 替代 provider-models-updated（BaseLLMProvider）
-  STATUS_CHANGED: 'model:status-changed' // 替代 model-status-changed
-}
-
 // 会话相关事件
 export const CONVERSATION_EVENTS = {
   CREATED: 'conversation:created',

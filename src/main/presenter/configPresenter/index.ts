@@ -34,7 +34,7 @@ const defaultProviders = DEFAULT_PROVIDERS.map((provider) => ({
 
 // 定义 storeKey 常量
 const PROVIDERS_STORE_KEY = 'providers'
-const CUSTOM_MODELS_KEY = 'custom_models'
+
 const PROVIDER_MODELS_DIR = 'provider_models'
 // 模型状态键前缀
 const MODEL_STATUS_KEY_PREFIX = 'model_status_'
@@ -107,7 +107,7 @@ export class ConfigPresenter implements IConfigPresenter {
       }
 
       // 迁移custom模型
-      const oldCustomModelsKey = `${CUSTOM_MODELS_KEY}_${provider.id}`
+      const oldCustomModelsKey = `custom_models_${provider.id}`
       const oldCustomModels = this.getSetting<MODEL_META[]>(oldCustomModelsKey)
 
       if (oldCustomModels && oldCustomModels.length > 0) {

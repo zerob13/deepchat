@@ -4,7 +4,7 @@ import type { LLM_PROVIDER, RENDERER_MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
-import { CONFIG_EVENTS, MODEL_EVENTS, UPDATE_EVENTS } from '@/events'
+import { CONFIG_EVENTS, UPDATE_EVENTS } from '@/events'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
@@ -252,10 +252,13 @@ export const useSettingsStore = defineStore('settings', () => {
         }
 
         // 合并在线和自定义模型
-        const allModels = modelsWithStatus.map((model) => ({
-          ...model,
-          isCustom: false
-        }))
+        const allModels = [
+          ...modelsWithStatus,
+          ...customModelsWithStatus.map((model) => ({
+            ...model,
+            isCustom: true
+          }))
+        ]
 
         allProviderModels.value.push({
           providerId: provider.id,
@@ -341,7 +344,7 @@ export const useSettingsStore = defineStore('settings', () => {
     })
     // 监听模型列表更新事件
     window.electron.ipcRenderer.on(
-      MODEL_EVENTS.LIST_UPDATED,
+      CONFIG_EVENTS.MODEL_LIST_CHANGED,
       async (_event, providerId: string) => {
         // 只刷新指定的provider模型，而不是所有模型
         if (providerId) {
@@ -368,7 +371,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 处理模型启用状态变更事件
     window.electron.ipcRenderer.on(
-      MODEL_EVENTS.STATUS_CHANGED,
+      CONFIG_EVENTS.MODEL_STATUS_CHANGED,
       async (_event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
         // 只更新模型启用状态，而不是刷新所有模型
         updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)
@@ -444,6 +447,7 @@ export const useSettingsStore = defineStore('settings', () => {
   ) => {
     try {
       const newModel = await llmP.addCustomModel(providerId, model)
+      await configP.addCustomModel(providerId, newModel)
       await refreshAllModels()
       return newModel
     } catch (error) {
