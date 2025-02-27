@@ -207,14 +207,17 @@ export class ContentEnricher {
     }
 
     let enrichedContent = `${userText}\n\n---
-  上面内容中提到的链接主要包含以下内容:\n
+  如下url-content的标签中包含了用户上述提到的一些链接的具体信息:
+  <url-content>
+  \n
   `
     for (let i = 0; i < urlResults.length; i++) {
       const result = urlResults[i]
       if (result.content) {
-        enrichedContent += `- ${i + 1}. ${result.url} \n${result.content}\n`
+        enrichedContent += `<url-content-item><url>${result.url}</url>\n<content>${result.content}</content>\n</url-content-item>`
       }
     }
+    enrichedContent += `</url-content>`
 
     return enrichedContent
   }
