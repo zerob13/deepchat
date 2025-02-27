@@ -4,6 +4,7 @@ import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
+import { CONFIG_EVENTS, MODEL_EVENTS, LEGACY_EVENTS } from '@/events'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
@@ -307,29 +308,124 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 监听 provider 设置变化
   const setupProviderListener = () => {
-    window.electron.ipcRenderer.on('provider-setting-changed', async () => {
+    // 监听配置变更事件
+    window.electron.ipcRenderer.on(CONFIG_EVENTS.PROVIDER_CHANGED, async () => {
+      providers.value = await configP.getProviders()
+      await refreshAllModels()
+    })
+    // 兼容旧事件
+    window.electron.ipcRenderer.on(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED, async () => {
       providers.value = await configP.getProviders()
       await refreshAllModels()
     })
 
-    window.electron.ipcRenderer.on('provider-models-updated', async () => {
-      await refreshAllModels()
+    // 监听模型列表更新事件
+    window.electron.ipcRenderer.on(MODEL_EVENTS.LIST_UPDATED, async (event, providerId: string) => {
+      // 只刷新指定的provider模型，而不是所有模型
+      if (providerId) {
+        await refreshProviderModels(providerId)
+      } else {
+        // 兼容旧代码，如果没有提供providerId，则刷新所有模型
+        await refreshAllModels()
+      }
     })
+    // 监听配置中的模型列表变更事件
+    window.electron.ipcRenderer.on(
+      CONFIG_EVENTS.MODEL_LIST_CHANGED,
+      async (event, providerId: string) => {
+        // 只刷新指定的provider模型，而不是所有模型
+        if (providerId) {
+          await refreshProviderModels(providerId)
+        } else {
+          // 兼容旧代码，如果没有提供providerId，则刷新所有模型
+          await refreshAllModels()
+        }
+      }
+    )
+    // 兼容旧事件
+    window.electron.ipcRenderer.on(
+      LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
+      async (event, providerId: string) => {
+        // 只刷新指定的provider模型，而不是所有模型
+        if (providerId) {
+          await refreshProviderModels(providerId)
+        } else {
+          // 兼容旧代码，如果没有提供providerId，则刷新所有模型
+          await refreshAllModels()
+        }
+      }
+    )
+
+    // 处理模型启用状态变更事件
+    window.electron.ipcRenderer.on(
+      MODEL_EVENTS.STATUS_CHANGED,
+      async (event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
+        // 只更新模型启用状态，而不是刷新所有模型
+        updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)
+      }
+    )
+    // 兼容旧事件
+    window.electron.ipcRenderer.on(
+      LEGACY_EVENTS.MODEL_STATUS_CHANGED,
+      async (event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
+        // 只更新模型启用状态，而不是刷新所有模型
+        updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)
+      }
+    )
+  }
+
+  // 更新本地模型状态，不触发后端请求
+  const updateLocalModelStatus = (providerId: string, modelId: string, enabled: boolean) => {
+    // 更新allProviderModels中的模型状态
+    const providerIndex = allProviderModels.value.findIndex((p) => p.providerId === providerId)
+    if (providerIndex !== -1) {
+      const models = allProviderModels.value[providerIndex].models
+      const modelIndex = models.findIndex((m) => m.id === modelId)
+      if (modelIndex !== -1) {
+        models[modelIndex].enabled = enabled
+      }
+    }
+
+    // 更新enabledModels中的模型状态
+    const enabledProviderIndex = enabledModels.value.findIndex((p) => p.providerId === providerId)
+    if (enabledProviderIndex !== -1) {
+      const models = enabledModels.value[enabledProviderIndex].models
+      if (enabled) {
+        // 如果启用，确保模型在列表中
+        const modelIndex = models.findIndex((m) => m.id === modelId)
+        if (modelIndex === -1) {
+          // 模型不在启用列表中，从allProviderModels查找并添加
+          const provider = allProviderModels.value.find((p) => p.providerId === providerId)
+          const model = provider?.models.find((m) => m.id === modelId)
+          if (model) {
+            models.push({ ...model, enabled: true })
+          }
+        }
+      } else {
+        // 如果禁用，从列表中移除
+        const modelIndex = models.findIndex((m) => m.id === modelId)
+        if (modelIndex !== -1) {
+          models.splice(modelIndex, 1)
+        }
+      }
+    }
+
+    // 更新customModels中的模型状态
+    const customProviderIndex = customModels.value.findIndex((p) => p.providerId === providerId)
+    if (customProviderIndex !== -1) {
+      const models = customModels.value[customProviderIndex].models
+      const modelIndex = models.findIndex((m) => m.id === modelId)
+      if (modelIndex !== -1) {
+        models[modelIndex].enabled = enabled
+      }
+    }
   }
 
   // 更新模型状态
   const updateModelStatus = async (providerId: string, modelId: string, enabled: boolean) => {
     try {
       await llmP.updateModelStatus(providerId, modelId, enabled)
-      const providerModels = await configP.getProviderModels(providerId)
-      const updatedModels = providerModels.map((model) => {
-        if (model.id === modelId) {
-          return { ...model, enabled }
-        }
-        return model
-      })
-      await configP.setProviderModels(providerId, updatedModels)
-      await refreshAllModels()
+      // 注意：这里不再调用refreshAllModels，因为会通过model-status-changed事件更新本地状态
     } catch (error) {
       console.error('Failed to update model status:', error)
     }
@@ -649,10 +745,9 @@ export const useSettingsStore = defineStore('settings', () => {
       for (const model of providerModelsData.models) {
         if (!model.enabled) {
           await llmP.updateModelStatus(providerId, model.id, true)
+          // 注意：不需要调用refreshAllModels，因为model-status-changed事件会更新UI
         }
       }
-
-      await refreshAllModels()
     } catch (error) {
       console.error(`Failed to enable all models for provider ${providerId}:`, error)
       throw error
@@ -676,6 +771,7 @@ export const useSettingsStore = defineStore('settings', () => {
       for (const model of standardModels) {
         if (model.enabled) {
           await llmP.updateModelStatus(providerId, model.id, false)
+          // 注意：不需要调用refreshAllModels，因为model-status-changed事件会更新UI
         }
       }
 
@@ -684,17 +780,10 @@ export const useSettingsStore = defineStore('settings', () => {
         for (const model of customModelsData.models) {
           if (model.enabled) {
             await llmP.updateCustomModel(providerId, model.id, { enabled: false })
+            // 注意：不需要调用refreshAllModels，因为model-status-changed事件会更新UI
           }
         }
       }
-
-      // 更新本地存储的模型状态
-      const providerModels = await configP.getProviderModels(providerId)
-      const updatedModels = providerModels.map((model) => ({ ...model, enabled: false }))
-      await configP.setProviderModels(providerId, updatedModels)
-
-      // 刷新模型列表
-      await refreshAllModels()
     } catch (error) {
       console.error(`Failed to disable all models for provider ${providerId}:`, error)
       throw error

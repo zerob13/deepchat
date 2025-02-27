@@ -7,6 +7,7 @@ import { eventBus } from '@/eventbus'
 import { OpenAICompatibleProvider } from './providers/openAICompatibleProvider'
 import { PPIOProvider } from './providers/ppioProvider'
 import { getModelConfig } from './modelConfigs'
+import { STREAM_EVENTS } from '@/events'
 // 导入其他provider...
 
 // 流的状态
@@ -229,18 +230,18 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         if (abortController.signal.aborted) {
           break
         }
-        eventBus.emit('stream-response', {
+        eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId,
           ...chunk
         })
       }
 
       if (!abortController.signal.aborted) {
-        eventBus.emit('stream-end', { eventId })
+        eventBus.emit(STREAM_EVENTS.END, { eventId })
       }
     } catch (error) {
       console.error('Stream error:', error)
-      eventBus.emit('stream-error', {
+      eventBus.emit(STREAM_EVENTS.ERROR, {
         eventId,
         error: error instanceof Error ? error.message : String(error)
       })
@@ -267,7 +268,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           if (stream.abortController.signal.aborted) {
             break
           }
-          eventBus.emit(`stream-response`, {
+          eventBus.emit(STREAM_EVENTS.RESPONSE, {
             content: response.content,
             reasoning_content: response.reasoning_content,
             eventId
@@ -303,7 +304,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           if (stream.abortController.signal.aborted) {
             break
           }
-          eventBus.emit(`stream-response`, {
+          eventBus.emit(STREAM_EVENTS.RESPONSE, {
             content: response.content,
             reasoning_content: response.reasoning_content,
             eventId

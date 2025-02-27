@@ -25,6 +25,8 @@ import MessageList from './message/MesasgeList.vue'
 import ChatInput from './ChatInput.vue'
 import { useRoute } from 'vue-router'
 import { UserMessageContent } from '@shared/chat'
+import { STREAM_EVENTS } from '@/events'
+
 const route = useRoute()
 
 const messageList = ref()
@@ -74,16 +76,16 @@ const handleFileUpload = (files: FileList) => {
 
 // 监听流式响应
 onMounted(async () => {
-  window.electron.ipcRenderer.on('stream-response', (_, msg) => {
+  window.electron.ipcRenderer.on(STREAM_EVENTS.RESPONSE, (_, msg) => {
     // console.log('stream-response', msg)
     chatStore.handleStreamResponse(msg)
   })
 
-  window.electron.ipcRenderer.on('stream-end', (_, msg) => {
+  window.electron.ipcRenderer.on(STREAM_EVENTS.END, (_, msg) => {
     chatStore.handleStreamEnd(msg)
   })
 
-  window.electron.ipcRenderer.on('stream-error', (_, msg) => {
+  window.electron.ipcRenderer.on(STREAM_EVENTS.ERROR, (_, msg) => {
     chatStore.handleStreamError(msg)
   })
 
@@ -111,8 +113,8 @@ watch(
 
 // 清理事件监听
 onUnmounted(async () => {
-  window.electron.ipcRenderer.removeAllListeners('stream-response')
-  window.electron.ipcRenderer.removeAllListeners('stream-end')
-  window.electron.ipcRenderer.removeAllListeners('stream-error')
+  window.electron.ipcRenderer.removeAllListeners(STREAM_EVENTS.RESPONSE)
+  window.electron.ipcRenderer.removeAllListeners(STREAM_EVENTS.END)
+  window.electron.ipcRenderer.removeAllListeners(STREAM_EVENTS.ERROR)
 })
 </script>

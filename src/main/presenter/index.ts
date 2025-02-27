@@ -3,7 +3,7 @@ import { ipcMain, IpcMainInvokeEvent, app } from 'electron'
 import { WindowPresenter } from './windowPresenter'
 import { SQLitePresenter } from './sqlitePresenter'
 import { ShortcutPresenter } from './shortcutPresenter'
-import { IPresenter, MODEL_META } from '@shared/presenter'
+import { IPresenter } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
 import path from 'path'
 import { LLMProviderPresenter } from './llmProviderPresenter'
@@ -11,6 +11,15 @@ import { ConfigPresenter } from './configPresenter'
 import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
+import {
+  CONFIG_EVENTS,
+  MODEL_EVENTS,
+  CONVERSATION_EVENTS,
+  STREAM_EVENTS,
+  WINDOW_EVENTS,
+  UPDATE_EVENTS,
+  LEGACY_EVENTS
+} from '@/events'
 
 export class Presenter implements IPresenter {
   windowPresenter: WindowPresenter
@@ -39,46 +48,156 @@ export class Presenter implements IPresenter {
     this.setupEventBus()
   }
   setupEventBus() {
-    eventBus.on('main-window-ready-to-show', () => {
+    // 窗口事件
+    eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
       this.init()
     })
-    eventBus.on('provider-setting-changed', () => {
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.MAIN_WINDOW_READY_TO_SHOW, () => {
+      this.init()
+    })
+
+    // 配置相关事件
+    eventBus.on(CONFIG_EVENTS.PROVIDER_CHANGED, () => {
       const providers = this.configPresenter.getProviders()
       this.llmproviderPresenter.setProviders(providers)
-      this.windowPresenter.mainWindow?.webContents.send('provider-setting-changed')
+      this.windowPresenter.mainWindow?.webContents.send(CONFIG_EVENTS.PROVIDER_CHANGED)
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED)
     })
-    eventBus.on('stream-response', (msg) => {
-      // console.log('stream-response', msg.eventId, msg)
-      this.windowPresenter.mainWindow?.webContents.send('stream-response', msg)
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED, () => {
+      const providers = this.configPresenter.getProviders()
+      this.llmproviderPresenter.setProviders(providers)
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED)
     })
-    eventBus.on('stream-end', (msg) => {
+
+    // 流式响应事件
+    eventBus.on(STREAM_EVENTS.RESPONSE, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(STREAM_EVENTS.RESPONSE, msg)
+    })
+
+    eventBus.on(STREAM_EVENTS.END, (msg) => {
       console.log('stream-end', msg.eventId)
-      this.windowPresenter.mainWindow?.webContents.send('stream-end', msg)
+      this.windowPresenter.mainWindow?.webContents.send(STREAM_EVENTS.END, msg)
     })
-    eventBus.on('stream-error', (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send('stream-error', msg)
+
+    eventBus.on(STREAM_EVENTS.ERROR, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(STREAM_EVENTS.ERROR, msg)
     })
-    eventBus.on('conversation-activated', (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send('conversation-activated', msg)
+
+    // 会话相关事件
+    eventBus.on(CONVERSATION_EVENTS.ACTIVATED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.ACTIVATED, msg)
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.CONVERSATION_ACTIVATED, msg)
     })
-    eventBus.on('active-conversation-cleared', (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send('active-conversation-cleared', msg)
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.CONVERSATION_ACTIVATED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.CONVERSATION_ACTIVATED, msg)
     })
-    eventBus.on('provider-models-updated', (msg: { providerId: string; models: MODEL_META[] }) => {
-      // 当模型列表更新时，保存自定义模型
-      const customModels = msg.models.filter((model) => model.isCustom)
-      this.configPresenter.setCustomModels(msg.providerId, customModels)
-      const providerModels = msg.models.filter((model) => !model.isCustom)
-      this.configPresenter.setProviderModels(msg.providerId, providerModels)
+
+    eventBus.on(CONVERSATION_EVENTS.CLEARED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.CLEARED, msg)
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(
+        LEGACY_EVENTS.ACTIVE_CONVERSATION_CLEARED,
+        msg
+      )
+    })
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.ACTIVE_CONVERSATION_CLEARED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(
+        LEGACY_EVENTS.ACTIVE_CONVERSATION_CLEARED,
+        msg
+      )
+    })
+
+    // 模型相关事件
+    eventBus.on(MODEL_EVENTS.LIST_UPDATED, (providerId: string) => {
+      // 当模型列表更新时，直接转发事件到渲染进程，并附带providerId参数
+      this.windowPresenter.mainWindow?.webContents.send(MODEL_EVENTS.LIST_UPDATED, providerId)
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(
+        LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
+        providerId
+      )
+    })
+    // 处理从ConfigPresenter过来的模型列表更新事件
+    eventBus.on(CONFIG_EVENTS.MODEL_LIST_CHANGED, (providerId: string) => {
       // 转发事件到渲染进程
-      this.windowPresenter.mainWindow?.webContents.send('provider-models-updated')
+      this.windowPresenter.mainWindow?.webContents.send(
+        CONFIG_EVENTS.MODEL_LIST_CHANGED,
+        providerId
+      )
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(
+        LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
+        providerId
+      )
     })
-    eventBus.on('update-status-changed', (msg) => {
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, (providerId: string) => {
+      // 当模型列表更新时，获取provider实例
+      const provider = this.llmproviderPresenter.getProviderById(providerId)
+      if (provider) {
+        // 直接转发事件到渲染进程，并附带providerId参数
+        this.windowPresenter.mainWindow?.webContents.send(
+          LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
+          providerId
+        )
+      }
+    })
+
+    eventBus.on(
+      MODEL_EVENTS.STATUS_CHANGED,
+      (providerId: string, modelId: string, enabled: boolean) => {
+        this.windowPresenter.mainWindow?.webContents.send(MODEL_EVENTS.STATUS_CHANGED, {
+          providerId,
+          modelId,
+          enabled
+        })
+        // 兼容旧事件
+        this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MODEL_STATUS_CHANGED, {
+          providerId,
+          modelId,
+          enabled
+        })
+      }
+    )
+    // 兼容旧事件
+    eventBus.on(
+      LEGACY_EVENTS.MODEL_STATUS_CHANGED,
+      (providerId: string, modelId: string, enabled: boolean) => {
+        this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MODEL_STATUS_CHANGED, {
+          providerId,
+          modelId,
+          enabled
+        })
+      }
+    )
+
+    // 更新相关事件
+    eventBus.on(UPDATE_EVENTS.STATUS_CHANGED, (msg) => {
       console.log('update-status-changed', msg)
-      this.windowPresenter.mainWindow?.webContents.send('update-status-changed', msg)
+      this.windowPresenter.mainWindow?.webContents.send(UPDATE_EVENTS.STATUS_CHANGED, msg)
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.UPDATE_STATUS_CHANGED, msg)
     })
-    eventBus.on('message-edited', (msgId: string) => {
-      this.windowPresenter.mainWindow?.webContents.send('message-edited', msgId)
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.UPDATE_STATUS_CHANGED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.UPDATE_STATUS_CHANGED, msg)
+    })
+
+    // 消息编辑事件
+    eventBus.on(CONVERSATION_EVENTS.MESSAGE_EDITED, (msgId: string) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.MESSAGE_EDITED, msgId)
+      // 兼容旧事件
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MESSAGE_EDITED, msgId)
+    })
+    // 兼容旧事件
+    eventBus.on(LEGACY_EVENTS.MESSAGE_EDITED, (msgId: string) => {
+      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MESSAGE_EDITED, msgId)
     })
   }
 

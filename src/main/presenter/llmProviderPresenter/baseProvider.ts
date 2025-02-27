@@ -2,6 +2,7 @@ import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@share
 import OpenAI from 'openai'
 import { ChatCompletionMessage } from 'openai/resources'
 import { eventBus } from '@/eventbus'
+import { MODEL_EVENTS, LEGACY_EVENTS } from '@/events'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -52,10 +53,8 @@ export abstract class BaseLLMProvider {
       const models = await this.fetchOpenAIModels()
       console.log('Fetched models:', models?.length)
       this.models = models
-      eventBus.emit('provider-models-updated', {
-        providerId: this.provider.id,
-        models: this.getModels()
-      })
+      // 不在这里触发事件，避免循环调用
+      // eventBus.emit('provider-models-updated', this.provider.id)
       return models
     } catch (e) {
       console.error('Failed to fetch models:', e)
@@ -87,25 +86,19 @@ export abstract class BaseLLMProvider {
     }
 
     // 触发模型列表更新事件
-    eventBus.emit('provider-models-updated', {
-      providerId: this.provider.id,
-      models: this.getModels()
-    })
-
+    eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
+    // 兼容旧事件
+    eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, this.provider.id)
     return newModel
   }
 
   public removeCustomModel(modelId: string): boolean {
-    const index = this.customModels.findIndex((m) => m.id === modelId)
+    const index = this.customModels.findIndex((model) => model.id === modelId)
     if (index !== -1) {
       this.customModels.splice(index, 1)
-
-      // 触发模型列表更新事件
-      eventBus.emit('provider-models-updated', {
-        providerId: this.provider.id,
-        models: this.getModels()
-      })
-
+      eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
+      // 兼容旧事件
+      eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, this.provider.id)
       return true
     }
     return false
@@ -114,13 +107,25 @@ export abstract class BaseLLMProvider {
   public updateCustomModel(modelId: string, updates: Partial<MODEL_META>): boolean {
     const model = this.customModels.find((m) => m.id === modelId)
     if (model) {
+      // 应用更新
       Object.assign(model, updates)
 
-      // 触发模型列表更新事件
-      eventBus.emit('provider-models-updated', {
-        providerId: this.provider.id,
-        models: this.getModels()
-      })
+      // 如果是启用状态变更，触发专门的事件
+      if (Object.prototype.hasOwnProperty.call(updates, 'enabled')) {
+        eventBus.emit(MODEL_EVENTS.STATUS_CHANGED, this.provider.id, modelId, !!model.enabled)
+        // 兼容旧事件
+        eventBus.emit(
+          LEGACY_EVENTS.MODEL_STATUS_CHANGED,
+          this.provider.id,
+          modelId,
+          !!model.enabled
+        )
+      } else {
+        // 其他更新仍然触发模型列表更新事件
+        eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
+        // 兼容旧事件
+        eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, this.provider.id)
+      }
 
       return true
     }
@@ -155,6 +160,10 @@ export abstract class BaseLLMProvider {
     const modelIndex = this.models.findIndex((m) => m.id === modelId)
     if (modelIndex !== -1) {
       this.models[modelIndex].enabled = enabled
+      // 触发模型状态更改事件
+      eventBus.emit(MODEL_EVENTS.STATUS_CHANGED, this.provider.id, modelId, enabled)
+      // 兼容旧事件
+      eventBus.emit(LEGACY_EVENTS.MODEL_STATUS_CHANGED, this.provider.id, modelId, enabled)
     }
   }
 
@@ -406,10 +415,8 @@ export abstract class BaseLLMProvider {
           timeout: 3000
         })
         this.models = models
-        eventBus.emit('provider-models-updated', {
-          providerId: this.provider.id,
-          models: this.getModels()
-        })
+        // 避免在这里触发事件，而是通过ConfigPresenter来管理模型更新
+        // eventBus.emit('provider-models-updated', this.provider.id)
       }
       return {
         isOk: true,
