@@ -1,6 +1,7 @@
 ---
 description: explain the IPC communication event mechanism between the main and renderer process of this electron project.
 globs: src/main/presenter/**/*.ts,src/renderer/stores/**/*.ts,src/shared/*.d.ts
+alwaysApply: false
 ---
 This is an Electron project. The renderer process is mainly used for UI rendering, while the main process is primarily responsible for data and logic processing. The shared/*.d.ts is used to define the types of objects exposed by the main process to the renderer process.
 
@@ -9,3 +10,5 @@ The IPC in the renderer process is implemented in [usePresenter.ts](mdc:src/rend
 [eventbus.ts](mdc:src/main/eventbus.ts)  is primarily used for intercommunication between main processes and decouples modules with events.
 
 The IPC messages from the main process to notify the view mainly rely on the EventBus [index.ts](mdc:src/main/presenter/index.ts) to listen for events that need to be notified and then send them to the renderer through the mainWindow.
+
+

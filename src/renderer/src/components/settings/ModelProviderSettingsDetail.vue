@@ -221,7 +221,7 @@ import {
 } from '@/components/ui/dialog'
 import ProviderModelList from './ProviderModelList.vue'
 import { useSettingsStore } from '@/stores/settings'
-import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
+import type { LLM_PROVIDER, RENDERER_MODEL_META } from '@shared/presenter'
 import ModelConfigItem from './ModelConfigItem.vue'
 
 const { t } = useI18n()
@@ -234,10 +234,10 @@ const settingsStore = useSettingsStore()
 const apiKey = ref(props.provider.apiKey || '')
 const apiHost = ref(props.provider.baseUrl || '')
 
-const providerModels = ref<MODEL_META[]>([])
-const customModels = ref<MODEL_META[]>([])
+const providerModels = ref<RENDERER_MODEL_META[]>([])
+const customModels = ref<RENDERER_MODEL_META[]>([])
 
-const modelToDisable = ref<MODEL_META | null>(null)
+const modelToDisable = ref<RENDERER_MODEL_META | null>(null)
 const showConfirmDialog = ref(false)
 const showModelListDialog = ref(false)
 const showDisableAllConfirmDialog = ref(false)
@@ -346,22 +346,18 @@ const handleApiHostChange = async (value: string) => {
 }
 
 const handleModelEnabledChange = async (
-  model: MODEL_META,
+  model: RENDERER_MODEL_META,
   enabled: boolean,
   comfirm: boolean = false
 ) => {
   if (!enabled && comfirm) {
     disableModel(model)
   } else {
-    if (model.isCustom) {
-      await settingsStore.updateCustomModel(props.provider.id, model.id, { enabled })
-    } else {
-      await settingsStore.updateModelStatus(props.provider.id, model.id, enabled)
-    }
+    await settingsStore.updateModelStatus(props.provider.id, model.id, enabled)
   }
 }
 
-const disableModel = (model: MODEL_META) => {
+const disableModel = (model: RENDERER_MODEL_META) => {
   modelToDisable.value = model
   showConfirmDialog.value = true
 }

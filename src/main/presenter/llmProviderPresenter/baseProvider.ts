@@ -1,7 +1,6 @@
 import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@shared/presenter'
 import OpenAI from 'openai'
 import { ChatCompletionMessage } from 'openai/resources'
-import { eventBus } from '@/eventbus'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -52,10 +51,8 @@ export abstract class BaseLLMProvider {
       const models = await this.fetchOpenAIModels()
       console.log('Fetched models:', models?.length)
       this.models = models
-      eventBus.emit('provider-models-updated', {
-        providerId: this.provider.id,
-        models: this.getModels()
-      })
+      // 不在这里触发事件，避免循环调用
+      // eventBus.emit('provider-models-updated', this.provider.id)
       return models
     } catch (e) {
       console.error('Failed to fetch models:', e)
@@ -86,26 +83,13 @@ export abstract class BaseLLMProvider {
       this.customModels.push(newModel)
     }
 
-    // 触发模型列表更新事件
-    eventBus.emit('provider-models-updated', {
-      providerId: this.provider.id,
-      models: this.getModels()
-    })
-
     return newModel
   }
 
   public removeCustomModel(modelId: string): boolean {
-    const index = this.customModels.findIndex((m) => m.id === modelId)
+    const index = this.customModels.findIndex((model) => model.id === modelId)
     if (index !== -1) {
       this.customModels.splice(index, 1)
-
-      // 触发模型列表更新事件
-      eventBus.emit('provider-models-updated', {
-        providerId: this.provider.id,
-        models: this.getModels()
-      })
-
       return true
     }
     return false
@@ -114,19 +98,12 @@ export abstract class BaseLLMProvider {
   public updateCustomModel(modelId: string, updates: Partial<MODEL_META>): boolean {
     const model = this.customModels.find((m) => m.id === modelId)
     if (model) {
+      // 应用更新
       Object.assign(model, updates)
-
-      // 触发模型列表更新事件
-      eventBus.emit('provider-models-updated', {
-        providerId: this.provider.id,
-        models: this.getModels()
-      })
-
       return true
     }
     return false
   }
-
   public getCustomModels(): MODEL_META[] {
     return this.customModels
   }
@@ -144,18 +121,10 @@ export abstract class BaseLLMProvider {
       name: model.id,
       group: 'default',
       providerId: this.provider.id,
-      enabled: true,
       isCustom: false,
       contextLength: 4096,
       maxTokens: 2048
     }))
-  }
-
-  public async updateModelStatus(modelId: string, enabled: boolean): Promise<void> {
-    const modelIndex = this.models.findIndex((m) => m.id === modelId)
-    if (modelIndex !== -1) {
-      this.models[modelIndex].enabled = enabled
-    }
   }
 
   protected async openAICompletion(
@@ -406,10 +375,7 @@ export abstract class BaseLLMProvider {
           timeout: 3000
         })
         this.models = models
-        eventBus.emit('provider-models-updated', {
-          providerId: this.provider.id,
-          models: this.getModels()
-        })
+        // 避免在这里触发事件，而是通过ConfigPresenter来管理模型更新
       }
       return {
         isOk: true,

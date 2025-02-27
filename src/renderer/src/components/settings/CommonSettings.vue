@@ -122,7 +122,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ChevronDown } from 'lucide-vue-next'
 import ModelSelect from '@/components/ModelSelect.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
-import type { MODEL_META } from '@shared/presenter'
+import type { RENDERER_MODEL_META } from '@shared/presenter'
 
 const devicePresenter = usePresenter('devicePresenter')
 const settingsStore = useSettingsStore()
@@ -166,7 +166,7 @@ const handleResetData = () => {
   closeDialog()
 }
 
-const handleSearchModelSelect = (model: MODEL_META, providerId: string) => {
+const handleSearchModelSelect = (model: RENDERER_MODEL_META, providerId: string) => {
   settingsStore.setSearchAssistantModel(model, providerId)
   modelSelectOpen.value = false
 }

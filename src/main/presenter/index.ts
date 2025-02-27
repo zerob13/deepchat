@@ -3,7 +3,7 @@ import { ipcMain, IpcMainInvokeEvent, app } from 'electron'
 import { WindowPresenter } from './windowPresenter'
 import { SQLitePresenter } from './sqlitePresenter'
 import { ShortcutPresenter } from './shortcutPresenter'
-import { IPresenter, MODEL_META } from '@shared/presenter'
+import { IPresenter } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
 import path from 'path'
 import { LLMProviderPresenter } from './llmProviderPresenter'
@@ -11,6 +11,13 @@ import { ConfigPresenter } from './configPresenter'
 import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
+import {
+  CONFIG_EVENTS,
+  CONVERSATION_EVENTS,
+  STREAM_EVENTS,
+  WINDOW_EVENTS,
+  UPDATE_EVENTS
+} from '@/events'
 
 export class Presenter implements IPresenter {
   windowPresenter: WindowPresenter
@@ -26,7 +33,7 @@ export class Presenter implements IPresenter {
   constructor() {
     this.configPresenter = new ConfigPresenter()
     this.windowPresenter = new WindowPresenter(this.configPresenter)
-    this.llmproviderPresenter = new LLMProviderPresenter()
+    this.llmproviderPresenter = new LLMProviderPresenter(this.configPresenter)
     this.devicePresenter = new DevicePresenter()
     // 初始化 SQLite 数据库
     const dbDir = path.join(app.getPath('userData'), 'app_db')
@@ -39,46 +46,70 @@ export class Presenter implements IPresenter {
     this.setupEventBus()
   }
   setupEventBus() {
-    eventBus.on('main-window-ready-to-show', () => {
+    // 窗口事件
+    eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
       this.init()
     })
-    eventBus.on('provider-setting-changed', () => {
+
+    // 配置相关事件
+    eventBus.on(CONFIG_EVENTS.PROVIDER_CHANGED, () => {
       const providers = this.configPresenter.getProviders()
       this.llmproviderPresenter.setProviders(providers)
-      this.windowPresenter.mainWindow?.webContents.send('provider-setting-changed')
+      this.windowPresenter.mainWindow?.webContents.send(CONFIG_EVENTS.PROVIDER_CHANGED)
     })
-    eventBus.on('stream-response', (msg) => {
-      // console.log('stream-response', msg.eventId, msg)
-      this.windowPresenter.mainWindow?.webContents.send('stream-response', msg)
+
+    // 流式响应事件
+    eventBus.on(STREAM_EVENTS.RESPONSE, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(STREAM_EVENTS.RESPONSE, msg)
     })
-    eventBus.on('stream-end', (msg) => {
+
+    eventBus.on(STREAM_EVENTS.END, (msg) => {
       console.log('stream-end', msg.eventId)
-      this.windowPresenter.mainWindow?.webContents.send('stream-end', msg)
+      this.windowPresenter.mainWindow?.webContents.send(STREAM_EVENTS.END, msg)
     })
-    eventBus.on('stream-error', (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send('stream-error', msg)
+
+    eventBus.on(STREAM_EVENTS.ERROR, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(STREAM_EVENTS.ERROR, msg)
     })
-    eventBus.on('conversation-activated', (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send('conversation-activated', msg)
+
+    // 会话相关事件
+    eventBus.on(CONVERSATION_EVENTS.ACTIVATED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.ACTIVATED, msg)
     })
-    eventBus.on('active-conversation-cleared', (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send('active-conversation-cleared', msg)
+
+    eventBus.on(CONVERSATION_EVENTS.DEACTIVATED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.DEACTIVATED, msg)
     })
-    eventBus.on('provider-models-updated', (msg: { providerId: string; models: MODEL_META[] }) => {
-      // 当模型列表更新时，保存自定义模型
-      const customModels = msg.models.filter((model) => model.isCustom)
-      this.configPresenter.setCustomModels(msg.providerId, customModels)
-      const providerModels = msg.models.filter((model) => !model.isCustom)
-      this.configPresenter.setProviderModels(msg.providerId, providerModels)
+
+    // 处理从ConfigPresenter过来的模型列表更新事件
+    eventBus.on(CONFIG_EVENTS.MODEL_LIST_CHANGED, (providerId: string) => {
       // 转发事件到渲染进程
-      this.windowPresenter.mainWindow?.webContents.send('provider-models-updated')
+      this.windowPresenter.mainWindow?.webContents.send(
+        CONFIG_EVENTS.MODEL_LIST_CHANGED,
+        providerId
+      )
     })
-    eventBus.on('update-status-changed', (msg) => {
-      console.log('update-status-changed', msg)
-      this.windowPresenter.mainWindow?.webContents.send('update-status-changed', msg)
+
+    eventBus.on(
+      CONFIG_EVENTS.MODEL_STATUS_CHANGED,
+      (providerId: string, modelId: string, enabled: boolean) => {
+        this.windowPresenter.mainWindow?.webContents.send(CONFIG_EVENTS.MODEL_STATUS_CHANGED, {
+          providerId,
+          modelId,
+          enabled
+        })
+      }
+    )
+
+    // 更新相关事件
+    eventBus.on(UPDATE_EVENTS.STATUS_CHANGED, (msg) => {
+      console.log(UPDATE_EVENTS.STATUS_CHANGED, msg)
+      this.windowPresenter.mainWindow?.webContents.send(UPDATE_EVENTS.STATUS_CHANGED, msg)
     })
-    eventBus.on('message-edited', (msgId: string) => {
-      this.windowPresenter.mainWindow?.webContents.send('message-edited', msgId)
+
+    // 消息编辑事件
+    eventBus.on(CONVERSATION_EVENTS.MESSAGE_EDITED, (msgId: string) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.MESSAGE_EDITED, msgId)
     })
   }
 
@@ -99,11 +130,11 @@ export class Presenter implements IPresenter {
     for (const provider of providers) {
       if (provider.enable) {
         const customModels = this.configPresenter.getCustomModels(provider.id)
+        console.log('syncCustomModels', provider.id, customModels)
         for (const model of customModels) {
           await this.llmproviderPresenter.addCustomModel(provider.id, {
             id: model.id,
             name: model.name,
-            enabled: model.enabled,
             contextLength: model.contextLength,
             maxTokens: model.maxTokens
           })

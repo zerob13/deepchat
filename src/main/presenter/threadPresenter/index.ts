@@ -23,6 +23,7 @@ import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
 import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 import { ContentEnricher } from './contentEnricher'
+import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -100,7 +101,7 @@ export class ThreadPresenter implements IThreadPresenter {
     // 初始化时处理所有未完成的消息
     this.initializeUnfinishedMessages()
 
-    eventBus.on('stream-response', async (msg) => {
+    eventBus.on(STREAM_EVENTS.RESPONSE, async (msg) => {
       const { eventId, content, reasoning_content } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -156,7 +157,7 @@ export class ThreadPresenter implements IThreadPresenter {
         }
       }
     })
-    eventBus.on('stream-end', async (msg) => {
+    eventBus.on(STREAM_EVENTS.END, async (msg) => {
       const { eventId } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -214,7 +215,7 @@ export class ThreadPresenter implements IThreadPresenter {
         this.generatingMessages.delete(eventId)
       }
     })
-    eventBus.on('stream-error', async (msg) => {
+    eventBus.on(STREAM_EVENTS.ERROR, async (msg) => {
       const { eventId, error } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -386,7 +387,7 @@ export class ThreadPresenter implements IThreadPresenter {
     const conversation = await this.getConversation(conversationId)
     if (conversation) {
       this.activeConversationId = conversationId
-      eventBus.emit('conversation-activated', { conversationId })
+      eventBus.emit(CONVERSATION_EVENTS.ACTIVATED, { conversationId })
     } else {
       throw new Error(`Conversation ${conversationId} not found`)
     }
@@ -1083,7 +1084,7 @@ export class ThreadPresenter implements IThreadPresenter {
   }
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null
-    eventBus.emit('active-conversation-cleared')
+    eventBus.emit(CONVERSATION_EVENTS.DEACTIVATED)
   }
 
   async clearAllMessages(conversationId: string): Promise<void> {
