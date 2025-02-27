@@ -87,8 +87,6 @@ export abstract class BaseLLMProvider {
 
     // 触发模型列表更新事件
     eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
-    // 兼容旧事件
-    eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, this.provider.id)
     return newModel
   }
 
@@ -97,8 +95,6 @@ export abstract class BaseLLMProvider {
     if (index !== -1) {
       this.customModels.splice(index, 1)
       eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
-      // 兼容旧事件
-      eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, this.provider.id)
       return true
     }
     return false
@@ -113,18 +109,9 @@ export abstract class BaseLLMProvider {
       // 如果是启用状态变更，触发专门的事件
       if (Object.prototype.hasOwnProperty.call(updates, 'enabled')) {
         eventBus.emit(MODEL_EVENTS.STATUS_CHANGED, this.provider.id, modelId, !!model.enabled)
-        // 兼容旧事件
-        eventBus.emit(
-          LEGACY_EVENTS.MODEL_STATUS_CHANGED,
-          this.provider.id,
-          modelId,
-          !!model.enabled
-        )
       } else {
         // 其他更新仍然触发模型列表更新事件
         eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
-        // 兼容旧事件
-        eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, this.provider.id)
       }
 
       return true
@@ -162,8 +149,6 @@ export abstract class BaseLLMProvider {
       this.models[modelIndex].enabled = enabled
       // 触发模型状态更改事件
       eventBus.emit(MODEL_EVENTS.STATUS_CHANGED, this.provider.id, modelId, enabled)
-      // 兼容旧事件
-      eventBus.emit(LEGACY_EVENTS.MODEL_STATUS_CHANGED, this.provider.id, modelId, enabled)
     }
   }
 

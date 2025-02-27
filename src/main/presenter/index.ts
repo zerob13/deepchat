@@ -58,14 +58,6 @@ export class Presenter implements IPresenter {
       const providers = this.configPresenter.getProviders()
       this.llmproviderPresenter.setProviders(providers)
       this.windowPresenter.mainWindow?.webContents.send(CONFIG_EVENTS.PROVIDER_CHANGED)
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED)
-    })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED, () => {
-      const providers = this.configPresenter.getProviders()
-      this.llmproviderPresenter.setProviders(providers)
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED)
     })
 
     // 流式响应事件
@@ -95,11 +87,6 @@ export class Presenter implements IPresenter {
     eventBus.on(MODEL_EVENTS.LIST_UPDATED, (providerId: string) => {
       // 当模型列表更新时，直接转发事件到渲染进程，并附带providerId参数
       this.windowPresenter.mainWindow?.webContents.send(MODEL_EVENTS.LIST_UPDATED, providerId)
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(
-        LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
-        providerId
-      )
     })
     // 处理从ConfigPresenter过来的模型列表更新事件
     eventBus.on(CONFIG_EVENTS.MODEL_LIST_CHANGED, (providerId: string) => {
@@ -108,46 +95,12 @@ export class Presenter implements IPresenter {
         CONFIG_EVENTS.MODEL_LIST_CHANGED,
         providerId
       )
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(
-        LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
-        providerId
-      )
-    })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, (providerId: string) => {
-      // 当模型列表更新时，获取provider实例
-      const provider = this.llmproviderPresenter.getProviderById(providerId)
-      if (provider) {
-        // 直接转发事件到渲染进程，并附带providerId参数
-        this.windowPresenter.mainWindow?.webContents.send(
-          LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
-          providerId
-        )
-      }
     })
 
     eventBus.on(
       MODEL_EVENTS.STATUS_CHANGED,
       (providerId: string, modelId: string, enabled: boolean) => {
         this.windowPresenter.mainWindow?.webContents.send(MODEL_EVENTS.STATUS_CHANGED, {
-          providerId,
-          modelId,
-          enabled
-        })
-        // 兼容旧事件
-        this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MODEL_STATUS_CHANGED, {
-          providerId,
-          modelId,
-          enabled
-        })
-      }
-    )
-    // 兼容旧事件
-    eventBus.on(
-      LEGACY_EVENTS.MODEL_STATUS_CHANGED,
-      (providerId: string, modelId: string, enabled: boolean) => {
-        this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MODEL_STATUS_CHANGED, {
           providerId,
           modelId,
           enabled

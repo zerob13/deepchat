@@ -10,7 +10,8 @@
 export const CONFIG_EVENTS = {
   PROVIDER_CHANGED: 'config:provider-changed', // 替代 provider-setting-changed
   SYSTEM_CHANGED: 'config:system-changed',
-  MODEL_LIST_CHANGED: 'config:model-list-changed' // 替代 provider-models-updated（ConfigPresenter）
+  MODEL_LIST_CHANGED: 'config:model-list-changed', // 替代 provider-models-updated（ConfigPresenter）
+  MODEL_STATUS_CHANGED: 'config:model-status-changed' // 替代 model-status-changed（ConfigPresenter）
 }
 
 // 模型相关事件
@@ -46,11 +47,4 @@ export const UPDATE_EVENTS = {
 // 窗口相关事件
 export const WINDOW_EVENTS = {
   READY_TO_SHOW: 'window:ready-to-show' // 替代 main-window-ready-to-show
-}
-
-// 旧事件名称 - 用于兼容性
-export const LEGACY_EVENTS = {
-  PROVIDER_SETTING_CHANGED: 'provider-setting-changed',
-  PROVIDER_MODELS_UPDATED: 'provider-models-updated',
-  MODEL_STATUS_CHANGED: 'model-status-changed'
 }

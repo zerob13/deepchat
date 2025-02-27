@@ -313,12 +313,6 @@ export const useSettingsStore = defineStore('settings', () => {
       providers.value = await configP.getProviders()
       await refreshAllModels()
     })
-    // 兼容旧事件
-    window.electron.ipcRenderer.on(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED, async () => {
-      providers.value = await configP.getProviders()
-      await refreshAllModels()
-    })
-
     // 监听模型列表更新事件
     window.electron.ipcRenderer.on(MODEL_EVENTS.LIST_UPDATED, async (event, providerId: string) => {
       // 只刷新指定的provider模型，而不是所有模型
@@ -342,31 +336,10 @@ export const useSettingsStore = defineStore('settings', () => {
         }
       }
     )
-    // 兼容旧事件
-    window.electron.ipcRenderer.on(
-      LEGACY_EVENTS.PROVIDER_MODELS_UPDATED,
-      async (event, providerId: string) => {
-        // 只刷新指定的provider模型，而不是所有模型
-        if (providerId) {
-          await refreshProviderModels(providerId)
-        } else {
-          // 兼容旧代码，如果没有提供providerId，则刷新所有模型
-          await refreshAllModels()
-        }
-      }
-    )
 
     // 处理模型启用状态变更事件
     window.electron.ipcRenderer.on(
       MODEL_EVENTS.STATUS_CHANGED,
-      async (event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
-        // 只更新模型启用状态，而不是刷新所有模型
-        updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)
-      }
-    )
-    // 兼容旧事件
-    window.electron.ipcRenderer.on(
-      LEGACY_EVENTS.MODEL_STATUS_CHANGED,
       async (event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
         // 只更新模型启用状态，而不是刷新所有模型
         updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)

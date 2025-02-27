@@ -149,8 +149,6 @@ export class ConfigPresenter implements IConfigPresenter {
     this.setSetting<LLM_PROVIDER[]>(PROVIDERS_STORE_KEY, providers)
     // 触发新事件
     eventBus.emit(CONFIG_EVENTS.PROVIDER_CHANGED)
-    // 兼容旧事件
-    eventBus.emit(LEGACY_EVENTS.PROVIDER_SETTING_CHANGED)
   }
 
   getProviderById(id: string): LLM_PROVIDER | undefined {
@@ -230,8 +228,6 @@ export class ConfigPresenter implements IConfigPresenter {
     this.setCustomModels(providerId, models)
     // 触发新事件
     eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
-    // 兼容旧事件
-    eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, providerId)
   }
 
   removeCustomModel(providerId: string, modelId: string): void {
@@ -240,8 +236,6 @@ export class ConfigPresenter implements IConfigPresenter {
     this.setCustomModels(providerId, filteredModels)
     // 触发新事件
     eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
-    // 兼容旧事件
-    eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, providerId)
   }
 
   updateCustomModel(providerId: string, modelId: string, updates: Partial<MODEL_META>): void {
@@ -256,15 +250,13 @@ export class ConfigPresenter implements IConfigPresenter {
         models[index].enabled = updates.enabled as boolean
         this.setCustomModels(providerId, models)
         // 只有enable状态更改时使用model-status-changed事件
-        eventBus.emit(LEGACY_EVENTS.MODEL_STATUS_CHANGED, providerId, modelId, updates.enabled)
+        eventBus.emit(CONFIG_EVENTS.MODEL_STATUS_CHANGED, providerId, modelId, updates.enabled)
       } else {
         // 其他属性变更使用provider-models-updated事件
         Object.assign(models[index], updates)
         this.setCustomModels(providerId, models)
         // 触发新事件
         eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
-        // 兼容旧事件
-        eventBus.emit(LEGACY_EVENTS.PROVIDER_MODELS_UPDATED, providerId)
       }
     }
   }
