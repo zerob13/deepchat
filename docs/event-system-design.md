@@ -45,7 +45,7 @@
 明确每个组件的事件触发责任：
 
 - **ConfigPresenter**：仅负责配置相关事件
-- **BaseLLMProvider**：仅负责模型操作相关事件
+- **BaseLLMProvider**：仅负责模型操作,不发起事件
 - **ThreadPresenter**：仅负责会话相关事件
 - **UpgradePresenter**：仅负责应用更新相关事件
 
