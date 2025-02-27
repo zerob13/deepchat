@@ -4,7 +4,7 @@ import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
-import { CONFIG_EVENTS, MODEL_EVENTS, LEGACY_EVENTS } from '@/events'
+import { CONFIG_EVENTS, MODEL_EVENTS, LEGACY_EVENTS, UPDATE_EVENTS } from '@/events'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
@@ -527,10 +527,10 @@ export const useSettingsStore = defineStore('settings', () => {
   // 监听更新状态
   const setupUpdateListener = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    window.electron.ipcRenderer.on('update-status-changed', (_, event: any) => {
+    window.electron.ipcRenderer.on(UPDATE_EVENTS.STATUS_CHANGED, (_, event: any) => {
       const { status, info, error } = event
       hasUpdate.value = status === 'available' || status === 'downloaded'
-      console.log('update-status-changed', status, info, error)
+      console.log(UPDATE_EVENTS.STATUS_CHANGED, status, info, error)
       // 根据不同状态更新UI
       switch (status) {
         case 'available':
@@ -564,21 +564,21 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 监听更新进度
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    window.electron.ipcRenderer.on('update-progress', (_, progressData: any) => {
-      console.log('update-progress', progressData)
+    window.electron.ipcRenderer.on(UPDATE_EVENTS.PROGRESS, (_, progressData: any) => {
+      console.log(UPDATE_EVENTS.PROGRESS, progressData)
       // 这里可以添加进度处理逻辑，如果需要显示进度条
     })
 
     // 监听更新错误
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    window.electron.ipcRenderer.on('update-error', (_, errorData: any) => {
-      console.error('Update error:', errorData.error)
+    window.electron.ipcRenderer.on(UPDATE_EVENTS.ERROR, (_, errorData: any) => {
+      console.error(UPDATE_EVENTS.ERROR, errorData.error)
       hasUpdate.value = false
       updateInfo.value = null
     })
 
     // 监听更新即将重启
-    window.electron.ipcRenderer.on('update-will-restart', () => {
+    window.electron.ipcRenderer.on(UPDATE_EVENTS.WILL_RESTART, () => {
       console.log('Application will restart to install update')
     })
   }

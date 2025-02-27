@@ -23,7 +23,7 @@ export const MODEL_EVENTS = {
 export const CONVERSATION_EVENTS = {
   CREATED: 'conversation:created',
   ACTIVATED: 'conversation:activated', // 替代 conversation-activated
-  CLEARED: 'conversation:cleared', // 替代 active-conversation-cleared
+  DEACTIVATED: 'conversation:deactivated', // 替代 active-conversation-cleared
   MESSAGE_EDITED: 'conversation:message-edited' // 替代 message-edited
 }
 
@@ -39,7 +39,8 @@ export const UPDATE_EVENTS = {
   STATUS_CHANGED: 'update:status-changed', // 替代 update-status-changed
   PROGRESS: 'update:progress', // 替代 update-progress
   ERROR: 'update:error', // 替代 update-error
-  WILL_RESTART: 'update:will-restart' // 替代 update-will-restart
+  WILL_RESTART: 'update:will-restart', // 替代 update-will-restart
+  FORCE_QUIT_APP: 'update:force-quit-app' // 替代 force-quit-app
 }
 
 // 窗口相关事件
@@ -51,10 +52,5 @@ export const WINDOW_EVENTS = {
 export const LEGACY_EVENTS = {
   PROVIDER_SETTING_CHANGED: 'provider-setting-changed',
   PROVIDER_MODELS_UPDATED: 'provider-models-updated',
-  MODEL_STATUS_CHANGED: 'model-status-changed',
-  CONVERSATION_ACTIVATED: 'conversation-activated',
-  ACTIVE_CONVERSATION_CLEARED: 'active-conversation-cleared',
-  UPDATE_STATUS_CHANGED: 'update-status-changed',
-  MAIN_WINDOW_READY_TO_SHOW: 'main-window-ready-to-show',
-  MESSAGE_EDITED: 'message-edited'
+  MODEL_STATUS_CHANGED: 'model-status-changed'
 }

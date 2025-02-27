@@ -9,6 +9,7 @@ import type {
 } from '@shared/chat'
 import type { CONVERSATION, CONVERSATION_SETTINGS } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
+import { CONVERSATION_EVENTS } from '@/events'
 // import DeepSeekLogo from '@/assets/llm-icons/deepseek-color.svg'
 // import BaiduLogo from '@/assets/llm-icons/baidu-color.svg'
 // import GoogleLogo from '@/assets/llm-icons/google-color.svg'
@@ -680,8 +681,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  window.electron.ipcRenderer.on('conversation-activated', (_, msg) => {
-    console.log('conversation-activated', msg)
+  window.electron.ipcRenderer.on(CONVERSATION_EVENTS.ACTIVATED, (_, msg) => {
+    console.log(CONVERSATION_EVENTS.ACTIVATED, msg)
     activeThreadId.value = msg.conversationId
     loadMessages()
     loadChatConfig() // 加载对话配置
@@ -718,8 +719,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // 注册消息编辑事件处理
-  window.electron.ipcRenderer.on('message-edited', (_, msgId: string) => {
-    // console.log('message-edited', msgId)
+  window.electron.ipcRenderer.on(CONVERSATION_EVENTS.MESSAGE_EDITED, (_, msgId: string) => {
     handleMessageEdited(msgId)
   })
 

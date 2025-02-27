@@ -52,10 +52,6 @@ export class Presenter implements IPresenter {
     eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
       this.init()
     })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.MAIN_WINDOW_READY_TO_SHOW, () => {
-      this.init()
-    })
 
     // 配置相关事件
     eventBus.on(CONFIG_EVENTS.PROVIDER_CHANGED, () => {
@@ -89,28 +85,10 @@ export class Presenter implements IPresenter {
     // 会话相关事件
     eventBus.on(CONVERSATION_EVENTS.ACTIVATED, (msg) => {
       this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.ACTIVATED, msg)
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.CONVERSATION_ACTIVATED, msg)
-    })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.CONVERSATION_ACTIVATED, (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.CONVERSATION_ACTIVATED, msg)
     })
 
-    eventBus.on(CONVERSATION_EVENTS.CLEARED, (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.CLEARED, msg)
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(
-        LEGACY_EVENTS.ACTIVE_CONVERSATION_CLEARED,
-        msg
-      )
-    })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.ACTIVE_CONVERSATION_CLEARED, (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send(
-        LEGACY_EVENTS.ACTIVE_CONVERSATION_CLEARED,
-        msg
-      )
+    eventBus.on(CONVERSATION_EVENTS.DEACTIVATED, (msg) => {
+      this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.DEACTIVATED, msg)
     })
 
     // 模型相关事件
@@ -179,25 +157,13 @@ export class Presenter implements IPresenter {
 
     // 更新相关事件
     eventBus.on(UPDATE_EVENTS.STATUS_CHANGED, (msg) => {
-      console.log('update-status-changed', msg)
+      console.log(UPDATE_EVENTS.STATUS_CHANGED, msg)
       this.windowPresenter.mainWindow?.webContents.send(UPDATE_EVENTS.STATUS_CHANGED, msg)
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.UPDATE_STATUS_CHANGED, msg)
-    })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.UPDATE_STATUS_CHANGED, (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.UPDATE_STATUS_CHANGED, msg)
     })
 
     // 消息编辑事件
     eventBus.on(CONVERSATION_EVENTS.MESSAGE_EDITED, (msgId: string) => {
       this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.MESSAGE_EDITED, msgId)
-      // 兼容旧事件
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MESSAGE_EDITED, msgId)
-    })
-    // 兼容旧事件
-    eventBus.on(LEGACY_EVENTS.MESSAGE_EDITED, (msgId: string) => {
-      this.windowPresenter.mainWindow?.webContents.send(LEGACY_EVENTS.MESSAGE_EDITED, msgId)
     })
   }
 

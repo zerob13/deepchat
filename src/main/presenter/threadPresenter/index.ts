@@ -23,7 +23,7 @@ import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
 import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 import { ContentEnricher } from './contentEnricher'
-import { STREAM_EVENTS } from '@/events'
+import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -387,7 +387,7 @@ export class ThreadPresenter implements IThreadPresenter {
     const conversation = await this.getConversation(conversationId)
     if (conversation) {
       this.activeConversationId = conversationId
-      eventBus.emit('conversation-activated', { conversationId })
+      eventBus.emit(CONVERSATION_EVENTS.ACTIVATED, { conversationId })
     } else {
       throw new Error(`Conversation ${conversationId} not found`)
     }
@@ -1084,7 +1084,7 @@ export class ThreadPresenter implements IThreadPresenter {
   }
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null
-    eventBus.emit('active-conversation-cleared')
+    eventBus.emit(CONVERSATION_EVENTS.DEACTIVATED)
   }
 
   async clearAllMessages(conversationId: string): Promise<void> {
