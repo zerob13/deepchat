@@ -105,20 +105,12 @@ export abstract class BaseLLMProvider {
     if (model) {
       // 应用更新
       Object.assign(model, updates)
-
-      // 如果是启用状态变更，触发专门的事件
-      if (Object.prototype.hasOwnProperty.call(updates, 'enabled')) {
-        eventBus.emit(MODEL_EVENTS.STATUS_CHANGED, this.provider.id, modelId, !!model.enabled)
-      } else {
-        // 其他更新仍然触发模型列表更新事件
-        eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
-      }
-
+      // 其他更新仍然触发模型列表更新事件
+      eventBus.emit(MODEL_EVENTS.LIST_UPDATED, this.provider.id)
       return true
     }
     return false
   }
-
   public getCustomModels(): MODEL_META[] {
     return this.customModels
   }
@@ -136,20 +128,10 @@ export abstract class BaseLLMProvider {
       name: model.id,
       group: 'default',
       providerId: this.provider.id,
-      enabled: true,
       isCustom: false,
       contextLength: 4096,
       maxTokens: 2048
     }))
-  }
-
-  public async updateModelStatus(modelId: string, enabled: boolean): Promise<void> {
-    const modelIndex = this.models.findIndex((m) => m.id === modelId)
-    if (modelIndex !== -1) {
-      this.models[modelIndex].enabled = enabled
-      // 触发模型状态更改事件
-      eventBus.emit(MODEL_EVENTS.STATUS_CHANGED, this.provider.id, modelId, enabled)
-    }
   }
 
   protected async openAICompletion(
@@ -401,7 +383,6 @@ export abstract class BaseLLMProvider {
         })
         this.models = models
         // 避免在这里触发事件，而是通过ConfigPresenter来管理模型更新
-        // eventBus.emit('provider-models-updated', this.provider.id)
       }
       return {
         isOk: true,

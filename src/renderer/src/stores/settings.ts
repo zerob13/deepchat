@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, onMounted, toRaw, computed } from 'vue'
-import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
+import type { LLM_PROVIDER, RENDERER_MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
@@ -15,9 +15,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const providers = ref<LLM_PROVIDER[]>([])
   const theme = ref<string>('system')
   const language = ref<string>('system')
-  const enabledModels = ref<{ providerId: string; models: MODEL_META[] }[]>([])
-  const allProviderModels = ref<{ providerId: string; models: MODEL_META[] }[]>([])
-  const customModels = ref<{ providerId: string; models: MODEL_META[] }[]>([])
+  const enabledModels = ref<{ providerId: string; models: RENDERER_MODEL_META[] }[]>([])
+  const allProviderModels = ref<{ providerId: string; models: RENDERER_MODEL_META[] }[]>([])
+  const customModels = ref<{ providerId: string; models: RENDERER_MODEL_META[] }[]>([])
   const hasUpdate = ref(false)
   const updateInfo = ref<{
     version: string
@@ -29,7 +29,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const activeSearchEngine = ref<string>('google')
 
   // 搜索助手模型相关
-  const searchAssistantModelRef = ref<MODEL_META | null>(null)
+  const searchAssistantModelRef = ref<RENDERER_MODEL_META | null>(null)
   const searchAssistantProviderRef = ref<string>('')
 
   // 搜索助手模型计算属性
@@ -69,7 +69,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 查找符合优先级的模型
-  const findPriorityModel = (): { model: MODEL_META; providerId: string } | null => {
+  const findPriorityModel = (): { model: RENDERER_MODEL_META; providerId: string } | null => {
     if (!enabledModels.value || enabledModels.value.length === 0) {
       return null
     }
@@ -102,7 +102,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 设置搜索助手模型
-  const setSearchAssistantModel = async (model: MODEL_META, providerId: string) => {
+  const setSearchAssistantModel = async (model: RENDERER_MODEL_META, providerId: string) => {
     const _model = toRaw(model)
     searchAssistantModelRef.value = _model
     searchAssistantProviderRef.value = providerId
@@ -119,7 +119,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // 初始化或更新搜索助手模型
   const initOrUpdateSearchAssistantModel = async () => {
     // 尝试从配置中加载搜索助手模型
-    let savedModel = await configP.getSetting<{ model: MODEL_META; providerId: string }>(
+    let savedModel = await configP.getSetting<{ model: RENDERER_MODEL_META; providerId: string }>(
       'searchAssistantModel'
     )
     savedModel = toRaw(savedModel)
@@ -204,29 +204,55 @@ export const useSettingsStore = defineStore('settings', () => {
               maxTokens: meta.maxTokens || 2048,
               provider: provider.id,
               group: meta.group,
-              enabled: meta.enabled,
+              enabled: false,
               isCustom: meta.isCustom,
               providerId: provider.id
             }))
           }
         }
 
+        // 获取模型状态并合并
+        const modelsWithStatus = await Promise.all(
+          models.map(async (model) => {
+            // 获取模型状态
+            const enabled = await configP.getModelStatus(provider.id, model.id)
+            return {
+              ...model,
+              enabled
+            }
+          })
+        )
+
         // 获取自定义模型
         const customModelsList = await llmP.getCustomModels(provider.id)
+        // 获取自定义模型状态并合并
+        const customModelsWithStatus = await Promise.all(
+          customModelsList.map(async (model) => {
+            // 获取模型状态
+            const enabled = await configP.getModelStatus(provider.id, model.id)
+
+            return {
+              ...model,
+              enabled,
+              isCustom: true
+            } as RENDERER_MODEL_META
+          })
+        )
+
         const existingIndex = customModels.value.findIndex(
           (item) => item.providerId === provider.id
         )
         if (existingIndex !== -1) {
-          customModels.value[existingIndex].models = customModelsList // 更新已存在的模型
+          customModels.value[existingIndex].models = customModelsWithStatus
         } else {
           customModels.value.push({
             providerId: provider.id,
-            models: customModelsList
+            models: customModelsWithStatus
           })
         }
 
         // 合并在线和自定义模型
-        const allModels = models.map((model) => ({
+        const allModels = modelsWithStatus.map((model) => ({
           ...model,
           isCustom: false
         }))
@@ -314,19 +340,22 @@ export const useSettingsStore = defineStore('settings', () => {
       await refreshAllModels()
     })
     // 监听模型列表更新事件
-    window.electron.ipcRenderer.on(MODEL_EVENTS.LIST_UPDATED, async (event, providerId: string) => {
-      // 只刷新指定的provider模型，而不是所有模型
-      if (providerId) {
-        await refreshProviderModels(providerId)
-      } else {
-        // 兼容旧代码，如果没有提供providerId，则刷新所有模型
-        await refreshAllModels()
+    window.electron.ipcRenderer.on(
+      MODEL_EVENTS.LIST_UPDATED,
+      async (_event, providerId: string) => {
+        // 只刷新指定的provider模型，而不是所有模型
+        if (providerId) {
+          await refreshProviderModels(providerId)
+        } else {
+          // 兼容旧代码，如果没有提供providerId，则刷新所有模型
+          await refreshAllModels()
+        }
       }
-    })
+    )
     // 监听配置中的模型列表变更事件
     window.electron.ipcRenderer.on(
       CONFIG_EVENTS.MODEL_LIST_CHANGED,
-      async (event, providerId: string) => {
+      async (_event, providerId: string) => {
         // 只刷新指定的provider模型，而不是所有模型
         if (providerId) {
           await refreshProviderModels(providerId)
@@ -340,7 +369,7 @@ export const useSettingsStore = defineStore('settings', () => {
     // 处理模型启用状态变更事件
     window.electron.ipcRenderer.on(
       MODEL_EVENTS.STATUS_CHANGED,
-      async (event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
+      async (_event, msg: { providerId: string; modelId: string; enabled: boolean }) => {
         // 只更新模型启用状态，而不是刷新所有模型
         updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)
       }
@@ -411,7 +440,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // 添加自定义模型
   const addCustomModel = async (
     providerId: string,
-    model: Omit<MODEL_META, 'providerId' | 'isCustom' | 'group'>
+    model: Omit<RENDERER_MODEL_META, 'providerId' | 'isCustom' | 'group'>
   ) => {
     try {
       const newModel = await llmP.addCustomModel(providerId, model)
@@ -441,9 +470,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const updateCustomModel = async (
     providerId: string,
     modelId: string,
-    updates: Partial<MODEL_META>
+    updates: Partial<RENDERER_MODEL_META> & { enabled?: boolean }
   ) => {
     try {
+      // 不包含启用状态的常规更新
       const success = await llmP.updateCustomModel(providerId, modelId, updates)
       if (success) {
         await refreshAllModels()
@@ -627,35 +657,80 @@ export const useSettingsStore = defineStore('settings', () => {
             maxTokens: meta.maxTokens || 2048,
             provider: providerId,
             group: meta.group,
-            enabled: meta.enabled,
-            isCustom: meta.isCustom,
+            isCustom: meta.isCustom || false,
             providerId
           }))
         }
       }
+
+      // 获取模型状态并合并
+      const modelsWithStatus = await Promise.all(
+        models.map(async (model) => {
+          // 获取模型状态
+          const enabled = await configP.getModelStatus(providerId, model.id)
+
+          return {
+            ...model,
+            enabled,
+            providerId,
+            isCustom: model.isCustom || false
+          }
+        })
+      )
 
       // 更新模型列表
       const existingIndex = allProviderModels.value.findIndex(
         (item) => item.providerId === providerId
       )
       if (existingIndex !== -1) {
-        allProviderModels.value[existingIndex].models = models
+        allProviderModels.value[existingIndex].models = modelsWithStatus
       } else {
         allProviderModels.value.push({
           providerId,
-          models
+          models: modelsWithStatus
         })
       }
 
       // 更新已启用的模型列表
       const enabledIndex = enabledModels.value.findIndex((item) => item.providerId === providerId)
       if (enabledIndex !== -1) {
-        enabledModels.value[enabledIndex].models = models.filter((model) => model.enabled !== false)
+        enabledModels.value[enabledIndex].models = modelsWithStatus.filter(
+          (model) => model.enabled !== false
+        )
       } else {
         enabledModels.value.push({
           providerId,
-          models: models.filter((model) => model.enabled !== false)
+          models: modelsWithStatus.filter((model) => model.enabled !== false)
         })
+      }
+
+      // 同时更新自定义模型
+      const customModelsList = await llmP.getCustomModels(providerId)
+      if (customModelsList && customModelsList.length > 0) {
+        // 获取自定义模型状态并合并
+        const customModelsWithStatus = await Promise.all(
+          customModelsList.map(async (model) => {
+            // 获取模型状态
+            const enabled = await configP.getModelStatus(providerId, model.id)
+
+            return {
+              ...model,
+              enabled,
+              providerId,
+              isCustom: true
+            }
+          })
+        )
+
+        const customIndex = customModels.value.findIndex((item) => item.providerId === providerId)
+        if (customIndex !== -1) {
+          customModels.value[customIndex].models = customModelsWithStatus
+        } else {
+          customModels.value.push({
+            providerId,
+            models: customModelsWithStatus
+          })
+        }
       }
     } catch (error) {
       console.error(`Failed to fetch models for provider ${providerId}:`, error)
@@ -752,7 +827,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (customModelsData) {
         for (const model of customModelsData.models) {
           if (model.enabled) {
-            await llmP.updateCustomModel(providerId, model.id, { enabled: false })
+            await llmP.updateModelStatus(providerId, model.id, false)
             // 注意：不需要调用refreshAllModels，因为model-status-changed事件会更新UI
           }
         }

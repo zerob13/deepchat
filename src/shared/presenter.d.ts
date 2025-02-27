@@ -110,7 +110,7 @@ export interface IConfigPresenter {
   getProviderModels(providerId: string): MODEL_META[]
   setProviderModels(providerId: string, models: MODEL_META[]): void
   getEnabledProviders(): LLM_PROVIDER[]
-  getAllEnabledModels(): Promise<{ providerId: string; models: MODEL_META[] }[]>
+  getAllEnabledModels(): Promise<{ providerId: string; models: RENDERER_MODEL_META[] }[]>
   // 自定义模型管理
   getCustomModels(providerId: string): MODEL_META[]
   setCustomModels(providerId: string, models: MODEL_META[]): void
@@ -120,14 +120,24 @@ export interface IConfigPresenter {
   // 关闭行为设置
   getCloseToQuit(): boolean
   setCloseToQuit(value: boolean): void
+  getModelStatus(providerId: string, modelId: string): boolean
+  setModelStatus(providerId: string, modelId: string, enabled: boolean): void
 }
-
-export type MODEL_META = {
+export type RENDERER_MODEL_META = {
   id: string
   name: string
   group: string
   providerId: string
   enabled: boolean
+  isCustom: boolean
+  contextLength: number
+  maxTokens: number
+}
+export type MODEL_META = {
+  id: string
+  name: string
+  group: string
+  providerId: string
   isCustom: boolean
   contextLength: number
   maxTokens: number

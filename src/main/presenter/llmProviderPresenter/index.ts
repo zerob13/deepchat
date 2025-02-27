@@ -8,6 +8,7 @@ import { OpenAICompatibleProvider } from './providers/openAICompatibleProvider'
 import { PPIOProvider } from './providers/ppioProvider'
 import { getModelConfig } from './modelConfigs'
 import { STREAM_EVENTS } from '@/events'
+import { ConfigPresenter } from '../configPresenter'
 // 导入其他provider...
 
 // 流的状态
@@ -33,6 +34,11 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   // 配置
   private config: ProviderConfig = {
     maxConcurrentStreams: 10
+  }
+  private configPresenter: ConfigPresenter
+
+  constructor(configPresenter: ConfigPresenter) {
+    this.configPresenter = configPresenter
   }
 
   getProviders(): LLM_PROVIDER[] {
@@ -130,8 +136,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   }
 
   async updateModelStatus(providerId: string, modelId: string, enabled: boolean): Promise<void> {
-    const provider = this.getProviderInstance(providerId)
-    await provider.updateModelStatus(modelId, enabled)
+    this.configPresenter.setModelStatus(providerId, modelId, enabled)
   }
 
   isGenerating(eventId: string): boolean {
@@ -397,7 +402,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     updates: Partial<MODEL_META>
   ): Promise<boolean> {
     const provider = this.getProviderInstance(providerId)
-    return provider.updateCustomModel(modelId, updates)
+    const res = provider.updateCustomModel(modelId, updates)
+    this.configPresenter.updateCustomModel(providerId, modelId, updates)
+    return res
   }
 
   async getCustomModels(providerId: string): Promise<MODEL_META[]> {

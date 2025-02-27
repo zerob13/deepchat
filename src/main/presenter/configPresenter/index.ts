@@ -1,5 +1,5 @@
 import { eventBus } from '@/eventbus'
-import { IConfigPresenter, LLM_PROVIDER, MODEL_META } from '@shared/presenter'
+import { IConfigPresenter, LLM_PROVIDER, MODEL_META, RENDERER_MODEL_META } from '@shared/presenter'
 import ElectronStore from 'electron-store'
 import { DEFAULT_PROVIDERS } from './providers'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
@@ -36,6 +36,8 @@ const defaultProviders = DEFAULT_PROVIDERS.map((provider) => ({
 const PROVIDERS_STORE_KEY = 'providers'
 const CUSTOM_MODELS_KEY = 'custom_models'
 const PROVIDER_MODELS_DIR = 'provider_models'
+// 模型状态键前缀
+const MODEL_STATUS_KEY_PREFIX = 'model_status_'
 
 export class ConfigPresenter implements IConfigPresenter {
   private store: ElectronStore<IAppSettings>
@@ -167,6 +169,42 @@ export class ConfigPresenter implements IConfigPresenter {
     }
   }
 
+  // 构造模型状态的存储键
+  private getModelStatusKey(providerId: string, modelId: string): string {
+    return `${MODEL_STATUS_KEY_PREFIX}${providerId}_${modelId}`
+  }
+
+  // 获取模型启用状态
+  getModelStatus(providerId: string, modelId: string): boolean {
+    const statusKey = this.getModelStatusKey(providerId, modelId)
+    return this.getSetting<boolean>(statusKey) ?? false
+  }
+
+  // 设置模型启用状态
+  setModelStatus(providerId: string, modelId: string, enabled: boolean): void {
+    const statusKey = this.getModelStatusKey(providerId, modelId)
+    this.setSetting(statusKey, enabled)
+    // 触发模型状态变更事件
+    eventBus.emit(CONFIG_EVENTS.MODEL_STATUS_CHANGED, providerId, modelId, enabled)
+  }
+
+  // 启用模型
+  enableModel(providerId: string, modelId: string): void {
+    this.setModelStatus(providerId, modelId, true)
+  }
+
+  // 禁用模型
+  disableModel(providerId: string, modelId: string): void {
+    this.setModelStatus(providerId, modelId, false)
+  }
+
+  // 批量设置模型状态
+  batchSetModelStatus(providerId: string, modelStatusMap: Record<string, boolean>): void {
+    for (const [modelId, enabled] of Object.entries(modelStatusMap)) {
+      this.setModelStatus(providerId, modelId, enabled)
+    }
+  }
+
   getProviderModels(providerId: string): MODEL_META[] {
     const store = this.getProviderModelStore(providerId)
     let models = store.get('models') || []
@@ -192,16 +230,29 @@ export class ConfigPresenter implements IConfigPresenter {
     return providers.filter((provider) => provider.enable)
   }
 
-  getAllEnabledModels(): Promise<{ providerId: string; models: MODEL_META[] }[]> {
+  getAllEnabledModels(): Promise<{ providerId: string; models: RENDERER_MODEL_META[] }[]> {
     const enabledProviders = this.getEnabledProviders()
     return Promise.all(
-      enabledProviders.map(async (provider) => ({
-        providerId: provider.id,
-        models: [
-          ...this.getProviderModels(provider.id).filter((model) => model.enabled),
-          ...this.getCustomModels(provider.id).filter((model) => model.enabled)
+      enabledProviders.map(async (provider) => {
+        const providerId = provider.id
+        const allModels = [
+          ...this.getProviderModels(providerId),
+          ...this.getCustomModels(providerId)
         ]
-      }))
+
+        // 根据单独存储的状态过滤启用的模型
+        const enabledModels = allModels
+          .filter((model) => this.getModelStatus(providerId, model.id))
+          .map((model) => ({
+            ...model,
+            enabled: true
+          }))
+
+        return {
+          providerId,
+          models: enabledModels
+        }
+      })
     )
   }
 
@@ -219,14 +270,21 @@ export class ConfigPresenter implements IConfigPresenter {
     const models = this.getCustomModels(providerId)
     const existingIndex = models.findIndex((m) => m.id === model.id)
 
+    // 创建不包含enabled属性的模型副本
+    const modelWithoutStatus: MODEL_META = { ...model }
+    // @ts-ignore - 需要删除enabled属性以便独立存储状态
+    delete modelWithoutStatus.enabled
+
     if (existingIndex !== -1) {
-      models[existingIndex] = model
+      models[existingIndex] = modelWithoutStatus as MODEL_META
     } else {
-      models.push(model)
+      models.push(modelWithoutStatus as MODEL_META)
     }
 
     this.setCustomModels(providerId, models)
-    // 触发新事件
+    // 单独设置模型状态
+    this.setModelStatus(providerId, model.id, true)
+    // 触发模型列表变更事件
     eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
   }
 
@@ -234,30 +292,23 @@ export class ConfigPresenter implements IConfigPresenter {
     const models = this.getCustomModels(providerId)
     const filteredModels = models.filter((model) => model.id !== modelId)
     this.setCustomModels(providerId, filteredModels)
-    // 触发新事件
+
+    // 删除模型状态
+    const statusKey = this.getModelStatusKey(providerId, modelId)
+    this.store.delete(statusKey)
+
+    // 触发模型列表变更事件
     eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
   }
 
   updateCustomModel(providerId: string, modelId: string, updates: Partial<MODEL_META>): void {
     const models = this.getCustomModels(providerId)
     const index = models.findIndex((model) => model.id === modelId)
+
     if (index !== -1) {
-      // 检查更新是否仅包含enabled属性
-      if (
-        Object.keys(updates).length === 1 &&
-        Object.prototype.hasOwnProperty.call(updates, 'enabled')
-      ) {
-        models[index].enabled = updates.enabled as boolean
-        this.setCustomModels(providerId, models)
-        // 只有enable状态更改时使用model-status-changed事件
-        eventBus.emit(CONFIG_EVENTS.MODEL_STATUS_CHANGED, providerId, modelId, updates.enabled)
-      } else {
-        // 其他属性变更使用provider-models-updated事件
-        Object.assign(models[index], updates)
-        this.setCustomModels(providerId, models)
-        // 触发新事件
-        eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
-      }
+      Object.assign(models[index], updates)
+      this.setCustomModels(providerId, models)
+      eventBus.emit(CONFIG_EVENTS.MODEL_LIST_CHANGED, providerId)
     }
   }
 

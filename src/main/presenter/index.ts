@@ -34,7 +34,7 @@ export class Presenter implements IPresenter {
   constructor() {
     this.configPresenter = new ConfigPresenter()
     this.windowPresenter = new WindowPresenter(this.configPresenter)
-    this.llmproviderPresenter = new LLMProviderPresenter()
+    this.llmproviderPresenter = new LLMProviderPresenter(this.configPresenter)
     this.devicePresenter = new DevicePresenter()
     // 初始化 SQLite 数据库
     const dbDir = path.join(app.getPath('userData'), 'app_db')
@@ -140,7 +140,6 @@ export class Presenter implements IPresenter {
           await this.llmproviderPresenter.addCustomModel(provider.id, {
             id: model.id,
             name: model.name,
-            enabled: model.enabled,
             contextLength: model.contextLength,
             maxTokens: model.maxTokens
           })
