@@ -17,8 +17,7 @@ import {
   CONVERSATION_EVENTS,
   STREAM_EVENTS,
   WINDOW_EVENTS,
-  UPDATE_EVENTS,
-  LEGACY_EVENTS
+  UPDATE_EVENTS
 } from '@/events'
 
 export class Presenter implements IPresenter {

@@ -2,7 +2,7 @@ import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@share
 import OpenAI from 'openai'
 import { ChatCompletionMessage } from 'openai/resources'
 import { eventBus } from '@/eventbus'
-import { MODEL_EVENTS, LEGACY_EVENTS } from '@/events'
+import { MODEL_EVENTS } from '@/events'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'

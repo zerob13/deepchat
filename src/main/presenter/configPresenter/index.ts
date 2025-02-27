@@ -6,7 +6,7 @@ import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import path from 'path'
 import { app } from 'electron'
 import fs from 'fs'
-import { CONFIG_EVENTS, LEGACY_EVENTS } from '@/events'
+import { CONFIG_EVENTS } from '@/events'
 
 // 定义应用设置的接口
 interface IAppSettings {

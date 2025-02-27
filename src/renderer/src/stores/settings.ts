@@ -4,7 +4,7 @@ import type { LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
-import { CONFIG_EVENTS, MODEL_EVENTS, LEGACY_EVENTS, UPDATE_EVENTS } from '@/events'
+import { CONFIG_EVENTS, MODEL_EVENTS, UPDATE_EVENTS } from '@/events'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
