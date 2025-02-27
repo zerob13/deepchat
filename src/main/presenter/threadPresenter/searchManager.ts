@@ -1,5 +1,4 @@
 import { app, BrowserWindow } from 'electron'
-import { eventBus } from '@/eventbus'
 import path from 'path'
 import { SearchEngineTemplate } from '@shared/chat'
 import { ContentEnricher } from './contentEnricher'
@@ -117,22 +116,7 @@ export class SearchManager {
   private engines: SearchEngineTemplate[] = defaultEngines
   private activeEngine: SearchEngineTemplate = this.engines[0]
 
-  constructor() {
-    this.setupEventListeners()
-  }
-
-  private setupEventListeners() {
-    eventBus.on('search-window-cleanup', (conversationId: string) => {
-      this.destroySearchWindow(conversationId)
-    })
-
-    eventBus.on('search-engine-change', (engineName: string) => {
-      const engine = this.engines.find((e) => e.name === engineName)
-      if (engine) {
-        this.activeEngine = engine
-      }
-    })
-  }
+  constructor() {}
 
   getEngines(): SearchEngineTemplate[] {
     return this.engines

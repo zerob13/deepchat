@@ -2,7 +2,7 @@ import electronUpdater from 'electron-updater'
 import { app } from 'electron'
 import { IUpgradePresenter, UpdateStatus, UpdateProgress } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
-import { UPDATE_EVENTS } from '@/events'
+import { UPDATE_EVENTS, WINDOW_EVENTS } from '@/events'
 
 const { autoUpdater } = electronUpdater
 
@@ -141,7 +141,7 @@ export class UpgradePresenter implements IUpgradePresenter {
       // 发送即将重启的消息
       eventBus.emit(UPDATE_EVENTS.WILL_RESTART)
       // 通知需要完全退出应用
-      eventBus.emit(UPDATE_EVENTS.FORCE_QUIT_APP)
+      eventBus.emit(WINDOW_EVENTS.FORCE_QUIT_APP)
       autoUpdater.quitAndInstall()
       // 如果30s还没完成，就强制退出重启
       setTimeout(() => {

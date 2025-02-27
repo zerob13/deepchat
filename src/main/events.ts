@@ -34,11 +34,11 @@ export const UPDATE_EVENTS = {
   STATUS_CHANGED: 'update:status-changed', // 替代 update-status-changed
   PROGRESS: 'update:progress', // 替代 update-progress
   ERROR: 'update:error', // 替代 update-error
-  WILL_RESTART: 'update:will-restart', // 替代 update-will-restart
-  FORCE_QUIT_APP: 'update:force-quit-app' // 替代 force-quit-app
+  WILL_RESTART: 'update:will-restart' // 替代 update-will-restart
 }
 
 // 窗口相关事件
 export const WINDOW_EVENTS = {
-  READY_TO_SHOW: 'window:ready-to-show' // 替代 main-window-ready-to-show
+  READY_TO_SHOW: 'window:ready-to-show', // 替代 main-window-ready-to-show
+  FORCE_QUIT_APP: 'window:force-quit-app' // 替代 force-quit-app
 }

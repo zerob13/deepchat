@@ -49,8 +49,7 @@ export class WindowPresenter implements IWindowPresenter {
     })
 
     // 监听强制退出事件
-    eventBus.on('force-quit-app', () => {
-      console.log('force-quit-app')
+    eventBus.on(WINDOW_EVENTS.FORCE_QUIT_APP, () => {
       this.isQuitting = true
       if (this.trayPresenter) {
         this.trayPresenter.destroy()
