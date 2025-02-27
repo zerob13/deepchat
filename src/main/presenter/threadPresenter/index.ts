@@ -22,6 +22,7 @@ import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
 import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
+import { ContentEnricher } from './contentEnricher'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -721,6 +722,7 @@ export class ThreadPresenter implements IThreadPresenter {
     let contextMessages: Message[] = []
     let userMessage: Message | null = null
     let searchResults: SearchResult[] | null = null
+    let urlResults: SearchResult[] = []
 
     try {
       if (queryMsgId) {
@@ -750,6 +752,9 @@ export class ThreadPresenter implements IThreadPresenter {
         throw new Error('找不到用户消息')
       }
 
+      // 从用户消息中提取并丰富URL内容
+      urlResults = await ContentEnricher.extractAndEnrichUrls(userMessage.content.text)
+
       // 处理搜索
       if (userMessage.content.search) {
         searchResults = await this.startStreamSearch(
@@ -763,9 +768,17 @@ export class ThreadPresenter implements IThreadPresenter {
       const searchPrompt = searchResults
         ? generateSearchPrompt(userMessage.content.text, searchResults)
         : ''
+
+      // 使用URL内容丰富用户消息
+      const enrichedUserMessage =
+        urlResults.length > 0
+          ? ContentEnricher.enrichUserMessageWithUrlContent(userMessage.content.text, urlResults)
+          : userMessage.content.text
+
+      // 计算token数量
       const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
       const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
-      const userMessageTokens = approximateTokenSize(userMessage.content.text)
+      const userMessageTokens = approximateTokenSize(enrichedUserMessage)
 
       // 计算剩余可用的上下文长度
       const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
@@ -846,7 +859,7 @@ export class ThreadPresenter implements IThreadPresenter {
       // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
       formattedMessages.push({
         role: 'user',
-        content: searchPrompt || userMessage.content.text
+        content: searchPrompt || enrichedUserMessage
       })
 
       const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
