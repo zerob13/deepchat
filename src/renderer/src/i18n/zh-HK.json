@@ -5,6 +5,8 @@
     "loading": "加載中...",
     "copySuccess": "已複製!",
     "copyCode": "複製代碼",
+    "copy": "複製",
+    "paste": "粘貼",
     "newChat": "新會話",
     "newTopic": "新話題",
     "cancel": "取消",
