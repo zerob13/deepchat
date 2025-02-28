@@ -5,6 +5,7 @@ declare global {
     electron: ElectronAPI
     api: {
       copyText(text: string): void
+      getPathForFile(file: File): string
     }
   }
 }

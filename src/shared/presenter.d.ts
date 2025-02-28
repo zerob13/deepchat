@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BrowserWindow } from 'electron'
+import { MessageFile } from './chat'
 
 export type SQLITE_MESSAGE = {
   id: string
@@ -21,6 +22,7 @@ export interface IWindowPresenter {
   createMainWindow(): BrowserWindow
   getWindow(windowName: string): BrowserWindow | undefined
   mainWindow: BrowserWindow | undefined
+  previewFile(filePath: string): void
   minimize(): void
   maximize(): void
   close(): void
@@ -97,6 +99,7 @@ export interface IPresenter {
   threadPresenter: IThreadPresenter
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
+  filePresenter: IFilePresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -337,6 +340,7 @@ export interface IMessageManager {
 }
 
 export interface IDevicePresenter {
+  getAppVersion(): Promise<string>
   getDeviceInfo(): Promise<DeviceInfo>
   getCPUUsage(): Promise<number>
   getMemoryUsage(): Promise<MemoryInfo>
@@ -416,4 +420,25 @@ export interface SearchResult {
 export interface ISearchPresenter {
   init(): void
   search(query: string, engine: 'google' | 'baidu'): Promise<SearchResult[]>
+}
+
+export type FileOperation = {
+  path: string
+  content?: string
+}
+
+export interface IFilePresenter {
+  readFile(relativePath: string): Promise<string>
+  writeFile(operation: FileOperation): Promise<void>
+  deleteFile(relativePath: string): Promise<void>
+  prepareFile(absPath: string): Promise<MessageFile>
+}
+
+export interface FileMetaData {
+  fileName: string
+  fileSize: number
+  // fileHash: string
+  fileDescription?: string
+  fileCreated: Date
+  fileModified: Date
 }

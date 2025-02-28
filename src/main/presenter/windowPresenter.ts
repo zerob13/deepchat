@@ -158,6 +158,13 @@ export class WindowPresenter implements IWindowPresenter {
     return this.getWindow(MAIN_WIN)
   }
 
+  previewFile(filePath: string): void {
+    const window = this.mainWindow
+    if (window) {
+      window.previewFile(filePath)
+    }
+  }
+
   minimize(): void {
     const window = this.mainWindow
     if (window) {

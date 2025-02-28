@@ -1,3 +1,5 @@
+import { FileMetaData } from './presenter'
+
 export type Message = {
   id: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,8 +50,9 @@ export type UserMessageContent = {
 
 export type MessageFile = {
   name: string
-  type: string
-  size: number
+  content: string
+  mimeType: string
+  metadata: FileMetaData
   token: number
   path: string
 }

@@ -11,6 +11,7 @@ import { ConfigPresenter } from './configPresenter'
 import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
+import { FilePresenter } from './filePresenter/FilePresenter'
 
 export class Presenter implements IPresenter {
   windowPresenter: WindowPresenter
@@ -21,6 +22,7 @@ export class Presenter implements IPresenter {
   devicePresenter: DevicePresenter
   upgradePresenter: UpgradePresenter
   shortcutPresenter: ShortcutPresenter
+  filePresenter: FilePresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -35,6 +37,7 @@ export class Presenter implements IPresenter {
     this.threadPresenter = new ThreadPresenter(this.sqlitePresenter, this.llmproviderPresenter)
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
+    this.filePresenter = new FilePresenter()
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }

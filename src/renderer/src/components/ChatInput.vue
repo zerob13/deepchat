@@ -17,9 +17,10 @@
         >
           <FileItem
             v-for="(file, idx) in selectedFiles"
-            :key="file.name"
-            :file-name="file.name"
+            :key="file.metadata.fileName"
+            :file-name="file.metadata.fileName"
             :deletable="true"
+            @click="previewFile(file.path)"
             @delete="deleteFile(idx)"
           />
         </TransitionGroup>
@@ -42,13 +43,13 @@
           <!-- {{ t('chat.input.fileSelect') }} -->
           <slot name="addon-buttons"></slot>
           <Button
-            v-show="false"
+            v-show="true"
             variant="outline"
             size="icon"
-            class="w-7 h-7 text-xs text-muted-foreground"
+            class="w-7 h-7 text-xs rounded-lg text-muted-foreground"
             @click="openFilePicker"
           >
-            <Icon icon="lucide:plus" class="w-4 h-4" />
+            <Icon icon="lucide:paperclip" class="w-4 h-4" />
             <input ref="fileInput" type="file" class="hidden" multiple @change="handleFileSelect" />
           </Button>
           <Button
@@ -103,7 +104,7 @@ import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import FileItem from './FileItem.vue'
 import { useChatStore } from '@/stores/chat'
-import { UserMessageContent } from '@shared/chat'
+import { MessageFile, UserMessageContent } from '@shared/chat'
 import { usePresenter } from '@/composables/usePresenter'
 
 const { t } = useI18n()
@@ -111,6 +112,8 @@ const configPresenter = usePresenter('configPresenter')
 const chatStore = useChatStore()
 const inputText = ref('')
 const fileInput = ref<HTMLInputElement>()
+const filePresenter = usePresenter('filePresenter')
+const windowPresenter = usePresenter('windowPresenter')
 const settings = ref({
   deepThinking: false,
   webSearch: false
@@ -118,7 +121,7 @@ const settings = ref({
 
 const textareaRef = ref<HTMLElement>()
 
-const selectedFiles = ref<File[]>([])
+const selectedFiles = ref<MessageFile[]>([])
 withDefaults(
   defineProps<{
     maxRows?: number
@@ -136,10 +139,18 @@ const openFilePicker = () => {
   fileInput.value?.click()
 }
 
-const handleFileSelect = (e: Event) => {
+const previewFile = (filePath: string) => {
+  windowPresenter.previewFile(filePath)
+}
+
+const handleFileSelect = async (e: Event) => {
   const files = (e.target as HTMLInputElement).files
   if (files && files.length > 0) {
-    selectedFiles.value.push(...Array.from(files))
+    for (const file of files) {
+      const path = window.api.getPathForFile(file)
+      const fileInfo: MessageFile = await filePresenter.prepareFile(path)
+      selectedFiles.value.push(fileInfo)
+    }
     emit('file-upload', selectedFiles.value)
   }
 }
@@ -148,7 +159,7 @@ const emitSend = () => {
   if (inputText.value.trim()) {
     const messageContent: UserMessageContent = {
       text: inputText.value.trim(),
-      files: [],
+      files: selectedFiles.value,
       links: [],
       search: settings.value.webSearch,
       think: settings.value.deepThinking

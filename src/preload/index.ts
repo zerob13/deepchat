@@ -1,10 +1,13 @@
-import { clipboard, contextBridge } from 'electron'
+import { clipboard, contextBridge, webUtils } from 'electron'
 import { exposeElectronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
 const api = {
   copyText: (text: string) => {
     clipboard.writeText(text)
+  },
+  getPathForFile: (file: File) => {
+    return webUtils.getPathForFile(file)
   }
 }
 exposeElectronAPI()
