@@ -280,6 +280,8 @@ const getProviderUrl = (providerId: string) => {
       return 'https://platform.spark.com/api-keys'
     case 'stability':
       return 'https://platform.stability.ai/api-keys'
+    case 'gemini':
+      return 'https://aistudio.google.com/'
     default:
       return '#'
   }
