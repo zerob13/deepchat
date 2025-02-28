@@ -2,6 +2,7 @@ import { CsvFileAdapter } from './CsvFileAdapter'
 import { ExcelFileAdapter } from './ExcelFileAdapter'
 import { FileAdapterConstructor } from './FileAdapterConstructor'
 import { ImageFileAdapter } from './ImageFileAdapter'
+import { PdfFileAdapter } from './PdfFileAdapter'
 import { TextFileAdapter } from './TextFileAdapter'
 
 export const getMimeTypeAdapterMap = (): Map<string, FileAdapterConstructor> => {
@@ -21,6 +22,7 @@ export const getMimeTypeAdapterMap = (): Map<string, FileAdapterConstructor> => 
   map.set('application/typescript', TextFileAdapter)
   map.set('application/x-sh', TextFileAdapter)
   map.set('text/*', TextFileAdapter)
+  map.set('application/pdf', PdfFileAdapter)
   map.set('image/jpeg', ImageFileAdapter)
   map.set('image/jpg', ImageFileAdapter)
   map.set('image/png', ImageFileAdapter)

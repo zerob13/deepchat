@@ -82,15 +82,33 @@
             {{ t('chat.features.webSearch') }}
           </Button>
         </div>
-        <Button
-          variant="default"
-          size="icon"
-          class="w-7 h-7 text-xs"
-          :disabled="disabledSend"
-          @click="emitSend"
-        >
-          <Icon icon="lucide:send" class="w-4 h-4" />
-        </Button>
+        <div class="flex items-center gap-2">
+          <div
+            v-if="
+              contextLength &&
+              contextLength > 0 &&
+              currentContextLength / (contextLength ?? 1000) > 0.5
+            "
+            class="text-xs text-muted-foreground"
+            :class="[
+              currentContextLength / (contextLength ?? 1000) > 0.9 ? ' text-red-600' : '',
+              currentContextLength / (contextLength ?? 1000) > 0.8
+                ? ' text-yellow-600'
+                : 'text-muted-foreground'
+            ]"
+          >
+            {{ currentContextLengthText }}
+          </div>
+          <Button
+            variant="default"
+            size="icon"
+            class="w-7 h-7 text-xs"
+            :disabled="disabledSend"
+            @click="emitSend"
+          >
+            <Icon icon="lucide:send" class="w-4 h-4" />
+          </Button>
+        </div>
       </div>
     </div>
   </div>
@@ -106,6 +124,7 @@ import FileItem from './FileItem.vue'
 import { useChatStore } from '@/stores/chat'
 import { MessageFile, UserMessageContent } from '@shared/chat'
 import { usePresenter } from '@/composables/usePresenter'
+import { approximateTokenSize } from 'tokenx'
 
 const { t } = useI18n()
 const configPresenter = usePresenter('configPresenter')
@@ -118,12 +137,21 @@ const settings = ref({
   deepThinking: false,
   webSearch: false
 })
+const currentContextLength = computed(() => {
+  return (
+    approximateTokenSize(inputText.value) +
+    selectedFiles.value.reduce((acc, file) => {
+      return acc + file.token
+    }, 0)
+  )
+})
 
 const textareaRef = ref<HTMLElement>()
 
 const selectedFiles = ref<MessageFile[]>([])
-withDefaults(
+const props = withDefaults(
   defineProps<{
+    contextLength?: number
     maxRows?: number
     rows?: number
   }>(),
@@ -132,6 +160,10 @@ withDefaults(
     rows: 1
   }
 )
+
+const currentContextLengthText = computed(() => {
+  return `${Math.round((currentContextLength.value / (props.contextLength ?? 1000)) * 100)}%`
+})
 
 const emit = defineEmits(['send', 'file-upload'])
 

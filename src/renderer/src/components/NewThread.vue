@@ -10,6 +10,7 @@
       :rows="3"
       :max-rows="10"
       @send="handleSend"
+      :context-length="contextLength"
     >
       <template #addon-buttons>
         <Popover v-model:open="modelSelectOpen">
@@ -33,6 +34,26 @@
             <ModelSelect @update:model="handleModelUpdate" />
           </PopoverContent>
         </Popover>
+        <Popover>
+          <PopoverTrigger as-child>
+            <Button
+              class="w-7 h-7 rounded-md hover:bg-accent text-muted-foreground hover:text-primary-foreground"
+              size="icon"
+              variant="outline"
+            >
+              <Icon icon="lucide:settings-2" class="w-4 h-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" class="p-0 w-80">
+            <ChatConfig
+              v-model:temperature="temperature"
+              v-model:context-length="contextLength"
+              v-model:max-tokens="maxTokens"
+              v-model:system-prompt="systemPrompt"
+              v-model:artifacts="artifacts"
+            />
+          </PopoverContent>
+        </Popover>
       </template>
     </ChatInput>
     <div class="h-12"></div>
@@ -53,7 +74,9 @@ import { MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
 import { computed, ref, watch } from 'vue'
 import { UserMessageContent } from '@shared/chat'
-
+import ChatConfig from './ChatConfig.vue'
+import { usePresenter } from '@/composables/usePresenter'
+const configPresenter = usePresenter('configPresenter')
 const { t } = useI18n()
 
 const chatStore = useChatStore()
@@ -70,10 +93,30 @@ const activeModel = ref({
   tags: string[]
 })
 
+const temperature = ref(0.7)
+const contextLength = ref(4096)
+const maxTokens = ref(8192)
+const systemPrompt = ref('')
+const artifacts = ref(0)
+
 const name = computed(() => {
   return activeModel.value?.name ? activeModel.value.name.split('/').pop() : ''
 })
 
+watch(
+  () => activeModel.value,
+  async () => {
+    // console.log('activeModel', activeModel.value)
+    const config = await configPresenter.getModelDefaultConfig(activeModel.value.id)
+    // console.log('config', config)
+    temperature.value = config.temperature
+    contextLength.value = config.contextLength
+    maxTokens.value = config.maxTokens
+    // console.log('temperature', temperature.value)
+    // console.log('contextLength', contextLength.value)
+    // console.log('maxTokens', maxTokens.value)
+  }
+)
 watch(
   () => [settingsStore.enabledModels, chatStore.threads],
   () => {
@@ -127,10 +170,11 @@ const handleSend = async (content: UserMessageContent) => {
   const threadId = await chatStore.createThread(content.text, {
     providerId: activeModel.value.providerId,
     modelId: activeModel.value.id,
-    systemPrompt: '',
-    temperature: 0.7,
-    contextLength: 1000,
-    maxTokens: 2000
+    systemPrompt: systemPrompt.value,
+    temperature: temperature.value,
+    contextLength: contextLength.value,
+    maxTokens: maxTokens.value,
+    artifacts: artifacts.value as 0 | 1
   })
   console.log('threadId', threadId, activeModel.value)
   await chatStore.setActiveThread(threadId)

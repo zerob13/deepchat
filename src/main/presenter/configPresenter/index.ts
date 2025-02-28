@@ -2,7 +2,7 @@ import { eventBus } from '@/eventbus'
 import { IConfigPresenter, LLM_PROVIDER, MODEL_META } from '@shared/presenter'
 import ElectronStore from 'electron-store'
 import { DEFAULT_PROVIDERS } from './providers'
-import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
+import { getModelConfig, ModelConfig } from '../llmProviderPresenter/modelConfigs'
 
 // 定义应用设置的接口
 interface IAppSettings {
@@ -104,6 +104,18 @@ export class ConfigPresenter implements IConfigPresenter {
       return model
     })
     return models
+  }
+
+  getModelDefaultConfig(modelId: string): ModelConfig {
+    const model = getModelConfig(modelId)
+    if (model) {
+      return model
+    }
+    return {
+      maxTokens: 4096,
+      contextLength: 4096,
+      temperature: 0.7
+    }
   }
 
   setProviderModels(providerId: string, models: MODEL_META[]): void {

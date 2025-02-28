@@ -18,6 +18,12 @@ export type SQLITE_MESSAGE = {
   variants?: SQLITE_MESSAGE[]
 }
 
+export interface ModelConfig {
+  maxTokens: number
+  contextLength: number
+  temperature: number
+}
+
 export interface IWindowPresenter {
   createMainWindow(): BrowserWindow
   getWindow(windowName: string): BrowserWindow | undefined
@@ -114,6 +120,7 @@ export interface IConfigPresenter {
   setProviderModels(providerId: string, models: MODEL_META[]): void
   getEnabledProviders(): LLM_PROVIDER[]
   getAllEnabledModels(): Promise<{ providerId: string; models: MODEL_META[] }[]>
+  getModelDefaultConfig(modelId: string): ModelConfig
   // 自定义模型管理
   getCustomModels(providerId: string): MODEL_META[]
   setCustomModels(providerId: string, models: MODEL_META[]): void

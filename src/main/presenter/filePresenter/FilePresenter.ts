@@ -59,7 +59,21 @@ export class FilePresenter implements IFilePresenter {
         await adapter.processFile()
         this.fileAdapters.set(fullPath, adapter)
         const content = await adapter.getLLMContent()
-        console.info('new file adapter created', adapter)
+        // console.info('new file adapter created', adapter)
+        console.info('content', {
+          name: adapter.fileMetaData?.fileName ?? '',
+          token: approximateTokenSize(content || ''),
+          path: adapter.filePath,
+          mimeType: adapter.mimeType ?? '',
+          metadata: adapter.fileMetaData ?? {
+            fileName: '',
+            fileSize: 0,
+            fileDescription: '',
+            fileCreated: new Date(),
+            fileModified: new Date()
+          },
+          content: content || ''
+        })
         return {
           name: adapter.fileMetaData?.fileName ?? '',
           token: approximateTokenSize(content || ''),
