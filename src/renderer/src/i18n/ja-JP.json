@@ -16,7 +16,8 @@
       "deleteChatFailed": "チャットの削除に失敗しました",
       "userCanceledGeneration": "ユーザーが生成をキャンセルしました",
       "sessionInterrupted": "セッションが中断され、生成が完了しませんでした",
-      "noModelResponse": "モデルが何も返しませんでした。返却テキストの長さ設定を確認してください"
+      "cleanMessagesFailed": "チャットメッセージのクリーンアップに失敗しました",
+      "noModelResponse": "モデルは何も返しませんでした。タイムアウトの可能性があります"
     },
     "resetDataConfirmTitle": "すべてのデータをリセットしますか？",
     "resetDataConfirmDescription": "すべてのデータがデフォルト設定にリセットされます。この操作は元に戻せません。"

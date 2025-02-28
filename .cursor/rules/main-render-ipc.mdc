@@ -11,4 +11,4 @@ The IPC in the renderer process is implemented in [usePresenter.ts](mdc:src/rend
 
 The IPC messages from the main process to notify the view mainly rely on the EventBus [index.ts](mdc:src/main/presenter/index.ts) to listen for events that need to be notified and then send them to the renderer through the mainWindow.
 
-
+If you need information about multiple modules, you can refer to the project structure description file [project-folder-structure.mdc](mdc:.cursor/rules/project-folder-structure.mdc)

@@ -16,7 +16,7 @@
       "deleteChatFailed": "刪除會話失敗",
       "userCanceledGeneration": "用戶取消了生成",
       "sessionInterrupted": "會話意外中斷，生成未完成",
-      "noModelResponse": "模型未返回任何內容，請檢查返回文本長度設置",
+      "noModelResponse": "模型未返回任何內容，可能是超時了",
       "cleanMessagesFailed": "清空會話消息失敗"
     },
     "resetDataConfirmTitle": "確定要重置所有數據嗎？",

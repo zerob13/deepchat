@@ -17,7 +17,7 @@
       "cleanMessagesFailed": "Failed to clean messages",
       "userCanceledGeneration": "User canceled generation",
       "sessionInterrupted": "Session was unexpectedly interrupted, generation is incomplete",
-      "noModelResponse": "Model did not return any content, please check your response length settings"
+      "noModelResponse": "Model did not return any content, it may have timed out"
     },
     "resetDataConfirmTitle": "Reset All Data?",
     "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone."

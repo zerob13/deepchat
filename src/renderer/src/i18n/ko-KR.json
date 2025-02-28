@@ -16,8 +16,8 @@
       "deleteChatFailed": "채팅 삭제 실패",
       "userCanceledGeneration": "사용자가 생성을 취소했습니다",
       "sessionInterrupted": "세션이 중단되었습니다. 생성이 완료되지 않았습니다",
-      "noModelResponse": "모델이 아무런 응답을 반환하지 않았습니다. 반환 텍스트 길이 설정을 확인하세요.",
-      "cleanMessagesFailed": "메시지 정리 실패"
+      "cleanMessagesFailed": "메시지 정리 실패",
+      "noModelResponse": "모델이 아무런 응답을 반환하지 않았습니다. 반환 텍스트 길이 설정을 확인하세요."
     },
     "resetDataConfirmTitle": "모든 데이터를 초기화하시겠습니까?",
     "resetDataConfirmDescription": "모든 데이터가 기본 설정으로 초기화됩니다. 이 작업은 취소할 수 없습니다."
