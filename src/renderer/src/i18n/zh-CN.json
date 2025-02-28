@@ -14,6 +14,7 @@
       "selectChatFailed": "选择会话失败",
       "renameChatFailed": "重命名会话失败",
       "deleteChatFailed": "删除会话失败",
+      "cleanMessagesFailed": "清空会话消息失败",
       "userCanceledGeneration": "用户取消了生成",
       "sessionInterrupted": "会话意外中断，生成未完成",
       "noModelResponse": "模型未返回任何内容，请检查返回文本长度设置"
@@ -84,7 +85,8 @@
   "thread": {
     "actions": {
       "rename": "重命名",
-      "delete": "删除"
+      "delete": "删除",
+      "cleanMessages": "清空消息"
     }
   },
   "dialog": {
@@ -99,6 +101,11 @@
     "rename": {
       "title": "重命名会话",
       "description": "请输入新的会话名称。"
+    },
+    "cleanMessages": {
+      "title": "清空会话消息",
+      "description": "清空消息会删除会话下所有消息和文件，确定要继续吗？",
+      "confirm": "清空"
     },
     "error": {
       "title": "错误"

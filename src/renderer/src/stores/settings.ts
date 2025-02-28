@@ -842,6 +842,10 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  const cleanAllMessages = async (conversationId: string) => {
+    await threadP.clearAllMessages(conversationId)
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -886,6 +890,7 @@ export const useSettingsStore = defineStore('settings', () => {
     enableAllModels,
     searchAssistantModel,
     setSearchAssistantModel,
-    initOrUpdateSearchAssistantModel
+    initOrUpdateSearchAssistantModel,
+    cleanAllMessages
   }
 })

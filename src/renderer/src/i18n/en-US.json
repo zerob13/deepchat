@@ -14,9 +14,10 @@
       "selectChatFailed": "Failed to select chat",
       "renameChatFailed": "Failed to rename chat",
       "deleteChatFailed": "Failed to delete chat",
+      "cleanMessagesFailed": "Failed to clean messages",
       "userCanceledGeneration": "User canceled generation",
-      "sessionInterrupted": "Session interrupted, generation not completed",
-      "noModelResponse": "Model did not return any content, please check the response length settings"
+      "sessionInterrupted": "Session was unexpectedly interrupted, generation is incomplete",
+      "noModelResponse": "Model did not return any content, please check your response length settings"
     },
     "resetDataConfirmTitle": "Reset All Data?",
     "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone."
@@ -84,7 +85,8 @@
   "thread": {
     "actions": {
       "rename": "Rename",
-      "delete": "Delete"
+      "delete": "Delete",
+      "cleanMessages": "Clean Messages"
     }
   },
   "dialog": {
@@ -102,6 +104,11 @@
     },
     "error": {
       "title": "Error"
+    },
+    "cleanMessages": {
+      "title": "Clean Chat Messages",
+      "description": "Cleaning messages will delete all messages and files in this conversation. Are you sure you want to continue?",
+      "confirm": "Clean"
     }
   },
   "settings": {
