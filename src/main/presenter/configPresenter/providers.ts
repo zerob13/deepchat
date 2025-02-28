@@ -127,20 +127,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
       models: 'https://platform.openai.com/docs/models'
     }
   },
-  // {
-  //   id: 'gemini',
-  //   name: 'Gemini',
-  //   apiType: 'gemini',
-  //   apiKey: '',
-  //   baseUrl: 'https://generativelanguage.googleapis.com',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://gemini.google.com/',
-  //     apiKey: 'https://aistudio.google.com/app/apikey',
-  //     docs: 'https://ai.google.dev/gemini-api/docs',
-  //     models: 'https://ai.google.dev/gemini-api/docs/models/gemini'
-  //   }
-  // },
+  {
+    id: 'gemini',
+    name: 'Gemini',
+    apiType: 'gemini',
+    apiKey: '',
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    enable: false,
+    websites: {
+      official: 'https://gemini.google.com/',
+      apiKey: 'https://aistudio.google.com/app/apikey',
+      docs: 'https://ai.google.dev/gemini-api/docs',
+      models: 'https://ai.google.dev/gemini-api/docs/models/gemini'
+    }
+  },
 
   // {
   //   id: 'ocoolai',

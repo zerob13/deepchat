@@ -21,7 +21,7 @@
           @blur="handleApiHostChange(String($event.target.value))"
           @keyup.enter="handleApiHostChange(apiHost)"
         />
-        <div class="text-xs text-secondary-foreground">
+        <div class="text-xs text-secondary-foreground" v-if="provider.id !== 'gemini'">
           {{ `${apiHost ?? ''}/chat/completions` }}
         </div>
       </div>
