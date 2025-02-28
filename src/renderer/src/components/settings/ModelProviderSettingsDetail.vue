@@ -21,7 +21,7 @@
           @blur="handleApiHostChange(String($event.target.value))"
           @keyup.enter="handleApiHostChange(apiHost)"
         />
-        <div class="text-xs text-secondary-foreground">
+        <div class="text-xs text-secondary-foreground" v-if="provider.id !== 'gemini'">
           {{ `${apiHost ?? ''}/chat/completions` }}
         </div>
       </div>
@@ -280,6 +280,8 @@ const getProviderUrl = (providerId: string) => {
       return 'https://platform.spark.com/api-keys'
     case 'stability':
       return 'https://platform.stability.ai/api-keys'
+    case 'gemini':
+      return 'https://aistudio.google.com/'
     default:
       return '#'
   }

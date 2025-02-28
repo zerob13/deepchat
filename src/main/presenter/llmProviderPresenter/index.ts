@@ -9,6 +9,7 @@ import { PPIOProvider } from './providers/ppioProvider'
 import { getModelConfig } from './modelConfigs'
 import { STREAM_EVENTS } from '@/events'
 import { ConfigPresenter } from '../configPresenter'
+import { GeminiProvider } from './providers/geminiProvider'
 // 导入其他provider...
 
 // 流的状态
@@ -109,6 +110,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           break
         case 'ppio':
           instance = new PPIOProvider(provider)
+          break
+        case 'gemini':
+          instance = new GeminiProvider(provider)
           break
         // 添加其他provider的实例化逻辑
         default:
