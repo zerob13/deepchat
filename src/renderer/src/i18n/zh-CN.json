@@ -8,15 +8,18 @@
     "cancel": "取消",
     "enabled": "已启用",
     "disabled": "已禁用",
+    "disclaimer": "免责声明",
+    "close": "关闭",
     "error": {
       "requestFailed": "请求失败...",
       "createChatFailed": "创建会话失败",
       "selectChatFailed": "选择会话失败",
       "renameChatFailed": "重命名会话失败",
       "deleteChatFailed": "删除会话失败",
+      "cleanMessagesFailed": "清空会话消息失败",
       "userCanceledGeneration": "用户取消了生成",
       "sessionInterrupted": "会话意外中断，生成未完成",
-      "noModelResponse": "模型未返回任何内容，请检查返回文本长度设置"
+      "noModelResponse": "模型未返回任何内容，可能是超时了"
     },
     "resetDataConfirmTitle": "确定要重置所有数据吗？",
     "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。"
@@ -84,7 +87,8 @@
   "thread": {
     "actions": {
       "rename": "重命名",
-      "delete": "删除"
+      "delete": "删除",
+      "cleanMessages": "清空消息"
     }
   },
   "dialog": {
@@ -99,6 +103,11 @@
     "rename": {
       "title": "重命名会话",
       "description": "请输入新的会话名称。"
+    },
+    "cleanMessages": {
+      "title": "清空会话消息",
+      "description": "清空消息会删除会话下所有消息和文件，确定要继续吗？",
+      "confirm": "清空"
     },
     "error": {
       "title": "错误"
@@ -240,6 +249,8 @@
     "title": "DeepChat",
     "description": "DeepChat 是一个支持多平台的 AI 客户端，我们致力于让更多人能享受到 AI 带来的便利。",
     "website": "deepchat.thinkinai.xyz",
+    "disclaimerButton": "免责声明",
+    "disclaimerTitle": "免责声明",
     "deviceInfo": {
       "title": "设备信息",
       "platform": "平台",
@@ -248,5 +259,6 @@
       "totalMemory": "总内存",
       "osVersion": "操作系统版本"
     }
-  }
+  },
+  "searchDisclaimer": "DeepChat 仅作为辅助工具，用户在主动发起搜索时，对搜索引擎返回的公开数据进行整理和总结，帮助用户更方便地查看和理解搜索结果。\n\n1. **公开数据使用**  \n本软件仅处理目标网站或搜索引擎公开、无需登录即可访问的数据。用户在使用前，请务必查阅并遵守目标网站或搜索引擎的服务条款，确保其使用行为合法合规。  \n\n2. **信息准确性与责任**  \n本软件所整理和生成的内容仅供参考，并不构成任何形式的法律、商业或其他建议。开发者对搜索结果的准确性、完整性、及时性或合法性不作任何保证，因使用本软件所产生的任何后果均由用户自行承担。  \n\n3. **免责条款**  \n本软件以“现状”提供，开发者不对其性能、稳定性及适用性承担任何明示或暗示的保证或责任。用户使用本软件的过程中，如因违反相关法律法规或目标网站规定而引发的任何争议、损失或法律责任，开发者均不承担任何责任。  \n\n4. **用户自律**  \n用户在使用本软件前，应充分了解并确认自己的使用行为不会侵犯他人的知识产权、商业秘密或其他合法权益。对于因用户不当使用本软件而产生的任何法律纠纷和后果，均由用户自行负责。  \n\n用本软件即表示用户已阅读、理解并同意本免责声明的所有条款。如有疑问，请咨询专业法律顾问。"
 }

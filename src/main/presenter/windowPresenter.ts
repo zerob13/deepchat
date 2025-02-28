@@ -7,6 +7,7 @@ import { IWindowPresenter } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
 import { ConfigPresenter } from './configPresenter'
 import { TrayPresenter } from './trayPresenter'
+import { WINDOW_EVENTS } from '@/events'
 
 export const MAIN_WIN = 'main'
 export class WindowPresenter implements IWindowPresenter {
@@ -48,8 +49,7 @@ export class WindowPresenter implements IWindowPresenter {
     })
 
     // 监听强制退出事件
-    eventBus.on('force-quit-app', () => {
-      console.log('force-quit-app')
+    eventBus.on(WINDOW_EVENTS.FORCE_QUIT_APP, () => {
       this.isQuitting = true
       if (this.trayPresenter) {
         this.trayPresenter.destroy()
@@ -82,7 +82,7 @@ export class WindowPresenter implements IWindowPresenter {
 
     mainWindow.on('ready-to-show', () => {
       mainWindow.show()
-      eventBus.emit('main-window-ready-to-show', mainWindow)
+      eventBus.emit(WINDOW_EVENTS.READY_TO_SHOW, mainWindow)
     })
 
     // 处理关闭按钮点击

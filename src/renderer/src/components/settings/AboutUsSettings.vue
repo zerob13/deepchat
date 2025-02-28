@@ -15,41 +15,87 @@
             >{{ t('about.website') }}</a
           >
         </div>
-        <div class="text-sm text-muted-foreground p-4 rounded-lg shadow-md">
-          <h2 class="text-lg font-semibold mb-2">{{ t('about.deviceInfo.title') }}</h2>
-          <div class="flex h-5 items-center space-x-4">
-            <div>
-              <strong>{{ t('about.deviceInfo.platform') }}:</strong> {{ deviceInfo.platform }}
+
+        <!-- 免责声明按钮 -->
+        <Button variant="outline" size="sm" class="mb-2 text-xs" @click="openDisclaimerDialog">
+          <Icon icon="lucide:info" class="mr-1 h-3 w-3" />
+          {{ t('about.disclaimerButton') }}
+        </Button>
+
+        <div class="text-sm text-muted-foreground p-6 rounded-lg shadow-md bg-card border">
+          <h2 class="text-lg font-semibold mb-4 flex items-center">
+            <Icon icon="lucide:cpu" class="mr-2 h-5 w-5" />
+            {{ t('about.deviceInfo.title') }}
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:monitor" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.platform') }}:</span>
+              <span>{{ deviceInfo.platform }}</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.arch') }}:</strong> {{ deviceInfo.arch }}
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:layers" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.arch') }}:</span>
+              <span>{{ deviceInfo.arch }}</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.cpuModel') }}:</strong> {{ deviceInfo.cpuModel }}
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:cpu" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.cpuModel') }}:</span>
+              <span class="truncate">{{ deviceInfo.cpuModel }}</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.totalMemory') }}:</strong>
-              {{ (deviceInfo.totalMemory / (1024 * 1024 * 1024)).toFixed(0) }} GB
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:database" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.totalMemory') }}:</span>
+              <span>{{ (deviceInfo.totalMemory / (1024 * 1024 * 1024)).toFixed(0) }} GB</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.osVersion') }}:</strong> {{ deviceInfo.osVersion }}
+            <div class="flex items-center space-x-2 col-span-full">
+              <Icon icon="lucide:info" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium"
+                >{{ t('about.deviceInfo.osVersion') || 'OS Version' }}:</span
+              >
+              <span>{{ deviceInfo.osVersion }}</span>
             </div>
           </div>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- 免责声明对话框 -->
+  <Dialog :open="isDisclaimerOpen" @update:open="isDisclaimerOpen = $event">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{ t('about.disclaimerTitle') }}</DialogTitle>
+        <DialogDescription>
+          <div
+            class="max-h-[300px] overflow-y-auto"
+            v-html="renderMarkdown(t('searchDisclaimer'))"
+          ></div>
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button @click="isDisclaimerOpen = false">{{ t('common.close') }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { usePresenter } from '@/composables/usePresenter'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Separator } from '@/components/ui/separator'
+import { Button } from '@/components/ui/button'
+import { Icon } from '@iconify/vue'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
+import { renderMarkdown } from '@/lib/markdown.helper'
+
 const { t } = useI18n()
 const devicePresenter = usePresenter('devicePresenter')
 const deviceInfo = ref<{
@@ -66,6 +112,15 @@ const deviceInfo = ref<{
   osVersion: ''
 })
 const appVersion = ref('')
+
+// 免责声明对话框状态
+const isDisclaimerOpen = ref(false)
+
+// 打开免责声明对话框
+const openDisclaimerDialog = () => {
+  isDisclaimerOpen.value = true
+}
+
 onMounted(async () => {
   deviceInfo.value = await devicePresenter.getDeviceInfo()
   appVersion.value = await devicePresenter.getAppVersion()

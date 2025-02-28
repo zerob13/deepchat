@@ -23,6 +23,8 @@ import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
 import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 import { getFileContext } from './fileContext'
+import { ContentEnricher } from './contentEnricher'
+import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -100,7 +102,7 @@ export class ThreadPresenter implements IThreadPresenter {
     // 初始化时处理所有未完成的消息
     this.initializeUnfinishedMessages()
 
-    eventBus.on('stream-response', async (msg) => {
+    eventBus.on(STREAM_EVENTS.RESPONSE, async (msg) => {
       const { eventId, content, reasoning_content } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -156,7 +158,7 @@ export class ThreadPresenter implements IThreadPresenter {
         }
       }
     })
-    eventBus.on('stream-end', async (msg) => {
+    eventBus.on(STREAM_EVENTS.END, async (msg) => {
       const { eventId } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -214,7 +216,7 @@ export class ThreadPresenter implements IThreadPresenter {
         this.generatingMessages.delete(eventId)
       }
     })
-    eventBus.on('stream-error', async (msg) => {
+    eventBus.on(STREAM_EVENTS.ERROR, async (msg) => {
       const { eventId, error } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -333,6 +335,12 @@ export class ThreadPresenter implements IThreadPresenter {
       }
     })
     const mergedSettings = { ...defaultSettings, ...settings }
+    const defaultModelsSettings = getModelConfig(mergedSettings.modelId)
+    if (defaultModelsSettings) {
+      mergedSettings.maxTokens = defaultModelsSettings.maxTokens
+      mergedSettings.contextLength = defaultModelsSettings.contextLength
+      mergedSettings.temperature = defaultModelsSettings.temperature
+    }
     const conversationId = await this.sqlitePresenter.createConversation(title, mergedSettings)
     await this.setActiveConversation(conversationId)
     return conversationId
@@ -386,7 +394,7 @@ export class ThreadPresenter implements IThreadPresenter {
     const conversation = await this.getConversation(conversationId)
     if (conversation) {
       this.activeConversationId = conversationId
-      eventBus.emit('conversation-activated', { conversationId })
+      eventBus.emit(CONVERSATION_EVENTS.ACTIVATED, { conversationId })
     } else {
       throw new Error(`Conversation ${conversationId} not found`)
     }
@@ -573,19 +581,28 @@ export class ThreadPresenter implements IThreadPresenter {
     你是一个搜索优化专家。基于以下内容，生成一个优化的搜索查询：
 
     当前时间：${new Date().toISOString()}
-    对话上下文：${contextMessages}
-    用户问题：${query}
     搜索引擎：${searchEngine}
 
     请遵循以下规则重写搜索查询：
     1. 根据用户的问题和上下文，重写应该进行搜索的关键词
     2. 如果需要使用时间，则根据当前时间给出需要查询的具体时间日期信息
     3. 编程相关查询：
-       - 加上编程语言或框架名称
-       - 指定错误代码或具体版本号
+        - 加上编程语言或框架名称
+        - 指定错误代码或具体版本号
     4. 保持查询简洁，通常不超过5-6个关键词
+    5. 默认保留用户的问题的语言，如果用户的问题是中文，则返回中文，如果用户的问题是英文，则返回英文，其他语言也一样
+    6. 如果用户的内容非常简单的字符或者词汇，没有特别的含义，直接返回原文，忽略以上1-5的规则
 
-    直接返回优化后的搜索词，不要有任何额外说明。`
+    直接返回优化后的搜索词，不要有任何额外说明。
+    如下是之前对话的上下文：
+    <context_messages>
+    ${contextMessages}
+    </context_messages>
+    如下是用户的问题：
+    <user_question>
+    ${query}
+    </user_question>
+    `
     const conversation = await this.getConversation(conversationId)
     if (!conversation) {
       return query
@@ -603,6 +620,7 @@ export class ThreadPresenter implements IThreadPresenter {
         ],
         this.searchAssistantModel?.id || modelId
       )
+      console.log('rewriteUserSearchQuery', rewrittenQuery)
       return rewrittenQuery.trim() || query
     } catch (error) {
       console.error('重写搜索查询失败:', error)
@@ -722,6 +740,7 @@ export class ThreadPresenter implements IThreadPresenter {
     let contextMessages: Message[] = []
     let userMessage: Message | null = null
     let searchResults: SearchResult[] | null = null
+    let urlResults: SearchResult[] = []
 
     try {
       if (queryMsgId) {
@@ -756,6 +775,8 @@ export class ThreadPresenter implements IThreadPresenter {
       ${userMessage.content.text}
       ${getFileContext(userMessage.content.files)}
       `
+      // 从用户消息中提取并丰富URL内容
+      urlResults = await ContentEnricher.extractAndEnrichUrls(userMessage.content.text)
 
       // 处理搜索
       if (userMessage.content.search) {
@@ -764,9 +785,17 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 计算搜索提示词的token数量
       const searchPrompt = searchResults ? generateSearchPrompt(userContent, searchResults) : ''
+
+      // 使用URL内容丰富用户消息
+      const enrichedUserMessage =
+        urlResults.length > 0
+          ? ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
+          : userContent
+
+      // 计算token数量
       const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
       const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
-      const userMessageTokens = approximateTokenSize(userContent)
+      const userMessageTokens = approximateTokenSize(enrichedUserMessage)
 
       // 计算剩余可用的上下文长度
       const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
@@ -851,8 +880,7 @@ export class ThreadPresenter implements IThreadPresenter {
       // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
       formattedMessages.push({
         role: 'user',
-        content:
-          searchPrompt || `${userMessage.content.text}${getFileContext(userMessage.content.files)}`
+        content: searchPrompt || enrichedUserMessage
       })
 
       const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
@@ -1076,7 +1104,7 @@ export class ThreadPresenter implements IThreadPresenter {
   }
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null
-    eventBus.emit('active-conversation-cleared')
+    eventBus.emit(CONVERSATION_EVENTS.DEACTIVATED)
   }
 
   async clearAllMessages(conversationId: string): Promise<void> {

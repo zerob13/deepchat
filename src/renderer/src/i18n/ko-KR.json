@@ -8,18 +8,20 @@
     "newChat": "새 채팅",
     "newTopic": "새 주제",
     "cancel": "취소",
+    "close": "닫기",
     "error": {
       "requestFailed": "요청 실패...",
       "createChatFailed": "채팅 생성 실패",
       "selectChatFailed": "채팅 선택 실패",
       "renameChatFailed": "채팅 이름 변경 실패",
       "deleteChatFailed": "채팅 삭제 실패",
+      "cleanMessagesFailed": "메시지 정리 실패",
       "userCanceledGeneration": "사용자가 생성을 취소했습니다",
-      "sessionInterrupted": "세션이 중단되었습니다. 생성이 완료되지 않았습니다",
-      "noModelResponse": "모델이 아무런 응답을 반환하지 않았습니다. 반환 텍스트 길이 설정을 확인하세요."
+      "sessionInterrupted": "세션이 예기치 않게 중단되었습니다. 생성이 완료되지 않았습니다",
+      "noModelResponse": "모델에서 콘텐츠를 반환하지 않았습니다. 시간 초과되었을 수 있습니다"
     },
-    "resetDataConfirmTitle": "모든 데이터를 초기화하시겠습니까?",
-    "resetDataConfirmDescription": "모든 데이터가 기본 설정으로 초기화됩니다. 이 작업은 취소할 수 없습니다."
+    "resetDataConfirmTitle": "모든 데이터 초기화?",
+    "resetDataConfirmDescription": "이렇게 하면 모든 데이터가 기본 설정으로 초기화됩니다. 이 작업은 취소할 수 없습니다."
   },
   "routes": {
     "chat": "채팅",
@@ -31,7 +33,7 @@
   },
   "chat": {
     "input": {
-      "placeholder": "메시지 입력...",
+      "placeholder": "메시지를 입력하세요...",
       "fileArea": "파일 영역",
       "inputArea": "입력 영역",
       "functionSwitch": "기능 전환",
@@ -40,12 +42,12 @@
     "features": {
       "deepThinking": "심층 사고",
       "webSearch": "웹 검색",
-      "deepThinkingProgress": "심층 사고 중...",
-      "thinkingDuration": "(소요 {0}초)",
-      "artifactThinking": "아티팩트 사고"
+      "deepThinkingProgress": "심층 사고 진행 중...",
+      "thinkingDuration": "({0}초 소요)",
+      "artifactThinking": "인공물 사고"
     },
     "search": {
-      "results": "{0}개의 웹페이지가 검색되었습니다",
+      "results": "{0}개의 웹 페이지를 찾았습니다",
       "searching": "검색 중...",
       "title": "검색 결과",
       "description": "{0}개의 관련 결과를 찾았습니다"
@@ -59,14 +61,14 @@
       "loadFailed": "모델 로드 실패"
     },
     "type": {
-      "custom": "사용자 정의 모델",
+      "custom": "커스텀 모델",
       "official": "공식 모델"
     },
     "add": {
       "namePlaceholder": "모델 이름",
       "idPlaceholder": "모델 ID",
-      "contextLengthPlaceholder": "문맥 길이",
-      "maxTokensPlaceholder": "최대 토큰 수"
+      "contextLengthPlaceholder": "컨텍스트 길이",
+      "maxTokensPlaceholder": "최대 토큰"
     },
     "actions": {
       "add": "모델 추가",
@@ -75,16 +77,17 @@
     },
     "tags": {
       "reasoning": "추론",
-      "chat": "대화",
+      "chat": "채팅",
       "code": "코드",
-      "writing": "작문",
+      "writing": "글쓰기",
       "analysis": "분석"
     }
   },
   "thread": {
     "actions": {
       "rename": "이름 변경",
-      "delete": "삭제"
+      "delete": "삭제",
+      "cleanMessages": "메시지 정리"
     }
   },
   "dialog": {
@@ -93,7 +96,7 @@
     "close": "닫기",
     "delete": {
       "title": "이 채팅을 삭제하시겠습니까?",
-      "description": "이 작업은 되돌릴 수 없으니 신중하게 진행하세요.",
+      "description": "이 작업은 취소할 수 없으므로 주의해서 진행하십시오.",
       "confirm": "삭제"
     },
     "rename": {
@@ -102,6 +105,11 @@
     },
     "error": {
       "title": "오류"
+    },
+    "cleanMessages": {
+      "title": "채팅 메시지 정리",
+      "description": "메시지를 정리하면 이 대화의 모든 메시지와 파일이 삭제됩니다. 계속하시겠습니까?",
+      "confirm": "정리"
     }
   },
   "settings": {
@@ -113,7 +121,7 @@
       "languageSelect": "언어 선택",
       "searchEngine": "검색 엔진",
       "searchEngineSelect": "검색 엔진 선택",
-      "searchAssistantModel": "검색 어시스턴트 모델",
+      "searchAssistantModel": "검색 보조 모델",
       "selectModel": "모델 선택"
     },
     "model": {
@@ -121,75 +129,75 @@
       "systemPrompt": {
         "label": "시스템 프롬프트",
         "placeholder": "시스템 프롬프트를 입력하세요...",
-        "description": "AI 도우미의 시스템 프롬프트를 설정하여 행동과 역할을 정의합니다"
+        "description": "AI 어시스턴트의 행동과 역할을 정의하는 시스템 프롬프트 설정"
       },
       "temperature": {
         "label": "모델 온도",
-        "description": "출력의 무작위성을 제어합니다. 높은 값은 더 창의적인 응답을 생성합니다"
+        "description": "출력의 무작위성을 제어합니다. 값이 높을수록 더 창의적인 응답이 생성됩니다"
       },
       "contextLength": {
-        "label": "문맥 길이",
-        "description": "대화 문맥의 최대 길이를 설정합니다"
+        "label": "컨텍스트 길이",
+        "description": "대화 컨텍스트의 최대 길이 설정"
       },
       "responseLength": {
-        "label": "응답 텍스트 길이",
-        "description": "AI 응답의 최대 길이를 설정합니다"
+        "label": "응답 길이",
+        "description": "AI 응답의 최대 길이 설정"
       },
       "artifacts": {
-        "description": "Artifacts 기능을 활성화하면 AI가 더 풍부한 콘텐츠를 생성할 수 있습니다"
+        "description": "인공물 기능을 활성화하면 AI가 더 풍부한 콘텐츠를 생성할 수 있습니다"
       }
     },
     "provider": {
       "enable": "서비스 활성화",
       "urlPlaceholder": "API URL을 입력하세요",
-      "keyPlaceholder": "API Key를 입력하세요",
-      "verifyKey": "키 검증",
-      "howToGet": "획득 방법",
+      "keyPlaceholder": "API 키를 입력하세요",
+      "verifyKey": "키 확인",
+      "howToGet": "얻는 방법",
       "getKeyTip": "다음으로 이동하세요",
-      "getKeyTipEnd": "API Key를 획득하세요",
+      "getKeyTipEnd": "API 키를 얻으려면",
       "modelList": "모델 목록",
       "enableModels": "모델 활성화",
       "disableAllModels": "모든 모델 비활성화",
       "modelsEnabled": "모델이 활성화되었습니다",
-      "verifyLink": "검증 링크",
+      "verifyLink": "링크 확인",
       "syncModelsFailed": "모델 동기화 실패...",
       "addCustomProvider": "커스텀 제공자 추가",
       "delete": "삭제",
       "dialog": {
         "disableModel": {
           "title": "모델 비활성화 확인",
-          "content": "모델 \"{name}\"을 비활성화하시겠습니까?",
+          "content": "모델 \"{name}\"을(를) 비활성화하시겠습니까?",
           "confirm": "비활성화"
+        },
+        "disableAllModels": {
+          "title": "모든 모델 비활성화 확인",
+          "content": "\"{name}\"의 모든 모델을 비활성화하시겠습니까?",
+          "confirm": "모두 비활성화"
         },
         "configModels": {
           "title": "모델 목록 구성"
         },
-        "disableAllModels": {
-          "title": "모든 모델 비활성화 확인",
-          "content": "모델 \"{name}\"의 모든 모델을 비활성화하시겠습니까?",
-          "confirm": "모두 비활성화"
-        },
         "verify": {
-          "missingFields": "API Key와 API URL을 입력해주세요",
-          "failed": "검증 실패",
-          "success": "검증 성공"
+          "missingFields": "API 키와 API URL을 입력하세요",
+          "failed": "확인 실패",
+          "success": "확인 성공"
         },
         "addCustomProvider": {
           "title": "커스텀 제공자 추가",
-          "description": "제공자의 필요한 정보를 입력해주세요",
+          "description": "제공자에 필요한 정보를 입력하세요",
           "name": "이름",
-          "namePlaceholder": "제공자 이름을 입력해주세요",
-          "apiType": "API 타입",
-          "apiTypePlaceholder": "API 타입을 선택해주세요",
+          "namePlaceholder": "제공자 이름을 입력하세요",
+          "apiType": "API 유형",
+          "apiTypePlaceholder": "API 유형을 선택하세요",
           "apiKey": "API 키",
-          "apiKeyPlaceholder": "API 키를 입력해주세요",
-          "baseUrl": "API URL",
-          "baseUrlPlaceholder": "API URL을 입력해주세요",
+          "apiKeyPlaceholder": "API 키를 입력하세요",
+          "baseUrl": "기본 URL",
+          "baseUrlPlaceholder": "기본 URL을 입력하세요",
           "enable": "제공자 활성화"
         },
         "deleteProvider": {
-          "title": "공급자 삭제 확인",
-          "content": "공급자 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.",
+          "title": "제공자 삭제",
+          "content": "제공자 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
           "confirm": "삭제"
         }
       }
@@ -199,7 +207,7 @@
     "steps": {
       "welcome": {
         "title": "환영합니다",
-        "description": "DeepChat 설정을 시작하겠습니다"
+        "description": "DeepChat 설정을 시작합시다"
       },
       "provider": {
         "title": "모델 제공자",
@@ -207,15 +215,15 @@
       },
       "configuration": {
         "title": "모델 구성",
-        "description": "사용하고 싶은 모델을 구성하세요"
+        "description": "사용할 모델을 구성하세요"
       },
       "complete": {
         "title": "완료",
-        "description": "모든 준비가 완료되었습니다!"
+        "description": "모든 설정이 완료되었습니다!"
       }
     },
     "title": "DeepChat에 오신 것을 환영합니다",
-    "description": "설정 과정을 완료해 보겠습니다",
+    "description": "설정 과정을 완료합시다",
     "provider": {
       "select": "제공자 선택",
       "apiUrl": "API URL",
@@ -224,12 +232,12 @@
     },
     "complete": {
       "title": "모두 완료!",
-      "description": "설정 과정이 완료되었습니다. 시작해볼까요!"
+      "description": "설정 과정을 완료했습니다. 시작해볼까요!"
     },
     "buttons": {
       "getStarted": "시작하기",
       "next": "다음",
-      "back": "이전"
+      "back": "뒤로"
     }
   },
   "newThread": {
@@ -240,6 +248,8 @@
     "title": "DeepChat",
     "description": "DeepChat은 크로스 플랫폼 AI 클라이언트입니다. 더 많은 사람들이 AI의 편리함을 누릴 수 있도록 노력하고 있습니다.",
     "website": "deepchat.thinkinai.xyz",
+    "disclaimerButton": "면책 조항",
+    "disclaimerTitle": "이용 약관 면책 조항",
     "deviceInfo": {
       "title": "장치 정보",
       "platform": "플랫폼",
@@ -248,5 +258,6 @@
       "totalMemory": "총 메모리",
       "osVersion": "운영 체제 버전"
     }
-  }
+  },
+  "searchDisclaimer": "DeepChat은 사용자가 적극적으로 검색을 시작할 때 검색 엔진에서 반환한 공개 데이터를 정리하고 요약하여 사용자가 검색 결과를 더 편리하게 볼 수 있도록 도와주는 보조 도구일 뿐입니다.\n1. 공개 데이터 사용\n이 소프트웨어는 로그인 없이 액세스할 수 있는 대상 웹사이트 또는 검색 엔진에서 공개적으로 사용 가능한 데이터만 처리합니다. 사용하기 전에 대상 웹사이트 또는 검색 엔진의 서비스 약관을 검토하고 준수하여 사용이 합법적이고 규정을 준수하는지 확인하십시오.\n2. 정보 정확성 및 책임\n이 소프트웨어에서 구성 및 생성된 콘텐츠는 참조용일 뿐이며 법적, 비즈니스 또는 기타 조언의 어떤 형태도 구성하지 않습니다. 개발자는 검색 결과의 정확성, 완전성, 적시성 또는 합법성에 대해 보증하지 않으며, 이 소프트웨어 사용으로 인해 발생하는 모든 결과는 전적으로 사용자의 책임입니다.\n3. 면책 조항\n이 소프트웨어는 \"있는 그대로\" 제공되며, 개발자는 성능, 안정성 또는 적용 가능성에 대한 명시적 또는 묵시적 보증이나 책임을 지지 않습니다. 이 소프트웨어를 사용하는 과정에서 관련 법률 및 규정 또는 대상 웹사이트의 규칙 위반으로 인해 발생하는 분쟁, 손실 또는 법적 책임에 대해 개발자는 어떠한 책임도 지지 않습니다.\n4. 사용자 자율 규제\n이 소프트웨어를 사용하기 전에 사용자는 자신의 사용이 타인의 지적 재산권, 영업 비밀 또는 기타 합법적 권리를 침해하지 않는다는 것을 충분히 이해하고 확인해야 합니다. 사용자의 부적절한 소프트웨어 사용으로 인해 발생하는 법적 분쟁 및 결과는 전적으로 사용자의 책임입니다.\n이 소프트웨어를 사용하면 사용자가 이 면책 조항의 모든 조건을 읽고, 이해하고, 동의했음을 나타냅니다. 질문이 있으시면 전문 법률 고문에게 문의하십시오."
 }

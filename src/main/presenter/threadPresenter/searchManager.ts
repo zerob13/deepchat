@@ -1,9 +1,8 @@
 import { app, BrowserWindow } from 'electron'
-import { eventBus } from '@/eventbus'
 import path from 'path'
-import { SearchResult, SearchEngineTemplate } from '@shared/chat'
-import axios from 'axios'
-import * as cheerio from 'cheerio'
+import { SearchEngineTemplate } from '@shared/chat'
+import { ContentEnricher } from './contentEnricher'
+import { SearchResult } from '@shared/presenter'
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
@@ -107,6 +106,55 @@ const defaultEngines: SearchEngineTemplate[] = [
       })
       return results
     `
+  },
+  {
+    name: 'google-scholar',
+    selector: '#gs_res_ccl',
+    searchUrl: 'https://scholar.google.com/scholar?q={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('.gs_r')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('.gs_rt')
+        const linkEl = item.querySelector('.gs_rt a')
+        const descEl = item.querySelector('.gs_rs')
+        const faviconEl = item.querySelector('.gs_rt img')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: faviconEl ? faviconEl.src : ''
+          })
+        }
+      })
+      return results
+    `
+  },
+  {
+    name: 'baidu-xueshu',
+    selector: '#bdxs_result_lists',
+    searchUrl: 'https://xueshu.baidu.com/s?wd={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('#bdxs_result_lists .sc_default_result')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('.sc_content .t')
+        const linkEl = item.querySelector('.sc_content a')
+        const descEl = item.querySelector('.c_abstract')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent?.trim(),
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent?.trim() : '',
+            icon:  ''
+          })
+        }
+      })
+      return results
+    `
   }
 ]
 
@@ -117,22 +165,7 @@ export class SearchManager {
   private engines: SearchEngineTemplate[] = defaultEngines
   private activeEngine: SearchEngineTemplate = this.engines[0]
 
-  constructor() {
-    this.setupEventListeners()
-  }
-
-  private setupEventListeners() {
-    eventBus.on('search-window-cleanup', (conversationId: string) => {
-      this.destroySearchWindow(conversationId)
-    })
-
-    eventBus.on('search-engine-change', (engineName: string) => {
-      const engine = this.engines.find((e) => e.name === engineName)
-      if (engine) {
-        this.activeEngine = engine
-      }
-    })
-  }
+  constructor() {}
 
   getEngines(): SearchEngineTemplate[] {
     return this.engines
@@ -291,89 +324,7 @@ export class SearchManager {
   }
 
   private async enrichResults(results: SearchResult[]): Promise<SearchResult[]> {
-    const enrichedResults: SearchResult[] = []
-    const timeout = 5000 // 5秒超时
-
-    for (const result of results) {
-      try {
-        // 使用 axios 获取页面内容
-        const response = await axios.get(result.url, {
-          timeout,
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-          }
-        })
-
-        const $ = cheerio.load(response.data)
-
-        // 移除不需要的元素
-        $('script, style, nav, header, footer, iframe, .ad, #ad, .advertisement').remove()
-
-        // 尝试获取主要内容
-        let mainContent = ''
-        const possibleSelectors = [
-          'article',
-          'main',
-          '.content',
-          '#content',
-          '.post-content',
-          '.article-content',
-          '.entry-content',
-          '[role="main"]'
-        ]
-
-        for (const selector of possibleSelectors) {
-          const element = $(selector)
-          if (element.length > 0) {
-            mainContent = element.text()
-            break
-          }
-        }
-
-        // 如果没有找到主要内容，使用 body
-        if (!mainContent) {
-          mainContent = $('body').text()
-        }
-
-        // 清理文本内容
-        mainContent = mainContent
-          .replace(/[\r\n]+/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 3000)
-        let icon: string | undefined = result.icon
-        if (!result.icon) {
-          // 尝试获取网站图标
-          icon = $('link[rel="icon"]').attr('href') || $('link[rel="shortcut icon"]').attr('href')
-
-          // 如果找到了相对路径的图标，转换为绝对路径
-          if (icon && !icon.startsWith('http')) {
-            const urlObj = new URL(result.url)
-            icon = icon.startsWith('/')
-              ? `${urlObj.protocol}//${urlObj.host}${icon}`
-              : `${urlObj.protocol}//${urlObj.host}/${icon}`
-          }
-
-          // 如果没有找到图标，使用默认的 favicon.ico
-          if (!icon) {
-            const urlObj = new URL(result.url)
-            icon = `${urlObj.protocol}//${urlObj.host}/favicon.ico`
-          }
-        }
-        enrichedResults.push({
-          ...result,
-          content: mainContent || result.description || '',
-          icon: icon || ''
-        })
-      } catch (error) {
-        console.error(`Error fetching content for ${result.url}:`, error)
-        // 如果获取失败，保留原始结果
-        enrichedResults.push(result)
-      }
-    }
-
-    return enrichedResults
+    return await ContentEnricher.enrichResults(results)
   }
 
   destroy() {

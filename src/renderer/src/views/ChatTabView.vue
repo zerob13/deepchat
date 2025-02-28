@@ -25,13 +25,13 @@ import ChatView from '@/components/ChatView.vue'
 import { useChatStore } from '@/stores/chat'
 import { computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
-import { MODEL_META } from '@shared/presenter'
+import { RENDERER_MODEL_META } from '@shared/presenter'
 import NewThread from '@/components/NewThread.vue'
 const settingsStore = useSettingsStore()
 
 const chatStore = useChatStore()
 const activeModel = computed(() => {
-  let model: MODEL_META | undefined
+  let model: RENDERER_MODEL_META | undefined
   const modelId = chatStore.activeThread?.settings.modelId
   if (modelId) {
     for (const group of settingsStore.enabledModels) {
