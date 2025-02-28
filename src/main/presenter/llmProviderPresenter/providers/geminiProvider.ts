@@ -105,14 +105,11 @@ export class GeminiProvider extends BaseLLMProvider {
       }
 
       // 使用第一个模型进行简单测试
-      if (this.models.length > 0) {
-        const testModel = this.getModel('models/gemini-1.5-flash-8b')
-        const result = await testModel.generateContent({
-          contents: [{ role: 'user', parts: [{ text: 'Hello' }] }]
-        })
-        return { isOk: result && result.response ? true : false, errorMsg: null }
-      }
-      return { isOk: false, errorMsg: '没有可用的模型' }
+      const testModel = this.getModel('models/gemini-1.5-flash-8b')
+      const result = await testModel.generateContent({
+        contents: [{ role: 'user', parts: [{ text: 'Hello' }] }]
+      })
+      return { isOk: result && result.response ? true : false, errorMsg: null }
     } catch (error) {
       console.error('Provider check failed:', this.provider.name, error)
       return { isOk: false, errorMsg: error instanceof Error ? error.message : String(error) }
