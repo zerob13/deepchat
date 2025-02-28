@@ -38,14 +38,12 @@ import { ref, computed, onMounted } from 'vue'
 import Input from './ui/input/Input.vue'
 // import Badge from './ui/badge/Badge.vue'
 import { useChatStore } from '@/stores/chat'
-import { usePresenter } from '@/composables/usePresenter'
 import type { RENDERER_MODEL_META } from '@shared/presenter'
 import ModelIcon from './icons/ModelIcon.vue'
 import { useSettingsStore } from '@/stores/settings'
 const { t } = useI18n()
 const keyword = ref('')
 const chatStore = useChatStore()
-const configP = usePresenter('configPresenter')
 const settingsStore = useSettingsStore()
 const providers = ref<{ id: string; name: string; models: RENDERER_MODEL_META[] }[]>([])
 const emit = defineEmits<{
@@ -86,7 +84,7 @@ const handleModelSelect = async (providerId: string, model: RENDERER_MODEL_META)
 
 onMounted(async () => {
   try {
-    const enabledModels = await configP.getAllEnabledModels()
+    const enabledModels = settingsStore.enabledModels
     providers.value = enabledModels.map(({ providerId, models }) => {
       const provider = settingsStore.providers.find((p) => p.id === providerId)
       return {

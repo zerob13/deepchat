@@ -54,7 +54,7 @@
         <DialogDescription>
           <div
             class="max-h-[300px] overflow-y-auto"
-            v-html="md.render(t('searchDisclaimer'))"
+            v-html="renderMarkdown(t('searchDisclaimer'))"
           ></div>
         </DialogDescription>
       </DialogHeader>
@@ -80,13 +80,8 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import MarkdownIt from 'markdown-it'
-const md = new MarkdownIt({
-  html: true,
-  linkify: true,
-  typographer: true,
-  breaks: true
-})
+import { renderMarkdown } from '@/lib/markdown.helper'
+
 const { t } = useI18n()
 const devicePresenter = usePresenter('devicePresenter')
 const deviceInfo = ref<{

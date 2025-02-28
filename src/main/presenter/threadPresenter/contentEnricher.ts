@@ -157,14 +157,12 @@ export class ContentEnricher {
     if (!mainContent) {
       mainContent = $('body').text()
     }
-    console.log('before', mainContent)
     // 清理文本内容
     mainContent = mainContent
       .replace(/[\r\n]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 3000)
-    console.log('after', mainContent)
     return mainContent
   }
 

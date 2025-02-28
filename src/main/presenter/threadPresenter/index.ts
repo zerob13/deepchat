@@ -580,20 +580,28 @@ export class ThreadPresenter implements IThreadPresenter {
     你是一个搜索优化专家。基于以下内容，生成一个优化的搜索查询：
 
     当前时间：${new Date().toISOString()}
-    对话上下文：${contextMessages}
-    用户问题：${query}
     搜索引擎：${searchEngine}
 
     请遵循以下规则重写搜索查询：
     1. 根据用户的问题和上下文，重写应该进行搜索的关键词
     2. 如果需要使用时间，则根据当前时间给出需要查询的具体时间日期信息
     3. 编程相关查询：
-       - 加上编程语言或框架名称
-       - 指定错误代码或具体版本号
+        - 加上编程语言或框架名称
+        - 指定错误代码或具体版本号
     4. 保持查询简洁，通常不超过5-6个关键词
     5. 默认保留用户的问题的语言，如果用户的问题是中文，则返回中文，如果用户的问题是英文，则返回英文，其他语言也一样
+    6. 如果用户的内容非常简单的字符或者词汇，没有特别的含义，直接返回原文，忽略以上1-5的规则
 
-    直接返回优化后的搜索词，不要有任何额外说明。`
+    直接返回优化后的搜索词，不要有任何额外说明。
+    如下是之前对话的上下文：
+    <context_messages>
+    ${contextMessages}
+    </context_messages>
+    如下是用户的问题：
+    <user_question>
+    ${query}
+    </user_question>
+    `
     const conversation = await this.getConversation(conversationId)
     if (!conversation) {
       return query
