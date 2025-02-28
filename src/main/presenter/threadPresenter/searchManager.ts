@@ -106,6 +106,55 @@ const defaultEngines: SearchEngineTemplate[] = [
       })
       return results
     `
+  },
+  {
+    name: 'google-scholar',
+    selector: '#gs_res_ccl',
+    searchUrl: 'https://scholar.google.com/scholar?q={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('.gs_r')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('.gs_rt')
+        const linkEl = item.querySelector('.gs_rt a')
+        const descEl = item.querySelector('.gs_rs')
+        const faviconEl = item.querySelector('.gs_rt img')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: faviconEl ? faviconEl.src : ''
+          })
+        }
+      })
+      return results
+    `
+  },
+  {
+    name: 'baidu-xueshu',
+    selector: '#bdxs_result_lists',
+    searchUrl: 'https://xueshu.baidu.com/s?wd={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('#bdxs_result_lists .sc_default_result')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('.sc_content .t')
+        const linkEl = item.querySelector('.sc_content a')
+        const descEl = item.querySelector('.c_abstract')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent?.trim(),
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent?.trim() : '',
+            icon:  ''
+          })
+        }
+      })
+      return results
+    `
   }
 ]
 
