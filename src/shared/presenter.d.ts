@@ -122,6 +122,8 @@ export interface IConfigPresenter {
   setCloseToQuit(value: boolean): void
   getModelStatus(providerId: string, modelId: string): boolean
   setModelStatus(providerId: string, modelId: string, enabled: boolean): void
+  // 语言设置
+  getLanguage(): string
 }
 export type RENDERER_MODEL_META = {
   id: string

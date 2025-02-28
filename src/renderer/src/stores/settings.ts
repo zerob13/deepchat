@@ -36,7 +36,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const searchAssistantModel = computed(() => searchAssistantModelRef.value)
 
   // 模型匹配字符串数组，按优先级排序
-  const assistantModelPriorities = [
+  const searchAssistantModelPriorities = [
     'gpt-3.5',
     'Qwen2.5-32B',
     'Qwen2.5-14B',
@@ -47,34 +47,13 @@ export const useSettingsStore = defineStore('settings', () => {
     'deepseek-chat'
   ]
 
-  // 获取系统语言
-  const getSystemLanguage = (): string => {
-    const systemLang = navigator.language
-    const supportedLanguages = ['zh-CN', 'en-US', 'zh-HK', 'ko-KR']
-
-    // 完全匹配
-    if (supportedLanguages.includes(systemLang)) {
-      return systemLang
-    }
-
-    // 部分匹配（只匹配语言代码）
-    const langCode = systemLang.split('-')[0]
-    const matchedLang = supportedLanguages.find((lang) => lang.startsWith(langCode))
-    if (matchedLang) {
-      return matchedLang
-    }
-
-    // 默认返回英文
-    return 'en-US'
-  }
-
   // 查找符合优先级的模型
   const findPriorityModel = (): { model: RENDERER_MODEL_META; providerId: string } | null => {
     if (!enabledModels.value || enabledModels.value.length === 0) {
       return null
     }
 
-    for (const priorityKey of assistantModelPriorities) {
+    for (const priorityKey of searchAssistantModelPriorities) {
       for (const providerModels of enabledModels.value) {
         for (const model of providerModels.models) {
           if (
@@ -171,12 +150,8 @@ export const useSettingsStore = defineStore('settings', () => {
       threadP.setActiveSearchEngine(activeSearchEngine.value)
     }
 
-    // 如果语言设置为 system，则使用系统语言
-    if (language.value === 'system') {
-      locale.value = getSystemLanguage()
-    } else {
-      locale.value = language.value
-    }
+    // 设置当前语言
+    locale.value = await configP.getLanguage()
 
     await refreshAllModels()
 
@@ -327,12 +302,8 @@ export const useSettingsStore = defineStore('settings', () => {
     await configP.setSetting('language', newLanguage)
     language.value = newLanguage
 
-    // 如果设置为 system，则使用系统语言
-    if (newLanguage === 'system') {
-      locale.value = getSystemLanguage()
-    } else {
-      locale.value = newLanguage
-    }
+    // 更新当前语言
+    locale.value = await configP.getLanguage()
   }
 
   // 监听 provider 设置变化

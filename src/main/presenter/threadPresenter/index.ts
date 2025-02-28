@@ -591,6 +591,7 @@ export class ThreadPresenter implements IThreadPresenter {
        - 加上编程语言或框架名称
        - 指定错误代码或具体版本号
     4. 保持查询简洁，通常不超过5-6个关键词
+    5. 默认保留用户的问题的语言，如果用户的问题是中文，则返回中文，如果用户的问题是英文，则返回英文，其他语言也一样
 
     直接返回优化后的搜索词，不要有任何额外说明。`
     const conversation = await this.getConversation(conversationId)
@@ -610,6 +611,7 @@ export class ThreadPresenter implements IThreadPresenter {
         ],
         this.searchAssistantModel?.id || modelId
       )
+      console.log('rewriteUserSearchQuery', rewrittenQuery)
       return rewrittenQuery.trim() || query
     } catch (error) {
       console.error('重写搜索查询失败:', error)

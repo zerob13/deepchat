@@ -319,4 +319,36 @@ export class ConfigPresenter implements IConfigPresenter {
   setCloseToQuit(value: boolean): void {
     this.setSetting('closeToQuit', value)
   }
+
+  // 获取应用当前语言，考虑系统语言设置
+  getLanguage(): string {
+    const language = this.getSetting<string>('language') || 'system'
+
+    if (language !== 'system') {
+      return language
+    }
+
+    return this.getSystemLanguage()
+  }
+
+  // 获取系统语言并匹配支持的语言列表
+  private getSystemLanguage(): string {
+    const systemLang = app.getLocale()
+    const supportedLanguages = ['zh-CN', 'en-US', 'zh-HK', 'ko-KR']
+
+    // 完全匹配
+    if (supportedLanguages.includes(systemLang)) {
+      return systemLang
+    }
+
+    // 部分匹配（只匹配语言代码）
+    const langCode = systemLang.split('-')[0]
+    const matchedLang = supportedLanguages.find((lang) => lang.startsWith(langCode))
+    if (matchedLang) {
+      return matchedLang
+    }
+
+    // 默认返回英文
+    return 'en-US'
+  }
 }
