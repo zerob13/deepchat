@@ -11,6 +11,7 @@ import { ConfigPresenter } from './configPresenter'
 import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
+import { ContextMenuPresenter } from './contextMenuPresenter'
 
 export class Presenter implements IPresenter {
   windowPresenter: WindowPresenter
@@ -22,6 +23,7 @@ export class Presenter implements IPresenter {
   upgradePresenter: UpgradePresenter
   shortcutPresenter: ShortcutPresenter
   // llamaCppPresenter: LlamaCppPresenter
+  contextMenuPresenter: ContextMenuPresenter
 
   constructor() {
     this.configPresenter = new ConfigPresenter()
@@ -36,6 +38,7 @@ export class Presenter implements IPresenter {
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     // this.llamaCppPresenter = new LlamaCppPresenter()
+    this.contextMenuPresenter = new ContextMenuPresenter()
     this.setupEventBus()
   }
   setupEventBus() {
@@ -116,6 +119,7 @@ export class Presenter implements IPresenter {
   destroy() {
     this.sqlitePresenter.close()
     this.shortcutPresenter.destroy()
+    this.contextMenuPresenter.dispose()
   }
 }
 

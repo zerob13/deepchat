@@ -7,6 +7,7 @@
         :id="id"
         class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
         @click="handleCopyClick"
+        @contextmenu="handleContextMenu"
         v-html="renderContent(part.content)"
       ></div>
       <ArtifactThinking
@@ -442,6 +443,31 @@ const renderContent = (content: string) => {
     }
   )
   return renderMarkdown(safeContent)
+}
+
+// 右键菜单事件处理
+const handleContextMenu = (event) => {
+  // 检查目标元素是否是可编辑元素或其中的一部分
+  const target = event.target as HTMLElement;
+  const isEditable = target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    !!target.closest('input, textarea, [contenteditable="true"]');
+
+  // 只有在非可编辑元素上且没有选中文本时才自动选择
+  if (!isEditable && window.getSelection()?.toString().trim().length === 0) {
+    // 获取事件目标元素
+    const targetForSelection = event.currentTarget;
+
+    // 创建范围选择整个元素内容
+    const range = document.createRange();
+    range.selectNodeContents(targetForSelection);
+
+    // 应用选择
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
 }
 
 // 添加 watch 来监听内容变化
