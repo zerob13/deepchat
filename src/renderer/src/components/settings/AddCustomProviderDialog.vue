@@ -33,10 +33,10 @@
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="openai">OpenAI</SelectItem>
+                <SelectItem value="gemini">Gemini</SelectItem>
                 <!-- <SelectItem value="ollama">Ollama</SelectItem>
                 <SelectItem value="anthropic">Anthropic</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
-                <SelectItem value="gemini">Gemini</SelectItem>
                 <SelectItem value="mistral">Mistral AI</SelectItem>
                 <SelectItem value="cohere">Cohere</SelectItem>
                 <SelectItem value="zhinao">智脑</SelectItem>
@@ -68,7 +68,10 @@
                 :placeholder="t('settings.provider.dialog.addCustomProvider.baseUrlPlaceholder')"
                 required
               />
-              <div class="text-xs text-secondary-foreground mt-1">
+              <div
+                class="text-xs text-secondary-foreground mt-1"
+                v-if="formData.apiType === 'openai'"
+              >
                 {{ `${formData.baseUrl ?? ''}/chat/completions` }}
               </div>
             </span>

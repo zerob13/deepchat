@@ -23,6 +23,12 @@
           <Icon icon="lucide:pencil" class="mr-2 h-4 w-4" />
           <span>{{ t('thread.actions.rename') }}</span>
         </DropdownMenuItem>
+
+        <DropdownMenuItem @select="$emit('cleanmsgs', thread)">
+          <Icon icon="lucide:eraser" class="mr-2 h-4 w-4" />
+          <span>{{ t('thread.actions.cleanMessages') }}</span>
+        </DropdownMenuItem>
+
         <DropdownMenuItem class="text-destructive" @select="$emit('delete', thread)">
           <Icon icon="lucide:trash-2" class="mr-2 h-4 w-4" />
           <span>{{ t('thread.actions.delete') }}</span>
@@ -53,6 +59,7 @@ defineEmits<{
   select: [thread: CONVERSATION]
   rename: [thread: CONVERSATION]
   delete: [thread: CONVERSATION]
+  cleanmsgs: [thread: CONVERSATION]
 }>()
 
 const { t } = useI18n()

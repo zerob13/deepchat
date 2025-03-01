@@ -1,0 +1,73 @@
+---
+description:  introduces the source code structure and specific purposes under the project’s src directory
+globs: 
+alwaysApply: false
+---
+# Project Structure
+
+```
+src
+├── main
+│   └── presenter
+│       ├── configPresenter
+│       ├── devicePresenter
+│       ├── llamaCppPresenter
+│       ├── llmProviderPresenter
+│       │   └── providers
+│       ├── sqlitePresenter
+│       │   └── tables
+│       ├── threadPresenter
+│       └── upgradePresenter
+├── preload
+├── renderer
+│   └── src
+│       ├── assets
+│       │   └── llm-icons
+│       ├── components
+│       │   ├── artifacts
+│       │   ├── icons
+│       │   ├── message
+│       │   ├── settings
+│       │   └── ui // shadcn ui components
+│       │       ├── alert
+│       │       ├── alert-dialog
+│       │       ├── aspect-ratio
+│       │       ├── avatar
+│       │       ├── badge
+│       │       ├── breadcrumb
+│       │       ├── button
+│       │       ├── card
+│       │       ├── checkbox
+│       │       ├── context-menu
+│       │       ├── dialog
+│       │       ├── dropdown-menu
+│       │       ├── hover-card
+│       │       ├── input
+│       │       ├── label
+│       │       ├── menubar
+│       │       ├── navigation-menu
+│       │       ├── number-field
+│       │       ├── popover
+│       │       ├── progress
+│       │       ├── radio-group
+│       │       ├── scroll-area
+│       │       ├── select
+│       │       ├── separator
+│       │       ├── sheet
+│       │       ├── sidebar
+│       │       ├── skeleton
+│       │       ├── slider
+│       │       ├── switch
+│       │       ├── textarea
+│       │       ├── toggle
+│       │       └── tooltip
+│       ├── composables
+│       ├── i18n
+│       ├── lib
+│       ├── router
+│       ├── stores
+│       └── views
+├── shared
+│   └── types
+└── types
+```

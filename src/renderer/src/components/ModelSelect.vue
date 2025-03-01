@@ -38,18 +38,16 @@ import { ref, computed, onMounted } from 'vue'
 import Input from './ui/input/Input.vue'
 // import Badge from './ui/badge/Badge.vue'
 import { useChatStore } from '@/stores/chat'
-import { usePresenter } from '@/composables/usePresenter'
-import type { MODEL_META } from '@shared/presenter'
+import type { RENDERER_MODEL_META } from '@shared/presenter'
 import ModelIcon from './icons/ModelIcon.vue'
-
+import { useSettingsStore } from '@/stores/settings'
 const { t } = useI18n()
 const keyword = ref('')
 const chatStore = useChatStore()
-const configP = usePresenter('configPresenter')
-
-const providers = ref<{ id: string; name: string; models: MODEL_META[] }[]>([])
+const settingsStore = useSettingsStore()
+const providers = ref<{ id: string; name: string; models: RENDERER_MODEL_META[] }[]>([])
 const emit = defineEmits<{
-  (e: 'update:model', model: MODEL_META, providerId: string): void
+  (e: 'update:model', model: RENDERER_MODEL_META, providerId: string): void
 }>()
 const filteredProviders = computed(() => {
   if (!keyword.value) return providers.value
@@ -67,7 +65,7 @@ const isSelected = (providerId: string, modelId: string) => {
   return chatStore.chatConfig.providerId === providerId && chatStore.chatConfig.modelId === modelId
 }
 
-const handleModelSelect = async (providerId: string, model: MODEL_META) => {
+const handleModelSelect = async (providerId: string, model: RENDERER_MODEL_META) => {
   await chatStore.updateChatConfig({
     providerId,
     modelId: model.id,
@@ -86,9 +84,9 @@ const handleModelSelect = async (providerId: string, model: MODEL_META) => {
 
 onMounted(async () => {
   try {
-    const enabledModels = await configP.getAllEnabledModels()
+    const enabledModels = settingsStore.enabledModels
     providers.value = enabledModels.map(({ providerId, models }) => {
-      const provider = configP.getProviderById(providerId)
+      const provider = settingsStore.providers.find((p) => p.id === providerId)
       return {
         id: providerId,
         name: provider?.name || providerId,

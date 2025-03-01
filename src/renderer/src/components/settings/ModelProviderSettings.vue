@@ -66,7 +66,7 @@ const setActiveProvider = (providerId: string) => {
   })
 }
 
-const toggleProviderStatus = async (provider) => {
+const toggleProviderStatus = async (provider: LLM_PROVIDER) => {
   await settingsStore.updateProviderStatus(provider.id, !provider.enable)
 }
 

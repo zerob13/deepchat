@@ -2,6 +2,7 @@ import electronUpdater from 'electron-updater'
 import { app } from 'electron'
 import { IUpgradePresenter, UpdateStatus, UpdateProgress } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
+import { UPDATE_EVENTS, WINDOW_EVENTS } from '@/events'
 
 const { autoUpdater } = electronUpdater
 
@@ -43,7 +44,7 @@ export class UpgradePresenter implements IUpgradePresenter {
       this._lock = false
       this._status = 'error'
       this._error = e.message
-      eventBus.emit('update-status-changed', {
+      eventBus.emit(UPDATE_EVENTS.STATUS_CHANGED, {
         status: this._status,
         error: this._error
       })
@@ -53,7 +54,7 @@ export class UpgradePresenter implements IUpgradePresenter {
     autoUpdater.on('checking-for-update', () => {
       console.log('checking-for-update')
       this._status = 'checking'
-      eventBus.emit('update-status-changed', { status: this._status })
+      eventBus.emit(UPDATE_EVENTS.STATUS_CHANGED, { status: this._status })
     })
 
     // 无可用更新
@@ -61,14 +62,14 @@ export class UpgradePresenter implements IUpgradePresenter {
       console.log('update-not-available')
       this._lock = false
       this._status = 'not-available'
-      eventBus.emit('update-status-changed', { status: this._status })
+      eventBus.emit(UPDATE_EVENTS.STATUS_CHANGED, { status: this._status })
     })
 
     // 有可用更新
     autoUpdater.on('update-available', (info) => {
       this._status = 'available'
       this._updateInfo = info
-      eventBus.emit('update-status-changed', {
+      eventBus.emit(UPDATE_EVENTS.STATUS_CHANGED, {
         status: this._status,
         info: {
           version: info.version,
@@ -88,7 +89,7 @@ export class UpgradePresenter implements IUpgradePresenter {
         transferred: progressObj.transferred,
         total: progressObj.total
       }
-      eventBus.emit('update-progress', this._progress)
+      eventBus.emit(UPDATE_EVENTS.PROGRESS, this._progress)
     })
 
     // 下载完成
@@ -96,7 +97,7 @@ export class UpgradePresenter implements IUpgradePresenter {
       this._lock = false
       this._status = 'downloaded'
       this._updateInfo = info
-      eventBus.emit('update-status-changed', {
+      eventBus.emit(UPDATE_EVENTS.STATUS_CHANGED, {
         status: this._status,
         info: {
           version: info.version,
@@ -115,10 +116,6 @@ export class UpgradePresenter implements IUpgradePresenter {
     } catch (error: Error | unknown) {
       this._status = 'error'
       this._error = error instanceof Error ? error.message : String(error)
-      // eventBus.emit('update-status-changed', {
-      //   status: this._status,
-      //   error: this._error
-      // })
     }
   }
   startDownloadUpdate() {
@@ -131,7 +128,7 @@ export class UpgradePresenter implements IUpgradePresenter {
     } catch (error: Error | unknown) {
       this._status = 'error'
       this._error = error instanceof Error ? error.message : String(error)
-      eventBus.emit('update-status-changed', {
+      eventBus.emit(UPDATE_EVENTS.STATUS_CHANGED, {
         status: this._status,
         error: this._error
       })
@@ -142,9 +139,9 @@ export class UpgradePresenter implements IUpgradePresenter {
     console.log('try to quit and install')
     try {
       // 发送即将重启的消息
-      eventBus.emit('update-will-restart')
+      eventBus.emit(UPDATE_EVENTS.WILL_RESTART)
       // 通知需要完全退出应用
-      eventBus.emit('force-quit-app')
+      eventBus.emit(WINDOW_EVENTS.FORCE_QUIT_APP)
       autoUpdater.quitAndInstall()
       // 如果30s还没完成，就强制退出重启
       setTimeout(() => {
@@ -152,7 +149,7 @@ export class UpgradePresenter implements IUpgradePresenter {
       }, 30151)
     } catch (e) {
       console.error('Failed to quit and install', e)
-      eventBus.emit('update-error', {
+      eventBus.emit(UPDATE_EVENTS.ERROR, {
         error: e instanceof Error ? e.message : String(e)
       })
     }
@@ -161,7 +158,7 @@ export class UpgradePresenter implements IUpgradePresenter {
   restartToUpdate() {
     console.log('Restarting update')
     if (this._status !== 'downloaded') {
-      eventBus.emit('update-error', {
+      eventBus.emit(UPDATE_EVENTS.ERROR, {
         error: '更新尚未下载完成'
       })
       return false
@@ -171,7 +168,7 @@ export class UpgradePresenter implements IUpgradePresenter {
       return true
     } catch (e) {
       console.error('Failed to restart update', e)
-      eventBus.emit('update-error', {
+      eventBus.emit(UPDATE_EVENTS.ERROR, {
         error: e instanceof Error ? e.message : String(e)
       })
       return false
@@ -181,7 +178,7 @@ export class UpgradePresenter implements IUpgradePresenter {
   restartApp() {
     try {
       // 发送即将重启的消息
-      eventBus.emit('app-will-restart')
+      eventBus.emit(UPDATE_EVENTS.WILL_RESTART)
       // 给UI层一点时间保存状态
       setTimeout(() => {
         app.relaunch()
@@ -189,7 +186,7 @@ export class UpgradePresenter implements IUpgradePresenter {
       }, 1000)
     } catch (e) {
       console.error('Failed to restart', e)
-      eventBus.emit('app-restart-error', {
+      eventBus.emit(UPDATE_EVENTS.ERROR, {
         error: e instanceof Error ? e.message : String(e)
       })
     }

@@ -3,15 +3,12 @@ import { onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppBar from './components/AppBar.vue'
 import SideBar from './components/SideBar.vue'
-import { useSettingsStore } from './stores/settings'
 import { usePresenter } from './composables/usePresenter'
 const route = useRoute()
 const configPresenter = usePresenter('configPresenter')
 
 const router = useRouter()
 const activeTab = ref('chat')
-const settingsStore = useSettingsStore()
-console.info(settingsStore.providers)
 
 const getInitComplete = async () => {
   const initComplete = await configPresenter.getSetting('init_complete')

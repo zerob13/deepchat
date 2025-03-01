@@ -7,6 +7,9 @@ import { eventBus } from '@/eventbus'
 import { OpenAICompatibleProvider } from './providers/openAICompatibleProvider'
 import { PPIOProvider } from './providers/ppioProvider'
 import { getModelConfig } from './modelConfigs'
+import { STREAM_EVENTS } from '@/events'
+import { ConfigPresenter } from '../configPresenter'
+import { GeminiProvider } from './providers/geminiProvider'
 // 导入其他provider...
 
 // 流的状态
@@ -32,6 +35,11 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   // 配置
   private config: ProviderConfig = {
     maxConcurrentStreams: 10
+  }
+  private configPresenter: ConfigPresenter
+
+  constructor(configPresenter: ConfigPresenter) {
+    this.configPresenter = configPresenter
   }
 
   getProviders(): LLM_PROVIDER[] {
@@ -62,7 +70,6 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     this.currentProviderId = providerId
     // 确保新的 provider 实例已经初始化
     this.getProviderInstance(providerId)
-    eventBus.emit('provider-changed', { providerId })
   }
 
   setProviders(providers: LLM_PROVIDER[]): void {
@@ -104,6 +111,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         case 'ppio':
           instance = new PPIOProvider(provider)
           break
+        case 'gemini':
+          instance = new GeminiProvider(provider)
+          break
         // 添加其他provider的实例化逻辑
         default:
           instance = new OpenAICompatibleProvider(provider)
@@ -129,8 +139,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   }
 
   async updateModelStatus(providerId: string, modelId: string, enabled: boolean): Promise<void> {
-    const provider = this.getProviderInstance(providerId)
-    await provider.updateModelStatus(modelId, enabled)
+    this.configPresenter.setModelStatus(providerId, modelId, enabled)
   }
 
   isGenerating(eventId: string): boolean {
@@ -146,7 +155,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     if (stream) {
       stream.abortController.abort()
       this.activeStreams.delete(eventId)
-      eventBus.emit('generation-stopped', { eventId })
+      eventBus.emit(STREAM_EVENTS.END, { eventId, userStop: true })
     }
   }
 
@@ -191,9 +200,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
     try {
       await operation()
-      eventBus.emit(`stream-end`, { eventId })
+      eventBus.emit(STREAM_EVENTS.END, { eventId })
     } catch (error) {
-      eventBus.emit(`stream-error`, { error: String(error), eventId })
+      eventBus.emit(STREAM_EVENTS.ERROR, { error: String(error), eventId })
       throw error
     } finally {
       this.activeStreams.delete(eventId)
@@ -229,18 +238,18 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         if (abortController.signal.aborted) {
           break
         }
-        eventBus.emit('stream-response', {
+        eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId,
           ...chunk
         })
       }
 
       if (!abortController.signal.aborted) {
-        eventBus.emit('stream-end', { eventId })
+        eventBus.emit(STREAM_EVENTS.END, { eventId })
       }
     } catch (error) {
       console.error('Stream error:', error)
-      eventBus.emit('stream-error', {
+      eventBus.emit(STREAM_EVENTS.ERROR, {
         eventId,
         error: error instanceof Error ? error.message : String(error)
       })
@@ -267,7 +276,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           if (stream.abortController.signal.aborted) {
             break
           }
-          eventBus.emit(`stream-response`, {
+          eventBus.emit(STREAM_EVENTS.RESPONSE, {
             content: response.content,
             reasoning_content: response.reasoning_content,
             eventId
@@ -303,7 +312,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           if (stream.abortController.signal.aborted) {
             break
           }
-          eventBus.emit(`stream-response`, {
+          eventBus.emit(STREAM_EVENTS.RESPONSE, {
             content: response.content,
             reasoning_content: response.reasoning_content,
             eventId
@@ -396,7 +405,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     updates: Partial<MODEL_META>
   ): Promise<boolean> {
     const provider = this.getProviderInstance(providerId)
-    return provider.updateCustomModel(modelId, updates)
+    const res = provider.updateCustomModel(modelId, updates)
+    this.configPresenter.updateCustomModel(providerId, modelId, updates)
+    return res
   }
 
   async getCustomModels(providerId: string): Promise<MODEL_META[]> {

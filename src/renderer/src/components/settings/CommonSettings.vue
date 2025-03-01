@@ -122,7 +122,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ChevronDown } from 'lucide-vue-next'
 import ModelSelect from '@/components/ModelSelect.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
-import type { MODEL_META } from '@shared/presenter'
+import type { RENDERER_MODEL_META } from '@shared/presenter'
 
 const devicePresenter = usePresenter('devicePresenter')
 const settingsStore = useSettingsStore()
@@ -138,7 +138,8 @@ const languageOptions = [
   { value: 'en-US', label: '🇺🇸 English (US)' },
   { value: 'zh-HK', label: '🇭🇰 繁體中文' },
   { value: 'ko-KR', label: '🇰🇷 한국어' },
-  { value: 'ru-RU', label: '🇷🇺 Русский' }
+  { value: 'ru-RU', label: '🇷🇺 Русский' },
+  { value: 'ja-JP', label: '🇯🇵 日本語' }
 ]
 
 onMounted(async () => {
@@ -166,7 +167,7 @@ const handleResetData = () => {
   closeDialog()
 }
 
-const handleSearchModelSelect = (model: MODEL_META, providerId: string) => {
+const handleSearchModelSelect = (model: RENDERER_MODEL_META, providerId: string) => {
   settingsStore.setSearchAssistantModel(model, providerId)
   modelSelectOpen.value = false
 }

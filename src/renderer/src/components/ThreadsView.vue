@@ -25,6 +25,7 @@
             @select="handleThreadSelect"
             @rename="showRenameDialog(dtThread)"
             @delete="showDeleteDialog(dtThread)"
+            @cleanmsgs="showCleanMessagesDialog(dtThread)"
           />
         </ul>
       </div>
@@ -67,6 +68,24 @@
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <Dialog v-model:open="cleanMessagesDialog">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ t('dialog.cleanMessages.title') }}</DialogTitle>
+          <DialogDescription>
+            {{ t('dialog.cleanMessages.description') }}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="handleCleanMessagesDialogCancel">{{
+            t('dialog.cancel')
+          }}</Button>
+          <Button variant="destructive" @click="handleThreadCleanMessages">{{
+            t('dialog.cleanMessages.confirm')
+          }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
 
@@ -98,6 +117,8 @@ const deleteDialog = ref(false)
 const deleteThread = ref<CONVERSATION | null>(null)
 const renameDialog = ref(false)
 const renameThread = ref<CONVERSATION | null>(null)
+const cleanMessagesDialog = ref(false)
+const cleanMessagesThread = ref<CONVERSATION | null>(null)
 
 // 创建新会话
 const createNewThread = async () => {
@@ -179,6 +200,33 @@ const handleThreadDelete = async () => {
 
   deleteDialog.value = false
   deleteThread.value = null
+}
+
+// 显示清空消息对话框
+const showCleanMessagesDialog = (thread: CONVERSATION) => {
+  cleanMessagesDialog.value = true
+  cleanMessagesThread.value = thread
+}
+
+// 取消清空消息对话框
+const handleCleanMessagesDialogCancel = () => {
+  cleanMessagesDialog.value = false
+  cleanMessagesThread.value = null
+}
+
+// 清空会话消息
+const handleThreadCleanMessages = async () => {
+  try {
+    if (!cleanMessagesThread.value) {
+      return
+    }
+    await chatStore.clearAllMessages(cleanMessagesThread.value.id)
+  } catch (error) {
+    console.error(t('common.error.cleanMessagesFailed'), error)
+  }
+
+  cleanMessagesDialog.value = false
+  cleanMessagesThread.value = null
 }
 
 const showRenameDialog = (thread: CONVERSATION) => {

@@ -1,7 +1,7 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream } from '@shared/presenter'
-import { BaseLLMProvider } from '../baseProvider'
+import { OpenAICompatibleProvider } from './openAICompatibleProvider'
 
-export class OpenAIProvider extends BaseLLMProvider {
+export class OpenAIProvider extends OpenAICompatibleProvider {
   constructor(provider: LLM_PROVIDER) {
     super(provider)
   }

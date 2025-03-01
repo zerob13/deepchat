@@ -8,6 +8,7 @@ import {
 } from '@shared/presenter'
 import { Message } from '@shared/chat'
 import { eventBus } from '@/eventbus'
+import { CONVERSATION_EVENTS } from '@/events'
 
 export class MessageManager implements IMessageManager {
   private sqlitePresenter: ISQLitePresenter
@@ -92,9 +93,9 @@ export class MessageManager implements IMessageManager {
       throw new Error(`Message ${messageId} not found`)
     }
     const msg = this.convertToMessage(message)
-    eventBus.emit('message-edited', messageId)
+    eventBus.emit(CONVERSATION_EVENTS.MESSAGE_EDITED, messageId)
     if (msg.parentId) {
-      eventBus.emit('message-edited', msg.parentId)
+      eventBus.emit(CONVERSATION_EVENTS.MESSAGE_EDITED, msg.parentId)
     }
     return msg
   }

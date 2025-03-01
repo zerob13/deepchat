@@ -106,7 +106,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import ModelConfigItem from './ModelConfigItem.vue'
-import type { MODEL_META } from '@shared/presenter'
+import type { RENDERER_MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
 
 const { t } = useI18n()
@@ -122,13 +122,13 @@ const modelSearchQuery = ref('')
 const settingsStore = useSettingsStore()
 
 const props = defineProps<{
-  providerModels: { providerId: string; models: MODEL_META[] }[]
-  customModels: MODEL_META[]
+  providerModels: { providerId: string; models: RENDERER_MODEL_META[] }[]
+  customModels: RENDERER_MODEL_META[]
   providers: { id: string; name: string }[]
 }>()
 
 const emit = defineEmits<{
-  enabledChange: [model: MODEL_META, enabled: boolean]
+  enabledChange: [model: RENDERER_MODEL_META, enabled: boolean]
 }>()
 
 const filteredProviderModels = computed(() => {
@@ -149,7 +149,7 @@ const filteredProviderModels = computed(() => {
 })
 
 const filteredCustomModels = computed(() => {
-  const customModelsList: MODEL_META[] = []
+  const customModelsList: RENDERER_MODEL_META[] = []
   for (const model of props.customModels) {
     customModelsList.push(model)
   }
@@ -158,7 +158,7 @@ const filteredCustomModels = computed(() => {
     return customModelsList
   }
 
-  const filteredModels: MODEL_META[] = []
+  const filteredModels: RENDERER_MODEL_META[] = []
   for (const model of customModelsList) {
     if (
       model.name.toLowerCase().includes(modelSearchQuery.value.toLowerCase()) ||
@@ -204,7 +204,7 @@ const confirmAdd = async (idx: number) => {
   }
 }
 
-const handleModelEnabledChange = (model: MODEL_META, enabled: boolean) => {
+const handleModelEnabledChange = (model: RENDERER_MODEL_META, enabled: boolean) => {
   emit('enabledChange', model, enabled)
 }
 
