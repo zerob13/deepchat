@@ -209,7 +209,16 @@ const adjustHeight = (e: Event) => {
 }
 
 const deleteFile = (idx: number) => {
+  const deletedFile = selectedFiles.value[idx]
   selectedFiles.value.splice(idx, 1)
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
+  if (deletedFile && deletedFile.path) {
+    filePresenter.onFileRemoved(deletedFile.path).catch((err) => {
+      console.error('移除文件适配器失败:', err)
+    })
+  }
 }
 
 const disabledSend = computed(() => {

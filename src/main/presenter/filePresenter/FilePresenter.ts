@@ -95,6 +95,19 @@ export class FilePresenter implements IFilePresenter {
     throw new Error(`无法读取文件: ${fullPath}`)
   }
 
+  /**
+   * 从文件适配器映射中移除指定路径的文件适配器
+   * @param filePath 文件的绝对路径
+   * @returns 是否成功移除
+   */
+  async onFileRemoved(filePath: string): Promise<boolean> {
+    const fullPath = path.join(filePath)
+    if (this.fileAdapters.has(fullPath)) {
+      return this.fileAdapters.delete(fullPath)
+    }
+    return false
+  }
+
   private findAdapterForMimeType(
     mimeType: string,
     adapterMap: Map<string, FileAdapterConstructor>
