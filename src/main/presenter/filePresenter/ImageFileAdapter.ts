@@ -58,7 +58,6 @@ export class ImageFileAdapter extends BaseFileAdapter {
 
   public async getLLMContent(): Promise<string | undefined> {
     const stats = await fs.stat(this.filePath)
-    console.log('sss', stats.size, this.maxFileSize)
     if (stats.size > this.maxFileSize) {
       return undefined
     }

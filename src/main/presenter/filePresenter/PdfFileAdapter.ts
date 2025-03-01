@@ -28,6 +28,7 @@ export class PdfFileAdapter extends BaseFileAdapter {
         // 创建自定义渲染选项，用于收集每页内容
         const pageTexts: string[] = []
         const renderOptions = {
+          verbosityLevel: 0 as 0 | 5 | undefined,
           pageTexts,
           normalizeWhitespace: false,
           disableCombineTextItems: false,

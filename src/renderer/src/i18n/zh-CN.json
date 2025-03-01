@@ -1,6 +1,8 @@
 {
   "common": {
     "loading": "加载中...",
+    "copy": "复制",
+    "paste": "粘贴",
     "copySuccess": "已复制!",
     "copyCode": "复制代码",
     "newChat": "新会话",
