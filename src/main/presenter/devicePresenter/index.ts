@@ -8,6 +8,10 @@ import { app, dialog } from 'electron'
 const execAsync = promisify(exec)
 
 export class DevicePresenter implements IDevicePresenter {
+  async getAppVersion(): Promise<string> {
+    return app.getVersion()
+  }
+
   async getDeviceInfo(): Promise<DeviceInfo> {
     return {
       platform: process.platform,

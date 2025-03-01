@@ -22,6 +22,7 @@ import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
 import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
+import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 
@@ -656,7 +657,7 @@ export class ThreadPresenter implements IThreadPresenter {
       const formattedContext = contextMessages
         .map((msg) => {
           if (msg.role === 'user') {
-            return `user: ${msg.content.text}`
+            return `user: ${msg.content.text}${getFileContext(msg.content.files)}`
           } else if (msg.role === 'ai') {
             return `assistant: ${msg.content.blocks.map((block) => block.content).join('')}`
           } else {
@@ -769,28 +770,27 @@ export class ThreadPresenter implements IThreadPresenter {
         throw new Error('找不到用户消息')
       }
 
+      // 处理本地文本信息
+      const userContent = `
+      ${userMessage.content.text}
+      ${getFileContext(userMessage.content.files)}
+      `
       // 从用户消息中提取并丰富URL内容
       urlResults = await ContentEnricher.extractAndEnrichUrls(userMessage.content.text)
 
       // 处理搜索
       if (userMessage.content.search) {
-        searchResults = await this.startStreamSearch(
-          conversationId,
-          state.message.id,
-          userMessage.content.text
-        )
+        searchResults = await this.startStreamSearch(conversationId, state.message.id, userContent)
       }
 
       // 计算搜索提示词的token数量
-      const searchPrompt = searchResults
-        ? generateSearchPrompt(userMessage.content.text, searchResults)
-        : ''
+      const searchPrompt = searchResults ? generateSearchPrompt(userContent, searchResults) : ''
 
       // 使用URL内容丰富用户消息
       const enrichedUserMessage =
         urlResults.length > 0
-          ? ContentEnricher.enrichUserMessageWithUrlContent(userMessage.content.text, urlResults)
-          : userMessage.content.text
+          ? ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
+          : userContent
 
       // 计算token数量
       const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
@@ -810,8 +810,12 @@ export class ThreadPresenter implements IThreadPresenter {
         const selectedMessages: Message[] = []
 
         for (const msg of messages) {
+          // 处理本地文本信息
+
           const msgTokens = approximateTokenSize(
-            msg.role === 'user' ? msg.content.text : JSON.stringify(msg.content)
+            msg.role === 'user'
+              ? `${msg.content.text}${getFileContext(msg.content.files)}`
+              : JSON.stringify(msg.content)
           )
 
           if (currentLength + msgTokens <= remainingContextLength) {
@@ -857,7 +861,7 @@ export class ThreadPresenter implements IThreadPresenter {
       contextMessages.forEach((msg) => {
         const content =
           msg.role === 'user'
-            ? msg.content.text
+            ? `${msg.content.text}${getFileContext(msg.content.files)}`
             : msg.content
                 .filter((block) => block.type === 'content')
                 .map((block) => block.content)
@@ -1070,10 +1074,10 @@ export class ThreadPresenter implements IThreadPresenter {
         if (msg.role === 'user') {
           return {
             message: msg,
-            length: msg.content.text.length,
+            length: `${msg.content.text}${getFileContext(msg.content.files)}`.length,
             formattedMessage: {
               role: 'user' as const,
-              content: msg.content.text
+              content: `${msg.content.text}${getFileContext(msg.content.files)}`
             }
           }
         } else {

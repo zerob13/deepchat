@@ -30,7 +30,17 @@
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" class="p-0 w-80">
-          <ChatConfig @update:config="handleConfigUpdate" />
+          <ChatConfig
+            v-model:system-prompt="systemPrompt"
+            :temperature="temperature"
+            :context-length="contextLength"
+            :max-tokens="maxTokens"
+            :artifacts="artifacts"
+            @update:temperature="updateTemperature"
+            @update:context-length="updateContextLength"
+            @update:max-tokens="updateMaxTokens"
+            @update:artifacts="updateArtifacts"
+          />
         </PopoverContent>
       </Popover>
     </div>
@@ -47,9 +57,77 @@ import ChatConfig from './ChatConfig.vue'
 import ModelSelect from './ModelSelect.vue'
 import ModelIcon from './icons/ModelIcon.vue'
 import { MODEL_META } from '@shared/presenter'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
+import { useChatStore } from '@/stores/chat'
 
 const { t } = useI18n()
+const chatStore = useChatStore()
+
+// Chat configuration state
+const temperature = ref(chatStore.chatConfig.temperature)
+const contextLength = ref(chatStore.chatConfig.contextLength)
+const maxTokens = ref(chatStore.chatConfig.maxTokens)
+const systemPrompt = ref(chatStore.chatConfig.systemPrompt)
+const artifacts = ref(chatStore.chatConfig.artifacts)
+
+// Independent update functions
+const updateTemperature = (value: number) => {
+  temperature.value = value
+}
+
+const updateContextLength = (value: number) => {
+  contextLength.value = value
+}
+
+const updateMaxTokens = (value: number) => {
+  maxTokens.value = value
+}
+
+const updateArtifacts = (value: 0 | 1) => {
+  artifacts.value = value
+}
+
+// Create debounced update functions
+const debouncedUpdateConfig = useDebounceFn((config: Partial<typeof chatStore.chatConfig>) => {
+  chatStore.updateChatConfig(config)
+}, 500)
+
+// Watch for changes and update store
+watch(
+  [temperature, contextLength, maxTokens, systemPrompt, artifacts],
+  ([newTemp, newContext, newMaxTokens, newSystemPrompt, newArtifacts]) => {
+    debouncedUpdateConfig({
+      temperature: newTemp,
+      contextLength: newContext,
+      maxTokens: newMaxTokens,
+      systemPrompt: newSystemPrompt,
+      artifacts: newArtifacts
+    })
+  }
+)
+
+// Watch store changes to update local state
+watch(
+  () => chatStore.chatConfig,
+  (newConfig) => {
+    temperature.value = newConfig.temperature
+    contextLength.value = newConfig.contextLength
+    maxTokens.value = newConfig.maxTokens
+    systemPrompt.value = newConfig.systemPrompt
+    artifacts.value = newConfig.artifacts
+  },
+  { deep: true }
+)
+
+// Watch config changes and save to store
+watch(
+  () => chatStore.chatConfig,
+  async () => {
+    await chatStore.saveChatConfig()
+  },
+  { deep: true }
+)
 
 type Model = {
   name: string
@@ -69,10 +147,6 @@ withDefaults(
     })
   }
 )
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const handleConfigUpdate = (config: any) => {
-  console.log('config', config)
-}
 
 const modelSelectOpen = ref(false)
 const handleModelUpdate = (model: MODEL_META) => {

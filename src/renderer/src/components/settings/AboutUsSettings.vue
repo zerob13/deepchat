@@ -5,7 +5,8 @@
         <img src="@/assets/logo.png" class="w-10 h-10" />
         <div class="flex flex-col gap-2 items-center">
           <h1 class="text-2xl font-bold">{{ t('about.title') }}</h1>
-          <p class="text-sm text-muted-foreground">
+          <p class="text-xs text-muted-foreground pb-4">v{{ appVersion }}</p>
+          <p class="text-sm text-muted-foreground px-8">
             {{ t('about.description') }}
           </p>
           <a
@@ -16,32 +17,51 @@
         </div>
 
         <!-- 免责声明按钮 -->
-        <Button variant="outline" size="sm" class="mb-2 text-xs" @click="openDisclaimerDialog">
+        <Button
+          variant="outline"
+          size="sm"
+          class="mb-2 text-xs text-muted-foreground"
+          @click="openDisclaimerDialog"
+        >
           <Icon icon="lucide:info" class="mr-1 h-3 w-3" />
           {{ t('about.disclaimerButton') }}
         </Button>
 
-        <div class="text-sm text-muted-foreground p-4 rounded-lg shadow-md">
-          <h2 class="text-lg font-semibold mb-2">{{ t('about.deviceInfo.title') }}</h2>
-          <div class="flex h-5 items-center space-x-4">
-            <div>
-              <strong>{{ t('about.deviceInfo.platform') }}:</strong> {{ deviceInfo.platform }}
+        <!-- <div class="text-sm text-muted-foreground p-6 rounded-lg shadow-md bg-card border">
+          <h2 class="text-lg font-semibold mb-4 flex items-center">
+            <Icon icon="lucide:cpu" class="mr-2 h-5 w-5" />
+            {{ t('about.deviceInfo.title') }}
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:monitor" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.platform') }}:</span>
+              <span>{{ deviceInfo.platform }}</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.arch') }}:</strong> {{ deviceInfo.arch }}
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:layers" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.arch') }}:</span>
+              <span>{{ deviceInfo.arch }}</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.cpuModel') }}:</strong> {{ deviceInfo.cpuModel }}
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:cpu" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.cpuModel') }}:</span>
+              <span class="truncate">{{ deviceInfo.cpuModel }}</span>
             </div>
-            <Separator orientation="vertical" />
-            <div>
-              <strong>{{ t('about.deviceInfo.totalMemory') }}:</strong>
-              {{ (deviceInfo.totalMemory / (1024 * 1024 * 1024)).toFixed(0) }} GB
+            <div class="flex items-center space-x-2">
+              <Icon icon="lucide:database" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium">{{ t('about.deviceInfo.totalMemory') }}:</span>
+              <span>{{ (deviceInfo.totalMemory / (1024 * 1024 * 1024)).toFixed(0) }} GB</span>
+            </div>
+            <div class="flex items-center space-x-2 col-span-full">
+              <Icon icon="lucide:info" class="h-4 w-4 text-muted-foreground" />
+              <span class="font-medium"
+                >{{ t('about.deviceInfo.osVersion') || 'OS Version' }}:</span
+              >
+              <span>{{ deviceInfo.osVersion }}</span>
             </div>
           </div>
-        </div>
+        </div> -->
       </div>
     </div>
   </div>
@@ -69,7 +89,6 @@
 import { usePresenter } from '@/composables/usePresenter'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import {
@@ -97,6 +116,7 @@ const deviceInfo = ref<{
   totalMemory: 0,
   osVersion: ''
 })
+const appVersion = ref('')
 
 // 免责声明对话框状态
 const isDisclaimerOpen = ref(false)
@@ -108,6 +128,7 @@ const openDisclaimerDialog = () => {
 
 onMounted(async () => {
   deviceInfo.value = await devicePresenter.getDeviceInfo()
+  appVersion.value = await devicePresenter.getAppVersion()
   console.log(deviceInfo.value)
 })
 </script>
