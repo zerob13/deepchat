@@ -286,7 +286,9 @@ const deleteFile = (idx: number) => {
 
 const disabledSend = computed(() => {
   return (
-    chatStore.generatingThreadIds.has(chatStore.activeThreadId ?? '') || inputText.value.length <= 0
+    chatStore.generatingThreadIds.has(chatStore.activeThreadId ?? '') ||
+    inputText.value.length <= 0 ||
+    currentContextLength.value > (props.contextLength ?? 4096)
   )
 })
 
