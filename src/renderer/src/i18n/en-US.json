@@ -5,6 +5,8 @@
     "loading": "Loading...",
     "copySuccess": "Copied!",
     "copyCode": "Copy Code",
+    "copy": "Copy",
+    "paste": "Paste",
     "newChat": "New Chat",
     "newTopic": "New Topic",
     "cancel": "Cancel",

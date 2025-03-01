@@ -25,16 +25,31 @@
         </TransitionGroup>
       </div>
       <!-- {{ t('chat.input.inputArea') }} -->
-      <Textarea
-        v-model="inputText"
-        :auto-focus="true"
-        :rows="rows"
-        :max-rows="maxRows"
-        :placeholder="t('chat.input.placeholder')"
-        class="border-none max-h-[10rem] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
-        @keydown.enter.exact.prevent="handleEnterKey"
-        @input="adjustHeight"
-      ></Textarea>
+      <ContextMenu>
+        <ContextMenuTrigger>
+          <Textarea
+            ref="textareaRef"
+            v-model="inputText"
+            :auto-focus="true"
+            :rows="rows"
+            :max-rows="maxRows"
+            :placeholder="t('chat.input.placeholder')"
+            class="border-none max-h-[10rem] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
+            @keydown.enter.exact.prevent="handleEnterKey"
+            @input="adjustHeight"
+          ></Textarea>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem @click="copyText">
+            <Icon icon="lucide:copy" class="w-4 h-4 mr-2" />
+            {{ t('common.copy') }}
+          </ContextMenuItem>
+          <ContextMenuItem @click="pasteText">
+            <Icon icon="lucide:clipboard" class="w-4 h-4 mr-2" />
+            {{ t('common.paste') }}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       <div class="flex items-center justify-between">
         <!-- {{ t('chat.input.functionSwitch') }} -->
@@ -105,6 +120,12 @@ import FileItem from './FileItem.vue'
 import { useChatStore } from '@/stores/chat'
 import { UserMessageContent } from '@shared/chat'
 import { usePresenter } from '@/composables/usePresenter'
+import { 
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
 
 const { t } = useI18n()
 const configPresenter = usePresenter('configPresenter')
@@ -116,7 +137,7 @@ const settings = ref({
   webSearch: false
 })
 
-const textareaRef = ref<HTMLElement>()
+const textareaRef = ref<HTMLTextAreaElement>()
 
 const selectedFiles = ref<File[]>([])
 withDefaults(
@@ -197,6 +218,44 @@ const onDeepThinkingClick = async () => {
 const initSettings = async () => {
   settings.value.deepThinking = Boolean(await configPresenter.getSetting('input_deepThinking'))
   settings.value.webSearch = Boolean(await configPresenter.getSetting('input_webSearch'))
+}
+
+const copyText = () => {
+  const textareaElement = textareaRef.value
+  if (textareaElement) {
+    const start = textareaElement.selectionStart
+    const end = textareaElement.selectionEnd
+    
+    if (start !== end) {
+      const selectedText = inputText.value.substring(start, end)
+      navigator.clipboard.writeText(selectedText)
+    }
+  }
+}
+
+const pasteText = async () => {
+  try {
+    const clipboardText = await navigator.clipboard.readText()
+    if (clipboardText) {
+      const textareaElement = textareaRef.value
+      if (textareaElement) {
+        const start = textareaElement.selectionStart
+        const end = textareaElement.selectionEnd
+        inputText.value = 
+          inputText.value.substring(0, start) + 
+          clipboardText + 
+          inputText.value.substring(end)
+        
+        // 设置光标位置到粘贴文本之后
+        nextTick(() => {
+          textareaElement.selectionStart = textareaElement.selectionEnd = start + clipboardText.length
+          textareaElement.focus()
+        })
+      }
+    }
+  } catch (err) {
+    console.error('粘贴失败:', err)
+  }
 }
 
 onMounted(() => {
