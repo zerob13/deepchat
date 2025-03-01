@@ -1,10 +1,5 @@
+import { ModelConfig } from '@shared/presenter'
 import { defaultModelsSettings } from '../configPresenter/models'
-
-export interface ModelConfig {
-  maxTokens: number
-  contextLength: number
-  temperature: number
-}
 
 export interface ProviderModelConfigs {
   [modelId: string]: ModelConfig

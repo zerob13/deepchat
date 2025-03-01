@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BrowserWindow } from 'electron'
+import { MessageFile } from './chat'
 
 export type SQLITE_MESSAGE = {
   id: string
@@ -17,10 +18,17 @@ export type SQLITE_MESSAGE = {
   variants?: SQLITE_MESSAGE[]
 }
 
+export interface ModelConfig {
+  maxTokens: number
+  contextLength: number
+  temperature: number
+}
+
 export interface IWindowPresenter {
   createMainWindow(): BrowserWindow
   getWindow(windowName: string): BrowserWindow | undefined
   mainWindow: BrowserWindow | undefined
+  previewFile(filePath: string): void
   minimize(): void
   maximize(): void
   close(): void
@@ -97,6 +105,7 @@ export interface IPresenter {
   threadPresenter: IThreadPresenter
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
+  filePresenter: IFilePresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -110,7 +119,9 @@ export interface IConfigPresenter {
   getProviderModels(providerId: string): MODEL_META[]
   setProviderModels(providerId: string, models: MODEL_META[]): void
   getEnabledProviders(): LLM_PROVIDER[]
+  getModelDefaultConfig(modelId: string): ModelConfig
   getAllEnabledModels(): Promise<{ providerId: string; models: RENDERER_MODEL_META[] }[]>
+
   // 自定义模型管理
   getCustomModels(providerId: string): MODEL_META[]
   setCustomModels(providerId: string, models: MODEL_META[]): void
@@ -349,6 +360,7 @@ export interface IMessageManager {
 }
 
 export interface IDevicePresenter {
+  getAppVersion(): Promise<string>
   getDeviceInfo(): Promise<DeviceInfo>
   getCPUUsage(): Promise<number>
   getMemoryUsage(): Promise<MemoryInfo>
@@ -428,4 +440,26 @@ export interface SearchResult {
 export interface ISearchPresenter {
   init(): void
   search(query: string, engine: 'google' | 'baidu'): Promise<SearchResult[]>
+}
+
+export type FileOperation = {
+  path: string
+  content?: string
+}
+
+export interface IFilePresenter {
+  readFile(relativePath: string): Promise<string>
+  writeFile(operation: FileOperation): Promise<void>
+  deleteFile(relativePath: string): Promise<void>
+  prepareFile(absPath: string): Promise<MessageFile>
+  onFileRemoved(filePath: string): Promise<boolean>
+}
+
+export interface FileMetaData {
+  fileName: string
+  fileSize: number
+  // fileHash: string
+  fileDescription?: string
+  fileCreated: Date
+  fileModified: Date
 }
