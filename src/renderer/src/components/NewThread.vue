@@ -9,51 +9,63 @@
       class="!max-w-2xl flex-shrink-0 px-4"
       :rows="3"
       :max-rows="10"
-      @send="handleSend"
       :context-length="contextLength"
+      @send="handleSend"
     >
       <template #addon-buttons>
-        <Popover v-model:open="modelSelectOpen">
-          <PopoverTrigger as-child>
-            <Button variant="outline" class="flex items-center gap-1.5 px-2 h-auto py-1" size="sm">
-              <ModelIcon class="w-4 h-4" :model-id="activeModel.id"></ModelIcon>
-              <!-- <Icon icon="lucide:message-circle" class="w-5 h-5 text-muted-foreground" /> -->
-              <h2 class="text-xs font-bold max-w-[150px] truncate">{{ name }}</h2>
-              <Badge
-                v-for="tag in activeModel.tags"
-                :key="tag"
+        <span
+          class="flex items-center h-7 rounded-md shadow-sm border border-border group transition-all duration-300"
+        >
+          <Popover v-model:open="modelSelectOpen">
+            <PopoverTrigger as-child>
+              <Button
                 variant="outline"
-                class="py-0 rounded-lg"
-                size="xs"
-                >{{ t(`model.tags.${tag}`) }}</Badge
+                class="flex border-none shadow-none items-center gap-1.5 px-2 h-full"
+                size="sm"
               >
-              <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" class="p-0 w-80">
-            <ModelSelect @update:model="handleModelUpdate" />
-          </PopoverContent>
-        </Popover>
-        <Popover>
-          <PopoverTrigger as-child>
-            <Button
-              class="w-7 h-7 rounded-md hover:bg-accent text-muted-foreground hover:text-primary-foreground"
-              size="icon"
-              variant="outline"
-            >
-              <Icon icon="lucide:settings-2" class="w-4 h-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" class="p-0 w-80">
-            <ChatConfig
-              v-model:temperature="temperature"
-              v-model:context-length="contextLength"
-              v-model:max-tokens="maxTokens"
-              v-model:system-prompt="systemPrompt"
-              v-model:artifacts="artifacts"
-            />
-          </PopoverContent>
-        </Popover>
+                <ModelIcon class="w-4 h-4" :model-id="activeModel.id"></ModelIcon>
+                <!-- <Icon icon="lucide:message-circle" class="w-5 h-5 text-muted-foreground" /> -->
+                <h2 class="text-xs font-bold max-w-[150px] truncate">{{ name }}</h2>
+                <Badge
+                  v-for="tag in activeModel.tags"
+                  :key="tag"
+                  variant="outline"
+                  class="py-0 rounded-lg"
+                  size="xs"
+                  >{{ t(`model.tags.${tag}`) }}</Badge
+                >
+                <!-- <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" /> -->
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" class="p-0 w-80">
+              <ModelSelect @update:model="handleModelUpdate" />
+            </PopoverContent>
+          </Popover>
+          <Popover v-model:open="settingsPopoverOpen" @update:open="handleSettingsPopoverUpdate">
+            <PopoverTrigger as-child>
+              <Button
+                class="w-7 h-full border-none shadow-none hover:bg-accent text-muted-foreground dark:hover:text-primary-foreground transition-all duration-300"
+                :class="{
+                  'w-0 opacity-0 p-0 overflow-hidden': !showSettingsButton && !isHovering,
+                  'w-7 opacity-100': showSettingsButton || isHovering
+                }"
+                size="icon"
+                variant="outline"
+              >
+                <Icon icon="lucide:settings-2" class="w-4 h-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" class="p-0 w-80">
+              <ChatConfig
+                v-model:temperature="temperature"
+                v-model:context-length="contextLength"
+                v-model:max-tokens="maxTokens"
+                v-model:system-prompt="systemPrompt"
+                v-model:artifacts="artifacts"
+              />
+            </PopoverContent>
+          </Popover>
+        </span>
       </template>
     </ChatInput>
     <div class="h-12"></div>
@@ -72,7 +84,7 @@ import ModelSelect from './ModelSelect.vue'
 import { useChatStore } from '@/stores/chat'
 import { MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { UserMessageContent } from '@shared/chat'
 import ChatConfig from './ChatConfig.vue'
 import { usePresenter } from '@/composables/usePresenter'
@@ -93,9 +105,9 @@ const activeModel = ref({
   tags: string[]
 })
 
-const temperature = ref(0.7)
-const contextLength = ref(4096)
-const maxTokens = ref(8192)
+const temperature = ref(0.6)
+const contextLength = ref(16384)
+const maxTokens = ref(4096)
 const systemPrompt = ref('')
 const artifacts = ref(0)
 
@@ -156,6 +168,58 @@ watch(
 )
 
 const modelSelectOpen = ref(false)
+const settingsPopoverOpen = ref(false)
+const showSettingsButton = ref(false)
+const isHovering = ref(false)
+
+// 监听鼠标悬停
+const handleMouseEnter = () => {
+  isHovering.value = true
+}
+
+const handleMouseLeave = () => {
+  isHovering.value = false
+}
+
+onMounted(() => {
+  const groupElement = document.querySelector('.group')
+  if (groupElement) {
+    groupElement.addEventListener('mouseenter', handleMouseEnter)
+    groupElement.addEventListener('mouseleave', handleMouseLeave)
+  }
+})
+
+onUnmounted(() => {
+  const groupElement = document.querySelector('.group')
+  if (groupElement) {
+    groupElement.removeEventListener('mouseenter', handleMouseEnter)
+    groupElement.removeEventListener('mouseleave', handleMouseLeave)
+  }
+})
+
+const handleSettingsPopoverUpdate = (isOpen: boolean) => {
+  if (isOpen) {
+    // 如果打开，立即显示按钮
+    showSettingsButton.value = true
+  } else {
+    // 如果关闭，延迟隐藏按钮，等待动画完成
+    setTimeout(() => {
+      showSettingsButton.value = false
+    }, 300) // 300ms是一个常见的动画持续时间，可以根据实际情况调整
+  }
+}
+
+// 初始化时设置showSettingsButton的值与settingsPopoverOpen一致
+watch(
+  settingsPopoverOpen,
+  (value) => {
+    if (value) {
+      showSettingsButton.value = true
+    }
+  },
+  { immediate: true }
+)
+
 const handleModelUpdate = (model: MODEL_META, providerId: string) => {
   activeModel.value = {
     name: model.name,
@@ -182,4 +246,13 @@ const handleSend = async (content: UserMessageContent) => {
 }
 </script>
 
-<style scoped></style>
+<style scoped>
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.duration-300 {
+  transition-duration: 300ms;
+}
+</style>

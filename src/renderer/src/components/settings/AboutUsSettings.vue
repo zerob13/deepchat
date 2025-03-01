@@ -6,7 +6,7 @@
         <div class="flex flex-col gap-2 items-center">
           <h1 class="text-2xl font-bold">{{ t('about.title') }}</h1>
           <p class="text-xs text-muted-foreground pb-4">v{{ appVersion }}</p>
-          <p class="text-sm text-muted-foreground">
+          <p class="text-sm text-muted-foreground px-8">
             {{ t('about.description') }}
           </p>
           <a
@@ -17,12 +17,17 @@
         </div>
 
         <!-- 免责声明按钮 -->
-        <Button variant="outline" size="sm" class="mb-2 text-xs" @click="openDisclaimerDialog">
+        <Button
+          variant="outline"
+          size="sm"
+          class="mb-2 text-xs text-muted-foreground"
+          @click="openDisclaimerDialog"
+        >
           <Icon icon="lucide:info" class="mr-1 h-3 w-3" />
           {{ t('about.disclaimerButton') }}
         </Button>
 
-        <div class="text-sm text-muted-foreground p-6 rounded-lg shadow-md bg-card border">
+        <!-- <div class="text-sm text-muted-foreground p-6 rounded-lg shadow-md bg-card border">
           <h2 class="text-lg font-semibold mb-4 flex items-center">
             <Icon icon="lucide:cpu" class="mr-2 h-5 w-5" />
             {{ t('about.deviceInfo.title') }}
@@ -56,7 +61,7 @@
               <span>{{ deviceInfo.osVersion }}</span>
             </div>
           </div>
-        </div>
+        </div> -->
       </div>
     </div>
   </div>

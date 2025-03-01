@@ -1,6 +1,7 @@
 import './assets/main.css'
 import { addCollection } from '@iconify/vue'
 import lucideIcons from '@iconify-json/lucide/icons.json'
+import vscodeIcons from '@iconify-json/vscode-icons/icons.json'
 import { createPinia } from 'pinia'
 import zhCN from './i18n/zh-CN.json'
 import enUS from './i18n/en-US.json'
@@ -28,6 +29,7 @@ const i18n = createI18n({
 })
 // 添加整个图标集合到本地
 addCollection(lucideIcons)
+addCollection(vscodeIcons)
 const pinia = createPinia()
 
 const app = createApp(App)

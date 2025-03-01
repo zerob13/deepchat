@@ -161,7 +161,11 @@ export class WindowPresenter implements IWindowPresenter {
   previewFile(filePath: string): void {
     const window = this.mainWindow
     if (window) {
-      window.previewFile(filePath)
+      if (process.platform === 'darwin') {
+        window.previewFile(filePath)
+      } else {
+        shell.openPath(filePath)
+      }
     }
   }
 

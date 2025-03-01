@@ -4,6 +4,8 @@ import { FileAdapterConstructor } from './FileAdapterConstructor'
 import { ImageFileAdapter } from './ImageFileAdapter'
 import { PdfFileAdapter } from './PdfFileAdapter'
 import { TextFileAdapter } from './TextFileAdapter'
+import { DocFileAdapter } from './DocFileAdapter'
+import { PptFileAdapter } from './PptFileAdapter'
 
 export const getMimeTypeAdapterMap = (): Map<string, FileAdapterConstructor> => {
   const map = new Map<string, FileAdapterConstructor>()
@@ -30,6 +32,22 @@ export const getMimeTypeAdapterMap = (): Map<string, FileAdapterConstructor> => 
   map.set('image/webp', ImageFileAdapter)
   map.set('image/bmp', ImageFileAdapter)
   map.set('image/*', ImageFileAdapter)
+
+  // Word document formats
+  map.set('application/msword', DocFileAdapter)
+  map.set('application/vnd.openxmlformats-officedocument.wordprocessingml.document', DocFileAdapter)
+
+  // PowerPoint formats
+  map.set('application/vnd.ms-powerpoint', PptFileAdapter)
+  map.set(
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    PptFileAdapter
+  )
+
+  // Web formats
+  map.set('text/html', TextFileAdapter)
+  map.set('text/css', TextFileAdapter)
+  map.set('application/xhtml+xml', TextFileAdapter)
 
   return map
 }

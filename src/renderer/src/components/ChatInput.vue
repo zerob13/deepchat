@@ -1,116 +1,140 @@
 <template>
   <div class="w-full max-w-5xl mx-auto">
-    <div
-      class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-2 shadow-sm"
-    >
-      <!-- {{  t('chat.input.fileArea') }} -->
-      <div v-if="selectedFiles.length > 0">
-        <TransitionGroup
-          name="file-list"
-          tag="div"
-          class="flex flex-wrap gap-1.5"
-          enter-active-class="transition-all duration-300 ease-in-out"
-          leave-active-class="transition-all duration-300 ease-in-out"
-          enter-from-class="opacity-0 -translate-y-2"
-          leave-to-class="opacity-0 -translate-y-2"
-          move-class="transition-transform duration-300 ease-in-out"
-        >
-          <FileItem
-            v-for="(file, idx) in selectedFiles"
-            :key="file.metadata.fileName"
-            :file-name="file.metadata.fileName"
-            :deletable="true"
-            @click="previewFile(file.path)"
-            @delete="deleteFile(idx)"
-          />
-        </TransitionGroup>
-      </div>
-      <!-- {{ t('chat.input.inputArea') }} -->
-      <Textarea
-        v-model="inputText"
-        :auto-focus="true"
-        :rows="rows"
-        :max-rows="maxRows"
-        :placeholder="t('chat.input.placeholder')"
-        class="border-none max-h-[10rem] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
-        @keydown.enter.exact.prevent="handleEnterKey"
-        @input="adjustHeight"
-      ></Textarea>
+    <TooltipProvider>
+      <div
+        class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-2 shadow-sm"
+      >
+        <!-- {{  t('chat.input.fileArea') }} -->
+        <div v-if="selectedFiles.length > 0">
+          <TransitionGroup
+            name="file-list"
+            tag="div"
+            class="flex flex-wrap gap-1.5"
+            enter-active-class="transition-all duration-300 ease-in-out"
+            leave-active-class="transition-all duration-300 ease-in-out"
+            enter-from-class="opacity-0 -translate-y-2"
+            leave-to-class="opacity-0 -translate-y-2"
+            move-class="transition-transform duration-300 ease-in-out"
+          >
+            <FileItem
+              v-for="(file, idx) in selectedFiles"
+              :key="file.metadata.fileName"
+              :file-name="file.metadata.fileName"
+              :deletable="true"
+              :mime-type="file.mimeType"
+              :tokens="file.token"
+              @click="previewFile(file.path)"
+              @delete="deleteFile(idx)"
+            />
+          </TransitionGroup>
+        </div>
+        <!-- {{ t('chat.input.inputArea') }} -->
+        <Textarea
+          v-model="inputText"
+          :auto-focus="true"
+          :rows="rows"
+          :max-rows="maxRows"
+          :placeholder="t('chat.input.placeholder')"
+          class="border-none max-h-[10rem] shadow-none p-2 focus-visible:ring-0 focus-within:ring-0 ring-0 outline-none focus-within:outline-none text-sm resize-none overflow-y-auto"
+          @keydown.enter.exact.prevent="handleEnterKey"
+          @input="adjustHeight"
+        ></Textarea>
 
-      <div class="flex items-center justify-between">
-        <!-- {{ t('chat.input.functionSwitch') }} -->
-        <div class="flex gap-1.5">
-          <!-- {{ t('chat.input.fileSelect') }} -->
-          <slot name="addon-buttons"></slot>
-          <Button
-            v-show="true"
-            variant="outline"
-            size="icon"
-            class="w-7 h-7 text-xs rounded-lg text-muted-foreground"
-            @click="openFilePicker"
-          >
-            <Icon icon="lucide:paperclip" class="w-4 h-4" />
-            <input ref="fileInput" type="file" class="hidden" multiple @change="handleFileSelect" />
-          </Button>
-          <Button
-            v-show="false"
-            variant="outline"
-            size="xs"
-            :class="[
-              'rounded-lg text-xs font-normal',
-              settings.deepThinking
-                ? '!bg-primary dark:!bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
-                : 'text-muted-foreground'
-            ]"
-            @click="onDeepThinkingClick"
-          >
-            <Icon icon="lucide:sparkles" class="w-4 h-4" />
-            {{ t('chat.features.deepThinking') }}
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            :class="[
-              'rounded-lg text-xs font-normal',
-              settings.webSearch
-                ? 'dark:!bg-primary bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
-                : 'text-muted-foreground'
-            ]"
-            @click="onWebSearchClick"
-          >
-            <Icon icon="lucide:globe" class="w-4 h-4" />
-            {{ t('chat.features.webSearch') }}
-          </Button>
-        </div>
-        <div class="flex items-center gap-2">
-          <div
-            v-if="
-              contextLength &&
-              contextLength > 0 &&
-              currentContextLength / (contextLength ?? 1000) > 0.5
-            "
-            class="text-xs text-muted-foreground"
-            :class="[
-              currentContextLength / (contextLength ?? 1000) > 0.9 ? ' text-red-600' : '',
-              currentContextLength / (contextLength ?? 1000) > 0.8
-                ? ' text-yellow-600'
-                : 'text-muted-foreground'
-            ]"
-          >
-            {{ currentContextLengthText }}
+        <div class="flex items-center justify-between">
+          <!-- {{ t('chat.input.functionSwitch') }} -->
+          <div class="flex gap-1.5">
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="w-7 h-7 text-xs rounded-lg text-muted-foreground"
+                  @click="openFilePicker"
+                >
+                  <Icon icon="lucide:paperclip" class="w-4 h-4" />
+                  <input
+                    ref="fileInput"
+                    type="file"
+                    class="hidden"
+                    multiple
+                    accept="application/json,application/javascript,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/vnd.ms-excel.sheet.binary.macroEnabled.12,application/vnd.apple.numbers,text/markdown,application/x-yaml,application/xml,application/typescript,application/x-sh,text/*,application/pdf,image/jpeg,image/jpg,image/png,image/gif,image/webp,image/bmp,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/html,text/css,application/xhtml+xml"
+                    @change="handleFileSelect"
+                  />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ t('chat.input.fileSelect') }}</TooltipContent>
+            </Tooltip>
+            <!-- <Tooltip v-show="false">
+              <TooltipTrigger>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  :class="[
+                    'rounded-lg text-xs font-normal',
+                    settings.deepThinking
+                      ? '!bg-primary dark:!bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                      : 'text-muted-foreground'
+                  ]"
+                  @click="onDeepThinkingClick"
+                >
+                  <Icon icon="lucide:sparkles" class="w-4 h-4" />
+                  {{ t('chat.features.deepThinking') }}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ t('chat.features.deepThinking') }}</TooltipContent>
+            </Tooltip> -->
+            <Tooltip>
+              <TooltipTrigger>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  :class="[
+                    'rounded-lg w-7 h-7 text-xs font-normal',
+                    settings.webSearch
+                      ? 'dark:!bg-primary bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                      : 'text-muted-foreground'
+                  ]"
+                  @click="onWebSearchClick"
+                >
+                  <Icon icon="lucide:globe" class="w-4 h-4" />
+                  <!-- {{ t('chat.features.webSearch') }} -->
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{{ t('chat.features.webSearch') }}</TooltipContent>
+            </Tooltip>
+            <!-- {{ t('chat.input.fileSelect') }} -->
+            <slot name="addon-buttons"></slot>
           </div>
-          <Button
-            variant="default"
-            size="icon"
-            class="w-7 h-7 text-xs"
-            :disabled="disabledSend"
-            @click="emitSend"
-          >
-            <Icon icon="lucide:send" class="w-4 h-4" />
-          </Button>
+          <div class="flex items-center gap-2">
+            <div
+              v-if="
+                contextLength &&
+                contextLength > 0 &&
+                currentContextLength / (contextLength ?? 1000) > 0.5
+              "
+              class="text-xs text-muted-foreground"
+              :class="[
+                currentContextLength / (contextLength ?? 1000) > 0.9 ? ' text-red-600' : '',
+                currentContextLength / (contextLength ?? 1000) > 0.8
+                  ? ' text-yellow-600'
+                  : 'text-muted-foreground'
+              ]"
+            >
+              {{ currentContextLengthText }}
+            </div>
+            <Button
+              variant="default"
+              size="icon"
+              class="w-7 h-7 text-xs rounded-lg"
+              :disabled="disabledSend"
+              @click="emitSend"
+            >
+              <Icon icon="lucide:arrow-up" class="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   </div>
 </template>
 
@@ -119,6 +143,7 @@ import { useI18n } from 'vue-i18n'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Icon } from '@iconify/vue'
 import FileItem from './FileItem.vue'
 import { useChatStore } from '@/stores/chat'
@@ -241,10 +266,10 @@ const onWebSearchClick = async () => {
   await configPresenter.setSetting('input_webSearch', settings.value.webSearch)
 }
 
-const onDeepThinkingClick = async () => {
-  settings.value.deepThinking = !settings.value.deepThinking
-  await configPresenter.setSetting('input_deepThinking', settings.value.deepThinking)
-}
+// const onDeepThinkingClick = async () => {
+//   settings.value.deepThinking = !settings.value.deepThinking
+//   await configPresenter.setSetting('input_deepThinking', settings.value.deepThinking)
+// }
 
 const initSettings = async () => {
   settings.value.deepThinking = Boolean(await configPresenter.getSetting('input_deepThinking'))
