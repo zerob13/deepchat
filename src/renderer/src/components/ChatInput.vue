@@ -1,8 +1,14 @@
 <template>
-  <div class="w-full max-w-5xl mx-auto">
+  <div
+    class="w-full max-w-5xl mx-auto"
+    @dragenter.prevent="handleDragEnter"
+    @dragover.prevent="handleDragOver"
+    @drop.prevent="handleDrop"
+    @dragleave.prevent="handleDragLeave"
+  >
     <TooltipProvider>
       <div
-        class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-2 shadow-sm"
+        class="bg-card border border-border rounded-lg focus-within:border-primary p-2 flex flex-col gap-2 shadow-sm relative"
       >
         <!-- {{  t('chat.input.fileArea') }} -->
         <div v-if="selectedFiles.length > 0">
@@ -148,6 +154,12 @@
             </Button>
           </div>
         </div>
+        <div v-if="isDragging" class="absolute inset-0 bg-black/40 rounded-lg">
+          <div class="flex items-center justify-center h-full gap-1">
+            <Icon icon="lucide:file-up" class="w-4 h-4 text-white" />
+            <span class="text-sm text-white">Drop files here</span>
+          </div>
+        </div>
       </div>
     </TooltipProvider>
   </div>
@@ -195,6 +207,9 @@ const currentContextLength = computed(() => {
 })
 
 const textareaRef = ref<HTMLTextAreaElement>()
+const isDragging = ref(false)
+const dragCounter = ref(0)
+let dragLeaveTimer: number | null = null
 
 const selectedFiles = ref<MessageFile[]>([])
 const props = withDefaults(
@@ -333,6 +348,55 @@ const pasteText = async () => {
     }
   } catch (err) {
     console.error('粘贴失败:', err)
+  }
+}
+
+const handleDragEnter = (e: DragEvent) => {
+  dragCounter.value++
+  isDragging.value = true
+
+  // 确保目标是文件
+  if (e.dataTransfer?.types.includes('Files')) {
+    isDragging.value = true
+  }
+}
+
+const handleDragOver = (e: DragEvent) => {
+  // 防止默认行为并保持拖拽状态
+  if (dragLeaveTimer) {
+    clearTimeout(dragLeaveTimer)
+    dragLeaveTimer = null
+  }
+}
+
+const handleDragLeave = () => {
+  dragCounter.value--
+
+  // 只有当计数器归零时才隐藏拖拽状态，并添加小延迟防止闪烁
+  if (dragCounter.value <= 0) {
+    if (dragLeaveTimer) clearTimeout(dragLeaveTimer)
+
+    dragLeaveTimer = window.setTimeout(() => {
+      if (dragCounter.value <= 0) {
+        isDragging.value = false
+        dragCounter.value = 0
+      }
+      dragLeaveTimer = null
+    }, 50)
+  }
+}
+
+const handleDrop = async (e: DragEvent) => {
+  isDragging.value = false
+  dragCounter.value = 0
+
+  if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+    for (const file of e.dataTransfer.files) {
+      const path = window.api.getPathForFile(file)
+      const fileInfo: MessageFile = await filePresenter.prepareFile(path)
+      selectedFiles.value.push(fileInfo)
+    }
+    emit('file-upload', selectedFiles.value)
   }
 }
 

@@ -1,5 +1,5 @@
 <template>
-  <div :class="['flex flex-row-reverse group p-4 gap-2']">
+  <div :class="['flex flex-row-reverse group p-4 pl-11 gap-2']">
     <!-- 头像 -->
     <div class="w-5 h-5 bg-muted rounded-md overflow-hidden">
       <img v-if="message.avatar" :src="message.avatar" class="w-full h-full" :alt="message.role" />
@@ -26,7 +26,7 @@
             @click="previewFile(file.path)"
           />
         </div>
-        <div>{{ message.content.text }}</div>
+        <div class="text-sm whitespace-pre-wrap break-words">{{ message.content.text }}</div>
         <!-- disable for now -->
         <!-- <div class="flex flex-row gap-1.5 text-xs text-muted-foreground">
           <span v-if="message.content.search">联网搜索</span>
