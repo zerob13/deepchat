@@ -235,6 +235,10 @@ export class WindowPresenter implements IWindowPresenter {
     if (window) {
       this.contextMenuDisposer = contextMenu({
         window: window,
+        shouldShowMenu(event, parameters) {
+          console.log('shouldShowMenu', JSON.stringify(event), parameters)
+          return true
+        },
         showLookUpSelection: false,
         showSearchWithGoogle: false,
         showSelectAll: false,
