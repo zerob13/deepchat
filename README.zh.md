@@ -85,6 +85,11 @@ $ npm run build:mac:arm64
 $ npm run build:linux:x64
 $ npm run build:linux:arm64
 ```
+
+## Star
+
+[![Star History Chart](https://api.star-history.com/svg?repos=ThinkInAIXYZ/deepchat&type=Date)](https://star-history.com/#ThinkInAIXYZ/deepchat&Date)
+
 # 📃 许可证
 [LICENSE](./LICENSE)
 
