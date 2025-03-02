@@ -14,7 +14,8 @@
     >
       <template #addon-buttons>
         <span
-          class="flex items-center h-7 rounded-md shadow-sm border border-border group transition-all duration-300"
+          key="newThread-model-select"
+          class="new-thread-model-select flex items-center h-7 rounded-md shadow-sm border border-border transition-all duration-300"
         >
           <Popover v-model:open="modelSelectOpen">
             <PopoverTrigger as-child>
@@ -182,7 +183,7 @@ const handleMouseLeave = () => {
 }
 
 onMounted(() => {
-  const groupElement = document.querySelector('.group')
+  const groupElement = document.querySelector('.new-thread-model-select')
   if (groupElement) {
     groupElement.addEventListener('mouseenter', handleMouseEnter)
     groupElement.addEventListener('mouseleave', handleMouseLeave)
@@ -190,7 +191,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  const groupElement = document.querySelector('.group')
+  const groupElement = document.querySelector('.new-thread-model-select')
   if (groupElement) {
     groupElement.removeEventListener('mouseenter', handleMouseEnter)
     groupElement.removeEventListener('mouseleave', handleMouseLeave)

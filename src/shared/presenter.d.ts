@@ -463,3 +463,7 @@ export interface FileMetaData {
   fileCreated: Date
   fileModified: Date
 }
+
+export interface IContextMenuPresenter {
+  registerContextMenu(selector: string, menuItems: { label: string; action: string }[]): void
+}
