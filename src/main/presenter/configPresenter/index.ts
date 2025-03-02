@@ -138,6 +138,8 @@ export class ConfigPresenter implements IConfigPresenter {
   setSetting<T>(key: string, value: T): void {
     try {
       this.store.set(key, value)
+      // 触发设置变更事件
+      eventBus.emit(CONFIG_EVENTS.SETTING_CHANGED, key, value)
     } catch (error) {
       console.error(`[Config] Failed to set setting ${key}:`, error)
     }

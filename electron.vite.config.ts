@@ -16,7 +16,7 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve('src/main/'),
-        '@shared': resolve('src/share')
+        '@shared': resolve('src/shared')
       }
     }
   },
@@ -24,7 +24,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
-        '@shared': resolve('src/share')
+        '@shared': resolve('src/shared')
       }
     }
   },
@@ -32,7 +32,7 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),
-        '@shared': resolve('src/share')
+        '@shared': resolve('src/shared')
       }
     },
     css: {
