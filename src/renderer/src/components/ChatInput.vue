@@ -153,7 +153,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -350,10 +350,6 @@ const handleDrop = async (e: DragEvent) => {
 
 onMounted(() => {
   initSettings()
-  
-  nextTick(() => {
-    textareaRef.value?.focus()
-  })
 })
 </script>
 
