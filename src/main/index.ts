@@ -9,8 +9,8 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096')
 app.commandLine.appendSwitch('ignore-certificate-errors')
 
 if (process.platform == 'win32') {
-  app.commandLine.appendSwitch('in-process-gpu')
-  app.commandLine.appendSwitch('wm-window-animations-disabled')
+  // app.commandLine.appendSwitch('in-process-gpu')
+  // app.commandLine.appendSwitch('wm-window-animations-disabled')
 }
 if (process.platform === 'darwin') {
   app.commandLine.appendSwitch('disable-features', 'DesktopCaptureMacV2,IOSurfaceCapturer')
