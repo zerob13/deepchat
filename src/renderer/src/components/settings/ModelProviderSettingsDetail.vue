@@ -267,7 +267,7 @@ const getProviderUrl = (providerId: string) => {
     case 'qwenlm':
       return 'https://chat.qwenlm.ai'
     case 'doubao':
-      return 'https://ppinfra.com/docs/get-started/quickstart.html'
+      return 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey'
     case 'minimax':
       return 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
     case 'fireworks':
