@@ -26,7 +26,7 @@
             @click="previewFile(file.path)"
           />
         </div>
-        <div class="text-sm whitespace-pre-wrap break-words">{{ message.content.text }}</div>
+        <div class="text-sm whitespace-pre-wrap break-all">{{ message.content.text }}</div>
         <!-- disable for now -->
         <!-- <div class="flex flex-row gap-1.5 text-xs text-muted-foreground">
           <span v-if="message.content.search">联网搜索</span>
