@@ -15,13 +15,13 @@
       <template #addon-buttons>
         <span
           key="newThread-model-select"
-          class="new-thread-model-select flex items-center h-7 rounded-md shadow-sm border border-border transition-all duration-300"
+          class="new-thread-model-select overflow-hidden flex items-center h-7 rounded-lg shadow-sm border border-border transition-all duration-300"
         >
           <Popover v-model:open="modelSelectOpen">
             <PopoverTrigger as-child>
               <Button
                 variant="outline"
-                class="flex border-none shadow-none items-center gap-1.5 px-2 h-full"
+                class="flex border-none rounded-none shadow-none items-center gap-1.5 px-2 h-full"
                 size="sm"
               >
                 <ModelIcon class="w-4 h-4" :model-id="activeModel.id"></ModelIcon>
@@ -35,7 +35,7 @@
                   size="xs"
                   >{{ t(`model.tags.${tag}`) }}</Badge
                 >
-                <!-- <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" /> -->
+                <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" />
               </Button>
             </PopoverTrigger>
             <PopoverContent align="start" class="p-0 w-80">
@@ -45,7 +45,7 @@
           <Popover v-model:open="settingsPopoverOpen" @update:open="handleSettingsPopoverUpdate">
             <PopoverTrigger as-child>
               <Button
-                class="w-7 h-full border-none shadow-none hover:bg-accent text-muted-foreground dark:hover:text-primary-foreground transition-all duration-300"
+                class="w-7 h-full rounded-none border-none shadow-none hover:bg-accent text-muted-foreground dark:hover:text-primary-foreground transition-all duration-300"
                 :class="{
                   'w-0 opacity-0 p-0 overflow-hidden': !showSettingsButton && !isHovering,
                   'w-7 opacity-100': showSettingsButton || isHovering
