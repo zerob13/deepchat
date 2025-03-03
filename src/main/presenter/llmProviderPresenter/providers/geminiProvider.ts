@@ -173,6 +173,7 @@ export class GeminiProvider extends BaseLLMProvider {
             description: 'Gemini 1.5 Pro 模型（更强大、支持多模态）'
           }
         ]
+        await this.autoEnableModelsIfNeeded()
         this.isInitialized = true
         console.info('Provider initialized successfully:', this.provider.name)
       } catch (error) {
