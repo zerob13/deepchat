@@ -28,7 +28,7 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
-# afterSign: scripts/notarize.js
+afterSign: scripts/notarize.js
 afterPack: scripts/afterPack.js
 mac:
   entitlementsInherit: build/entitlements.mac.plist
