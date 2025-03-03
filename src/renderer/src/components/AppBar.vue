@@ -1,5 +1,7 @@
 <template>
-  <div class="h-9 flex-shrink-0 w-full flex items-center justify-between bg-background border-b">
+  <div
+    class="h-9 flex-shrink-0 w-full flex items-center justify-between select-none bg-background border-b"
+  >
     <!-- App title/content in center -->
     <div
       :class="[
