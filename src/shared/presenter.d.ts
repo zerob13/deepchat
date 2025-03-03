@@ -22,6 +22,7 @@ export interface ModelConfig {
   maxTokens: number
   contextLength: number
   temperature: number
+  vision: boolean
 }
 
 export interface IWindowPresenter {

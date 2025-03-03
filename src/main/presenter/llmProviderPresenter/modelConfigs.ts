@@ -16,7 +16,8 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     return {
       maxTokens: 8192,
       contextLength: 1048576,
-      temperature: 0.7
+      temperature: 0.7,
+      vision: true
     }
   }
 
@@ -24,7 +25,8 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     return {
       maxTokens: 8192,
       contextLength: 1048576,
-      temperature: 0.7
+      temperature: 0.7,
+      vision: true
     }
   }
 
@@ -32,7 +34,8 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     return {
       maxTokens: 8192,
       contextLength: 2097152,
-      temperature: 0.7
+      temperature: 0.7,
+      vision: true
     }
   }
 

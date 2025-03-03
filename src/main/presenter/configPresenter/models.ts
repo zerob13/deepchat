@@ -5,7 +5,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 8192,
     contextLength: 65536,
-    match: ['deepseek', 'reasoner']
+    match: ['deepseek', 'reasoner'],
+    vision: false
   },
   {
     id: 'deepseek-chat',
@@ -13,7 +14,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 8192,
     contextLength: 65536,
-    match: ['deepseek', 'chat']
+    match: ['deepseek', 'chat'],
+    vision: false
   },
   {
     id: 'deepseek-r1',
@@ -21,7 +23,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 8192,
     contextLength: 65536,
-    match: ['deepseek', 'r1']
+    match: ['deepseek', 'r1'],
+    vision: false
   },
   {
     id: 'deepseek-v3',
@@ -29,7 +32,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 8192,
     contextLength: 65536,
-    match: ['deepseek', 'v3']
+    match: ['deepseek', 'v3'],
+    vision: false
   },
   {
     id: 'deepseek-v2.5',
@@ -37,7 +41,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 4096,
     contextLength: 32768,
-    match: ['deepseek', 'v2.5']
+    match: ['deepseek', 'v2.5'],
+    vision: false
   },
   {
     id: 'qwen2.5-32b',
@@ -45,7 +50,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 4096,
     contextLength: 32768,
-    match: ['qwen2.5', '32b']
+    match: ['qwen2.5', '32b'],
+    vision: false
   },
   {
     id: 'qwen2.5-72b',
@@ -53,7 +59,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 4096,
     contextLength: 32768,
-    match: ['qwen2.5', '72b']
+    match: ['qwen2.5', '72b'],
+    vision: false
   },
   {
     id: 'qwen2.5-14b',
@@ -61,7 +68,8 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 4096,
     contextLength: 32768,
-    match: ['qwen2.5', '14b']
+    match: ['qwen2.5', '14b'],
+    vision: false
   },
   {
     id: 'qwen2.5-7b',
@@ -69,6 +77,7 @@ export const defaultModelsSettings = [
     temperature: 0.6,
     maxTokens: 4096,
     contextLength: 32768,
-    match: ['qwen2.5', '7b']
+    match: ['qwen2.5', '7b'],
+    vision: false
   }
 ]
