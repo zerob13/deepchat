@@ -102,10 +102,18 @@ export class ConfigPresenter implements IConfigPresenter {
     for (const provider of providers) {
       // 迁移provider模型
       const oldProviderModelsKey = `${provider.id}_models`
-      const oldModels = this.getSetting<MODEL_META[]>(oldProviderModelsKey)
+      const oldModels = this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldProviderModelsKey)
 
       if (oldModels && oldModels.length > 0) {
         const store = this.getProviderModelStore(provider.id)
+        // 遍历旧模型，保存启用状态
+        oldModels.forEach((model) => {
+          if (model.enabled) {
+            this.setModelStatus(provider.id, model.id, true)
+          }
+          // @ts-ignore - 需要删除enabled属性以便独立存储状态
+          delete model.enabled
+        })
         // 保存模型列表到新存储
         store.set('models', oldModels)
         // 清除旧存储
@@ -114,10 +122,19 @@ export class ConfigPresenter implements IConfigPresenter {
 
       // 迁移custom模型
       const oldCustomModelsKey = `custom_models_${provider.id}`
-      const oldCustomModels = this.getSetting<MODEL_META[]>(oldCustomModelsKey)
+      const oldCustomModels =
+        this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldCustomModelsKey)
 
       if (oldCustomModels && oldCustomModels.length > 0) {
         const store = this.getProviderModelStore(provider.id)
+        // 遍历旧的自定义模型，保存启用状态
+        oldCustomModels.forEach((model) => {
+          if (model.enabled) {
+            this.setModelStatus(provider.id, model.id, true)
+          }
+          // @ts-ignore - 需要删除enabled属性以便独立存储状态
+          delete model.enabled
+        })
         // 保存自定义模型列表到新存储
         store.set('custom_models', oldCustomModels)
         // 清除旧存储
