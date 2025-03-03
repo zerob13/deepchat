@@ -51,6 +51,7 @@
             size="xs"
             class="text-xs text-normal rounded-lg"
             v-if="!provider.custom && provider.id !== 'doubao'"
+            @click="openProviderWebsite(provider.id)"
           >
             <Icon icon="lucide:hand-helping" class="w-4 h-4 text-muted-foreground" />{{
               t('settings.provider.howToGet')
@@ -396,6 +397,10 @@ const confirmDeleteProvider = async () => {
   } catch (error) {
     console.error('删除供应商失败:', error)
   }
+}
+const openProviderWebsite = (providerId: string) => {
+  const url = getProviderUrl(providerId)
+  window.open(url, '_blank')
 }
 
 watch(
