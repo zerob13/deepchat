@@ -4,6 +4,7 @@ import mathjax3 from 'markdown-it-mathjax3'
 // Create markdown-it instance with configuration
 const md = new MarkdownIt({
   html: true,
+  xhtmlOut: true,
   linkify: true,
   typographer: true,
   breaks: false
@@ -63,8 +64,8 @@ md.use(mathjax3, {
 md.options.highlight = null
 
 // Custom paragraph rendering rules
-md.renderer.rules.paragraph_open = () => ''
-md.renderer.rules.paragraph_close = () => ''
+// md.renderer.rules.paragraph_open = () => ''
+// md.renderer.rules.paragraph_close = () => ''
 
 // Custom code block rendering
 export const createCodeBlockRenderer = (t: (key: string) => string) => {
@@ -125,9 +126,9 @@ const referenceInline = (state: any, silent: boolean) => {
 // Add rendering rule for references
 md.renderer.rules.reference = (tokens, idx) => {
   const id = tokens[idx].content
-  return `<span class="reference-link" 
-    data-reference-id="${id}" 
-    role="button" 
+  return `<span class="reference-link"
+    data-reference-id="${id}"
+    role="button"
     tabindex="0"
     title="Click to view reference"
     onclick="window.handleReferenceClick(${id}, event)"
