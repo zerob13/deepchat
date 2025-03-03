@@ -33,7 +33,7 @@ export abstract class BaseLLMProvider {
   }
 
   // 检查并自动启用模型
-  private async autoEnableModelsIfNeeded() {
+  protected async autoEnableModelsIfNeeded() {
     if (!this.models || this.models.length === 0) return
 
     const providerId = this.provider.id
