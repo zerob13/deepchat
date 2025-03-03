@@ -10,6 +10,7 @@ import { getModelConfig } from './modelConfigs'
 import { STREAM_EVENTS } from '@/events'
 import { ConfigPresenter } from '../configPresenter'
 import { GeminiProvider } from './providers/geminiProvider'
+import { DEFAULT_PROVIDERS } from '../configPresenter/providers'
 // 导入其他provider...
 
 // 流的状态
@@ -40,6 +41,16 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
   constructor(configPresenter: ConfigPresenter) {
     this.configPresenter = configPresenter
+    this.init()
+  }
+
+  private init() {
+    // 初始化默认的providers
+    DEFAULT_PROVIDERS.forEach((provider) => {
+      this.providers.set(provider.id, {
+        ...provider
+      })
+    })
   }
 
   getProviders(): LLM_PROVIDER[] {
@@ -100,23 +111,23 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
       const provider = this.getProviderById(providerId)
       switch (provider.id) {
         case 'openai':
-          instance = new OpenAIProvider(provider)
+          instance = new OpenAIProvider(provider, this.configPresenter)
           break
         case 'deepseek':
-          instance = new DeepseekProvider(provider)
+          instance = new DeepseekProvider(provider, this.configPresenter)
           break
         case 'silicon':
-          instance = new SiliconcloudProvider(provider)
+          instance = new SiliconcloudProvider(provider, this.configPresenter)
           break
         case 'ppio':
-          instance = new PPIOProvider(provider)
+          instance = new PPIOProvider(provider, this.configPresenter)
           break
         case 'gemini':
-          instance = new GeminiProvider(provider)
+          instance = new GeminiProvider(provider, this.configPresenter)
           break
         // 添加其他provider的实例化逻辑
         default:
-          instance = new OpenAICompatibleProvider(provider)
+          instance = new OpenAICompatibleProvider(provider, this.configPresenter)
           break
       }
       this.providerInstances.set(providerId, instance)

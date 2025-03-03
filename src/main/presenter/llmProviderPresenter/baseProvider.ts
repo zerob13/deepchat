@@ -1,4 +1,5 @@
 import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@shared/presenter'
+import { ConfigPresenter } from '../configPresenter'
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -10,20 +11,55 @@ export abstract class BaseLLMProvider {
   protected models: MODEL_META[] = []
   protected customModels: MODEL_META[] = []
   protected isInitialized: boolean = false
+  protected configPresenter: ConfigPresenter
 
-  constructor(provider: LLM_PROVIDER) {
+  constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     this.provider = provider
+    this.configPresenter = configPresenter
   }
 
   protected async init() {
     if (this.provider.enable) {
       try {
         await this.fetchModels()
+        // 检查是否需要自动启用所有模型
+        await this.autoEnableModelsIfNeeded()
         this.isInitialized = true
         console.info('Provider initialized successfully:', this.provider.name)
       } catch (error) {
         console.warn('Provider initialization failed:', this.provider.name, error)
       }
+    }
+  }
+
+  // 检查并自动启用模型
+  private async autoEnableModelsIfNeeded() {
+    if (!this.models || this.models.length === 0) return
+
+    const providerId = this.provider.id
+
+    // 检查是否有自定义模型
+    const customModels = this.configPresenter.getCustomModels(providerId)
+    if (customModels && customModels.length > 0) return
+
+    // 检查是否有任何模型的状态被手动修改过
+    const hasManuallyModifiedModels = this.models.some((model) =>
+      this.configPresenter.getModelStatus(providerId, model.id)
+    )
+    if (hasManuallyModifiedModels) return
+
+    // 检查是否有任何已启用的模型
+    const hasEnabledModels = this.models.some((model) =>
+      this.configPresenter.getModelStatus(providerId, model.id)
+    )
+
+    // 如果没有任何已启用的模型，则自动启用所有模型
+    // 这部分后续应该改为启用推荐模型
+    if (!hasEnabledModels) {
+      console.info(`Auto enabling all models for provider: ${this.provider.name}`)
+      this.models.forEach((model) => {
+        this.configPresenter.enableModel(providerId, model.id)
+      })
     }
   }
 

@@ -2,6 +2,7 @@ import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@share
 import { BaseLLMProvider } from '../baseProvider'
 import OpenAI from 'openai'
 import { ChatCompletionMessage } from 'openai/resources'
+import { ConfigPresenter } from '../../configPresenter'
 
 // 定义ChatMessage接口用于统一消息格式
 interface ChatMessage {
@@ -15,8 +16,8 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   // 添加不支持 OpenAI 标准接口的供应商黑名单
   private static readonly NO_MODELS_API_LIST = ['doubao']
 
-  constructor(provider: LLM_PROVIDER) {
-    super(provider)
+  constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
+    super(provider, configPresenter)
     this.openai = new OpenAI({
       apiKey: this.provider.apiKey,
       baseURL: this.provider.baseUrl

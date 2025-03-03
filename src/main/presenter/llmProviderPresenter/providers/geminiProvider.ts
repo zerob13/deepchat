@@ -1,12 +1,13 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
 import { BaseLLMProvider } from '../baseProvider'
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai'
+import { ConfigPresenter } from '../../configPresenter'
 
 export class GeminiProvider extends BaseLLMProvider {
   private genAI: GoogleGenerativeAI
 
-  constructor(provider: LLM_PROVIDER) {
-    super(provider)
+  constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
+    super(provider, configPresenter)
     this.genAI = new GoogleGenerativeAI(this.provider.apiKey)
     this.init()
   }

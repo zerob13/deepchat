@@ -1,9 +1,10 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream } from '@shared/presenter'
 import { OpenAICompatibleProvider } from './openAICompatibleProvider'
+import { ConfigPresenter } from '../../configPresenter'
 
 export class SiliconcloudProvider extends OpenAICompatibleProvider {
-  constructor(provider: LLM_PROVIDER) {
-    super(provider)
+  constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
+    super(provider, configPresenter)
   }
 
   async completions(
