@@ -482,7 +482,14 @@ export class ThreadPresenter implements IThreadPresenter {
       const { list: messages } = await this.getMessages(conversationId, 1, 2)
       if (messages.length === 1) {
         // 更新会话的 is_new 标志位
-        await this.sqlitePresenter.updateConversation(conversationId, { is_new: 0 })
+        await this.sqlitePresenter.updateConversation(conversationId, {
+          is_new: 0,
+          updatedAt: Date.now()
+        })
+      } else {
+        await this.sqlitePresenter.updateConversation(conversationId, {
+          updatedAt: Date.now()
+        })
       }
 
       return assistantMessage
