@@ -157,7 +157,8 @@ export class WindowPresenter implements IWindowPresenter {
       this.trayPresenter = new TrayPresenter(this)
     }
 
-    this.resetContextMenu(app.getLocale())
+    const lang = this.configPresenter.getSetting<string>('language')
+    this.resetContextMenu(lang || app.getLocale())
 
     return mainWindow
   }
@@ -226,6 +227,7 @@ export class WindowPresenter implements IWindowPresenter {
 
   async resetContextMenu(lang: string): Promise<void> {
     const locale = lang === 'system' ? app.getLocale() : lang
+    console.log('resetContextMenu', locale)
     if (this.contextMenuDisposer) {
       this.contextMenuDisposer()
       this.contextMenuDisposer = undefined
