@@ -204,7 +204,7 @@ export class ContentEnricher {
       return userText
     }
 
-    let enrichedContent = `${userText}\n\n---
+    let enrichedContent = `---
   如下url-content的标签中包含了用户上述提到的一些链接的具体信息:
   <url-content>
   \n

@@ -789,13 +789,13 @@ export class ThreadPresenter implements IThreadPresenter {
       // 使用URL内容丰富用户消息
       const enrichedUserMessage =
         urlResults.length > 0
-          ? ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
-          : userContent
+          ? '\n\n' + ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
+          : ''
 
       // 计算token数量
       const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
       const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
-      const userMessageTokens = approximateTokenSize(enrichedUserMessage)
+      const userMessageTokens = approximateTokenSize(userContent + enrichedUserMessage)
 
       // 计算剩余可用的上下文长度
       const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
@@ -876,11 +876,19 @@ export class ThreadPresenter implements IThreadPresenter {
           content
         })
       })
-
+      let finalContent = ''
+      if (searchPrompt) {
+        finalContent += searchPrompt
+      } else {
+        finalContent += userContent
+      }
+      if (enrichedUserMessage) {
+        finalContent += enrichedUserMessage
+      }
       // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
       formattedMessages.push({
         role: 'user',
-        content: searchPrompt || enrichedUserMessage
+        content: finalContent.trim()
       })
 
       const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
