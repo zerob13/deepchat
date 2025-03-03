@@ -11,7 +11,6 @@ import { ConfigPresenter } from './configPresenter'
 import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
-import { ContextMenuPresenter } from './contextMenuPresenter'
 import { FilePresenter } from './filePresenter/FilePresenter'
 import {
   CONFIG_EVENTS,
@@ -20,7 +19,6 @@ import {
   WINDOW_EVENTS,
   UPDATE_EVENTS
 } from '@/events'
-
 
 export class Presenter implements IPresenter {
   windowPresenter: WindowPresenter
@@ -33,7 +31,6 @@ export class Presenter implements IPresenter {
   shortcutPresenter: ShortcutPresenter
   filePresenter: FilePresenter
   // llamaCppPresenter: LlamaCppPresenter
-  contextMenuPresenter: ContextMenuPresenter
 
   constructor() {
     this.configPresenter = new ConfigPresenter()
@@ -49,7 +46,6 @@ export class Presenter implements IPresenter {
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
     // this.llamaCppPresenter = new LlamaCppPresenter()
-    this.contextMenuPresenter = new ContextMenuPresenter()
     this.setupEventBus()
   }
   setupEventBus() {
@@ -154,7 +150,6 @@ export class Presenter implements IPresenter {
   destroy() {
     this.sqlitePresenter.close()
     this.shortcutPresenter.destroy()
-    this.contextMenuPresenter.dispose()
   }
 }
 

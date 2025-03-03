@@ -7,7 +7,9 @@ import { IWindowPresenter } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
 import { ConfigPresenter } from './configPresenter'
 import { TrayPresenter } from './trayPresenter'
-import { WINDOW_EVENTS } from '@/events'
+import { CONFIG_EVENTS, WINDOW_EVENTS } from '@/events'
+import contextMenu from 'electron-context-menu'
+import { getContextMenuLabels } from '@shared/i18n'
 
 export const MAIN_WIN = 'main'
 export class WindowPresenter implements IWindowPresenter {
@@ -15,6 +17,7 @@ export class WindowPresenter implements IWindowPresenter {
   private configPresenter: ConfigPresenter
   private isQuitting: boolean = false
   private trayPresenter: TrayPresenter | null = null
+  private contextMenuDisposer?: () => void
 
   constructor(configPresenter: ConfigPresenter) {
     this.windows = new Map()
@@ -53,6 +56,12 @@ export class WindowPresenter implements IWindowPresenter {
       this.isQuitting = true
       if (this.trayPresenter) {
         this.trayPresenter.destroy()
+      }
+    })
+
+    eventBus.on(CONFIG_EVENTS.SETTING_CHANGED, (key, value) => {
+      if (key === 'language') {
+        this.resetContextMenu(value as string)
       }
     })
 
@@ -148,6 +157,8 @@ export class WindowPresenter implements IWindowPresenter {
       this.trayPresenter = new TrayPresenter(this)
     }
 
+    this.resetContextMenu(app.getLocale())
+
     return mainWindow
   }
   getWindow(windowName: string): BrowserWindow | undefined {
@@ -211,5 +222,40 @@ export class WindowPresenter implements IWindowPresenter {
   isMaximized(): boolean {
     const window = this.mainWindow
     return window ? window.isMaximized() : false
+  }
+
+  async resetContextMenu(lang: string): Promise<void> {
+    const locale = lang === 'system' ? app.getLocale() : lang
+    if (this.contextMenuDisposer) {
+      this.contextMenuDisposer()
+      this.contextMenuDisposer = undefined
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const window = this.mainWindow
+    if (window) {
+      this.contextMenuDisposer = contextMenu({
+        window: window,
+        shouldShowMenu(event, parameters) {
+          console.log('shouldShowMenu', JSON.stringify(event), parameters)
+          return true
+        },
+        showLookUpSelection: false,
+        showSearchWithGoogle: false,
+        showSelectAll: false,
+        showCopyImage: false,
+        showSaveImageAs: false,
+        showServices: false,
+        showInspectElement: false,
+        showLearnSpelling: false,
+        showCopyImageAddress: false,
+        showCopyVideoAddress: false,
+        showSaveVideo: false,
+        showSaveVideoAs: false,
+        showCopyLink: false,
+        showSaveImage: false,
+        showSaveLinkAs: false,
+        labels: getContextMenuLabels(locale)
+      })
+    }
   }
 }

@@ -153,7 +153,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -294,11 +294,6 @@ const initSettings = async () => {
   settings.value.webSearch = Boolean(await configPresenter.getSetting('input_webSearch'))
 }
 
-const contextMenuPresenter = usePresenter('contextMenuPresenter')
-contextMenuPresenter.registerContextMenu('textarea.textarea-selector', [
-  { label: '复制', action: 'copy' }
-])
-
 const handleDragEnter = (e: DragEvent) => {
   dragCounter.value++
   isDragging.value = true
@@ -309,7 +304,7 @@ const handleDragEnter = (e: DragEvent) => {
   }
 }
 
-const handleDragOver = (e: DragEvent) => {
+const handleDragOver = () => {
   // 防止默认行为并保持拖拽状态
   if (dragLeaveTimer) {
     clearTimeout(dragLeaveTimer)
@@ -351,6 +346,8 @@ const handleDrop = async (e: DragEvent) => {
 onMounted(() => {
   initSettings()
 })
+
+onUnmounted(() => {})
 </script>
 
 <style scoped></style>
