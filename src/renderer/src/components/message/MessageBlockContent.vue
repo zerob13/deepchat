@@ -433,16 +433,17 @@ const cleanupEditors = () => {
 
 const renderContent = (content: string) => {
   refreshLoadingCursor()
-  const safeContent = DOMPurify.sanitize(
-    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content,
-    {
-      WHOLE_DOCUMENT: false,
-      FORBID_TAGS: ['script', 'style'],
-      ALLOWED_URI_REGEXP:
-        /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
-    }
+
+  const rawContent = renderMarkdown(
+    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
-  return renderMarkdown(safeContent)
+  const safeContent = DOMPurify.sanitize(rawContent, {
+    WHOLE_DOCUMENT: false,
+    FORBID_TAGS: ['script', 'style', 'code'],
+    ALLOWED_URI_REGEXP:
+      /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
+  })
+  return safeContent
 }
 
 // 右键菜单事件处理
