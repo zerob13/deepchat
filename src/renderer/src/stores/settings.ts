@@ -234,16 +234,30 @@ export const useSettingsStore = defineStore('settings', () => {
             isCustom: true
           }))
         ]
+        const findAllProviderModelIndex = allProviderModels.value.findIndex(
+          (item) => item.providerId === provider.id
+        )
+        if (findAllProviderModelIndex !== -1) {
+          allProviderModels.value[findAllProviderModelIndex].models = allModels
+        } else {
+          allProviderModels.value.push({
+            providerId: provider.id,
+            models: allModels
+          })
+        }
 
-        allProviderModels.value.push({
-          providerId: provider.id,
-          models: allModels
-        })
-
-        enabledModels.value.push({
+        const existingEnabledIndex = enabledModels.value.findIndex(
+          (item) => item.providerId === provider.id
+        )
+        const enabledModelsData = {
           providerId: provider.id,
           models: allModels.filter((model) => model.enabled !== false)
-        })
+        }
+        if (existingEnabledIndex !== -1) {
+          enabledModels.value[existingEnabledIndex].models = enabledModelsData.models
+        } else {
+          enabledModels.value.push(enabledModelsData)
+        }
       } catch (error) {
         console.error(`Failed to fetch models for provider ${provider.id}:`, error)
       }
