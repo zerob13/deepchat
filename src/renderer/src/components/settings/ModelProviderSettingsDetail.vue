@@ -50,7 +50,7 @@
             variant="outline"
             size="xs"
             class="text-xs text-normal rounded-lg"
-            v-if="!provider.custom"
+            v-if="!provider.custom && provider.id !== 'doubao'"
           >
             <Icon icon="lucide:hand-helping" class="w-4 h-4 text-muted-foreground" />{{
               t('settings.provider.howToGet')
