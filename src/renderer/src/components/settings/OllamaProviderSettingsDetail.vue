@@ -69,17 +69,6 @@
                   formatModelSize(model.size)
                 }}</span>
               </div>
-              <div class="flex flex-row gap-2">
-                <Button
-                  variant="outline"
-                  size="xs"
-                  class="text-xs rounded-lg"
-                  @click="stopModel(model.name)"
-                >
-                  <Icon icon="lucide:stop-circle" class="w-3.5 h-3.5 mr-1" />
-                  {{ t('settings.provider.stopModel') }}
-                </Button>
-              </div>
             </div>
           </div>
         </div>
@@ -348,17 +337,6 @@ const refreshModels = async () => {
     localModels.value = await ollamaStore.listModels()
   } catch (error) {
     console.error('Failed to refresh models:', error)
-  }
-}
-
-// 停止模型
-const stopModel = async (modelName: string) => {
-  try {
-    // 在实际实现中，应该有一个方法来停止模型
-    await settingsStore.updateModelStatus(props.provider.id, modelName, false)
-    await refreshModels()
-  } catch (error) {
-    console.error(`Failed to stop model ${modelName}:`, error)
   }
 }
 
