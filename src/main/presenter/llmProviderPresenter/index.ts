@@ -452,22 +452,16 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
   // 获取 OllamaProvider 实例
   getOllamaProviderInstance(): OllamaProvider | null {
-    // 检查当前激活的 provider 是否是 ollama
-    if (!this.currentProviderId) {
-      return null
+    // 从所有 provider 中找到已经启用的 ollama provider
+    for (const provider of this.providers.values()) {
+      if (provider.id === 'ollama' && provider.enable) {
+        const providerInstance = this.providerInstances.get(provider.id)
+        if (providerInstance instanceof OllamaProvider) {
+          return providerInstance
+        }
+      }
     }
-
-    const currentProvider = this.providers.get(this.currentProviderId)
-    if (!currentProvider || currentProvider.apiType !== 'ollama') {
-      return null
-    }
-
-    const providerInstance = this.providerInstances.get(this.currentProviderId)
-    if (!providerInstance || !(providerInstance instanceof OllamaProvider)) {
-      return null
-    }
-
-    return providerInstance
+    return null
   }
   // ollama api
   listOllamaModels(): Promise<OllamaModel[]> {
