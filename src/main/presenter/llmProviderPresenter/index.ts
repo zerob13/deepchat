@@ -467,7 +467,8 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   listOllamaModels(): Promise<OllamaModel[]> {
     const provider = this.getOllamaProviderInstance()
     if (!provider) {
-      throw new Error('Ollama provider not found')
+      console.error('Ollama provider not found')
+      return Promise.resolve([])
     }
     return provider.listModels()
   }
@@ -481,7 +482,8 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   listOllamaRunningModels(): Promise<OllamaModel[]> {
     const provider = this.getOllamaProviderInstance()
     if (!provider) {
-      throw new Error('Ollama provider not found')
+      console.error('Ollama provider not found')
+      return Promise.resolve([])
     }
     return provider.listRunningModels()
   }
