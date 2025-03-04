@@ -90,7 +90,10 @@
             {{ t('settings.provider.localModels') }}
           </h3>
           <div class="flex flex-col w-full border overflow-hidden rounded-lg">
-            <div v-if="localModels.length === 0" class="p-4 text-center text-secondary-foreground">
+            <div
+              v-if="localModels.length === 0 && pullingModels.size === 0"
+              class="p-4 text-center text-secondary-foreground"
+            >
               {{ t('settings.provider.noLocalModels') }}
             </div>
             <div
@@ -116,17 +119,6 @@
                 </div>
               </div>
               <div class="flex flex-row gap-2">
-                <Button
-                  v-if="!model.pulling"
-                  variant="outline"
-                  size="xs"
-                  class="text-xs rounded-lg"
-                  :disabled="isModelRunning(model.name)"
-                  @click="runModel(model.name)"
-                >
-                  <Icon icon="lucide:play" class="w-3.5 h-3.5 mr-1" />
-                  {{ t('settings.provider.runModel') }}
-                </Button>
                 <Button
                   v-if="!model.pulling"
                   variant="destructive"
@@ -207,7 +199,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -246,13 +238,13 @@ const modelToDelete = ref('')
 
 // 预设可拉取的模型列表
 const presetModels = [
-  { name: 'deepseek-r:1.5b' },
-  { name: 'deepseek-r:7b' },
-  { name: 'deepseek-r:8b' },
-  { name: 'deepseek-r:14b' },
-  { name: 'deepseek-r:32b' },
-  { name: 'deepseek-r:70b' },
-  { name: 'deepseek-r:671b' },
+  { name: 'deepseek-r1:1.5b' },
+  { name: 'deepseek-r1:7b' },
+  { name: 'deepseek-r1:8b' },
+  { name: 'deepseek-r1:14b' },
+  { name: 'deepseek-r1:32b' },
+  { name: 'deepseek-r1:70b' },
+  { name: 'deepseek-r1:671b' },
   { name: 'llama3.3:70b' },
   { name: 'llama3.2:1b' },
   { name: 'llama3.2:3b' },
@@ -288,10 +280,12 @@ const presetModels = [
   { name: 'gemma:7b' }
 ]
 
-// 可拉取的模型（排除已有的）
+// 可拉取的模型（排除已有的和正在拉取的）
 const availableModels = computed(() => {
   const localModelNames = new Set(localModels.value.map((m) => m.name))
-  return presetModels.filter((m) => !localModelNames.has(m.name))
+  const pullingModelNames = new Set(Array.from(pullingModels.value.keys()))
+  console.log(localModels.value, presetModels, localModelNames)
+  return presetModels.filter((m) => !localModelNames.has(m.name) && !pullingModelNames.has(m.name))
 })
 
 // 显示的本地模型（包括正在拉取的）
@@ -335,8 +329,15 @@ const displayLocalModels = computed(() => {
 })
 
 // 初始化
-onMounted(async () => {
-  await refreshModels()
+onMounted(() => {
+  refreshModels()
+  // 注册事件监听器
+  window.electron?.ipcRenderer?.on(
+    'ollama-model-pull-progress',
+    (_event: unknown, data: Record<string, unknown>) => {
+      handlePullModelEvent(data)
+    }
+  )
 })
 
 // 刷新模型列表
@@ -346,19 +347,6 @@ const refreshModels = async () => {
     localModels.value = await ollamaStore.listModels()
   } catch (error) {
     console.error('Failed to refresh models:', error)
-  }
-}
-
-// 启动模型
-const runModel = async (modelName: string) => {
-  try {
-    // 在实际实现中，应该有一个方法来启动模型
-    // 这里我们模拟启动后刷新列表
-    // 实际应该调用某个API触发模型加载
-    await settingsStore.updateModelStatus(props.provider.id, modelName, true)
-    await refreshModels()
-  } catch (error) {
-    console.error(`Failed to run model ${modelName}:`, error)
   }
 }
 
@@ -379,16 +367,16 @@ const pullModel = async (modelName: string) => {
     // 初始化进度为0
     pullingModels.value.set(modelName, 0)
 
-    // 开始拉取，实际中应该有进度回调
+    // 开始拉取
     const success = await ollamaStore.pullModel(modelName)
 
-    // 拉取完成后刷新列表并删除进度记录
+    // 成功开始拉取后关闭对话框
     if (success) {
-      await refreshModels()
+      showPullModelDialog.value = false
+    } else {
+      // 如果拉取失败，删除进度记录
+      pullingModels.value.delete(modelName)
     }
-
-    pullingModels.value.delete(modelName)
-    showPullModelDialog.value = false
   } catch (error) {
     console.error(`Failed to pull model ${modelName}:`, error)
     pullingModels.value.delete(modelName)
@@ -458,25 +446,36 @@ watch(
   { immediate: true }
 )
 
-// 模拟进度更新 (实际项目中应该由后端事件驱动)
-watch(pullingModels, () => {
-  for (const [modelName, progress] of pullingModels.value.entries()) {
-    if (progress < 100) {
-      const timerId = setTimeout(() => {
-        // 模拟进度增加
-        const newProgress = Math.min(progress + 5, 100)
-        pullingModels.value.set(modelName, newProgress)
+// 处理模型拉取事件
+const handlePullModelEvent = (event: Record<string, unknown>) => {
+  if (event?.eventId !== 'pullOllamaModels' || !event?.modelName) return
 
-        if (newProgress === 100) {
-          setTimeout(() => {
-            pullingModels.value.delete(modelName)
-            refreshModels()
-          }, 1000)
-        }
-      }, 1000)
+  const modelName = event.modelName as string
+  const status = event.status as string
+  const total = event.total as number
+  const completed = event.completed as number
 
-      return () => clearTimeout(timerId)
-    }
+  // 如果有 completed 和 total，计算进度
+  if (typeof completed === 'number' && typeof total === 'number' && total > 0) {
+    const progress = Math.min(Math.round((completed / total) * 100), 100)
+    pullingModels.value.set(modelName, progress)
   }
+  // 如果只有 status 是 pulling manifest 或没有 total，设置为初始状态
+  else if (status && status.includes('manifest')) {
+    pullingModels.value.set(modelName, 1) // 设置为1%表示开始
+  }
+
+  // 如果拉取完成
+  if (status === 'success' || status === 'completed') {
+    setTimeout(() => {
+      pullingModels.value.delete(modelName)
+      refreshModels()
+    }, 1000)
+  }
+}
+
+// 组件卸载时移除事件监听器
+onUnmounted(() => {
+  window.electron?.ipcRenderer?.removeAllListeners('ollama-model-pull-progress')
 })
 </script>
