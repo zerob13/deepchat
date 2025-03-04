@@ -101,7 +101,7 @@
               :key="model.name"
               class="flex flex-row items-center justify-between p-2 border-b last:border-b-0 hover:bg-accent"
             >
-              <div class="flex flex-col">
+              <div class="flex flex-col flex-grow">
                 <div class="flex flex-row items-center gap-1">
                   <span class="text-sm font-medium">{{ model.name }}</span>
                   <span
@@ -110,13 +110,13 @@
                   >
                     {{ t('settings.provider.pulling') }}
                   </span>
+                  <span class="w-[50px]" v-if="model.pulling">
+                    <Progress :modelValue="pullingModels.get(model.name)" class="h-1.5" />
+                  </span>
                 </div>
                 <span class="text-xs text-secondary-foreground">{{
                   formatModelSize(model.size)
                 }}</span>
-                <div v-if="model.pulling" class="w-full mt-1">
-                  <Progress :value="model.progress" class="h-1.5" />
-                </div>
               </div>
               <div class="flex flex-row gap-2">
                 <Button
@@ -215,6 +215,7 @@ import {
 import { useSettingsStore } from '@/stores/settings'
 import type { LLM_PROVIDER, OllamaModel } from '@shared/presenter'
 import { useOllamaStore } from '@/stores/ollama'
+import { OLLAMA_EVENTS } from '@/events'
 
 const { t } = useI18n()
 
@@ -284,7 +285,6 @@ const presetModels = [
 const availableModels = computed(() => {
   const localModelNames = new Set(localModels.value.map((m) => m.name))
   const pullingModelNames = new Set(Array.from(pullingModels.value.keys()))
-  console.log(localModels.value, presetModels, localModelNames)
   return presetModels.filter((m) => !localModelNames.has(m.name) && !pullingModelNames.has(m.name))
 })
 
@@ -333,8 +333,9 @@ onMounted(() => {
   refreshModels()
   // 注册事件监听器
   window.electron?.ipcRenderer?.on(
-    'ollama-model-pull-progress',
+    OLLAMA_EVENTS.PULL_MODEL_PROGRESS,
     (_event: unknown, data: Record<string, unknown>) => {
+      // console.log('pullModelProgress', data)
       handlePullModelEvent(data)
     }
   )
@@ -476,6 +477,6 @@ const handlePullModelEvent = (event: Record<string, unknown>) => {
 
 // 组件卸载时移除事件监听器
 onUnmounted(() => {
-  window.electron?.ipcRenderer?.removeAllListeners('ollama-model-pull-progress')
+  window.electron?.ipcRenderer?.removeAllListeners(OLLAMA_EVENTS.PULL_MODEL_PROGRESS)
 })
 </script>
