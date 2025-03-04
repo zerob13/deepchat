@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Install Sharp
-        run: npm install --cpu=${{ matrix.arch }} --os=win32 sharp
+        run: npm install sharp  --build-from-source
       - name: Build Windows
         run: npm run build:win:${{ matrix.arch }}
       - name: Upload artifacts

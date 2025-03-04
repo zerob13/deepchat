@@ -43,6 +43,7 @@ import ppioColorIcon from '@/assets/llm-icons/ppio-color.svg?url'
 import moonshotColorIcon from '@/assets/llm-icons/moonshot.svg?url'
 import openrouterColorIcon from '@/assets/llm-icons/openrouter.svg?url'
 import geminiColorIcon from '@/assets/llm-icons/gemini-color.svg?url'
+import githubColorIcon from '@/assets/llm-icons/github.svg?url'
 // 导入所有图标
 const icons = {
   deepseek: deepseekColorIcon,
@@ -87,7 +88,8 @@ const icons = {
   qwen: qwenColorIcon,
   moonshot: moonshotColorIcon,
   openrouter: openrouterColorIcon,
-  gemini: geminiColorIcon
+  gemini: geminiColorIcon,
+  github: githubColorIcon
 }
 
 interface Props {

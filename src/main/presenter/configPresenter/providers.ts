@@ -170,20 +170,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
   //     models: 'https://docs.together.ai/docs/chat-models'
   //   }
   // },
-  // {
-  //   id: 'github',
-  //   name: 'GitHub',
-  //   apiType: 'github',
-  //   apiKey: '',
-  //   baseUrl: 'https://models.inference.ai.azure.com/',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://github.com/marketplace/models',
-  //     apiKey: 'https://github.com/settings/tokens',
-  //     docs: 'https://docs.github.com/en/github-models',
-  //     models: 'https://github.com/marketplace/models'
-  //   }
-  // },
+  {
+    id: 'github',
+    name: 'GitHub Models',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: 'https://models.inference.ai.azure.com',
+    enable: false,
+    websites: {
+      official: 'https://github.com/marketplace/models',
+      apiKey: 'https://github.com/settings/tokens',
+      docs: 'https://docs.github.com/en/github-models',
+      models: 'https://github.com/marketplace/models'
+    }
+  },
   // {
   //   id: 'yi',
   //   name: 'Yi',

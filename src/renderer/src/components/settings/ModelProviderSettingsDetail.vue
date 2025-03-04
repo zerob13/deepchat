@@ -291,6 +291,8 @@ const getProviderUrl = (providerId: string) => {
       return 'https://platform.stability.ai/api-keys'
     case 'gemini':
       return 'https://aistudio.google.com/'
+    case 'github':
+      return 'https://github.com/settings/tokens'
     default:
       return '#'
   }
