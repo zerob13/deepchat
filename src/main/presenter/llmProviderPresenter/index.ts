@@ -11,6 +11,7 @@ import { STREAM_EVENTS } from '@/events'
 import { ConfigPresenter } from '../configPresenter'
 import { GeminiProvider } from './providers/geminiProvider'
 import { DEFAULT_PROVIDERS } from '../configPresenter/providers'
+import { GithubProvider } from './providers/githubProvider'
 // 导入其他provider...
 
 // 流的状态
@@ -124,6 +125,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           break
         case 'gemini':
           instance = new GeminiProvider(provider, this.configPresenter)
+          break
+        case 'github':
+          instance = new GithubProvider(provider, this.configPresenter)
           break
         // 添加其他provider的实例化逻辑
         default:
