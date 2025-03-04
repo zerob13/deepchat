@@ -447,8 +447,7 @@ const cleanupEditors = () => {
   editorInstances.value.forEach((editor) => {
     editor.destroy()
   })
-  // Skip clearing editor instances to preserve references and improve rendering performance
-  // editorInstances.value.clear()
+  editorInstances.value.clear()
 }
 
 const renderContent = (content: string) => {
