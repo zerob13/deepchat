@@ -644,11 +644,9 @@ const renderContent = (content: string) => {
   refreshLoadingCursor()
 
   const rawContent = renderMarkdown(
+    md,
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
-<<<<<<< HEAD
-  return renderMarkdown(md, safeContent)
-=======
   // Note: Content is not sanitized to allow proper code rendering
   // Be careful with user-generated content as this could pose XSS risks
   // const safeContent = DOMPurify.sanitize(rawContent, {
@@ -658,7 +656,6 @@ const renderContent = (content: string) => {
   //     /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
   // })
   return rawContent
->>>>>>> dev
 }
 
 // 右键菜单事件处理
