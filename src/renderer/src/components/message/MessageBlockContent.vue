@@ -276,7 +276,7 @@ const initCodeEditors = () => {
     const decodedCode = decodeURIComponent(escape(atob(code)))
 
     // 如果是 mermaid 代码块，渲染图表
-    if (lang.toLowerCase() === 'mermaid') {
+    if (lang.toLowerCase() === 'mermaid' && props.block.status !== 'loading') {
       renderMermaidDiagram(editorContainer as HTMLElement, decodedCode, editorId)
       return
     }
@@ -444,10 +444,9 @@ const renderMermaidDiagram = async (container: HTMLElement, code: string, id: st
         <div class="flex justify-center items-center p-4 bg-white rounded overflow-auto max-h-[500px]">
           <div id="mermaid-${id}" class="mermaid w-full text-center">${code}</div>
         </div>
-        <div class="flex flex-wrap gap-2 justify-end">
-          <button class="save-svg-btn px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">保存 SVG</button>
-          <button class="save-png-btn px-2 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">保存 PNG</button>
-          <button class="save-code-btn px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">保存源码</button>
+        <div class="flex flex-wrap gap-2 justify-end" id="mermaid-${id}-buttons">
+          <button class="save-svg-btn px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">Export SVG</button>
+          <button class="save-code-btn px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">Save Code</button>
         </div>
       </div>
     `
@@ -465,22 +464,21 @@ const renderMermaidDiagram = async (container: HTMLElement, code: string, id: st
     // 渲染图表
     const mermaidElement = document.getElementById(`mermaid-${id}`)
     if (mermaidElement) {
-      await mermaid.run({
-        nodes: [mermaidElement]
-      })
+      mermaid
+        .run({
+          nodes: [mermaidElement]
+        })
+        .catch((e) => {
+          console.info('Failed to render mermaid diagram:', e)
+        })
     }
 
     // 添加事件监听器
-    const saveSvgBtn = container.querySelector('.save-svg-btn')
-    const savePngBtn = container.querySelector('.save-png-btn')
-    const saveCodeBtn = container.querySelector('.save-code-btn')
+    const saveSvgBtn = container.querySelector(`#mermaid-${id}-buttons .save-svg-btn`)
+    const saveCodeBtn = container.querySelector(`#mermaid-${id}-buttons .save-code-btn`)
 
     if (saveSvgBtn) {
       saveSvgBtn.addEventListener('click', () => saveMermaidAsSVG(id))
-    }
-
-    if (savePngBtn) {
-      savePngBtn.addEventListener('click', () => saveMermaidAsPNG(id))
     }
 
     if (saveCodeBtn) {
@@ -534,71 +532,6 @@ const saveMermaidAsSVG = (id: string) => {
     URL.revokeObjectURL(svgUrl)
   } catch (error) {
     console.error('Failed to save SVG:', error)
-  }
-}
-
-// 保存 Mermaid 图表为 PNG
-const saveMermaidAsPNG = (id: string) => {
-  try {
-    const svgElement = document.querySelector(`#mermaid-${id} svg`)
-    if (!svgElement) {
-      console.error('SVG element not found')
-      return
-    }
-
-    // 创建一个 Canvas 元素
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      console.error('Failed to get canvas context')
-      return
-    }
-
-    // 获取 SVG 数据
-    const svgData = new XMLSerializer().serializeToString(svgElement)
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-    const svgUrl = URL.createObjectURL(svgBlob)
-
-    // 创建图片对象
-    const img = new Image()
-    img.onload = () => {
-      // 设置 Canvas 尺寸
-      canvas.width = img.width
-      canvas.height = img.height
-
-      // 绘制图片到 Canvas
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(img, 0, 0)
-
-      // 将 Canvas 转换为 PNG
-      try {
-        const pngUrl = canvas.toDataURL('image/png')
-
-        // 创建下载链接
-        const downloadLink = document.createElement('a')
-        downloadLink.href = pngUrl
-        downloadLink.download = `diagram-${Date.now()}.png`
-        document.body.appendChild(downloadLink)
-        downloadLink.click()
-        document.body.removeChild(downloadLink)
-      } catch (error) {
-        console.error('Failed to convert to PNG:', error)
-      }
-
-      // 清理资源
-      URL.revokeObjectURL(svgUrl)
-    }
-
-    img.onerror = () => {
-      console.error('Failed to load SVG as image')
-      URL.revokeObjectURL(svgUrl)
-    }
-
-    // 加载 SVG URL
-    img.src = svgUrl
-  } catch (error) {
-    console.error('Failed to save PNG:', error)
   }
 }
 
