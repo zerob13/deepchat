@@ -1,3 +1,4 @@
+<!-- eslint-disable @typescript-eslint/no-explicit-any -->
 <!-- eslint-disable vue/no-v-html -->
 <template>
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
@@ -33,12 +34,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  createCodeBlockRenderer,
-  initReference,
-  renderMarkdown
-  // enableDebugRendering
-} from '@/lib/markdown.helper'
+import { getMarkdown, renderMarkdown } from '@/lib/markdown.helper'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -67,7 +63,6 @@ import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
-import mermaid from 'mermaid'
 
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
@@ -78,6 +73,7 @@ const searchResults = ref<SearchResult[]>([])
 
 import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
 import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
+import { renderMermaidDiagram } from '@/lib/mermaid.helper'
 
 const props = defineProps<{
   block: {
@@ -97,30 +93,6 @@ const messageBlock = ref<HTMLDivElement>()
 const previewContent = ref<SearchResult | undefined>()
 const showPreview = ref(false)
 const previewRect = ref<DOMRect>()
-
-const onReferenceClick = (id: string) => {
-  const index = parseInt(id) - 1
-  if (searchResults.value && searchResults.value[index]) {
-    // Handle navigation or content display
-    // console.log('Navigate to:', searchResults.value[index])
-    window.open(searchResults.value[index].url, '_blank')
-  }
-}
-
-const onReferenceHover = (id: string, isHover: boolean, rect: DOMRect) => {
-  const index = parseInt(id) - 1
-  // console.log(id, isHover, rect)
-  if (searchResults.value && searchResults.value[index]) {
-    if (isHover) {
-      previewContent.value = searchResults.value[index]
-      previewRect.value = rect
-      showPreview.value = true
-    } else {
-      previewContent.value = undefined
-      showPreview.value = false
-    }
-  }
-}
 
 // Store editor instances for cleanup
 const editorInstances = ref<Map<string, EditorView>>(new Map())
@@ -149,13 +121,50 @@ const refreshLoadingCursor = () => {
   }
 }
 
-initReference({
-  onClick: onReferenceClick,
-  onHover: onReferenceHover
+const md = getMarkdown(id.value, t)
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(window as any).addEventListener('reference-click', (e: CustomEvent) => {
+  const { msgId, refId } = e.detail
+  if (msgId !== id.value) {
+    return
+  }
+  const index = parseInt(refId) - 1
+  if (searchResults.value && searchResults.value[index]) {
+    // Handle navigation or content display
+    // console.log('Navigate to:', searchResults.value[index])
+    window.open(searchResults.value[index].url, '_blank')
+  }
 })
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(window as any).addEventListener('reference-hover', (e: CustomEvent) => {
+  const { msgId, refId, isHover, event } = e.detail
+  const rect = (event.target as HTMLElement).getBoundingClientRect()
+  if (msgId !== id.value) {
+    if (!isHover) {
+      previewContent.value = undefined
+      showPreview.value = false
+    }
+    return
+  }
+  const index = parseInt(refId) - 1
+  // console.log(id, isHover, rect)
+  if (searchResults.value && searchResults.value[index]) {
+    if (isHover) {
+      previewContent.value = searchResults.value[index]
+      previewRect.value = rect
+      showPreview.value = true
+    } else {
+      previewContent.value = undefined
+      showPreview.value = false
+    }
+  }
+})
+
 // Remove all the markdown-it configuration and setup
 // Instead, just configure the code block renderer
-createCodeBlockRenderer(t)
+// createCodeBlockRenderer(t)
 // enableDebugRendering() // Optional, remove if debug logging is not needed
 
 const processedContent = computed<ProcessedPart[]>(() => {
@@ -432,178 +441,6 @@ const initCodeEditors = () => {
   })
 }
 
-// 渲染 Mermaid 图表
-const renderMermaidDiagram = async (container: HTMLElement, code: string, id: string) => {
-  try {
-    // 创建一个包含编辑器和图表的容器，使用 Tailwind 类
-    container.innerHTML = `
-      <div class="relative w-full">
-        <!-- 视图切换按钮 -->
-        <div class="absolute top-2 left-2 z-10">
-          <div class="flex items-center gap-1 bg-muted/80 backdrop-blur rounded-lg p-0.5">
-            <button 
-              id="preview-btn-${id}" 
-              class="px-2 py-1 text-xs rounded bg-background text-foreground transition-colors flex items-center gap-1"
-              data-id="${id}"
-            >
-              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-              Preview
-            </button>
-            <button 
-              id="code-btn-${id}" 
-              class="px-2 py-1 text-xs rounded text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
-              data-id="${id}"
-            >
-              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
-              </svg>
-              Code
-            </button>
-          </div>
-        </div>
-
-        <!-- 内容区域 -->
-        <div class="rounded-lg overflow-hidden">
-          <!-- 代码视图 -->
-          <div id="code-view-${id}" class="hidden bg-[#1e1e1e] p-4 rounded text-white font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-y-auto max-h-[500px]">
-            <pre>${code}</pre>
-          </div>
-          <!-- 预览视图 -->
-          <div id="preview-view-${id}" class="bg-white rounded p-4 flex justify-center items-center min-h-[200px] max-h-[500px] overflow-auto">
-            <div id="mermaid-${id}" class="mermaid w-full text-center">${code}</div>
-          </div>
-        </div>
-
-        <!-- 导出按钮组 -->
-        <div class="mt-2 flex justify-end gap-2">
-          <button class="save-svg-btn px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded border-none cursor-pointer transition-colors flex items-center gap-1" data-id="${id}">
-            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-            </svg>
-            Export SVG
-          </button>
-          <button class="save-code-btn px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs rounded border-none cursor-pointer transition-colors flex items-center gap-1" data-id="${id}">
-            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
-              <polyline points="17 21 17 13 7 13 7 21" />
-              <polyline points="7 3 7 8 15 8" />
-            </svg>
-            Save Code
-          </button>
-        </div>
-      </div>
-    `
-
-    // 初始化 mermaid
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: 'dark',
-      securityLevel: 'loose',
-      fontFamily: 'monospace',
-      logLevel: 3,
-      darkMode: true
-    })
-
-    // 渲染图表
-    const mermaidElement = document.getElementById(`mermaid-${id}`)
-    if (mermaidElement) {
-      mermaid
-        .run({
-          nodes: [mermaidElement]
-        })
-        .catch((e) => {
-          console.info('Failed to render mermaid diagram:', e)
-        })
-    }
-
-    // 添加视图切换事件监听器
-    const previewBtn = container.querySelector(`#preview-btn-${id}`)
-    const codeBtn = container.querySelector(`#code-btn-${id}`)
-    const previewView = container.querySelector(`#preview-view-${id}`)
-    const codeView = container.querySelector(`#code-view-${id}`)
-
-    if (previewBtn && codeBtn && previewView && codeView) {
-      previewBtn.addEventListener('click', () => {
-        previewView.classList.remove('hidden')
-        codeView.classList.add('hidden')
-        previewBtn.classList.add('bg-background', 'text-foreground')
-        previewBtn.classList.remove('text-muted-foreground')
-        codeBtn.classList.remove('bg-background', 'text-foreground')
-        codeBtn.classList.add('text-muted-foreground')
-      })
-
-      codeBtn.addEventListener('click', () => {
-        previewView.classList.add('hidden')
-        codeView.classList.remove('hidden')
-        codeBtn.classList.add('bg-background', 'text-foreground')
-        codeBtn.classList.remove('text-muted-foreground')
-        previewBtn.classList.remove('bg-background', 'text-foreground')
-        previewBtn.classList.add('text-muted-foreground')
-      })
-    }
-
-    // 添加导出按钮事件监听器
-    const saveSvgBtn = container.querySelector('.save-svg-btn')
-    const saveCodeBtn = container.querySelector('.save-code-btn')
-
-    if (saveSvgBtn) {
-      saveSvgBtn.addEventListener('click', () => saveMermaidAsSVG(id))
-    }
-
-    if (saveCodeBtn) {
-      saveCodeBtn.addEventListener('click', () => {
-        try {
-          const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
-          const url = URL.createObjectURL(blob)
-          const downloadLink = document.createElement('a')
-          downloadLink.href = url
-          downloadLink.download = `diagram-${Date.now()}.mmd`
-          document.body.appendChild(downloadLink)
-          downloadLink.click()
-          document.body.removeChild(downloadLink)
-          URL.revokeObjectURL(url)
-        } catch (error) {
-          console.error('Failed to save code:', error)
-        }
-      })
-    }
-  } catch (error: unknown) {
-    console.error('Failed to render mermaid diagram:', error)
-    const errorMessage = error instanceof Error ? error.message : '未知错误'
-    container.innerHTML = `<div class="text-red-500 p-2 bg-red-100 rounded">Failed to render diagram: ${errorMessage}</div>`
-  }
-}
-
-// 保存 Mermaid 图表为 SVG
-const saveMermaidAsSVG = (id: string) => {
-  try {
-    const svgElement = document.querySelector(`#mermaid-${id} svg`)
-    if (!svgElement) {
-      console.error('SVG element not found')
-      return
-    }
-
-    // 获取 SVG 内容
-    const svgData = new XMLSerializer().serializeToString(svgElement)
-    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
-    const svgUrl = URL.createObjectURL(svgBlob)
-
-    // 创建下载链接
-    const downloadLink = document.createElement('a')
-    downloadLink.href = svgUrl
-    downloadLink.download = `diagram-${Date.now()}.svg`
-    document.body.appendChild(downloadLink)
-    downloadLink.click()
-    document.body.removeChild(downloadLink)
-    URL.revokeObjectURL(svgUrl)
-  } catch (error) {
-    console.error('Failed to save SVG:', error)
-  }
-}
-
 // Handle copy functionality
 const handleCopyClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement
@@ -637,6 +474,7 @@ const renderContent = (content: string) => {
   refreshLoadingCursor()
 
   const rawContent = renderMarkdown(
+    md,
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
   // Note: Content is not sanitized to allow proper code rendering
