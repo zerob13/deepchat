@@ -437,16 +437,62 @@ const renderMermaidDiagram = async (container: HTMLElement, code: string, id: st
   try {
     // 创建一个包含编辑器和图表的容器，使用 Tailwind 类
     container.innerHTML = `
-      <div class="flex flex-col w-full gap-4">
-        <div class="bg-[#1e1e1e] p-2 rounded text-white font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-y-auto max-h-[200px]">
-          <pre>${code}</pre>
+      <div class="relative w-full">
+        <!-- 视图切换按钮 -->
+        <div class="absolute top-2 left-2 z-10">
+          <div class="flex items-center gap-1 bg-muted/80 backdrop-blur rounded-lg p-0.5">
+            <button 
+              id="preview-btn-${id}" 
+              class="px-2 py-1 text-xs rounded bg-background text-foreground transition-colors flex items-center gap-1"
+              data-id="${id}"
+            >
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              Preview
+            </button>
+            <button 
+              id="code-btn-${id}" 
+              class="px-2 py-1 text-xs rounded text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+              data-id="${id}"
+            >
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+              </svg>
+              Code
+            </button>
+          </div>
         </div>
-        <div class="flex justify-center items-center p-4 bg-white rounded overflow-auto max-h-[500px]">
-          <div id="mermaid-${id}" class="mermaid w-full text-center">${code}</div>
+
+        <!-- 内容区域 -->
+        <div class="rounded-lg overflow-hidden">
+          <!-- 代码视图 -->
+          <div id="code-view-${id}" class="hidden bg-[#1e1e1e] p-4 rounded text-white font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-y-auto max-h-[500px]">
+            <pre>${code}</pre>
+          </div>
+          <!-- 预览视图 -->
+          <div id="preview-view-${id}" class="bg-white rounded p-4 flex justify-center items-center min-h-[200px] max-h-[500px] overflow-auto">
+            <div id="mermaid-${id}" class="mermaid w-full text-center">${code}</div>
+          </div>
         </div>
-        <div class="flex flex-wrap gap-2 justify-end" id="mermaid-${id}-buttons">
-          <button class="save-svg-btn px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">Export SVG</button>
-          <button class="save-code-btn px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">Save Code</button>
+
+        <!-- 导出按钮组 -->
+        <div class="mt-2 flex justify-end gap-2">
+          <button class="save-svg-btn px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded border-none cursor-pointer transition-colors flex items-center gap-1" data-id="${id}">
+            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+            </svg>
+            Export SVG
+          </button>
+          <button class="save-code-btn px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs rounded border-none cursor-pointer transition-colors flex items-center gap-1" data-id="${id}">
+            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            Save Code
+          </button>
         </div>
       </div>
     `
@@ -473,9 +519,35 @@ const renderMermaidDiagram = async (container: HTMLElement, code: string, id: st
         })
     }
 
-    // 添加事件监听器
-    const saveSvgBtn = container.querySelector(`#mermaid-${id}-buttons .save-svg-btn`)
-    const saveCodeBtn = container.querySelector(`#mermaid-${id}-buttons .save-code-btn`)
+    // 添加视图切换事件监听器
+    const previewBtn = container.querySelector(`#preview-btn-${id}`)
+    const codeBtn = container.querySelector(`#code-btn-${id}`)
+    const previewView = container.querySelector(`#preview-view-${id}`)
+    const codeView = container.querySelector(`#code-view-${id}`)
+
+    if (previewBtn && codeBtn && previewView && codeView) {
+      previewBtn.addEventListener('click', () => {
+        previewView.classList.remove('hidden')
+        codeView.classList.add('hidden')
+        previewBtn.classList.add('bg-background', 'text-foreground')
+        previewBtn.classList.remove('text-muted-foreground')
+        codeBtn.classList.remove('bg-background', 'text-foreground')
+        codeBtn.classList.add('text-muted-foreground')
+      })
+
+      codeBtn.addEventListener('click', () => {
+        previewView.classList.add('hidden')
+        codeView.classList.remove('hidden')
+        codeBtn.classList.add('bg-background', 'text-foreground')
+        codeBtn.classList.remove('text-muted-foreground')
+        previewBtn.classList.remove('bg-background', 'text-foreground')
+        previewBtn.classList.add('text-muted-foreground')
+      })
+    }
+
+    // 添加导出按钮事件监听器
+    const saveSvgBtn = container.querySelector('.save-svg-btn')
+    const saveCodeBtn = container.querySelector('.save-code-btn')
 
     if (saveSvgBtn) {
       saveSvgBtn.addEventListener('click', () => saveMermaidAsSVG(id))
@@ -483,12 +555,9 @@ const renderMermaidDiagram = async (container: HTMLElement, code: string, id: st
 
     if (saveCodeBtn) {
       saveCodeBtn.addEventListener('click', () => {
-        // 内联实现保存源码功能
         try {
           const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
           const url = URL.createObjectURL(blob)
-
-          // 创建下载链接
           const downloadLink = document.createElement('a')
           downloadLink.href = url
           downloadLink.download = `diagram-${Date.now()}.mmd`
