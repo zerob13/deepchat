@@ -248,7 +248,15 @@ const enabledModels = computed(() => {
     ...customModels.value.filter((m) => m.enabled),
     ...providerModels.value.filter((m) => m.enabled)
   ]
-  return enabledModelsList
+  const uniqueModels = new Map<string, RENDERER_MODEL_META>()
+
+  enabledModelsList.forEach((model) => {
+    if (!uniqueModels.has(model.id)) {
+      uniqueModels.set(model.id, model)
+    }
+  })
+
+  return Array.from(uniqueModels.values())
 })
 const checkResult = ref<boolean>(false)
 const showCheckModelDialog = ref(false)
@@ -283,6 +291,10 @@ const getProviderUrl = (providerId: string) => {
       return 'https://platform.stability.ai/api-keys'
     case 'gemini':
       return 'https://aistudio.google.com/'
+    case 'github':
+      return 'https://github.com/settings/tokens'
+    case 'azure-openai':
+      return 'https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI'
     default:
       return '#'
   }

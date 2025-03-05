@@ -71,6 +71,7 @@ export const getMarkdown = (msgId: string, t: (key: string) => string) => {
   // Add rendering rules
   md.renderer.rules.math_inline = (tokens, idx) => tokens[idx].content
   md.renderer.rules.math_block = (tokens, idx) => tokens[idx].content
+  md.renderer.rules.code_block = (tokens, idx) => tokens[idx].content
 
   // Configure MathJax
   md.use(mathjax3, {

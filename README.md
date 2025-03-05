@@ -57,6 +57,14 @@ Please read the [Contribution Guidelines](./CONTRIBUTING.md)
 
 ```bash
 $ npm install
+# for windows x64
+$ npm install --cpu=x64 --os=win32 sharp
+# for mac apple silicon
+$ npm install --cpu=arm64 --os=darwin sharp
+# for mac intel
+$ npm install --cpu=x64 --os=darwin sharp
+# for linux x64
+$ npm install --cpu=x64 --os=linux sharp
 ```
 
 ### Start development

@@ -63,11 +63,11 @@ import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
 import { anysphereTheme } from '@/lib/code.theme'
 import LoadingCursor from '@/components/LoadingCursor.vue'
+import mermaid from 'mermaid'
 
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
 import ReferencePreview from './ReferencePreview.vue'
-import DOMPurify from 'dompurify'
 
 const threadPresenter = usePresenter('threadPresenter')
 const searchResults = ref<SearchResult[]>([])
@@ -284,6 +284,12 @@ const initCodeEditors = () => {
 
     const decodedCode = decodeURIComponent(escape(atob(code)))
 
+    // 如果是 mermaid 代码块，渲染图表
+    if (lang.toLowerCase() === 'mermaid') {
+      renderMermaidDiagram(editorContainer as HTMLElement, decodedCode, editorId)
+      return
+    }
+
     // 如果编辑器已存在，更新内容而不是重新创建
     if (editorInstances.value.has(editorId)) {
       const existingEditor = editorInstances.value.get(editorId)
@@ -394,21 +400,215 @@ const initCodeEditors = () => {
       case 'clojure':
         extensions.push(StreamLanguage.define(clojure))
         break
+      case 'mermaid':
+        // 使用简单的文本编辑器，不使用 StreamLanguage
+        extensions.push(markdown())
+        break
     }
 
     try {
-      const editorView = new EditorView({
-        state: EditorState.create({
-          doc: decodedCode,
-          extensions: [...extensions, EditorState.readOnly.of(true)]
-        }),
-        parent: editorContainer as HTMLElement
-      })
-      editorInstances.value.set(editorId, editorView)
+      if (editorContainer instanceof HTMLElement) {
+        try {
+          const editorView = new EditorView({
+            state: EditorState.create({
+              doc: decodedCode,
+              extensions: [
+                ...extensions,
+                EditorState.readOnly.of(true)
+                // Remove the inline theme configuration
+              ]
+            }),
+            parent: editorContainer
+          })
+          editorInstances.value.set(editorId, editorView)
+        } catch (innerError) {
+          console.error('Failed with standard method, trying fallback:', innerError)
+          // Fallback if CodeMirror fails - create a basic pre element with escaped HTML
+          const escapedCode = decodedCode
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;')
+          editorContainer.innerHTML = `<pre style="white-space: pre-wrap; color: #ffffff; margin: 0;">${escapedCode}</pre>`
+        }
+      } else {
+        console.error('Editor container is not a valid HTMLElement')
+      }
     } catch (error) {
       console.error('Failed to initialize editor:', error)
     }
   })
+}
+
+// 渲染 Mermaid 图表
+const renderMermaidDiagram = async (container: HTMLElement, code: string, id: string) => {
+  try {
+    // 创建一个包含编辑器和图表的容器，使用 Tailwind 类
+    container.innerHTML = `
+      <div class="flex flex-col w-full gap-4">
+        <div class="bg-[#1e1e1e] p-2 rounded text-white font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-y-auto max-h-[200px]">
+          <pre>${code}</pre>
+        </div>
+        <div class="flex justify-center items-center p-4 bg-white rounded overflow-auto max-h-[500px]">
+          <div id="mermaid-${id}" class="mermaid w-full text-center">${code}</div>
+        </div>
+        <div class="flex flex-wrap gap-2 justify-end">
+          <button class="save-svg-btn px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">保存 SVG</button>
+          <button class="save-png-btn px-2 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">保存 PNG</button>
+          <button class="save-code-btn px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs rounded border-none cursor-pointer transition-colors" data-id="${id}">保存源码</button>
+        </div>
+      </div>
+    `
+
+    // 初始化 mermaid
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      securityLevel: 'loose',
+      fontFamily: 'monospace',
+      logLevel: 3,
+      darkMode: true
+    })
+
+    // 渲染图表
+    const mermaidElement = document.getElementById(`mermaid-${id}`)
+    if (mermaidElement) {
+      await mermaid.run({
+        nodes: [mermaidElement]
+      })
+    }
+
+    // 添加事件监听器
+    const saveSvgBtn = container.querySelector('.save-svg-btn')
+    const savePngBtn = container.querySelector('.save-png-btn')
+    const saveCodeBtn = container.querySelector('.save-code-btn')
+
+    if (saveSvgBtn) {
+      saveSvgBtn.addEventListener('click', () => saveMermaidAsSVG(id))
+    }
+
+    if (savePngBtn) {
+      savePngBtn.addEventListener('click', () => saveMermaidAsPNG(id))
+    }
+
+    if (saveCodeBtn) {
+      saveCodeBtn.addEventListener('click', () => {
+        // 内联实现保存源码功能
+        try {
+          const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
+          const url = URL.createObjectURL(blob)
+
+          // 创建下载链接
+          const downloadLink = document.createElement('a')
+          downloadLink.href = url
+          downloadLink.download = `diagram-${Date.now()}.mmd`
+          document.body.appendChild(downloadLink)
+          downloadLink.click()
+          document.body.removeChild(downloadLink)
+          URL.revokeObjectURL(url)
+        } catch (error) {
+          console.error('Failed to save code:', error)
+        }
+      })
+    }
+  } catch (error: unknown) {
+    console.error('Failed to render mermaid diagram:', error)
+    const errorMessage = error instanceof Error ? error.message : '未知错误'
+    container.innerHTML = `<div class="text-red-500 p-2 bg-red-100 rounded">Failed to render diagram: ${errorMessage}</div>`
+  }
+}
+
+// 保存 Mermaid 图表为 SVG
+const saveMermaidAsSVG = (id: string) => {
+  try {
+    const svgElement = document.querySelector(`#mermaid-${id} svg`)
+    if (!svgElement) {
+      console.error('SVG element not found')
+      return
+    }
+
+    // 获取 SVG 内容
+    const svgData = new XMLSerializer().serializeToString(svgElement)
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+    const svgUrl = URL.createObjectURL(svgBlob)
+
+    // 创建下载链接
+    const downloadLink = document.createElement('a')
+    downloadLink.href = svgUrl
+    downloadLink.download = `diagram-${Date.now()}.svg`
+    document.body.appendChild(downloadLink)
+    downloadLink.click()
+    document.body.removeChild(downloadLink)
+    URL.revokeObjectURL(svgUrl)
+  } catch (error) {
+    console.error('Failed to save SVG:', error)
+  }
+}
+
+// 保存 Mermaid 图表为 PNG
+const saveMermaidAsPNG = (id: string) => {
+  try {
+    const svgElement = document.querySelector(`#mermaid-${id} svg`)
+    if (!svgElement) {
+      console.error('SVG element not found')
+      return
+    }
+
+    // 创建一个 Canvas 元素
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      console.error('Failed to get canvas context')
+      return
+    }
+
+    // 获取 SVG 数据
+    const svgData = new XMLSerializer().serializeToString(svgElement)
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+    const svgUrl = URL.createObjectURL(svgBlob)
+
+    // 创建图片对象
+    const img = new Image()
+    img.onload = () => {
+      // 设置 Canvas 尺寸
+      canvas.width = img.width
+      canvas.height = img.height
+
+      // 绘制图片到 Canvas
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 0, 0)
+
+      // 将 Canvas 转换为 PNG
+      try {
+        const pngUrl = canvas.toDataURL('image/png')
+
+        // 创建下载链接
+        const downloadLink = document.createElement('a')
+        downloadLink.href = pngUrl
+        downloadLink.download = `diagram-${Date.now()}.png`
+        document.body.appendChild(downloadLink)
+        downloadLink.click()
+        document.body.removeChild(downloadLink)
+      } catch (error) {
+        console.error('Failed to convert to PNG:', error)
+      }
+
+      // 清理资源
+      URL.revokeObjectURL(svgUrl)
+    }
+
+    img.onerror = () => {
+      console.error('Failed to load SVG as image')
+      URL.revokeObjectURL(svgUrl)
+    }
+
+    // 加载 SVG URL
+    img.src = svgUrl
+  } catch (error) {
+    console.error('Failed to save PNG:', error)
+  }
 }
 
 // Handle copy functionality
@@ -442,16 +642,23 @@ const cleanupEditors = () => {
 
 const renderContent = (content: string) => {
   refreshLoadingCursor()
-  const safeContent = DOMPurify.sanitize(
-    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content,
-    {
-      WHOLE_DOCUMENT: false,
-      FORBID_TAGS: ['script', 'style'],
-      ALLOWED_URI_REGEXP:
-        /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
-    }
+
+  const rawContent = renderMarkdown(
+    props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
+<<<<<<< HEAD
   return renderMarkdown(md, safeContent)
+=======
+  // Note: Content is not sanitized to allow proper code rendering
+  // Be careful with user-generated content as this could pose XSS risks
+  // const safeContent = DOMPurify.sanitize(rawContent, {
+  //   WHOLE_DOCUMENT: false,
+  //   FORBID_TAGS: ['script', 'style', 'code'],
+  //   ALLOWED_URI_REGEXP:
+  //     /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
+  // })
+  return rawContent
+>>>>>>> dev
 }
 
 // 右键菜单事件处理
@@ -555,6 +762,28 @@ onMounted(async () => {
 
 .prose .code-editor {
   @apply overflow-auto;
+  min-height: 10px;
+  background-color: #1e1e1e;
+  color: #ffffff;
+  padding: 8px;
+  border-radius: 0 0 0.5rem 0.5rem;
+}
+
+/* Mermaid SVG 样式 */
+.mermaid svg {
+  @apply max-w-full h-auto;
+}
+
+.prose .code-editor .cm-editor {
+  background-color: #1e1e1e;
+}
+
+.prose .code-editor .cm-content {
+  color: #ffffff !important;
+}
+
+.prose .code-editor .cm-line {
+  padding: 0 8px;
 }
 
 .prose hr {

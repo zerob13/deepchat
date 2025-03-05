@@ -3,6 +3,7 @@ import path from 'path'
 import { SearchEngineTemplate } from '@shared/chat'
 import { ContentEnricher } from './contentEnricher'
 import { SearchResult } from '@shared/presenter'
+import { is } from '@electron-toolkit/utils'
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
@@ -155,6 +156,31 @@ const defaultEngines: SearchEngineTemplate[] = [
       })
       return results
     `
+  },
+  {
+    name: 'duckduckgo',
+    selector: 'button.cxQwADb9kt3UnKwcXKat',
+    searchUrl: 'https://duckduckgo.com/?q={query}',
+    extractorScript: `
+      const results = []
+      const items = document.querySelectorAll('article.yQDlj3B5DI5YO8c8Ulio')
+      items.forEach((item, index) => {
+        const titleEl = item.querySelector('.EKtkFWMYpwzMKOYr0GYm.LQVY1Jpkk8nyJ6HBWKAk')
+        const linkEl = item.querySelector('a')
+        const descEl = item.querySelector('.E2eLOJr8HctVnDOTM8fs')
+        const icon = item.querySelector('.DpVR46dTZaePK29PDkz8 img')
+        if (titleEl && linkEl) {
+          results.push({
+            title: titleEl.textContent,
+            url: linkEl.href,
+            rank: index + 1,
+            description: descEl ? descEl.textContent : '',
+            icon: icon ? icon.src : ''
+          })
+        }
+      })
+      return results
+    `
   }
 ]
 
@@ -203,8 +229,9 @@ export class SearchManager {
       height: 600,
       show: this.isDevelopment,
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false
+        nodeIntegration: false,
+        contextIsolation: true,
+        devTools: is.dev
       }
     })
 
@@ -219,7 +246,9 @@ export class SearchManager {
         callback({ requestHeaders: headers })
       }
     )
-
+    if (is.dev) {
+      searchWindow.webContents.openDevTools()
+    }
     this.searchWindows.set(conversationId, searchWindow)
     return searchWindow
   }

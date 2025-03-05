@@ -536,6 +536,7 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
       }
+      loadThreads(1)
     }
   }
 

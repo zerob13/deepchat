@@ -170,20 +170,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
   //     models: 'https://docs.together.ai/docs/chat-models'
   //   }
   // },
-  // {
-  //   id: 'github',
-  //   name: 'GitHub',
-  //   apiType: 'github',
-  //   apiKey: '',
-  //   baseUrl: 'https://models.inference.ai.azure.com/',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://github.com/marketplace/models',
-  //     apiKey: 'https://github.com/settings/tokens',
-  //     docs: 'https://docs.github.com/en/github-models',
-  //     models: 'https://github.com/marketplace/models'
-  //   }
-  // },
+  {
+    id: 'github',
+    name: 'GitHub Models',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: 'https://models.inference.ai.azure.com',
+    enable: false,
+    websites: {
+      official: 'https://github.com/marketplace/models',
+      apiKey: 'https://github.com/settings/tokens',
+      docs: 'https://docs.github.com/en/github-models',
+      models: 'https://github.com/marketplace/models'
+    }
+  },
   // {
   //   id: 'yi',
   //   name: 'Yi',
@@ -282,7 +282,7 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
       docs: 'https://openrouter.ai/docs/quick-start',
       models: 'https://openrouter.ai/docs/models'
     }
-  }
+  },
   // {
   //   id: 'groq',
   //   name: 'Groq',
@@ -438,19 +438,19 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
   //     models: 'https://build.nvidia.com/nim'
   //   }
   // },
-  // {
-  //   id: 'azure-openai',
-  //   name: 'Azure OpenAI',
-  //   apiType: 'azure-openai',
-  //   apiKey: '',
-  //   baseUrl: '',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://azure.microsoft.com/en-us/products/ai-services/openai-service',
-  //     apiKey:
-  //       'https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI',
-  //     docs: 'https://learn.microsoft.com/en-us/azure/ai-services/openai/',
-  //     models: 'https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models'
-  //   }
-  // }
+  {
+    id: 'azure-openai',
+    name: 'Azure OpenAI',
+    apiType: 'openai',
+    apiKey: '',
+    baseUrl: '',
+    enable: false,
+    websites: {
+      official: 'https://azure.microsoft.com/en-us/products/ai-services/openai-service',
+      apiKey:
+        'https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI',
+      docs: 'https://learn.microsoft.com/en-us/azure/ai-services/openai/',
+      models: 'https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models'
+    }
+  }
 ]
