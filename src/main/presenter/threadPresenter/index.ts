@@ -47,34 +47,31 @@ interface GeneratingMessageState {
   lastReasoningTime: number | null
 }
 const SEARCH_PROMPT_TEMPLATE = `
-# 以下内容是基于用户发送的消息的搜索结果:
-<search_results>
+# The following content is based on the search results from the user's message:
 {{SEARCH_RESULTS}}
-</search_results>
-在我给你的搜索结果中，每个结果都是[webpage X begin]...[webpage X end]格式的，X代表每篇文章的数字索引,请在适当的情况下在句子末尾引用上下文。请按照引用编号[X]的格式在答案中对应部分引用上下文。如果一句话源自多个上下文，请列出所有相关的引用编号，例如[3][5]，切记不要将引用集中在最后返回引用编号，而是在答案对应部分列出。
-在回答时，请注意以下几点：
+In the search results I provided, each result is in the format [webpage X begin]...[webpage X end], where X represents the numerical index of each article. Please reference the context at the end of sentences where appropriate. Use the citation number [X] format to reference the corresponding parts in your answer. If a sentence is derived from multiple contexts, list all relevant citation numbers, such as [3][5]. Be careful not to concentrate the citation numbers at the end of the response, but rather list them in the corresponding parts of the answer.
+When answering, please pay attention to the following points:
 
-- 今天是 {{CUR_DATE}}
-- 并非搜索结果的所有内容都与用户的问题密切相关，你需要结合问题，对搜索结果进行甄别、筛选。
-- 对于列举类的问题（如列举所有航班信息），尽量将答案控制在10个要点以内，并告诉用户可以查看搜索来源、获得完整信息。优先提供信息完整、最相关的列举项；如非必要，不要主动告诉用户搜索结果未提供的内容。
-- 对于创作类的问题（如写论文），请务必在正文的段落中引用对应的参考编号，例如[3][5]，不能只在文章末尾引用。你需要解读并概括用户的题目要求，选择合适的格式，充分利用搜索结果并抽取重要信息，生成符合用户要求、极具思想深度、富有创造力与专业性的答案。你的创作篇幅需要尽可能延长，对于每一个要点的论述要推测用户的意图，给出尽可能多角度的回答要点，且务必信息量大、论述详尽。
-- 如果回答很长，请尽量结构化、分段落总结。如果需要分点作答，尽量控制在5个点以内，并合并相关的内容。
-- 对于客观类的问答，如果问题的答案非常简短，可以适当补充一到两句相关信息，以丰富内容。
-- 你需要根据用户要求和回答内容选择合适、美观的回答格式，确保可读性强。
-- 你的回答应该综合多个相关网页来回答，不能重复引用一个网页。
-- 除非用户要求，否则你回答的语言需要和用户提问的语言保持一致。
-- 尽可能使用markdown格式化段落、列表、表格和引用。
-- 使用markdown代码块编写代码，包括语法高亮的语言。
-- 使用LaTeX包裹所有数学表达式。始终使用双美元符号$$，例如$$x^4 = x - 3$$。
-- 不要包含任何网址，只需包含带有数字的引用，例如[1]。
-- 不要在末尾包含参考文献（网址、来源）。
-- 在适用的句子末尾使用脚注引用（例如，[1][2]）。
-- 写超过100个字（2个段落）。
-- 在回答中避免直接引用引用。
+- Today is {{CUR_DATE}}
+- The language of the answer should be consistent with the language of the user's message, unless the user explicitly indicates a different language for the response.
+- Not all content from the search results is closely related to the user's question; you need to discern and filter the search results based on the question.
+- For listing questions (e.g., listing all flight information), try to limit the answer to no more than 10 points and inform the user that they can check the search sources for complete information. Prioritize providing the most complete and relevant items; unless necessary, do not proactively inform the user that the search results did not provide certain content.
+- For creative questions (e.g., writing an essay), be sure to cite the corresponding reference numbers in the body of the paragraphs, such as [3][5], and not just at the end of the article. You need to interpret and summarize the user's topic requirements, choose an appropriate format, fully utilize the search results, and extract important information to generate answers that meet the user's requirements, are deeply thoughtful, creative, and professional. Your creative length should be as long as possible, and for each point, infer the user's intent, provide as many angles of response as possible, and ensure that the information is rich and the discussion is detailed.
+- If the answer is long, try to structure it and summarize it in paragraphs. If you need to answer in points, try to limit it to no more than 5 points and merge related content.
+- For objective questions, if the answer to the question is very brief, you can appropriately add one or two sentences of related information to enrich the content.
+- You need to choose an appropriate and aesthetically pleasing answer format based on the user's requirements and the content of the answer to ensure strong readability.
+- Your answer should synthesize multiple relevant web pages and not repeat citations from a single web page.
+- Use markdown to format paragraphs, lists, tables, and citations as much as possible.
+- Use markdown code blocks to write code, including syntax-highlighted languages.
+- Enclose all mathematical expressions in LaTeX. Always use double dollar signs $$, for example, $$x^4 = x - 3$$.
+- Do not include any URLs, only include citations with numbers, such as [1].
+- Do not include references (URLs, sources) at the end.
+- Use footnote citations at the end of applicable sentences (e.g., [1][2]).
+- Write more than 100 words (2 paragraphs).
+- Avoid directly quoting citations in the answer.
 
-<user_query>
+# The user's message is:
 {{USER_QUERY}}
-</user_query>
   `
 // 格式化搜索结果的函数
 export function formatSearchResults(results: SearchResult[]): string {
