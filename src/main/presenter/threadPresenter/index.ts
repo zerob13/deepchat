@@ -1076,13 +1076,12 @@ export class ThreadPresenter implements IThreadPresenter {
     if (!conversation) {
       throw new Error('找不到当前对话')
     }
-    if (!modelId) {
-      modelId = conversation.settings.modelId
-    }
     let summaryProviderId = providerId
-    if (!summaryProviderId) {
-      summaryProviderId = conversation.settings.providerId
+    if (!modelId || !providerId) {
+      modelId = this.searchAssistantModel?.id || conversation.settings.modelId
+      summaryProviderId = this.searchAssistantProviderId || conversation.settings.providerId
     }
+
     const messages = await this.getContextMessages(conversation.id)
     const messagesWithLength = messages
       .map((msg) => {
