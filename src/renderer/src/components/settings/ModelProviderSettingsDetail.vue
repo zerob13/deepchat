@@ -293,6 +293,8 @@ const getProviderUrl = (providerId: string) => {
       return 'https://aistudio.google.com/'
     case 'github':
       return 'https://github.com/settings/tokens'
+    case 'azure-openai':
+      return 'https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI'
     default:
       return '#'
   }
