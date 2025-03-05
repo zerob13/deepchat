@@ -28,6 +28,7 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  allowToChangeInstallationDirectory: true
 afterSign: scripts/notarize.js
 afterPack: scripts/afterPack.js
 mac:
