@@ -1,3 +1,4 @@
+<!-- eslint-disable @typescript-eslint/no-explicit-any -->
 <!-- eslint-disable vue/no-v-html -->
 <template>
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
@@ -33,12 +34,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  createCodeBlockRenderer,
-  initReference,
-  renderMarkdown
-  // enableDebugRendering
-} from '@/lib/markdown.helper'
+import { getMarkdown, renderMarkdown } from '@/lib/markdown.helper'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { python } from '@codemirror/lang-python'
@@ -98,30 +94,6 @@ const previewContent = ref<SearchResult | undefined>()
 const showPreview = ref(false)
 const previewRect = ref<DOMRect>()
 
-const onReferenceClick = (id: string) => {
-  const index = parseInt(id) - 1
-  if (searchResults.value && searchResults.value[index]) {
-    // Handle navigation or content display
-    // console.log('Navigate to:', searchResults.value[index])
-    window.open(searchResults.value[index].url, '_blank')
-  }
-}
-
-const onReferenceHover = (id: string, isHover: boolean, rect: DOMRect) => {
-  const index = parseInt(id) - 1
-  // console.log(id, isHover, rect)
-  if (searchResults.value && searchResults.value[index]) {
-    if (isHover) {
-      previewContent.value = searchResults.value[index]
-      previewRect.value = rect
-      showPreview.value = true
-    } else {
-      previewContent.value = undefined
-      showPreview.value = false
-    }
-  }
-}
-
 // Store editor instances for cleanup
 const editorInstances = ref<Map<string, EditorView>>(new Map())
 
@@ -149,13 +121,50 @@ const refreshLoadingCursor = () => {
   }
 }
 
-initReference({
-  onClick: onReferenceClick,
-  onHover: onReferenceHover
+const md = getMarkdown(id.value, t)
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(window as any).addEventListener('reference-click', (e: CustomEvent) => {
+  const { msgId, refId } = e.detail
+  if (msgId !== id.value) {
+    return
+  }
+  const index = parseInt(refId) - 1
+  if (searchResults.value && searchResults.value[index]) {
+    // Handle navigation or content display
+    // console.log('Navigate to:', searchResults.value[index])
+    window.open(searchResults.value[index].url, '_blank')
+  }
 })
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(window as any).addEventListener('reference-hover', (e: CustomEvent) => {
+  const { msgId, refId, isHover, event } = e.detail
+  const rect = (event.target as HTMLElement).getBoundingClientRect()
+  if (msgId !== id.value) {
+    if (!isHover) {
+      previewContent.value = undefined
+      showPreview.value = false
+    }
+    return
+  }
+  const index = parseInt(refId) - 1
+  // console.log(id, isHover, rect)
+  if (searchResults.value && searchResults.value[index]) {
+    if (isHover) {
+      previewContent.value = searchResults.value[index]
+      previewRect.value = rect
+      showPreview.value = true
+    } else {
+      previewContent.value = undefined
+      showPreview.value = false
+    }
+  }
+})
+
 // Remove all the markdown-it configuration and setup
 // Instead, just configure the code block renderer
-createCodeBlockRenderer(t)
+// createCodeBlockRenderer(t)
 // enableDebugRendering() // Optional, remove if debug logging is not needed
 
 const processedContent = computed<ProcessedPart[]>(() => {
@@ -442,31 +451,32 @@ const renderContent = (content: string) => {
         /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
     }
   )
-  return renderMarkdown(safeContent)
+  return renderMarkdown(md, safeContent)
 }
 
 // 右键菜单事件处理
 const handleContextMenu = (event) => {
   // 检查目标元素是否是可编辑元素或其中的一部分
-  const target = event.target as HTMLElement;
-  const isEditable = target.isContentEditable ||
+  const target = event.target as HTMLElement
+  const isEditable =
+    target.isContentEditable ||
     target.tagName === 'INPUT' ||
     target.tagName === 'TEXTAREA' ||
-    !!target.closest('input, textarea, [contenteditable="true"]');
+    !!target.closest('input, textarea, [contenteditable="true"]')
 
   // 只有在非可编辑元素上且没有选中文本时才自动选择
   if (!isEditable && window.getSelection()?.toString().trim().length === 0) {
     // 获取事件目标元素
-    const targetForSelection = event.currentTarget;
+    const targetForSelection = event.currentTarget
 
     // 创建范围选择整个元素内容
-    const range = document.createRange();
-    range.selectNodeContents(targetForSelection);
+    const range = document.createRange()
+    range.selectNodeContents(targetForSelection)
 
     // 应用选择
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
   }
 }
 
