@@ -146,4 +146,14 @@ export const getMarkdown = (msgId: string, t: (key: string) => string) => {
   return md
 }
 
+export const getCommonMarkdown = () => {
+  const md = new MarkdownIt({
+    html: true,
+    linkify: true,
+    typographer: true,
+    breaks: false
+  })
+  return md
+}
+
 export const renderMarkdown = (md: MarkdownIt, content: string) => md.render(content)

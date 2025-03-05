@@ -72,10 +72,7 @@
       <DialogHeader>
         <DialogTitle>{{ t('about.disclaimerTitle') }}</DialogTitle>
         <DialogDescription>
-          <div
-            class="max-h-[300px] overflow-y-auto"
-            v-html="renderMarkdown(t('searchDisclaimer'))"
-          ></div>
+          <div class="max-h-[300px] overflow-y-auto" v-html="disclaimerContent"></div>
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
@@ -87,7 +84,7 @@
 
 <script setup lang="ts">
 import { usePresenter } from '@/composables/usePresenter'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
@@ -99,7 +96,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { renderMarkdown } from '@/lib/markdown.helper'
+import { renderMarkdown, getCommonMarkdown } from '@/lib/markdown.helper'
 
 const { t } = useI18n()
 const devicePresenter = usePresenter('devicePresenter')
@@ -125,6 +122,8 @@ const isDisclaimerOpen = ref(false)
 const openDisclaimerDialog = () => {
   isDisclaimerOpen.value = true
 }
+const md = getCommonMarkdown()
+const disclaimerContent = computed(() => renderMarkdown(md, t('searchDisclaimer')))
 
 onMounted(async () => {
   deviceInfo.value = await devicePresenter.getDeviceInfo()
