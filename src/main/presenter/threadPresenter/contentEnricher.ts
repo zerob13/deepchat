@@ -79,13 +79,13 @@ export class ContentEnricher {
         rank
       }
     } catch (error: Error | unknown) {
-      console.error(`提取URL内容失败 ${url}:`, error)
+      console.error(`提取URL内容失败 ${url}:`, error instanceof Error ? error.message : '')
       // 如果获取失败，只添加URL信息
       return {
         title: url,
         url,
         rank,
-        description: `无法加载内容: ${error instanceof Error ? error.message : '未知错误'}`,
+        description: '',
         icon: ''
       }
     }
