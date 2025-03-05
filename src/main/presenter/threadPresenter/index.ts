@@ -1078,7 +1078,7 @@ export class ThreadPresenter implements IThreadPresenter {
     }
     let summaryProviderId = providerId
     if (!modelId || !providerId) {
-      modelId = this.searchAssistantModel?.id || conversation.settings.modelId
+      modelId = this.searchAssistantModel?.id
       summaryProviderId = this.searchAssistantProviderId || conversation.settings.providerId
     }
 
@@ -1112,8 +1112,8 @@ export class ThreadPresenter implements IThreadPresenter {
       .filter((item) => item.formattedMessage.content.length > 0)
     return await this.llmProviderPresenter.summaryTitles(
       messagesWithLength.map((item) => item.formattedMessage),
-      summaryProviderId,
-      modelId
+      summaryProviderId || conversation.settings.providerId,
+      modelId || conversation.settings.modelId
     )
   }
   async clearActiveThread(): Promise<void> {
