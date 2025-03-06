@@ -45,6 +45,7 @@ import openrouterColorIcon from '@/assets/llm-icons/openrouter.svg?url'
 import geminiColorIcon from '@/assets/llm-icons/gemini-color.svg?url'
 import githubColorIcon from '@/assets/llm-icons/github.svg?url'
 import azureOpenaiColorIcon from '@/assets/llm-icons/azure-color.svg?url'
+import anthropicColorIcon from '@/assets/llm-icons/anthropic.svg?url'
 // 导入所有图标
 const icons = {
   azure: azureOpenaiColorIcon,
@@ -91,7 +92,8 @@ const icons = {
   moonshot: moonshotColorIcon,
   openrouter: openrouterColorIcon,
   gemini: geminiColorIcon,
-  github: githubColorIcon
+  github: githubColorIcon,
+  anthropic: anthropicColorIcon
 }
 
 interface Props {
