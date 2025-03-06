@@ -101,7 +101,10 @@ export const getMarkdown = (msgId: string, t: (key: string) => string) => {
     const language = info || 'text'
     const uniqueId = `editor-${Math.random().toString(36).substr(2, 9)}`
 
-    return `<div class="code-block" data-code="${encodedCode}" data-lang="${language}" id="${uniqueId}">
+    // 为了确保代码块的本意被保留，添加一个额外的属性，方便后续处理
+    const codeOriginal = btoa(unescape(encodeURIComponent(`\`\`\`${language}\n${str}\n\`\`\``)))
+
+    return `<div class="code-block" data-code="${encodedCode}" data-lang="${language}" data-original="${codeOriginal}" id="${uniqueId}">
       <div class="code-header">
         <span class="code-lang">${language.toUpperCase()}</span>
         <button class="copy-button" data-code="${encodedCode}">${t('common.copyCode')}</button>
@@ -143,6 +146,12 @@ export const getMarkdown = (msgId: string, t: (key: string) => string) => {
 
   // Register custom rule
   md.inline.ruler.before('escape', 'reference', referenceInline)
+
+  // 创建一个新的div来渲染Mermaid图表
+  const mermaidContainer = document.createElement('div')
+  mermaidContainer.className = 'mermaid-container my-2'
+  mermaidContainer.style.width = '100%'
+
   return md
 }
 
@@ -157,3 +166,47 @@ export const getCommonMarkdown = () => {
 }
 
 export const renderMarkdown = (md: MarkdownIt, content: string) => md.render(content)
+
+export const initMermaidInMarkdown = (container: HTMLElement): void => {
+  if (!container) return
+  
+  // 查找所有mermaid代码块
+  const mermaidBlocks = container.querySelectorAll('pre code.language-mermaid')
+  
+  if (mermaidBlocks.length === 0) return
+  
+  // 处理每个mermaid代码块
+  mermaidBlocks.forEach(async (block) => {
+    try {
+      const mermaidCode = block.textContent || ''
+      if (!mermaidCode.trim()) return
+      
+      // 创建一个新的div来渲染Mermaid图表
+      const mermaidContainer = document.createElement('div')
+      mermaidContainer.className = 'mermaid-container my-1'
+      mermaidContainer.style.width = '100%'
+      
+      // 生成唯一ID
+      const id = `mermaid-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+      mermaidContainer.id = id
+      
+      // 替换原始代码块
+      const preElement = block.closest('pre')
+      if (preElement && preElement.parentNode) {
+        preElement.parentNode.replaceChild(mermaidContainer, preElement)
+        
+        // 渲染Mermaid图表
+        try {
+          // @ts-ignore - window.mermaid类型在全局声明中不完整
+          const { svg } = await window.mermaid.render(id, mermaidCode)
+          mermaidContainer.innerHTML = svg
+        } catch (error: any) {
+          console.error('Mermaid渲染错误:', error)
+          mermaidContainer.innerHTML = `<div class="error-message p-2 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 rounded">Mermaid图表渲染失败: ${error.message || '未知错误'}</div>`
+        }
+      }
+    } catch (err) {
+      console.error('处理Mermaid图表时出错:', err)
+    }
+  })
+}

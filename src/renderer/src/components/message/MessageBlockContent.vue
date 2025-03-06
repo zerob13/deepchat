@@ -17,14 +17,14 @@
           content: part.content
         }"
       />
-      <ArtifactBlock
-        class="max-h-[500px] overflow-auto"
-        v-else-if="part.type === 'artifact' && part.artifact"
-        :block="{
-          content: part.content,
-          artifact: part.artifact
-        }"
-      />
+      <div v-else-if="part.type === 'artifact' && part.artifact" class="my-1">
+        <ArtifactPreview
+          :block="{
+            content: part.content,
+            artifact: part.artifact
+          }"
+        />
+      </div>
     </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
     <ReferencePreview :show="showPreview" :content="previewContent" :rect="previewRect" />
@@ -35,45 +35,19 @@
 import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getMarkdown, renderMarkdown } from '@/lib/markdown.helper'
-import { EditorView, basicSetup } from 'codemirror'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { json } from '@codemirror/lang-json'
-import { java } from '@codemirror/lang-java'
-import { go } from '@codemirror/lang-go'
-import { markdown } from '@codemirror/lang-markdown'
-import { sql } from '@codemirror/lang-sql'
-import { xml } from '@codemirror/lang-xml'
-import { cpp } from '@codemirror/lang-cpp'
-import { rust } from '@codemirror/lang-rust'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
-import { swift } from '@codemirror/legacy-modes/mode/swift'
-import { ruby } from '@codemirror/legacy-modes/mode/ruby'
-import { perl } from '@codemirror/legacy-modes/mode/perl'
-import { lua } from '@codemirror/legacy-modes/mode/lua'
-import { haskell } from '@codemirror/legacy-modes/mode/haskell'
-import { erlang } from '@codemirror/legacy-modes/mode/erlang'
-import { clojure } from '@codemirror/legacy-modes/mode/clojure'
-import { StreamLanguage } from '@codemirror/language'
-import { php } from '@codemirror/lang-php'
-import { yaml } from '@codemirror/lang-yaml'
-import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
-import { anysphereTheme } from '@/lib/code.theme'
-import LoadingCursor from '@/components/LoadingCursor.vue'
+import mermaid from 'mermaid'
 
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
 import ReferencePreview from './ReferencePreview.vue'
+import LoadingCursor from '@/components/LoadingCursor.vue'
 
 const threadPresenter = usePresenter('threadPresenter')
 const searchResults = ref<SearchResult[]>([])
 
 import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
-import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
-import { renderMermaidDiagram } from '@/lib/mermaid.helper'
+import ArtifactPreview from '../artifacts/ArtifactPreview.vue'
 
 const props = defineProps<{
   block: {
@@ -93,9 +67,6 @@ const messageBlock = ref<HTMLDivElement>()
 const previewContent = ref<SearchResult | undefined>()
 const showPreview = ref(false)
 const previewRect = ref<DOMRect>()
-
-// Store editor instances for cleanup
-const editorInstances = ref<Map<string, EditorView>>(new Map())
 
 const { t } = useI18n()
 
@@ -170,21 +141,203 @@ const md = getMarkdown(id.value, t)
 const processedContent = computed<ProcessedPart[]>(() => {
   if (!props.block.content) return [{ type: 'text', content: '' }]
   if (props.block.status === 'loading') {
-    return [
-      {
-        type: 'text',
-        content: props.block.content
-      }
-    ]
+    return [{ type: 'text', content: props.block.content }]
   }
-
+  console.log(props.block.content)
+  // 严格的Markdown代码块检测
+  const isMarkdownCodeBlock = (content: string): boolean => {
+    // 必须以```markdown或```md开头，并以```结尾
+    return /^\s*```(markdown|md)\s*\n[\s\S]*?```\s*$/i.test(content.trim())
+  }
+  
+  // 严格的Mermaid图表检测
+  const isMermaidDiagram = (content: string): boolean => {
+    // 必须以```mermaid开头，并以```结尾，且不是嵌套在Markdown中的
+    const isMermaidBlock = /^\s*```mermaid\s*\n[\s\S]*?```\s*$/i.test(content.trim())
+    // 检查是否嵌套在Markdown中
+    const isNestedInMarkdown = /^\s*```(markdown|md)\s*\n[\s\S]*?```mermaid[\s\S]*?```[\s\S]*?```\s*$/i.test(content.trim())
+    
+    // 只有独立的Mermaid块才返回true，嵌套在Markdown中的返回false
+    return isMermaidBlock && !isNestedInMarkdown
+  }
+  
+  // 检查是否是完整的Markdown文档（包含嵌套的代码块）
+  const isCompleteMarkdownWithNestedBlocks = (content: string): boolean => {
+    // 检查是否以```markdown或```md开头
+    const isMarkdownBlock = /^\s*```(markdown|md)\s*\n/i.test(content.trim())
+    
+    // 检查是否包含嵌套的代码块（特别是Mermaid）
+    const hasNestedCodeBlocks = /```(markdown|md)\s*\n[\s\S]*?```[a-zA-Z]*\s*\n[\s\S]*?```[\s\S]*?```/i.test(content.trim())
+    
+    return isMarkdownBlock && hasNestedCodeBlocks
+  }
+  
+  // 如果是包含嵌套代码块的Markdown文档，作为整体处理
+  if (isCompleteMarkdownWithNestedBlocks(props.block.content)) {
+    const markdownContent = props.block.content.trim()
+      .replace(/^\s*```(markdown|md)\s*\n/i, '')
+      .replace(/```\s*$/i, '')
+      .trim()
+    
+    return [{
+      type: 'artifact',
+      content: markdownContent,
+      artifact: {
+        identifier: `markdown-nested-${props.messageId}`,
+        type: 'text/markdown',
+        title: '包含图表的Markdown文档',
+        language: 'markdown'
+      }
+    }]
+  }
+  
+  // 处理普通的Markdown代码块（不包含嵌套代码块）
+  if (isMarkdownCodeBlock(props.block.content) && !isCompleteMarkdownWithNestedBlocks(props.block.content)) {
+    const markdownContent = props.block.content.trim()
+      .replace(/^\s*```(markdown|md)\s*\n/i, '')
+      .replace(/```\s*$/i, '')
+      .trim()
+    
+    return [{
+      type: 'artifact',
+      content: markdownContent,
+      artifact: {
+        identifier: `markdown-${props.messageId}`,
+        type: 'text/markdown',
+        title: 'Markdown 文档',
+        language: 'markdown'
+      }
+    }]
+  }
+  
+  // 处理独立的Mermaid图表
+  if (isMermaidDiagram(props.block.content)) {
+    const mermaidContent = props.block.content.trim()
+      .replace(/^\s*```mermaid\s*\n/i, '')
+      .replace(/```\s*$/i, '')
+      .trim()
+    
+    return [{
+      type: 'artifact',
+      content: mermaidContent,
+      artifact: {
+        identifier: `mermaid-${props.messageId}`,
+        type: 'application/vnd.ant.mermaid',
+        title: 'Mermaid 图表',
+        language: 'mermaid'
+      }
+    }]
+  }
+  
+  // 正常的内容处理逻辑（提取代码块和Mermaid图表）
   const parts: ProcessedPart[] = []
   let content = props.block.content
   let lastIndex = 0
+  let mermaidIndex = 0
+  let codeIndex = 0
+
+  // 先处理 Mermaid 代码块
+  const mermaidRegex = /```mermaid\n([\s\S]*?)```/g
+  let match
+
+  while ((match = mermaidRegex.exec(content)) !== null) {
+    // 添加 Mermaid 前的普通文本
+    if (match.index > lastIndex) {
+      const text = content.substring(lastIndex, match.index)
+      if (text.trim()) {
+        parts.push({
+          type: 'text',
+          content: text
+        })
+      }
+    }
+
+    // 添加 Mermaid 图表作为 artifact
+    const diagramTitle = `Mermaid Diagram ${mermaidIndex + 1}`
+    parts.push({
+      type: 'artifact',
+      content: match[1].trim(),
+      artifact: {
+        identifier: `mermaid-${props.messageId}-${mermaidIndex}`,
+        type: 'application/vnd.ant.mermaid',
+        title: diagramTitle,
+        language: 'mermaid'
+      }
+    })
+
+    lastIndex = match.index + match[0].length
+    mermaidIndex++
+  }
+
+  // 处理剩余内容中的普通代码块
+  content = content.substring(lastIndex)
+  lastIndex = 0
+
+  // 处理普通代码块
+  const codeRegex = /```(\w+)?\n([\s\S]*?)```/g
+  while ((match = codeRegex.exec(content)) !== null) {
+    // 添加代码块前的普通文本
+    if (match.index > lastIndex) {
+      const text = content.substring(lastIndex, match.index)
+      if (text.trim()) {
+        parts.push({
+          type: 'text',
+          content: text
+        })
+      }
+    }
+
+    // 添加代码块作为 artifact
+    const language = match[1] || 'text'
+    const codeContent = match[2].trim()
+    
+    // 根据语言类型设置不同的artifact类型和标题
+    let artifactType: 'application/vnd.ant.code' | 'text/markdown' | 'text/html' | 'image/svg+xml' | 'application/vnd.ant.mermaid' = 'application/vnd.ant.code'
+    let title = `代码块 ${codeIndex + 1}`
+    
+    // 根据语言设置不同的类型
+    if (language.toLowerCase() === 'markdown' || language.toLowerCase() === 'md') {
+      artifactType = 'text/markdown'
+      title = 'Markdown 文档'
+    } else if (language.toLowerCase() === 'csv') {
+      title = 'CSV 数据表格'
+    } else if (language.toLowerCase() === 'python' || language.toLowerCase() === 'py') {
+      title = 'Python 代码'
+    } else if (language.toLowerCase() === 'html') {
+      artifactType = 'text/html'
+      title = 'HTML 文档'
+    } else if (language.toLowerCase() === 'svg') {
+      artifactType = 'image/svg+xml'
+      title = 'SVG 图像'
+    } else if (language.toLowerCase() === 'mermaid') {
+      artifactType = 'application/vnd.ant.mermaid'
+      title = 'Mermaid 图表'
+    } else {
+      // 对于其他语言，使用语言名称作为标题前缀
+      const langCapitalized = language.charAt(0).toUpperCase() + language.slice(1).toLowerCase()
+      title = `${langCapitalized} 代码`
+    }
+    
+    parts.push({
+      type: 'artifact',
+      content: codeContent,
+      artifact: {
+        identifier: `code-${props.messageId}-${codeIndex}`,
+        type: artifactType,
+        title: title,
+        language: language
+      }
+    })
+
+    lastIndex = match.index + match[0].length
+    codeIndex++
+  }
+
+  content = content.substring(lastIndex)
+  lastIndex = 0
 
   // 处理 antThinking 标签
   const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
-  let match
   while ((match = thinkingRegex.exec(content)) !== null) {
     // 添加思考前的普通文本
     if (match.index > lastIndex) {
@@ -209,7 +362,7 @@ const processedContent = computed<ProcessedPart[]>(() => {
   // 处理 antArtifact 标签
   const artifactRegex =
     /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
-  content = props.block.content
+  content = content.substring(lastIndex)
   lastIndex = 0
 
   while ((match = artifactRegex.exec(content)) !== null) {
@@ -268,179 +421,6 @@ const processedContent = computed<ProcessedPart[]>(() => {
   return parts
 })
 
-// Initialize code editors
-const initCodeEditors = () => {
-  const codeBlocks = document.querySelectorAll(`#${id.value} .code-block`)
-
-  codeBlocks.forEach((block) => {
-    const editorId = block.getAttribute('id')
-    const editorContainer = block.querySelector('.code-editor')
-    const code = block.getAttribute('data-code')
-    const lang = block.getAttribute('data-lang')
-
-    if (!editorId || !editorContainer || !code || !lang) {
-      return
-    }
-
-    const decodedCode = decodeURIComponent(escape(atob(code)))
-
-    // 如果是 mermaid 代码块，渲染图表
-    if (lang.toLowerCase() === 'mermaid' && props.block.status !== 'loading') {
-      renderMermaidDiagram(editorContainer as HTMLElement, decodedCode, editorId)
-      return
-    }
-
-    // 如果编辑器已存在，更新内容而不是重新创建
-    if (editorInstances.value.has(editorId)) {
-      const existingEditor = editorInstances.value.get(editorId)
-      const currentContent = existingEditor?.state.doc.toString()
-
-      // 只在内容变化时更新
-      if (currentContent !== decodedCode) {
-        existingEditor?.dispatch({
-          changes: {
-            from: 0,
-            to: currentContent?.length || 0,
-            insert: decodedCode
-          }
-        })
-      }
-      return
-    }
-
-    // 创建新的编辑器实例
-    const extensions = [
-      basicSetup,
-      anysphereTheme,
-      EditorView.lineWrapping,
-      EditorState.tabSize.of(2)
-    ]
-
-    switch (lang.toLowerCase()) {
-      case 'javascript':
-      case 'js':
-      case 'ts':
-      case 'typescript':
-        extensions.push(javascript())
-        break
-      case 'react':
-      case 'vue':
-      case 'html':
-        extensions.push(html())
-        break
-      case 'css':
-        extensions.push(css())
-        break
-      case 'json':
-        extensions.push(json())
-        break
-      case 'python':
-      case 'py':
-        extensions.push(python())
-        break
-      case 'kotlin':
-      case 'kt':
-      case 'java':
-        extensions.push(java())
-        break
-      case 'go':
-      case 'golang':
-        extensions.push(go())
-        break
-      case 'markdown':
-      case 'md':
-        extensions.push(markdown())
-        break
-      case 'sql':
-        extensions.push(sql())
-        break
-      case 'xml':
-        extensions.push(xml())
-        break
-      case 'cpp':
-      case 'c++':
-      case 'c':
-        extensions.push(cpp())
-        break
-      case 'rust':
-      case 'rs':
-        extensions.push(rust())
-        break
-      case 'bash':
-      case 'sh':
-      case 'shell':
-      case 'zsh':
-        extensions.push(StreamLanguage.define(shell))
-        break
-      case 'php':
-        extensions.push(php())
-        break
-      case 'yaml':
-      case 'yml':
-        extensions.push(yaml())
-        break
-      case 'swift':
-        extensions.push(StreamLanguage.define(swift))
-        break
-      case 'ruby':
-        extensions.push(StreamLanguage.define(ruby))
-        break
-      case 'perl':
-        extensions.push(StreamLanguage.define(perl))
-        break
-      case 'lua':
-        extensions.push(StreamLanguage.define(lua))
-        break
-      case 'haskell':
-        extensions.push(StreamLanguage.define(haskell))
-        break
-      case 'erlang':
-        extensions.push(StreamLanguage.define(erlang))
-        break
-      case 'clojure':
-        extensions.push(StreamLanguage.define(clojure))
-        break
-      case 'mermaid':
-        // 使用简单的文本编辑器，不使用 StreamLanguage
-        extensions.push(markdown())
-        break
-    }
-
-    try {
-      if (editorContainer instanceof HTMLElement) {
-        try {
-          const editorView = new EditorView({
-            state: EditorState.create({
-              doc: decodedCode,
-              extensions: [
-                ...extensions,
-                EditorState.readOnly.of(true)
-                // Remove the inline theme configuration
-              ]
-            }),
-            parent: editorContainer
-          })
-          editorInstances.value.set(editorId, editorView)
-        } catch (innerError) {
-          console.error('Failed with standard method, trying fallback:', innerError)
-          // Fallback if CodeMirror fails - create a basic pre element with escaped HTML
-          const escapedCode = decodedCode
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;')
-          editorContainer.innerHTML = `<pre style="white-space: pre-wrap; color: #ffffff; margin: 0;">${escapedCode}</pre>`
-        }
-      } else {
-        console.error('Editor container is not a valid HTMLElement')
-      }
-    } catch (error) {
-      console.error('Failed to initialize editor:', error)
-    }
-  })
-}
-
 // Handle copy functionality
 const handleCopyClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement
@@ -462,30 +442,184 @@ const handleCopyClick = async (e: MouseEvent) => {
   }
 }
 
-// Cleanup editors on unmount
-const cleanupEditors = () => {
-  editorInstances.value.forEach((editor) => {
-    editor.destroy()
-  })
-  editorInstances.value.clear()
-}
-
 const renderContent = (content: string) => {
   refreshLoadingCursor()
-
-  const rawContent = renderMarkdown(
+  
+  // 完全移除旧的isCompleteMarkdown函数，替换为严格版本
+  const isMarkdownDocument = (content: string): boolean => {
+    // 只有明确以```markdown或```md开头的内容才被视为Markdown文档
+    return /^\s*```(markdown|md)\s*\n/i.test(content.trim()) && 
+           content.trim().endsWith('```')
+  }
+  
+  // 替换原来的判断条件
+  if (isMarkdownDocument(content)) {
+    nextTick(() => {
+      if (messageBlock.value) {
+        // 查找包含markdown内容的div
+        const markdownDiv = messageBlock.value.querySelector(`#${id.value}`)
+        if (markdownDiv && markdownDiv.parentNode) {
+          // 创建一个artifact容器
+          const artifactContainer = document.createElement('div')
+          artifactContainer.className = 'my-1'
+          
+          // 创建点击处理器
+          artifactContainer.onclick = () => {
+            import('@/stores/artifact').then(module => {
+              const artifactStore = module.useArtifactStore()
+              artifactStore.showArtifact({
+                type: 'text/markdown',
+                title: '完整Markdown文档',
+                content: content
+              })
+            })
+          }
+          
+          // 创建预览界面
+          const previewUI = document.createElement('div')
+          previewUI.className = 'flex items-center gap-2 p-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50 cursor-pointer'
+          
+          // 图标
+          const iconContainer = document.createElement('div')
+          iconContainer.className = 'flex-shrink-0'
+          const icon = document.createElement('span')
+          icon.className = 'w-6 h-6 text-muted-foreground'
+          icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>'
+          iconContainer.appendChild(icon)
+          previewUI.appendChild(iconContainer)
+          
+          // 标题和提示
+          const textContainer = document.createElement('div')
+          textContainer.className = 'flex-grow'
+          const heading = document.createElement('h3')
+          heading.className = 'text-base font-medium leading-none tracking-tight'
+          
+          // 尝试从Markdown提取标题
+          const titleMatch = content.match(/^#\s+(.+)$/m)
+          heading.textContent = titleMatch ? titleMatch[1] : '完整Markdown文档'
+          
+          const hint = document.createElement('p')
+          //hint.className = 'text-sm text-muted-foreground mt-0.5'
+          hint.textContent = '点击查看完整内容'
+          textContainer.appendChild(heading)
+          textContainer.appendChild(hint)
+          previewUI.appendChild(textContainer)
+          
+          artifactContainer.appendChild(previewUI)
+          
+          // 替换原始的markdown内容
+          markdownDiv.innerHTML = ''
+          markdownDiv.appendChild(artifactContainer)
+          return
+        }
+      }
+    })
+  }
+  
+  // 处理常规内容或代码块
+  const rendered = renderMarkdown(
     md,
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
-  // Note: Content is not sanitized to allow proper code rendering
-  // Be careful with user-generated content as this could pose XSS risks
-  // const safeContent = DOMPurify.sanitize(rawContent, {
-  //   WHOLE_DOCUMENT: false,
-  //   FORBID_TAGS: ['script', 'style', 'code'],
-  //   ALLOWED_URI_REGEXP:
-  //     /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
-  // })
-  return rawContent
+  
+  // 处理代码块
+  nextTick(() => {
+    // 在DOM渲染完成后，处理代码块
+    if (messageBlock.value) {
+      const codeBlocks = messageBlock.value.querySelectorAll('.code-block')
+      codeBlocks.forEach((block, index) => {
+        const language = (block.getAttribute('data-lang') || '').toLowerCase()
+        const codeData = block.getAttribute('data-code')
+        
+        // 只处理特定类型的代码块
+        if ((language === 'markdown' || language === 'md' || 
+             language === 'csv' || language === 'python' || language === 'py') && codeData) {
+          try {
+            // 解码代码内容
+            const codeContent = decodeURIComponent(escape(atob(codeData)))
+            
+            // 创建artifact对象
+            let artifactType: 'application/vnd.ant.code' | 'text/markdown' | 'text/html' | 'image/svg+xml' | 'application/vnd.ant.mermaid' = 'application/vnd.ant.code'
+            let title = `代码块 ${index + 1}`
+            
+            if (language === 'markdown' || language === 'md') {
+              artifactType = 'text/markdown'
+              title = 'Markdown 文档'
+            } else if (language === 'csv') {
+              artifactType = 'application/vnd.ant.code'
+              title = 'CSV 数据表格'
+            } else if (language === 'python' || language === 'py') {
+              artifactType = 'application/vnd.ant.code'
+              title = 'Python 代码'
+            }
+            
+            // 创建DOM元素
+            const artifactContainer = document.createElement('div')
+            artifactContainer.className = 'my-1'
+            
+            // 创建新的ArtifactPreview组件
+            const artifactComponent = document.createElement('div')
+            artifactComponent.className = 'artifact-preview-container'
+            artifactComponent.setAttribute('data-identifier', `inline-${props.messageId}-${index}`)
+            artifactComponent.setAttribute('data-type', artifactType)
+            artifactComponent.setAttribute('data-title', title)
+            artifactContainer.appendChild(artifactComponent)
+            
+            // 创建点击处理器
+            artifactContainer.onclick = () => {
+              import('@/stores/artifact').then(module => {
+                const artifactStore = module.useArtifactStore()
+                artifactStore.showArtifact({
+                  type: artifactType,
+                  title: title,
+                  content: codeContent
+                })
+              })
+            }
+            
+            // 创建预览界面
+            const previewUI = document.createElement('div')
+            previewUI.className = 'flex items-center gap-2 p-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50 cursor-pointer'
+            
+            // 图标
+            const iconContainer = document.createElement('div')
+            iconContainer.className = 'flex-shrink-0'
+            const icon = document.createElement('span')
+            icon.className = 'w-6 h-6 text-muted-foreground'
+            icon.innerHTML = language === 'markdown' || language === 'md' 
+              ? '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>'
+              : '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>'
+            iconContainer.appendChild(icon)
+            previewUI.appendChild(iconContainer)
+            
+            // 标题和提示
+            const textContainer = document.createElement('div')
+            textContainer.className = 'flex-grow'
+            const heading = document.createElement('h3')
+            heading.className = 'text-base font-medium leading-none tracking-tight'
+            heading.textContent = title
+            const hint = document.createElement('p')
+            //hint.className = 'text-sm text-muted-foreground mt-0.5'
+            hint.textContent = '点击查看完整内容'
+            textContainer.appendChild(heading)
+            textContainer.appendChild(hint)
+            previewUI.appendChild(textContainer)
+            
+            artifactContainer.appendChild(previewUI)
+            
+            // 替换原代码块
+            if (block.parentNode) {
+              block.parentNode.replaceChild(artifactContainer, block)
+            }
+          } catch (err) {
+            console.error('处理代码块时出错:', err)
+          }
+        }
+      })
+    }
+  })
+  
+  return rendered
 }
 
 // 右键菜单事件处理
@@ -514,15 +648,12 @@ const handleContextMenu = (event) => {
   }
 }
 
-// 添加 watch 来监听内容变化
+// 修改 watch 函数
 watch(
   processedContent,
   () => {
     nextTick(() => {
-      // 清理现有的编辑器实例
-      cleanupEditors()
-      // 初始化新的编辑器
-      initCodeEditors()
+      refreshLoadingCursor()
     })
   },
   { immediate: true }
@@ -532,6 +663,13 @@ onMounted(async () => {
   if (props.isSearchResult) {
     searchResults.value = await threadPresenter.getSearchResults(props.messageId)
   }
+})
+
+// 初始化 mermaid
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  securityLevel: 'loose'
 })
 </script>
 
@@ -572,7 +710,7 @@ onMounted(async () => {
 }
 
 .prose .code-block {
-  @apply rounded-lg overflow-hidden mt-2  mb-4 text-xs;
+  @apply rounded-lg overflow-hidden mt-2 mb-4 text-xs;
 }
 
 .prose .code-header {

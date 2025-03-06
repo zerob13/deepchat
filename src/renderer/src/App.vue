@@ -1,14 +1,27 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch, computed } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppBar from './components/AppBar.vue'
 import SideBar from './components/SideBar.vue'
 import { usePresenter } from './composables/usePresenter'
+import ArtifactDialog from './components/artifacts/ArtifactDialog.vue'
+import { useArtifactStore } from './stores/artifact'
+import { useChatStore } from '@/stores/chat'
+
 const route = useRoute()
 const configPresenter = usePresenter('configPresenter')
+const artifactStore = useArtifactStore()
+const chatStore = useChatStore()
 
 const router = useRouter()
 const activeTab = ref('chat')
+
+const mainContentClass = computed(() => {
+  return {
+    'flex-1 w-0 h-full transition-all duration-200': true,
+    'mr-[50%]': artifactStore.isOpen
+  }
+})
 
 const getInitComplete = async () => {
   const initComplete = await configPresenter.getSetting('init_complete')
@@ -38,6 +51,17 @@ onMounted(() => {
       if (newTab !== activeTab.value) {
         activeTab.value = newTab
       }
+      // 路由变化时关闭 artifacts 页面
+      artifactStore.hideArtifact()
+    }
+  )
+
+  // 监听当前对话的变化
+  watch(
+    () => chatStore.activeThreadId,
+    () => {
+      // 当切换对话时关闭 artifacts 页面
+      artifactStore.hideArtifact()
     }
   )
 })
@@ -51,11 +75,27 @@ onMounted(() => {
       <SideBar v-show="route.name !== 'welcome'" v-model:model-value="activeTab" class="h-full" />
 
       <!-- 主内容区域 -->
-      <div class="flex-1 w-0 h-full">
+      <div :class="mainContentClass">
         <RouterView />
       </div>
+
+      <!-- Artifacts 预览区域 -->
+      <ArtifactDialog />
     </div>
   </div>
 </template>
 
-<style></style>
+<style>
+.dialog-content-override {
+  position: fixed !important;
+  right: 0 !important;
+  left: 50% !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  transform: none !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+  border-radius: 0 !important;
+  width: 50% !important;
+}
+</style>
