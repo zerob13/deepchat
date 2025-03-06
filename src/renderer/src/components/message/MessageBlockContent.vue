@@ -23,6 +23,8 @@
             content: part.content,
             artifact: part.artifact
           }"
+          :message-id="messageId"
+          :thread-id="threadId"
         />
       </div>
     </template>
@@ -56,6 +58,7 @@ const props = defineProps<{
     timestamp: number
   }
   messageId: string
+  threadId: string
   isSearchResult?: boolean
 }>()
 
@@ -143,7 +146,8 @@ const processedContent = computed<ProcessedPart[]>(() => {
   if (props.block.status === 'loading') {
     return [{ type: 'text', content: props.block.content }]
   }
-  console.log(props.block.content)
+  // 调试代码：
+  // console.log(props.block.content)
   // 严格的Markdown代码块检测
   const isMarkdownCodeBlock = (content: string): boolean => {
     // 必须以```markdown或```md开头，并以```结尾
@@ -467,11 +471,15 @@ const renderContent = (content: string) => {
           artifactContainer.onclick = () => {
             import('@/stores/artifact').then(module => {
               const artifactStore = module.useArtifactStore()
-              artifactStore.showArtifact({
-                type: 'text/markdown',
-                title: '完整Markdown文档',
-                content: content
-              })
+              if (artifactStore.isOpen) {
+                artifactStore.hideArtifact()
+              } else {
+                artifactStore.showArtifact({
+                  type: 'text/markdown',
+                  title: '完整Markdown文档',
+                  content: content
+                }, props.messageId, props.threadId)
+              }
             })
           }
           
@@ -569,11 +577,15 @@ const renderContent = (content: string) => {
             artifactContainer.onclick = () => {
               import('@/stores/artifact').then(module => {
                 const artifactStore = module.useArtifactStore()
-                artifactStore.showArtifact({
-                  type: artifactType,
-                  title: title,
-                  content: codeContent
-                })
+                if (artifactStore.isOpen) {
+                  artifactStore.hideArtifact()
+                } else {
+                  artifactStore.showArtifact({
+                    type: artifactType,
+                    title: title,
+                    content: codeContent
+                  }, props.messageId, props.threadId)
+                }
               })
             }
             

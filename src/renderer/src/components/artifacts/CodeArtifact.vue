@@ -141,7 +141,7 @@ const getLanguageSupport = (lang: string) => {
 
 const handleCopy = async () => {
   try {
-    await navigator.clipboard.writeText(props.block.content)
+    window.api.copyText(props.block.content)
     copied.value = true
     setTimeout(() => {
       copied.value = false

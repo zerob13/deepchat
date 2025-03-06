@@ -11,7 +11,7 @@
         <h3 class="text-base font-medium leading-none tracking-tight">
           {{ displayTitle }}
         </h3>
-        <p class="text-sm text-muted-foreground mt-0.5">点击打开</p>
+        <p class="text-sm text-muted-foreground mt-0.5">{{ t('artifacts.clickToOpen') }}</p>
       </div>
     </div>
   </div>
@@ -21,7 +21,9 @@
 import { Icon } from '@iconify/vue'
 import { useArtifactStore } from '@/stores/artifact'
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const artifactStore = useArtifactStore()
 
 const props = defineProps<{
@@ -32,6 +34,8 @@ const props = defineProps<{
     }
     content: string
   }
+  messageId: string
+  threadId: string
 }>()
 
 const displayTitle = computed(() => {
@@ -49,7 +53,7 @@ const displayTitle = computed(() => {
   // 根据不同类型生成标题
   switch (type) {
     case 'application/vnd.ant.code': {
-      let codeTitle = '代码片段'
+      let codeTitle = t('artifacts.codeSnippet')
       const lines = content.split('\n')
       
       // 尝试从注释中提取标题
@@ -67,7 +71,7 @@ const displayTitle = computed(() => {
         }
       }
 
-      if (codeTitle === '代码片段') {
+      if (codeTitle === t('artifacts.codeSnippet')) {
         // 尝试识别函数定义
         const functionMatch = content.match(/(?:function|def|func)\s+([a-zA-Z_]\w*)\s*\([^)]*\)/);
         if (functionMatch) {
@@ -77,7 +81,7 @@ const displayTitle = computed(() => {
             .toLowerCase()
             .replace(/(?:^|\s)\S/g, c => c.toUpperCase()) // 首字母大写
             .replace(/_/g, ' ') // 下划线转空格
-          codeTitle += ' 函数'
+          codeTitle += t('artifacts.function')
           return codeTitle
         }
 
@@ -89,19 +93,19 @@ const displayTitle = computed(() => {
             .toLowerCase()
             .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
             .replace(/_/g, ' ')
-          codeTitle += ' 类'
+          codeTitle += t('artifacts.class')
           return codeTitle
         }
 
         // 尝试识别主要的代码特征
         if (content.includes('export default')) {
-          codeTitle = 'Vue 组件'
+          codeTitle = t('artifacts.vueComponent')
         } else if (content.includes('import') && content.includes('from')) {
-          codeTitle = '模块导入'
+          codeTitle = t('artifacts.moduleImport')
         } else if (content.includes('const') || content.includes('let') || content.includes('var')) {
           const varMatch = content.match(/(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=/);
           if (varMatch) {
-            codeTitle = `${varMatch[1]} 变量定义`
+            codeTitle = t('artifacts.variableDefinition', { name: varMatch[1] })
           }
         }
       }
@@ -111,16 +115,16 @@ const displayTitle = computed(() => {
     case 'text/markdown': {
       // 尝试从 Markdown 内容中提取第一个标题
       const headingMatch = content.match(/^#\s+(.+)$/m)
-      return headingMatch ? headingMatch[1] : 'Markdown 文档'
+      return headingMatch ? headingMatch[1] : t('artifacts.markdownDocument')
     }
     case 'text/html': {
       // 尝试从 HTML 中提取 title 或第一个标题
       const htmlTitleMatch = content.match(/<title>(.+?)<\/title>/i) || 
                             content.match(/<h[1-6][^>]*>(.+?)<\/h[1-6]>/i)
-      return htmlTitleMatch ? htmlTitleMatch[1] : 'HTML 文档'
+      return htmlTitleMatch ? htmlTitleMatch[1] : t('artifacts.htmlDocument')
     }
     case 'image/svg+xml':
-      return 'SVG 图像'
+      return t('artifacts.svgImage')
     case 'application/vnd.ant.mermaid': {
       const lines = content.trim().split('\n')
       const firstLine = lines[0].toLowerCase()
@@ -129,34 +133,34 @@ const displayTitle = computed(() => {
 
       // 确定图表类型
       if (firstLine.includes('flowchart') || firstLine.includes('graph')) {
-        chartType = '流程图'
+        chartType = t('artifacts.flowchart')
       } else if (firstLine.includes('sequencediagram')) {
-        chartType = '时序图'
+        chartType = t('artifacts.sequenceDiagram')
       } else if (firstLine.includes('classdiagram')) {
-        chartType = '类图'
+        chartType = t('artifacts.classDiagram')
       } else if (firstLine.includes('statediagram')) {
-        chartType = '状态图'
+        chartType = t('artifacts.stateDiagram')
       } else if (firstLine.includes('erdiagram')) {
-        chartType = 'ER图'
+        chartType = t('artifacts.erDiagram')
       } else if (firstLine.includes('gantt')) {
-        chartType = '甘特图'
+        chartType = t('artifacts.ganttChart')
       } else if (firstLine.includes('pie')) {
-        chartType = '饼图'
+        chartType = t('artifacts.pieChart')
       } else {
-        return 'Mermaid 图表'
+        return t('artifacts.mermaidDiagram')
       }
 
       // 尝试从内容中提取更多信息
       switch (chartType) {
-        case '流程图': {
+        case t('artifacts.flowchart'): {
           // 尝试找到第一个节点的文本作为主题
           const nodeMatch = content.match(/[A-Za-z0-9]+\["([^"]+)"\]/);
           if (nodeMatch) {
-            chartTitle = `${nodeMatch[1]}的${chartType}`
+            chartTitle = t('artifacts.flowchartOf', { name: nodeMatch[1] })
           }
           break
         }
-        case '时序图': {
+        case t('artifacts.sequenceDiagram'): {
           // 尝试找到参与者
           const participants = lines
             .filter(line => line.toLowerCase().includes('participant') || line.match(/^[^->\s]+/))
@@ -167,35 +171,35 @@ const displayTitle = computed(() => {
             })
             .filter(Boolean)
           if (participants.length > 0) {
-            chartTitle = `${participants.join(' 和 ')}之间的${chartType}`
+            chartTitle = t('artifacts.sequenceDiagramBetween', { participants: participants.join(t('artifacts.and')) })
           }
           break
         }
-        case '类图': {
+        case t('artifacts.classDiagram'): {
           // 尝试找到主要的类名
           const classMatch = content.match(/class\s+([^\s{]+)/);
           if (classMatch) {
-            chartTitle = `${classMatch[1]}的${chartType}`
+            chartTitle = t('artifacts.classDiagramOf', { name: classMatch[1] })
           }
           break
         }
-        case '状态图': {
+        case t('artifacts.stateDiagram'): {
           // 尝试找到初始状态
           const stateMatch = content.match(/[*]?\s*-->\s*([^[\]:\n]+)/);
           if (stateMatch) {
-            chartTitle = `${stateMatch[1].trim()}的${chartType}`
+            chartTitle = t('artifacts.stateDiagramOf', { name: stateMatch[1].trim() })
           }
           break
         }
-        case 'ER图': {
+        case t('artifacts.erDiagram'): {
           // 尝试找到主要的实体
           const entityMatch = content.match(/([^\s|{}]+)\s*{/);
           if (entityMatch) {
-            chartTitle = `${entityMatch[1]}的${chartType}`
+            chartTitle = t('artifacts.erDiagramOf', { name: entityMatch[1] })
           }
           break
         }
-        case '甘特图': {
+        case t('artifacts.ganttChart'): {
           // 尝试找到项目标题
           const titleMatch = content.match(/title\s+([^\n]+)/i);
           if (titleMatch) {
@@ -203,11 +207,12 @@ const displayTitle = computed(() => {
           }
           break
         }
-        case '饼图': {
+        case t('artifacts.pieChart'): {
           // 尝试找到标题或第一个数据项
           const pieTitle = content.match(/title\s+([^\n]+)|"([^"]+)"/i);
           if (pieTitle) {
-            chartTitle = `${pieTitle[1] || pieTitle[2]}的${chartType}`          }
+            chartTitle = t('artifacts.pieChartOf', { name: pieTitle[1] || pieTitle[2] })
+          }
           break
         }
       }
@@ -215,7 +220,7 @@ const displayTitle = computed(() => {
       return chartTitle || chartType
     }
     default:
-      return title || '未知类型文档'
+      return title || t('artifacts.unknownDocument')
   }
 })
 
@@ -230,7 +235,7 @@ const handleClick = () => {
       type: props.block.artifact.type,
       title: displayTitle.value,
       content: props.block.content
-    })
+    }, props.messageId, props.threadId)
   }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch, computed } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppBar from './components/AppBar.vue'
 import SideBar from './components/SideBar.vue'
@@ -15,13 +15,6 @@ const chatStore = useChatStore()
 
 const router = useRouter()
 const activeTab = ref('chat')
-
-const mainContentClass = computed(() => {
-  return {
-    'flex-1 w-0 h-full transition-all duration-200': true,
-    'mr-[50%]': artifactStore.isOpen
-  }
-})
 
 const getInitComplete = async () => {
   const initComplete = await configPresenter.getSetting('init_complete')
@@ -75,7 +68,10 @@ onMounted(() => {
       <SideBar v-show="route.name !== 'welcome'" v-model:model-value="activeTab" class="h-full" />
 
       <!-- 主内容区域 -->
-      <div :class="mainContentClass">
+      <div :class="{
+        'flex-1 w-0 h-full transition-all duration-200': true,
+        'mr-[50%]': artifactStore.isOpen
+      }">
         <RouterView />
       </div>
 
@@ -84,18 +80,3 @@ onMounted(() => {
     </div>
   </div>
 </template>
-
-<style>
-.dialog-content-override {
-  position: fixed !important;
-  right: 0 !important;
-  left: 50% !important;
-  top: 0 !important;
-  bottom: 0 !important;
-  transform: none !important;
-  height: 100vh !important;
-  max-height: 100vh !important;
-  border-radius: 0 !important;
-  width: 50% !important;
-}
-</style>
