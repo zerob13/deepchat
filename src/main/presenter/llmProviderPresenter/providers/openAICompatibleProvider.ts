@@ -46,12 +46,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   // 辅助方法：格式化消息
-  protected formatMessages(
-    messages: {
-      role: 'system' | 'user' | 'assistant'
-      content: string | { type: 'text' | 'image'; text?: string; image_url?: string }[]
-    }[]
-  ): ChatMessage[] {
+  protected formatMessages(messages: ChatMessage[]): ChatMessage[] {
     return messages
   }
 
@@ -121,7 +116,8 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   // OpenAI流式完成方法
   protected async *openAIStreamCompletion(
-    messages: ChatMessage[],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    messages: any[],
     modelId?: string,
     temperature?: number,
     maxTokens?: number

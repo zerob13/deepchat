@@ -239,10 +239,10 @@ export class GeminiProvider extends BaseLLMProvider {
               hasAddedSystemPrompt = true
             }
             formattedParts.push({ text: textContent })
-          } else if (part.type === 'image' && part.image_url) {
+          } else if (part.type === 'image_url' && part.image_url) {
             // 处理图片（假设是 base64 格式）
             // 从 base64 URL 中提取实际数据和 MIME 类型
-            const matches = part.image_url.match(/^data:([^;]+);base64,(.+)$/)
+            const matches = part.image_url.url.match(/^data:([^;]+);base64,(.+)$/)
             if (matches && matches.length === 3) {
               const mimeType = matches[1]
               const base64Data = matches[2]

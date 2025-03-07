@@ -131,10 +131,10 @@ export class AnthropicProvider extends BaseLLMProvider {
           formattedContent = [{ type: 'text', text: msg.content }]
         } else {
           formattedContent = msg.content.map((content) => {
-            if (content.type === 'image') {
+            if (content.type === 'image_url') {
               return {
                 type: 'image',
-                source: { type: 'url', url: content.image_url! }
+                source: { type: 'url', url: content.image_url!.url }
               }
             } else {
               return { type: 'text', text: content.text || '' }

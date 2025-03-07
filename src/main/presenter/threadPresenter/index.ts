@@ -860,7 +860,7 @@ export class ThreadPresenter implements IThreadPresenter {
     // 处理文本内容
     const userContent = `
       ${userMessage.content.text}
-      ${getFileContext(userMessage.content.files)}
+      ${getFileContext(userMessage.content.files.filter((file) => file.mime?.startsWith('image/')))}
     `
 
     // 从用户消息中提取并丰富URL内容
@@ -889,7 +889,7 @@ export class ThreadPresenter implements IThreadPresenter {
     userMessage: Message,
     imageFiles: MessageFile[]
   ): {
-    finalContent: { role: 'system' | 'user' | 'assistant'; content: string }[]
+    finalContent: ChatMessage[]
     promptTokens: number
   } {
     const { systemPrompt, contextLength, artifacts } = conversation.settings
@@ -902,8 +902,8 @@ export class ThreadPresenter implements IThreadPresenter {
         : ''
 
     // 计算token数量
-    const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
-    const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
+    const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt ?? '') : 0
+    const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt ?? '') : 0
     const userMessageTokens = approximateTokenSize(userContent + enrichedUserMessage)
 
     // 计算剩余可用的上下文长度
@@ -934,7 +934,13 @@ export class ThreadPresenter implements IThreadPresenter {
     // 计算prompt tokens
     let promptTokens = 0
     for (const msg of mergedMessages) {
-      promptTokens += approximateTokenSize(msg.content)
+      if (typeof msg.content === 'string') {
+        promptTokens += approximateTokenSize(msg.content)
+      } else {
+        promptTokens +=
+          approximateTokenSize(msg.content.map((item) => item.text).join('')) +
+          imageFiles.reduce((acc, file) => acc + file.token, 0)
+      }
     }
 
     return { finalContent: mergedMessages, promptTokens }
@@ -1015,7 +1021,10 @@ export class ThreadPresenter implements IThreadPresenter {
     return {
       role: 'user',
       content: [
-        ...imageFiles.map((file) => ({ type: 'image' as const, image_url: file.content })),
+        ...imageFiles.map((file) => ({
+          type: 'image_url' as const,
+          image_url: { url: file.content, detail: 'auto' as const }
+        })),
         { type: 'text' as const, text: finalContent.trim() }
       ]
     }
@@ -1072,10 +1081,8 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   // 合并连续的相同角色消息
-  private mergeConsecutiveMessages(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
-  ): { role: 'system' | 'user' | 'assistant'; content: string }[] {
-    const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
+  private mergeConsecutiveMessages(messages: ChatMessage[]): ChatMessage[] {
+    const mergedMessages: ChatMessage[] = []
 
     for (let i = 0; i < messages.length; i++) {
       const currentMessage = messages[i]

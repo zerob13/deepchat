@@ -7,9 +7,12 @@ export interface ChatMessage {
   content:
     | string
     | {
-        type: 'text' | 'image'
+        type: 'text' | 'image_url'
         text?: string
-        image_url?: string
+        image_url?: {
+          url: string
+          detail?: 'auto' | 'low' | 'high'
+        }
       }[]
 }
 

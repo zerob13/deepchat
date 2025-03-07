@@ -55,8 +55,8 @@ export class OllamaProvider extends BaseLLMProvider {
           .join('\n')
 
         const images = msg.content
-          .filter((c) => c.type === 'image')
-          .map((c) => c.image_url) as string[]
+          .filter((c) => c.type === 'image_url')
+          .map((c) => c.image_url?.url) as string[]
 
         return {
           role: msg.role,
