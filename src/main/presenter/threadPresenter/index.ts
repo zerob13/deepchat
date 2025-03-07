@@ -87,9 +87,13 @@ content：${result.content || ''}
 }
 // 生成带搜索结果的提示词
 export function generateSearchPrompt(query: string, results: SearchResult[]): string {
-  return SEARCH_PROMPT_TEMPLATE.replace('{{SEARCH_RESULTS}}', formatSearchResults(results))
-    .replace('{{USER_QUERY}}', query)
-    .replace('{{CUR_DATE}}', new Date().toLocaleDateString())
+  if (results.length > 0) {
+    return SEARCH_PROMPT_TEMPLATE.replace('{{SEARCH_RESULTS}}', formatSearchResults(results))
+      .replace('{{USER_QUERY}}', query)
+      .replace('{{CUR_DATE}}', new Date().toLocaleDateString())
+  } else {
+    return query
+  }
 }
 
 export class ThreadPresenter implements IThreadPresenter {
