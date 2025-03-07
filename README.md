@@ -40,10 +40,29 @@
 - 📄 Complete Markdown rendering, excellent code module rendering
 - 🌟 Easy to use, with a complete guide page, you can get started immediately without understanding complex concepts
 
+## Currently Supported Model Providers
+
+- [Ollama](https://ollama.com)
+- [Deepseek](https://deepseek.com/)
+- [Silicon](https://www.siliconflow.cn/)
+- [QwenLM](https://chat.qwenlm.ai)
+- [Doubao](https://console.volcengine.com/ark/)
+- [MiniMax](https://platform.minimaxi.com/)
+- [Fireworks](https://fireworks.ai/)
+- [PPIO](https://ppinfra.com/)
+- [OpenAI](https://openai.com/)
+- [Gemini](https://gemini.google.com/)
+- [GitHub Models](https://github.com/marketplace/models)
+- [Moonshot](https://moonshot.ai/)
+- [OpenRouter](https://openrouter.ai/)
+- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
+- Customizable addition of any openai/gemini format API providers
+
 ## TODO List
+- [X] Support for Ollama local model management
 - [ ] Support for llama.cpp local model
 - [ ] Support for local file processing
-- [ ] Mermaid chart visualization
+- [X] Mermaid chart visualization
 - [ ] Search integration (local + cloud API)
 - [ ] MCP support
 - [ ] Multi-modal model support

@@ -228,6 +228,7 @@ const modelToDelete = ref('')
 
 // 预设可拉取的模型列表
 const presetModels = [
+  { name: 'qwq' },
   { name: 'deepseek-r1:1.5b' },
   { name: 'deepseek-r1:7b' },
   { name: 'deepseek-r1:8b' },

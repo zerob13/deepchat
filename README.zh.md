@@ -39,10 +39,29 @@
 - 📄 完整的 Markdown 渲染，优秀的代码模块渲染
 - 🌟 简单易用，完善的引导页，不了解复杂的概念也能立刻上手
 
+## 目前支持的模型供应商
+
+- [Ollama](https://ollama.com)
+- [Deepseek](https://deepseek.com/)
+- [Silicon](https://www.siliconflow.cn/)
+- [QwenLM](https://chat.qwenlm.ai)
+- [Doubao](https://console.volcengine.com/ark/)
+- [MiniMax](https://platform.minimaxi.com/)
+- [Fireworks](https://fireworks.ai/)
+- [PPIO](https://ppinfra.com/)
+- [OpenAI](https://openai.com/)
+- [Gemini](https://gemini.google.com/)
+- [GitHub Models](https://github.com/marketplace/models)
+- [Moonshot](https://moonshot.ai/)
+- [OpenRouter](https://openrouter.ai/)
+- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
+- 自定义添加任意 openai/gemini 格式API的供应商
+
 ## 即将推出（TODO）
+- [X] 支持 Ollama 本地模型管理
 - [ ] 支持 llama.cpp 本地模型
 - [ ] 支持本地文件处理
-- [ ] Mermaid 图表可视化
+- [X] Mermaid 图表可视化
 - [ ] 搜索集成（本地+云端API）
 - [ ] MCP支持
 - [ ] 多模态模型支持
