@@ -389,4 +389,8 @@ export class ConfigPresenter implements IConfigPresenter {
     // 默认返回英文
     return 'en-US'
   }
+
+  public getDefaultProviders(): LLM_PROVIDER[] {
+    return DEFAULT_PROVIDERS
+  }
 }

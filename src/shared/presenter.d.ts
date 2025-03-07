@@ -137,6 +137,7 @@ export interface IConfigPresenter {
   setModelStatus(providerId: string, modelId: string, enabled: boolean): void
   // 语言设置
   getLanguage(): string
+  getDefaultProviders(): LLM_PROVIDER[]
 }
 export type RENDERER_MODEL_META = {
   id: string
@@ -167,6 +168,12 @@ export type LLM_PROVIDER = {
   baseUrl: string
   enable: boolean
   custom?: boolean
+  websites?: {
+    official: string
+    apiKey: string
+    docs: string
+    models: string
+  }
 }
 
 export type LLM_PROVIDER_BASE = {

@@ -262,42 +262,13 @@ const checkResult = ref<boolean>(false)
 const showCheckModelDialog = ref(false)
 
 const getProviderUrl = (providerId: string) => {
-  switch (providerId) {
-    case 'openai':
-      return 'https://platform.openai.com/api-keys'
-    case 'deepseek':
-      return 'https://platform.deepseek.com'
-    case 'silicon':
-      return 'https://platform.siliconcloud.com'
-    case 'moonshot':
-      return 'https://platform.moonshot.cn/console/api-keys'
-    case 'openrouter':
-      return 'https://openrouter.ai/settings/keys'
-    case 'qwenlm':
-      return 'https://chat.qwenlm.ai'
-    case 'doubao':
-      return 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey'
-    case 'minimax':
-      return 'https://platform.minimaxi.com/user-center/basic-information/interface-key'
-    case 'fireworks':
-      return 'https://platform.fireworks.ai/api-keys'
-    case 'tencentcloud':
-      return 'https://console.cloud.tencent.com/cam/capi'
-    case 'ppio':
-      return 'https://ppinfra.com/docs/get-started/quickstart.html'
-    case 'spark':
-      return 'https://platform.spark.com/api-keys'
-    case 'stability':
-      return 'https://platform.stability.ai/api-keys'
-    case 'gemini':
-      return 'https://aistudio.google.com/'
-    case 'github':
-      return 'https://github.com/settings/tokens'
-    case 'azure-openai':
-      return 'https://portal.azure.com/#view/Microsoft_Azure_ProjectOxford/CognitiveServicesHub/~/OpenAI'
-    default:
-      return '#'
+  const providerConfig = settingsStore.defaultProviders.find((provider) => {
+    return provider.id === providerId
+  })
+  if (providerConfig && providerConfig.websites) {
+    return providerConfig.websites.apiKey
   }
+  return ''
 }
 
 const validateApiKey = async () => {

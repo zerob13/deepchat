@@ -50,7 +50,7 @@ export const useSettingsStore = defineStore('settings', () => {
     '32B',
     'deepseek-chat'
   ]
-
+  const defaultProviders = ref<LLM_PROVIDER[]>([])
   // 查找符合优先级的模型
   const findPriorityModel = (): { model: RENDERER_MODEL_META; providerId: string } | null => {
     if (!enabledModels.value || enabledModels.value.length === 0) {
@@ -140,6 +140,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // 初始化配置
   const initSettings = async () => {
     providers.value = await configP.getProviders()
+    defaultProviders.value = await configP.getDefaultProviders()
     theme.value = (await configP.getSetting<string>('theme')) || 'system'
     language.value = (await configP.getSetting<string>('language')) || 'system'
 
@@ -884,6 +885,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showUpdateDialog,
     openUpdateDialog,
     closeUpdateDialog,
-    handleUpdate
+    handleUpdate,
+    defaultProviders
   }
 })
