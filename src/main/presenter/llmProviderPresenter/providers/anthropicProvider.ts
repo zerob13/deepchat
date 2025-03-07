@@ -2,11 +2,7 @@ import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@share
 import { BaseLLMProvider } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import Anthropic from '@anthropic-ai/sdk'
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
+import { ChatMessage } from './openAICompatibleProvider'
 
 export class AnthropicProvider extends BaseLLMProvider {
   private anthropic!: Anthropic
@@ -114,32 +110,63 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   private formatMessages(messages: ChatMessage[]): Anthropic.MessageParam[] {
-    // Anthropic 不支持系统消息作为单独的消息类型
-    // 我们需要将系统消息合并到第一个用户消息中
     const formattedMessages: Anthropic.MessageParam[] = []
     let systemContent = ''
 
     // 收集所有系统消息
     for (const msg of messages) {
       if (msg.role === 'system') {
-        systemContent += msg.content + '\n'
+        systemContent +=
+          (typeof msg.content === 'string'
+            ? msg.content
+            : msg.content
+                .filter((c) => c.type === 'text')
+                .map((c) => c.text)
+                .join('\n')) + '\n'
       } else {
+        // 处理消息内容
+        let formattedContent: Anthropic.ContentBlockParam[] = []
+
+        if (typeof msg.content === 'string') {
+          formattedContent = [{ type: 'text', text: msg.content }]
+        } else {
+          formattedContent = msg.content.map((content) => {
+            if (content.type === 'image') {
+              return {
+                type: 'image',
+                source: { type: 'url', url: content.image_url! }
+              }
+            } else {
+              return { type: 'text', text: content.text || '' }
+            }
+          })
+        }
+
         formattedMessages.push({
           role: msg.role as 'user' | 'assistant',
-          content: msg.content
+          content: formattedContent
         })
       }
     }
 
     // 如果有系统消息，添加到第一个用户消息前
-    if (systemContent && formattedMessages.length > 0 && formattedMessages[0].role === 'user') {
-      formattedMessages[0].content = `${systemContent}\n${formattedMessages[0].content}`
-    } else if (systemContent) {
-      // 如果只有系统消息或第一个不是用户消息，创建一个新的用户消息
-      formattedMessages.unshift({
-        role: 'user',
-        content: systemContent
-      })
+    if (systemContent) {
+      if (formattedMessages.length > 0 && formattedMessages[0].role === 'user') {
+        // 在现有内容前添加系统消息
+        const existingContent = formattedMessages[0].content
+        formattedMessages[0].content = [
+          { type: 'text' as const, text: systemContent },
+          ...(Array.isArray(existingContent)
+            ? existingContent
+            : [{ type: 'text' as const, text: String(existingContent) }])
+        ]
+      } else {
+        // 创建新的用户消息
+        formattedMessages.unshift({
+          role: 'user',
+          content: [{ type: 'text' as const, text: systemContent }]
+        })
+      }
     }
 
     return formattedMessages

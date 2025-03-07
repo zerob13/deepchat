@@ -1,13 +1,19 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
 import { BaseLLMProvider } from '../baseProvider'
 import OpenAI from 'openai'
-import { ChatCompletionMessage } from 'openai/resources'
+import { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources'
 import { ConfigPresenter } from '../../configPresenter'
 
 // 定义ChatMessage接口用于统一消息格式
-interface ChatMessage {
+export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content:
+    | string
+    | {
+        type: 'text' | 'image'
+        text?: string
+        image_url?: string
+      }[]
 }
 
 export class OpenAICompatibleProvider extends BaseLLMProvider {
@@ -53,7 +59,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   // 辅助方法：格式化消息
   protected formatMessages(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+    messages: {
+      role: 'system' | 'user' | 'assistant'
+      content: string | { type: 'text' | 'image'; text?: string; image_url?: string }[]
+    }[]
   ): ChatMessage[] {
     return messages
   }
@@ -74,7 +83,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
 
     const completion = await this.openai.chat.completions.create({
-      messages: messages,
+      messages: messages as ChatCompletionMessageParam[],
       model: modelId,
       stream: false,
       temperature: temperature,
@@ -138,7 +147,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
 
     const stream = await this.openai.chat.completions.create({
-      messages: messages,
+      messages: messages as ChatCompletionMessageParam[],
       model: modelId,
       stream: true,
       temperature: temperature,

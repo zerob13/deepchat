@@ -8,7 +8,8 @@ import {
 } from '@shared/presenter'
 import { BaseLLMProvider } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
-import ollama, { ShowResponse } from 'ollama'
+import ollama, { Message, ShowResponse } from 'ollama'
+import { ChatMessage } from './openAICompatibleProvider'
 
 export class OllamaProvider extends BaseLLMProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
@@ -37,6 +38,34 @@ export class OllamaProvider extends BaseLLMProvider {
       console.error('Failed to fetch Ollama models:', error)
       return []
     }
+  }
+
+  // 辅助方法：格式化消息
+  private formatMessages(messages: ChatMessage[]): Message[] {
+    return messages.map((msg) => {
+      if (typeof msg.content === 'string') {
+        return {
+          role: msg.role,
+          content: msg.content
+        }
+      } else {
+        // 分离文本和图片内容
+        const text = msg.content
+          .filter((c) => c.type === 'text')
+          .map((c) => c.text)
+          .join('\n')
+
+        const images = msg.content
+          .filter((c) => c.type === 'image')
+          .map((c) => c.image_url) as string[]
+
+        return {
+          role: msg.role,
+          content: text,
+          ...(images.length > 0 && { images })
+        }
+      }
+    })
   }
 
   public async check(): Promise<{ isOk: boolean; errorMsg: string | null }> {
@@ -79,7 +108,7 @@ export class OllamaProvider extends BaseLLMProvider {
   }
 
   public async completions(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     temperature?: number,
     maxTokens?: number
@@ -87,10 +116,7 @@ export class OllamaProvider extends BaseLLMProvider {
     try {
       const response = await ollama.chat({
         model: modelId,
-        messages: messages.map((m) => ({
-          role: m.role,
-          content: m.content
-        })),
+        messages: this.formatMessages(messages),
         options: {
           temperature: temperature || 0.7,
           num_predict: maxTokens

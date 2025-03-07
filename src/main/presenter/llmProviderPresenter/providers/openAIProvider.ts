@@ -1,5 +1,5 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream } from '@shared/presenter'
-import { OpenAICompatibleProvider } from './openAICompatibleProvider'
+import { ChatMessage, OpenAICompatibleProvider } from './openAICompatibleProvider'
 import { ConfigPresenter } from '../../configPresenter'
 
 export class OpenAIProvider extends OpenAICompatibleProvider {
@@ -75,7 +75,7 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
   }
 
   async *streamCompletions(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     temperature?: number,
     maxTokens?: number
