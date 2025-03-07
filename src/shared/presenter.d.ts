@@ -204,7 +204,7 @@ export interface ILlmProviderPresenter {
   getCustomModels(providerId: string): Promise<MODEL_META[]>
   startStreamCompletion(
     providerId: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     eventId: string,
     temperature?: number,

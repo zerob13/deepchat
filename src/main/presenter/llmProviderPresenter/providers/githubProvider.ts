@@ -2,6 +2,7 @@ import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@share
 import { OpenAICompatibleProvider } from './openAICompatibleProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import { ModelsPage } from 'openai/resources'
+import { ChatMessage } from '../baseProvider'
 
 export class GithubProvider extends OpenAICompatibleProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
@@ -27,7 +28,7 @@ export class GithubProvider extends OpenAICompatibleProvider {
     }))
   }
   async completions(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     temperature?: number,
     maxTokens?: number
