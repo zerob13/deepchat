@@ -34,8 +34,8 @@
               <SelectContent>
                 <SelectItem value="openai">OpenAI</SelectItem>
                 <SelectItem value="gemini">Gemini</SelectItem>
-                <!-- <SelectItem value="ollama">Ollama</SelectItem>
                 <SelectItem value="anthropic">Anthropic</SelectItem>
+                <!-- <SelectItem value="ollama">Ollama</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="mistral">Mistral AI</SelectItem>
                 <SelectItem value="cohere">Cohere</SelectItem>

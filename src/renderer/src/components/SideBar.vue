@@ -63,7 +63,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="rounded-lg w-9 h-9 text-muted-foreground"
+        class="rounded-lg w-9 h-9 text-muted-foreground relative"
         @click="handleProfileClick"
       >
         <Icon icon="lucide:user" class="h-5 w-5" />
@@ -74,51 +74,14 @@
         <span class="sr-only">User Profile</span>
       </Button>
     </div>
-    <Dialog :open="showUpdateDialog" @update:open="showUpdateDialog = $event">
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>发现新版本</DialogTitle>
-          <DialogDescription>
-            <div class="space-y-2">
-              <p>版本: {{ settings.updateInfo?.version }}</p>
-              <p>发布日期: {{ settings.updateInfo?.releaseDate }}</p>
-              <!-- <div v-if="settings.updateInfo?.releaseNotes" class="mt-2">
-                <p class="font-medium">更新内容:</p>
-                <p class="whitespace-pre-line">{{ settings.updateInfo?.releaseNotes }}</p>
-              </div> -->
-            </div>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" @click="showUpdateDialog = false">稍后再说</Button>
-          <Button @click="handleUpdate" :disabled="isUpdating">
-            <Icon
-              v-if="isUpdating"
-              icon="lucide:loader-circle
-            "
-              class="mr-2 h-4 w-4 animate-spin"
-            />
-            {{ isUpdating ? '更新中...' : '立即更新' }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useDark, useToggle } from '@vueuse/core'
 
 defineProps<{
@@ -130,9 +93,6 @@ defineEmits<{
 }>()
 
 const settings = useSettingsStore()
-const showUpdateDialog = ref(false)
-const isUpdating = ref(false)
-
 const isDark = useDark()
 const toggleDark = useToggle(isDark)
 
@@ -140,23 +100,19 @@ const handleProfileClick = async () => {
   if (!settings.hasUpdate) {
     await settings.checkUpdate()
   } else {
-    showUpdateDialog.value = true
+    settings.openUpdateDialog()
   }
 }
 
-const handleUpdate = async () => {
-  isUpdating.value = true
-  try {
-    const success = await settings.startUpdate()
-    if (success) {
-      showUpdateDialog.value = false
+// 监听更新状态变化，当有新更新时自动显示更新弹窗
+watch(
+  () => settings.hasUpdate,
+  (newVal, oldVal) => {
+    if (newVal && !oldVal) {
+      settings.openUpdateDialog()
     }
-  } catch (error) {
-    console.error('Update failed:', error)
-  } finally {
-    isUpdating.value = false
   }
-}
+)
 
 onMounted(() => {
   settings.checkUpdate()

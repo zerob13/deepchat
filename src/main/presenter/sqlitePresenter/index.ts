@@ -242,9 +242,10 @@ export class SQLitePresenter implements ISQLitePresenter {
         max_tokens,
         provider_id,
         model_id,
-        is_new
+        is_new,
+        artifacts
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
     )
     const conv_id = nanoid()
@@ -260,6 +261,7 @@ export class SQLitePresenter implements ISQLitePresenter {
       settings.maxTokens || 2000,
       settings.providerId || 'openai',
       settings.modelId || 'gpt-4',
+      settings.artifacts || 0,
       1
     )
     return conv_id

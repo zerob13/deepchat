@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppBar from './components/AppBar.vue'
 import SideBar from './components/SideBar.vue'
+import UpdateDialog from './components/ui/UpdateDialog.vue'
 import { usePresenter } from './composables/usePresenter'
 import ArtifactDialog from './components/artifacts/ArtifactDialog.vue'
 import { useArtifactStore } from './stores/artifact'
@@ -78,5 +79,7 @@ onMounted(() => {
       <!-- Artifacts 预览区域 -->
       <ArtifactDialog />
     </div>
+    <!-- 全局更新弹窗 -->
+    <UpdateDialog />
   </div>
 </template>

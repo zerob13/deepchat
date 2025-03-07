@@ -5,7 +5,7 @@ import {
   MODEL_META,
   OllamaModel
 } from '@shared/presenter'
-import { BaseLLMProvider } from './baseProvider'
+import { BaseLLMProvider, ChatMessage } from './baseProvider'
 import { OpenAIProvider } from './providers/openAIProvider'
 import { DeepseekProvider } from './providers/deepseekProvider'
 import { SiliconcloudProvider } from './providers/siliconcloudProvider'
@@ -16,9 +16,9 @@ import { getModelConfig } from './modelConfigs'
 import { OLLAMA_EVENTS, STREAM_EVENTS } from '@/events'
 import { ConfigPresenter } from '../configPresenter'
 import { GeminiProvider } from './providers/geminiProvider'
-import { DEFAULT_PROVIDERS } from '../configPresenter/providers'
 import { GithubProvider } from './providers/githubProvider'
 import { OllamaProvider } from './providers/ollamaProvider'
+import { AnthropicProvider } from './providers/anthropicProvider'
 import { ShowResponse } from 'ollama'
 // 导入其他provider...
 
@@ -54,12 +54,40 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   }
 
   private init() {
-    // 初始化默认的providers
-    DEFAULT_PROVIDERS.forEach((provider) => {
-      this.providers.set(provider.id, {
-        ...provider
-      })
-    })
+    const providers = this.configPresenter.getProviders()
+    for (const provider of providers) {
+      this.providers.set(provider.id, provider)
+      if (provider.enable) {
+        try {
+          let instance: BaseLLMProvider
+          if (provider.apiType === 'openai') {
+            instance = new OpenAIProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'deepseek') {
+            instance = new DeepseekProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'siliconcloud') {
+            instance = new SiliconcloudProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'openai-compatible') {
+            instance = new OpenAICompatibleProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'ppio') {
+            instance = new PPIOProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'gemini') {
+            instance = new GeminiProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'github') {
+            instance = new GithubProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'ollama') {
+            instance = new OllamaProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'anthropic') {
+            instance = new AnthropicProvider(provider, this.configPresenter)
+          } else {
+            console.warn(`Unknown provider type: ${provider.apiType}`)
+            continue
+          }
+          this.providerInstances.set(provider.id, instance)
+        } catch (error) {
+          console.error(`Failed to initialize provider ${provider.id}:`, error)
+        }
+      }
+    }
   }
 
   getProviders(): LLM_PROVIDER[] {
@@ -140,6 +168,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         // 添加其他provider的实例化逻辑
         case 'ollama':
           instance = new OllamaProvider(provider, this.configPresenter)
+          break
+        case 'anthropic':
+          instance = new AnthropicProvider(provider, this.configPresenter)
           break
         default:
           instance = new OpenAICompatibleProvider(provider, this.configPresenter)
@@ -237,7 +268,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
   async startStreamCompletion(
     providerId: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     eventId: string,
     temperature?: number

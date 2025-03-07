@@ -22,8 +22,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const updateInfo = ref<{
     version: string
     releaseDate: string
-    releaseNotes: string | undefined
+    releaseNotes: string
+    githubUrl?: string
+    downloadUrl?: string
   } | null>(null)
+  const showUpdateDialog = ref(false)
+  const isUpdating = ref(false)
   const isChecking = ref(false)
   const searchEngines = ref<SearchEngineTemplate[]>([])
   const activeSearchEngine = ref<string>('google')
@@ -46,7 +50,7 @@ export const useSettingsStore = defineStore('settings', () => {
     '32B',
     'deepseek-chat'
   ]
-
+  const defaultProviders = ref<LLM_PROVIDER[]>([])
   // 查找符合优先级的模型
   const findPriorityModel = (): { model: RENDERER_MODEL_META; providerId: string } | null => {
     if (!enabledModels.value || enabledModels.value.length === 0) {
@@ -136,6 +140,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // 初始化配置
   const initSettings = async () => {
     providers.value = await configP.getProviders()
+    defaultProviders.value = await configP.getDefaultProviders()
     theme.value = (await configP.getSetting<string>('theme')) || 'system'
     language.value = (await configP.getSetting<string>('language')) || 'system'
 
@@ -490,7 +495,9 @@ export const useSettingsStore = defineStore('settings', () => {
         updateInfo.value = {
           version: status.updateInfo.version,
           releaseDate: status.updateInfo.releaseDate,
-          releaseNotes: status.updateInfo.releaseNotes
+          releaseNotes: status.updateInfo.releaseNotes,
+          githubUrl: status.updateInfo.githubUrl,
+          downloadUrl: status.updateInfo.downloadUrl
         }
       }
     } catch (error) {
@@ -501,21 +508,11 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 开始下载更新
-  const startUpdate = async () => {
+  const startUpdate = async (type: 'github' | 'netdisk') => {
     try {
-      return await upgradeP.startDownloadUpdate()
+      return await upgradeP.goDownloadUpgrade(type)
     } catch (error) {
       console.error('Failed to start update:', error)
-      return false
-    }
-  }
-
-  // 重启并安装更新
-  const restartAndUpdate = async () => {
-    try {
-      return await upgradeP.restartToUpdate()
-    } catch (error) {
-      console.error('Failed to restart and update:', error)
       return false
     }
   }
@@ -525,7 +522,7 @@ export const useSettingsStore = defineStore('settings', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     window.electron.ipcRenderer.on(UPDATE_EVENTS.STATUS_CHANGED, (_, event: any) => {
       const { status, info, error } = event
-      hasUpdate.value = status === 'available' || status === 'downloaded'
+      hasUpdate.value = status === 'available'
       console.log(UPDATE_EVENTS.STATUS_CHANGED, status, info, error)
       // 根据不同状态更新UI
       switch (status) {
@@ -534,19 +531,11 @@ export const useSettingsStore = defineStore('settings', () => {
             updateInfo.value = {
               version: info.version,
               releaseDate: info.releaseDate,
-              releaseNotes: info.releaseNotes
+              releaseNotes: info.releaseNotes,
+              githubUrl: info.githubUrl,
+              downloadUrl: info.downloadUrl
             }
           }
-          break
-        case 'downloaded':
-          if (info) {
-            updateInfo.value = {
-              version: info.version,
-              releaseDate: info.releaseDate,
-              releaseNotes: info.releaseNotes
-            }
-          }
-          restartAndUpdate()
           break
         case 'not-available':
           updateInfo.value = null
@@ -558,24 +547,12 @@ export const useSettingsStore = defineStore('settings', () => {
       }
     })
 
-    // 监听更新进度
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    window.electron.ipcRenderer.on(UPDATE_EVENTS.PROGRESS, (_, progressData: any) => {
-      console.log(UPDATE_EVENTS.PROGRESS, progressData)
-      // 这里可以添加进度处理逻辑，如果需要显示进度条
-    })
-
     // 监听更新错误
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     window.electron.ipcRenderer.on(UPDATE_EVENTS.ERROR, (_, errorData: any) => {
       console.error(UPDATE_EVENTS.ERROR, errorData.error)
       hasUpdate.value = false
       updateInfo.value = null
-    })
-
-    // 监听更新即将重启
-    window.electron.ipcRenderer.on(UPDATE_EVENTS.WILL_RESTART, () => {
-      console.log('Application will restart to install update')
     })
   }
 
@@ -835,6 +812,31 @@ export const useSettingsStore = defineStore('settings', () => {
     await threadP.clearAllMessages(conversationId)
   }
 
+  // 打开更新弹窗
+  const openUpdateDialog = () => {
+    showUpdateDialog.value = true
+  }
+
+  // 关闭更新弹窗
+  const closeUpdateDialog = () => {
+    showUpdateDialog.value = false
+  }
+
+  // 处理更新操作
+  const handleUpdate = async (type: 'github' | 'netdisk') => {
+    isUpdating.value = true
+    try {
+      const success = await startUpdate(type)
+      if (success) {
+        closeUpdateDialog()
+      }
+    } catch (error) {
+      console.error('Update failed:', error)
+    } finally {
+      isUpdating.value = false
+    }
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -865,7 +867,6 @@ export const useSettingsStore = defineStore('settings', () => {
     isChecking,
     checkUpdate,
     startUpdate,
-    restartAndUpdate,
     updateProviderConfig,
     updateProviderApi,
     updateProviderStatus,
@@ -880,6 +881,11 @@ export const useSettingsStore = defineStore('settings', () => {
     searchAssistantModel,
     setSearchAssistantModel,
     initOrUpdateSearchAssistantModel,
-    cleanAllMessages
+    cleanAllMessages,
+    showUpdateDialog,
+    openUpdateDialog,
+    closeUpdateDialog,
+    handleUpdate,
+    defaultProviders
   }
 })

@@ -32,9 +32,7 @@ export const STREAM_EVENTS = {
 // 应用更新相关事件
 export const UPDATE_EVENTS = {
   STATUS_CHANGED: 'update:status-changed', // 替代 update-status-changed
-  PROGRESS: 'update:progress', // 替代 update-progress
-  ERROR: 'update:error', // 替代 update-error
-  WILL_RESTART: 'update:will-restart' // 替代 update-will-restart
+  ERROR: 'update:error' // 替代 update-error
 }
 
 // 窗口相关事件

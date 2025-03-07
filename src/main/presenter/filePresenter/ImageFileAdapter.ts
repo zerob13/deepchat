@@ -7,10 +7,12 @@ import sharp from 'sharp'
 
 export class ImageFileAdapter extends BaseFileAdapter {
   private maxFileSize: number
-  private imageMetadata: {
+  imageMetadata: {
     width?: number
     height?: number
     format?: string
+    compressWidth?: number
+    compressHeight?: number
   } = {}
   // private visionDescription: string | undefined
 
@@ -65,32 +67,27 @@ export class ImageFileAdapter extends BaseFileAdapter {
     // 提取图片元数据
     await this.extractImageMetadata()
 
-    // 获取视觉描述
-    const visionDescription = await this.getContent()
+    // 压缩图片并转换为JPG格式
+    const compressedImage = await sharp(this.filePath)
+      .resize(1200, 1200, {
+        // 限制最大尺寸
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({
+        // 统一转换为JPG
+        quality: 70, // 压缩质量
+        mozjpeg: true // 使用mozjpeg优化
+      })
+    this.imageMetadata.compressWidth =
+      (await compressedImage.metadata()).width ?? this.imageMetadata.width
+    this.imageMetadata.compressHeight =
+      (await compressedImage.metadata()).height ?? this.imageMetadata.height
 
-    // 构建基本信息
-    const basicInfo = [
-      `* **File Name:** ${path.basename(this.filePath)}`,
-      `* **File Type:** Image File`,
-      this.imageMetadata.format && `* **Image Format:** ${this.imageMetadata.format.toUpperCase()}`,
-      `* **File Size:** ${stats.size} bytes`,
-      `* **Creation Date:** ${stats.birthtime.toISOString().split('T')[0]}`,
-      `* **Last Modified:** ${stats.mtime.toISOString().split('T')[0]}`
-    ].filter(Boolean)
+    const buffer = await compressedImage.toBuffer()
 
-    // 构建图片信息（只有当宽高都存在时才显示）
-    const imageInfo: string[] = []
-    if (this.imageMetadata.width && this.imageMetadata.height) {
-      imageInfo.push(`* **Dimensions:** ${this.imageMetadata.width} x ${this.imageMetadata.height}`)
-    }
-
-    const fileDescription = `# Image File Description
-
-## Basic File Information
-${basicInfo.join('\n')}
-${imageInfo.length > 0 ? `\n## Image Information\n${imageInfo.join('\n')}` : ''}${visionDescription ? `\n## Visual Content Description\n${visionDescription}` : ''}`
-
-    return fileDescription
+    const base64ImageString = buffer.toString('base64')
+    return `data:image/jpeg;base64,${base64ImageString}`
   }
 
   async getContent(): Promise<string | undefined> {

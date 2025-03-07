@@ -1,0 +1,10 @@
+---
+description: Internationalization for renderer
+globs: src/renderer/src/**
+alwaysApply: false
+---
+# Internationalization
+i18n:
+  framework: 'vue-i18n'
+  location: 'src/renderer/src/i18n'
+  requirement: 'all user-facing strings must use i18n keys'

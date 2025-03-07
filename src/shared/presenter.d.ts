@@ -137,6 +137,7 @@ export interface IConfigPresenter {
   setModelStatus(providerId: string, modelId: string, enabled: boolean): void
   // 语言设置
   getLanguage(): string
+  getDefaultProviders(): LLM_PROVIDER[]
 }
 export type RENDERER_MODEL_META = {
   id: string
@@ -167,6 +168,12 @@ export type LLM_PROVIDER = {
   baseUrl: string
   enable: boolean
   custom?: boolean
+  websites?: {
+    official: string
+    apiKey: string
+    docs: string
+    models: string
+  }
 }
 
 export type LLM_PROVIDER_BASE = {
@@ -197,7 +204,7 @@ export interface ILlmProviderPresenter {
   getCustomModels(providerId: string): Promise<MODEL_META[]>
   startStreamCompletion(
     providerId: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     eventId: string,
     temperature?: number,
@@ -405,9 +412,6 @@ export type LLMResponseStream = {
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>
-  startDownloadUpdate(): void
-  restartToUpdate(): void
-  restartApp(): void
   getUpdateStatus(): {
     status: UpdateStatus | null
     progress: UpdateProgress | null
@@ -416,8 +420,11 @@ export interface IUpgradePresenter {
       version: string
       releaseDate: string
       releaseNotes: any
+      githubUrl: string | undefined
+      downloadUrl: string | undefined
     } | null
   }
+  goDownloadUpgrade(type: 'github' | 'netdisk'): Promise<void>
 }
 // 更新状态类型
 export type UpdateStatus =

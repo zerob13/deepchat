@@ -16,16 +16,35 @@
           >
         </div>
 
-        <!-- 免责声明按钮 -->
-        <Button
-          variant="outline"
-          size="sm"
-          class="mb-2 text-xs text-muted-foreground"
-          @click="openDisclaimerDialog"
-        >
-          <Icon icon="lucide:info" class="mr-1 h-3 w-3" />
-          {{ t('about.disclaimerButton') }}
-        </Button>
+        <!-- 操作按钮区域 -->
+        <div class="flex gap-2 mt-2">
+          <!-- 免责声明按钮 -->
+          <Button
+            variant="outline"
+            size="sm"
+            class="mb-2 text-xs text-muted-foreground"
+            @click="openDisclaimerDialog"
+          >
+            <Icon icon="lucide:info" class="mr-1 h-3 w-3" />
+            {{ t('about.disclaimerButton') }}
+          </Button>
+
+          <!-- 检查更新按钮 -->
+          <Button
+            variant="outline"
+            size="sm"
+            class="mb-2 text-xs text-muted-foreground"
+            @click="handleCheckUpdate"
+            :disabled="settings.isChecking"
+          >
+            <Icon
+              icon="lucide:refresh-cw"
+              class="mr-1 h-3 w-3"
+              :class="{ 'animate-spin': settings.isChecking }"
+            />
+            {{ t('about.checkUpdateButton') }}
+          </Button>
+        </div>
 
         <!-- <div class="text-sm text-muted-foreground p-6 rounded-lg shadow-md bg-card border">
           <h2 class="text-lg font-semibold mb-4 flex items-center">
@@ -97,6 +116,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { renderMarkdown, getCommonMarkdown } from '@/lib/markdown.helper'
+import { useSettingsStore } from '@/stores/settings'
 
 const { t } = useI18n()
 const devicePresenter = usePresenter('devicePresenter')
@@ -114,6 +134,7 @@ const deviceInfo = ref<{
   osVersion: ''
 })
 const appVersion = ref('')
+const settings = useSettingsStore()
 
 // 免责声明对话框状态
 const isDisclaimerOpen = ref(false)
@@ -122,6 +143,15 @@ const isDisclaimerOpen = ref(false)
 const openDisclaimerDialog = () => {
   isDisclaimerOpen.value = true
 }
+
+// 检查更新
+const handleCheckUpdate = async () => {
+  await settings.checkUpdate()
+  if (settings.hasUpdate) {
+    settings.openUpdateDialog()
+  }
+}
+
 const md = getCommonMarkdown()
 const disclaimerContent = computed(() => renderMarkdown(md, t('searchDisclaimer')))
 

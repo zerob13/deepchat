@@ -6,9 +6,9 @@ import {
   OllamaModel,
   ProgressResponse
 } from '@shared/presenter'
-import { BaseLLMProvider } from '../baseProvider'
+import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
-import ollama, { ShowResponse } from 'ollama'
+import ollama, { Message, ShowResponse } from 'ollama'
 
 export class OllamaProvider extends BaseLLMProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
@@ -39,6 +39,34 @@ export class OllamaProvider extends BaseLLMProvider {
     }
   }
 
+  // 辅助方法：格式化消息
+  private formatMessages(messages: ChatMessage[]): Message[] {
+    return messages.map((msg) => {
+      if (typeof msg.content === 'string') {
+        return {
+          role: msg.role,
+          content: msg.content
+        }
+      } else {
+        // 分离文本和图片内容
+        const text = msg.content
+          .filter((c) => c.type === 'text')
+          .map((c) => c.text)
+          .join('\n')
+
+        const images = msg.content
+          .filter((c) => c.type === 'image_url')
+          .map((c) => c.image_url?.url) as string[]
+
+        return {
+          role: msg.role,
+          content: text,
+          ...(images.length > 0 && { images })
+        }
+      }
+    })
+  }
+
   public async check(): Promise<{ isOk: boolean; errorMsg: string | null }> {
     try {
       // 尝试获取模型列表来检查 Ollama 服务是否可用
@@ -53,10 +81,7 @@ export class OllamaProvider extends BaseLLMProvider {
     }
   }
 
-  public async summaryTitles(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    modelId: string
-  ): Promise<string> {
+  public async summaryTitles(messages: ChatMessage[], modelId: string): Promise<string> {
     try {
       const prompt = `根据以下对话生成一个简短的标题（不超过6个字）：\n\n${messages
         .map((m) => `${m.role}: ${m.content}`)
@@ -79,7 +104,7 @@ export class OllamaProvider extends BaseLLMProvider {
   }
 
   public async completions(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     temperature?: number,
     maxTokens?: number
@@ -87,10 +112,7 @@ export class OllamaProvider extends BaseLLMProvider {
     try {
       const response = await ollama.chat({
         model: modelId,
-        messages: messages.map((m) => ({
-          role: m.role,
-          content: m.content
-        })),
+        messages: this.formatMessages(messages),
         options: {
           temperature: temperature || 0.7,
           num_predict: maxTokens
