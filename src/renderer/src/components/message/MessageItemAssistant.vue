@@ -21,6 +21,7 @@
             v-if="block.type === 'content'"
             :block="block"
             :message-id="message.id"
+            :thread-id="currentThreadId"
             :is-search-result="isSearchResult"
           />
           <MessageBlockThink
@@ -71,6 +72,9 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 const currentVariantIndex = ref(0)
+
+// 获取当前会话ID
+const currentThreadId = computed(() => chatStore.activeThreadId || '')
 
 // 计算当前消息的所有变体（包括缓存中的）
 const allVariants = computed(() => {
