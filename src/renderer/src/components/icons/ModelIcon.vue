@@ -48,6 +48,7 @@ import azureOpenaiColorIcon from '@/assets/llm-icons/azure-color.svg?url'
 import anthropicColorIcon from '@/assets/llm-icons/anthropic.svg?url'
 // 导入所有图标
 const icons = {
+  claude: anthropicColorIcon,
   azure: azureOpenaiColorIcon,
   deepseek: deepseekColorIcon,
   adobe: adobeColorIcon,
