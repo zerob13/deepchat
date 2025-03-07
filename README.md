@@ -42,21 +42,75 @@
 
 ## Currently Supported Model Providers
 
-- [Ollama](https://ollama.com)
-- [Deepseek](https://deepseek.com/)
-- [Silicon](https://www.siliconflow.cn/)
-- [QwenLM](https://chat.qwenlm.ai)
-- [Doubao](https://console.volcengine.com/ark/)
-- [MiniMax](https://platform.minimaxi.com/)
-- [Fireworks](https://fireworks.ai/)
-- [PPIO](https://ppinfra.com/)
-- [OpenAI](https://openai.com/)
-- [Gemini](https://gemini.google.com/)
-- [GitHub Models](https://github.com/marketplace/models)
-- [Moonshot](https://moonshot.ai/)
-- [OpenRouter](https://openrouter.ai/)
-- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
-- Customizable addition of any openai/gemini format API providers
+<table>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/ollama.svg" width="50" height="50"><br/>
+      <a href="https://ollama.com">Ollama</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/deepseek-color.svg" width="50" height="50"><br/>
+      <a href="https://deepseek.com/">Deepseek</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/siliconcloud.svg" width="50" height="50"><br/>
+      <a href="https://www.siliconflow.cn/">Silicon</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/qwen-color.svg" width="50" height="50"><br/>
+      <a href="https://chat.qwenlm.ai">QwenLM</a>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/doubao-color.svg" width="50" height="50"><br/>
+      <a href="https://console.volcengine.com/ark/">Doubao</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/minimax-color.svg" width="50" height="50"><br/>
+      <a href="https://platform.minimaxi.com/">MiniMax</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/fireworks-color.svg" width="50" height="50"><br/>
+      <a href="https://fireworks.ai/">Fireworks</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/ppio-color.svg" width="50" height="50"><br/>
+      <a href="https://ppinfra.com/">PPIO</a>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/openai.svg" width="50" height="50"><br/>
+      <a href="https://openai.com/">OpenAI</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/gemini-color.svg" width="50" height="50"><br/>
+      <a href="https://gemini.google.com/">Gemini</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/github.svg" width="50" height="50"><br/>
+      <a href="https://github.com/marketplace/models">GitHub Models</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/moonshot.svg" width="50" height="50"><br/>
+      <a href="https://moonshot.ai/">Moonshot</a>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/openrouter.svg" width="50" height="50"><br/>
+      <a href="https://openrouter.ai/">OpenRouter</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/azure-color.svg" width="50" height="50"><br/>
+      <a href="https://azure.microsoft.com/en-us/products/ai-services/openai-service">Azure OpenAI</a>
+    </td>
+    <td colspan="2">
+          Compatible with any model provider in openai/gemini API format
+    </td>
+  </tr>
+</table>
 
 ## TODO List
 - [X] Support for Ollama local model management

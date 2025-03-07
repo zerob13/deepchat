@@ -41,21 +41,75 @@
 
 ## 目前支持的模型供应商
 
-- [Ollama](https://ollama.com)
-- [Deepseek](https://deepseek.com/)
-- [Silicon](https://www.siliconflow.cn/)
-- [QwenLM](https://chat.qwenlm.ai)
-- [Doubao](https://console.volcengine.com/ark/)
-- [MiniMax](https://platform.minimaxi.com/)
-- [Fireworks](https://fireworks.ai/)
-- [PPIO](https://ppinfra.com/)
-- [OpenAI](https://openai.com/)
-- [Gemini](https://gemini.google.com/)
-- [GitHub Models](https://github.com/marketplace/models)
-- [Moonshot](https://moonshot.ai/)
-- [OpenRouter](https://openrouter.ai/)
-- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
-- 自定义添加任意 openai/gemini 格式API的供应商
+<table>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/ollama.svg" width="50" height="50"><br/>
+      <a href="https://ollama.com">Ollama</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/deepseek-color.svg" width="50" height="50"><br/>
+      <a href="https://deepseek.com/">Deepseek（深度求索）</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/siliconcloud.svg" width="50" height="50"><br/>
+      <a href="https://www.siliconflow.cn/">硅基流动</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/qwen-color.svg" width="50" height="50"><br/>
+      <a href="https://chat.qwenlm.ai">QwenLM</a>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/doubao-color.svg" width="50" height="50"><br/>
+      <a href="https://console.volcengine.com/ark/">火山引擎</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/minimax-color.svg" width="50" height="50"><br/>
+      <a href="https://minimaxi.com/">MiniMax大模型</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/fireworks-color.svg" width="50" height="50"><br/>
+      <a href="https://fireworks.ai/">Fireworks</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/ppio-color.svg" width="50" height="50"><br/>
+      <a href="https://ppinfra.com/">PPIO派欧云</a>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/openai.svg" width="50" height="50"><br/>
+      <a href="https://openai.com/">OpenAI</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/gemini-color.svg" width="50" height="50"><br/>
+      <a href="https://gemini.google.com/">Gemini</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/github.svg" width="50" height="50"><br/>
+      <a href="https://github.com/marketplace/models">GitHub Models</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/moonshot.svg" width="50" height="50"><br/>
+      <a href="https://moonshot.ai/">Moonshot</a>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/openrouter.svg" width="50" height="50"><br/>
+      <a href="https://openrouter.ai/">OpenRouter</a>
+    </td>
+    <td>
+      <img src="./src/renderer/src/assets/llm-icons/azure-color.svg" width="50" height="50"><br/>
+      <a href="https://azure.microsoft.com/en-us/products/ai-services/openai-service">Azure OpenAI</a>
+    </td>
+    <td colspan="2">
+      兼容任意 openai/gemini 格式API的供应商
+    </td>
+  </tr>
+</table>
 
 ## 即将推出（TODO）
 - [X] 支持 Ollama 本地模型管理
