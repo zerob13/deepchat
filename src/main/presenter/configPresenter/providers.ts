@@ -298,20 +298,20 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
   //   }
   // },
 
-  // {
-  //   id: 'anthropic',
-  //   name: 'Anthropic',
-  //   apiType: 'anthropic',
-  //   apiKey: '',
-  //   baseUrl: 'https://api.anthropic.com/',
-  //   enable: false,
-  //   websites: {
-  //     official: 'https://anthropic.com/',
-  //     apiKey: 'https://console.anthropic.com/settings/keys',
-  //     docs: 'https://docs.anthropic.com/en/docs',
-  //     models: 'https://docs.anthropic.com/en/docs/about-claude/models'
-  //   }
-  // },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    apiType: 'anthropic',
+    apiKey: '',
+    baseUrl: 'https://api.anthropic.com',
+    enable: false,
+    websites: {
+      official: 'https://www.anthropic.com/',
+      apiKey: 'https://console.anthropic.com/settings/keys',
+      docs: 'https://docs.anthropic.com/',
+      models: 'https://docs.anthropic.com/claude/docs/models-overview'
+    }
+  },
   // {
   //   id: 'grok',
   //   name: 'Grok',
