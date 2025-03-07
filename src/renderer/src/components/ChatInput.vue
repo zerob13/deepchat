@@ -260,11 +260,19 @@ const previewFile = (filePath: string) => {
 
 const handleFileSelect = async (e: Event) => {
   const files = (e.target as HTMLInputElement).files
+
   if (files && files.length > 0) {
     for (const file of files) {
       const path = window.api.getPathForFile(file)
-      const fileInfo: MessageFile = await filePresenter.prepareFile(path)
-      selectedFiles.value.push(fileInfo)
+      try {
+        const fileInfo: MessageFile = await filePresenter.prepareFile(path)
+        if (fileInfo) {
+          selectedFiles.value.push(fileInfo)
+        }
+      } catch (error) {
+        console.error('文件准备失败:', error)
+        return
+      }
     }
     emit('file-upload', selectedFiles.value)
   }
@@ -382,9 +390,17 @@ const handleDrop = async (e: DragEvent) => {
 
   if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
     for (const file of e.dataTransfer.files) {
-      const path = window.api.getPathForFile(file)
-      const fileInfo: MessageFile = await filePresenter.prepareFile(path)
-      selectedFiles.value.push(fileInfo)
+      try {
+        const path = window.api.getPathForFile(file)
+        const fileInfo: MessageFile = await filePresenter.prepareFile(path)
+        console.log('fileInfo', fileInfo)
+        if (fileInfo) {
+          selectedFiles.value.push(fileInfo)
+        }
+      } catch (error) {
+        console.error('文件准备失败:', error)
+        return
+      }
     }
     emit('file-upload', selectedFiles.value)
   }
