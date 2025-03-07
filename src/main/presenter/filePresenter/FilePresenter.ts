@@ -9,6 +9,7 @@ import { getMimeTypeAdapterMap } from './mime'
 import { IFilePresenter } from '../../../shared/presenter'
 import { MessageFile } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
+import { ImageFileAdapter } from './ImageFileAdapter'
 
 export class FilePresenter implements IFilePresenter {
   private userDataPath: string
@@ -62,7 +63,9 @@ export class FilePresenter implements IFilePresenter {
         // console.info('new file adapter created', adapter)
         return {
           name: adapter.fileMetaData?.fileName ?? '',
-          token: approximateTokenSize(content || ''),
+          token: adapter.mimeType?.startsWith('image')
+            ? calculateImageTokens(adapter as ImageFileAdapter)
+            : approximateTokenSize(content || ''),
           path: adapter.filePath,
           mimeType: adapter.mimeType ?? '',
           metadata: adapter.fileMetaData ?? {
@@ -109,4 +112,11 @@ export class FilePresenter implements IFilePresenter {
     const wildcardMatch = adapterMap.get(`${type}/*`)
     return wildcardMatch
   }
+}
+
+function calculateImageTokens(adapter: ImageFileAdapter): number {
+  // 方法1：基于图片尺寸
+  const pixelBasedTokens =
+    ((adapter.imageMetadata.width ?? 0) * (adapter.imageMetadata.height ?? 0)) / 750
+  return pixelBasedTokens
 }

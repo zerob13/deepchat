@@ -16,7 +16,9 @@ import {
   AssistantMessage,
   Message,
   AssistantMessageBlock,
-  SearchEngineTemplate
+  SearchEngineTemplate,
+  UserMessage,
+  MessageFile
 } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
@@ -25,6 +27,7 @@ import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
+import { ChatMessage } from '../llmProviderPresenter/baseProvider'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -761,7 +764,8 @@ export class ThreadPresenter implements IThreadPresenter {
       )
 
       // 2. 处理用户消息内容
-      const { userContent, urlResults } = await this.processUserMessageContent(userMessage)
+      const { userContent, urlResults, imageFiles } =
+        await this.processUserMessageContent(userMessage)
 
       // 3. 处理搜索（如果需要）
       const searchResults = userMessage.content.search
@@ -775,7 +779,8 @@ export class ThreadPresenter implements IThreadPresenter {
         contextMessages,
         searchResults,
         urlResults,
-        userMessage
+        userMessage,
+        imageFiles
       )
 
       // 5. 更新生成状态
@@ -847,10 +852,12 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   // 处理用户消息内容
-  private async processUserMessageContent(userMessage: Message): Promise<{
+  private async processUserMessageContent(userMessage: UserMessage): Promise<{
     userContent: string
     urlResults: SearchResult[]
+    imageFiles: MessageFile[] // 图片文件列表
   }> {
+    // 处理文本内容
     const userContent = `
       ${userMessage.content.text}
       ${getFileContext(userMessage.content.files)}
@@ -859,7 +866,17 @@ export class ThreadPresenter implements IThreadPresenter {
     // 从用户消息中提取并丰富URL内容
     const urlResults = await ContentEnricher.extractAndEnrichUrls(userMessage.content.text)
 
-    return { userContent, urlResults }
+    // 提取图片文件
+    const imageFiles =
+      userMessage.content.files?.filter((file) => {
+        // 根据文件类型、MIME类型或扩展名过滤图片文件
+        const isImage =
+          file.mime?.startsWith('image/') ||
+          /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(file.name || '')
+        return isImage
+      }) || []
+
+    return { userContent, urlResults, imageFiles }
   }
 
   // 准备提示内容
@@ -869,7 +886,8 @@ export class ThreadPresenter implements IThreadPresenter {
     contextMessages: Message[],
     searchResults: SearchResult[] | null,
     urlResults: SearchResult[],
-    userMessage: Message
+    userMessage: Message,
+    imageFiles: MessageFile[]
   ): {
     finalContent: { role: 'system' | 'user' | 'assistant'; content: string }[]
     promptTokens: number
@@ -906,7 +924,8 @@ export class ThreadPresenter implements IThreadPresenter {
       artifacts,
       searchPrompt,
       userContent,
-      enrichedUserMessage
+      enrichedUserMessage,
+      imageFiles
     )
 
     // 合并连续的相同角色消息
@@ -961,9 +980,10 @@ export class ThreadPresenter implements IThreadPresenter {
     artifacts: number,
     searchPrompt: string,
     userContent: string,
-    enrichedUserMessage: string
-  ): { role: 'system' | 'user' | 'assistant'; content: string }[] {
-    const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
+    enrichedUserMessage: string,
+    imageFiles: MessageFile[]
+  ): ChatMessage[] {
+    const formattedMessages: ChatMessage[] = []
 
     // 添加系统提示
     if (systemPrompt || artifacts === 1) {
@@ -979,17 +999,31 @@ export class ThreadPresenter implements IThreadPresenter {
       finalContent += enrichedUserMessage
     }
 
-    formattedMessages.push({
-      role: 'user',
-      content: finalContent.trim()
-    })
+    if (imageFiles.length > 0) {
+      formattedMessages.push(this.addImageFiles(finalContent, imageFiles))
+    } else {
+      formattedMessages.push({
+        role: 'user',
+        content: finalContent.trim()
+      })
+    }
 
     return formattedMessages
   }
 
+  private addImageFiles(finalContent: string, imageFiles: MessageFile[]): ChatMessage {
+    return {
+      role: 'user',
+      content: [
+        ...imageFiles.map((file) => ({ type: 'image' as const, image_url: file.content })),
+        { type: 'text' as const, text: finalContent.trim() }
+      ]
+    }
+  }
+
   // 添加系统提示
   private async addSystemPrompt(
-    formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    formattedMessages: ChatMessage[],
     systemPrompt: string,
     artifacts: number
   ): Promise<void> {
@@ -1016,10 +1050,7 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   // 添加上下文消息
-  private addContextMessages(
-    formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    contextMessages: Message[]
-  ): void {
+  private addContextMessages(formattedMessages: ChatMessage[], contextMessages: Message[]): void {
     contextMessages.forEach((msg) => {
       const content =
         msg.role === 'user'
