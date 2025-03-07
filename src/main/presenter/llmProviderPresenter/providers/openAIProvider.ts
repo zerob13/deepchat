@@ -1,7 +1,7 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream } from '@shared/presenter'
-import { ChatMessage, OpenAICompatibleProvider } from './openAICompatibleProvider'
+import { OpenAICompatibleProvider } from './openAICompatibleProvider'
 import { ConfigPresenter } from '../../configPresenter'
-
+import { ChatMessage } from '../baseProvider'
 export class OpenAIProvider extends OpenAICompatibleProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     super(provider, configPresenter)

@@ -1,20 +1,8 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
-import { BaseLLMProvider } from '../baseProvider'
+import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import OpenAI from 'openai'
 import { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources'
 import { ConfigPresenter } from '../../configPresenter'
-
-// 定义ChatMessage接口用于统一消息格式
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
-  content:
-    | string
-    | {
-        type: 'text' | 'image'
-        text?: string
-        image_url?: string
-      }[]
-}
 
 export class OpenAICompatibleProvider extends BaseLLMProvider {
   protected openai: OpenAI

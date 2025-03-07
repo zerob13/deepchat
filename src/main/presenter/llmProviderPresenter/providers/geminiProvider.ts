@@ -1,5 +1,5 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
-import { BaseLLMProvider } from '../baseProvider'
+import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai'
 import { ConfigPresenter } from '../../configPresenter'
 
@@ -201,9 +201,7 @@ export class GeminiProvider extends BaseLLMProvider {
   }
 
   // 将 ChatMessage 转换为 Gemini 格式的消息
-  private formatGeminiMessages(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
-  ) {
+  private formatGeminiMessages(messages: ChatMessage[]) {
     // Gemini 不直接支持 system 消息，需要将它们附加到第一个用户消息中
     const formattedMessages: { role: string; parts: string[] }[] = []
     let systemPrompt = ''

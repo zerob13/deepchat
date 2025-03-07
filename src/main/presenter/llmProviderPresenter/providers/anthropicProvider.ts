@@ -2,7 +2,7 @@ import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@share
 import { BaseLLMProvider } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import Anthropic from '@anthropic-ai/sdk'
-import { ChatMessage } from './openAICompatibleProvider'
+import { ChatMessage } from '../baseProvider'
 
 export class AnthropicProvider extends BaseLLMProvider {
   private anthropic!: Anthropic

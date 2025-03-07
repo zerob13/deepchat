@@ -6,10 +6,9 @@ import {
   OllamaModel,
   ProgressResponse
 } from '@shared/presenter'
-import { BaseLLMProvider } from '../baseProvider'
+import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import ollama, { Message, ShowResponse } from 'ollama'
-import { ChatMessage } from './openAICompatibleProvider'
 
 export class OllamaProvider extends BaseLLMProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
@@ -82,10 +81,7 @@ export class OllamaProvider extends BaseLLMProvider {
     }
   }
 
-  public async summaryTitles(
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
-    modelId: string
-  ): Promise<string> {
+  public async summaryTitles(messages: ChatMessage[], modelId: string): Promise<string> {
     try {
       const prompt = `根据以下对话生成一个简短的标题（不超过6个字）：\n\n${messages
         .map((m) => `${m.role}: ${m.content}`)

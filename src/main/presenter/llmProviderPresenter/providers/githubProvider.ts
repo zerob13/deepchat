@@ -1,7 +1,8 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
-import { ChatMessage, OpenAICompatibleProvider } from './openAICompatibleProvider'
+import { OpenAICompatibleProvider } from './openAICompatibleProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import { ModelsPage } from 'openai/resources'
+import { ChatMessage } from '../baseProvider'
 
 export class GithubProvider extends OpenAICompatibleProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {

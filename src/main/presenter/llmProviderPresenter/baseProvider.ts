@@ -1,9 +1,16 @@
 import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@shared/presenter'
 import { ConfigPresenter } from '../configPresenter'
 
-interface ChatMessage {
+// 定义ChatMessage接口用于统一消息格式
+export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content:
+    | string
+    | {
+        type: 'text' | 'image'
+        text?: string
+        image_url?: string
+      }[]
 }
 
 export abstract class BaseLLMProvider {
