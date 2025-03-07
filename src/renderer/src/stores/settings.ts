@@ -22,10 +22,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const updateInfo = ref<{
     version: string
     releaseDate: string
-    releaseNotes: string | undefined
-    githubUrl: string | undefined
-    downloadUrl: string | undefined
+    releaseNotes: string
+    githubUrl?: string
+    downloadUrl?: string
   } | null>(null)
+  const showUpdateDialog = ref(false)
+  const isUpdating = ref(false)
   const isChecking = ref(false)
   const searchEngines = ref<SearchEngineTemplate[]>([])
   const activeSearchEngine = ref<string>('google')
@@ -809,6 +811,31 @@ export const useSettingsStore = defineStore('settings', () => {
     await threadP.clearAllMessages(conversationId)
   }
 
+  // 打开更新弹窗
+  const openUpdateDialog = () => {
+    showUpdateDialog.value = true
+  }
+
+  // 关闭更新弹窗
+  const closeUpdateDialog = () => {
+    showUpdateDialog.value = false
+  }
+
+  // 处理更新操作
+  const handleUpdate = async (type: 'github' | 'netdisk') => {
+    isUpdating.value = true
+    try {
+      const success = await startUpdate(type)
+      if (success) {
+        closeUpdateDialog()
+      }
+    } catch (error) {
+      console.error('Update failed:', error)
+    } finally {
+      isUpdating.value = false
+    }
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
@@ -853,6 +880,10 @@ export const useSettingsStore = defineStore('settings', () => {
     searchAssistantModel,
     setSearchAssistantModel,
     initOrUpdateSearchAssistantModel,
-    cleanAllMessages
+    cleanAllMessages,
+    showUpdateDialog,
+    openUpdateDialog,
+    closeUpdateDialog,
+    handleUpdate
   }
 })

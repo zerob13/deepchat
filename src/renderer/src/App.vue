@@ -3,6 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import AppBar from './components/AppBar.vue'
 import SideBar from './components/SideBar.vue'
+import UpdateDialog from './components/ui/UpdateDialog.vue'
 import { usePresenter } from './composables/usePresenter'
 const route = useRoute()
 const configPresenter = usePresenter('configPresenter')
@@ -55,6 +56,8 @@ onMounted(() => {
         <RouterView />
       </div>
     </div>
+    <!-- 全局更新弹窗 -->
+    <UpdateDialog />
   </div>
 </template>
 

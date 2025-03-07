@@ -74,46 +74,14 @@
         <span class="sr-only">User Profile</span>
       </Button>
     </div>
-    <Dialog :open="showUpdateDialog" @update:open="showUpdateDialog = $event">
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>发现新版本</DialogTitle>
-          <DialogDescription>
-            <div class="space-y-2">
-              <p>版本: {{ settings.updateInfo?.version }}</p>
-              <p>发布日期: {{ settings.updateInfo?.releaseDate }}</p>
-              <p>更新内容:</p>
-              <p class="whitespace-pre-line">{{ settings.updateInfo?.releaseNotes }}</p>
-            </div>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" @click="showUpdateDialog = false">稍后再说</Button>
-          <Button @click="handleUpdate('github')" :disabled="isUpdating">
-            {{ 'Github下载' }}
-          </Button>
-          <Button @click="handleUpdate('netdisk')" :disabled="isUpdating">
-            {{ '网盘下载' }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { Icon } from '@iconify/vue'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, onMounted, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useDark, useToggle } from '@vueuse/core'
 
 defineProps<{
@@ -125,9 +93,6 @@ defineEmits<{
 }>()
 
 const settings = useSettingsStore()
-const showUpdateDialog = ref(false)
-const isUpdating = ref(false)
-
 const isDark = useDark()
 const toggleDark = useToggle(isDark)
 
@@ -135,32 +100,19 @@ const handleProfileClick = async () => {
   if (!settings.hasUpdate) {
     await settings.checkUpdate()
   } else {
-    showUpdateDialog.value = true
+    settings.openUpdateDialog()
   }
 }
+
+// 监听更新状态变化，当有新更新时自动显示更新弹窗
 watch(
-  () => {
-    return settings.hasUpdate
-  },
+  () => settings.hasUpdate,
   (newVal, oldVal) => {
     if (newVal && !oldVal) {
-      showUpdateDialog.value = true
+      settings.openUpdateDialog()
     }
   }
 )
-const handleUpdate = async (type: 'github' | 'netdisk') => {
-  isUpdating.value = true
-  try {
-    const success = await settings.startUpdate(type)
-    if (success) {
-      showUpdateDialog.value = false
-    }
-  } catch (error) {
-    console.error('Update failed:', error)
-  } finally {
-    isUpdating.value = false
-  }
-}
 
 onMounted(() => {
   settings.checkUpdate()
