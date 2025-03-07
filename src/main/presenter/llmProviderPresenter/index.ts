@@ -5,7 +5,7 @@ import {
   MODEL_META,
   OllamaModel
 } from '@shared/presenter'
-import { BaseLLMProvider } from './baseProvider'
+import { BaseLLMProvider, ChatMessage } from './baseProvider'
 import { OpenAIProvider } from './providers/openAIProvider'
 import { DeepseekProvider } from './providers/deepseekProvider'
 import { SiliconcloudProvider } from './providers/siliconcloudProvider'
@@ -268,7 +268,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
   async startStreamCompletion(
     providerId: string,
-    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    messages: ChatMessage[],
     modelId: string,
     eventId: string,
     temperature?: number

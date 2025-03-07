@@ -747,213 +747,45 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   async startStreamCompletion(conversationId: string, queryMsgId?: string) {
-    const state = Array.from(this.generatingMessages.values()).find(
-      (state) => state.conversationId === conversationId
-    )
+    const state = this.findGeneratingState(conversationId)
     if (!state) {
       console.warn('未找到状态，conversationId:', conversationId)
       return
     }
 
-    const conversation = await this.getConversation(conversationId)
-    const { systemPrompt, providerId, modelId, temperature, contextLength, maxTokens, artifacts } =
-      conversation.settings
-
-    let contextMessages: Message[] = []
-    let userMessage: Message | null = null
-    let searchResults: SearchResult[] | null = null
-    let urlResults: SearchResult[] = []
-
     try {
-      if (queryMsgId) {
-        console.log('有queryMsgId，从该消息开始获取历史消息')
-        const queryMessage = await this.getMessage(queryMsgId)
-        if (!queryMessage || !queryMessage.parentId) {
-          console.error('找不到指定的消息，queryMsgId:', queryMsgId)
-          throw new Error('找不到指定的消息')
-        }
-        userMessage = await this.getMessage(queryMessage.parentId)
-        if (!userMessage) {
-          console.error('找不到触发消息，parentId:', queryMessage.parentId)
-          throw new Error('找不到指定的消息')
-        }
-        // 获取触发消息之前的历史消息
-        contextMessages = await this.getMessageHistory(userMessage.id, contextLength)
-      } else {
-        // 直接从数据库获取最后一条用户消息
-        userMessage = await this.getLastUserMessage(conversationId)
-        if (!userMessage) {
-          throw new Error('找不到用户消息')
-        }
-        contextMessages = await this.getContextMessages(conversationId)
-      }
+      // 1. 获取上下文信息
+      const { conversation, userMessage, contextMessages } = await this.prepareConversationContext(
+        conversationId,
+        queryMsgId
+      )
 
-      if (!userMessage) {
-        throw new Error('找不到用户消息')
-      }
+      // 2. 处理用户消息内容
+      const { userContent, urlResults } = await this.processUserMessageContent(userMessage)
 
-      // 处理本地文本信息
-      const userContent = `
-      ${userMessage.content.text}
-      ${getFileContext(userMessage.content.files)}
-      `
-      // 从用户消息中提取并丰富URL内容
-      urlResults = await ContentEnricher.extractAndEnrichUrls(userMessage.content.text)
+      // 3. 处理搜索（如果需要）
+      const searchResults = userMessage.content.search
+        ? await this.startStreamSearch(conversationId, state.message.id, userContent)
+        : null
 
-      // 处理搜索
-      if (userMessage.content.search) {
-        searchResults = await this.startStreamSearch(conversationId, state.message.id, userContent)
-      }
+      // 4. 准备提示内容
+      const { finalContent, promptTokens } = this.preparePromptContent(
+        conversation,
+        userContent,
+        contextMessages,
+        searchResults,
+        urlResults,
+        userMessage
+      )
 
-      // 计算搜索提示词的token数量
-      const searchPrompt = searchResults ? generateSearchPrompt(userContent, searchResults) : ''
+      // 5. 更新生成状态
+      await this.updateGenerationState(state, promptTokens)
 
-      // 使用URL内容丰富用户消息
-      const enrichedUserMessage =
-        urlResults.length > 0
-          ? '\n\n' + ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
-          : ''
-
-      // 计算token数量
-      const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
-      const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
-      const userMessageTokens = approximateTokenSize(userContent + enrichedUserMessage)
-
-      // 计算剩余可用的上下文长度
-      const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
-      const remainingContextLength = contextLength - reservedTokens
-
-      // 获取历史消息，优先考虑上下文边界
-      if (remainingContextLength > 0) {
-        const messages = contextMessages
-          .filter((msg) => msg.id !== userMessage?.id) // 排除当前用户消息
-          .reverse() // 从新到旧排序
-        let currentLength = 0
-        const selectedMessages: Message[] = []
-
-        for (const msg of messages) {
-          // 处理本地文本信息
-
-          const msgTokens = approximateTokenSize(
-            msg.role === 'user'
-              ? `${msg.content.text}${getFileContext(msg.content.files)}`
-              : JSON.stringify(msg.content)
-          )
-
-          if (currentLength + msgTokens <= remainingContextLength) {
-            selectedMessages.unshift(msg)
-            currentLength += msgTokens
-          } else {
-            break
-          }
-        }
-
-        contextMessages = selectedMessages
-      } else {
-        contextMessages = []
-      }
-
-      const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
-
-      // 添加系统提示语
-      if (systemPrompt) {
-        if (artifacts === 1) {
-          const artifactsPrompt = await getArtifactsPrompt()
-          formattedMessages.push({
-            role: 'system',
-            content: `${systemPrompt}\n\n${artifactsPrompt}`
-          })
-        } else {
-          formattedMessages.push({
-            role: 'system',
-            content: systemPrompt
-          })
-        }
-      } else {
-        if (artifacts === 1) {
-          const artifactsPrompt = await getArtifactsPrompt()
-          formattedMessages.push({
-            role: 'system',
-            content: `${artifactsPrompt}`
-          })
-        }
-      }
-      console.log('contextMessages:', contextMessages)
-      // 添加上下文消息
-      contextMessages.forEach((msg) => {
-        const content =
-          msg.role === 'user'
-            ? `${msg.content.text}${getFileContext(msg.content.files)}`
-            : msg.content
-                .filter((block) => block.type === 'content')
-                .map((block) => block.content)
-                .join('\n')
-
-        if (msg.role === 'assistant' && !content) {
-          return // 如果是assistant且content为空，则不加入formattedMessages
-        }
-
-        formattedMessages.push({
-          role: msg.role as 'user' | 'assistant',
-          content
-        })
-      })
-      let finalContent = ''
-      if (searchPrompt) {
-        finalContent += searchPrompt
-      } else {
-        finalContent += userContent
-      }
-      if (enrichedUserMessage) {
-        finalContent += enrichedUserMessage
-      }
-      // 添加当前用户消息，如果有搜索结果则替换为搜索提示词
-      formattedMessages.push({
-        role: 'user',
-        content: finalContent.trim()
-      })
-
-      const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
-      for (let i = 0; i < formattedMessages.length; i++) {
-        const currentMessage = formattedMessages[i]
-        if (
-          mergedMessages.length > 0 &&
-          mergedMessages[mergedMessages.length - 1].role === currentMessage.role
-        ) {
-          mergedMessages[mergedMessages.length - 1].content += `\n${currentMessage.content}`
-        } else {
-          mergedMessages.push({ ...currentMessage })
-        }
-      }
-      formattedMessages.length = 0 // 清空原数组
-      formattedMessages.push(...mergedMessages) // 将合并后的消息推入原数组
-
-      // 计算prompt tokens
-      let promptTokens = 0
-      for (const msg of formattedMessages) {
-        promptTokens += approximateTokenSize(msg.content)
-      }
-      console.log('formattedMessage:', formattedMessages, 'promptTokens:', promptTokens)
-
-      // 更新生成状态
-      this.generatingMessages.set(state.message.id, {
-        ...state,
-        startTime: Date.now(),
-        firstTokenTime: null,
-        promptTokens
-      })
-
-      // 更新消息的usage信息
-      await this.messageManager.updateMessageMetadata(state.message.id, {
-        totalTokens: promptTokens,
-        generationTime: 0,
-        firstTokenTime: 0,
-        tokensPerSecond: 0
-      })
-
+      // 6. 启动流式生成
+      const { providerId, modelId, temperature, maxTokens } = conversation.settings
       await this.llmProviderPresenter.startStreamCompletion(
         providerId,
-        formattedMessages,
+        finalContent,
         modelId,
         state.message.id,
         temperature,
@@ -964,6 +796,291 @@ export class ThreadPresenter implements IThreadPresenter {
       await this.handleMessageError(state.message.id, String(error))
       throw error
     }
+  }
+
+  // 查找特定会话的生成状态
+  private findGeneratingState(conversationId: string): GeneratingMessageState | null {
+    return (
+      Array.from(this.generatingMessages.values()).find(
+        (state) => state.conversationId === conversationId
+      ) || null
+    )
+  }
+
+  // 准备会话上下文
+  private async prepareConversationContext(
+    conversationId: string,
+    queryMsgId?: string
+  ): Promise<{
+    conversation: CONVERSATION
+    userMessage: Message
+    contextMessages: Message[]
+  }> {
+    const conversation = await this.getConversation(conversationId)
+    let contextMessages: Message[] = []
+    let userMessage: Message | null = null
+
+    if (queryMsgId) {
+      // 处理指定消息ID的情况
+      const queryMessage = await this.getMessage(queryMsgId)
+      if (!queryMessage || !queryMessage.parentId) {
+        throw new Error('找不到指定的消息')
+      }
+      userMessage = await this.getMessage(queryMessage.parentId)
+      if (!userMessage) {
+        throw new Error('找不到触发消息')
+      }
+      contextMessages = await this.getMessageHistory(
+        userMessage.id,
+        conversation.settings.contextLength
+      )
+    } else {
+      // 获取最新的用户消息
+      userMessage = await this.getLastUserMessage(conversationId)
+      if (!userMessage) {
+        throw new Error('找不到用户消息')
+      }
+      contextMessages = await this.getContextMessages(conversationId)
+    }
+
+    return { conversation, userMessage, contextMessages }
+  }
+
+  // 处理用户消息内容
+  private async processUserMessageContent(userMessage: Message): Promise<{
+    userContent: string
+    urlResults: SearchResult[]
+  }> {
+    const userContent = `
+      ${userMessage.content.text}
+      ${getFileContext(userMessage.content.files)}
+    `
+
+    // 从用户消息中提取并丰富URL内容
+    const urlResults = await ContentEnricher.extractAndEnrichUrls(userMessage.content.text)
+
+    return { userContent, urlResults }
+  }
+
+  // 准备提示内容
+  private preparePromptContent(
+    conversation: CONVERSATION,
+    userContent: string,
+    contextMessages: Message[],
+    searchResults: SearchResult[] | null,
+    urlResults: SearchResult[],
+    userMessage: Message
+  ): {
+    finalContent: { role: 'system' | 'user' | 'assistant'; content: string }[]
+    promptTokens: number
+  } {
+    const { systemPrompt, contextLength, artifacts } = conversation.settings
+
+    // 计算搜索提示词和丰富用户消息
+    const searchPrompt = searchResults ? generateSearchPrompt(userContent, searchResults) : ''
+    const enrichedUserMessage =
+      urlResults.length > 0
+        ? '\n\n' + ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
+        : ''
+
+    // 计算token数量
+    const searchPromptTokens = searchPrompt ? approximateTokenSize(searchPrompt) : 0
+    const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
+    const userMessageTokens = approximateTokenSize(userContent + enrichedUserMessage)
+
+    // 计算剩余可用的上下文长度
+    const reservedTokens = searchPromptTokens + systemPromptTokens + userMessageTokens
+    const remainingContextLength = contextLength - reservedTokens
+
+    // 选择合适的上下文消息
+    const selectedContextMessages = this.selectContextMessages(
+      contextMessages,
+      userMessage,
+      remainingContextLength
+    )
+
+    // 格式化消息
+    const formattedMessages = this.formatMessagesForCompletion(
+      selectedContextMessages,
+      systemPrompt,
+      artifacts,
+      searchPrompt,
+      userContent,
+      enrichedUserMessage
+    )
+
+    // 合并连续的相同角色消息
+    const mergedMessages = this.mergeConsecutiveMessages(formattedMessages)
+
+    // 计算prompt tokens
+    let promptTokens = 0
+    for (const msg of mergedMessages) {
+      promptTokens += approximateTokenSize(msg.content)
+    }
+
+    return { finalContent: mergedMessages, promptTokens }
+  }
+
+  // 选择上下文消息
+  private selectContextMessages(
+    contextMessages: Message[],
+    userMessage: Message,
+    remainingContextLength: number
+  ): Message[] {
+    if (remainingContextLength <= 0) {
+      return []
+    }
+
+    const messages = contextMessages.filter((msg) => msg.id !== userMessage?.id).reverse()
+
+    let currentLength = 0
+    const selectedMessages: Message[] = []
+
+    for (const msg of messages) {
+      const msgTokens = approximateTokenSize(
+        msg.role === 'user'
+          ? `${msg.content.text}${getFileContext(msg.content.files)}`
+          : JSON.stringify(msg.content)
+      )
+
+      if (currentLength + msgTokens <= remainingContextLength) {
+        selectedMessages.unshift(msg)
+        currentLength += msgTokens
+      } else {
+        break
+      }
+    }
+
+    return selectedMessages
+  }
+
+  // 格式化消息用于完成
+  private formatMessagesForCompletion(
+    contextMessages: Message[],
+    systemPrompt: string,
+    artifacts: number,
+    searchPrompt: string,
+    userContent: string,
+    enrichedUserMessage: string
+  ): { role: 'system' | 'user' | 'assistant'; content: string }[] {
+    const formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
+
+    // 添加系统提示
+    if (systemPrompt || artifacts === 1) {
+      this.addSystemPrompt(formattedMessages, systemPrompt, artifacts)
+    }
+
+    // 添加上下文消息
+    this.addContextMessages(formattedMessages, contextMessages)
+
+    // 添加当前用户消息
+    let finalContent = searchPrompt || userContent
+    if (enrichedUserMessage) {
+      finalContent += enrichedUserMessage
+    }
+
+    formattedMessages.push({
+      role: 'user',
+      content: finalContent.trim()
+    })
+
+    return formattedMessages
+  }
+
+  // 添加系统提示
+  private async addSystemPrompt(
+    formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    systemPrompt: string,
+    artifacts: number
+  ): Promise<void> {
+    if (systemPrompt) {
+      if (artifacts === 1) {
+        const artifactsPrompt = await getArtifactsPrompt()
+        formattedMessages.push({
+          role: 'system',
+          content: `${systemPrompt}\n\n${artifactsPrompt}`
+        })
+      } else {
+        formattedMessages.push({
+          role: 'system',
+          content: systemPrompt
+        })
+      }
+    } else if (artifacts === 1) {
+      const artifactsPrompt = await getArtifactsPrompt()
+      formattedMessages.push({
+        role: 'system',
+        content: artifactsPrompt
+      })
+    }
+  }
+
+  // 添加上下文消息
+  private addContextMessages(
+    formattedMessages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+    contextMessages: Message[]
+  ): void {
+    contextMessages.forEach((msg) => {
+      const content =
+        msg.role === 'user'
+          ? `${msg.content.text}${getFileContext(msg.content.files)}`
+          : msg.content
+              .filter((block) => block.type === 'content')
+              .map((block) => block.content)
+              .join('\n')
+
+      if (msg.role === 'assistant' && !content) {
+        return // 如果是assistant且content为空，则不加入
+      }
+
+      formattedMessages.push({
+        role: msg.role as 'user' | 'assistant',
+        content
+      })
+    })
+  }
+
+  // 合并连续的相同角色消息
+  private mergeConsecutiveMessages(
+    messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  ): { role: 'system' | 'user' | 'assistant'; content: string }[] {
+    const mergedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] = []
+
+    for (let i = 0; i < messages.length; i++) {
+      const currentMessage = messages[i]
+      if (
+        mergedMessages.length > 0 &&
+        mergedMessages[mergedMessages.length - 1].role === currentMessage.role
+      ) {
+        mergedMessages[mergedMessages.length - 1].content += `\n${currentMessage.content}`
+      } else {
+        mergedMessages.push({ ...currentMessage })
+      }
+    }
+
+    return mergedMessages
+  }
+
+  // 更新生成状态
+  private async updateGenerationState(
+    state: GeneratingMessageState,
+    promptTokens: number
+  ): Promise<void> {
+    // 更新生成状态
+    this.generatingMessages.set(state.message.id, {
+      ...state,
+      startTime: Date.now(),
+      firstTokenTime: null,
+      promptTokens
+    })
+
+    // 更新消息的usage信息
+    await this.messageManager.updateMessageMetadata(state.message.id, {
+      totalTokens: promptTokens,
+      generationTime: 0,
+      firstTokenTime: 0,
+      tokensPerSecond: 0
+    })
   }
 
   async editMessage(messageId: string, content: string): Promise<Message> {
