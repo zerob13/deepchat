@@ -1,6 +1,6 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
 import { BaseLLMProvider, ChatMessage } from '../baseProvider'
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai'
+import { GoogleGenerativeAI, GenerativeModel, Part } from '@google/generative-ai'
 import { ConfigPresenter } from '../../configPresenter'
 
 export class GeminiProvider extends BaseLLMProvider {
@@ -201,9 +201,8 @@ export class GeminiProvider extends BaseLLMProvider {
   }
 
   // 将 ChatMessage 转换为 Gemini 格式的消息
-  private formatGeminiMessages(messages: ChatMessage[]) {
-    // Gemini 不直接支持 system 消息，需要将它们附加到第一个用户消息中
-    const formattedMessages: { role: string; parts: string[] }[] = []
+  private formatGeminiMessages(messages: ChatMessage[]): Part[] {
+    const formattedParts: Part[] = []
     let systemPrompt = ''
 
     // 提取系统消息
@@ -216,21 +215,55 @@ export class GeminiProvider extends BaseLLMProvider {
     const nonSystemMessages = messages.filter((msg) => msg.role !== 'system')
     for (let i = 0; i < nonSystemMessages.length; i++) {
       const message = nonSystemMessages[i]
-      // 将系统提示附加到第一个用户消息
-      let content = message.content
-      if (i === 0 && message.role === 'user' && systemPrompt) {
-        content = systemPrompt + content
-      }
 
-      // 将角色转换为 Gemini 格式
-      const geminiRole = message.role === 'assistant' ? 'model' : 'user'
-      formattedMessages.push({
-        role: geminiRole,
-        parts: [content]
-      })
+      // 处理消息内容 - 可能是字符串或包含图片的数组
+      if (typeof message.content === 'string') {
+        // 处理纯文本消息
+        let textContent = message.content
+        // 将系统提示附加到第一个用户消息
+        if (i === 0 && message.role === 'user' && systemPrompt) {
+          textContent = systemPrompt + textContent
+        }
+        formattedParts.push({ text: textContent })
+      } else if (Array.isArray(message.content)) {
+        // 处理多模态消息（带图片）
+        // 添加系统提示到第一个文本部分（如果适用）
+        let hasAddedSystemPrompt = false
+
+        for (const part of message.content) {
+          if (part.type === 'text') {
+            let textContent = part.text || ''
+            // 将系统提示附加到第一个文本内容
+            if (i === 0 && message.role === 'user' && systemPrompt && !hasAddedSystemPrompt) {
+              textContent = systemPrompt + textContent
+              hasAddedSystemPrompt = true
+            }
+            formattedParts.push({ text: textContent })
+          } else if (part.type === 'image' && part.image_url) {
+            // 处理图片（假设是 base64 格式）
+            // 从 base64 URL 中提取实际数据和 MIME 类型
+            const matches = part.image_url.match(/^data:([^;]+);base64,(.+)$/)
+            if (matches && matches.length === 3) {
+              const mimeType = matches[1]
+              const base64Data = matches[2]
+              formattedParts.push({
+                inlineData: {
+                  data: base64Data,
+                  mimeType: mimeType
+                }
+              })
+            }
+          }
+        }
+
+        // 如果没有添加过系统提示，并且这是第一条用户消息，则添加一个带系统提示的文本部分
+        if (i === 0 && message.role === 'user' && systemPrompt && !hasAddedSystemPrompt) {
+          formattedParts.unshift({ text: systemPrompt })
+        }
+      }
     }
 
-    return formattedMessages
+    return formattedParts
   }
 
   // 处理响应，提取思考内容
@@ -285,20 +318,8 @@ export class GeminiProvider extends BaseLLMProvider {
     try {
       // 每次创建新的模型实例，并传入生成配置
       const model = this.getModel(modelId, temperature, maxTokens)
-      const formattedMessages = this.formatGeminiMessages(messages)
-      const chat = model.startChat()
-
-      // 发送所有消息，除了最后一条（这是要生成回复的消息）
-      for (let i = 0; i < formattedMessages.length - 1; i++) {
-        const msg = formattedMessages[i]
-        if (msg.role === 'user') {
-          await chat.sendMessage(msg.parts[0])
-        }
-      }
-
-      // 发送最后一条消息并获取响应
-      const lastMessage = formattedMessages[formattedMessages.length - 1]
-      const result = await chat.sendMessage(lastMessage.parts[0])
+      const formattedParts = this.formatGeminiMessages(messages)
+      const result = await model.generateContent(formattedParts)
       const text = result.response.text()
 
       return this.processResponse(text)
@@ -440,21 +461,8 @@ export class GeminiProvider extends BaseLLMProvider {
     try {
       // 每次创建新的模型实例，并传入生成配置
       const model = this.getModel(modelId, temperature, maxTokens)
-
-      const formattedMessages = this.formatGeminiMessages(messages)
-      const chat = model.startChat()
-
-      // 发送所有消息，除了最后一条（这是要生成回复的消息）
-      for (let i = 0; i < formattedMessages.length - 1; i++) {
-        const msg = formattedMessages[i]
-        if (msg.role === 'user') {
-          await chat.sendMessage(msg.parts[0])
-        }
-      }
-
-      // 发送最后一条消息并获取流式响应
-      const lastMessage = formattedMessages[formattedMessages.length - 1]
-      const result = await chat.sendMessageStream(lastMessage.parts[0])
+      const formattedParts = this.formatGeminiMessages(messages)
+      const result = await model.generateContentStream(formattedParts)
 
       // 处理流式响应
       let buffer = ''
@@ -513,18 +521,14 @@ export class GeminiProvider extends BaseLLMProvider {
         }
       }
 
-      // 处理剩余的缓冲区内容
-      if (buffer && !isInThinkTag) {
+      // 如果还有剩余的缓冲内容，发送它
+      if (buffer) {
         yield {
           content: buffer
         }
-      } else if (buffer && isInThinkTag) {
-        yield {
-          reasoning_content: buffer
-        }
       }
     } catch (error) {
-      console.error('Gemini streamCompletions error:', error)
+      console.error('Gemini stream completions error:', error)
       throw error
     }
   }
