@@ -9,9 +9,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { EditorView } from 'codemirror'
 import { v4 as uuidv4 } from 'uuid'
 import { useI18n } from 'vue-i18n'
 import mermaid from 'mermaid'
@@ -19,6 +18,16 @@ import mermaid from 'mermaid'
 const { t } = useI18n()
 const id = ref(`editor-${uuidv4()}`)
 const messageBlock = ref<HTMLDivElement>()
+
+// 初始化 mermaid 配置
+onMounted(() => {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'loose',
+    fontFamily: 'sans-serif'
+  })
+})
 
 const md = new MarkdownIt({
   html: true,
@@ -42,9 +51,14 @@ md.renderer.rules.fence = (tokens, idx) => {
   const str = token.content
   const lang = info || 'text'
   
+  // 如果是 mermaid 图表，直接使用 mermaid 类
+  if (lang === 'mermaid') {
+    return `<div class="mermaid">${str}</div>`
+  }
+  
   const encodedCode = btoa(unescape(encodeURIComponent(str)))
   
-  // 为代码块添加样式和语言标记，但不提取为独立组件
+  // 为代码块添加样式和语言标记
   return `<div class="markdown-code-block">
     <div class="code-header">
       <span class="code-lang">${lang.toUpperCase()}</span>
@@ -68,66 +82,48 @@ const renderedContent = computed(() => {
   return md.render(props.block.content || '')
 })
 
-// 修改watch来初始化Mermaid和代码高亮，而不是代码编辑器
+// 修改 watch 来初始化 Mermaid
 watch(
   renderedContent,
   async () => {
     if (!renderedContent.value) return
     
-    // 等待DOM更新
+    // 等待 DOM 更新
     await nextTick()
     
-    // 初始化Mermaid图表
+    // 初始化 Mermaid 图表
     try {
-      const mermaidDivs = document.querySelectorAll('.language-mermaid')
+      // 重新初始化 mermaid 配置
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: 'sans-serif'
+      })
+
+      const mermaidDivs = document.querySelectorAll('.mermaid')
+
       if (mermaidDivs.length > 0) {
-        mermaidDivs.forEach(async (element, index) => {
-          try {
-            // 获取Mermaid代码
-            const code = element.textContent || ''
-            if (!code.trim()) return
-            
-            // 创建一个新的div来渲染Mermaid图表
-            const mermaidContainer = document.createElement('div')
-            mermaidContainer.className = 'mermaid-container'
-            mermaidContainer.style.width = '100%'
-            mermaidContainer.style.marginTop = '1rem'
-            mermaidContainer.style.marginBottom = '1rem'
-            
-            // 生成唯一ID
-            const id = `mermaid-${Date.now()}-${index}`
-            mermaidContainer.id = id
-            
-            // 替换原始代码块
-            if (element.parentNode) {
-              element.parentNode.replaceChild(mermaidContainer, element)
-              
-              // 渲染Mermaid图表
-              try {
-                const { svg } = await mermaid.render(id, code)
-                mermaidContainer.innerHTML = svg
-              } catch (renderError: any) {
-                console.error('Mermaid渲染错误:', renderError)
-                mermaidContainer.innerHTML = `<div class="error-message">Mermaid图表渲染失败: ${renderError.message || '未知错误'}</div>`
-              }
-            }
-          } catch (err) {
-            console.error('处理Mermaid图表时出错:', err)
-          }
+        // 使用 mermaid.run() 来渲染所有图表
+        await mermaid.run({
+          querySelector: '.mermaid',
+          nodes: Array.from(mermaidDivs).filter((node): node is HTMLElement => node instanceof HTMLElement)
         })
       }
     } catch (err) {
-      console.error('初始化Mermaid图表时出错:', err)
+      console.error('初始化 Mermaid 图表时出错:', err)
     }
     
     // 初始化代码高亮
     try {
-      const codeBlocks = document.querySelectorAll('pre code:not(.language-mermaid)')
-      if (codeBlocks.length > 0 && window.Prism) {
+      const codeBlocks = document.querySelectorAll('pre code:not(.mermaid)')
+      if (codeBlocks.length > 0 && window.Prism && messageBlock.value) {
         window.Prism.highlightAllUnder(messageBlock.value)
       } else if (codeBlocks.length > 0 && window.hljs) {
         codeBlocks.forEach(block => {
-          window.hljs.highlightElement(block)
+          if (block instanceof HTMLElement && window.hljs) {
+            window.hljs.highlightElement(block)
+          }
         })
       }
     } catch (err) {

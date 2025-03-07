@@ -23,8 +23,45 @@ import { useArtifactStore } from '@/stores/artifact'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-const { t } = useI18n()
 const artifactStore = useArtifactStore()
+
+// 创建一个安全的翻译函数
+const t = (() => {
+  try {
+    const { t } = useI18n()
+    return t
+  } catch (e) {
+    // 如果 i18n 未初始化，提供默认翻译
+    return (key: string, values?: { name?: string; participants?: string }) => {
+      if (key === 'artifacts.flowchartOf') return `流程图：${values?.name || ''}`
+      if (key === 'artifacts.sequenceDiagramBetween') return `时序图：${values?.participants || ''}`
+      if (key === 'artifacts.classDiagramOf') return `类图：${values?.name || ''}`
+      if (key === 'artifacts.stateDiagramOf') return `状态图：${values?.name || ''}`
+      if (key === 'artifacts.erDiagramOf') return `ER图：${values?.name || ''}`
+      if (key === 'artifacts.pieChartOf') return `饼图：${values?.name || ''}`
+      if (key === 'artifacts.flowchart') return '流程图'
+      if (key === 'artifacts.sequenceDiagram') return '时序图'
+      if (key === 'artifacts.classDiagram') return '类图'
+      if (key === 'artifacts.stateDiagram') return '状态图'
+      if (key === 'artifacts.erDiagram') return 'ER图'
+      if (key === 'artifacts.ganttChart') return '甘特图'
+      if (key === 'artifacts.pieChart') return '饼图'
+      if (key === 'artifacts.mermaidDiagram') return 'Mermaid图表'
+      if (key === 'artifacts.codeSnippet') return '代码片段'
+      if (key === 'artifacts.function') return '函数'
+      if (key === 'artifacts.class') return '类'
+      if (key === 'artifacts.vueComponent') return 'Vue组件'
+      if (key === 'artifacts.moduleImport') return '模块导入'
+      if (key === 'artifacts.variableDefinition') return `变量：${values?.name || ''}`
+      if (key === 'artifacts.markdownDocument') return 'Markdown文档'
+      if (key === 'artifacts.htmlDocument') return 'HTML文档'
+      if (key === 'artifacts.svgImage') return 'SVG图片'
+      if (key === 'artifacts.unknownDocument') return '未知文档'
+      if (key === 'artifacts.clickToOpen') return '点击打开'
+      return key
+    }
+  }
+})()
 
 const props = defineProps<{
   block: {
@@ -42,70 +79,150 @@ const displayTitle = computed(() => {
   const { type, title } = props.block.artifact
   const content = props.block.content
 
-  // 如果已有有意义的标题，且不是自动生成的标题
-  if (title && 
-      !title.startsWith('artifact_') && 
-      !title.match(/^[0-9a-f-]+$/) &&
-      !title.match(/^(Mermaid Diagram|Code Block)\s+\d+$/)) {
-    return title
+  // 直接处理 Mermaid 图表
+  if (type === 'application/vnd.ant.mermaid') {
+    const lines = content.trim().split('\n')
+    const firstLine = lines[0].toLowerCase()
+    let chartType = ''
+    let chartTitle = ''
+
+    // 先确定图表类型
+    if (firstLine.includes('flowchart') || firstLine.includes('graph')) {
+      chartType = 'flowchart'
+    } else if (firstLine.includes('sequencediagram')) {
+      chartType = 'sequence'
+    } else if (firstLine.includes('classdiagram')) {
+      chartType = 'class'
+    } else if (firstLine.includes('statediagram')) {
+      chartType = 'state'
+    } else if (firstLine.includes('erdiagram')) {
+      chartType = 'er'
+    } else if (firstLine.includes('gantt')) {
+      chartType = 'gantt'
+    } else if (firstLine.includes('pie')) {
+      chartType = 'pie'
+    }
+
+    // 先尝试从内容中提取标题
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      
+      // 跳过空行和图表类型声明行
+      if (!trimmedLine || trimmedLine.toLowerCase().match(/^(graph|flowchart|sequencediagram|classdiagram|statediagram|erdiagram|gantt|pie)\b/i)) {
+        continue
+      }
+
+      // 根据图表类型提取标题
+      if (chartType === 'flowchart') {
+        // 尝试多种节点格式
+        const nodePatterns = [
+          /([A-Za-z0-9]+)\["([^"]+)"\]/, // 方括号格式
+          /([A-Za-z0-9]+)\("([^"]+)"\)/, // 圆括号格式
+          /([A-Za-z0-9]+)\['([^']+)'\]/, // 方括号格式（单引号）
+          /([A-Za-z0-9]+)\('([^']+)'\)/, // 圆括号格式（单引号）
+          /([A-Za-z0-9]+)\[([^\]]+)\]/, // 简单方括号格式
+          /([A-Za-z0-9]+)\(([^)]+)\)/, // 简单圆括号格式
+        ]
+
+        for (const pattern of nodePatterns) {
+          const nodeMatch = trimmedLine.match(pattern)
+          if (nodeMatch) {
+            chartTitle = nodeMatch[2]
+            break
+          }
+        }
+        if (chartTitle) break
+      }
+    }
+
+    // 如果找到了具体标题，使用对应的格式
+    if (chartTitle) {
+      const finalTitle = chartType === 'flowchart' ? t('artifacts.flowchartOf', { name: chartTitle }) :
+                       chartType === 'sequence' ? t('artifacts.sequenceDiagramBetween', { participants: chartTitle }) :
+                       chartType === 'class' ? t('artifacts.classDiagramOf', { name: chartTitle }) :
+                       chartType === 'state' ? t('artifacts.stateDiagramOf', { name: chartTitle }) :
+                       chartType === 'er' ? t('artifacts.erDiagramOf', { name: chartTitle }) :
+                       chartType === 'pie' ? t('artifacts.pieChartOf', { name: chartTitle }) :
+                       chartTitle;
+      return finalTitle
+    }
+
+    // 如果没有找到具体标题，使用图表类型
+    const defaultTitle = chartType === 'flowchart' ? t('artifacts.flowchart') :
+                       chartType === 'sequence' ? t('artifacts.sequenceDiagram') :
+                       chartType === 'class' ? t('artifacts.classDiagram') :
+                       chartType === 'state' ? t('artifacts.stateDiagram') :
+                       chartType === 'er' ? t('artifacts.erDiagram') :
+                       chartType === 'gantt' ? t('artifacts.ganttChart') :
+                       chartType === 'pie' ? t('artifacts.pieChart') :
+                       t('artifacts.mermaidDiagram');
+    return defaultTitle
   }
 
-  // 根据不同类型生成标题
+  // 处理其他类型
   switch (type) {
     case 'application/vnd.ant.code': {
-      let codeTitle = t('artifacts.codeSnippet')
+      let codeTitle = title || t('artifacts.codeSnippet')
       const lines = content.split('\n')
       
       // 尝试从注释中提取标题
-      for (const line of lines.slice(0, 5)) { // 检查前5行
+      let foundTitle = false
+      for (const line of lines) {
         const trimmedLine = line.trim()
+        // 跳过空行
+        if (!trimmedLine) continue
+        
         // 匹配各种注释格式
-        if (trimmedLine.startsWith('//') || trimmedLine.startsWith('#') || 
-            trimmedLine.startsWith('/*') || trimmedLine.startsWith('"""') || 
+        if (trimmedLine.startsWith('//') || 
+            trimmedLine.startsWith('#') || 
+            trimmedLine.startsWith('/*') || 
+            trimmedLine.startsWith('"""') || 
             trimmedLine.startsWith("'''")) {
           const commentContent = trimmedLine.replace(/^[/#*\s"']+/, '').trim()
           if (commentContent && commentContent.length > 1) {
             codeTitle = commentContent
+            foundTitle = true
             break
           }
+        } else {
+          // 如果遇到非注释、非空行，就停止搜索
+          break
         }
       }
 
-      if (codeTitle === t('artifacts.codeSnippet')) {
+      // 如果没有找到注释标题，尝试其他方式
+      if (!foundTitle) {
         // 尝试识别函数定义
         const functionMatch = content.match(/(?:function|def|func)\s+([a-zA-Z_]\w*)\s*\([^)]*\)/);
         if (functionMatch) {
           const funcName = functionMatch[1]
-          // 尝试从函数名生成更有意义的标题
           codeTitle = funcName.replace(/[A-Z]/g, ' $&').trim() // 驼峰转空格
             .toLowerCase()
             .replace(/(?:^|\s)\S/g, c => c.toUpperCase()) // 首字母大写
             .replace(/_/g, ' ') // 下划线转空格
           codeTitle += t('artifacts.function')
-          return codeTitle
-        }
-
-        // 尝试识别类定义
-        const classMatch = content.match(/(?:class)\s+([a-zA-Z_]\w*)/);
-        if (classMatch) {
-          const className = classMatch[1]
-          codeTitle = className.replace(/[A-Z]/g, ' $&').trim()
-            .toLowerCase()
-            .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
-            .replace(/_/g, ' ')
-          codeTitle += t('artifacts.class')
-          return codeTitle
-        }
-
-        // 尝试识别主要的代码特征
-        if (content.includes('export default')) {
-          codeTitle = t('artifacts.vueComponent')
-        } else if (content.includes('import') && content.includes('from')) {
-          codeTitle = t('artifacts.moduleImport')
-        } else if (content.includes('const') || content.includes('let') || content.includes('var')) {
-          const varMatch = content.match(/(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=/);
-          if (varMatch) {
-            codeTitle = t('artifacts.variableDefinition', { name: varMatch[1] })
+        } else {
+          // 尝试识别类定义
+          const classMatch = content.match(/(?:class)\s+([a-zA-Z_]\w*)/);
+          if (classMatch) {
+            const className = classMatch[1]
+            codeTitle = className.replace(/[A-Z]/g, ' $&').trim()
+              .toLowerCase()
+              .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
+              .replace(/_/g, ' ')
+            codeTitle += t('artifacts.class')
+          } else {
+            // 尝试识别主要的代码特征
+            if (content.includes('export default')) {
+              codeTitle = t('artifacts.vueComponent')
+            } else if (content.includes('import') && content.includes('from')) {
+              codeTitle = t('artifacts.moduleImport')
+            } else if (content.includes('const') || content.includes('let') || content.includes('var')) {
+              const varMatch = content.match(/(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=/);
+              if (varMatch) {
+                codeTitle = t('artifacts.variableDefinition', { name: varMatch[1] })
+              }
+            }
           }
         }
       }
@@ -125,100 +242,6 @@ const displayTitle = computed(() => {
     }
     case 'image/svg+xml':
       return t('artifacts.svgImage')
-    case 'application/vnd.ant.mermaid': {
-      const lines = content.trim().split('\n')
-      const firstLine = lines[0].toLowerCase()
-      let chartType = ''
-      let chartTitle = ''
-
-      // 确定图表类型
-      if (firstLine.includes('flowchart') || firstLine.includes('graph')) {
-        chartType = t('artifacts.flowchart')
-      } else if (firstLine.includes('sequencediagram')) {
-        chartType = t('artifacts.sequenceDiagram')
-      } else if (firstLine.includes('classdiagram')) {
-        chartType = t('artifacts.classDiagram')
-      } else if (firstLine.includes('statediagram')) {
-        chartType = t('artifacts.stateDiagram')
-      } else if (firstLine.includes('erdiagram')) {
-        chartType = t('artifacts.erDiagram')
-      } else if (firstLine.includes('gantt')) {
-        chartType = t('artifacts.ganttChart')
-      } else if (firstLine.includes('pie')) {
-        chartType = t('artifacts.pieChart')
-      } else {
-        return t('artifacts.mermaidDiagram')
-      }
-
-      // 尝试从内容中提取更多信息
-      switch (chartType) {
-        case t('artifacts.flowchart'): {
-          // 尝试找到第一个节点的文本作为主题
-          const nodeMatch = content.match(/[A-Za-z0-9]+\["([^"]+)"\]/);
-          if (nodeMatch) {
-            chartTitle = t('artifacts.flowchartOf', { name: nodeMatch[1] })
-          }
-          break
-        }
-        case t('artifacts.sequenceDiagram'): {
-          // 尝试找到参与者
-          const participants = lines
-            .filter(line => line.toLowerCase().includes('participant') || line.match(/^[^->\s]+/))
-            .slice(0, 2)
-            .map(line => {
-              const match = line.match(/participant\s+([^->\s]+)|^([^->\s]+)/i)
-              return match ? (match[1] || match[2]) : null
-            })
-            .filter(Boolean)
-          if (participants.length > 0) {
-            chartTitle = t('artifacts.sequenceDiagramBetween', { participants: participants.join(t('artifacts.and')) })
-          }
-          break
-        }
-        case t('artifacts.classDiagram'): {
-          // 尝试找到主要的类名
-          const classMatch = content.match(/class\s+([^\s{]+)/);
-          if (classMatch) {
-            chartTitle = t('artifacts.classDiagramOf', { name: classMatch[1] })
-          }
-          break
-        }
-        case t('artifacts.stateDiagram'): {
-          // 尝试找到初始状态
-          const stateMatch = content.match(/[*]?\s*-->\s*([^[\]:\n]+)/);
-          if (stateMatch) {
-            chartTitle = t('artifacts.stateDiagramOf', { name: stateMatch[1].trim() })
-          }
-          break
-        }
-        case t('artifacts.erDiagram'): {
-          // 尝试找到主要的实体
-          const entityMatch = content.match(/([^\s|{}]+)\s*{/);
-          if (entityMatch) {
-            chartTitle = t('artifacts.erDiagramOf', { name: entityMatch[1] })
-          }
-          break
-        }
-        case t('artifacts.ganttChart'): {
-          // 尝试找到项目标题
-          const titleMatch = content.match(/title\s+([^\n]+)/i);
-          if (titleMatch) {
-            chartTitle = titleMatch[1].trim()
-          }
-          break
-        }
-        case t('artifacts.pieChart'): {
-          // 尝试找到标题或第一个数据项
-          const pieTitle = content.match(/title\s+([^\n]+)|"([^"]+)"/i);
-          if (pieTitle) {
-            chartTitle = t('artifacts.pieChartOf', { name: pieTitle[1] || pieTitle[2] })
-          }
-          break
-        }
-      }
-
-      return chartTitle || chartType
-    }
     default:
       return title || t('artifacts.unknownDocument')
   }
