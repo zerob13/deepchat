@@ -354,6 +354,9 @@ export class ThreadPresenter implements IThreadPresenter {
       mergedSettings.contextLength = defaultModelsSettings.contextLength
       mergedSettings.temperature = defaultModelsSettings.temperature
     }
+    if (settings.artifacts) {
+      mergedSettings.artifacts = settings.artifacts
+    }
     const conversationId = await this.sqlitePresenter.createConversation(title, mergedSettings)
     await this.setActiveConversation(conversationId)
     return conversationId
