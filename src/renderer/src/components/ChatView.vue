@@ -11,9 +11,9 @@
     <!-- 输入框区域 -->
     <div class="flex-none p-2">
       <ChatInput
+        :disabled="!chatStore.activeThreadId || isGenerating"
         @send="handleSend"
         @file-upload="handleFileUpload"
-        :disabled="!chatStore.activeThreadId || isGenerating"
       />
     </div>
   </div>
@@ -47,30 +47,7 @@ const handleSend = async (msg: UserMessageContent) => {
   scrollToBottom()
 }
 
-const handleFileUpload = (files: FileList) => {
-  console.log('files', files)
-  // const fileList = Array.from(files).map((file) => ({
-  //   name: file.name,
-  //   type: file.type
-  // }))
-
-  // messages.value.push({
-  //   type: 'file',
-  //   content: '',
-  //   files: fileList,
-  //   role: 'user',
-  //   timestamp: Date.now()
-  // })
-  const fileList = Array.from(files).map((file) => ({
-    name: file.name,
-    type: file.type,
-    size: file.size,
-    token: 0,
-    path: ''
-  }))
-
-  // TODO: 实现文件上传逻辑
-  console.log('文件上传:', fileList)
+const handleFileUpload = () => {
   scrollToBottom()
 }
 
