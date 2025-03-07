@@ -11,6 +11,8 @@ export class ImageFileAdapter extends BaseFileAdapter {
     width?: number
     height?: number
     format?: string
+    compressWidth?: number
+    compressHeight?: number
   } = {}
   // private visionDescription: string | undefined
 
@@ -77,9 +79,14 @@ export class ImageFileAdapter extends BaseFileAdapter {
         quality: 70, // 压缩质量
         mozjpeg: true // 使用mozjpeg优化
       })
-      .toBuffer()
+    this.imageMetadata.compressWidth =
+      (await compressedImage.metadata()).width ?? this.imageMetadata.width
+    this.imageMetadata.compressHeight =
+      (await compressedImage.metadata()).height ?? this.imageMetadata.height
 
-    const base64ImageString = compressedImage.toString('base64')
+    const buffer = await compressedImage.toBuffer()
+
+    const base64ImageString = buffer.toString('base64')
     return `data:image/jpeg;base64,${base64ImageString}`
   }
 

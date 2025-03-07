@@ -117,7 +117,9 @@ export class FilePresenter implements IFilePresenter {
 function calculateImageTokens(adapter: ImageFileAdapter): number {
   // 方法1：基于图片尺寸
   const pixelBasedTokens = Math.round(
-    ((adapter.imageMetadata.width ?? 0) * (adapter.imageMetadata.height ?? 0)) / 750
+    ((adapter.imageMetadata.compressWidth ?? adapter.imageMetadata.width ?? 1) *
+      (adapter.imageMetadata.compressHeight ?? adapter.imageMetadata.height ?? 1)) /
+      750
   )
   return pixelBasedTokens
 }
