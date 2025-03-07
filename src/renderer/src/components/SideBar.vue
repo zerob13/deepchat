@@ -63,7 +63,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="rounded-lg w-9 h-9 text-muted-foreground"
+        class="rounded-lg w-9 h-9 text-muted-foreground relative"
         @click="handleProfileClick"
       >
         <Icon icon="lucide:user" class="h-5 w-5" />
@@ -82,23 +82,18 @@
             <div class="space-y-2">
               <p>版本: {{ settings.updateInfo?.version }}</p>
               <p>发布日期: {{ settings.updateInfo?.releaseDate }}</p>
-              <!-- <div v-if="settings.updateInfo?.releaseNotes" class="mt-2">
-                <p class="font-medium">更新内容:</p>
-                <p class="whitespace-pre-line">{{ settings.updateInfo?.releaseNotes }}</p>
-              </div> -->
+              <p>更新内容:</p>
+              <p class="whitespace-pre-line">{{ settings.updateInfo?.releaseNotes }}</p>
             </div>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" @click="showUpdateDialog = false">稍后再说</Button>
-          <Button @click="handleUpdate" :disabled="isUpdating">
-            <Icon
-              v-if="isUpdating"
-              icon="lucide:loader-circle
-            "
-              class="mr-2 h-4 w-4 animate-spin"
-            />
-            {{ isUpdating ? '更新中...' : '立即更新' }}
+          <Button @click="handleUpdate('github')" :disabled="isUpdating">
+            {{ 'Github下载' }}
+          </Button>
+          <Button @click="handleUpdate('netdisk')" :disabled="isUpdating">
+            {{ '网盘下载' }}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -118,7 +113,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/settings'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useDark, useToggle } from '@vueuse/core'
 
 defineProps<{
@@ -143,11 +138,20 @@ const handleProfileClick = async () => {
     showUpdateDialog.value = true
   }
 }
-
-const handleUpdate = async () => {
+watch(
+  () => {
+    return settings.hasUpdate
+  },
+  (newVal, oldVal) => {
+    if (newVal && !oldVal) {
+      showUpdateDialog.value = true
+    }
+  }
+)
+const handleUpdate = async (type: 'github' | 'netdisk') => {
   isUpdating.value = true
   try {
-    const success = await settings.startUpdate()
+    const success = await settings.startUpdate(type)
     if (success) {
       showUpdateDialog.value = false
     }

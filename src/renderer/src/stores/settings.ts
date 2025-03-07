@@ -23,6 +23,8 @@ export const useSettingsStore = defineStore('settings', () => {
     version: string
     releaseDate: string
     releaseNotes: string | undefined
+    githubUrl: string | undefined
+    downloadUrl: string | undefined
   } | null>(null)
   const isChecking = ref(false)
   const searchEngines = ref<SearchEngineTemplate[]>([])
@@ -490,7 +492,9 @@ export const useSettingsStore = defineStore('settings', () => {
         updateInfo.value = {
           version: status.updateInfo.version,
           releaseDate: status.updateInfo.releaseDate,
-          releaseNotes: status.updateInfo.releaseNotes
+          releaseNotes: status.updateInfo.releaseNotes,
+          githubUrl: status.updateInfo.githubUrl,
+          downloadUrl: status.updateInfo.downloadUrl
         }
       }
     } catch (error) {
@@ -501,21 +505,11 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 开始下载更新
-  const startUpdate = async () => {
+  const startUpdate = async (type: 'github' | 'netdisk') => {
     try {
-      return await upgradeP.startDownloadUpdate()
+      return await upgradeP.goDownloadUpgrade(type)
     } catch (error) {
       console.error('Failed to start update:', error)
-      return false
-    }
-  }
-
-  // 重启并安装更新
-  const restartAndUpdate = async () => {
-    try {
-      return await upgradeP.restartToUpdate()
-    } catch (error) {
-      console.error('Failed to restart and update:', error)
       return false
     }
   }
@@ -525,7 +519,7 @@ export const useSettingsStore = defineStore('settings', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     window.electron.ipcRenderer.on(UPDATE_EVENTS.STATUS_CHANGED, (_, event: any) => {
       const { status, info, error } = event
-      hasUpdate.value = status === 'available' || status === 'downloaded'
+      hasUpdate.value = status === 'available'
       console.log(UPDATE_EVENTS.STATUS_CHANGED, status, info, error)
       // 根据不同状态更新UI
       switch (status) {
@@ -534,19 +528,11 @@ export const useSettingsStore = defineStore('settings', () => {
             updateInfo.value = {
               version: info.version,
               releaseDate: info.releaseDate,
-              releaseNotes: info.releaseNotes
+              releaseNotes: info.releaseNotes,
+              githubUrl: info.githubUrl,
+              downloadUrl: info.downloadUrl
             }
           }
-          break
-        case 'downloaded':
-          if (info) {
-            updateInfo.value = {
-              version: info.version,
-              releaseDate: info.releaseDate,
-              releaseNotes: info.releaseNotes
-            }
-          }
-          restartAndUpdate()
           break
         case 'not-available':
           updateInfo.value = null
@@ -558,24 +544,12 @@ export const useSettingsStore = defineStore('settings', () => {
       }
     })
 
-    // 监听更新进度
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    window.electron.ipcRenderer.on(UPDATE_EVENTS.PROGRESS, (_, progressData: any) => {
-      console.log(UPDATE_EVENTS.PROGRESS, progressData)
-      // 这里可以添加进度处理逻辑，如果需要显示进度条
-    })
-
     // 监听更新错误
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     window.electron.ipcRenderer.on(UPDATE_EVENTS.ERROR, (_, errorData: any) => {
       console.error(UPDATE_EVENTS.ERROR, errorData.error)
       hasUpdate.value = false
       updateInfo.value = null
-    })
-
-    // 监听更新即将重启
-    window.electron.ipcRenderer.on(UPDATE_EVENTS.WILL_RESTART, () => {
-      console.log('Application will restart to install update')
     })
   }
 
@@ -865,7 +839,6 @@ export const useSettingsStore = defineStore('settings', () => {
     isChecking,
     checkUpdate,
     startUpdate,
-    restartAndUpdate,
     updateProviderConfig,
     updateProviderApi,
     updateProviderStatus,

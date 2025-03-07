@@ -8,3 +8,9 @@ yarn.lock
 pnpm-lock.yaml
 .vscode
 .idea
+build/linuxarm.json
+build/linuxx64.json
+build/macarm.json
+build/macx64.json
+build/winarm.json
+build/winx64.json

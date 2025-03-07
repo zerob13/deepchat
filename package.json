@@ -1,6 +1,6 @@
 {
   "name": "DeepChat",
-  "version": "0.0.5",
+  "version": "0.0.4",
   "description": "DeepChat，一个简单易用的AI客户端",
   "main": "./out/main/index.js",
   "author": "ThinkInAIXYZ",
@@ -69,6 +69,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.1",
+    "compare-versions": "^6.1.1",
     "dompurify": "^3.2.4",
     "dotenv": "^16.4.7",
     "electron-context-menu": "^4.0.5",

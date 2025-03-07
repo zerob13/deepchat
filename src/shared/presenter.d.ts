@@ -405,9 +405,6 @@ export type LLMResponseStream = {
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>
-  startDownloadUpdate(): void
-  restartToUpdate(): void
-  restartApp(): void
   getUpdateStatus(): {
     status: UpdateStatus | null
     progress: UpdateProgress | null
@@ -416,8 +413,11 @@ export interface IUpgradePresenter {
       version: string
       releaseDate: string
       releaseNotes: any
+      githubUrl: string | undefined
+      downloadUrl: string | undefined
     } | null
   }
+  goDownloadUpgrade(type: 'github' | 'netdisk'): Promise<void>
 }
 // 更新状态类型
 export type UpdateStatus =
