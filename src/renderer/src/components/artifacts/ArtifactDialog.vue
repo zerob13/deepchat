@@ -9,7 +9,7 @@
   >
     <div
       v-if="artifactStore.isOpen"
-      class="fixed right-0 top-0 bottom-0 w-1/2 bg-background border-l shadow-lg flex flex-col"
+      class="fixed right-0 top-0 bottom-0 w-[calc(50%_-_104px)] bg-background border-l shadow-lg flex flex-col"
     >
       <!-- 顶部导航栏 -->
       <div class="flex items-center justify-between px-4 h-14 border-b">

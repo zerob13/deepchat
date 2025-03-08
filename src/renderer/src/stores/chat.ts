@@ -683,7 +683,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   window.electron.ipcRenderer.on(CONVERSATION_EVENTS.ACTIVATED, (_, msg) => {
-    console.log(CONVERSATION_EVENTS.ACTIVATED, msg)
+    // console.log(CONVERSATION_EVENTS.ACTIVATED, msg)
     activeThreadId.value = msg.conversationId
     loadMessages()
     loadChatConfig() // 加载对话配置

@@ -63,7 +63,7 @@ export const useBlockContent = (props: {
         content: match[1].trim()
       })
 
-      console.log(match[0], '\n\n', match[1])
+      //console.log(match[0], '\n\n', match[1])
 
       lastIndex = match.index + match[0].length
     }
@@ -197,7 +197,7 @@ export const useBlockContent = (props: {
       ]
     }
 
-    console.log(parts)
+    // console.log(parts)
     return parts
   })
   return {
