@@ -167,6 +167,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const initSettings = async () => {
     // 获取全部 provider
     providers.value = await configP.getProviders()
+    defaultProviders.value = await configP.getDefaultProviders()
     // 获取主题
     theme.value = (await configP.getSetting('theme')) || 'system'
 

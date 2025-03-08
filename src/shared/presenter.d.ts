@@ -182,6 +182,7 @@ export type LLM_PROVIDER_BASE = {
     apiKey: string
     docs: string
     models: string
+    defaultBaseUrl: string
   }
 } & LLM_PROVIDER
 

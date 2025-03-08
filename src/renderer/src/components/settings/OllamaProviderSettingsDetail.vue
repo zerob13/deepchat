@@ -13,7 +13,11 @@
           @keyup.enter="handleApiHostChange(apiHost)"
         />
         <div class="text-xs text-secondary-foreground">
-          {{ `${apiHost ?? ''}/v1/api` }}
+          {{
+            t('settings.provider.urlFormat', {
+              defaultUrl: 'http://127.0.0.1:11434'
+            })
+          }}
         </div>
       </div>
 
