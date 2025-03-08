@@ -192,7 +192,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 获取搜索引擎
     searchEngines.value = await threadP.getSearchEngines()
-    activeSearchEngine.value = await threadP.getActiveSearchEngine()
+    const savedEngineName = await configP.getSetting<string>('searchEngine')
+    const savedEngine = searchEngines.value.find((e) => e.name === savedEngineName)
+    if (savedEngine) {
+      activeSearchEngine.value = savedEngine
+      threadP.setActiveSearchEngine(savedEngine.name)
+    } else {
+      activeSearchEngine.value = searchEngines.value[0]
+      threadP.setActiveSearchEngine(searchEngines.value[0].name)
+    }
 
     // 设置事件监听
     setupProviderListener()
