@@ -42,16 +42,19 @@ export const useBlockContent = (props: {
     // 处理 antThinking 标签
     const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
     let match
+    let hasMatchedClosedThinkingTags = false
+
     while ((match = thinkingRegex.exec(content)) !== null) {
+      hasMatchedClosedThinkingTags = true
       // 添加思考前的普通文本
       if (match.index > lastIndex) {
-        const text = content.substring(lastIndex, match.index)
-        if (text.trim()) {
-          parts.push({
-            type: 'text',
-            content: text
-          })
-        }
+        // const text = content.substring(lastIndex, match.index)
+        // if (text.trim()) {
+        //   parts.push({
+        //     type: 'thinking',
+        //     content: text
+        //   })
+        // }
       }
 
       // 添加思考内容
@@ -60,14 +63,44 @@ export const useBlockContent = (props: {
         content: match[1].trim()
       })
 
+      console.log(match[0], '\n\n', match[1])
+
       lastIndex = match.index + match[0].length
+    }
+
+    // 如果没有找到闭合的思考标签，尝试查找未闭合的 antThinking 标签
+    if (!hasMatchedClosedThinkingTags) {
+      // 重置 lastIndex 以便从头开始搜索
+      lastIndex = 0
+      // 只匹配开始标签的正则表达式
+      const unclosedThinkingRegex = /<antThinking>([\s\S]*)/gs
+
+      while ((match = unclosedThinkingRegex.exec(content)) !== null) {
+        // 添加 thinking 前的普通文本
+        if (match.index > lastIndex) {
+          const text = content.substring(lastIndex, match.index)
+          if (text.trim()) {
+            parts.push({
+              type: 'text',
+              content: text
+            })
+          }
+        }
+
+        // 添加未闭合标签的思考内容（将剩余所有内容视为思考内容）
+        parts.push({
+          type: 'thinking',
+          content: match[1].trim()
+        })
+
+        lastIndex = match.index + match[0].length
+      }
     }
 
     // 处理 antArtifact 标签
     const artifactRegex =
       /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
     content = props.block.content
-    lastIndex = 0
     let hasMatchedClosedTags = false
 
     while ((match = artifactRegex.exec(content)) !== null) {
@@ -106,7 +139,6 @@ export const useBlockContent = (props: {
     // 如果没有找到闭合的标签，尝试查找未闭合的 antArtifact 标签
     if (!hasMatchedClosedTags) {
       // 重置 lastIndex 以便从头开始搜索
-      lastIndex = 0
       // 只匹配开始标签的正则表达式
       const unclosedArtifactRegex =
         /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*)/gs
