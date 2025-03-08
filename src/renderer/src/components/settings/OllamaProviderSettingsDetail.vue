@@ -13,7 +13,7 @@
           @keyup.enter="handleApiHostChange(apiHost)"
         />
         <div class="text-xs text-secondary-foreground">
-          {{ `${apiHost ?? ''}/api` }}
+          {{ `${apiHost ?? ''}/v1/api` }}
         </div>
       </div>
 
@@ -188,7 +188,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -202,9 +202,7 @@ import {
   DialogFooter
 } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/settings'
-import type { LLM_PROVIDER, OllamaModel } from '@shared/presenter'
-import { useOllamaStore } from '@/stores/ollama'
-import { OLLAMA_EVENTS } from '@/events'
+import type { LLM_PROVIDER } from '@shared/presenter'
 
 const { t } = useI18n()
 
@@ -213,13 +211,12 @@ const props = defineProps<{
 }>()
 
 const settingsStore = useSettingsStore()
-const ollamaStore = useOllamaStore()
 const apiHost = ref(props.provider.baseUrl || '')
 
-// 模型列表
-const runningModels = ref<OllamaModel[]>([])
-const localModels = ref<OllamaModel[]>([])
-const pullingModels = ref<Map<string, number>>(new Map()) // 模型名 -> 进度
+// 模型列表 - 从 settings store 获取
+const runningModels = computed(() => settingsStore.ollamaRunningModels)
+const localModels = computed(() => settingsStore.ollamaLocalModels)
+const pullingModels = computed(() => settingsStore.ollamaPullingModels)
 
 // 对话框状态
 const showPullModelDialog = ref(false)
@@ -321,45 +318,25 @@ const displayLocalModels = computed(() => {
 // 初始化
 onMounted(() => {
   refreshModels()
-  // 注册事件监听器
-  window.electron?.ipcRenderer?.on(
-    OLLAMA_EVENTS.PULL_MODEL_PROGRESS,
-    (_event: unknown, data: Record<string, unknown>) => {
-      // console.log('pullModelProgress', data)
-      handlePullModelEvent(data)
-    }
-  )
 })
 
-// 刷新模型列表
+// 刷新模型列表 - 使用 settings store
 const refreshModels = async () => {
-  try {
-    runningModels.value = await ollamaStore.listRunningModels()
-    localModels.value = await ollamaStore.listModels()
-  } catch (error) {
-    console.error('Failed to refresh models:', error)
-  }
+  await settingsStore.refreshOllamaModels()
 }
 
-// 拉取模型
+// 拉取模型 - 使用 settings store
 const pullModel = async (modelName: string) => {
   try {
-    // 初始化进度为0
-    pullingModels.value.set(modelName, 0)
-
     // 开始拉取
-    const success = await ollamaStore.pullModel(modelName)
+    const success = await settingsStore.pullOllamaModel(modelName)
 
     // 成功开始拉取后关闭对话框
     if (success) {
       showPullModelDialog.value = false
-    } else {
-      // 如果拉取失败，删除进度记录
-      pullingModels.value.delete(modelName)
     }
   } catch (error) {
     console.error(`Failed to pull model ${modelName}:`, error)
-    pullingModels.value.delete(modelName)
   }
 }
 
@@ -369,14 +346,14 @@ const showDeleteModelConfirm = (modelName: string) => {
   showDeleteModelDialog.value = true
 }
 
-// 确认删除模型
+// 确认删除模型 - 使用 settings store
 const confirmDeleteModel = async () => {
   if (!modelToDelete.value) return
 
   try {
-    const success = await ollamaStore.deleteModel(modelToDelete.value)
+    const success = await settingsStore.deleteOllamaModel(modelToDelete.value)
     if (success) {
-      await refreshModels()
+      // 删除成功后模型列表会自动刷新，无需额外调用 refreshModels
     }
     showDeleteModelDialog.value = false
     modelToDelete.value = ''
@@ -403,12 +380,13 @@ const formatModelSize = (sizeInBytes: number): string => {
   return `${(sizeInBytes / KB).toFixed(2)} KB`
 }
 
+// 使用 settings store 的辅助函数
 const isModelRunning = (modelName: string): boolean => {
-  return runningModels.value.some((m) => m.name === modelName)
+  return settingsStore.isOllamaModelRunning(modelName)
 }
 
 const isModelLocal = (modelName: string): boolean => {
-  return localModels.value.some((m) => m.name === modelName)
+  return settingsStore.isOllamaModelLocal(modelName)
 }
 
 // API URL 处理
@@ -425,37 +403,4 @@ watch(
   },
   { immediate: true }
 )
-
-// 处理模型拉取事件
-const handlePullModelEvent = (event: Record<string, unknown>) => {
-  if (event?.eventId !== 'pullOllamaModels' || !event?.modelName) return
-
-  const modelName = event.modelName as string
-  const status = event.status as string
-  const total = event.total as number
-  const completed = event.completed as number
-
-  // 如果有 completed 和 total，计算进度
-  if (typeof completed === 'number' && typeof total === 'number' && total > 0) {
-    const progress = Math.min(Math.round((completed / total) * 100), 100)
-    pullingModels.value.set(modelName, progress)
-  }
-  // 如果只有 status 是 pulling manifest 或没有 total，设置为初始状态
-  else if (status && status.includes('manifest')) {
-    pullingModels.value.set(modelName, 1) // 设置为1%表示开始
-  }
-
-  // 如果拉取完成
-  if (status === 'success' || status === 'completed') {
-    setTimeout(() => {
-      pullingModels.value.delete(modelName)
-      refreshModels()
-    }, 1000)
-  }
-}
-
-// 组件卸载时移除事件监听器
-onUnmounted(() => {
-  window.electron?.ipcRenderer?.removeAllListeners(OLLAMA_EVENTS.PULL_MODEL_PROGRESS)
-})
 </script>

@@ -8,17 +8,20 @@ import {
 } from '@shared/presenter'
 import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
-import ollama, { Message, ShowResponse } from 'ollama'
+import { Ollama, Message, ShowResponse } from 'ollama'
 
 export class OllamaProvider extends BaseLLMProvider {
+  private ollama: Ollama
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     super(provider, configPresenter)
+    this.ollama = new Ollama({ host: this.provider.baseUrl })
     this.init()
   }
 
   // 基础 Provider 功能实现
   protected async fetchProviderModels(): Promise<MODEL_META[]> {
     try {
+      console.log('Ollama service check', this.ollama, this.provider)
       // 获取 Ollama 本地已安装的模型列表
       const ollamaModels = await this.listModels()
 
@@ -70,7 +73,7 @@ export class OllamaProvider extends BaseLLMProvider {
   public async check(): Promise<{ isOk: boolean; errorMsg: string | null }> {
     try {
       // 尝试获取模型列表来检查 Ollama 服务是否可用
-      await ollama.list()
+      await this.ollama.list()
       return { isOk: true, errorMsg: null }
     } catch (error) {
       console.error('Ollama service check failed:', error)
@@ -87,7 +90,7 @@ export class OllamaProvider extends BaseLLMProvider {
         .map((m) => `${m.role}: ${m.content}`)
         .join('\n')}`
 
-      const response = await ollama.generate({
+      const response = await this.ollama.generate({
         model: modelId,
         prompt: prompt,
         options: {
@@ -110,7 +113,7 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): Promise<LLMResponse> {
     try {
-      const response = await ollama.chat({
+      const response = await this.ollama.chat({
         model: modelId,
         messages: this.formatMessages(messages),
         options: {
@@ -138,7 +141,7 @@ export class OllamaProvider extends BaseLLMProvider {
     try {
       const prompt = `请对以下内容进行总结：\n\n${text}`
 
-      const response = await ollama.generate({
+      const response = await this.ollama.generate({
         model: modelId,
         prompt: prompt,
         options: {
@@ -164,7 +167,7 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): Promise<LLMResponse> {
     try {
-      const response = await ollama.generate({
+      const response = await this.ollama.generate({
         model: modelId,
         prompt: prompt,
         options: {
@@ -192,7 +195,7 @@ export class OllamaProvider extends BaseLLMProvider {
     try {
       const prompt = `基于以下上下文，生成5个可能的后续问题或建议：\n\n${context}`
 
-      const response = await ollama.generate({
+      const response = await this.ollama.generate({
         model: modelId,
         prompt: prompt,
         options: {
@@ -220,7 +223,7 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): AsyncGenerator<LLMResponseStream> {
     try {
-      const stream = await ollama.chat({
+      const stream = await this.ollama.chat({
         model: modelId,
         messages: messages.map((m) => ({
           role: m.role,
@@ -258,7 +261,7 @@ export class OllamaProvider extends BaseLLMProvider {
     try {
       const prompt = `请对以下内容进行总结：\n\n${text}`
 
-      const stream = await ollama.generate({
+      const stream = await this.ollama.generate({
         model: modelId,
         prompt: prompt,
         options: {
@@ -291,7 +294,7 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): AsyncGenerator<LLMResponseStream> {
     try {
-      const stream = await ollama.generate({
+      const stream = await this.ollama.generate({
         model: modelId,
         prompt: prompt,
         options: {
@@ -320,21 +323,21 @@ export class OllamaProvider extends BaseLLMProvider {
   // Ollama 特有的模型管理功能
   public async listModels(): Promise<OllamaModel[]> {
     try {
-      const response = await ollama.list()
+      const response = await this.ollama.list()
       // 返回类型转换，适应我们的 OllamaModel 接口
       return response.models as unknown as OllamaModel[]
     } catch (error) {
-      console.error('Failed to list Ollama models:', error)
+      console.error('Failed to list Ollama models:', (error as Error).message)
       return []
     }
   }
 
   public async listRunningModels(): Promise<OllamaModel[]> {
     try {
-      const response = await ollama.ps()
+      const response = await this.ollama.ps()
       return response.models as unknown as OllamaModel[]
     } catch (error) {
-      console.error('Failed to list running Ollama models:', error)
+      console.error('Failed to list running Ollama models:', (error as Error).message)
       return []
     }
   }
@@ -344,7 +347,7 @@ export class OllamaProvider extends BaseLLMProvider {
     onProgress?: (progress: ProgressResponse) => void
   ): Promise<boolean> {
     try {
-      const stream = await ollama.pull({
+      const stream = await this.ollama.pull({
         model: modelName,
         insecure: true,
         stream: true
@@ -358,31 +361,31 @@ export class OllamaProvider extends BaseLLMProvider {
 
       return true
     } catch (error) {
-      console.error(`Failed to pull Ollama model ${modelName}:`, error)
+      console.error(`Failed to pull Ollama model ${modelName}:`, (error as Error).message)
       return false
     }
   }
 
   public async deleteModel(modelName: string): Promise<boolean> {
     try {
-      await ollama.delete({
+      await this.ollama.delete({
         model: modelName
       })
       return true
     } catch (error) {
-      console.error(`Failed to delete Ollama model ${modelName}:`, error)
+      console.error(`Failed to delete Ollama model ${modelName}:`, (error as Error).message)
       return false
     }
   }
 
   public async showModelInfo(modelName: string): Promise<ShowResponse> {
     try {
-      const response = await ollama.show({
+      const response = await this.ollama.show({
         model: modelName
       })
       return response
     } catch (error) {
-      console.error(`Failed to show Ollama model info for ${modelName}:`, error)
+      console.error(`Failed to show Ollama model info for ${modelName}:`, (error as Error).message)
       throw error
     }
   }

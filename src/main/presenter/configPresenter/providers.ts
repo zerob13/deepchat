@@ -6,7 +6,7 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
     name: 'Ollama',
     apiType: 'ollama',
     apiKey: '',
-    baseUrl: 'http://localhost:11434/v1',
+    baseUrl: 'http://localhost:11434',
     enable: false,
     websites: {
       official: 'https://ollama.com/',

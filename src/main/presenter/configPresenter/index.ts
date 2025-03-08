@@ -100,6 +100,15 @@ export class ConfigPresenter implements IConfigPresenter {
     const providers = this.getProviders()
 
     for (const provider of providers) {
+      // 检查并修正 ollama 的 baseUrl
+      if (provider.id === 'ollama' && provider.baseUrl) {
+        if (provider.baseUrl.endsWith('/v1')) {
+          provider.baseUrl = provider.baseUrl.replace(/\/v1$/, '')
+          // 保存修改后的提供者
+          this.setProviderById('ollama', provider)
+        }
+      }
+
       // 迁移provider模型
       const oldProviderModelsKey = `${provider.id}_models`
       const oldModels = this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldProviderModelsKey)
