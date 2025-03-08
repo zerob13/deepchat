@@ -31,7 +31,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const isUpdating = ref(false)
   const isChecking = ref(false)
   const searchEngines = ref<SearchEngineTemplate[]>([])
-  const activeSearchEngine = ref<string>('google')
+  const activeSearchEngine = ref<SearchEngineTemplate | null>(null)
 
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])

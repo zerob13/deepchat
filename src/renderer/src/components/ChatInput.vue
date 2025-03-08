@@ -346,7 +346,7 @@ const onSearchEngineChange = async (engineName: string) => {
 const initSettings = async () => {
   settings.value.deepThinking = Boolean(await configPresenter.getSetting('input_deepThinking'))
   settings.value.webSearch = Boolean(await configPresenter.getSetting('input_webSearch'))
-  selectedSearchEngine.value = settingsStore.activeSearchEngine
+  selectedSearchEngine.value = settingsStore.activeSearchEngine?.name ?? 'google'
 }
 
 const handleDragEnter = (e: DragEvent) => {
