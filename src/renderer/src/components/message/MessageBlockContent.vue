@@ -147,7 +147,7 @@ const processedContent = computed<ProcessedPart[]>(() => {
     return [{ type: 'text', content: props.block.content }]
   }
   // 调试代码：
-  console.log(props.block.content)
+  //console.log(props.block.content)
   // 严格的Markdown代码块检测
   const isMarkdownCodeBlock = (content: string): boolean => {
     // 必须以```markdown或```md开头，并以```结尾
