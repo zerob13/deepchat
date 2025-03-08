@@ -56,48 +56,48 @@ const props = defineProps<{
 
 // 语言映射表
 const languageAliases: Record<string, string> = {
-  'js': 'javascript',
-  'ts': 'typescript',
-  'py': 'python',
-  'rb': 'ruby',
-  'sh': 'bash',
-  'yml': 'yaml',
-  'md': 'markdown',
-  'vue': 'javascript',
-  'jsx': 'javascript',
-  'tsx': 'typescript'
+  js: 'javascript',
+  ts: 'typescript',
+  py: 'python',
+  rb: 'ruby',
+  sh: 'bash',
+  yml: 'yaml',
+  md: 'markdown',
+  vue: 'javascript',
+  jsx: 'javascript',
+  tsx: 'typescript'
 }
 
 // 获取显示用的语言名称
 const displayLanguage = computed(() => {
   const lang = props.block.artifact?.language?.toLowerCase() || 'text'
   const displayNames: Record<string, string> = {
-    'javascript': 'JavaScript',
-    'typescript': 'TypeScript',
-    'python': 'Python',
-    'java': 'Java',
-    'cpp': 'C++',
-    'csharp': 'C#',
-    'php': 'PHP',
-    'ruby': 'Ruby',
-    'go': 'Go',
-    'rust': 'Rust',
-    'swift': 'Swift',
-    'kotlin': 'Kotlin',
-    'html': 'HTML',
-    'css': 'CSS',
-    'scss': 'SCSS',
-    'sql': 'SQL',
-    'json': 'JSON',
-    'yaml': 'YAML',
-    'markdown': 'Markdown',
-    'bash': 'Bash',
-    'shell': 'Shell',
-    'dockerfile': 'Dockerfile',
-    'vue': 'Vue',
-    'react': 'React',
-    'xml': 'XML',
-    'text': 'Plain Text'
+    javascript: 'JavaScript',
+    typescript: 'TypeScript',
+    python: 'Python',
+    java: 'Java',
+    cpp: 'C++',
+    csharp: 'C#',
+    php: 'PHP',
+    ruby: 'Ruby',
+    go: 'Go',
+    rust: 'Rust',
+    swift: 'Swift',
+    kotlin: 'Kotlin',
+    html: 'HTML',
+    css: 'CSS',
+    scss: 'SCSS',
+    sql: 'SQL',
+    json: 'JSON',
+    yaml: 'YAML',
+    markdown: 'Markdown',
+    bash: 'Bash',
+    shell: 'Shell',
+    dockerfile: 'Dockerfile',
+    vue: 'Vue',
+    react: 'React',
+    xml: 'XML',
+    text: 'Plain Text'
   }
   return displayNames[lang] || lang.toUpperCase()
 })
@@ -192,7 +192,7 @@ onBeforeUnmount(() => {
 })
 </script>
 
-<style>
+<style scoped>
 .code-artifact {
   width: 100%;
   height: 100%;
@@ -236,7 +236,9 @@ onBeforeUnmount(() => {
 }
 
 .code-content .cm-scroller {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
   font-size: 0.875rem;
   line-height: 1.5;
 }

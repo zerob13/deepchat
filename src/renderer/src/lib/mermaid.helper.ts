@@ -76,11 +76,11 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         <!-- 内容区域 -->
         <div class="rounded-lg overflow-hidden">
           <!-- 代码视图 -->
-          <div id="code-view-${id}" class="hidden p-2 rounded font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-y-auto max-h-[500px]">
+          <div id="code-view-${id}" class="hidden p-2 rounded font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-y-auto max-h-[360px]">
             <pre class="text-muted-foreground !p-2 bg-muted dark:bg-background" >${code}</pre>
           </div>
           <!-- 预览视图 -->
-          <div id="preview-view-${id}" class="rounded p-4 flex justify-center items-center min-h-[500px] max-h-[500px] overflow-auto relative">
+          <div id="preview-view-${id}" class="rounded p-4 flex justify-center items-center min-h-[360px] max-h-[360px] overflow-auto relative">
             <div id="mermaid-container-${id}" class="w-full h-full absolute inset-0 overflow-hidden" style="cursor: grab; touch-action: none;">
               <div id="mermaid-${id}" class="mermaid w-full text-center absolute" 
                    style="transform-origin: center; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(1);">${code}</div>
@@ -334,54 +334,6 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         },
         { passive: false }
       )
-
-      // 添加鼠标滚轮缩放支持
-      if (previewView) {
-        previewView.addEventListener(
-          'wheel',
-          (e: Event) => {
-            const wheelEvent = e as WheelEvent
-            if (wheelEvent.ctrlKey || wheelEvent.metaKey) {
-              e.preventDefault()
-
-              // 获取鼠标相对于预览视图的位置
-              const rect = previewView.getBoundingClientRect()
-              const mouseX = wheelEvent.clientX - rect.left
-              const mouseY = wheelEvent.clientY - rect.top
-
-              // 计算缩放前鼠标位置相对于图表中心的偏移
-              const offsetX = mouseX - rect.width / 2 - translateX
-              const offsetY = mouseY - rect.height / 2 - translateY
-
-              // 保存旧的缩放值
-              const oldZoom = currentZoom
-
-              // 更新缩放值
-              if (wheelEvent.deltaY < 0 && currentZoom < maxZoom) {
-                currentZoom += zoomStep
-              } else if (wheelEvent.deltaY > 0 && currentZoom > minZoom) {
-                currentZoom -= zoomStep
-              }
-
-              // 调整位移以保持鼠标指向的点不变
-              if (oldZoom !== currentZoom) {
-                const zoomRatio = currentZoom / oldZoom
-                translateX -= offsetX * (zoomRatio - 1)
-                translateY -= offsetY * (zoomRatio - 1)
-              }
-
-              updateZoom()
-            } else {
-              // 非缩放模式下，允许滚动来平移图表
-              e.preventDefault()
-              translateX -= wheelEvent.deltaX
-              translateY -= wheelEvent.deltaY
-              updateZoom()
-            }
-          },
-          { passive: false }
-        )
-      }
     }
   } catch (error: unknown) {
     console.error('Failed to render mermaid diagram:', error)

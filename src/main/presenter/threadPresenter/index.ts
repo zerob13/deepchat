@@ -23,11 +23,11 @@ import {
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import { SearchManager } from './searchManager'
-import { getArtifactsPrompt } from '../llmProviderPresenter/promptUtils'
 import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import { ChatMessage } from '../llmProviderPresenter/baseProvider'
+import { ARTIFACTS_PROMPT } from '@/lib/artifactsPrompt'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
   systemPrompt: '',
@@ -993,11 +993,12 @@ export class ThreadPresenter implements IThreadPresenter {
 
     // 添加系统提示
     if (systemPrompt || artifacts === 1) {
-      this.addSystemPrompt(formattedMessages, systemPrompt, artifacts)
+      formattedMessages.push(...this.addSystemPrompt(formattedMessages, systemPrompt, artifacts))
+      console.log('-------------> system prompt \n', systemPrompt, artifacts, formattedMessages)
     }
 
     // 添加上下文消息
-    this.addContextMessages(formattedMessages, contextMessages)
+    formattedMessages.push(...this.addContextMessages(formattedMessages, contextMessages))
 
     // 添加当前用户消息
     let finalContent = searchPrompt || userContent
@@ -1031,35 +1032,42 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   // 添加系统提示
-  private async addSystemPrompt(
+  private addSystemPrompt(
     formattedMessages: ChatMessage[],
     systemPrompt: string,
     artifacts: number
-  ): Promise<void> {
+  ): ChatMessage[] {
+    const resultMessages: ChatMessage[] = [...formattedMessages]
     if (systemPrompt) {
       if (artifacts === 1) {
-        const artifactsPrompt = await getArtifactsPrompt()
-        formattedMessages.push({
+        console.log('we artifacts!')
+        resultMessages.push({
           role: 'system',
-          content: `${systemPrompt}\n\n${artifactsPrompt}`
+          content: `${systemPrompt}\n\n${ARTIFACTS_PROMPT}`
         })
       } else {
-        formattedMessages.push({
+        console.log('we dont artifacts!')
+        resultMessages.push({
           role: 'system',
           content: systemPrompt
         })
       }
     } else if (artifacts === 1) {
-      const artifactsPrompt = await getArtifactsPrompt()
-      formattedMessages.push({
+      console.log('we have artifacts!')
+      resultMessages.push({
         role: 'system',
-        content: artifactsPrompt
+        content: ARTIFACTS_PROMPT
       })
     }
+    return resultMessages
   }
 
   // 添加上下文消息
-  private addContextMessages(formattedMessages: ChatMessage[], contextMessages: Message[]): void {
+  private addContextMessages(
+    formattedMessages: ChatMessage[],
+    contextMessages: Message[]
+  ): ChatMessage[] {
+    const resultMessages = [...formattedMessages]
     contextMessages.forEach((msg) => {
       const content =
         msg.role === 'user'
@@ -1073,11 +1081,12 @@ export class ThreadPresenter implements IThreadPresenter {
         return // 如果是assistant且content为空，则不加入
       }
 
-      formattedMessages.push({
+      resultMessages.push({
         role: msg.role as 'user' | 'assistant',
         content
       })
     })
+    return resultMessages
   }
 
   // 合并连续的相同角色消息
