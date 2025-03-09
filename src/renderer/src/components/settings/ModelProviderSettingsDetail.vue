@@ -21,11 +21,12 @@
           @blur="handleApiHostChange(String($event.target.value))"
           @keyup.enter="handleApiHostChange(apiHost)"
         />
-        <div
-          class="text-xs text-secondary-foreground"
-          v-if="provider.id !== 'gemini' && provider.id !== 'anthropic'"
-        >
-          {{ `${apiHost ?? ''}/chat/completions` }}
+        <div class="text-xs text-secondary-foreground">
+          {{
+            t('settings.provider.urlFormat', {
+              defaultUrl: providerWebsites?.defaultBaseUrl || ''
+            })
+          }}
         </div>
       </div>
       <div class="flex flex-col items-start p-2 gap-2">
@@ -54,7 +55,7 @@
             size="xs"
             class="text-xs text-normal rounded-lg"
             v-if="!provider.custom && provider.id !== 'doubao'"
-            @click="openProviderWebsite(provider.id)"
+            @click="openProviderWebsite"
           >
             <Icon icon="lucide:hand-helping" class="w-4 h-4 text-muted-foreground" />{{
               t('settings.provider.howToGet')
@@ -63,7 +64,7 @@
         </div>
         <div class="text-xs text-secondary-foreground" v-if="!provider.custom">
           {{ t('settings.provider.getKeyTip') }}
-          <a :href="getProviderUrl(provider.id)" target="_blank" class="text-primary">{{
+          <a :href="providerWebsites?.apiKey" target="_blank" class="text-primary">{{
             provider.name
           }}</a>
           {{ t('settings.provider.getKeyTipEnd') }}
@@ -228,6 +229,14 @@ import { useSettingsStore } from '@/stores/settings'
 import type { LLM_PROVIDER, RENDERER_MODEL_META } from '@shared/presenter'
 import ModelConfigItem from './ModelConfigItem.vue'
 
+interface ProviderWebsites {
+  official: string
+  apiKey: string
+  docs: string
+  models: string
+  defaultBaseUrl: string
+}
+
 const { t } = useI18n()
 
 const props = defineProps<{
@@ -264,15 +273,15 @@ const enabledModels = computed(() => {
 const checkResult = ref<boolean>(false)
 const showCheckModelDialog = ref(false)
 
-const getProviderUrl = (providerId: string) => {
+const providerWebsites = computed<ProviderWebsites | undefined>(() => {
   const providerConfig = settingsStore.defaultProviders.find((provider) => {
-    return provider.id === providerId
+    return provider.id === props.provider.id
   })
   if (providerConfig && providerConfig.websites) {
-    return providerConfig.websites.apiKey
+    return providerConfig.websites as ProviderWebsites
   }
-  return ''
-}
+  return undefined
+})
 
 const validateApiKey = async () => {
   try {
@@ -384,9 +393,11 @@ const confirmDeleteProvider = async () => {
     console.error('删除供应商失败:', error)
   }
 }
-const openProviderWebsite = (providerId: string) => {
-  const url = getProviderUrl(providerId)
-  window.open(url, '_blank')
+const openProviderWebsite = () => {
+  const url = providerWebsites.value?.apiKey
+  if (url) {
+    window.open(url, '_blank')
+  }
 }
 
 watch(

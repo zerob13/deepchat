@@ -13,6 +13,7 @@ import path from 'path'
 import { app } from 'electron'
 import fs from 'fs'
 import { CONFIG_EVENTS } from '@/events'
+import { compare } from 'compare-versions'
 
 // 定义应用设置的接口
 interface IAppSettings {
@@ -20,6 +21,7 @@ interface IAppSettings {
   language: string
   providers: LLM_PROVIDER[]
   closeToQuit: boolean // 是否点击关闭按钮时退出程序
+  appVersion?: string // 用于版本检查和数据迁移
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -49,8 +51,12 @@ export class ConfigPresenter implements IConfigPresenter {
   private store: ElectronStore<IAppSettings>
   private providersModelStores: Map<string, ElectronStore<IModelStore>> = new Map()
   private userDataPath: string
+  private currentAppVersion: string
 
   constructor() {
+    // 获取当前应用版本号
+    this.currentAppVersion = app.getVersion()
+
     this.store = new ElectronStore<IAppSettings>({
       name: 'app-settings',
       watch: true
@@ -69,8 +75,17 @@ export class ConfigPresenter implements IConfigPresenter {
       this.setProviders([...existingProviders, ...newProviders])
     }
 
-    // 迁移旧的模型数据
-    this.migrateModelData()
+    // 获取存储的应用版本号
+    const storedAppVersion = this.getSetting<string>('appVersion')
+
+    // 如果版本号不存在或低于当前版本，执行数据迁移
+    if (!storedAppVersion || compare(storedAppVersion, this.currentAppVersion, '<')) {
+      // 迁移旧的模型数据
+      this.migrateModelData()
+
+      // 更新存储的应用版本号
+      this.setSetting('appVersion', this.currentAppVersion)
+    }
   }
 
   private initProviderModelsDir(): void {
@@ -100,6 +115,15 @@ export class ConfigPresenter implements IConfigPresenter {
     const providers = this.getProviders()
 
     for (const provider of providers) {
+      // 检查并修正 ollama 的 baseUrl
+      if (provider.id === 'ollama' && provider.baseUrl) {
+        if (provider.baseUrl.endsWith('/v1')) {
+          provider.baseUrl = provider.baseUrl.replace(/\/v1$/, '')
+          // 保存修改后的提供者
+          this.setProviderById('ollama', provider)
+        }
+      }
+
       // 迁移provider模型
       const oldProviderModelsKey = `${provider.id}_models`
       const oldModels = this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldProviderModelsKey)

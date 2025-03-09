@@ -129,7 +129,7 @@ const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 const selectedLanguage = ref('system')
-const selectedSearchEngine = ref(settingsStore.activeSearchEngine)
+const selectedSearchEngine = ref(settingsStore.activeSearchEngine?.name ?? 'google')
 const selectedSearchModel = computed(() => settingsStore.searchAssistantModel)
 
 const languageOptions = [
@@ -144,7 +144,7 @@ const languageOptions = [
 
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language
-  selectedSearchEngine.value = settingsStore.activeSearchEngine
+  selectedSearchEngine.value = settingsStore.activeSearchEngine?.name ?? 'google'
 })
 
 watch(selectedLanguage, async (newValue) => {

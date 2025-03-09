@@ -4,7 +4,8 @@ import type { LLM_PROVIDER, RENDERER_MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
-import { CONFIG_EVENTS, UPDATE_EVENTS } from '@/events'
+import { CONFIG_EVENTS, UPDATE_EVENTS, OLLAMA_EVENTS } from '@/events'
+import type { OllamaModel } from '@shared/presenter'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
@@ -30,7 +31,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const isUpdating = ref(false)
   const isChecking = ref(false)
   const searchEngines = ref<SearchEngineTemplate[]>([])
-  const activeSearchEngine = ref<string>('google')
+  const activeSearchEngine = ref<SearchEngineTemplate | null>(null)
+
+  // Ollama 相关状态
+  const ollamaRunningModels = ref<OllamaModel[]>([])
+  const ollamaLocalModels = ref<OllamaModel[]>([])
+  const ollamaPullingModels = ref<Map<string, number>>(new Map()) // 模型名 -> 进度
 
   // 搜索助手模型相关
   const searchAssistantModelRef = ref<RENDERER_MODEL_META | null>(null)
@@ -128,40 +134,77 @@ export const useSettingsStore = defineStore('settings', () => {
       searchAssistantProviderRef.value = priorityModel.providerId
 
       await configP.setSetting('searchAssistantModel', {
-        model: toRaw(priorityModel.model),
+        model: {
+          id: priorityModel.model.id,
+          name: priorityModel.model.name,
+          contextLength: priorityModel.model.contextLength,
+          maxTokens: priorityModel.model.maxTokens,
+          providerId: priorityModel.providerId,
+          group: priorityModel.model.group,
+          enabled: true,
+          isCustom: priorityModel.model.isCustom
+        },
         providerId: priorityModel.providerId
       })
 
       // 通知线程处理器更新搜索助手模型
-      threadP.setSearchAssistantModel(toRaw(priorityModel.model), priorityModel.providerId)
+      threadP.setSearchAssistantModel(
+        {
+          id: priorityModel.model.id,
+          name: priorityModel.model.name,
+          contextLength: priorityModel.model.contextLength,
+          maxTokens: priorityModel.model.maxTokens,
+          providerId: priorityModel.providerId,
+          group: priorityModel.model.group,
+          isCustom: priorityModel.model.isCustom
+        },
+        toRaw(priorityModel.providerId)
+      )
     }
   }
 
-  // 初始化配置
+  // 初始化设置
   const initSettings = async () => {
+    // 获取全部 provider
     providers.value = await configP.getProviders()
     defaultProviders.value = await configP.getDefaultProviders()
-    theme.value = (await configP.getSetting<string>('theme')) || 'system'
-    language.value = (await configP.getSetting<string>('language')) || 'system'
+    // 获取主题
+    theme.value = (await configP.getSetting('theme')) || 'system'
 
-    // 初始化搜索引擎配置
-    searchEngines.value = await threadP.getSearchEngines()
-    const savedEngine = await configP.getSetting<string>('searchEngine')
-    if (savedEngine && searchEngines.value.find((e) => e.name === savedEngine)) {
-      activeSearchEngine.value = savedEngine
-      threadP.setActiveSearchEngine(savedEngine)
-    } else {
-      activeSearchEngine.value = searchEngines.value[0]?.name || 'google'
-      threadP.setActiveSearchEngine(activeSearchEngine.value)
-    }
-
-    // 设置当前语言
+    // 获取语言
+    language.value = (await configP.getSetting('language')) || 'system'
+    // 设置语言
     locale.value = await configP.getLanguage()
 
+    // 获取全部模型
     await refreshAllModels()
 
     // 初始化搜索助手模型
     await initOrUpdateSearchAssistantModel()
+
+    // 设置 Ollama 事件监听器
+    setupOllamaEventListeners()
+
+    // 单独刷新一次 Ollama 模型，确保即使没有启用 Ollama provider 也能获取模型列表
+    if (providers.value.some((p) => p.id === 'ollama')) {
+      await refreshOllamaModels()
+    }
+
+    // 获取搜索引擎
+    searchEngines.value = await threadP.getSearchEngines()
+    const savedEngineName = await configP.getSetting<string>('searchEngine')
+    const savedEngine = searchEngines.value.find((e) => e.name === savedEngineName)
+    if (savedEngine) {
+      activeSearchEngine.value = savedEngine
+      threadP.setActiveSearchEngine(savedEngine.name)
+    } else {
+      activeSearchEngine.value = searchEngines.value[0]
+      threadP.setActiveSearchEngine(searchEngines.value[0].name)
+    }
+
+    // 设置事件监听
+    setupProviderListener()
+    setupUpdateListener()
   }
 
   // 刷新所有模型列表
@@ -170,7 +213,16 @@ export const useSettingsStore = defineStore('settings', () => {
     allProviderModels.value = []
     enabledModels.value = []
     customModels.value = []
+
+    // 刷新 Ollama 模型
+    if (activeProviders.some((p) => p.id === 'ollama')) {
+      await refreshOllamaModels()
+    }
+
     for (const provider of activeProviders) {
+      // 如果是 Ollama 提供者，已经在 refreshOllamaModels 中处理过了
+      if (provider.id === 'ollama') continue
+
       try {
         // 获取在线模型
         let models = await configP.getProviderModels(provider.id)
@@ -837,12 +889,206 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  // Ollama 模型管理方法
+  /**
+   * 刷新 Ollama 模型列表
+   */
+  const refreshOllamaModels = async (): Promise<void> => {
+    try {
+      ollamaRunningModels.value = await llmP.listOllamaRunningModels()
+      ollamaLocalModels.value = await llmP.listOllamaModels()
+
+      // 更新到全局模型列表中
+      await syncOllamaModelsToGlobal()
+    } catch (error) {
+      console.error('Failed to refresh Ollama models:', error)
+    }
+  }
+
+  /**
+   * 同步 Ollama 模型到全局模型列表
+   */
+  const syncOllamaModelsToGlobal = async (): Promise<void> => {
+    // 找到 Ollama provider
+    const ollamaProvider = providers.value.find((p) => p.id === 'ollama')
+    if (!ollamaProvider) return
+
+    // 获取现有的 Ollama 模型，以保留自定义设置
+    const existingOllamaModels =
+      allProviderModels.value.find((item) => item.providerId === 'ollama')?.models || []
+
+    // 将 Ollama 本地模型转换为全局模型格式
+    const ollamaModelsAsGlobal = ollamaLocalModels.value.map((model) => {
+      // 检查是否已存在相同ID的模型，如果存在，保留其现有的配置
+      const existingModel = existingOllamaModels.find((m) => m.id === model.name)
+
+      return {
+        id: model.name,
+        name: model.name,
+        contextLength: existingModel?.contextLength || 4096, // 使用现有值或默认值
+        maxTokens: existingModel?.maxTokens || 2048, // 使用现有值或默认值
+        provider: 'ollama',
+        group: existingModel?.group || 'local',
+        enabled: true,
+        isCustom: existingModel?.isCustom || false,
+        providerId: 'ollama',
+        // 保留现有的其他配置，但确保更新 Ollama 特有数据
+        ...(existingModel ? { ...existingModel } : {}),
+        ollamaModel: model
+      } as RENDERER_MODEL_META & { ollamaModel: OllamaModel }
+    })
+
+    // 更新全局模型列表
+    const existingIndex = allProviderModels.value.findIndex((item) => item.providerId === 'ollama')
+
+    if (existingIndex !== -1) {
+      // 只替换 Ollama 的模型，保留全局数据中的其他字段
+      allProviderModels.value[existingIndex].models = ollamaModelsAsGlobal
+    } else {
+      allProviderModels.value.push({
+        providerId: 'ollama',
+        models: ollamaModelsAsGlobal
+      })
+    }
+
+    // 更新已启用的模型列表
+    const enabledIndex = enabledModels.value.findIndex((item) => item.providerId === 'ollama')
+    const enabledOllamaModels = ollamaModelsAsGlobal.filter((model) => model.enabled)
+
+    if (enabledIndex !== -1) {
+      enabledModels.value[enabledIndex].models = enabledOllamaModels
+    } else if (enabledOllamaModels.length > 0) {
+      enabledModels.value.push({
+        providerId: 'ollama',
+        models: enabledOllamaModels
+      })
+    }
+
+    // 触发搜索助手模型更新，确保如果有 Ollama 模型符合条件也能被用作搜索助手
+    await initOrUpdateSearchAssistantModel()
+  }
+
+  /**
+   * 拉取 Ollama 模型
+   */
+  const pullOllamaModel = async (modelName: string): Promise<boolean> => {
+    try {
+      // 初始化进度为0
+      ollamaPullingModels.value.set(modelName, 0)
+
+      // 开始拉取
+      const success = await llmP.pullOllamaModels(modelName)
+
+      if (!success) {
+        // 如果拉取失败，删除进度记录
+        ollamaPullingModels.value.delete(modelName)
+      }
+
+      return success
+    } catch (error) {
+      console.error(`Failed to pull Ollama model ${modelName}:`, error)
+      ollamaPullingModels.value.delete(modelName)
+      return false
+    }
+  }
+
+  /**
+   * 删除 Ollama 模型
+   */
+  const deleteOllamaModel = async (modelName: string): Promise<boolean> => {
+    try {
+      const success = await llmP.deleteOllamaModel(modelName)
+      if (success) {
+        await refreshOllamaModels()
+      }
+      return success
+    } catch (error) {
+      console.error(`Failed to delete Ollama model ${modelName}:`, error)
+      return false
+    }
+  }
+
+  /**
+   * 处理 Ollama 模型拉取事件
+   */
+  const handleOllamaModelPullEvent = (event: Record<string, unknown>) => {
+    if (event?.eventId !== 'pullOllamaModels' || !event?.modelName) return
+
+    const modelName = event.modelName as string
+    const status = event.status as string
+    const total = event.total as number
+    const completed = event.completed as number
+
+    // 如果有 completed 和 total，计算进度
+    if (typeof completed === 'number' && typeof total === 'number' && total > 0) {
+      const progress = Math.min(Math.round((completed / total) * 100), 100)
+      ollamaPullingModels.value.set(modelName, progress)
+    }
+    // 如果只有 status 是 pulling manifest 或没有 total，设置为初始状态
+    else if (status && status.includes('manifest')) {
+      ollamaPullingModels.value.set(modelName, 1) // 设置为1%表示开始
+    }
+
+    // 如果拉取完成
+    if (status === 'success' || status === 'completed') {
+      setTimeout(() => {
+        ollamaPullingModels.value.delete(modelName)
+        refreshOllamaModels()
+      }, 1000)
+    }
+  }
+
+  /**
+   * 设置 Ollama 拉取事件监听器
+   */
+  const setupOllamaEventListeners = () => {
+    window.electron?.ipcRenderer?.on(
+      OLLAMA_EVENTS.PULL_MODEL_PROGRESS,
+      (_event: unknown, data: Record<string, unknown>) => {
+        handleOllamaModelPullEvent(data)
+      }
+    )
+  }
+
+  /**
+   * 移除 Ollama 事件监听器
+   */
+  const removeOllamaEventListeners = () => {
+    window.electron?.ipcRenderer?.removeAllListeners(OLLAMA_EVENTS.PULL_MODEL_PROGRESS)
+  }
+
+  /**
+   * 判断模型是否正在运行
+   */
+  const isOllamaModelRunning = (modelName: string): boolean => {
+    return ollamaRunningModels.value.some((m) => m.name === modelName)
+  }
+
+  /**
+   * 判断模型是否已存在于本地
+   */
+  const isOllamaModelLocal = (modelName: string): boolean => {
+    return ollamaLocalModels.value.some((m) => m.name === modelName)
+  }
+
+  /**
+   * 获取正在拉取的 Ollama 模型列表
+   */
+  const getOllamaPullingModels = () => {
+    return ollamaPullingModels.value
+  }
+
   // 在 store 创建时初始化
   onMounted(() => {
     initSettings()
     setupProviderListener()
     setupUpdateListener()
   })
+
+  // 清理可能的事件监听器
+  const cleanup = () => {
+    removeOllamaEventListeners()
+  }
 
   return {
     providers,
@@ -886,6 +1132,17 @@ export const useSettingsStore = defineStore('settings', () => {
     openUpdateDialog,
     closeUpdateDialog,
     handleUpdate,
-    defaultProviders
+    defaultProviders,
+    ollamaRunningModels,
+    ollamaLocalModels,
+    ollamaPullingModels,
+    refreshOllamaModels,
+    pullOllamaModel,
+    deleteOllamaModel,
+    isOllamaModelRunning,
+    isOllamaModelLocal,
+    getOllamaPullingModels,
+    removeOllamaEventListeners,
+    cleanup
   }
 })

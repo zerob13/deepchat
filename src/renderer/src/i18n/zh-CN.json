@@ -168,6 +168,7 @@
       "howToGet": "如何获取",
       "getKeyTip": "请前往",
       "getKeyTipEnd": "获取API Key",
+      "urlFormat": "API样例：{defaultUrl}",
       "modelList": "模型列表",
       "enableModels": "启用模型",
       "disableAllModels": "禁用全部",
