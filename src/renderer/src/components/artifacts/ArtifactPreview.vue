@@ -1,17 +1,29 @@
 <template>
   <div>
     <div
-      class="flex items-center gap-2 p-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50 cursor-pointer"
+      class="flex w-96 max-w-full shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50 cursor-pointer"
       @click="handleClick"
     >
-      <div class="flex-shrink-0">
-        <Icon :icon="getArtifactIcon(block.artifact?.type)" class="w-6 h-6 text-muted-foreground" />
+      <div
+        class="flex-shrink-0 w-14 h-14 rounded-lg rounded-r-none inline-flex flex-row justify-center items-center bg-muted border-r"
+      >
+        <Icon :icon="getArtifactIcon(block.artifact?.type)" class="w-5 h-5 text-muted-foreground" />
       </div>
-      <div class="flex-grow">
-        <h3 class="text-base font-medium leading-none tracking-tight">
+      <div class="flex-grow w-0">
+        <h3 class="text-sm font-medium leading-none tracking-tight truncate">
           {{ displayTitle }}
         </h3>
-        <p class="text-sm text-muted-foreground mt-0.5">{{ t('artifacts.clickToOpen') }}</p>
+        <p class="text-xs text-muted-foreground mt-0.5">{{ artifactDesc }}</p>
+      </div>
+      <div
+        class="flex-shrink-0 px-3 h-14 rounded-lg rounded-l-none flex justify-center items-center"
+      >
+        <Icon
+          v-if="props.loading"
+          icon="lucide:loader-2"
+          class="w-5 h-5 animate-spin text-muted-foreground"
+        />
+        <Icon v-else icon="lucide:chevron-right" class="w-5 h-5 text-muted-foreground" />
       </div>
     </div>
   </div>
@@ -66,6 +78,7 @@ const t = (() => {
 const props = defineProps<{
   block: {
     artifact: {
+      identifier: string
       type: string
       title: string
     }
@@ -73,6 +86,7 @@ const props = defineProps<{
   }
   messageId: string
   threadId: string
+  loading?: boolean
 }>()
 
 const displayTitle = computed(() => {
@@ -106,9 +120,16 @@ const displayTitle = computed(() => {
     // 先尝试从内容中提取标题
     for (const line of lines) {
       const trimmedLine = line.trim()
-      
+
       // 跳过空行和图表类型声明行
-      if (!trimmedLine || trimmedLine.toLowerCase().match(/^(graph|flowchart|sequencediagram|classdiagram|statediagram|erdiagram|gantt|pie)\b/i)) {
+      if (
+        !trimmedLine ||
+        trimmedLine
+          .toLowerCase()
+          .match(
+            /^(graph|flowchart|sequencediagram|classdiagram|statediagram|erdiagram|gantt|pie)\b/i
+          )
+      ) {
         continue
       }
 
@@ -121,7 +142,7 @@ const displayTitle = computed(() => {
           /([A-Za-z0-9]+)\['([^']+)'\]/, // 方括号格式（单引号）
           /([A-Za-z0-9]+)\('([^']+)'\)/, // 圆括号格式（单引号）
           /([A-Za-z0-9]+)\[([^\]]+)\]/, // 简单方括号格式
-          /([A-Za-z0-9]+)\(([^)]+)\)/, // 简单圆括号格式
+          /([A-Za-z0-9]+)\(([^)]+)\)/ // 简单圆括号格式
         ]
 
         for (const pattern of nodePatterns) {
@@ -137,25 +158,40 @@ const displayTitle = computed(() => {
 
     // 如果找到了具体标题，使用对应的格式
     if (chartTitle) {
-      const finalTitle = chartType === 'flowchart' ? t('artifacts.flowchartOf', { name: chartTitle }) :
-                       chartType === 'sequence' ? t('artifacts.sequenceDiagramBetween', { participants: chartTitle }) :
-                       chartType === 'class' ? t('artifacts.classDiagramOf', { name: chartTitle }) :
-                       chartType === 'state' ? t('artifacts.stateDiagramOf', { name: chartTitle }) :
-                       chartType === 'er' ? t('artifacts.erDiagramOf', { name: chartTitle }) :
-                       chartType === 'pie' ? t('artifacts.pieChartOf', { name: chartTitle }) :
-                       chartTitle;
+      const finalTitle =
+        chartType === 'flowchart'
+          ? t('artifacts.flowchartOf', { name: chartTitle })
+          : chartType === 'sequence'
+            ? t('artifacts.sequenceDiagramBetween', { participants: chartTitle })
+            : chartType === 'class'
+              ? t('artifacts.classDiagramOf', { name: chartTitle })
+              : chartType === 'state'
+                ? t('artifacts.stateDiagramOf', { name: chartTitle })
+                : chartType === 'er'
+                  ? t('artifacts.erDiagramOf', { name: chartTitle })
+                  : chartType === 'pie'
+                    ? t('artifacts.pieChartOf', { name: chartTitle })
+                    : chartTitle
       return finalTitle
     }
 
     // 如果没有找到具体标题，使用图表类型
-    const defaultTitle = chartType === 'flowchart' ? t('artifacts.flowchart') :
-                       chartType === 'sequence' ? t('artifacts.sequenceDiagram') :
-                       chartType === 'class' ? t('artifacts.classDiagram') :
-                       chartType === 'state' ? t('artifacts.stateDiagram') :
-                       chartType === 'er' ? t('artifacts.erDiagram') :
-                       chartType === 'gantt' ? t('artifacts.ganttChart') :
-                       chartType === 'pie' ? t('artifacts.pieChart') :
-                       t('artifacts.mermaidDiagram');
+    const defaultTitle =
+      chartType === 'flowchart'
+        ? t('artifacts.flowchart')
+        : chartType === 'sequence'
+          ? t('artifacts.sequenceDiagram')
+          : chartType === 'class'
+            ? t('artifacts.classDiagram')
+            : chartType === 'state'
+              ? t('artifacts.stateDiagram')
+              : chartType === 'er'
+                ? t('artifacts.erDiagram')
+                : chartType === 'gantt'
+                  ? t('artifacts.ganttChart')
+                  : chartType === 'pie'
+                    ? t('artifacts.pieChart')
+                    : t('artifacts.mermaidDiagram')
     return defaultTitle
   }
 
@@ -164,20 +200,22 @@ const displayTitle = computed(() => {
     case 'application/vnd.ant.code': {
       let codeTitle = title || t('artifacts.codeSnippet')
       const lines = content.split('\n')
-      
+
       // 尝试从注释中提取标题
       let foundTitle = false
       for (const line of lines) {
         const trimmedLine = line.trim()
         // 跳过空行
         if (!trimmedLine) continue
-        
+
         // 匹配各种注释格式
-        if (trimmedLine.startsWith('//') || 
-            trimmedLine.startsWith('#') || 
-            trimmedLine.startsWith('/*') || 
-            trimmedLine.startsWith('"""') || 
-            trimmedLine.startsWith("'''")) {
+        if (
+          trimmedLine.startsWith('//') ||
+          trimmedLine.startsWith('#') ||
+          trimmedLine.startsWith('/*') ||
+          trimmedLine.startsWith('"""') ||
+          trimmedLine.startsWith("'''")
+        ) {
           const commentContent = trimmedLine.replace(/^[/#*\s"']+/, '').trim()
           if (commentContent && commentContent.length > 1) {
             codeTitle = commentContent
@@ -193,22 +231,26 @@ const displayTitle = computed(() => {
       // 如果没有找到注释标题，尝试其他方式
       if (!foundTitle) {
         // 尝试识别函数定义
-        const functionMatch = content.match(/(?:function|def|func)\s+([a-zA-Z_]\w*)\s*\([^)]*\)/);
+        const functionMatch = content.match(/(?:function|def|func)\s+([a-zA-Z_]\w*)\s*\([^)]*\)/)
         if (functionMatch) {
           const funcName = functionMatch[1]
-          codeTitle = funcName.replace(/[A-Z]/g, ' $&').trim() // 驼峰转空格
+          codeTitle = funcName
+            .replace(/[A-Z]/g, ' $&')
+            .trim() // 驼峰转空格
             .toLowerCase()
-            .replace(/(?:^|\s)\S/g, c => c.toUpperCase()) // 首字母大写
+            .replace(/(?:^|\s)\S/g, (c) => c.toUpperCase()) // 首字母大写
             .replace(/_/g, ' ') // 下划线转空格
           codeTitle += t('artifacts.function')
         } else {
           // 尝试识别类定义
-          const classMatch = content.match(/(?:class)\s+([a-zA-Z_]\w*)/);
+          const classMatch = content.match(/(?:class)\s+([a-zA-Z_]\w*)/)
           if (classMatch) {
             const className = classMatch[1]
-            codeTitle = className.replace(/[A-Z]/g, ' $&').trim()
+            codeTitle = className
+              .replace(/[A-Z]/g, ' $&')
+              .trim()
               .toLowerCase()
-              .replace(/(?:^|\s)\S/g, c => c.toUpperCase())
+              .replace(/(?:^|\s)\S/g, (c) => c.toUpperCase())
               .replace(/_/g, ' ')
             codeTitle += t('artifacts.class')
           } else {
@@ -217,8 +259,12 @@ const displayTitle = computed(() => {
               codeTitle = t('artifacts.vueComponent')
             } else if (content.includes('import') && content.includes('from')) {
               codeTitle = t('artifacts.moduleImport')
-            } else if (content.includes('const') || content.includes('let') || content.includes('var')) {
-              const varMatch = content.match(/(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=/);
+            } else if (
+              content.includes('const') ||
+              content.includes('let') ||
+              content.includes('var')
+            ) {
+              const varMatch = content.match(/(?:const|let|var)\s+([a-zA-Z_]\w*)\s*=/)
               if (varMatch) {
                 codeTitle = t('artifacts.variableDefinition', { name: varMatch[1] })
               }
@@ -226,7 +272,7 @@ const displayTitle = computed(() => {
           }
         }
       }
-      
+
       return codeTitle
     }
     case 'text/markdown': {
@@ -236,8 +282,8 @@ const displayTitle = computed(() => {
     }
     case 'text/html': {
       // 尝试从 HTML 中提取 title 或第一个标题
-      const htmlTitleMatch = content.match(/<title>(.+?)<\/title>/i) || 
-                            content.match(/<h[1-6][^>]*>(.+?)<\/h[1-6]>/i)
+      const htmlTitleMatch =
+        content.match(/<title>(.+?)<\/title>/i) || content.match(/<h[1-6][^>]*>(.+?)<\/h[1-6]>/i)
       return htmlTitleMatch ? htmlTitleMatch[1] : t('artifacts.htmlDocument')
     }
     case 'image/svg+xml':
@@ -248,17 +294,25 @@ const displayTitle = computed(() => {
 })
 
 const handleClick = () => {
-  if (artifactStore.isOpen && 
-      artifactStore.currentArtifact?.type === props.block.artifact.type &&
-      artifactStore.currentArtifact?.title === displayTitle.value &&
-      artifactStore.currentArtifact?.content === props.block.content) {
+  if (
+    artifactStore.isOpen &&
+    artifactStore.currentArtifact?.type === props.block.artifact.type &&
+    artifactStore.currentArtifact?.title === displayTitle.value &&
+    artifactStore.currentArtifact?.content === props.block.content
+  ) {
     artifactStore.hideArtifact()
   } else {
-    artifactStore.showArtifact({
-      type: props.block.artifact.type,
-      title: displayTitle.value,
-      content: props.block.content
-    }, props.messageId, props.threadId)
+    artifactStore.showArtifact(
+      {
+        id: props.block.artifact.identifier,
+        type: props.block.artifact.type,
+        title: displayTitle.value,
+        content: props.block.content,
+        status: 'loaded'
+      },
+      props.messageId,
+      props.threadId
+    )
   }
 }
 
@@ -279,4 +333,22 @@ const getArtifactIcon = (type: string | undefined) => {
       return 'lucide:file'
   }
 }
-</script> 
+
+const artifactDesc = computed(() => {
+  const { type } = props.block.artifact
+  switch (type) {
+    case 'application/vnd.ant.code':
+      return 'code'
+    case 'text/markdown':
+      return 'markdown'
+    case 'text/html':
+      return 'html'
+    case 'image/svg+xml':
+      return 'svg'
+    case 'application/vnd.ant.mermaid':
+      return 'mermaid'
+    default:
+      return 'unknown'
+  }
+})
+</script>

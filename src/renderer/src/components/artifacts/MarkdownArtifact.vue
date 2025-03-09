@@ -50,14 +50,14 @@ md.renderer.rules.fence = (tokens, idx) => {
   const info = token.info ? token.info.trim() : ''
   const str = token.content
   const lang = info || 'text'
-  
+
   // 如果是 mermaid 图表，直接使用 mermaid 类
   if (lang === 'mermaid') {
     return `<div class="mermaid">${str}</div>`
   }
-  
+
   const encodedCode = btoa(unescape(encodeURIComponent(str)))
-  
+
   // 为代码块添加样式和语言标记
   return `<div class="markdown-code-block">
     <div class="code-header">
@@ -87,10 +87,10 @@ watch(
   renderedContent,
   async () => {
     if (!renderedContent.value) return
-    
+
     // 等待 DOM 更新
     await nextTick()
-    
+
     // 初始化 Mermaid 图表
     try {
       // 重新初始化 mermaid 配置
@@ -107,20 +107,22 @@ watch(
         // 使用 mermaid.run() 来渲染所有图表
         await mermaid.run({
           querySelector: '.mermaid',
-          nodes: Array.from(mermaidDivs).filter((node): node is HTMLElement => node instanceof HTMLElement)
+          nodes: Array.from(mermaidDivs).filter(
+            (node): node is HTMLElement => node instanceof HTMLElement
+          )
         })
       }
     } catch (err) {
       console.error('初始化 Mermaid 图表时出错:', err)
     }
-    
+
     // 初始化代码高亮
     try {
       const codeBlocks = document.querySelectorAll('pre code:not(.mermaid)')
       if (codeBlocks.length > 0 && window.Prism && messageBlock.value) {
         window.Prism.highlightAllUnder(messageBlock.value)
       } else if (codeBlocks.length > 0 && window.hljs) {
-        codeBlocks.forEach(block => {
+        codeBlocks.forEach((block) => {
           if (block instanceof HTMLElement && window.hljs) {
             window.hljs.highlightElement(block)
           }
@@ -137,12 +139,12 @@ watch(
 declare global {
   interface Window {
     Prism?: {
-      highlightAllUnder: (element: HTMLElement) => void;
-    };
+      highlightAllUnder: (element: HTMLElement) => void
+    }
     hljs?: {
-      highlightElement: (element: HTMLElement) => void;
-    };
-    mermaid: typeof mermaid;
+      highlightElement: (element: HTMLElement) => void
+    }
+    mermaid: typeof mermaid
   }
 }
 </script>

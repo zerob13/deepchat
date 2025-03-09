@@ -1,5 +1,5 @@
 <template>
-  <div class="w-52 h-full bg-muted overflow-y-auto p-2 space-y-3 border-r">
+  <div class="w-60 h-full bg-muted overflow-y-auto p-2 space-y-3 border-r">
     <div>
       <Button
         variant="outline"

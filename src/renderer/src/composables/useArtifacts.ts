@@ -2,6 +2,7 @@ import { computed } from 'vue'
 export interface ProcessedPart {
   type: 'text' | 'thinking' | 'artifact'
   content: string
+  loading?: boolean
   artifact?: {
     identifier: string
     title: string
@@ -60,7 +61,8 @@ export const useBlockContent = (props: {
       // 添加思考内容
       parts.push({
         type: 'thinking',
-        content: match[1].trim()
+        content: match[1].trim(),
+        loading: false
       })
 
       //console.log(match[0], '\n\n', match[1])
@@ -90,7 +92,8 @@ export const useBlockContent = (props: {
         // 添加未闭合标签的思考内容（将剩余所有内容视为思考内容）
         parts.push({
           type: 'thinking',
-          content: match[1].trim()
+          content: match[1].trim(),
+          loading: false
         })
 
         lastIndex = match.index + match[0].length
@@ -130,7 +133,8 @@ export const useBlockContent = (props: {
             | 'application/vnd.ant.mermaid',
           title: match[3],
           language: match[4]
-        }
+        },
+        loading: false
       })
 
       lastIndex = match.index + match[0].length
@@ -169,7 +173,8 @@ export const useBlockContent = (props: {
               | 'application/vnd.ant.mermaid',
             title: match[3],
             language: match[4]
-          }
+          },
+          loading: true
         })
 
         lastIndex = match.index + match[0].length

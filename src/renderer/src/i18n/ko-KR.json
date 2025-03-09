@@ -319,7 +319,9 @@
     "stateDiagramOf": "{name}의 상태 다이어그램",
     "erDiagramOf": "{name}의 ER 다이어그램",
     "pieChartOf": "{name}의 파이 차트",
-    "and": "와(과)",
-    "unknownDocument": "알 수 없는 문서 유형"
+    "unknownDocument": "알 수 없는 문서",
+    "preview": "미리보기",
+    "code": "코드",
+    "export": "내보내기"
   }
 }

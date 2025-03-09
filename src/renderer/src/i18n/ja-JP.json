@@ -313,7 +313,9 @@
     "stateDiagramOf": "{name}の状態図",
     "erDiagramOf": "{name}のER図",
     "pieChartOf": "{name}の円グラフ",
-    "and": "と",
-    "unknownDocument": "不明なドキュメントタイプ"
+    "unknownDocument": "不明なドキュメント",
+    "preview": "プレビュー",
+    "code": "コード",
+    "export": "エクスポート"
   }
 }

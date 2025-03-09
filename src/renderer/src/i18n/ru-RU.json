@@ -314,6 +314,9 @@
     "erDiagramOf": "ER-диаграмма {name}",
     "pieChartOf": "Круговая диаграмма {name}",
     "and": " и ",
-    "unknownDocument": "Неизвестный тип документа"
+    "unknownDocument": "Неизвестный документ",
+    "preview": "Предпросмотр",
+    "code": "Код",
+    "export": "Экспорт"
   }
 }

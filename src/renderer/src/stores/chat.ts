@@ -180,6 +180,7 @@ export const useChatStore = defineStore('chat', () => {
   // const currentPage = ref(1)
   const pageSize = ref(20)
   const hasMore = ref(true)
+  const isSidebarOpen = ref(false)
 
   // 添加消息生成缓存
   const generatingMessagesCache = ref<
@@ -727,6 +728,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     renameThread,
     // 状态
+    isSidebarOpen,
     activeThreadId,
     threads,
     messages,

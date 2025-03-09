@@ -58,21 +58,34 @@ onMounted(() => {
       artifactStore.hideArtifact()
     }
   )
+
+  watch(
+    () => artifactStore.isOpen,
+    () => {
+      chatStore.isSidebarOpen = false
+    }
+  )
 })
 </script>
 
 <template>
   <div class="flex flex-col h-screen">
     <AppBar />
-    <div class="flex flex-row h-0 flex-grow">
+    <div class="flex flex-row h-0 flex-grow relative overflow-hidden">
       <!-- 侧边导航栏 -->
-      <SideBar v-show="route.name !== 'welcome'" v-model:model-value="activeTab" class="h-full" />
+      <SideBar
+        v-show="route.name !== 'welcome'"
+        v-model:model-value="activeTab"
+        class="h-full z-10"
+      />
 
       <!-- 主内容区域 -->
-      <div :class="{
-        'flex-1 w-0 h-full transition-all duration-200': true,
-        'mr-[calc(50%_-_104px)]': artifactStore.isOpen && route.name === 'chat'
-      }">
+      <div
+        :class="{
+          'flex-1 w-0 h-full transition-all duration-200': true,
+          'mr-[calc(50%_-_104px)]': artifactStore.isOpen && route.name === 'chat'
+        }"
+      >
         <RouterView />
       </div>
 

@@ -320,7 +320,9 @@
     "stateDiagramOf": "State Diagram of {name}",
     "erDiagramOf": "ER Diagram of {name}",
     "pieChartOf": "Pie Chart of {name}",
-    "and": " and ",
-    "unknownDocument": "Unknown Document Type"
+    "unknownDocument": "Unknown Document",
+    "preview": "Preview",
+    "code": "Code",
+    "export": "Export"
   }
 }

@@ -11,13 +11,9 @@
         @contextmenu="handleContextMenu"
         v-html="renderContent(part.content)"
       ></div>
-      <ArtifactThinking
-        v-else-if="part.type === 'thinking'"
-        :block="{
-          content: part.content
-        }"
-      />
-      <div v-else-if="part.type === 'artifact' && part.artifact" class="my-1">
+      <!-- <ArtifactThinking v-if="part.type === 'thinking'" /> -->
+      <ArtifactThinking v-if="part.type === 'thinking' && part.loading" />
+      <div v-if="part.type === 'artifact' && part.artifact" class="my-1">
         <ArtifactPreview
           :block="{
             content: part.content,
@@ -25,6 +21,7 @@
           }"
           :message-id="messageId"
           :thread-id="threadId"
+          :loading="part.loading"
         />
       </div>
     </template>
@@ -51,7 +48,9 @@ import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
 import ArtifactPreview from '../artifacts/ArtifactPreview.vue'
 import { useCodeEditor } from '@/composables/useCodeEditor'
 import { useBlockContent } from '@/composables/useArtifacts'
+import { useArtifactStore } from '@/stores/artifact'
 
+const artifactStore = useArtifactStore()
 const props = defineProps<{
   block: {
     content: string
@@ -191,6 +190,35 @@ watch(
       for (const part of processedContent.value) {
         if (part.type === 'text') {
           initCodeEditors(props.block.status)
+        }
+        if (part.type === 'artifact' && part.artifact) {
+          if (props.block.status === 'loading') {
+            if (artifactStore.currentArtifact?.id === part.artifact.identifier) {
+              artifactStore.currentArtifact.content = part.content
+              artifactStore.currentArtifact.title = part.artifact.title
+              artifactStore.currentArtifact.type = part.artifact.type
+              artifactStore.currentArtifact.status = 'loading'
+            } else {
+              artifactStore.showArtifact(
+                {
+                  id: part.artifact.identifier,
+                  type: part.artifact.type,
+                  title: part.artifact.title,
+                  content: part.content,
+                  status: 'loading'
+                },
+                props.messageId,
+                props.threadId
+              )
+            }
+          } else {
+            if (artifactStore.currentArtifact?.id === part.artifact.identifier) {
+              artifactStore.currentArtifact.content = part.content
+              artifactStore.currentArtifact.title = part.artifact.title
+              artifactStore.currentArtifact.type = part.artifact.type
+              artifactStore.currentArtifact.status = 'loaded'
+            }
+          }
         }
       }
     })

@@ -301,7 +301,7 @@
     "class": "類",
     "vueComponent": "Vue 元件",
     "moduleImport": "模組導入",
-    "variableDefinition": "{name} 變數定義",
+    "variableDefinition": "{name} 變量定義",
     "markdownDocument": "Markdown 文檔",
     "htmlDocument": "HTML 文檔",
     "svgImage": "SVG 圖像",
@@ -311,15 +311,17 @@
     "stateDiagram": "狀態圖",
     "erDiagram": "ER圖",
     "ganttChart": "甘特圖",
-    "pieChart": "圓餅圖",
+    "pieChart": "餅圖",
     "mermaidDiagram": "Mermaid 圖表",
     "flowchartOf": "{name}的流程圖",
     "sequenceDiagramBetween": "{participants}之間的時序圖",
     "classDiagramOf": "{name}的類圖",
     "stateDiagramOf": "{name}的狀態圖",
     "erDiagramOf": "{name}的ER圖",
-    "pieChartOf": "{name}的圓餅圖",
-    "and": "和",
-    "unknownDocument": "未知類型文檔"
+    "pieChartOf": "{name}的餅圖",
+    "unknownDocument": "未知文檔",
+    "preview": "預覽",
+    "code": "代碼",
+    "export": "導出"
   }
 }

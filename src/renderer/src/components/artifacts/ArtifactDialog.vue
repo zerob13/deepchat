@@ -9,61 +9,75 @@
   >
     <div
       v-if="artifactStore.isOpen"
-      class="fixed right-0 top-0 bottom-0 w-[calc(50%_-_104px)] bg-background border-l shadow-lg flex flex-col"
+      class="absolute right-0 top-0 bottom-0 w-[calc(50%_-_104px)] bg-background border-l shadow-lg flex flex-col"
     >
       <!-- 顶部导航栏 -->
-      <div class="flex items-center justify-between px-4 h-14 border-b">
-        <div class="flex items-center gap-2">
+      <div class="flex items-center justify-between px-4 h-11 border-b w-full overflow-hidden">
+        <div class="flex items-center gap-2 flex-grow w-0">
           <button class="p-2 hover:bg-accent/50 rounded-md" @click="artifactStore.hideArtifact">
             <Icon icon="lucide:arrow-left" class="w-4 h-4" />
           </button>
-          <h2 class="text-lg font-medium">{{ artifactStore.currentArtifact?.title }}</h2>
+          <h2 class="text-sm font-medium truncate">{{ artifactStore.currentArtifact?.title }}</h2>
         </div>
-        
+
         <div class="flex items-center gap-2">
           <!-- 预览/代码切换按钮组 -->
-          <div class="bg-muted p-1 rounded-lg flex items-center">
+          <div class="bg-muted p-0.5 rounded-lg flex items-center">
             <button
-              class="px-3 py-1.5 text-sm rounded-md transition-colors"
-              :class="isPreview ? 'bg-background shadow-sm' : 'text-muted-foreground hover:bg-background/50'"
+              class="px-2 py-1 text-xs rounded-md transition-colors"
+              :class="
+                isPreview
+                  ? 'bg-background shadow-sm'
+                  : 'text-muted-foreground hover:bg-background/50'
+              "
               @click="setPreview(true)"
             >
-              Preview
+              {{ t('artifacts.preview') }}
             </button>
             <button
-              class="px-3 py-1.5 text-sm rounded-md transition-colors"
-              :class="!isPreview ? 'bg-background shadow-sm' : 'text-muted-foreground hover:bg-background/50'"
+              class="px-2 py-1 text-xs rounded-md transition-colors"
+              :class="
+                !isPreview
+                  ? 'bg-background shadow-sm'
+                  : 'text-muted-foreground hover:bg-background/50'
+              "
               @click="setPreview(false)"
             >
-              Code
+              {{ t('artifacts.code') }}
             </button>
           </div>
 
           <!-- 导出按钮 -->
           <div class="flex items-center gap-1">
-            <Button 
-              v-if="artifactStore.currentArtifact?.type === 'image/svg+xml' || artifactStore.currentArtifact?.type === 'application/vnd.ant.mermaid'"
-              variant="outline" 
-              size="sm" 
+            <Button
+              v-if="
+                artifactStore.currentArtifact?.type === 'image/svg+xml' ||
+                artifactStore.currentArtifact?.type === 'application/vnd.ant.mermaid'
+              "
+              variant="outline"
+              size="sm"
+              :title="t('artifacts.export')"
+              class="text-xs h-7"
               @click="exportSVG"
             >
               <Icon icon="lucide:download" class="w-4 h-4" />
             </Button>
-            <Button variant="outline" size="sm" @click="exportCode">
-              <Icon icon="lucide:file-code" class="w-4 h-4" />
+            <Button
+              variant="outline"
+              size="sm"
+              class="text-xs h-7"
+              :title="t('artifacts.export')"
+              @click="exportCode"
+            >
+              <Icon icon="lucide:download" class="w-4 h-4" />
             </Button>
           </div>
-
-          <!-- 关闭按钮 -->
-          <Button variant="ghost" size="icon" @click="artifactStore.hideArtifact">
-            <Icon icon="lucide:x" class="w-4 h-4" />
-          </Button>
         </div>
       </div>
 
       <!-- 内容区域 -->
-      <div class="flex-1 overflow-auto">
-        <div class="h-full">
+      <div class="flex-1 overflow-auto h-0">
+        <template v-if="isPreview">
           <component
             :is="artifactComponent"
             v-if="artifactComponent && artifactStore.currentArtifact"
@@ -77,7 +91,14 @@
             }"
             :is-preview="isPreview"
           />
-        </div>
+        </template>
+        <template v-else>
+          <div class="flex-1 p-4 h-0">
+            <pre
+              class="rounded-lg bg-muted p-4 w-full h-hull overflow-auto"
+            ><code class="text-xs">{{ artifactStore.currentArtifact?.content }}</code></pre>
+          </div>
+        </template>
       </div>
     </div>
   </Transition>
@@ -94,10 +115,12 @@ import HTMLArtifact from './HTMLArtifact.vue'
 import SvgArtifact from './SvgArtifact.vue'
 import MermaidArtifact from './MermaidArtifact.vue'
 import mermaid from 'mermaid'
+import { useI18n } from 'vue-i18n'
 
 const artifactStore = useArtifactStore()
 const componentKey = ref(0)
-const isPreview = ref(true)
+const isPreview = ref(false)
+const t = useI18n().t
 
 const setPreview = (value: boolean) => {
   isPreview.value = value
@@ -108,6 +131,9 @@ watch(
   () => artifactStore.currentArtifact,
   () => {
     componentKey.value++
+    if (artifactStore.currentArtifact?.status === 'loaded') {
+      isPreview.value = true
+    }
   }
 )
 
@@ -151,7 +177,7 @@ const exportSVG = async () => {
 
   try {
     let svgContent = artifactStore.currentArtifact.content
-    
+
     // 如果是 Mermaid 图表，需要先渲染成 SVG
     if (artifactStore.currentArtifact.type === 'application/vnd.ant.mermaid') {
       const { svg } = await mermaid.render('export-diagram', artifactStore.currentArtifact.content)
@@ -200,4 +226,4 @@ const exportCode = () => {
   display: flex;
   flex-direction: column;
 }
-</style> 
+</style>

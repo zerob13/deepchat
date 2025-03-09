@@ -1,26 +1,41 @@
 <template>
   <div class="flex items-center justify-between w-full p-2">
-    <Popover v-model:open="modelSelectOpen">
-      <PopoverTrigger as-child>
-        <Button variant="outline" class="flex items-center gap-1.5 px-2" size="sm">
-          <ModelIcon class="w-5 h-5" :model-id="model.id"></ModelIcon>
-          <!-- <Icon icon="lucide:message-circle" class="w-5 h-5 text-muted-foreground" /> -->
-          <h2 class="text-xs font-bold">{{ model.name }}</h2>
-          <Badge
-            v-for="tag in model.tags"
-            :key="tag"
-            variant="outline"
-            class="py-0 rounded-lg"
-            size="xs"
-            >{{ t(`model.tags.${tag}`) }}</Badge
-          >
-          <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" class="p-0 w-80">
-        <ModelSelect @update:model="handleModelUpdate" />
-      </PopoverContent>
-    </Popover>
+    <div class="flex flex-row gap-2 items-center">
+      <Button
+        class="w-7 h-7 rounded-md hover:bg-accent"
+        size="icon"
+        variant="outline"
+        @click="onSidebarButtonClick"
+      >
+        <Icon
+          v-if="chatStore.isSidebarOpen"
+          icon="lucide:panel-left-close"
+          class="w-4 h-4 text-muted-foreground"
+        />
+        <Icon v-else icon="lucide:panel-left-open" class="w-4 h-4 text-muted-foreground" />
+      </Button>
+      <Popover v-model:open="modelSelectOpen">
+        <PopoverTrigger as-child>
+          <Button variant="outline" class="flex items-center gap-1.5 px-2 h-7" size="sm">
+            <ModelIcon class="w-5 h-5" :model-id="model.id"></ModelIcon>
+            <!-- <Icon icon="lucide:message-circle" class="w-5 h-5 text-muted-foreground" /> -->
+            <h2 class="text-xs font-bold">{{ model.name }}</h2>
+            <Badge
+              v-for="tag in model.tags"
+              :key="tag"
+              variant="outline"
+              class="py-0 rounded-lg"
+              size="xs"
+              >{{ t(`model.tags.${tag}`) }}</Badge
+            >
+            <Icon icon="lucide:chevron-right" class="w-4 h-4 text-muted-foreground" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" class="p-0 w-80">
+          <ModelSelect @update:model="handleModelUpdate" />
+        </PopoverContent>
+      </Popover>
+    </div>
 
     <div class="flex items-center gap-2">
       <Popover>
@@ -86,6 +101,10 @@ const updateMaxTokens = (value: number) => {
 
 const updateArtifacts = (value: 0 | 1) => {
   artifacts.value = value
+}
+
+const onSidebarButtonClick = () => {
+  chatStore.isSidebarOpen = !chatStore.isSidebarOpen
 }
 
 // Create debounced update functions
