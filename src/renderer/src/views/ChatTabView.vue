@@ -1,7 +1,14 @@
 <template>
   <div class="flex h-full bg-background">
     <!-- 左侧会话列表 -->
-    <ThreadsView />
+    <Transition
+      enter-active-class="transition-all duration-300 ease-out"
+      leave-active-class="transition-all duration-300 ease-in"
+      enter-from-class="-translate-x-full opacity-0"
+      leave-to-class="-translate-x-full opacity-0"
+    >
+      <ThreadsView v-show="chatStore.isSidebarOpen" class="transform" />
+    </Transition>
 
     <!-- 主聊天区域 -->
     <div class="flex-1 flex flex-col">

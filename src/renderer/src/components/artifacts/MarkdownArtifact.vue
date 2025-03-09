@@ -9,43 +9,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch } from 'vue'
+import { computed, ref, nextTick, watch, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
-import { EditorView, basicSetup } from 'codemirror'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { json } from '@codemirror/lang-json'
-import { java } from '@codemirror/lang-java'
-import { go } from '@codemirror/lang-go'
-import { markdown } from '@codemirror/lang-markdown'
-import { sql } from '@codemirror/lang-sql'
-import { xml } from '@codemirror/lang-xml'
-import { cpp } from '@codemirror/lang-cpp'
-import { rust } from '@codemirror/lang-rust'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
-import { swift } from '@codemirror/legacy-modes/mode/swift'
-import { ruby } from '@codemirror/legacy-modes/mode/ruby'
-import { perl } from '@codemirror/legacy-modes/mode/perl'
-import { lua } from '@codemirror/legacy-modes/mode/lua'
-import { haskell } from '@codemirror/legacy-modes/mode/haskell'
-import { erlang } from '@codemirror/legacy-modes/mode/erlang'
-import { clojure } from '@codemirror/legacy-modes/mode/clojure'
-import { StreamLanguage } from '@codemirror/language'
-import { php } from '@codemirror/lang-php'
-import { yaml } from '@codemirror/lang-yaml'
-import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
-import { anysphereTheme } from '@/lib/code.theme'
 import { useI18n } from 'vue-i18n'
+import mermaid from 'mermaid'
 
 const { t } = useI18n()
 const id = ref(`editor-${uuidv4()}`)
 const messageBlock = ref<HTMLDivElement>()
 
-// Store editor instances for cleanup
-const editorInstances = ref<Map<string, EditorView>>(new Map())
+// 初始化 mermaid 配置
+onMounted(() => {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'loose',
+    fontFamily: 'sans-serif'
+  })
+})
 
 const md = new MarkdownIt({
   html: true,
@@ -58,25 +40,31 @@ const md = new MarkdownIt({
 md.options.highlight = null
 
 // 自定义段落渲染规则
-md.renderer.rules.paragraph_open = () => ''
-md.renderer.rules.paragraph_close = () => ''
+// 移除空段落规则，允许正常渲染段落
+// md.renderer.rules.paragraph_open = () => ''
+// md.renderer.rules.paragraph_close = () => ''
 
-// Custom code block rendering
+// 修改代码块渲染方式，保持在Markdown内部渲染
 md.renderer.rules.fence = (tokens, idx) => {
   const token = tokens[idx]
   const info = token.info ? token.info.trim() : ''
   const str = token.content
+  const lang = info || 'text'
+
+  // 如果是 mermaid 图表，直接使用 mermaid 类
+  if (lang === 'mermaid') {
+    return `<div class="mermaid">${str}</div>`
+  }
 
   const encodedCode = btoa(unescape(encodeURIComponent(str)))
-  const language = info || 'text'
-  const uniqueId = `editor-${Math.random().toString(36).substr(2, 9)}`
 
-  return `<div class="code-block" data-code="${encodedCode}" data-lang="${language}" id="${uniqueId}">
+  // 为代码块添加样式和语言标记
+  return `<div class="markdown-code-block">
     <div class="code-header">
-      <span class="code-lang">${language.toUpperCase()}</span>
+      <span class="code-lang">${lang.toUpperCase()}</span>
       <button class="copy-button" data-code="${encodedCode}">${t('common.copyCode')}</button>
     </div>
-    <div class="code-editor"></div>
+    <pre class="code-content"><code class="language-${lang}">${str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')}</code></pre>
   </div>`
 }
 
@@ -90,226 +78,199 @@ const props = defineProps<{
   }
 }>()
 
-// Initialize code editors
-const initCodeEditors = () => {
-  const codeBlocks = document.querySelectorAll(`#${id.value} .code-block`)
-
-  codeBlocks.forEach((block) => {
-    const editorId = block.getAttribute('id')
-    const editorContainer = block.querySelector('.code-editor')
-    const code = block.getAttribute('data-code')
-    const lang = block.getAttribute('data-lang')
-
-    if (!editorId || !editorContainer || !code || !lang) {
-      return
-    }
-
-    const decodedCode = decodeURIComponent(escape(atob(code)))
-
-    // 如果编辑器已存在，更新内容而不是重新创建
-    if (editorInstances.value.has(editorId)) {
-      const existingEditor = editorInstances.value.get(editorId)
-      const currentContent = existingEditor?.state.doc.toString()
-
-      // 只在内容变化时更新
-      if (currentContent !== decodedCode) {
-        existingEditor?.dispatch({
-          changes: {
-            from: 0,
-            to: currentContent?.length || 0,
-            insert: decodedCode
-          }
-        })
-      }
-      return
-    }
-
-    // 创建新的编辑器实例
-    const extensions = [
-      basicSetup,
-      anysphereTheme,
-      EditorView.lineWrapping,
-      EditorState.tabSize.of(2)
-    ]
-
-    switch (lang.toLowerCase()) {
-      case 'javascript':
-      case 'js':
-      case 'ts':
-      case 'typescript':
-        extensions.push(javascript())
-        break
-      case 'react':
-      case 'vue':
-      case 'html':
-        extensions.push(html())
-        break
-      case 'css':
-        extensions.push(css())
-        break
-      case 'json':
-        extensions.push(json())
-        break
-      case 'python':
-      case 'py':
-        extensions.push(python())
-        break
-      case 'kotlin':
-      case 'kt':
-      case 'java':
-        extensions.push(java())
-        break
-      case 'go':
-      case 'golang':
-        extensions.push(go())
-        break
-      case 'markdown':
-      case 'md':
-        extensions.push(markdown())
-        break
-      case 'sql':
-        extensions.push(sql())
-        break
-      case 'xml':
-        extensions.push(xml())
-        break
-      case 'cpp':
-      case 'c++':
-      case 'c':
-        extensions.push(cpp())
-        break
-      case 'rust':
-      case 'rs':
-        extensions.push(rust())
-        break
-      case 'bash':
-      case 'sh':
-      case 'shell':
-      case 'zsh':
-        extensions.push(StreamLanguage.define(shell))
-        break
-      case 'php':
-        extensions.push(php())
-        break
-      case 'yaml':
-      case 'yml':
-        extensions.push(yaml())
-        break
-      case 'swift':
-        extensions.push(StreamLanguage.define(swift))
-        break
-      case 'ruby':
-        extensions.push(StreamLanguage.define(ruby))
-        break
-      case 'perl':
-        extensions.push(StreamLanguage.define(perl))
-        break
-      case 'lua':
-        extensions.push(StreamLanguage.define(lua))
-        break
-      case 'haskell':
-        extensions.push(StreamLanguage.define(haskell))
-        break
-      case 'erlang':
-        extensions.push(StreamLanguage.define(erlang))
-        break
-      case 'clojure':
-        extensions.push(StreamLanguage.define(clojure))
-        break
-    }
-
-    try {
-      const editorView = new EditorView({
-        state: EditorState.create({
-          doc: decodedCode,
-          extensions: [...extensions, EditorState.readOnly.of(true)]
-        }),
-        parent: editorContainer as HTMLElement
-      })
-      editorInstances.value.set(editorId, editorView)
-    } catch (error) {
-      console.error('Failed to initialize editor:', error)
-    }
-  })
-}
-
-// Cleanup editors on unmount
-const cleanupEditors = () => {
-  editorInstances.value.forEach((editor) => {
-    editor.destroy()
-  })
-  editorInstances.value.clear()
-}
-
 const renderedContent = computed(() => {
   return md.render(props.block.content || '')
 })
 
-// 添加 watch 来监听内容变化
+// 修改 watch 来初始化 Mermaid
 watch(
   renderedContent,
-  () => {
-    nextTick(() => {
-      // 清理现有的编辑器实例
-      cleanupEditors()
-      // 初始化新的编辑器
-      initCodeEditors()
-    })
+  async () => {
+    if (!renderedContent.value) return
+
+    // 等待 DOM 更新
+    await nextTick()
+
+    // 初始化 Mermaid 图表
+    try {
+      // 重新初始化 mermaid 配置
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: 'default',
+        securityLevel: 'loose',
+        fontFamily: 'sans-serif'
+      })
+
+      const mermaidDivs = document.querySelectorAll('.mermaid')
+
+      if (mermaidDivs.length > 0) {
+        // 使用 mermaid.run() 来渲染所有图表
+        await mermaid.run({
+          querySelector: '.mermaid',
+          nodes: Array.from(mermaidDivs).filter(
+            (node): node is HTMLElement => node instanceof HTMLElement
+          )
+        })
+      }
+    } catch (err) {
+      console.error('初始化 Mermaid 图表时出错:', err)
+    }
+
+    // 初始化代码高亮
+    try {
+      const codeBlocks = document.querySelectorAll('pre code:not(.mermaid)')
+      if (codeBlocks.length > 0 && window.Prism && messageBlock.value) {
+        window.Prism.highlightAllUnder(messageBlock.value)
+      } else if (codeBlocks.length > 0 && window.hljs) {
+        codeBlocks.forEach((block) => {
+          if (block instanceof HTMLElement && window.hljs) {
+            window.hljs.highlightElement(block)
+          }
+        })
+      }
+    } catch (err) {
+      console.error('初始化代码高亮时出错:', err)
+    }
   },
   { immediate: true }
 )
+
+// 添加类型声明
+declare global {
+  interface Window {
+    Prism?: {
+      highlightAllUnder: (element: HTMLElement) => void
+    }
+    hljs?: {
+      highlightElement: (element: HTMLElement) => void
+    }
+    mermaid: typeof mermaid
+  }
+}
 </script>
 
 <style>
-.prose {
-  @apply leading-7;
+.markdown-content {
+  @apply leading-7 px-4 py-4;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.prose pre {
-  @apply bg-transparent p-0 m-0;
+/* 表格样式 */
+.markdown-content table {
+  @apply border-collapse w-full my-4;
 }
 
-.prose h1 {
-  @apply text-xl mt-4 mb-2;
+.markdown-content table th {
+  @apply bg-muted text-left p-2 border border-border;
 }
 
-.prose h2 {
-  @apply text-lg mt-4 mb-2;
+.markdown-content table td {
+  @apply p-2 border border-border;
 }
 
-.prose h3 {
-  @apply text-base mt-3 mb-2;
-}
-
-.prose .code-block {
-  @apply rounded-lg overflow-hidden mt-2 mb-4 text-xs;
-}
-
-.prose .code-header {
-  @apply flex justify-between items-center px-4 py-2 bg-[#181818];
-}
-
-.prose .code-lang {
-  @apply text-xs text-gray-400;
-}
-
-.prose .copy-button {
-  @apply text-xs text-gray-400 hover:text-white;
-}
-
-.prose .code-editor {
-  @apply overflow-auto;
-}
-
-.prose hr {
+/* 段落样式 */
+.markdown-content p {
   @apply my-4;
 }
 
-.prose hr:last-child {
-  @apply mb-4;
+/* 列表样式 */
+.markdown-content ul,
+.markdown-content ol {
+  @apply pl-8 my-4;
 }
 
-.prose hr + p {
-  @apply mt-4;
+.markdown-content li {
+  @apply my-1;
+}
+
+.markdown-content ul li {
+  @apply list-disc;
+}
+
+.markdown-content ol li {
+  @apply list-decimal;
+}
+
+/* 标题样式 */
+.markdown-content h1 {
+  @apply text-2xl font-bold mt-8 mb-4;
+}
+
+.markdown-content h2 {
+  @apply text-xl font-bold mt-6 mb-3;
+}
+
+.markdown-content h3 {
+  @apply text-lg font-bold mt-5 mb-2;
+}
+
+.markdown-content h4 {
+  @apply text-base font-bold mt-4 mb-2;
+}
+
+/* 引用块样式 */
+.markdown-content blockquote {
+  @apply pl-4 py-1 my-4 border-l-4 border-primary/30 bg-muted/30;
+}
+
+/* 代码块样式 */
+.markdown-content .markdown-code-block {
+  @apply rounded-lg overflow-hidden mt-2 mb-4 text-xs;
+  background-color: #1e1e1e;
+}
+
+.markdown-content .code-header {
+  @apply flex justify-between items-center px-4 py-2 bg-[#181818];
+}
+
+.markdown-content .code-lang {
+  @apply text-xs text-gray-400;
+}
+
+.markdown-content .copy-button {
+  @apply text-xs text-gray-400 hover:text-white cursor-pointer;
+}
+
+.markdown-content .code-content {
+  @apply overflow-auto p-4 m-0;
+  min-height: 10px;
+  background-color: #1e1e1e;
+  color: #ffffff;
+}
+
+.markdown-content code {
+  @apply font-mono text-xs;
+  color: #ffffff;
+}
+
+/* Mermaid容器样式 */
+.mermaid-container {
+  @apply my-4 mx-auto max-w-full overflow-auto bg-transparent;
+}
+
+.mermaid-container svg {
+  @apply mx-auto;
+}
+
+.error-message {
+  @apply p-4 text-red-500 bg-red-100 dark:bg-red-900/20 rounded-md;
+}
+
+/* 水平线样式 */
+.markdown-content hr {
+  @apply my-6 border-t border-border;
+}
+
+/* 添加适当的图片样式 */
+.markdown-content img {
+  @apply max-w-full h-auto my-4 mx-auto;
+}
+
+/* 链接样式 */
+.markdown-content a {
+  @apply text-primary hover:underline;
 }
 </style>

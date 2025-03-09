@@ -180,6 +180,7 @@ export const useChatStore = defineStore('chat', () => {
   // const currentPage = ref(1)
   const pageSize = ref(20)
   const hasMore = ref(true)
+  const isSidebarOpen = ref(false)
 
   // 添加消息生成缓存
   const generatingMessagesCache = ref<
@@ -683,7 +684,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   window.electron.ipcRenderer.on(CONVERSATION_EVENTS.ACTIVATED, (_, msg) => {
-    console.log(CONVERSATION_EVENTS.ACTIVATED, msg)
+    // console.log(CONVERSATION_EVENTS.ACTIVATED, msg)
     activeThreadId.value = msg.conversationId
     loadMessages()
     loadChatConfig() // 加载对话配置
@@ -727,6 +728,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     renameThread,
     // 状态
+    isSidebarOpen,
     activeThreadId,
     threads,
     messages,

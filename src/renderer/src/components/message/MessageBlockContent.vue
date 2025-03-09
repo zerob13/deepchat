@@ -6,25 +6,24 @@
       <div
         v-if="part.type === 'text'"
         :id="id"
-        class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
+        class="prose prose-sm dark:prose-invert max-w-full break-words"
         @click="handleCopyClick"
         @contextmenu="handleContextMenu"
         v-html="renderContent(part.content)"
       ></div>
-      <ArtifactThinking
-        v-else-if="part.type === 'thinking'"
-        :block="{
-          content: part.content
-        }"
-      />
-      <ArtifactBlock
-        class="max-h-[500px] overflow-auto"
-        v-else-if="part.type === 'artifact' && part.artifact"
-        :block="{
-          content: part.content,
-          artifact: part.artifact
-        }"
-      />
+      <!-- <ArtifactThinking v-if="part.type === 'thinking'" /> -->
+      <ArtifactThinking v-if="part.type === 'thinking' && part.loading" />
+      <div v-if="part.type === 'artifact' && part.artifact" class="my-1">
+        <ArtifactPreview
+          :block="{
+            content: part.content,
+            artifact: part.artifact
+          }"
+          :message-id="messageId"
+          :thread-id="threadId"
+          :loading="part.loading"
+        />
+      </div>
     </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
     <ReferencePreview :show="showPreview" :content="previewContent" :rect="previewRect" />
@@ -32,49 +31,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, watch, onMounted } from 'vue'
+import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getMarkdown, renderMarkdown } from '@/lib/markdown.helper'
-import { EditorView, basicSetup } from 'codemirror'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { json } from '@codemirror/lang-json'
-import { java } from '@codemirror/lang-java'
-import { go } from '@codemirror/lang-go'
-import { markdown } from '@codemirror/lang-markdown'
-import { sql } from '@codemirror/lang-sql'
-import { xml } from '@codemirror/lang-xml'
-import { cpp } from '@codemirror/lang-cpp'
-import { rust } from '@codemirror/lang-rust'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
-import { swift } from '@codemirror/legacy-modes/mode/swift'
-import { ruby } from '@codemirror/legacy-modes/mode/ruby'
-import { perl } from '@codemirror/legacy-modes/mode/perl'
-import { lua } from '@codemirror/legacy-modes/mode/lua'
-import { haskell } from '@codemirror/legacy-modes/mode/haskell'
-import { erlang } from '@codemirror/legacy-modes/mode/erlang'
-import { clojure } from '@codemirror/legacy-modes/mode/clojure'
-import { StreamLanguage } from '@codemirror/language'
-import { php } from '@codemirror/lang-php'
-import { yaml } from '@codemirror/lang-yaml'
-import { EditorState } from '@codemirror/state'
 import { v4 as uuidv4 } from 'uuid'
-import { anysphereTheme } from '@/lib/code.theme'
-import LoadingCursor from '@/components/LoadingCursor.vue'
 
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
 import ReferencePreview from './ReferencePreview.vue'
+import LoadingCursor from '@/components/LoadingCursor.vue'
 
 const threadPresenter = usePresenter('threadPresenter')
 const searchResults = ref<SearchResult[]>([])
 
 import ArtifactThinking from '../artifacts/ArtifactThinking.vue'
-import ArtifactBlock from '../artifacts/ArtifactBlock.vue'
-import { renderMermaidDiagram } from '@/lib/mermaid.helper'
+import ArtifactPreview from '../artifacts/ArtifactPreview.vue'
+import { useCodeEditor } from '@/composables/useCodeEditor'
+import { useBlockContent } from '@/composables/useArtifacts'
+import { useArtifactStore } from '@/stores/artifact'
 
+const artifactStore = useArtifactStore()
 const props = defineProps<{
   block: {
     content: string
@@ -82,10 +58,13 @@ const props = defineProps<{
     timestamp: number
   }
   messageId: string
+  threadId: string
   isSearchResult?: boolean
 }>()
 
 const id = ref(`editor-${uuidv4()}`)
+
+const { initCodeEditors, cleanupEditors } = useCodeEditor(id.value)
 
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
 const messageBlock = ref<HTMLDivElement>()
@@ -94,26 +73,9 @@ const previewContent = ref<SearchResult | undefined>()
 const showPreview = ref(false)
 const previewRect = ref<DOMRect>()
 
-// Store editor instances for cleanup
-const editorInstances = ref<Map<string, EditorView>>(new Map())
-
 const { t } = useI18n()
 
-interface ProcessedPart {
-  type: 'text' | 'thinking' | 'artifact'
-  content: string
-  artifact?: {
-    identifier: string
-    title: string
-    type:
-      | 'application/vnd.ant.code'
-      | 'text/markdown'
-      | 'text/html'
-      | 'image/svg+xml'
-      | 'application/vnd.ant.mermaid'
-    language?: string
-  }
-}
+const { processedContent } = useBlockContent(props)
 
 const refreshLoadingCursor = () => {
   if (messageBlock.value) {
@@ -162,285 +124,6 @@ const md = getMarkdown(id.value, t)
   }
 })
 
-// Remove all the markdown-it configuration and setup
-// Instead, just configure the code block renderer
-// createCodeBlockRenderer(t)
-// enableDebugRendering() // Optional, remove if debug logging is not needed
-
-const processedContent = computed<ProcessedPart[]>(() => {
-  if (!props.block.content) return [{ type: 'text', content: '' }]
-  if (props.block.status === 'loading') {
-    return [
-      {
-        type: 'text',
-        content: props.block.content
-      }
-    ]
-  }
-
-  const parts: ProcessedPart[] = []
-  let content = props.block.content
-  let lastIndex = 0
-
-  // 处理 antThinking 标签
-  const thinkingRegex = /<antThinking>(.*?)<\/antThinking>/gs
-  let match
-  while ((match = thinkingRegex.exec(content)) !== null) {
-    // 添加思考前的普通文本
-    if (match.index > lastIndex) {
-      const text = content.substring(lastIndex, match.index)
-      if (text.trim()) {
-        parts.push({
-          type: 'text',
-          content: text
-        })
-      }
-    }
-
-    // 添加思考内容
-    parts.push({
-      type: 'thinking',
-      content: match[1].trim()
-    })
-
-    lastIndex = match.index + match[0].length
-  }
-
-  // 处理 antArtifact 标签
-  const artifactRegex =
-    /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
-  content = props.block.content
-  lastIndex = 0
-
-  while ((match = artifactRegex.exec(content)) !== null) {
-    // 添加 artifact 前的普通文本
-    if (match.index > lastIndex) {
-      const text = content.substring(lastIndex, match.index)
-      if (text.trim()) {
-        parts.push({
-          type: 'text',
-          content: text
-        })
-      }
-    }
-
-    // 添加 artifact 内容
-    parts.push({
-      type: 'artifact',
-      content: match[5].trim(),
-      artifact: {
-        identifier: match[1],
-        type: match[2] as
-          | 'application/vnd.ant.code'
-          | 'text/markdown'
-          | 'text/html'
-          | 'image/svg+xml'
-          | 'application/vnd.ant.mermaid',
-        title: match[3],
-        language: match[4]
-      }
-    })
-
-    lastIndex = match.index + match[0].length
-  }
-
-  // 添加剩余的普通文本
-  if (lastIndex < content.length) {
-    const text = content.substring(lastIndex)
-    if (text.trim()) {
-      parts.push({
-        type: 'text',
-        content: text
-      })
-    }
-  }
-
-  // 如果没有任何特殊标签，返回原始内容
-  if (parts.length === 0) {
-    return [
-      {
-        type: 'text',
-        content: content
-      }
-    ]
-  }
-
-  return parts
-})
-
-// Initialize code editors
-const initCodeEditors = () => {
-  const codeBlocks = document.querySelectorAll(`#${id.value} .code-block`)
-
-  codeBlocks.forEach((block) => {
-    const editorId = block.getAttribute('id')
-    const editorContainer = block.querySelector('.code-editor')
-    const code = block.getAttribute('data-code')
-    const lang = block.getAttribute('data-lang')
-
-    if (!editorId || !editorContainer || !code || !lang) {
-      return
-    }
-
-    const decodedCode = decodeURIComponent(escape(atob(code)))
-
-    // 如果是 mermaid 代码块，渲染图表
-    if (lang.toLowerCase() === 'mermaid' && props.block.status !== 'loading') {
-      renderMermaidDiagram(editorContainer as HTMLElement, decodedCode, editorId)
-      return
-    }
-
-    // 如果编辑器已存在，更新内容而不是重新创建
-    if (editorInstances.value.has(editorId)) {
-      const existingEditor = editorInstances.value.get(editorId)
-      const currentContent = existingEditor?.state.doc.toString()
-
-      // 只在内容变化时更新
-      if (currentContent !== decodedCode) {
-        existingEditor?.dispatch({
-          changes: {
-            from: 0,
-            to: currentContent?.length || 0,
-            insert: decodedCode
-          }
-        })
-      }
-      return
-    }
-
-    // 创建新的编辑器实例
-    const extensions = [
-      basicSetup,
-      anysphereTheme,
-      EditorView.lineWrapping,
-      EditorState.tabSize.of(2)
-    ]
-
-    switch (lang.toLowerCase()) {
-      case 'javascript':
-      case 'js':
-      case 'ts':
-      case 'typescript':
-        extensions.push(javascript())
-        break
-      case 'react':
-      case 'vue':
-      case 'html':
-        extensions.push(html())
-        break
-      case 'css':
-        extensions.push(css())
-        break
-      case 'json':
-        extensions.push(json())
-        break
-      case 'python':
-      case 'py':
-        extensions.push(python())
-        break
-      case 'kotlin':
-      case 'kt':
-      case 'java':
-        extensions.push(java())
-        break
-      case 'go':
-      case 'golang':
-        extensions.push(go())
-        break
-      case 'markdown':
-      case 'md':
-        extensions.push(markdown())
-        break
-      case 'sql':
-        extensions.push(sql())
-        break
-      case 'xml':
-        extensions.push(xml())
-        break
-      case 'cpp':
-      case 'c++':
-      case 'c':
-        extensions.push(cpp())
-        break
-      case 'rust':
-      case 'rs':
-        extensions.push(rust())
-        break
-      case 'bash':
-      case 'sh':
-      case 'shell':
-      case 'zsh':
-        extensions.push(StreamLanguage.define(shell))
-        break
-      case 'php':
-        extensions.push(php())
-        break
-      case 'yaml':
-      case 'yml':
-        extensions.push(yaml())
-        break
-      case 'swift':
-        extensions.push(StreamLanguage.define(swift))
-        break
-      case 'ruby':
-        extensions.push(StreamLanguage.define(ruby))
-        break
-      case 'perl':
-        extensions.push(StreamLanguage.define(perl))
-        break
-      case 'lua':
-        extensions.push(StreamLanguage.define(lua))
-        break
-      case 'haskell':
-        extensions.push(StreamLanguage.define(haskell))
-        break
-      case 'erlang':
-        extensions.push(StreamLanguage.define(erlang))
-        break
-      case 'clojure':
-        extensions.push(StreamLanguage.define(clojure))
-        break
-      case 'mermaid':
-        // 使用简单的文本编辑器，不使用 StreamLanguage
-        extensions.push(markdown())
-        break
-    }
-
-    try {
-      if (editorContainer instanceof HTMLElement) {
-        try {
-          const editorView = new EditorView({
-            state: EditorState.create({
-              doc: decodedCode,
-              extensions: [
-                ...extensions,
-                EditorState.readOnly.of(true)
-                // Remove the inline theme configuration
-              ]
-            }),
-            parent: editorContainer
-          })
-          editorInstances.value.set(editorId, editorView)
-        } catch (innerError) {
-          console.error('Failed with standard method, trying fallback:', innerError)
-          // Fallback if CodeMirror fails - create a basic pre element with escaped HTML
-          const escapedCode = decodedCode
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;')
-          editorContainer.innerHTML = `<pre style="white-space: pre-wrap; color: #ffffff; margin: 0;">${escapedCode}</pre>`
-        }
-      } else {
-        console.error('Editor container is not a valid HTMLElement')
-      }
-    } catch (error) {
-      console.error('Failed to initialize editor:', error)
-    }
-  })
-}
-
 // Handle copy functionality
 const handleCopyClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement
@@ -462,30 +145,14 @@ const handleCopyClick = async (e: MouseEvent) => {
   }
 }
 
-// Cleanup editors on unmount
-const cleanupEditors = () => {
-  editorInstances.value.forEach((editor) => {
-    editor.destroy()
-  })
-  editorInstances.value.clear()
-}
-
 const renderContent = (content: string) => {
   refreshLoadingCursor()
-
-  const rawContent = renderMarkdown(
+  // 处理常规内容或代码块
+  const rendered = renderMarkdown(
     md,
     props.block.status === 'loading' ? content + loadingCursor.value?.CURSOR_MARKER : content
   )
-  // Note: Content is not sanitized to allow proper code rendering
-  // Be careful with user-generated content as this could pose XSS risks
-  // const safeContent = DOMPurify.sanitize(rawContent, {
-  //   WHOLE_DOCUMENT: false,
-  //   FORBID_TAGS: ['script', 'style', 'code'],
-  //   ALLOWED_URI_REGEXP:
-  //     /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i
-  // })
-  return rawContent
+  return rendered
 }
 
 // 右键菜单事件处理
@@ -514,15 +181,46 @@ const handleContextMenu = (event) => {
   }
 }
 
-// 添加 watch 来监听内容变化
+// 修改 watch 函数
 watch(
   processedContent,
   () => {
     nextTick(() => {
-      // 清理现有的编辑器实例
-      cleanupEditors()
-      // 初始化新的编辑器
-      initCodeEditors()
+      refreshLoadingCursor()
+      for (const part of processedContent.value) {
+        if (part.type === 'text') {
+          initCodeEditors(props.block.status)
+        }
+        if (part.type === 'artifact' && part.artifact) {
+          if (props.block.status === 'loading') {
+            if (artifactStore.currentArtifact?.id === part.artifact.identifier) {
+              artifactStore.currentArtifact.content = part.content
+              artifactStore.currentArtifact.title = part.artifact.title
+              artifactStore.currentArtifact.type = part.artifact.type
+              artifactStore.currentArtifact.status = part.loading ? 'loading' : 'loaded'
+            } else {
+              artifactStore.showArtifact(
+                {
+                  id: part.artifact.identifier,
+                  type: part.artifact.type,
+                  title: part.artifact.title,
+                  content: part.content,
+                  status: part.loading ? 'loading' : 'loaded'
+                },
+                props.messageId,
+                props.threadId
+              )
+            }
+          } else {
+            if (artifactStore.currentArtifact?.id === part.artifact.identifier) {
+              artifactStore.currentArtifact.content = part.content
+              artifactStore.currentArtifact.title = part.artifact.title
+              artifactStore.currentArtifact.type = part.artifact.type
+              artifactStore.currentArtifact.status = 'loaded'
+            }
+          }
+        }
+      }
     })
   },
   { immediate: true }
@@ -532,6 +230,10 @@ onMounted(async () => {
   if (props.isSearchResult) {
     searchResults.value = await threadPresenter.getSearchResults(props.messageId)
   }
+})
+
+onUnmounted(() => {
+  cleanupEditors()
 })
 </script>
 
@@ -572,7 +274,7 @@ onMounted(async () => {
 }
 
 .prose .code-block {
-  @apply rounded-lg overflow-hidden mt-2  mb-4 text-xs;
+  @apply rounded-lg overflow-hidden mt-2 mb-4 text-xs;
 }
 
 .prose .code-header {
@@ -594,11 +296,6 @@ onMounted(async () => {
   color: #ffffff;
   padding: 8px;
   border-radius: 0 0 0.5rem 0.5rem;
-}
-
-/* Mermaid SVG 样式 */
-.mermaid svg {
-  @apply max-w-full h-auto;
 }
 
 .prose .code-editor .cm-editor {
