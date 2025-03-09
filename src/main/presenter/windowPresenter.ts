@@ -8,7 +8,7 @@ import { eventBus } from '@/eventbus'
 import { ConfigPresenter } from './configPresenter'
 import { TrayPresenter } from './trayPresenter'
 import { CONFIG_EVENTS, WINDOW_EVENTS } from '@/events'
-import contextMenu from 'electron-context-menu'
+import contextMenu from '../contextMenuHelper'
 import { getContextMenuLabels } from '@shared/i18n'
 
 export const MAIN_WIN = 'main'
@@ -235,29 +235,18 @@ export class WindowPresenter implements IWindowPresenter {
     await new Promise((resolve) => setTimeout(resolve, 100))
     const window = this.mainWindow
     if (window) {
+      const labels = getContextMenuLabels(locale)
+      console.log('使用上下文菜单标签:', JSON.stringify(labels))
       this.contextMenuDisposer = contextMenu({
         window: window,
-        shouldShowMenu() {
-          // console.log('shouldShowMenu', JSON.stringify(event), parameters)
+        shouldShowMenu(event, params) {
+          console.log('shouldShowMenu 被调用:', params.x, params.y, params.mediaType)
           return true
         },
-        showLookUpSelection: false,
-        showSearchWithGoogle: false,
-        showSelectAll: false,
-        showCopyImage: false,
-        showSaveImageAs: false,
-        showServices: false,
-        showInspectElement: false,
-        showLearnSpelling: false,
-        showCopyImageAddress: false,
-        showCopyVideoAddress: false,
-        showSaveVideo: false,
-        showSaveVideoAs: false,
-        showCopyLink: false,
-        showSaveImage: false,
-        showSaveLinkAs: false,
-        labels: getContextMenuLabels(locale)
+        labels
       })
+    } else {
+      console.error('无法重置上下文菜单: 找不到主窗口')
     }
   }
 }
