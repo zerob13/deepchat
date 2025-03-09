@@ -11,7 +11,7 @@
       </div>
       <div class="flex-grow w-0">
         <h3 class="text-sm font-medium leading-none tracking-tight truncate">
-          {{ displayTitle }}
+          {{ block.artifact.title || displayTitle }}
         </h3>
         <p class="text-xs text-muted-foreground mt-0.5">{{ artifactDesc }}</p>
       </div>
@@ -306,7 +306,7 @@ const handleClick = () => {
       {
         id: props.block.artifact.identifier,
         type: props.block.artifact.type,
-        title: displayTitle.value,
+        title: props.block.artifact.title || displayTitle.value,
         content: props.block.content,
         status: 'loaded'
       },

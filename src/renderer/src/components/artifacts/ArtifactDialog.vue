@@ -17,6 +17,7 @@
           <button class="p-2 hover:bg-accent/50 rounded-md" @click="artifactStore.hideArtifact">
             <Icon icon="lucide:arrow-left" class="w-4 h-4" />
           </button>
+          {{ artifactStore.currentArtifact?.title }}
           <h2 class="text-sm font-medium truncate">{{ artifactStore.currentArtifact?.title }}</h2>
         </div>
 
@@ -105,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useArtifactStore } from '@/stores/artifact'
 import { Icon } from '@iconify/vue'
 import Button from '@/components/ui/button/Button.vue'
@@ -131,11 +132,39 @@ watch(
   () => artifactStore.currentArtifact,
   () => {
     componentKey.value++
+  },
+  {
+    immediate: true
+  }
+)
+
+watch(
+  () => artifactStore.currentArtifact?.status,
+  () => {
+    console.log('artifactStore.currentArtifact?.status', artifactStore.currentArtifact?.status)
     if (artifactStore.currentArtifact?.status === 'loaded') {
       isPreview.value = true
     }
+  },
+  {
+    immediate: true
   }
 )
+
+watch(
+  () => artifactStore.isOpen,
+  () => {
+    if (artifactStore.isOpen) {
+      if (artifactStore.currentArtifact?.status === 'loaded') {
+        isPreview.value = true
+      } else {
+        isPreview.value = false
+      }
+    }
+  }
+)
+
+onMounted(() => {})
 
 const artifactComponent = computed(() => {
   if (!artifactStore.currentArtifact) return null

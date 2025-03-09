@@ -197,7 +197,7 @@ watch(
               artifactStore.currentArtifact.content = part.content
               artifactStore.currentArtifact.title = part.artifact.title
               artifactStore.currentArtifact.type = part.artifact.type
-              artifactStore.currentArtifact.status = 'loading'
+              artifactStore.currentArtifact.status = part.loading ? 'loading' : 'loaded'
             } else {
               artifactStore.showArtifact(
                 {
@@ -205,7 +205,7 @@ watch(
                   type: part.artifact.type,
                   title: part.artifact.title,
                   content: part.content,
-                  status: 'loading'
+                  status: part.loading ? 'loading' : 'loaded'
                 },
                 props.messageId,
                 props.threadId
