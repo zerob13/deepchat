@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { presenter } from './presenter'
 import { proxyConfig } from './presenter/proxyConfig'
+import { ProxyMode } from './presenter/proxyConfig'
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100')
@@ -21,7 +22,12 @@ if (process.platform === 'darwin') {
 app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.wefonk.deepchat')
-  proxyConfig.resolveProxy()
+
+  // 从配置中读取代理设置并初始化
+  const proxyMode = presenter.configPresenter.getProxyMode() as ProxyMode
+  const customProxyUrl = presenter.configPresenter.getCustomProxyUrl()
+  proxyConfig.initFromConfig(proxyMode as ProxyMode, customProxyUrl)
+
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils

@@ -24,7 +24,23 @@
       "noModelResponse": "模型未返回任何内容，可能是超时了"
     },
     "resetDataConfirmTitle": "确定要重置所有数据吗？",
-    "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。"
+    "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。",
+    "title": "通用设置",
+    "resetData": "重置数据",
+    "language": "语言",
+    "languageSelect": "选择语言",
+    "searchEngine": "搜索引擎",
+    "searchEngineSelect": "选择搜索引擎",
+    "searchAssistantModel": "搜索助手模型",
+    "selectModel": "选择模型",
+    "proxyMode": "代理模式",
+    "proxyModeSelect": "选择代理模式",
+    "proxyModeSystem": "系统代理",
+    "proxyModeNone": "不使用代理",
+    "proxyModeCustom": "自定义代理",
+    "customProxyUrl": "自定义代理地址",
+    "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
+    "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
   },
   "update": {
     "newVersion": "发现新版本",
@@ -135,7 +151,15 @@
       "searchEngine": "搜索引擎",
       "searchEngineSelect": "选择搜索引擎",
       "searchAssistantModel": "搜索助手模型",
-      "selectModel": "选择模型"
+      "selectModel": "选择模型",
+      "proxyMode": "代理模式",
+      "proxyModeSelect": "选择代理模式",
+      "proxyModeSystem": "系统代理",
+      "proxyModeNone": "不使用代理",
+      "proxyModeCustom": "自定义代理",
+      "customProxyUrl": "自定义代理地址",
+      "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
+      "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
     },
     "model": {
       "title": "模型设置",

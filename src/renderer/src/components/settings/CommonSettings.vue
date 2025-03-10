@@ -65,6 +65,44 @@
           </Popover>
         </div>
       </div>
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:globe" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">{{ t('settings.common.proxyMode') }}</span>
+        </span>
+        <div class="flex-shrink-0 min-w-64 max-w-96">
+          <Select v-model="selectedProxyMode" class="">
+            <SelectTrigger>
+              <SelectValue :placeholder="t('settings.common.proxyModeSelect')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="mode in proxyModes" :key="mode.value" :value="mode.value">
+                {{ mode.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div v-if="selectedProxyMode === 'custom'" class="flex flex-col p-2 gap-2 px-2">
+        <div class="flex flex-row items-center gap-2">
+          <span class="flex flex-row items-center gap-2 flex-grow w-full">
+            <Icon icon="lucide:link" class="w-4 h-4 text-muted-foreground" />
+            <span class="text-sm font-medium">{{ t('settings.common.customProxyUrl') }}</span>
+          </span>
+          <div class="flex-shrink-0 min-w-64 max-w-96">
+            <Input
+              v-model="customProxyUrl"
+              :placeholder="t('settings.common.customProxyUrlPlaceholder')"
+              :class="{ 'border-red-500': showUrlError }"
+              @input="validateProxyUrl"
+              @blur="validateProxyUrl"
+            />
+          </div>
+        </div>
+        <div v-if="showUrlError" class="text-xs text-red-500 ml-6">
+          {{ t('settings.common.invalidProxyUrl') }}
+        </div>
+      </div>
       <Dialog v-model:open="isDialogOpen">
         <DialogTrigger as-child>
           <div
@@ -122,15 +160,23 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ChevronDown } from 'lucide-vue-next'
 import ModelSelect from '@/components/ModelSelect.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
+import { Input } from '@/components/ui/input'
 import type { RENDERER_MODEL_META } from '@shared/presenter'
 
 const devicePresenter = usePresenter('devicePresenter')
+const configPresenter = usePresenter('configPresenter')
 const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 const selectedLanguage = ref('system')
 const selectedSearchEngine = ref(settingsStore.activeSearchEngine?.name ?? 'google')
 const selectedSearchModel = computed(() => settingsStore.searchAssistantModel)
+
+const selectedProxyMode = ref('system')
+const customProxyUrl = ref('')
+const showUrlError = ref(false)
+
+let proxyUrlDebounceTimer: number | null = null
 
 const languageOptions = [
   { value: 'system', label: '🌐 跟随系统' },
@@ -142,9 +188,38 @@ const languageOptions = [
   { value: 'ja-JP', label: '🇯🇵 日本語' }
 ]
 
+const proxyModes = [
+  { value: 'system', label: t('settings.common.proxyModeSystem') },
+  { value: 'none', label: t('settings.common.proxyModeNone') },
+  { value: 'custom', label: t('settings.common.proxyModeCustom') }
+]
+
+const validateProxyUrl = () => {
+  if (!customProxyUrl.value.trim()) {
+    showUrlError.value = false
+    return
+  }
+
+  const urlPattern =
+    /^(http|https):\/\/([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(:[0-9]+)?(\/[^\s]*)?$/
+  const isValid = urlPattern.test(customProxyUrl.value)
+
+  showUrlError.value = !isValid
+
+  if (isValid || !customProxyUrl.value.trim()) {
+    configPresenter.setCustomProxyUrl(customProxyUrl.value)
+  }
+}
+
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language
   selectedSearchEngine.value = settingsStore.activeSearchEngine?.name ?? 'google'
+
+  selectedProxyMode.value = await configPresenter.getProxyMode()
+  customProxyUrl.value = await configPresenter.getCustomProxyUrl()
+  if (selectedProxyMode.value === 'custom' && customProxyUrl.value) {
+    validateProxyUrl()
+  }
 })
 
 watch(selectedLanguage, async (newValue) => {
@@ -153,6 +228,19 @@ watch(selectedLanguage, async (newValue) => {
 
 watch(selectedSearchEngine, async (newValue) => {
   await settingsStore.setSearchEngine(newValue)
+})
+
+watch(selectedProxyMode, (newValue) => {
+  configPresenter.setProxyMode(newValue)
+})
+
+watch(customProxyUrl, () => {
+  if (proxyUrlDebounceTimer !== null) {
+    clearTimeout(proxyUrlDebounceTimer)
+  }
+  proxyUrlDebounceTimer = window.setTimeout(() => {
+    validateProxyUrl()
+  }, 300)
 })
 
 const isDialogOpen = ref(false)

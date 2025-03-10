@@ -138,6 +138,11 @@ export interface IConfigPresenter {
   // 语言设置
   getLanguage(): string
   getDefaultProviders(): LLM_PROVIDER[]
+  // 代理设置
+  getProxyMode(): string
+  setProxyMode(mode: string): void
+  getCustomProxyUrl(): string
+  setCustomProxyUrl(url: string): void
 }
 export type RENDERER_MODEL_META = {
   id: string

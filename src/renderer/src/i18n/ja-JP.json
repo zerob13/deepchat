@@ -23,7 +23,15 @@
       "noModelResponse": "モデルは何も返しませんでした。タイムアウトの可能性があります"
     },
     "resetDataConfirmTitle": "すべてのデータをリセットしますか？",
-    "resetDataConfirmDescription": "すべてのデータがデフォルト設定にリセットされます。この操作は元に戻せません。"
+    "resetDataConfirmDescription": "すべてのデータがデフォルト設定にリセットされます。この操作は元に戻せません。",
+    "proxyMode": "プロキシモード",
+    "proxyModeSelect": "プロキシモードを選択",
+    "proxyModeSystem": "システムプロキシ",
+    "proxyModeNone": "プロキシなし",
+    "proxyModeCustom": "カスタムプロキシ",
+    "customProxyUrl": "カスタムプロキシURL",
+    "customProxyUrlPlaceholder": "例: http://127.0.0.1:7890",
+    "invalidProxyUrl": "無効なプロキシURL、有効なhttp/https URLを入力してください"
   },
   "update": {
     "newVersion": "新しいバージョンが見つかりました",
@@ -128,7 +136,15 @@
       "searchEngine": "検索エンジン",
       "searchEngineSelect": "検索エンジンを選択",
       "searchAssistantModel": "検索アシスタントモデル",
-      "selectModel": "モデルを選択"
+      "selectModel": "モデルを選択",
+      "proxyMode": "プロキシモード",
+      "proxyModeSelect": "プロキシモードを選択",
+      "proxyModeSystem": "システムプロキシ",
+      "proxyModeNone": "プロキシなし",
+      "proxyModeCustom": "カスタムプロキシ",
+      "customProxyUrl": "カスタムプロキシURL",
+      "customProxyUrlPlaceholder": "例: http://127.0.0.1:7890",
+      "invalidProxyUrl": "無効なプロキシURL、有効なhttp/https URLを入力してください"
     },
     "model": {
       "title": "モデル設定",
