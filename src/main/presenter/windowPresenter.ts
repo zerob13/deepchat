@@ -240,7 +240,7 @@ export class WindowPresenter implements IWindowPresenter {
       this.contextMenuDisposer = contextMenu({
         window: window,
         shouldShowMenu(event, params) {
-          console.log('shouldShowMenu 被调用:', params.x, params.y, params.mediaType)
+          console.log('shouldShowMenu 被调用:', params.x, params.y, params.mediaType, event)
           return true
         },
         labels

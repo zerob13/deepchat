@@ -172,13 +172,6 @@ export class AnthropicProvider extends BaseLLMProvider {
     return formattedMessages
   }
 
-  private processResponse(text: string): LLMResponse {
-    return {
-      content: text,
-      reasoning_content: undefined
-    }
-  }
-
   public async summaryTitles(messages: ChatMessage[], modelId: string): Promise<string> {
     const prompt = `
 请为以下对话生成一个简短的标题，不超过6个字：
