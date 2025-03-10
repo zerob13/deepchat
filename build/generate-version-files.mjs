@@ -74,7 +74,7 @@ platforms.forEach((platform) => {
   } else if (os === 'mac') {
     platformData.githubUrl = `https://github.com/ThinkInAIXYZ/deepchat/releases/download/v${params.version}/DeepChat-${params.version}-mac-${arch}.dmg`
   } else if (os === 'linux') {
-    platformData.githubUrl = `https://github.com/ThinkInAIXYZ/deepchat/releases/download/v${params.version}/DeepChat-${params.version}-linux-${arch}.tar.gx`
+    platformData.githubUrl = `https://github.com/ThinkInAIXYZ/deepchat/releases/download/v${params.version}/DeepChat-${params.version}-linux-${arch}.tar.gz`
   }
   // 写入文件
   const outputPath = path.join(process.cwd(), `${platform}.json`)
