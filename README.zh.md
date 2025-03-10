@@ -1,4 +1,3 @@
-
 <p align='center'>
 <img src='./build/icon.png' width="150" height="150" alt="logo" />
 </p>
@@ -12,21 +11,25 @@
 </div>
 
 ### 深度思考
+
 <p align='center'>
 <img src='./build/screen.zh.jpg'/>
 </p>
 
 ### 支持搜索 (纯本地直接向搜索引擎发起)
+
 <p align='center'>
 <img src='./build/screen.search.zh.jpg'/>
 </p>
 
 ### Latex 公式支持
+
 <p align='center'>
 <img src='./build/screen.latex.jpg'/>
 </p>
 
 ### Artifacts 特性
+
 <p align='center'>
 <img src='./build/screen.artifacts.zh.jpg'/>
 </p>
@@ -112,15 +115,15 @@
 </table>
 
 ## 即将推出（TODO）
-- [X] 支持 Ollama 本地模型管理
-- [ ] 支持 llama.cpp 本地模型
-- [ ] 支持本地文件处理
-- [X] Mermaid 图表可视化
-- [ ] 搜索集成（本地+云端API）
-- [ ] MCP支持
-- [ ] 多模态模型支持
-- [ ] 本地聊天数据同步和加密
 
+- [x] 支持 Ollama 本地模型管理
+- [ ] 支持 llama.cpp 本地模型
+- [x] 支持本地文件处理
+- [x] Mermaid 图表可视化
+- [x] 搜索集成（本地+云端API）
+- [ ] MCP支持
+- [x] 多模态模型支持
+- [ ] 本地聊天数据同步和加密
 
 ## 开发
 
@@ -172,5 +175,5 @@ $ npm run build:linux:arm64
 [![Star History Chart](https://api.star-history.com/svg?repos=ThinkInAIXYZ/deepchat&type=Date)](https://star-history.com/#ThinkInAIXYZ/deepchat&Date)
 
 # 📃 许可证
-[LICENSE](./LICENSE)
 
+[LICENSE](./LICENSE)

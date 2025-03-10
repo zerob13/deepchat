@@ -1,4 +1,3 @@
-
 <p align='center'>
 <img src='./build/icon.png' width="150" height="150" alt="logo" />
 </p>
@@ -12,21 +11,25 @@
 </div>
 
 ### Reasoning
+
 <p align='center'>
 <img src='./build/screen.jpg'/>
 </p>
 
 ### Search
+
 <p align='center'>
 <img src='./build/screen.search.jpg'/>
 </p>
 
 ### Latex
+
 <p align='center'>
 <img src='./build/screen.latex.jpg'/>
 </p>
 
 ### Artifacts support
+
 <p align='center'>
 <img src='./build/screen.artifacts.jpg'/>
 </p>
@@ -113,13 +116,14 @@
 </table>
 
 ## TODO List
-- [X] Support for Ollama local model management
+
+- [x] Support for Ollama local model management
 - [ ] Support for llama.cpp local model
-- [ ] Support for local file processing
-- [X] Mermaid chart visualization
-- [ ] Search integration (local + cloud API)
+- [x] Support for local file processing
+- [x] Mermaid chart visualization
+- [x] Search integration (local + cloud API)
 - [ ] MCP support
-- [ ] Multi-modal model support
+- [x] Multi-modal model support
 - [ ] Local chat data synchronization and encryption
 
 ## Development
@@ -172,4 +176,5 @@ $ npm run build:linux:arm64
 [![Star History Chart](https://api.star-history.com/svg?repos=ThinkInAIXYZ/deepchat&type=Date)](https://star-history.com/#ThinkInAIXYZ/deepchat&Date)
 
 # 📃 License
+
 [LICENSE](./LICENSE)
