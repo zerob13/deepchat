@@ -67,8 +67,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('deepseek-r1-distill-qwen-1.5b') || 
-      modelId.toLowerCase().includes('deepseek-r1-distill-qwen-1-5b')) {
+  if (
+    modelId.toLowerCase().includes('deepseek-r1-distill-qwen-1.5b') ||
+    modelId.toLowerCase().includes('deepseek-r1-distill-qwen-1-5b')
+  ) {
     return {
       maxTokens: 32768,
       contextLength: 131072,
@@ -89,24 +91,29 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   if (modelId.toLowerCase().includes('deepseek-r1-distill-llama-70b')) {
     return {
       maxTokens: 32768,
-      contextLength: 128000,
+      contextLength: 65536,
       temperature: 0.6,
       vision: false
     }
   }
 
-  if (modelId.toLowerCase().includes('deepseek-r1') || modelId.toLowerCase().includes('deepseek-r1-zero')) {
+  if (
+    modelId.toLowerCase().includes('deepseek-r1') ||
+    modelId.toLowerCase().includes('deepseek-r1-zero')
+  ) {
     return {
       maxTokens: 32768,
-      contextLength: 128000,
+      contextLength: 65536,
       temperature: 0.6,
       vision: false
     }
   }
 
   // Claude系列模型配置
-  if (modelId.toLowerCase().includes('claude-3-7-sonnet') || 
-      modelId.toLowerCase().includes('claude-3.7-sonnet')) {
+  if (
+    modelId.toLowerCase().includes('claude-3-7-sonnet') ||
+    modelId.toLowerCase().includes('claude-3.7-sonnet')
+  ) {
     return {
       maxTokens: 64000, // 支持extended thinking
       contextLength: 200000,
@@ -115,8 +122,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('claude-3-5-sonnet') || 
-      modelId.toLowerCase().includes('claude-3.5-sonnet')) {
+  if (
+    modelId.toLowerCase().includes('claude-3-5-sonnet') ||
+    modelId.toLowerCase().includes('claude-3.5-sonnet')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 200000,
@@ -125,8 +134,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('claude-3-opus') || 
-      modelId.toLowerCase().includes('claude-3.opus')) {
+  if (
+    modelId.toLowerCase().includes('claude-3-opus') ||
+    modelId.toLowerCase().includes('claude-3.opus')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 200000,
@@ -135,10 +146,12 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('claude-3-haiku') || 
-      modelId.toLowerCase().includes('claude-3.haiku') ||
-      modelId.toLowerCase().includes('claude-3-5-haiku') ||
-      modelId.toLowerCase().includes('claude-3.5-haiku')) {
+  if (
+    modelId.toLowerCase().includes('claude-3-haiku') ||
+    modelId.toLowerCase().includes('claude-3.haiku') ||
+    modelId.toLowerCase().includes('claude-3-5-haiku') ||
+    modelId.toLowerCase().includes('claude-3.5-haiku')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 200000,
@@ -157,8 +170,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('gpt-4-turbo') || 
-      modelId.toLowerCase().includes('gpt-4-1106')) {
+  if (
+    modelId.toLowerCase().includes('gpt-4-turbo') ||
+    modelId.toLowerCase().includes('gpt-4-1106')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 128000,
@@ -223,9 +238,11 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
 
   // 开源模型配置
   // Llama系列
-  if (modelId.toLowerCase().includes('llama-3.1-405b') || 
-      modelId.toLowerCase().includes('llama-3.1-405-b') ||
-      modelId.toLowerCase().includes('llama-3.1-405')) {
+  if (
+    modelId.toLowerCase().includes('llama-3.1-405b') ||
+    modelId.toLowerCase().includes('llama-3.1-405-b') ||
+    modelId.toLowerCase().includes('llama-3.1-405')
+  ) {
     return {
       maxTokens: 32768,
       contextLength: 128000,
@@ -234,9 +251,11 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('llama-3.1-70b') || 
-      modelId.toLowerCase().includes('llama-3.1-70-b') ||
-      modelId.toLowerCase().includes('llama-3.1-70')) {
+  if (
+    modelId.toLowerCase().includes('llama-3.1-70b') ||
+    modelId.toLowerCase().includes('llama-3.1-70-b') ||
+    modelId.toLowerCase().includes('llama-3.1-70')
+  ) {
     return {
       maxTokens: 16384,
       contextLength: 128000,
@@ -245,9 +264,11 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('llama-3-70b') || 
-      modelId.toLowerCase().includes('llama-3-70-b') ||
-      modelId.toLowerCase().includes('llama-3-70')) {
+  if (
+    modelId.toLowerCase().includes('llama-3-70b') ||
+    modelId.toLowerCase().includes('llama-3-70-b') ||
+    modelId.toLowerCase().includes('llama-3-70')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 32768,
@@ -256,8 +277,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('llama-3.1-8b') || 
-      modelId.toLowerCase().includes('llama-3.1-8-b')) {
+  if (
+    modelId.toLowerCase().includes('llama-3.1-8b') ||
+    modelId.toLowerCase().includes('llama-3.1-8-b')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 8192,
@@ -266,8 +289,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('llama-3-8b') || 
-      modelId.toLowerCase().includes('llama-3-8-b')) {
+  if (
+    modelId.toLowerCase().includes('llama-3-8b') ||
+    modelId.toLowerCase().includes('llama-3-8-b')
+  ) {
     return {
       maxTokens: 2048,
       contextLength: 8192,
@@ -313,8 +338,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('mistral-8x7b') ||
-      modelId.toLowerCase().includes('mixtral-8x7b')) {
+  if (
+    modelId.toLowerCase().includes('mistral-8x7b') ||
+    modelId.toLowerCase().includes('mixtral-8x7b')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 32768,
@@ -322,7 +349,7 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
       vision: false
     }
   }
-  
+
   if (modelId.toLowerCase().includes('mistral-7b')) {
     return {
       maxTokens: 4096,
@@ -333,8 +360,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // Qwen系列
-  if (modelId.toLowerCase().includes('qwen2.5-72b') || 
-      modelId.toLowerCase().includes('qwen-2.5-72b')) {
+  if (
+    modelId.toLowerCase().includes('qwen2.5-72b') ||
+    modelId.toLowerCase().includes('qwen-2.5-72b')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 131072,
@@ -343,8 +372,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('qwen2.5-32b') || 
-      modelId.toLowerCase().includes('qwen-2.5-32b')) {
+  if (
+    modelId.toLowerCase().includes('qwen2.5-32b') ||
+    modelId.toLowerCase().includes('qwen-2.5-32b')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 131072,
@@ -353,8 +384,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('qwen2.5-14b') || 
-      modelId.toLowerCase().includes('qwen-2.5-14b')) {
+  if (
+    modelId.toLowerCase().includes('qwen2.5-14b') ||
+    modelId.toLowerCase().includes('qwen-2.5-14b')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 131072,
@@ -363,8 +396,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('qwen2.5-7b') || 
-      modelId.toLowerCase().includes('qwen-2.5-7b')) {
+  if (
+    modelId.toLowerCase().includes('qwen2.5-7b') ||
+    modelId.toLowerCase().includes('qwen-2.5-7b')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 131072,
@@ -373,8 +408,7 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('qwen2.5-') || 
-      modelId.toLowerCase().includes('qwen-2.5-')) {
+  if (modelId.toLowerCase().includes('qwen2.5-') || modelId.toLowerCase().includes('qwen-2.5-')) {
     return {
       maxTokens: 4096,
       contextLength: 128000,
@@ -458,9 +492,11 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // Phi系列
-  if (modelId.toLowerCase().includes('phi-4-') || 
-      modelId.toLowerCase().includes('phi4-') ||
-      modelId.toLowerCase().includes('phi4')) {
+  if (
+    modelId.toLowerCase().includes('phi-4-') ||
+    modelId.toLowerCase().includes('phi4-') ||
+    modelId.toLowerCase().includes('phi4')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 128000,
@@ -469,9 +505,11 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('phi-3-') || 
-      modelId.toLowerCase().includes('phi3-') ||
-      modelId.toLowerCase().includes('phi3')) {
+  if (
+    modelId.toLowerCase().includes('phi-3-') ||
+    modelId.toLowerCase().includes('phi3-') ||
+    modelId.toLowerCase().includes('phi3')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 32768,
@@ -481,10 +519,9 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // ==== 新增模型提供商 ====
-  
+
   // Ollama平台模型配置 (默认上下文长度2048，可通过num_ctx参数调整)
-  if (modelId.toLowerCase().includes('ollama') || 
-      modelId.toLowerCase().startsWith('ollama/')) {
+  if (modelId.toLowerCase().includes('ollama') || modelId.toLowerCase().startsWith('ollama/')) {
     return {
       maxTokens: 2048,
       contextLength: 2048,
@@ -531,9 +568,11 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // MiniMax模型配置
-  if (modelId.toLowerCase().includes('minimax-01') || 
-      modelId.toLowerCase().includes('minimax/minimax-01') ||
-      modelId.toLowerCase().includes('minimax-text-01')) {
+  if (
+    modelId.toLowerCase().includes('minimax-01') ||
+    modelId.toLowerCase().includes('minimax/minimax-01') ||
+    modelId.toLowerCase().includes('minimax-text-01')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 1048576, // 1M token
@@ -542,8 +581,7 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('glm-4-plus') || 
-      modelId.toLowerCase().includes('glm-4-air')) {
+  if (modelId.toLowerCase().includes('glm-4-plus') || modelId.toLowerCase().includes('glm-4-air')) {
     return {
       maxTokens: 8192,
       contextLength: 1048576, // 1M token
@@ -552,8 +590,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('step-2-16k-exp') || 
-      modelId.toLowerCase().includes('step-2-16k')) {
+  if (
+    modelId.toLowerCase().includes('step-2-16k-exp') ||
+    modelId.toLowerCase().includes('step-2-16k')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 16384, // 16k
@@ -581,27 +621,35 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // Fireworks AI模型配置
-  if (modelId.toLowerCase().includes('fireworks') || 
-      modelId.toLowerCase().startsWith('accounts/fireworks/')) {
+  if (
+    modelId.toLowerCase().includes('fireworks') ||
+    modelId.toLowerCase().startsWith('accounts/fireworks/')
+  ) {
     // 根据模型ID判断基础模型类型
-    if (modelId.toLowerCase().includes('llama-3.1-405b') || 
-        modelId.toLowerCase().includes('llama-3.1-405-b')) {
+    if (
+      modelId.toLowerCase().includes('llama-3.1-405b') ||
+      modelId.toLowerCase().includes('llama-3.1-405-b')
+    ) {
       return {
         maxTokens: 32768,
         contextLength: 128000,
         temperature: 0.7,
         vision: false
       }
-    } else if (modelId.toLowerCase().includes('llama-3.1-70b') || 
-        modelId.toLowerCase().includes('llama-3.1-70-b')) {
+    } else if (
+      modelId.toLowerCase().includes('llama-3.1-70b') ||
+      modelId.toLowerCase().includes('llama-3.1-70-b')
+    ) {
       return {
         maxTokens: 16384,
         contextLength: 128000,
         temperature: 0.7,
         vision: false
       }
-    } else if (modelId.toLowerCase().includes('llama-3.1-8b') || 
-        modelId.toLowerCase().includes('llama-3.1-8-b')) {
+    } else if (
+      modelId.toLowerCase().includes('llama-3.1-8b') ||
+      modelId.toLowerCase().includes('llama-3.1-8-b')
+    ) {
       return {
         maxTokens: 8192,
         contextLength: 8192,
@@ -630,8 +678,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // Moonshot (月之暗面)模型配置
-  if (modelId.toLowerCase().includes('moonshot-v1-8k') || 
-      modelId.toLowerCase().includes('moonshot/moonshot-v1-8k')) {
+  if (
+    modelId.toLowerCase().includes('moonshot-v1-8k') ||
+    modelId.toLowerCase().includes('moonshot/moonshot-v1-8k')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 8192,
@@ -640,8 +690,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('moonshot-v1-32k') || 
-      modelId.toLowerCase().includes('moonshot/moonshot-v1-32k')) {
+  if (
+    modelId.toLowerCase().includes('moonshot-v1-32k') ||
+    modelId.toLowerCase().includes('moonshot/moonshot-v1-32k')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 32768,
@@ -650,8 +702,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
     }
   }
 
-  if (modelId.toLowerCase().includes('moonshot-v1-128k') || 
-      modelId.toLowerCase().includes('moonshot/moonshot-v1-128k')) {
+  if (
+    modelId.toLowerCase().includes('moonshot-v1-128k') ||
+    modelId.toLowerCase().includes('moonshot/moonshot-v1-128k')
+  ) {
     return {
       maxTokens: 8192,
       contextLength: 131072,
@@ -670,8 +724,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // OpenRouter配置（根据实际转发的模型参数而定）
-  if (modelId.toLowerCase().includes('openrouter') || 
-      modelId.toLowerCase().startsWith('openrouter/')) {
+  if (
+    modelId.toLowerCase().includes('openrouter') ||
+    modelId.toLowerCase().startsWith('openrouter/')
+  ) {
     // 默认使用较大的上下文长度和token数，实际会根据目标模型限制
     return {
       maxTokens: 8192,
@@ -682,8 +738,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // GitHub Copilot配置
-  if (modelId.toLowerCase().includes('github-copilot') || 
-      modelId.toLowerCase().includes('copilot')) {
+  if (
+    modelId.toLowerCase().includes('github-copilot') ||
+    modelId.toLowerCase().includes('copilot')
+  ) {
     return {
       maxTokens: 4096,
       contextLength: 8192, // 保守估计
@@ -693,8 +751,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
   }
 
   // Azure OpenAI配置（与OpenAI模型相同，但独立配置便于识别）
-  if (modelId.toLowerCase().includes('azure-openai') || 
-      modelId.toLowerCase().includes('azure/openai')) {
+  if (
+    modelId.toLowerCase().includes('azure-openai') ||
+    modelId.toLowerCase().includes('azure/openai')
+  ) {
     if (modelId.toLowerCase().includes('gpt-4o')) {
       return {
         maxTokens: 4096,
@@ -702,8 +762,10 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
         temperature: 0.7,
         vision: true
       }
-    } else if (modelId.toLowerCase().includes('gpt-4-turbo') || 
-        modelId.toLowerCase().includes('gpt-4-1106')) {
+    } else if (
+      modelId.toLowerCase().includes('gpt-4-turbo') ||
+      modelId.toLowerCase().includes('gpt-4-1106')
+    ) {
       return {
         maxTokens: 4096,
         contextLength: 128000,
