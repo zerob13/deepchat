@@ -22,6 +22,8 @@ interface IAppSettings {
   providers: LLM_PROVIDER[]
   closeToQuit: boolean // 是否点击关闭按钮时退出程序
   appVersion?: string // 用于版本检查和数据迁移
+  proxyMode?: string // 代理模式：system, none, custom
+  customProxyUrl?: string // 自定义代理地址
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -416,5 +418,27 @@ export class ConfigPresenter implements IConfigPresenter {
 
   public getDefaultProviders(): LLM_PROVIDER[] {
     return DEFAULT_PROVIDERS
+  }
+
+  // 获取代理模式
+  getProxyMode(): string {
+    return this.getSetting<string>('proxyMode') || 'system'
+  }
+
+  // 设置代理模式
+  setProxyMode(mode: string): void {
+    this.setSetting('proxyMode', mode)
+    eventBus.emit(CONFIG_EVENTS.PROXY_MODE_CHANGED, mode)
+  }
+
+  // 获取自定义代理地址
+  getCustomProxyUrl(): string {
+    return this.getSetting<string>('customProxyUrl') || ''
+  }
+
+  // 设置自定义代理地址
+  setCustomProxyUrl(url: string): void {
+    this.setSetting('customProxyUrl', url)
+    eventBus.emit(CONFIG_EVENTS.CUSTOM_PROXY_URL_CHANGED, url)
   }
 }

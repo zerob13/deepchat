@@ -23,7 +23,15 @@
       "cleanMessagesFailed": "清空會話消息失敗"
     },
     "resetDataConfirmTitle": "確定要重置所有數據嗎？",
-    "resetDataConfirmDescription": "這將會把所有數據恢復到默認設置。此操作無法撤銷。"
+    "resetDataConfirmDescription": "這將會把所有數據恢復到默認設置。此操作無法撤銷。",
+    "proxyMode": "代理模式",
+    "proxyModeSelect": "選擇代理模式",
+    "proxyModeSystem": "系統代理",
+    "proxyModeNone": "不使用代理",
+    "proxyModeCustom": "自定義代理",
+    "customProxyUrl": "自定義代理地址",
+    "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
+    "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL"
   },
   "routes": {
     "chat": "聊天",
@@ -124,7 +132,15 @@
       "searchEngine": "搜索引擎",
       "searchEngineSelect": "選擇搜索引擎",
       "searchAssistantModel": "搜索助手模型",
-      "selectModel": "選擇模型"
+      "selectModel": "選擇模型",
+      "proxyMode": "代理模式",
+      "proxyModeSelect": "選擇代理模式",
+      "proxyModeSystem": "系統代理",
+      "proxyModeNone": "不使用代理",
+      "proxyModeCustom": "自定義代理",
+      "customProxyUrl": "自定義代理地址",
+      "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
+      "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL"
     },
     "model": {
       "title": "模型設置",

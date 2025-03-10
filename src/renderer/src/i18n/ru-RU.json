@@ -23,7 +23,15 @@
       "cleanMessagesFailed": "Не удалось очистить сообщения чата"
     },
     "resetDataConfirmTitle": "Сбросить все данные?",
-    "resetDataConfirmDescription": "Это сбросит все ваши данные до настроек по умолчанию. Это действие нельзя отменить."
+    "resetDataConfirmDescription": "Это сбросит все ваши данные до настроек по умолчанию. Это действие нельзя отменить.",
+    "proxyMode": "Режим прокси",
+    "proxyModeSelect": "Выбрать режим прокси",
+    "proxyModeSystem": "Системный прокси",
+    "proxyModeNone": "Без прокси",
+    "proxyModeCustom": "Пользовательский прокси",
+    "customProxyUrl": "URL пользовательского прокси",
+    "customProxyUrlPlaceholder": "Пример: http://127.0.0.1:7890",
+    "invalidProxyUrl": "Неверный URL прокси, введите корректный http/https URL"
   },
   "update": {
     "newVersion": "Найдена новая версия",
@@ -128,7 +136,15 @@
       "searchEngine": "Поисковый движок",
       "searchEngineSelect": "Выбор поискового движка",
       "searchAssistantModel": "Поисковый движок",
-      "selectModel": "Выбор модели"
+      "selectModel": "Выбор модели",
+      "proxyMode": "Режим прокси",
+      "proxyModeSelect": "Выбрать режим прокси",
+      "proxyModeSystem": "Системный прокси",
+      "proxyModeNone": "Без прокси",
+      "proxyModeCustom": "Пользовательский прокси",
+      "customProxyUrl": "URL пользовательского прокси",
+      "customProxyUrlPlaceholder": "Пример: http://127.0.0.1:7890",
+      "invalidProxyUrl": "Неверный URL прокси, введите корректный http/https URL"
     },
     "model": {
       "title": "Настройки модели",

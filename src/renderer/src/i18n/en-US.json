@@ -23,7 +23,15 @@
       "noModelResponse": "Model did not return any content, it may have timed out"
     },
     "resetDataConfirmTitle": "Reset All Data?",
-    "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone."
+    "resetDataConfirmDescription": "This will reset all your data to default settings. This action cannot be undone.",
+    "proxyMode": "Proxy Mode",
+    "proxyModeSelect": "Select Proxy Mode",
+    "proxyModeSystem": "System Proxy",
+    "proxyModeNone": "No Proxy",
+    "proxyModeCustom": "Custom Proxy",
+    "customProxyUrl": "Custom Proxy URL",
+    "customProxyUrlPlaceholder": "Example: http://127.0.0.1:7890",
+    "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL"
   },
   "update": {
     "newVersion": "New Version Found",
@@ -134,7 +142,15 @@
       "searchEngine": "Search Engine",
       "searchEngineSelect": "Select Search Engine",
       "searchAssistantModel": "Search Assistant Model",
-      "selectModel": "Select Model"
+      "selectModel": "Select Model",
+      "proxyMode": "Proxy Mode",
+      "proxyModeSelect": "Select Proxy Mode",
+      "proxyModeSystem": "System Proxy",
+      "proxyModeNone": "No Proxy",
+      "proxyModeCustom": "Custom Proxy",
+      "customProxyUrl": "Custom Proxy URL",
+      "customProxyUrlPlaceholder": "e.g. http://127.0.0.1:7890",
+      "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL"
     },
     "model": {
       "title": "Model Settings",
