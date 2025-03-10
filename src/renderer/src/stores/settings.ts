@@ -759,8 +759,9 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
   const setSearchEngine = async (engineName: string) => {
-    if (searchEngines.value.find((e) => e.name === engineName)) {
-      activeSearchEngine.value = engineName
+    const engine = searchEngines.value.find((e) => e.name === engineName)
+    if (engine) {
+      activeSearchEngine.value = engine
       await configP.setSetting('searchEngine', engineName)
       threadP.setActiveSearchEngine(engineName)
     }
