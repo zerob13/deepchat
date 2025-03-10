@@ -49,13 +49,13 @@ export const useBlockContent = (props: {
       hasMatchedClosedThinkingTags = true
       // 添加思考前的普通文本
       if (match.index > lastIndex) {
-        // const text = content.substring(lastIndex, match.index)
-        // if (text.trim()) {
-        //   parts.push({
-        //     type: 'thinking',
-        //     content: text
-        //   })
-        // }
+        const text = content.substring(lastIndex, match.index)
+        if (text.trim()) {
+          parts.push({
+            type: 'text',
+            content: text
+          })
+        }
       }
 
       // 添加思考内容
