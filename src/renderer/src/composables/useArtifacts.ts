@@ -102,10 +102,9 @@ export const useBlockContent = (props: {
 
     // 处理 antArtifact 标签
     const artifactRegex =
-      /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*?)<\/antArtifact>/gs
+      /<antArtifact\s+(?=.*\btype="([^"]+)")(?=.*\bidentifier="([^"]+)")(?=.*\btitle="([^"]+)")(?:\s+language="([^"]+)")?\s*(?:[^>]*?)>([\s\S]*?)<\/antArtifact>/gs
     content = props.block.content
     let hasMatchedClosedTags = false
-
     while ((match = artifactRegex.exec(content)) !== null) {
       hasMatchedClosedTags = true
       // 添加 artifact 前的普通文本
@@ -119,20 +118,31 @@ export const useBlockContent = (props: {
         }
       }
 
+      // 提取完整的标签内容用于属性匹配
+      const fullTag = match[0]
+      const typeMatch = fullTag.match(/type="([^"]+)"/)
+      const identifierMatch = fullTag.match(/identifier="([^"]+)"/)
+      const titleMatch = fullTag.match(/title="([^"]+)"/)
+      const languageMatch = fullTag.match(/language="([^"]+)"/)
+      // 修复内容匹配，使用非贪婪模式匹配所有内容
+      const closedContentMatch = fullTag.match(/<antArtifact[^>]*>([\s\S]*?)<\/antArtifact>/s)
+
       // 添加 artifact 内容
       parts.push({
         type: 'artifact',
-        content: match[5].trim(),
+        content: closedContentMatch ? closedContentMatch[1].trim() : '',
         artifact: {
-          identifier: match[1],
-          type: match[2] as
-            | 'application/vnd.ant.code'
-            | 'text/markdown'
-            | 'text/html'
-            | 'image/svg+xml'
-            | 'application/vnd.ant.mermaid',
-          title: match[3],
-          language: match[4]
+          identifier: identifierMatch ? identifierMatch[1] : '',
+          type: typeMatch
+            ? (typeMatch[1] as
+                | 'application/vnd.ant.code'
+                | 'text/markdown'
+                | 'text/html'
+                | 'image/svg+xml'
+                | 'application/vnd.ant.mermaid')
+            : 'text/markdown',
+          title: titleMatch ? titleMatch[1] : '',
+          language: languageMatch ? languageMatch[1] : undefined
         },
         loading: false
       })
@@ -145,7 +155,7 @@ export const useBlockContent = (props: {
       // 重置 lastIndex 以便从头开始搜索
       // 只匹配开始标签的正则表达式
       const unclosedArtifactRegex =
-        /<antArtifact\s+identifier="([^"]+)"\s+type="([^"]+)"\s+title="([^"]+)"(?:\s+language="([^"]+)")?\s*>([\s\S]*)/gs
+        /<antArtifact\s+(?=.*\btype="([^"]+)")(?=.*\bidentifier="([^"]+)")(?=.*\btitle="([^"]+)")(?:\s+language="([^"]+)")?\s*(?:[^>]*?)>([\s\S]*)/gs
 
       while ((match = unclosedArtifactRegex.exec(content)) !== null) {
         // 添加 artifact 前的普通文本
@@ -159,20 +169,31 @@ export const useBlockContent = (props: {
           }
         }
 
-        // 添加未闭合标签的 artifact 内容（将剩余所有内容视为 artifact 的内容）
+        // 提取完整的标签内容用于属性匹配
+        const fullTag = match[0]
+        const typeMatch = fullTag.match(/type="([^"]+)"/)
+        const identifierMatch = fullTag.match(/identifier="([^"]+)"/)
+        const titleMatch = fullTag.match(/title="([^"]+)"/)
+        const languageMatch = fullTag.match(/language="([^"]+)"/)
+        // 提取未闭合标签后的所有内容
+        const unclosedContentMatch = fullTag.match(/<antArtifact[^>]*>([\s\S]*)/s)
+
+        // 添加未闭合标签的 artifact 内容
         parts.push({
           type: 'artifact',
-          content: match[5].trim(),
+          content: unclosedContentMatch ? unclosedContentMatch[1].trim() : '',
           artifact: {
-            identifier: match[1],
-            type: match[2] as
-              | 'application/vnd.ant.code'
-              | 'text/markdown'
-              | 'text/html'
-              | 'image/svg+xml'
-              | 'application/vnd.ant.mermaid',
-            title: match[3],
-            language: match[4]
+            identifier: identifierMatch ? identifierMatch[1] : '',
+            type: typeMatch
+              ? (typeMatch[1] as
+                  | 'application/vnd.ant.code'
+                  | 'text/markdown'
+                  | 'text/html'
+                  | 'image/svg+xml'
+                  | 'application/vnd.ant.mermaid')
+              : 'text/markdown',
+            title: titleMatch ? titleMatch[1] : '',
+            language: languageMatch ? languageMatch[1] : undefined
           },
           loading: true
         })
