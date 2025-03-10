@@ -83,7 +83,7 @@ onMounted(() => {
       <div
         :class="{
           'flex-1 w-0 h-full transition-all duration-200': true,
-          'mr-[calc(50%_-_104px)]': artifactStore.isOpen && route.name === 'chat'
+          'mr-[calc(60%_-_104px)]': artifactStore.isOpen && route.name === 'chat'
         }"
       >
         <RouterView />
