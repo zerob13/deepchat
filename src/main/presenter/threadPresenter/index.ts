@@ -860,7 +860,7 @@ export class ThreadPresenter implements IThreadPresenter {
     // 处理文本内容
     const userContent = `
       ${userMessage.content.text}
-      ${getFileContext(userMessage.content.files.filter((file) => file.mime?.startsWith('image/')))}
+      ${getFileContext(userMessage.content.files.filter((file) => !file.mime?.startsWith('image/')))}
     `
 
     // 从用户消息中提取并丰富URL内容
