@@ -261,8 +261,8 @@ export class SQLitePresenter implements ISQLitePresenter {
       settings.maxTokens || 2000,
       settings.providerId || 'openai',
       settings.modelId || 'gpt-4',
-      settings.artifacts || 0,
-      1
+      1,
+      settings.artifacts || 0
     )
     return conv_id
   }
