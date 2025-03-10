@@ -291,14 +291,52 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     try {
       const stream = provider.streamCompletions(messages, modelId, temperature)
 
+      // 固定打字速度，单位毫秒
+      const typingInterval = 2
+      let buffer = ''
+
       for await (const chunk of stream) {
         if (abortController.signal.aborted) {
           break
         }
+
+        // 将接收到的新内容添加到缓冲区
+        const newContent = chunk.content || ''
+        buffer += newContent
+
+        // 如果有内容可以处理
+        if (buffer.length > 0) {
+          // 从缓冲区取出第一个字符
+          const char = buffer.charAt(0)
+          buffer = buffer.substring(1)
+
+          // 发送这个字符
+          eventBus.emit(STREAM_EVENTS.RESPONSE, {
+            eventId,
+            ...chunk,
+            content: char // 覆盖原始content
+          })
+
+          // 等待一段时间再处理下一个字符（如果还有的话）
+          if (buffer.length > 0 && !abortController.signal.aborted) {
+            await new Promise((resolve) => setTimeout(resolve, typingInterval))
+          }
+        }
+      }
+
+      // 处理缓冲区中剩余的内容
+      while (buffer.length > 0 && !abortController.signal.aborted) {
+        const char = buffer.charAt(0)
+        buffer = buffer.substring(1)
+
         eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId,
-          ...chunk
+          content: char
         })
+
+        if (buffer.length > 0) {
+          await new Promise((resolve) => setTimeout(resolve, typingInterval))
+        }
       }
 
       if (!abortController.signal.aborted) {
@@ -329,15 +367,76 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         if (!stream) return
 
         const summaryStream = stream.provider.streamSummaries(text, modelId, temperature, maxTokens)
+
+        // 固定打字速度，单位毫秒
+        const typingInterval = 50
+        let contentBuffer = ''
+        let reasoningBuffer = ''
+
         for await (const response of summaryStream) {
           if (stream.abortController.signal.aborted) {
             break
           }
-          eventBus.emit(STREAM_EVENTS.RESPONSE, {
-            content: response.content,
-            reasoning_content: response.reasoning_content,
+
+          // 将新内容添加到缓冲区
+          if (response.content) contentBuffer += response.content
+          if (response.reasoning_content) reasoningBuffer += response.reasoning_content
+
+          // 处理内容缓冲区
+          if (contentBuffer.length > 0) {
+            const char = contentBuffer.charAt(0)
+            contentBuffer = contentBuffer.substring(1)
+
+            const responseObj: { eventId: string; content?: string; reasoning_content?: string } = {
+              eventId,
+              content: char
+            }
+
+            // 如果有推理内容要处理
+            if (reasoningBuffer.length > 0) {
+              const reasoningChar = reasoningBuffer.charAt(0)
+              reasoningBuffer = reasoningBuffer.substring(1)
+              responseObj.reasoning_content = reasoningChar
+            }
+
+            eventBus.emit(STREAM_EVENTS.RESPONSE, responseObj)
+
+            // 等待一段时间再处理
+            if (
+              (contentBuffer.length > 0 || reasoningBuffer.length > 0) &&
+              !stream.abortController.signal.aborted
+            ) {
+              await new Promise((resolve) => setTimeout(resolve, typingInterval))
+            }
+          }
+        }
+
+        // 处理缓冲区中剩余的内容
+        while (
+          (contentBuffer.length > 0 || reasoningBuffer.length > 0) &&
+          !stream.abortController.signal.aborted
+        ) {
+          const responseObj: { eventId: string; content?: string; reasoning_content?: string } = {
             eventId
-          })
+          }
+
+          if (contentBuffer.length > 0) {
+            const char = contentBuffer.charAt(0)
+            contentBuffer = contentBuffer.substring(1)
+            responseObj.content = char
+          }
+
+          if (reasoningBuffer.length > 0) {
+            const reasoningChar = reasoningBuffer.charAt(0)
+            reasoningBuffer = reasoningBuffer.substring(1)
+            responseObj.reasoning_content = reasoningChar
+          }
+
+          eventBus.emit(STREAM_EVENTS.RESPONSE, responseObj)
+
+          if (contentBuffer.length > 0 || reasoningBuffer.length > 0) {
+            await new Promise((resolve) => setTimeout(resolve, typingInterval))
+          }
         }
       },
       eventId,
@@ -365,15 +464,76 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           temperature,
           maxTokens
         )
+
+        // 固定打字速度，单位毫秒
+        const typingInterval = 50
+        let contentBuffer = ''
+        let reasoningBuffer = ''
+
         for await (const response of textStream) {
           if (stream.abortController.signal.aborted) {
             break
           }
-          eventBus.emit(STREAM_EVENTS.RESPONSE, {
-            content: response.content,
-            reasoning_content: response.reasoning_content,
+
+          // 将新内容添加到缓冲区
+          if (response.content) contentBuffer += response.content
+          if (response.reasoning_content) reasoningBuffer += response.reasoning_content
+
+          // 处理内容缓冲区
+          if (contentBuffer.length > 0) {
+            const char = contentBuffer.charAt(0)
+            contentBuffer = contentBuffer.substring(1)
+
+            const responseObj: { eventId: string; content?: string; reasoning_content?: string } = {
+              eventId,
+              content: char
+            }
+
+            // 如果有推理内容要处理
+            if (reasoningBuffer.length > 0) {
+              const reasoningChar = reasoningBuffer.charAt(0)
+              reasoningBuffer = reasoningBuffer.substring(1)
+              responseObj.reasoning_content = reasoningChar
+            }
+
+            eventBus.emit(STREAM_EVENTS.RESPONSE, responseObj)
+
+            // 等待一段时间再处理
+            if (
+              (contentBuffer.length > 0 || reasoningBuffer.length > 0) &&
+              !stream.abortController.signal.aborted
+            ) {
+              await new Promise((resolve) => setTimeout(resolve, typingInterval))
+            }
+          }
+        }
+
+        // 处理缓冲区中剩余的内容
+        while (
+          (contentBuffer.length > 0 || reasoningBuffer.length > 0) &&
+          !stream.abortController.signal.aborted
+        ) {
+          const responseObj: { eventId: string; content?: string; reasoning_content?: string } = {
             eventId
-          })
+          }
+
+          if (contentBuffer.length > 0) {
+            const char = contentBuffer.charAt(0)
+            contentBuffer = contentBuffer.substring(1)
+            responseObj.content = char
+          }
+
+          if (reasoningBuffer.length > 0) {
+            const reasoningChar = reasoningBuffer.charAt(0)
+            reasoningBuffer = reasoningBuffer.substring(1)
+            responseObj.reasoning_content = reasoningChar
+          }
+
+          eventBus.emit(STREAM_EVENTS.RESPONSE, responseObj)
+
+          if (contentBuffer.length > 0 || reasoningBuffer.length > 0) {
+            await new Promise((resolve) => setTimeout(resolve, typingInterval))
+          }
         }
       },
       eventId,
