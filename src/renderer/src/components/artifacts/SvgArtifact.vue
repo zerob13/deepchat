@@ -4,7 +4,6 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import DOMPurify from 'dompurify'
 
 const props = defineProps<{
   block: {
@@ -18,9 +17,7 @@ const props = defineProps<{
 
 const sanitizedContent = computed(() => {
   if (!props.block.content) return ''
-  return DOMPurify.sanitize(props.block.content, {
-    USE_PROFILES: { svg: true }
-  })
+  return props.block.content
 })
 </script>
 
