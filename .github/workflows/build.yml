@@ -61,7 +61,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        run: npm install
+        run: npm install --cpu=${{ matrix.arch }} --os=linux
       - name: Install Sharp
         run: npm install --cpu=${{ matrix.arch }} --os=linux sharp
       - name: Build Linux
