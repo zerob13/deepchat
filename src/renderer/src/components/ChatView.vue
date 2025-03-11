@@ -26,8 +26,10 @@ import ChatInput from './ChatInput.vue'
 import { useRoute } from 'vue-router'
 import { UserMessageContent } from '@shared/chat'
 import { STREAM_EVENTS } from '@/events'
+import { useSettingsStore } from '@/stores/settings'
 
 const route = useRoute()
+const settingsStore = useSettingsStore()
 
 const messageList = ref()
 
@@ -69,19 +71,22 @@ onMounted(async () => {
   if (route.query.modelId && route.query.providerId) {
     const threadId = await chatStore.createThread('新会话', {
       modelId: route.query.modelId as string,
-      providerId: route.query.providerId as string
+      providerId: route.query.providerId as string,
+      artifacts: settingsStore.artifactsEffectEnabled ? 1 : 0
     })
     chatStore.setActiveThread(threadId)
   }
 })
 
+// 监听路由变化，创建新线程
 watch(
   () => route.query,
   async () => {
     if (route.query.modelId && route.query.providerId) {
       const threadId = await chatStore.createThread('新会话', {
         modelId: route.query.modelId as string,
-        providerId: route.query.providerId as string
+        providerId: route.query.providerId as string,
+        artifacts: settingsStore.artifactsEffectEnabled ? 1 : 0
       })
       chatStore.setActiveThread(threadId)
     }
