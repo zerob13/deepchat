@@ -394,6 +394,10 @@ export interface IDevicePresenter {
   getMemoryUsage(): Promise<MemoryInfo>
   getDiskSpace(): Promise<DiskInfo>
   resetData(): Promise<void>
+
+  // 目录选择和应用重启
+  selectDirectory(): Promise<{ canceled: boolean; filePaths: string[] }>
+  restartApp(): Promise<void>
 }
 
 export type DeviceInfo = {
@@ -525,9 +529,6 @@ export interface ISyncPresenter {
   importFromSync(): Promise<{ success: boolean; message: string }>
   checkSyncFolder(): Promise<{ exists: boolean; path: string }>
   openSyncFolder(): Promise<void>
-
-  // 应用重启
-  restartApp(): Promise<void>
 
   // 初始化和销毁
   init(): void

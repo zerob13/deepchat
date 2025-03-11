@@ -53,6 +53,7 @@ export class Presenter implements IPresenter {
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }
+
   setupEventBus() {
     // 窗口事件
     eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
