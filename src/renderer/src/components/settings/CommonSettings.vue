@@ -6,6 +6,7 @@
           <Icon icon="lucide:languages" class="w-4 h-4 text-muted-foreground" />
           <span class="text-sm font-medium">{{ t('settings.common.language') }}</span>
         </span>
+        <!-- 语言选择 -->
         <div class="flex-shrink-0 min-w-64 max-w-96">
           <Select v-model="selectedLanguage" class="">
             <SelectTrigger>
@@ -19,6 +20,7 @@
           </Select>
         </div>
       </div>
+      <!-- 搜索引擎选择 -->
       <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
           <Icon icon="lucide:search" class="w-4 h-4 text-muted-foreground" />
@@ -41,6 +43,7 @@
           </Select>
         </div>
       </div>
+      <!-- 搜索助手模型选择 -->
       <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
           <Icon icon="lucide:bot" class="w-4 h-4 text-muted-foreground" />
@@ -65,6 +68,7 @@
           </Popover>
         </div>
       </div>
+      <!-- 代理模式选择 -->
       <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
           <Icon icon="lucide:globe" class="w-4 h-4 text-muted-foreground" />
@@ -103,6 +107,21 @@
           {{ t('settings.common.invalidProxyUrl') }}
         </div>
       </div>
+      <!-- artifacts效果开关 -->
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:sparkles" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">Artifacts</span>
+        </span>
+        <div class="flex-shrink-0">
+          <Switch
+            id="artifacts-effect-switch"
+            :checked="artifactsEffectEnabled"
+            @update:checked="val => settingsStore.setArtifactsEffectEnabled(Boolean(val))"
+          />
+        </div>
+      </div>
+      <!-- 重置数据 -->
       <Dialog v-model:open="isDialogOpen">
         <DialogTrigger as-child>
           <div
@@ -162,6 +181,7 @@ import ModelSelect from '@/components/ModelSelect.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
 import { Input } from '@/components/ui/input'
 import type { RENDERER_MODEL_META } from '@shared/presenter'
+import { Switch } from '@/components/ui/switch'
 
 const devicePresenter = usePresenter('devicePresenter')
 const configPresenter = usePresenter('configPresenter')
@@ -210,6 +230,17 @@ const validateProxyUrl = () => {
     configPresenter.setCustomProxyUrl(customProxyUrl.value)
   }
 }
+
+const artifactsEffectEnabled = computed({
+  get: () => {
+    console.log('获取artifactsEffectEnabled值:', settingsStore.artifactsEffectEnabled)
+    return settingsStore.artifactsEffectEnabled
+  },
+  set: (value) => {
+    console.log('设置artifactsEffectEnabled值:', value)
+    settingsStore.setArtifactsEffectEnabled(value)
+  }
+})
 
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language

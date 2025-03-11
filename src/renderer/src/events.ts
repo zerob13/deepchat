@@ -11,7 +11,8 @@ export const CONFIG_EVENTS = {
   PROVIDER_CHANGED: 'config:provider-changed', // 替代 provider-setting-changed
   SYSTEM_CHANGED: 'config:system-changed',
   MODEL_LIST_CHANGED: 'config:model-list-changed', // 替代 provider-models-updated（ConfigPresenter）
-  MODEL_STATUS_CHANGED: 'config:model-status-changed' // 替代 model-status-changed（ConfigPresenter）
+  MODEL_STATUS_CHANGED: 'config:model-status-changed', // 替代 model-status-changed（ConfigPresenter）
+  ARTIFACTS_EFFECT_CHANGED: 'config:artifacts-effect-changed' // artifacts效果设置变更
 }
 
 // 会话相关事件
