@@ -49,7 +49,8 @@
     "settings": "設定",
     "settings-common": "一般設定",
     "settings-provider": "プロバイダー設定",
-    "settings-about": "について"
+    "settings-about": "について",
+    "settings-database": "データ設定"
   },
   "chat": {
     "input": {
@@ -113,6 +114,7 @@
     "cancel": "キャンセル",
     "confirm": "確認",
     "close": "閉じる",
+    "ok": "OK",
     "delete": {
       "title": "このチャットを削除してもよろしいですか？",
       "description": "この操作は元に戻せませんので、慎重に行ってください。",
@@ -145,6 +147,23 @@
       "customProxyUrl": "カスタムプロキシURL",
       "customProxyUrlPlaceholder": "例: http://127.0.0.1:7890",
       "invalidProxyUrl": "無効なプロキシURL、有効なhttp/https URLを入力してください"
+    },
+    "data": {
+      "title": "データ設定",
+      "syncEnable": "データ同期を有効にする",
+      "syncFolder": "同期フォルダ",
+      "openSyncFolder": "同期フォルダを開く",
+      "lastSyncTime": "最終同期時間",
+      "never": "未同期",
+      "startBackup": "今すぐバックアップ",
+      "backingUp": "バックアップ中...",
+      "importData": "データをインポート",
+      "importConfirmTitle": "データインポートの確認",
+      "importConfirmDescription": "インポートすると、チャット履歴や設定を含むすべての現在のデータが上書きされます。重要なデータをバックアップしたことを確認してください。インポート後はアプリケーションを再起動する必要があります。",
+      "importing": "インポート中...",
+      "confirmImport": "インポートを確認",
+      "importSuccessTitle": "インポート成功",
+      "importErrorTitle": "インポート失敗"
     },
     "model": {
       "title": "モデル設定",

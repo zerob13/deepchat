@@ -58,7 +58,8 @@
     "settings": "设置",
     "settings-common": "通用设置",
     "settings-provider": "服务商设置",
-    "settings-about": "关于"
+    "settings-about": "关于",
+    "settings-database": "数据设置"
   },
   "chat": {
     "input": {
@@ -123,6 +124,7 @@
     "cancel": "取消",
     "confirm": "确认",
     "close": "关闭",
+    "ok": "确定",
     "delete": {
       "title": "确定要删除这个会话吗？",
       "description": "此操作无法撤销，请谨慎操作。",
@@ -160,6 +162,23 @@
       "customProxyUrl": "自定义代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
       "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
+    },
+    "data": {
+      "title": "数据设置",
+      "syncEnable": "启用数据同步",
+      "syncFolder": "同步文件夹",
+      "openSyncFolder": "打开同步文件夹",
+      "lastSyncTime": "上次同步时间",
+      "never": "从未同步",
+      "startBackup": "立即备份",
+      "backingUp": "备份中...",
+      "importData": "导入数据",
+      "importConfirmTitle": "确认导入数据",
+      "importConfirmDescription": "导入将会覆盖当前所有数据，包括聊天记录和设置。请确保已备份重要数据。导入完成后需要重启应用程序。",
+      "importing": "导入中...",
+      "confirmImport": "确认导入",
+      "importSuccessTitle": "导入成功",
+      "importErrorTitle": "导入失败"
     },
     "model": {
       "title": "模型设置",
@@ -253,13 +272,10 @@
       },
       "pullModels": "拉取模型",
       "refreshModels": "刷新模型",
-      "modelsRunning": "模型正在运行",
+      "modelsRunning": "运行中的模型",
       "runningModels": "运行中的模型",
       "noRunningModels": "没有运行中的模型",
-      "deleteModel": "删除模型",
-      "deleteModelConfirm": "是否确认删除模型 \"{name}\"？此操作不可恢复。",
-      "noLocalModels": "没有本地模型",
-      "localModels": "本地模型"
+      "deleteModel": "删除模型"
     }
   },
   "welcome": {

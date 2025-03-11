@@ -14,7 +14,8 @@ export const CONFIG_EVENTS = {
   MODEL_STATUS_CHANGED: 'config:model-status-changed', // 替代 model-status-changed（ConfigPresenter）
   SETTING_CHANGED: 'config:setting-changed', // 替代 setting-changed（ConfigPresenter）
   PROXY_MODE_CHANGED: 'config:proxy-mode-changed',
-  CUSTOM_PROXY_URL_CHANGED: 'config:custom-proxy-url-changed'
+  CUSTOM_PROXY_URL_CHANGED: 'config:custom-proxy-url-changed',
+  SYNC_SETTINGS_CHANGED: 'config:sync-settings-changed'
 }
 
 // 会话相关事件
@@ -47,4 +48,14 @@ export const WINDOW_EVENTS = {
 // ollama 相关事件
 export const OLLAMA_EVENTS = {
   PULL_MODEL_PROGRESS: 'ollama:pull-model-progress'
+}
+
+// 同步相关事件
+export const SYNC_EVENTS = {
+  BACKUP_STARTED: 'sync:backup-started',
+  BACKUP_COMPLETED: 'sync:backup-completed',
+  BACKUP_ERROR: 'sync:backup-error',
+  IMPORT_STARTED: 'sync:import-started',
+  IMPORT_COMPLETED: 'sync:import-completed',
+  IMPORT_ERROR: 'sync:import-error'
 }
