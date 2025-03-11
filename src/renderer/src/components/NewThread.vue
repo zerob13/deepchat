@@ -92,6 +92,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import ChatInput from './ChatInput.vue'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
@@ -108,7 +109,7 @@ import ChatConfig from './ChatConfig.vue'
 import { usePresenter } from '@/composables/usePresenter'
 const configPresenter = usePresenter('configPresenter')
 const { t } = useI18n()
-
+const router = useRouter()
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const activeModel = ref({
@@ -127,7 +128,7 @@ const temperature = ref(0.6)
 const contextLength = ref(16384)
 const maxTokens = ref(4096)
 const systemPrompt = ref('')
-const artifacts = ref(0)
+const artifacts = ref(settingsStore.artifactsEffectEnabled ? 1 : 0)
 
 const name = computed(() => {
   return activeModel.value?.name ? activeModel.value.name.split('/').pop() : ''
