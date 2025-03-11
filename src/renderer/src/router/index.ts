@@ -52,6 +52,15 @@ const router = createRouter({
           }
         },
         {
+          path: 'database',
+          name: 'settings-database',
+          component: () => import('@/components/settings/DataSettings.vue'),
+          meta: {
+            titleKey: 'routes.settings-database',
+            icon: 'lucide:database'
+          }
+        },
+        {
           path: 'about',
           name: 'settings-about',
           component: () => import('@/components/settings/AboutUsSettings.vue'),
