@@ -136,7 +136,7 @@ onMounted(() => {
       () => height.value,
       () => {
         const lastMessage = props.messages[props.messages.length - 1]
-        if (lastMessage?.status === 'pending') {
+        if (lastMessage?.status === 'pending' && !aboveThreshold.value) {
           scrollToBottom(true)
         }
       }
