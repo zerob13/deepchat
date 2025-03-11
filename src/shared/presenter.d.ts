@@ -529,6 +529,9 @@ export interface ISyncPresenter {
   checkSyncFolder(): Promise<{ exists: boolean; path: string }>
   openSyncFolder(): Promise<void>
 
+  // 应用重启
+  restartApp(): Promise<void>
+
   // 初始化和销毁
   init(): void
   destroy(): void

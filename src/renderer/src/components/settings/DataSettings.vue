@@ -8,7 +8,7 @@
           <span class="text-sm font-medium">{{ t('settings.data.syncEnable') }}</span>
         </span>
         <div class="flex-shrink-0">
-          <Switch v-model="syncStore.syncEnabled" @update:model-value="syncStore.setSyncEnabled" />
+          <Switch v-model:checked="syncEnabled" />
         </div>
       </div>
 
@@ -20,11 +20,7 @@
             <span class="text-sm font-medium">{{ t('settings.data.syncFolder') }}</span>
           </span>
           <div class="flex-shrink-0 min-w-64 max-w-96 flex gap-2">
-            <Input
-              v-model="syncStore.syncFolderPath"
-              :disabled="!syncStore.syncEnabled"
-              @update:model-value="(value: any) => syncStore.setSyncFolderPath(value)"
-            />
+            <Input v-model="syncFolderPath" :disabled="!syncStore.syncEnabled" />
             <Button
               size="icon"
               variant="outline"
@@ -111,11 +107,11 @@
                 : t('settings.data.importErrorTitle')
             }}</AlertDialogTitle>
             <AlertDialogDescription>
-              {{ syncStore.importResult?.message }}
+              {{ syncStore.importResult?.message ? t(syncStore.importResult.message) : '' }}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction>
+            <AlertDialogAction @click="handleAlertAction">
               {{ t('dialog.ok') }}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -129,7 +125,7 @@
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import {
   Dialog,
   DialogContent,
@@ -157,6 +153,17 @@ const { t } = useI18n()
 const syncStore = useSyncStore()
 const isImportDialogOpen = ref(false)
 
+// 使用计算属性处理双向绑定
+const syncEnabled = computed({
+  get: () => syncStore.syncEnabled,
+  set: (value) => syncStore.setSyncEnabled(value)
+})
+
+const syncFolderPath = computed({
+  get: () => syncStore.syncFolderPath,
+  set: (value) => syncStore.setSyncFolderPath(value)
+})
+
 // 初始化
 onMounted(async () => {
   await syncStore.initialize()
@@ -171,5 +178,14 @@ const closeImportDialog = () => {
 const handleImport = async () => {
   await syncStore.importData()
   closeImportDialog()
+}
+
+// 处理警告对话框的确认操作
+const handleAlertAction = () => {
+  // 如果导入成功，则重启应用
+  if (syncStore.importResult?.success) {
+    syncStore.restartApp()
+  }
+  syncStore.clearImportResult()
 }
 </script>

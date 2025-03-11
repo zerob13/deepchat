@@ -5,13 +5,22 @@ import { ISyncPresenter, IConfigPresenter, ISQLitePresenter } from '@shared/pres
 import { eventBus } from '@/eventbus'
 import { SYNC_EVENTS } from '@/events'
 
+// 为配置文件定义接口
+interface AppSettings {
+  syncEnabled?: boolean
+  syncFolderPath?: string
+  lastSyncTime?: number
+  [key: string]: unknown
+}
+
 export class SyncPresenter implements ISyncPresenter {
   private configPresenter: IConfigPresenter
   private sqlitePresenter: ISQLitePresenter
   private isBackingUp: boolean = false
   private backupTimer: NodeJS.Timeout | null = null
   private readonly BACKUP_DELAY = 60 * 1000 // 60秒无变更后触发备份
-  private readonly CONFIG_STORE_PATH = path.join(app.getPath('userData'), 'config.json')
+  private readonly APP_SETTINGS_PATH = path.join(app.getPath('userData'), 'app-settings.json')
+  private readonly PROVIDER_MODELS_DIR_PATH = path.join(app.getPath('userData'), 'provider_models')
   private readonly DB_PATH = path.join(app.getPath('userData'), 'app_db', 'chat.db')
 
   constructor(configPresenter: IConfigPresenter, sqlitePresenter: ISQLitePresenter) {
@@ -21,9 +30,6 @@ export class SyncPresenter implements ISyncPresenter {
   }
 
   public init(): void {
-    // 检查启动时是否需要导入数据
-    this.checkStartupImport()
-
     // 监听数据变更事件，触发备份计划
     this.listenForChanges()
   }
@@ -79,14 +85,14 @@ export class SyncPresenter implements ISyncPresenter {
 
     // 检查同步功能是否启用
     if (!this.configPresenter.getSyncEnabled()) {
-      throw new Error('同步功能未启用')
+      throw new Error('sync.error.notEnabled')
     }
 
     try {
       await this.performBackup()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('备份失败:', error)
-      eventBus.emit(SYNC_EVENTS.BACKUP_ERROR, error.message || '备份过程发生未知错误')
+      eventBus.emit(SYNC_EVENTS.BACKUP_ERROR, (error as Error).message || 'sync.error.unknown')
       throw error
     }
   }
@@ -103,21 +109,30 @@ export class SyncPresenter implements ISyncPresenter {
   }
 
   /**
+   * 重启应用程序
+   */
+  public async restartApp(): Promise<void> {
+    app.relaunch()
+    app.exit()
+  }
+
+  /**
    * 从同步文件夹导入数据
    */
   public async importFromSync(): Promise<{ success: boolean; message: string }> {
     // 检查同步文件夹是否存在
     const { exists, path: syncFolderPath } = await this.checkSyncFolder()
     if (!exists) {
-      return { success: false, message: '同步文件夹不存在' }
+      return { success: false, message: 'sync.error.folderNotExists' }
     }
 
     // 检查是否有备份文件
     const dbBackupPath = path.join(syncFolderPath, 'chat.db')
-    const configBackupPath = path.join(syncFolderPath, 'config.json')
+    const appSettingsBackupPath = path.join(syncFolderPath, 'app-settings.json')
+    const providerModelsBackupPath = path.join(syncFolderPath, 'provider_models')
 
-    if (!fs.existsSync(dbBackupPath) || !fs.existsSync(configBackupPath)) {
-      return { success: false, message: '同步文件夹中没有有效的备份文件' }
+    if (!fs.existsSync(dbBackupPath) || !fs.existsSync(appSettingsBackupPath)) {
+      return { success: false, message: 'sync.error.noValidBackup' }
     }
 
     // 发出导入开始事件
@@ -129,25 +144,69 @@ export class SyncPresenter implements ISyncPresenter {
 
       // 备份当前文件
       const tempDbPath = path.join(app.getPath('temp'), `chat_${Date.now()}.db`)
-      const tempConfigPath = path.join(app.getPath('temp'), `config_${Date.now()}.json`)
+      const tempAppSettingsPath = path.join(app.getPath('temp'), `app_settings_${Date.now()}.json`)
+      const tempProviderModelsPath = path.join(app.getPath('temp'), `provider_models_${Date.now()}`)
 
       // 创建临时备份
       if (fs.existsSync(this.DB_PATH)) {
         fs.copyFileSync(this.DB_PATH, tempDbPath)
       }
 
-      if (fs.existsSync(this.CONFIG_STORE_PATH)) {
-        fs.copyFileSync(this.CONFIG_STORE_PATH, tempConfigPath)
+      if (fs.existsSync(this.APP_SETTINGS_PATH)) {
+        fs.copyFileSync(this.APP_SETTINGS_PATH, tempAppSettingsPath)
+      }
+
+      // 如果 provider_models 目录存在，备份整个目录
+      if (fs.existsSync(this.PROVIDER_MODELS_DIR_PATH)) {
+        this.copyDirectory(this.PROVIDER_MODELS_DIR_PATH, tempProviderModelsPath)
       }
 
       try {
-        // 复制文件到应用目录
+        // 复制数据库文件到应用目录
         fs.copyFileSync(dbBackupPath, this.DB_PATH)
-        fs.copyFileSync(configBackupPath, this.CONFIG_STORE_PATH)
+
+        // 合并 app-settings.json 文件 (排除同步相关的设置)
+        if (fs.existsSync(appSettingsBackupPath)) {
+          // 读取当前的 app-settings
+          let currentSettings: AppSettings = {}
+          if (fs.existsSync(this.APP_SETTINGS_PATH)) {
+            const currentContent = fs.readFileSync(this.APP_SETTINGS_PATH, 'utf-8')
+            currentSettings = JSON.parse(currentContent)
+          }
+
+          // 读取备份的 app-settings
+          const backupContent = fs.readFileSync(appSettingsBackupPath, 'utf-8')
+          const backupSettings = JSON.parse(backupContent)
+
+          // 保留当前的同步相关设置
+          const syncSettings: AppSettings = {
+            syncEnabled: currentSettings.syncEnabled,
+            syncFolderPath: currentSettings.syncFolderPath,
+            lastSyncTime: currentSettings.lastSyncTime
+          }
+
+          // 合并设置: 使用备份的设置，但保留同步相关设置
+          const mergedSettings = { ...backupSettings, ...syncSettings }
+
+          // 保存合并后的设置
+          fs.writeFileSync(this.APP_SETTINGS_PATH, JSON.stringify(mergedSettings, null, 2), 'utf-8')
+        }
+
+        // 如果存在 provider_models 备份，复制整个目录（直接覆盖）
+        if (fs.existsSync(providerModelsBackupPath)) {
+          // 清空当前 provider_models 目录
+          if (fs.existsSync(this.PROVIDER_MODELS_DIR_PATH)) {
+            this.removeDirectory(this.PROVIDER_MODELS_DIR_PATH)
+          }
+          // 确保目标目录存在
+          fs.mkdirSync(this.PROVIDER_MODELS_DIR_PATH, { recursive: true })
+          // 复制备份目录到应用目录
+          this.copyDirectory(providerModelsBackupPath, this.PROVIDER_MODELS_DIR_PATH)
+        }
 
         eventBus.emit(SYNC_EVENTS.IMPORT_COMPLETED)
-        return { success: true, message: '数据导入成功，请重启应用以应用更改' }
-      } catch (error: any) {
+        return { success: true, message: 'sync.success.importComplete' }
+      } catch (error: unknown) {
         console.error('导入文件失败，恢复备份:', error)
 
         // 恢复备份
@@ -155,26 +214,37 @@ export class SyncPresenter implements ISyncPresenter {
           fs.copyFileSync(tempDbPath, this.DB_PATH)
         }
 
-        if (fs.existsSync(tempConfigPath)) {
-          fs.copyFileSync(tempConfigPath, this.CONFIG_STORE_PATH)
+        if (fs.existsSync(tempAppSettingsPath)) {
+          fs.copyFileSync(tempAppSettingsPath, this.APP_SETTINGS_PATH)
         }
 
-        eventBus.emit(SYNC_EVENTS.IMPORT_ERROR, error.message || '导入过程发生未知错误')
-        return { success: false, message: '导入失败，已恢复原始数据' }
+        if (fs.existsSync(tempProviderModelsPath)) {
+          if (fs.existsSync(this.PROVIDER_MODELS_DIR_PATH)) {
+            this.removeDirectory(this.PROVIDER_MODELS_DIR_PATH)
+          }
+          this.copyDirectory(tempProviderModelsPath, this.PROVIDER_MODELS_DIR_PATH)
+        }
+
+        eventBus.emit(SYNC_EVENTS.IMPORT_ERROR, (error as Error).message || 'sync.error.unknown')
+        return { success: false, message: 'sync.error.importFailed' }
       } finally {
         // 清理临时文件
         if (fs.existsSync(tempDbPath)) {
           fs.unlinkSync(tempDbPath)
         }
 
-        if (fs.existsSync(tempConfigPath)) {
-          fs.unlinkSync(tempConfigPath)
+        if (fs.existsSync(tempAppSettingsPath)) {
+          fs.unlinkSync(tempAppSettingsPath)
+        }
+
+        if (fs.existsSync(tempProviderModelsPath)) {
+          this.removeDirectory(tempProviderModelsPath)
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('导入过程出错:', error)
-      eventBus.emit(SYNC_EVENTS.IMPORT_ERROR, error.message || '导入过程发生未知错误')
-      return { success: false, message: '导入过程出错: ' + (error.message || '未知错误') }
+      eventBus.emit(SYNC_EVENTS.IMPORT_ERROR, (error as Error).message || 'sync.error.unknown')
+      return { success: false, message: 'sync.error.importProcess' }
     }
   }
 
@@ -196,23 +266,67 @@ export class SyncPresenter implements ISyncPresenter {
 
       // 生成临时备份文件路径（防止导入过程中的文件冲突）
       const tempDbBackupPath = path.join(syncFolderPath, `chat_${Date.now()}.db.tmp`)
-      const tempConfigBackupPath = path.join(syncFolderPath, `config_${Date.now()}.json.tmp`)
+      const tempAppSettingsBackupPath = path.join(
+        syncFolderPath,
+        `app_settings_${Date.now()}.json.tmp`
+      )
+      const tempProviderModelsBackupPath = path.join(
+        syncFolderPath,
+        `provider_models_${Date.now()}.tmp`
+      )
       const finalDbBackupPath = path.join(syncFolderPath, 'chat.db')
-      const finalConfigBackupPath = path.join(syncFolderPath, 'config.json')
+      const finalAppSettingsBackupPath = path.join(syncFolderPath, 'app-settings.json')
+      const finalProviderModelsBackupPath = path.join(syncFolderPath, 'provider_models')
+
+      // 确保数据库文件存在
+      if (!fs.existsSync(this.DB_PATH)) {
+        console.warn('数据库文件不存在:', this.DB_PATH)
+        throw new Error('sync.error.dbNotExists')
+      }
+
+      // 确保配置文件存在
+      if (!fs.existsSync(this.APP_SETTINGS_PATH)) {
+        console.warn('配置文件不存在:', this.APP_SETTINGS_PATH)
+        throw new Error('sync.error.configNotExists')
+      }
 
       // 备份数据库
       fs.copyFileSync(this.DB_PATH, tempDbBackupPath)
 
-      // 备份配置文件（过滤掉syncFolderPath设置）
-      if (fs.existsSync(this.CONFIG_STORE_PATH)) {
-        const configContent = fs.readFileSync(this.CONFIG_STORE_PATH, 'utf-8')
-        const config = JSON.parse(configContent)
+      // 备份配置文件（过滤掉同步相关的设置）
+      if (fs.existsSync(this.APP_SETTINGS_PATH)) {
+        const appSettingsContent = fs.readFileSync(this.APP_SETTINGS_PATH, 'utf-8')
+        const appSettings = JSON.parse(appSettingsContent)
 
-        // 创建配置副本，不包含同步文件夹路径
-        const filteredConfig = { ...config }
-        if (filteredConfig.syncFolderPath) delete filteredConfig.syncFolderPath
+        // 创建配置副本，不包含同步相关的设置
+        const filteredSettings = { ...appSettings }
+        // 删除同步相关的设置
+        delete filteredSettings.syncEnabled
+        delete filteredSettings.syncFolderPath
+        delete filteredSettings.lastSyncTime
 
-        fs.writeFileSync(tempConfigBackupPath, JSON.stringify(filteredConfig, null, 2), 'utf-8')
+        fs.writeFileSync(
+          tempAppSettingsBackupPath,
+          JSON.stringify(filteredSettings, null, 2),
+          'utf-8'
+        )
+      }
+
+      // 备份 provider_models 目录
+      if (fs.existsSync(this.PROVIDER_MODELS_DIR_PATH)) {
+        // 确保临时目录存在
+        fs.mkdirSync(tempProviderModelsBackupPath, { recursive: true })
+        // 复制整个 provider_models 目录
+        this.copyDirectory(this.PROVIDER_MODELS_DIR_PATH, tempProviderModelsBackupPath)
+      }
+
+      // 检查临时文件是否成功创建
+      if (!fs.existsSync(tempDbBackupPath)) {
+        throw new Error('sync.error.tempDbFailed')
+      }
+
+      if (!fs.existsSync(tempAppSettingsBackupPath)) {
+        throw new Error('sync.error.tempConfigFailed')
       }
 
       // 重命名临时文件为最终文件
@@ -220,12 +334,23 @@ export class SyncPresenter implements ISyncPresenter {
         fs.unlinkSync(finalDbBackupPath)
       }
 
-      if (fs.existsSync(finalConfigBackupPath)) {
-        fs.unlinkSync(finalConfigBackupPath)
+      if (fs.existsSync(finalAppSettingsBackupPath)) {
+        fs.unlinkSync(finalAppSettingsBackupPath)
       }
 
+      // 如果存在之前的 provider_models 备份目录，删除它
+      if (fs.existsSync(finalProviderModelsBackupPath)) {
+        this.removeDirectory(finalProviderModelsBackupPath)
+      }
+
+      // 确保临时文件存在后再执行重命名
       fs.renameSync(tempDbBackupPath, finalDbBackupPath)
-      fs.renameSync(tempConfigBackupPath, finalConfigBackupPath)
+      fs.renameSync(tempAppSettingsBackupPath, finalAppSettingsBackupPath)
+
+      // 重命名 provider_models 临时目录
+      if (fs.existsSync(tempProviderModelsBackupPath)) {
+        fs.renameSync(tempProviderModelsBackupPath, finalProviderModelsBackupPath)
+      }
 
       // 更新最后备份时间
       const now = Date.now()
@@ -233,10 +358,9 @@ export class SyncPresenter implements ISyncPresenter {
 
       // 发送备份完成事件
       eventBus.emit(SYNC_EVENTS.BACKUP_COMPLETED, now)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('备份过程出错:', error)
-      eventBus.emit(SYNC_EVENTS.BACKUP_ERROR, error.message || '备份过程发生未知错误')
+      eventBus.emit(SYNC_EVENTS.BACKUP_ERROR, (error as Error).message || 'sync.error.unknown')
       throw error
     } finally {
       // 标记备份结束
@@ -284,11 +408,49 @@ export class SyncPresenter implements ISyncPresenter {
   }
 
   /**
-   * 检查程序启动时是否需要导入数据
+   * 辅助方法：复制目录
    */
-  private async checkStartupImport(): Promise<void> {
-    // 在这里可以实现自动导入逻辑
-    // 例如检查同步文件夹中是否有比当前更新的备份
-    // 这里我们不实现自动导入，因为需求指出导入应该是手动操作
+  private copyDirectory(source: string, target: string): void {
+    // 确保目标目录存在
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(target, { recursive: true })
+    }
+
+    // 读取源目录
+    const entries = fs.readdirSync(source, { withFileTypes: true })
+
+    // 复制每个文件和子目录
+    for (const entry of entries) {
+      const srcPath = path.join(source, entry.name)
+      const destPath = path.join(target, entry.name)
+
+      if (entry.isDirectory()) {
+        // 递归复制子目录
+        this.copyDirectory(srcPath, destPath)
+      } else {
+        // 复制文件
+        fs.copyFileSync(srcPath, destPath)
+      }
+    }
+  }
+
+  /**
+   * 辅助方法：删除目录及其内容
+   */
+  private removeDirectory(dirPath: string): void {
+    if (fs.existsSync(dirPath)) {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name)
+        if (entry.isDirectory()) {
+          this.removeDirectory(fullPath)
+        } else {
+          fs.unlinkSync(fullPath)
+        }
+      }
+
+      fs.rmdirSync(dirPath)
+    }
   }
 }
