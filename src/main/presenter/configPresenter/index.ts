@@ -452,6 +452,7 @@ export class ConfigPresenter implements IConfigPresenter {
 
   // 设置同步功能状态
   setSyncEnabled(enabled: boolean): void {
+    console.log('setSyncEnabled', enabled)
     this.setSetting('syncEnabled', enabled)
     eventBus.emit(CONFIG_EVENTS.SYNC_SETTINGS_CHANGED, { enabled })
   }

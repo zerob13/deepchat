@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
+import { SYNC_EVENTS } from '@/events'
 
 export const useSyncStore = defineStore('sync', () => {
   // 状态
@@ -35,29 +36,29 @@ export const useSyncStore = defineStore('sync', () => {
     isBackingUp.value = status.isBackingUp
 
     // 监听备份状态变化事件
-    window.electron.ipcRenderer.on('sync:backup-started', () => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.BACKUP_STARTED, () => {
       isBackingUp.value = true
     })
 
-    window.electron.ipcRenderer.on('sync:backup-completed', (event, time) => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.BACKUP_COMPLETED, (event, time) => {
       isBackingUp.value = false
       lastSyncTime.value = time
     })
 
-    window.electron.ipcRenderer.on('sync:backup-error', () => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.BACKUP_ERROR, () => {
       isBackingUp.value = false
     })
 
     // 导入事件
-    window.electron.ipcRenderer.on('sync:import-started', () => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.IMPORT_STARTED, () => {
       isImporting.value = true
     })
 
-    window.electron.ipcRenderer.on('sync:import-completed', () => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.IMPORT_COMPLETED, () => {
       isImporting.value = false
     })
 
-    window.electron.ipcRenderer.on('sync:import-error', () => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.IMPORT_ERROR, () => {
       isImporting.value = false
     })
   }
@@ -109,6 +110,11 @@ export const useSyncStore = defineStore('sync', () => {
     isImporting.value = false
   }
 
+  // 重启应用
+  const restartApp = async () => {
+    await syncPresenter.restartApp()
+  }
+
   // 清除导入结果
   const clearImportResult = () => {
     importResult.value = null
@@ -132,6 +138,7 @@ export const useSyncStore = defineStore('sync', () => {
     openSyncFolder,
     startBackup,
     importData,
+    restartApp,
     clearImportResult
   }
 })
