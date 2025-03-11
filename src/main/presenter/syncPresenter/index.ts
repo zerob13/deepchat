@@ -109,14 +109,6 @@ export class SyncPresenter implements ISyncPresenter {
   }
 
   /**
-   * 重启应用程序
-   */
-  public async restartApp(): Promise<void> {
-    app.relaunch()
-    app.exit()
-  }
-
-  /**
    * 从同步文件夹导入数据
    */
   public async importFromSync(): Promise<{ success: boolean; message: string }> {

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
 import { SYNC_EVENTS } from '@/events'
 
@@ -15,14 +15,7 @@ export const useSyncStore = defineStore('sync', () => {
   // 获取 presenter 实例
   const configPresenter = usePresenter('configPresenter')
   const syncPresenter = usePresenter('syncPresenter')
-
-  // 计算属性
-  const lastSyncTimeFormatted = computed(() => {
-    if (!lastSyncTime.value) {
-      return 'settings.data.never'
-    }
-    return new Date(lastSyncTime.value).toLocaleString()
-  })
+  const devicePresenter = usePresenter('devicePresenter')
 
   // 初始化函数
   const initialize = async () => {
@@ -40,7 +33,7 @@ export const useSyncStore = defineStore('sync', () => {
       isBackingUp.value = true
     })
 
-    window.electron.ipcRenderer.on(SYNC_EVENTS.BACKUP_COMPLETED, (event, time) => {
+    window.electron.ipcRenderer.on(SYNC_EVENTS.BACKUP_COMPLETED, (_event, time) => {
       isBackingUp.value = false
       lastSyncTime.value = time
     })
@@ -77,7 +70,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   // 选择同步文件夹
   const selectSyncFolder = async () => {
-    const result = await window.electron.ipcRenderer.invoke('dialog:select-directory')
+    const result = await devicePresenter.selectDirectory()
     if (result && !result.canceled && result.filePaths.length > 0) {
       await setSyncFolderPath(result.filePaths[0])
     }
@@ -112,7 +105,7 @@ export const useSyncStore = defineStore('sync', () => {
 
   // 重启应用
   const restartApp = async () => {
-    await syncPresenter.restartApp()
+    await devicePresenter.restartApp()
   }
 
   // 清除导入结果
@@ -125,7 +118,6 @@ export const useSyncStore = defineStore('sync', () => {
     syncEnabled,
     syncFolderPath,
     lastSyncTime,
-    lastSyncTimeFormatted,
     isBackingUp,
     isImporting,
     importResult,

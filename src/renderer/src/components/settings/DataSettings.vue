@@ -20,34 +20,36 @@
             <span class="text-sm font-medium">{{ t('settings.data.syncFolder') }}</span>
           </span>
           <div class="flex-shrink-0 min-w-64 max-w-96 flex gap-2">
-            <Input v-model="syncFolderPath" :disabled="!syncStore.syncEnabled" />
+            <Input
+              v-model="syncFolderPath"
+              :disabled="!syncStore.syncEnabled"
+              class="cursor-pointer"
+              @click="syncStore.selectSyncFolder"
+            />
             <Button
               size="icon"
               variant="outline"
-              @click="syncStore.selectSyncFolder"
+              @click="syncStore.openSyncFolder"
               :disabled="!syncStore.syncEnabled"
+              title="打开同步文件夹"
             >
-              <Icon icon="lucide:folder-open" class="w-4 h-4" />
+              <Icon icon="lucide:external-link" class="w-4 h-4" />
             </Button>
           </div>
         </div>
-      </div>
-
-      <!-- 打开同步文件夹 -->
-      <div
-        class="p-2 flex flex-row items-center gap-2 hover:bg-accent rounded-lg cursor-pointer"
-        @click="syncStore.openSyncFolder"
-        :class="{ 'opacity-50 cursor-not-allowed': !syncStore.syncEnabled }"
-      >
-        <Icon icon="lucide:external-link" class="w-4 h-4 text-muted-foreground" />
-        <span class="text-sm font-medium">{{ t('settings.data.openSyncFolder') }}</span>
       </div>
 
       <!-- 上次同步时间 -->
       <div class="p-2 flex flex-row items-center gap-2">
         <Icon icon="lucide:clock" class="w-4 h-4 text-muted-foreground" />
         <span class="text-sm font-medium">{{ t('settings.data.lastSyncTime') }}:</span>
-        <span class="text-sm text-muted-foreground">{{ t(syncStore.lastSyncTimeFormatted) }}</span>
+        <span class="text-sm text-muted-foreground">
+          {{
+            !syncStore.lastSyncTime
+              ? t('settings.data.never')
+              : new Date(syncStore.lastSyncTime).toLocaleString()
+          }}
+        </span>
       </div>
 
       <!-- 手动备份 -->
@@ -98,7 +100,7 @@
         </DialogContent>
       </Dialog>
 
-      <AlertDialog :open="!!syncStore.importResult" @update:open="syncStore.clearImportResult">
+      <AlertDialog :open="!!syncStore.importResult">
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{{
@@ -183,6 +185,7 @@ const handleImport = async () => {
 // 处理警告对话框的确认操作
 const handleAlertAction = () => {
   // 如果导入成功，则重启应用
+  console.log(syncStore.importResult)
   if (syncStore.importResult?.success) {
     syncStore.restartApp()
   }
