@@ -42,7 +42,7 @@ export class Presenter implements IPresenter {
     const dbDir = path.join(app.getPath('userData'), 'app_db')
     const dbPath = path.join(dbDir, 'chat.db')
     this.sqlitePresenter = new SQLitePresenter(dbPath)
-    this.threadPresenter = new ThreadPresenter(this.sqlitePresenter, this.llmproviderPresenter)
+    this.threadPresenter = new ThreadPresenter(this.sqlitePresenter, this.llmproviderPresenter, this.configPresenter)
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
