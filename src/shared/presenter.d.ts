@@ -108,6 +108,7 @@ export interface IPresenter {
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
   filePresenter: IFilePresenter
+  mcpPresenter: IMCPPresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -505,4 +506,50 @@ export interface ProgressResponse {
   digest?: string
   total?: number
   completed?: number
+}
+
+// MCP相关类型定义
+export interface MCPServerConfig {
+  command: string
+  args: string[]
+  env: Record<string, string>
+  descriptions: string
+  icons: string
+  autoApprove: string[]
+}
+
+export interface MCPConfig {
+  mcpServers: Record<string, MCPServerConfig>
+  defaultServer: string
+}
+
+export interface MCPToolDefinition {
+  type: string
+  function: {
+    name: string
+    description: string
+    parameters: {
+      properties: Record<string, any>
+    }
+  }
+}
+
+export interface IMCPPresenter {
+  getMcpConfig(): Promise<MCPConfig>
+  addMcpServer(serverName: string, config: MCPServerConfig): Promise<void>
+  updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void>
+  removeMcpServer(serverName: string): Promise<void>
+  setDefaultServer(serverName: string): Promise<void>
+  isServerRunning(serverName: string): Promise<boolean>
+  startServer(serverName: string): Promise<void>
+  stopServer(serverName: string): Promise<void>
+  getAllToolDefinitions(): Promise<MCPToolDefinition[]>
+  callTool(request: {
+    id: string
+    type: string
+    function: {
+      name: string
+      arguments: string
+    }
+  }): Promise<{ content: string }>
 }

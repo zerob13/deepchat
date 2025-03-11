@@ -12,6 +12,7 @@ import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
 import { FilePresenter } from './filePresenter/FilePresenter'
+import { McpPresenter } from './mcpPresenter'
 import {
   CONFIG_EVENTS,
   CONVERSATION_EVENTS,
@@ -31,6 +32,7 @@ export class Presenter implements IPresenter {
   upgradePresenter: UpgradePresenter
   shortcutPresenter: ShortcutPresenter
   filePresenter: FilePresenter
+  mcpPresenter: McpPresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -46,6 +48,7 @@ export class Presenter implements IPresenter {
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
+    this.mcpPresenter = new McpPresenter()
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }

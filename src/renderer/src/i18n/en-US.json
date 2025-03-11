@@ -49,6 +49,7 @@
     "settings": "Settings",
     "settings-common": "Common Settings",
     "settings-provider": "Provider Settings",
+    "settings-mcp": "MCP Settings",
     "settings-about": "About"
   },
   "chat": {
@@ -251,6 +252,95 @@
       "deleteModelConfirm": "Are you sure you want to delete model \"{name}\"? This action cannot be undone.",
       "noLocalModels": "No Local Models",
       "localModels": "Local Models"
+    },
+    "mcp": {
+      "title": "MCP Settings",
+      "description": "Manage and configure MCP (Model Control Protocol) servers and tools",
+      "tabs": {
+        "servers": "Servers",
+        "tools": "Tools"
+      },
+      "serverList": "Server List",
+      "addServer": "Add Server",
+      "running": "Running",
+      "stopped": "Stopped",
+      "stopServer": "Stop Server",
+      "startServer": "Start Server",
+      "noServersFound": "No Servers Found",
+      "addServerDialog": {
+        "title": "Add Server",
+        "description": "Configure a new MCP server"
+      },
+      "editServerDialog": {
+        "title": "Edit Server",
+        "description": "Edit MCP server configuration"
+      },
+      "serverForm": {
+        "name": "Server Name",
+        "namePlaceholder": "Enter server name",
+        "nameRequired": "Server name is required",
+        "command": "Command",
+        "commandPlaceholder": "Enter command",
+        "commandRequired": "Command is required",
+        "args": "Arguments",
+        "argsPlaceholder": "Enter arguments separated by spaces",
+        "argsRequired": "Arguments are required",
+        "env": "Environment Variables",
+        "envPlaceholder": "Enter environment variables in JSON format",
+        "envInvalid": "Environment variables must be valid JSON",
+        "description": "Description",
+        "descriptionPlaceholder": "Enter server description",
+        "descriptions": "Description",
+        "descriptionsPlaceholder": "Enter server description",
+        "icon": "Icon",
+        "iconPlaceholder": "Enter icon",
+        "icons": "Icon",
+        "iconsPlaceholder": "Enter icon",
+        "autoApprove": "Auto Approve",
+        "autoApproveAll": "All",
+        "autoApproveRead": "Read",
+        "autoApproveWrite": "Write",
+        "autoApproveHelp": "Select operation types to auto-approve without user confirmation",
+        "submit": "Submit",
+        "add": "Add",
+        "update": "Update",
+        "cancel": "Cancel"
+      },
+      "deleteServer": "Delete Server",
+      "editServer": "Edit Server",
+      "setDefault": "Set as Default",
+      "isDefault": "Default Server",
+      "default": "Default",
+      "setAsDefault": "Set as Default",
+      "removeServer": "Remove Server",
+      "confirmRemoveServer": "Are you sure you want to delete server {name}? This action cannot be undone.",
+      "confirmDelete": {
+        "title": "Confirm Delete",
+        "description": "Are you sure you want to delete server {name}? This action cannot be undone.",
+        "confirm": "Delete",
+        "cancel": "Cancel"
+      },
+      "tools": {
+        "searchPlaceholder": "Search tools...",
+        "noToolsAvailable": "No tools available",
+        "selectTool": "Please select a tool from the left",
+        "path": "Path",
+        "pathPlaceholder": "Enter file path",
+        "searchPattern": "Search Pattern",
+        "searchPatternPlaceholder": "Enter regular expression",
+        "filePattern": "File Pattern",
+        "filePatternPlaceholder": "Enter file pattern, e.g.: *.md",
+        "executeButton": "Execute",
+        "resultTitle": "Execution Result",
+        "runningTool": "Running..."
+      }
+    },
+    "about": {
+      "title": "About Us",
+      "version": "Version",
+      "checkUpdate": "Check Update",
+      "checking": "Checking...",
+      "latestVersion": "Latest Version"
     }
   },
   "welcome": {

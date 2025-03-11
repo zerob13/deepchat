@@ -52,6 +52,15 @@ const router = createRouter({
           }
         },
         {
+          path: 'mcp',
+          name: 'settings-mcp',
+          component: () => import('@/components/settings/McpSettings.vue'),
+          meta: {
+            titleKey: 'routes.settings-mcp',
+            icon: 'lucide:server'
+          }
+        },
+        {
           path: 'about',
           name: 'settings-about',
           component: () => import('@/components/settings/AboutUsSettings.vue'),
