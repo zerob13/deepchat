@@ -24,6 +24,7 @@ interface IAppSettings {
   appVersion?: string // 用于版本检查和数据迁移
   proxyMode?: string // 代理模式：system, none, custom
   customProxyUrl?: string // 自定义代理地址
+  artifactsEffectEnabled?: boolean // artifacts动画效果是否启用
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -440,5 +441,23 @@ export class ConfigPresenter implements IConfigPresenter {
   setCustomProxyUrl(url: string): void {
     this.setSetting('customProxyUrl', url)
     eventBus.emit(CONFIG_EVENTS.CUSTOM_PROXY_URL_CHANGED, url)
+  }
+
+  getArtifactsEffectEnabled(): boolean {
+    const value = this.getSetting<boolean>('artifactsEffectEnabled')
+    console.log('getArtifactsEffectEnabled 原始值:', value, '类型:', typeof value)
+    // 只有当值是undefined或null时才使用默认值true
+    // 注意：false是一个有效的boolean值，应该被保留而不是替换为默认值
+    return value === undefined || value === null ? true : value
+  }
+
+  setArtifactsEffectEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setArtifactsEffectEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('artifactsEffectEnabled', boolValue)
+    eventBus.emit(CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED, boolValue)
   }
 }

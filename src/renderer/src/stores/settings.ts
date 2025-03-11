@@ -32,6 +32,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const isChecking = ref(false)
   const searchEngines = ref<SearchEngineTemplate[]>([])
   const activeSearchEngine = ref<SearchEngineTemplate | null>(null)
+  const artifactsEffectEnabled = ref<boolean>(false) // 默认值与配置文件一致
 
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])
@@ -176,6 +177,9 @@ export const useSettingsStore = defineStore('settings', () => {
     // 设置语言
     locale.value = await configP.getLanguage()
 
+    // 获取artifacts效果开关状态
+    artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
+
     // 获取全部模型
     await refreshAllModels()
 
@@ -184,6 +188,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 设置 Ollama 事件监听器
     setupOllamaEventListeners()
+
+    // 设置 artifacts 效果事件监听器
+    setupArtifactsEffectListener()
 
     // 单独刷新一次 Ollama 模型，确保即使没有启用 Ollama provider 也能获取模型列表
     if (providers.value.some((p) => p.id === 'ollama')) {
@@ -423,6 +430,9 @@ export const useSettingsStore = defineStore('settings', () => {
         updateLocalModelStatus(msg.providerId, msg.modelId, msg.enabled)
       }
     )
+
+    // 在setupProviderListener方法或其他初始化方法附近添加对artifacts效果变更的监听
+    setupArtifactsEffectListener()
   }
 
   // 更新本地模型状态，不触发后端请求
@@ -1091,6 +1101,26 @@ export const useSettingsStore = defineStore('settings', () => {
     removeOllamaEventListeners()
   }
 
+  // 添加设置artifactsEffectEnabled的方法
+  const setArtifactsEffectEnabled = async (enabled: boolean) => {
+    // 更新本地状态
+    artifactsEffectEnabled.value = Boolean(enabled)
+
+    // 调用ConfigPresenter设置值，确保等待Promise完成
+    await configP.setArtifactsEffectEnabled(enabled)
+  }
+
+  // 在setupProviderListener方法或其他初始化方法附近添加对artifacts效果变更的监听
+  const setupArtifactsEffectListener = () => {
+    // 监听artifacts效果变更事件
+    window.electron.ipcRenderer.on(
+      CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED,
+      (_event, enabled: boolean) => {
+        artifactsEffectEnabled.value = enabled
+      }
+    )
+  }
+
   return {
     providers,
     theme,
@@ -1144,6 +1174,9 @@ export const useSettingsStore = defineStore('settings', () => {
     isOllamaModelLocal,
     getOllamaPullingModels,
     removeOllamaEventListeners,
-    cleanup
+    cleanup,
+    artifactsEffectEnabled,
+    setArtifactsEffectEnabled,
+    setupArtifactsEffectListener
   }
 })

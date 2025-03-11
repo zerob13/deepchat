@@ -14,7 +14,8 @@ export const CONFIG_EVENTS = {
   MODEL_STATUS_CHANGED: 'config:model-status-changed', // 替代 model-status-changed（ConfigPresenter）
   SETTING_CHANGED: 'config:setting-changed', // 替代 setting-changed（ConfigPresenter）
   PROXY_MODE_CHANGED: 'config:proxy-mode-changed',
-  CUSTOM_PROXY_URL_CHANGED: 'config:custom-proxy-url-changed'
+  CUSTOM_PROXY_URL_CHANGED: 'config:custom-proxy-url-changed',
+  ARTIFACTS_EFFECT_CHANGED: 'config:artifacts-effect-changed'
 }
 
 // 会话相关事件

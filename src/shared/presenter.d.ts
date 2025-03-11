@@ -143,6 +143,9 @@ export interface IConfigPresenter {
   setProxyMode(mode: string): void
   getCustomProxyUrl(): string
   setCustomProxyUrl(url: string): void
+  // artifacts效果设置
+  getArtifactsEffectEnabled(): boolean
+  setArtifactsEffectEnabled(enabled: boolean): void
 }
 export type RENDERER_MODEL_META = {
   id: string
