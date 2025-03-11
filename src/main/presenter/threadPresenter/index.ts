@@ -1359,11 +1359,15 @@ export class ThreadPresenter implements IThreadPresenter {
         }
       })
       .filter((item) => item.formattedMessage.content.length > 0)
-    return await this.llmProviderPresenter.summaryTitles(
+    const title = await this.llmProviderPresenter.summaryTitles(
       messagesWithLength.map((item) => item.formattedMessage),
       summaryProviderId || conversation.settings.providerId,
       modelId || conversation.settings.modelId
     )
+    console.log('-------------> title \n', title)
+    const cleanedTitle = title.replace(/<think>.*?<\/think>/g, '').trim()
+    console.log('-------------> cleanedTitle \n', cleanedTitle)
+    return cleanedTitle
   }
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null
