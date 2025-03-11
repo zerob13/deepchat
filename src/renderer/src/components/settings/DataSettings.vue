@@ -19,7 +19,7 @@
             <Icon icon="lucide:folder" class="w-4 h-4 text-muted-foreground" />
             <span class="text-sm font-medium">{{ t('settings.data.syncFolder') }}</span>
           </span>
-          <div class="flex-shrink-0 min-w-64 max-w-96 flex gap-2">
+          <div class="flex-shrink-0 w-96 flex gap-2">
             <Input
               v-model="syncFolderPath"
               :disabled="!syncStore.syncEnabled"
