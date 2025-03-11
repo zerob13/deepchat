@@ -57,7 +57,7 @@
     "welcome": "欢迎",
     "settings": "设置",
     "settings-common": "通用设置",
-    "settings-provider": "服务商设置",
+    "settings-provider": "大模型设置",
     "settings-about": "关于"
   },
   "chat": {
@@ -349,5 +349,10 @@
     "preview": "预览",
     "code": "代码",
     "export": "导出"
-  }
+  },
+  "Silicon": "硅基流动",
+  "QwenLM": "千问模型",
+  "Doubao": "豆包",
+  "PPIO": "派欧云",
+  "Moonshot": "月之暗面"
 }
