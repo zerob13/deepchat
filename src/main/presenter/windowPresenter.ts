@@ -236,7 +236,6 @@ export class WindowPresenter implements IWindowPresenter {
     const window = this.mainWindow
     if (window) {
       const labels = getContextMenuLabels(locale)
-      console.log('使用上下文菜单标签:', JSON.stringify(labels))
       this.contextMenuDisposer = contextMenu({
         window: window,
         shouldShowMenu(event, params) {

@@ -389,14 +389,7 @@ export class SyncPresenter implements ISyncPresenter {
     }
 
     // 监听消息相关变更
-    eventBus.on('message-added', scheduleBackup)
-    eventBus.on('message-updated', scheduleBackup)
-    eventBus.on('message-deleted', scheduleBackup)
-
-    // 监听会话相关变更
-    eventBus.on('conversation-added', scheduleBackup)
-    eventBus.on('conversation-updated', scheduleBackup)
-    eventBus.on('conversation-deleted', scheduleBackup)
+    eventBus.on(SYNC_EVENTS.DATA_CHANGED, scheduleBackup)
   }
 
   /**
