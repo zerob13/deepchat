@@ -99,7 +99,7 @@ const handleScroll = useDebounceFn((event) => {
     const scrollBottom = container.scrollHeight - (container.scrollTop + container.clientHeight)
     aboveThreshold.value = scrollBottom > SCROLL_THRESHOLD
   }
-}) // 这里需要实时更新，否则，会和scrollToBottom逻辑冲突
+}, 100)
 
 // 创建新会话
 const createNewThread = async () => {
