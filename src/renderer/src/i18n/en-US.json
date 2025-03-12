@@ -48,6 +48,7 @@
     "welcome": "Welcome",
     "settings": "Settings",
     "settings-common": "Common Settings",
+    "settings-database": "Data Settings",
     "settings-provider": "LLM Settings",
     "settings-about": "About"
   },
@@ -114,6 +115,7 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "close": "Close",
+    "ok": "OK",
     "delete": {
       "title": "Are you sure you want to delete this chat?",
       "description": "This action cannot be undone, please proceed with caution.",
@@ -151,6 +153,23 @@
       "customProxyUrl": "Custom Proxy URL",
       "customProxyUrlPlaceholder": "e.g. http://127.0.0.1:7890",
       "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL"
+    },
+    "data": {
+      "title": "Data Settings",
+      "syncEnable": "Enable Data Sync",
+      "syncFolder": "Sync Folder",
+      "openSyncFolder": "Open Sync Folder",
+      "lastSyncTime": "Last Sync Time",
+      "never": "Never",
+      "startBackup": "Backup Now",
+      "backingUp": "Backing up...",
+      "importData": "Import Data",
+      "importConfirmTitle": "Confirm Data Import",
+      "importConfirmDescription": "Importing will overwrite all current data, including chat history and settings. Make sure you have backed up important data. You'll need to restart the application after import.",
+      "importing": "Importing...",
+      "confirmImport": "Confirm Import",
+      "importSuccessTitle": "Import Successful",
+      "importErrorTitle": "Import Failed"
     },
     "model": {
       "title": "Model Settings",
@@ -247,10 +266,7 @@
       "modelsRunning": "Models Running",
       "runningModels": "Running Models",
       "noRunningModels": "No Running Models",
-      "deleteModel": "Delete Model",
-      "deleteModelConfirm": "Are you sure you want to delete model \"{name}\"? This action cannot be undone.",
-      "noLocalModels": "No Local Models",
-      "localModels": "Local Models"
+      "deleteModel": "Delete Model"
     }
   },
   "welcome": {
@@ -341,5 +357,22 @@
     "preview": "Preview",
     "code": "Code",
     "export": "Export"
+  },
+  "sync": {
+    "success": {
+      "importComplete": "Data import successful. Click OK to restart the application."
+    },
+    "error": {
+      "notEnabled": "Sync feature is not enabled",
+      "folderNotExists": "Sync folder does not exist",
+      "noValidBackup": "No valid backup files found in sync folder",
+      "dbNotExists": "Database file does not exist",
+      "configNotExists": "Configuration file does not exist",
+      "tempDbFailed": "Failed to create temporary database backup file",
+      "tempConfigFailed": "Failed to create temporary configuration backup file",
+      "importFailed": "Import failed, original data has been restored",
+      "importProcess": "Error during import process",
+      "unknown": "Unknown error"
+    }
   }
 }

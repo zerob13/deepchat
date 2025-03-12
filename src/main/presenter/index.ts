@@ -12,13 +12,15 @@ import { ThreadPresenter } from './threadPresenter'
 import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
 import { FilePresenter } from './filePresenter/FilePresenter'
+import { SyncPresenter } from './syncPresenter'
 import {
   CONFIG_EVENTS,
   CONVERSATION_EVENTS,
   STREAM_EVENTS,
   WINDOW_EVENTS,
   UPDATE_EVENTS,
-  OLLAMA_EVENTS
+  OLLAMA_EVENTS,
+  SYNC_EVENTS
 } from '@/events'
 
 export class Presenter implements IPresenter {
@@ -31,6 +33,7 @@ export class Presenter implements IPresenter {
   upgradePresenter: UpgradePresenter
   shortcutPresenter: ShortcutPresenter
   filePresenter: FilePresenter
+  syncPresenter: SyncPresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -46,9 +49,11 @@ export class Presenter implements IPresenter {
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
+    this.syncPresenter = new SyncPresenter(this.configPresenter, this.sqlitePresenter)
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }
+
   setupEventBus() {
     // 窗口事件
     eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
@@ -119,6 +124,31 @@ export class Presenter implements IPresenter {
     eventBus.on(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, (msg) => {
       this.windowPresenter.mainWindow?.webContents.send(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, msg)
     })
+
+    // 同步相关事件
+    eventBus.on(SYNC_EVENTS.BACKUP_STARTED, () => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.BACKUP_STARTED)
+    })
+
+    eventBus.on(SYNC_EVENTS.BACKUP_COMPLETED, (time) => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.BACKUP_COMPLETED, time)
+    })
+
+    eventBus.on(SYNC_EVENTS.BACKUP_ERROR, (error) => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.BACKUP_ERROR, error)
+    })
+
+    eventBus.on(SYNC_EVENTS.IMPORT_STARTED, () => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_STARTED)
+    })
+
+    eventBus.on(SYNC_EVENTS.IMPORT_COMPLETED, () => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_COMPLETED)
+    })
+
+    eventBus.on(SYNC_EVENTS.IMPORT_ERROR, (error) => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_ERROR, error)
+    })
   }
 
   init() {
@@ -155,6 +185,7 @@ export class Presenter implements IPresenter {
   destroy() {
     this.sqlitePresenter.close()
     this.shortcutPresenter.destroy()
+    this.syncPresenter.destroy()
   }
 }
 

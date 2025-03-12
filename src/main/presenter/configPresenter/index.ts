@@ -25,6 +25,9 @@ interface IAppSettings {
   proxyMode?: string // 代理模式：system, none, custom
   customProxyUrl?: string // 自定义代理地址
   artifactsEffectEnabled?: boolean // artifacts动画效果是否启用
+  syncEnabled?: boolean // 是否启用同步功能
+  syncFolderPath?: string // 同步文件夹路径
+  lastSyncTime?: number // 上次同步时间
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -459,5 +462,39 @@ export class ConfigPresenter implements IConfigPresenter {
 
     this.setSetting('artifactsEffectEnabled', boolValue)
     eventBus.emit(CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED, boolValue)
+  }
+  // 获取同步功能状态
+  getSyncEnabled(): boolean {
+    return this.getSetting<boolean>('syncEnabled') || false
+  }
+
+  // 设置同步功能状态
+  setSyncEnabled(enabled: boolean): void {
+    console.log('setSyncEnabled', enabled)
+    this.setSetting('syncEnabled', enabled)
+    eventBus.emit(CONFIG_EVENTS.SYNC_SETTINGS_CHANGED, { enabled })
+  }
+
+  // 获取同步文件夹路径
+  getSyncFolderPath(): string {
+    return (
+      this.getSetting<string>('syncFolderPath') || path.join(app.getPath('home'), 'DeepchatSync')
+    )
+  }
+
+  // 设置同步文件夹路径
+  setSyncFolderPath(folderPath: string): void {
+    this.setSetting('syncFolderPath', folderPath)
+    eventBus.emit(CONFIG_EVENTS.SYNC_SETTINGS_CHANGED, { folderPath })
+  }
+
+  // 获取上次同步时间
+  getLastSyncTime(): number {
+    return this.getSetting<number>('lastSyncTime') || 0
+  }
+
+  // 设置上次同步时间
+  setLastSyncTime(time: number): void {
+    this.setSetting('lastSyncTime', time)
   }
 }

@@ -39,7 +39,8 @@
     "settings": "設置",
     "settings-common": "通用設置",
     "settings-provider": "服務商設置",
-    "settings-about": "關於"
+    "settings-about": "關於",
+    "settings-database": "數據設置"
   },
   "chat": {
     "input": {
@@ -104,6 +105,7 @@
     "cancel": "取消",
     "confirm": "確認",
     "close": "關閉",
+    "ok": "確定",
     "delete": {
       "title": "確定要刪除這個會話嗎？",
       "description": "此操作無法撤銷，請謹慎操作。",
@@ -141,6 +143,23 @@
       "customProxyUrl": "自定義代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
       "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL"
+    },
+    "data": {
+      "title": "數據設置",
+      "syncEnable": "啟用數據同步",
+      "syncFolder": "同步資料夾",
+      "openSyncFolder": "打開同步資料夾",
+      "lastSyncTime": "最後同步時間",
+      "never": "從未同步",
+      "startBackup": "立即備份",
+      "backingUp": "備份中...",
+      "importData": "導入數據",
+      "importConfirmTitle": "確認導入數據",
+      "importConfirmDescription": "導入將會覆蓋所有當前數據，包括聊天記錄和設置。請確保已備份重要數據。導入後需要重新啟動應用程序。",
+      "importing": "導入中...",
+      "confirmImport": "確認導入",
+      "importSuccessTitle": "導入成功",
+      "importErrorTitle": "導入失敗"
     },
     "model": {
       "title": "模型設置",
@@ -339,5 +358,22 @@
     "preview": "預覽",
     "code": "代碼",
     "export": "導出"
+  },
+  "sync": {
+    "success": {
+      "importComplete": "數據導入成功，點擊確定後將重啟應用"
+    },
+    "error": {
+      "notEnabled": "同步功能未啟用",
+      "folderNotExists": "同步文件夾不存在",
+      "noValidBackup": "同步文件夾中沒有有效的備份文件",
+      "dbNotExists": "數據庫文件不存在",
+      "configNotExists": "配置文件不存在",
+      "tempDbFailed": "臨時數據庫備份文件創建失敗",
+      "tempConfigFailed": "臨時配置備份文件創建失敗",
+      "importFailed": "導入失敗，已恢復原始數據",
+      "importProcess": "導入過程出錯",
+      "unknown": "未知錯誤"
+    }
   }
 }

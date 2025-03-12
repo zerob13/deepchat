@@ -108,6 +108,7 @@ export interface IPresenter {
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
   filePresenter: IFilePresenter
+  syncPresenter: ISyncPresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -146,6 +147,13 @@ export interface IConfigPresenter {
   // artifacts效果设置
   getArtifactsEffectEnabled(): boolean
   setArtifactsEffectEnabled(enabled: boolean): void
+  // 同步设置
+  getSyncEnabled(): boolean
+  setSyncEnabled(enabled: boolean): void
+  getSyncFolderPath(): string
+  setSyncFolderPath(folderPath: string): void
+  getLastSyncTime(): number
+  setLastSyncTime(time: number): void
 }
 export type RENDERER_MODEL_META = {
   id: string
@@ -389,6 +397,10 @@ export interface IDevicePresenter {
   getMemoryUsage(): Promise<MemoryInfo>
   getDiskSpace(): Promise<DiskInfo>
   resetData(): Promise<void>
+
+  // 目录选择和应用重启
+  selectDirectory(): Promise<{ canceled: boolean; filePaths: string[] }>
+  restartApp(): Promise<void>
 }
 
 export type DeviceInfo = {
@@ -508,4 +520,20 @@ export interface ProgressResponse {
   digest?: string
   total?: number
   completed?: number
+}
+
+export interface ISyncPresenter {
+  // 备份相关操作
+  startBackup(): Promise<void>
+  cancelBackup(): Promise<void>
+  getBackupStatus(): Promise<{ isBackingUp: boolean; lastBackupTime: number }>
+
+  // 导入相关操作
+  importFromSync(): Promise<{ success: boolean; message: string }>
+  checkSyncFolder(): Promise<{ exists: boolean; path: string }>
+  openSyncFolder(): Promise<void>
+
+  // 初始化和销毁
+  init(): void
+  destroy(): void
 }

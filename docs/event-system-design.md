@@ -40,6 +40,14 @@
    - `update:error`
    - `update:will-restart`
 
+6. **同步相关事件**：
+   - `sync:backup-started`：备份开始
+   - `sync:backup-completed`：备份完成
+   - `sync:backup-error`：备份出错
+   - `sync:import-started`：导入开始
+   - `sync:import-completed`：导入完成
+   - `sync:import-error`：导入出错
+
 ## 责任分离
 
 明确每个组件的事件触发责任：

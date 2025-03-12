@@ -57,6 +57,7 @@
     "welcome": "欢迎",
     "settings": "设置",
     "settings-common": "通用设置",
+    "settings-database": "数据设置",
     "settings-provider": "大模型设置",
     "settings-about": "关于"
   },
@@ -123,6 +124,7 @@
     "cancel": "取消",
     "confirm": "确认",
     "close": "关闭",
+    "ok": "确定",
     "delete": {
       "title": "确定要删除这个会话吗？",
       "description": "此操作无法撤销，请谨慎操作。",
@@ -160,6 +162,23 @@
       "customProxyUrl": "自定义代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
       "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
+    },
+    "data": {
+      "title": "数据设置",
+      "syncEnable": "启用数据同步",
+      "syncFolder": "同步文件夹",
+      "openSyncFolder": "打开同步文件夹",
+      "lastSyncTime": "上次同步时间",
+      "never": "从未同步",
+      "startBackup": "立即备份",
+      "backingUp": "备份中...",
+      "importData": "导入数据",
+      "importConfirmTitle": "确认导入数据",
+      "importConfirmDescription": "导入将会覆盖当前所有数据，包括聊天记录和设置。请确保已备份重要数据。导入完成后需要重启应用程序。",
+      "importing": "导入中...",
+      "confirmImport": "确认导入",
+      "importSuccessTitle": "导入成功",
+      "importErrorTitle": "导入失败"
     },
     "model": {
       "title": "模型设置",
@@ -253,13 +272,10 @@
       },
       "pullModels": "拉取模型",
       "refreshModels": "刷新模型",
-      "modelsRunning": "模型正在运行",
+      "modelsRunning": "运行中的模型",
       "runningModels": "运行中的模型",
       "noRunningModels": "没有运行中的模型",
-      "deleteModel": "删除模型",
-      "deleteModelConfirm": "是否确认删除模型 \"{name}\"？此操作不可恢复。",
-      "noLocalModels": "没有本地模型",
-      "localModels": "本地模型"
+      "deleteModel": "删除模型"
     }
   },
   "welcome": {
@@ -350,9 +366,29 @@
     "code": "代码",
     "export": "导出"
   },
+<<<<<<< HEAD
+  "sync": {
+    "success": {
+      "importComplete": "数据导入成功，点击确定后将重启应用"
+    },
+    "error": {
+      "notEnabled": "同步功能未启用",
+      "folderNotExists": "同步文件夹不存在",
+      "noValidBackup": "同步文件夹中没有有效的备份文件",
+      "dbNotExists": "数据库文件不存在",
+      "configNotExists": "配置文件不存在",
+      "tempDbFailed": "临时数据库备份文件创建失败",
+      "tempConfigFailed": "临时配置备份文件创建失败",
+      "importFailed": "导入失败，已恢复原始数据",
+      "importProcess": "导入过程出错",
+      "unknown": "未知错误"
+    }
+  }
+=======
   "Silicon": "硅基流动",
   "QwenLM": "千问模型",
   "Doubao": "豆包",
   "PPIO": "派欧云",
   "Moonshot": "月之暗面"
+>>>>>>> dev
 }
