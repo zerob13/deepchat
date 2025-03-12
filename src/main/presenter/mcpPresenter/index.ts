@@ -2,9 +2,6 @@ import { IMCPPresenter, MCPConfig, MCPServerConfig, MCPToolDefinition } from '@s
 import { ConfigManager } from './configManager'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
-import { app } from 'electron'
-import path from 'path'
-import fs from 'fs'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
 
@@ -13,7 +10,6 @@ export class McpPresenter implements IMCPPresenter {
   private configManager: ConfigManager
   private serverManager: ServerManager
   private toolManager: ToolManager
-  private isInitialized = false
 
   constructor() {
     console.log('初始化 MCP Presenter')
@@ -45,8 +41,6 @@ export class McpPresenter implements IMCPPresenter {
           console.error(`[MCP] 默认服务器 ${serverName} 启动失败:`, error)
         }
       }
-      
-      this.isInitialized = true
     } catch (error) {
       console.error('[MCP] 初始化失败:', error)
     }
