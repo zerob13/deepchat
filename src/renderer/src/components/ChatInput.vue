@@ -129,8 +129,8 @@
                     <SelectContent align="start" class="w-64">
                       <SelectItem
                         v-for="engine in searchEngines"
-                        :key="engine.name"
-                        :value="engine.name"
+                        :key="engine.id"
+                        :value="engine.id"
                       >
                         {{ engine.name }}
                       </SelectItem>
@@ -184,7 +184,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -346,7 +346,7 @@ const onSearchEngineChange = async (engineName: string) => {
 const initSettings = async () => {
   settings.value.deepThinking = Boolean(await configPresenter.getSetting('input_deepThinking'))
   settings.value.webSearch = Boolean(await configPresenter.getSetting('input_webSearch'))
-  selectedSearchEngine.value = settingsStore.activeSearchEngine?.name ?? 'google'
+  selectedSearchEngine.value = settingsStore.activeSearchEngine?.id ?? 'google'
 }
 
 const handleDragEnter = (e: DragEvent) => {
@@ -444,6 +444,12 @@ onUnmounted(() => {
     searchElement.removeEventListener('mouseleave', handleSearchMouseLeave)
   }
 })
+watch(
+  () => settingsStore.activeSearchEngine?.id,
+  async () => {
+    selectedSearchEngine.value = settingsStore.activeSearchEngine?.id ?? 'google'
+  }
+)
 </script>
 
 <style scoped>
