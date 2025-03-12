@@ -351,6 +351,20 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   /**
+   * 设置搜索引擎
+   * @param engineId 搜索引擎ID
+   * @returns 是否设置成功
+   */
+  async setSearchEngine(engineId: string): Promise<boolean> {
+    try {
+      return await this.searchManager.setActiveEngine(engineId)
+    } catch (error) {
+      console.error('设置搜索引擎失败:', error)
+      return false
+    }
+  }
+
+  /**
    * 处理消息错误状态的公共函数
    * @param messageId 消息ID
    * @param errorMessage 错误信息

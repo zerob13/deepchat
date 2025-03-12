@@ -26,6 +26,7 @@ interface IAppSettings {
   proxyMode?: string // 代理模式：system, none, custom
   customProxyUrl?: string // 自定义代理地址
   artifactsEffectEnabled?: boolean // artifacts动画效果是否启用
+  searchPreviewEnabled?: boolean // 搜索预览是否启用
   syncEnabled?: boolean // 是否启用同步功能
   syncFolderPath?: string // 同步文件夹路径
   lastSyncTime?: number // 上次同步时间
@@ -524,5 +525,22 @@ export class ConfigPresenter implements IConfigPresenter {
       console.error('设置自定义搜索引擎失败:', error)
       throw error
     }
+  }
+
+  // 获取搜索预览设置状态
+  getSearchPreviewEnabled(): Promise<boolean> {
+    const value = this.getSetting<boolean>('searchPreviewEnabled')
+    // 默认开启搜索预览
+    return Promise.resolve(value === undefined || value === null ? true : value)
+  }
+
+  // 设置搜索预览状态
+  setSearchPreviewEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setSearchPreviewEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('searchPreviewEnabled', boolValue)
   }
 }

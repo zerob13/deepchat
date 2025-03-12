@@ -62,6 +62,7 @@
           </Button>
         </div>
       </div>
+
       <!-- 搜索助手模型选择 -->
       <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
@@ -137,6 +138,20 @@
             id="artifacts-effect-switch"
             :checked="artifactsEffectEnabled"
             @update:checked="(val) => settingsStore.setArtifactsEffectEnabled(Boolean(val))"
+          />
+        </div>
+      </div>
+      <!-- 搜索预览开关 -->
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:eye" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">{{ t('settings.common.searchPreview') }}</span>
+        </span>
+        <div class="flex-shrink-0">
+          <Switch
+            id="search-preview-switch"
+            :checked="searchPreviewEnabled"
+            @update:checked="handleSearchPreviewChange"
           />
         </div>
       </div>
@@ -534,4 +549,20 @@ const currentEngine = computed(() => {
 const isCurrentEngineCustom = computed(() => {
   return currentEngine.value?.isCustom || false
 })
+
+// 搜索预览启用状态
+const searchPreviewEnabled = computed({
+  get: () => {
+    return settingsStore.searchPreviewEnabled
+  },
+  set: (value) => {
+    settingsStore.setSearchPreviewEnabled(value)
+  }
+})
+
+// 处理搜索预览状态变更
+const handleSearchPreviewChange = (value: boolean) => {
+  console.log('切换搜索预览状态:', value)
+  settingsStore.setSearchPreviewEnabled(value)
+}
 </script>

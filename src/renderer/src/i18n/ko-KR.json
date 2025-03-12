@@ -146,6 +146,7 @@
       "languageSelect": "언어 선택",
       "searchEngine": "검색 엔진",
       "searchEngineSelect": "검색 엔진 선택",
+      "searchPreview": "검색 미리보기",
       "searchAssistantModel": "검색 보조 모델",
       "selectModel": "모델 선택",
       "proxyMode": "프록시 모드",

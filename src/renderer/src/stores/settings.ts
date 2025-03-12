@@ -33,6 +33,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const searchEngines = ref<SearchEngineTemplate[]>([])
   const activeSearchEngine = ref<SearchEngineTemplate | null>(null)
   const artifactsEffectEnabled = ref<boolean>(false) // 默认值与配置文件一致
+  const searchPreviewEnabled = ref<boolean>(true) // 搜索预览是否启用，默认启用
 
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])
@@ -178,8 +179,12 @@ export const useSettingsStore = defineStore('settings', () => {
       // 设置语言
       locale.value = await configP.getLanguage()
 
+      // 获取搜索预览设置
+      searchPreviewEnabled.value = await configP.getSearchPreviewEnabled()
+
       // 获取artifacts效果开关状态
       artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
+
       // 获取搜索引擎
       searchEngines.value = await threadP.getSearchEngines()
 
@@ -786,11 +791,13 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
   const setSearchEngine = async (engineId: string) => {
-    const engine = searchEngines.value.find((e) => e.id === engineId)
-    if (engine) {
-      activeSearchEngine.value = engine
-      await configP.setSetting('searchEngine', engineId)
-      await threadP.setActiveSearchEngine(engineId)
+    try {
+      const success = await threadP.setSearchEngine(engineId)
+      if (success) {
+        activeSearchEngine.value = searchEngines.value.find((e) => e.id === engineId) || null
+      }
+    } catch (error) {
+      console.error('设置搜索引擎失败:', error)
     }
   }
 
@@ -1111,7 +1118,6 @@ export const useSettingsStore = defineStore('settings', () => {
     initSettings()
     setupProviderListener()
     setupUpdateListener()
-    setupSearchEnginesListener()
   })
 
   // 清理可能的事件监听器
@@ -1139,10 +1145,22 @@ export const useSettingsStore = defineStore('settings', () => {
     )
   }
 
+  // 添加设置searchPreviewEnabled的方法
+  const setSearchPreviewEnabled = async (enabled: boolean) => {
+    // 更新本地状态
+    searchPreviewEnabled.value = Boolean(enabled)
+
+    // 调用ConfigPresenter设置值，确保等待Promise完成
+    await configP.setSearchPreviewEnabled(enabled)
+  }
+
+  // 搜索预览设置 - 直接从configPresenter获取
+  const getSearchPreviewEnabled = async (): Promise<boolean> => {
+    return await configP.getSearchPreviewEnabled()
+  }
+
   // 添加监听搜索引擎更新的事件
   const setupSearchEnginesListener = () => {
-    const configP = usePresenter('configPresenter')
-
     // 使用IPC监听事件
     window.electron.ipcRenderer.on(CONFIG_EVENTS.SEARCH_ENGINES_UPDATED, async () => {
       try {
@@ -1166,6 +1184,13 @@ export const useSettingsStore = defineStore('settings', () => {
     enabledModels,
     allProviderModels,
     customModels,
+    searchEngines,
+    activeSearchEngine,
+    artifactsEffectEnabled,
+    searchPreviewEnabled,
+    hasUpdate,
+    updateInfo,
+    showUpdateDialog,
     updateProvider,
     updateTheme,
     updateLanguage,
@@ -1177,8 +1202,6 @@ export const useSettingsStore = defineStore('settings', () => {
     addCustomModel,
     removeCustomModel,
     updateCustomModel,
-    hasUpdate,
-    updateInfo,
     isChecking,
     checkUpdate,
     startUpdate,
@@ -1187,8 +1210,6 @@ export const useSettingsStore = defineStore('settings', () => {
     updateProviderStatus,
     refreshProviderModels,
     setSearchEngine,
-    searchEngines,
-    activeSearchEngine,
     addCustomProvider,
     removeProvider,
     disableAllModels,
@@ -1197,7 +1218,6 @@ export const useSettingsStore = defineStore('settings', () => {
     setSearchAssistantModel,
     initOrUpdateSearchAssistantModel,
     cleanAllMessages,
-    showUpdateDialog,
     openUpdateDialog,
     closeUpdateDialog,
     handleUpdate,
@@ -1213,9 +1233,10 @@ export const useSettingsStore = defineStore('settings', () => {
     getOllamaPullingModels,
     removeOllamaEventListeners,
     cleanup,
-    artifactsEffectEnabled,
     setArtifactsEffectEnabled,
     setupArtifactsEffectListener,
+    getSearchPreviewEnabled,
+    setSearchPreviewEnabled,
     setupSearchEnginesListener
   }
 })

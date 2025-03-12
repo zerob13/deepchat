@@ -146,6 +146,7 @@
       "languageSelect": "Select Language",
       "searchEngine": "Search Engine",
       "searchEngineSelect": "Select Search Engine",
+      "searchPreview": "Search Preview",
       "searchAssistantModel": "Search Assistant Model",
       "selectModel": "Select Model",
       "proxyMode": "Proxy Mode",

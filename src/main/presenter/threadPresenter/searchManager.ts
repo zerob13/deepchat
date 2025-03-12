@@ -349,6 +349,39 @@ export class SearchManager {
   }
 
   private async initSearchWindow(conversationId: string): Promise<BrowserWindow> {
+    // 直接从 ConfigPresenter 获取搜索预览设置状态
+    const searchPreviewEnabled = await presenter.configPresenter.getSearchPreviewEnabled()
+
+    // 如果搜索预览关闭，创建一个隐藏的窗口
+    if (!searchPreviewEnabled) {
+      const searchWindow = new BrowserWindow({
+        width: this.searchWindowWidth,
+        height: 800,
+        show: false, // 窗口不显示
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          devTools: is.dev
+        }
+      })
+
+      searchWindow.webContents.session.webRequest.onBeforeSendHeaders(
+        { urls: ['*://*/*'] },
+        (details, callback) => {
+          const headers = {
+            ...details.requestHeaders,
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+          callback({ requestHeaders: headers })
+        }
+      )
+
+      this.searchWindows.set(conversationId, searchWindow)
+      return searchWindow
+    }
+
+    // 下面是原始代码，当预览启用时执行
     if (this.searchWindows.size >= this.maxConcurrentSearches) {
       // 找到最早创建的窗口并销毁
       const [oldestConversationId] = this.searchWindows.keys()
@@ -516,6 +549,14 @@ export class SearchManager {
     if (window) {
       window.destroy()
       this.searchWindows.delete(conversationId)
+
+      // 直接从 ConfigPresenter 获取搜索预览设置状态
+      const searchPreviewEnabled = await presenter.configPresenter.getSearchPreviewEnabled()
+
+      // 如果搜索预览未启用，不需要恢复主窗口状态
+      if (!searchPreviewEnabled) {
+        return
+      }
 
       // 恢复主窗口原始位置和大小
       const originalSize = this.originalWindowSizes.get(conversationId)

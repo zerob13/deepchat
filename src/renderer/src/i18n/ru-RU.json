@@ -140,6 +140,7 @@
       "languageSelect": "Выбор языка",
       "searchEngine": "Поисковый движок",
       "searchEngineSelect": "Выбор поискового движка",
+      "searchPreview": "Предпросмотр поиска",
       "searchAssistantModel": "Поисковый движок",
       "selectModel": "Выбор модели",
       "proxyMode": "Режим прокси",

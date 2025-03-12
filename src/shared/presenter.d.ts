@@ -150,6 +150,9 @@ export interface IConfigPresenter {
   // artifacts效果设置
   getArtifactsEffectEnabled(): boolean
   setArtifactsEffectEnabled(enabled: boolean): void
+  // 搜索预览设置
+  getSearchPreviewEnabled(): Promise<boolean>
+  setSearchPreviewEnabled(enabled: boolean): void
   // 同步设置
   getSyncEnabled(): boolean
   setSyncEnabled(enabled: boolean): void
@@ -336,6 +339,7 @@ export interface IThreadPresenter {
   getSearchEngines(): Promise<SearchEngineTemplate[]>
   getActiveSearchEngine(): Promise<SearchEngineTemplate>
   setActiveSearchEngine(engineId: string): Promise<void>
+  setSearchEngine(engineId: string): Promise<boolean>
   // 搜索助手模型设置
   setSearchAssistantModel(model: MODEL_META, providerId: string): void
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
