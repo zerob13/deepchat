@@ -516,6 +516,7 @@ export interface MCPServerConfig {
   descriptions: string
   icons: string
   autoApprove: string[]
+  disable?: boolean
 }
 
 export interface MCPConfig {
@@ -529,9 +530,25 @@ export interface MCPToolDefinition {
     name: string
     description: string
     parameters: {
+      type: string
       properties: Record<string, any>
+      required?: string[]
     }
   }
+}
+
+export interface MCPToolCall {
+  id: string
+  type: string
+  function: {
+    name: string
+    arguments: string
+  }
+}
+
+export interface MCPToolResponse {
+  toolCallId: string
+  content: string
 }
 
 export interface IMCPPresenter {

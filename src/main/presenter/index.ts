@@ -19,7 +19,8 @@ import {
   STREAM_EVENTS,
   WINDOW_EVENTS,
   UPDATE_EVENTS,
-  OLLAMA_EVENTS
+  OLLAMA_EVENTS,
+  MCP_EVENTS
 } from '@/events'
 
 export class Presenter implements IPresenter {
@@ -119,8 +120,26 @@ export class Presenter implements IPresenter {
       this.windowPresenter.mainWindow?.webContents.send(CONVERSATION_EVENTS.MESSAGE_EDITED, msgId)
     })
 
-    eventBus.on(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, (msg) => {
-      this.windowPresenter.mainWindow?.webContents.send(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, msg)
+    // MCP 相关事件
+    eventBus.on(MCP_EVENTS.SERVER_STARTED, (serverName) => {
+      this.windowPresenter.mainWindow?.webContents.send(MCP_EVENTS.SERVER_STARTED, serverName)
+    })
+
+    eventBus.on(MCP_EVENTS.SERVER_STOPPED, (serverName) => {
+      this.windowPresenter.mainWindow?.webContents.send(MCP_EVENTS.SERVER_STOPPED, serverName)
+    })
+
+    eventBus.on(MCP_EVENTS.CONFIG_CHANGED, (config) => {
+      this.windowPresenter.mainWindow?.webContents.send(MCP_EVENTS.CONFIG_CHANGED, config)
+    })
+
+    eventBus.on(MCP_EVENTS.TOOL_CALL_RESULT, (result) => {
+      this.windowPresenter.mainWindow?.webContents.send(MCP_EVENTS.TOOL_CALL_RESULT, result)
+    })
+
+    // Ollama 相关事件
+    eventBus.on(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, (progress) => {
+      this.windowPresenter.mainWindow?.webContents.send(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, progress)
     })
   }
 
