@@ -366,7 +366,6 @@
     "code": "代码",
     "export": "导出"
   },
-<<<<<<< HEAD
   "sync": {
     "success": {
       "importComplete": "数据导入成功，点击确定后将重启应用"
@@ -383,12 +382,10 @@
       "importProcess": "导入过程出错",
       "unknown": "未知错误"
     }
-  }
-=======
+  },
   "Silicon": "硅基流动",
   "QwenLM": "千问模型",
   "Doubao": "豆包",
   "PPIO": "派欧云",
   "Moonshot": "月之暗面"
->>>>>>> dev
 }
