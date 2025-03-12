@@ -48,7 +48,7 @@
     "welcome": "Welcome",
     "settings": "Settings",
     "settings-common": "Common Settings",
-    "settings-provider": "Provider Settings",
+    "settings-provider": "LLM Settings",
     "settings-about": "About"
   },
   "chat": {
