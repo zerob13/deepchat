@@ -71,7 +71,10 @@
       "results": "Found {0} web pages",
       "searching": "Searching...",
       "title": "Search Results",
-      "description": "Found {0} related results"
+      "description": "Found {0} related results",
+      "optimizing": "Optimizing search query...",
+      "reading": "Searching and reading web pages...",
+      "error": "Search failed"
     }
   },
   "model": {

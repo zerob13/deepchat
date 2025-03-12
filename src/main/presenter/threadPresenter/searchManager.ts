@@ -196,7 +196,7 @@ export class SearchManager {
   private originalWindowPositions: Map<string, { x: number; y: number }> = new Map()
   private wasFullScreen: Map<string, boolean> = new Map()
   private searchWindowWidth = 800
-
+  private abortControllers: Map<string, AbortController> = new Map()
   constructor() {}
 
   getEngines(): SearchEngineTemplate[] {
@@ -439,6 +439,10 @@ export class SearchManager {
   }
 
   async search(conversationId: string, query: string): Promise<SearchResult[]> {
+    // 创建用于可能中断搜索的 AbortController
+    const abortController = new AbortController()
+    this.abortControllers.set(conversationId, abortController)
+
     let searchWindow = this.searchWindows.get(conversationId)
     if (!searchWindow) {
       searchWindow = await this.initSearchWindow(conversationId)
@@ -452,22 +456,57 @@ export class SearchManager {
     }, 8000)
 
     try {
+      // 检查是否已经被中止
+      if (abortController.signal.aborted) {
+        throw new Error('搜索已被用户取消')
+      }
+
       await searchWindow.loadURL(searchUrl)
       console.log('搜索URL加载成功')
     } catch (error) {
       console.error('加载URL失败:', error)
+      if (abortController.signal.aborted) {
+        // 如果是用户取消导致的错误，直接返回空结果
+        this.destroySearchWindow(conversationId)
+        this.abortControllers.delete(conversationId)
+        return []
+      }
     } finally {
       clearTimeout(loadTimeout)
+    }
+
+    // 检查是否已经被中止
+    if (abortController.signal.aborted) {
+      this.destroySearchWindow(conversationId)
+      this.abortControllers.delete(conversationId)
+      return []
     }
 
     await this.waitForSelector(searchWindow, this.activeEngine.selector)
     console.log('搜索结果加载完成')
 
+    // 检查是否已经被中止
+    if (abortController.signal.aborted) {
+      this.destroySearchWindow(conversationId)
+      this.abortControllers.delete(conversationId)
+      return []
+    }
+
     const results = await this.extractSearchResults(searchWindow)
     console.log('搜索结果提取完成:', results?.length)
 
+    // 检查是否已经被中止
+    if (abortController.signal.aborted) {
+      this.destroySearchWindow(conversationId)
+      this.abortControllers.delete(conversationId)
+      return []
+    }
+
     const enrichedResults = await this.enrichResults(results.slice(0, 5))
     console.log('详细内容获取完成')
+
+    // 清理资源
+    this.abortControllers.delete(conversationId)
 
     searchWindow
       .loadFile(helperPage)
@@ -533,7 +572,31 @@ export class SearchManager {
     return await ContentEnricher.enrichResults(results)
   }
 
+  /**
+   * 停止特定会话的搜索操作
+   * @param conversationId 会话ID
+   */
+  async stopSearch(conversationId: string): Promise<void> {
+    console.log('停止搜索, conversationId:', conversationId)
+
+    // 中止搜索操作
+    const abortController = this.abortControllers.get(conversationId)
+    if (abortController) {
+      abortController.abort()
+      this.abortControllers.delete(conversationId)
+    }
+
+    // 关闭搜索窗口
+    await this.destroySearchWindow(conversationId)
+  }
+
   destroy() {
+    // 中止所有搜索操作
+    for (const controller of this.abortControllers.values()) {
+      controller.abort()
+    }
+    this.abortControllers.clear()
+
     for (const [conversationId] of this.searchWindows) {
       this.destroySearchWindow(conversationId)
     }

@@ -32,6 +32,18 @@
           : t('chat.search.searching')
       }}</span>
     </template>
+    <template v-else-if="block.status === 'optimizing'">
+      <Icon icon="lucide:loader-circle" class="w-4 h-4 text-muted-foreground animate-spin" />
+      <span>{{ t('chat.search.optimizing') }}</span>
+    </template>
+    <template v-else-if="block.status === 'reading'">
+      <Icon icon="lucide:loader-circle" class="w-4 h-4 text-muted-foreground animate-spin" />
+      <span>{{ t('chat.search.reading') }}</span>
+    </template>
+    <template v-else-if="block.status === 'error'">
+      <Icon icon="lucide:x" class="w-4 h-4 text-muted-foreground" />
+      <span>{{ t('chat.search.error') }}</span>
+    </template>
   </div>
   <SearchResultsDrawer v-model:open="isDrawerOpen" :search-results="searchResults" />
 </template>
@@ -52,7 +64,7 @@ const searchResults = ref<SearchResult[]>([])
 const props = defineProps<{
   messageId: string
   block: {
-    status: 'success' | 'loading'
+    status: 'success' | 'loading' | 'optimizing' | 'reading' | 'error'
     extra: {
       total: number
       pages?: Array<{
@@ -64,7 +76,9 @@ const props = defineProps<{
 }>()
 
 const openSearchResults = async () => {
-  isDrawerOpen.value = true
-  searchResults.value = await threadPresenter.getSearchResults(props.messageId)
+  if (props.block.status === 'success') {
+    isDrawerOpen.value = true
+    searchResults.value = await threadPresenter.getSearchResults(props.messageId)
+  }
 }
 </script>

@@ -80,7 +80,10 @@
       "results": "已搜索到{0}个网页",
       "searching": "搜索中...",
       "title": "搜索结果",
-      "description": "共找到 {0} 条相关结果"
+      "description": "共找到 {0} 条相关结果",
+      "optimizing": "正在提取搜索意图...",
+      "reading": "正在搜索并阅读网页...",
+      "error": "搜索失败"
     }
   },
   "model": {

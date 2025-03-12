@@ -71,7 +71,10 @@
       "results": "{0}개의 웹 페이지를 찾았습니다",
       "searching": "검색 중...",
       "title": "검색 결과",
-      "description": "{0}개의 관련 결과를 찾았습니다"
+      "description": "{0}개의 관련 결과를 찾았습니다",
+      "optimizing": "검색 의도 추출 중...",
+      "reading": "웹 페이지 검색 중...",
+      "error": "검색 실패"
     }
   },
   "model": {

@@ -61,7 +61,7 @@ export type AssistantMessageBlock = {
   type: 'content' | 'search' | 'reasoning_content' | 'error'
   content?: string
   extra?: Record<string, string | number | object[]>
-  status: 'success' | 'loading' | 'cancel' | 'error' | 'reading'
+  status: 'success' | 'loading' | 'cancel' | 'error' | 'reading' | 'optimizing'
   timestamp: number
   artifact?: {
     identifier: string
