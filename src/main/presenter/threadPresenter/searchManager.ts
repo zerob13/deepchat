@@ -6,11 +6,14 @@ import { SearchResult } from '@shared/presenter'
 import { is } from '@electron-toolkit/utils'
 import { presenter } from '@/presenter'
 import { MAIN_WIN } from '../windowPresenter'
+import { eventBus } from '@/eventbus'
+import { CONFIG_EVENTS } from '@/events'
 
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
   {
+    id: 'sogou',
     name: 'sogou',
     selector: '.news-list',
     searchUrl:
@@ -37,6 +40,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
+    id: 'google',
     name: 'google',
     selector: '#search',
     searchUrl: 'https://www.google.com/search?q={query}',
@@ -62,6 +66,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
+    id: 'baidu',
     name: 'baidu',
     selector: '#content_left',
     searchUrl: 'https://www.baidu.com/s?wd={query}',
@@ -87,6 +92,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
+    id: 'bing',
     name: 'bing',
     selector: '',
     searchUrl: 'https://www.bing.com/search?q={query}',
@@ -112,6 +118,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
+    id: 'google-scholar',
     name: 'google-scholar',
     selector: '#gs_res_ccl',
     searchUrl: 'https://scholar.google.com/scholar?q={query}',
@@ -137,6 +144,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
+    id: 'baidu-xueshu',
     name: 'baidu-xueshu',
     selector: '#bdxs_result_lists',
     searchUrl: 'https://xueshu.baidu.com/s?wd={query}',
@@ -161,6 +169,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     `
   },
   {
+    id: 'duckduckgo',
     name: 'duckduckgo',
     selector: 'button.cxQwADb9kt3UnKwcXKat',
     searchUrl: 'https://duckduckgo.com/?q={query}',
@@ -197,22 +206,48 @@ export class SearchManager {
   private wasFullScreen: Map<string, boolean> = new Map()
   private searchWindowWidth = 800
   private abortControllers: Map<string, AbortController> = new Map()
+  private lastEnginesUpdateTime = 0
 
-  // 默认空实现，不需要初始化
   constructor() {
     // 初始化搜索管理器
+    this.setupEventListeners()
   }
 
-  getEngines(): SearchEngineTemplate[] {
+  /**
+   * 设置事件监听器，监听搜索引擎更新事件
+   */
+  private setupEventListeners(): void {
+    // 监听搜索引擎更新事件
+    eventBus.on(CONFIG_EVENTS.SEARCH_ENGINES_UPDATED, () => {
+      // 标记需要刷新引擎列表
+      this.lastEnginesUpdateTime = 0
+    })
+  }
+
+  /**
+   * 获取搜索引擎列表，包括默认引擎和自定义引擎
+   */
+  async getEngines(): Promise<SearchEngineTemplate[]> {
+    await this.ensureEnginesUpdated()
     return this.engines
   }
 
+  /**
+   * 获取当前活跃的搜索引擎
+   */
   getActiveEngine(): SearchEngineTemplate {
     return this.activeEngine
   }
 
-  setActiveEngine(engineName: string): boolean {
-    const engine = this.engines.find((e) => e.name === engineName)
+  /**
+   * 设置活跃搜索引擎
+   * @param engineId 搜索引擎ID
+   */
+  async setActiveEngine(engineId: string): Promise<boolean> {
+    // 确保引擎列表是最新的
+    await this.ensureEnginesUpdated()
+    console.log('setActiveEngine', engineId, this.engines)
+    const engine = this.engines.find((e) => e.id === engineId)
     if (engine) {
       this.activeEngine = engine
       return true
@@ -220,10 +255,96 @@ export class SearchManager {
     return false
   }
 
-  updateEngines(newEngines: SearchEngineTemplate[]): void {
+  /**
+   * 更新搜索引擎列表
+   * @param newEngines 新的搜索引擎列表
+   */
+  async updateEngines(newEngines: SearchEngineTemplate[]): Promise<void> {
+    // 保存当前活跃引擎ID
+    const activeEngineId = this.activeEngine.id
+
+    // 更新引擎列表
     this.engines = newEngines
-    if (!this.engines.find((e) => e.name === this.activeEngine.name)) {
+
+    // 尝试保持当前活跃引擎
+    const engine = this.engines.find((e) => e.id === activeEngineId)
+    if (engine) {
+      this.activeEngine = engine
+    } else {
+      // 如果当前活跃引擎不在新列表中，选择第一个引擎
       this.activeEngine = this.engines[0]
+    }
+
+    // 更新自定义引擎到配置
+    await this.updateCustomEnginesToConfig()
+
+    // 更新时间戳
+    this.lastEnginesUpdateTime = Date.now()
+  }
+
+  /**
+   * 确保引擎列表是最新的，如果需要就更新
+   */
+  private async ensureEnginesUpdated(): Promise<void> {
+    // 如果上次更新时间是0或者距离现在超过5分钟，则更新引擎列表
+    const currentTime = Date.now()
+    if (
+      this.lastEnginesUpdateTime === 0 ||
+      currentTime - this.lastEnginesUpdateTime > 5 * 60 * 1000
+    ) {
+      await this.refreshEngines()
+    }
+  }
+
+  /**
+   * 刷新引擎列表，合并默认引擎和自定义引擎
+   */
+  private async refreshEngines(): Promise<void> {
+    try {
+      const configPresenter = presenter.configPresenter
+
+      // 获取自定义搜索引擎
+      const customEngines = await configPresenter.getCustomSearchEngines()
+
+      if (customEngines && customEngines.length > 0) {
+        // 记住当前活跃引擎ID
+        const activeEngineId = this.activeEngine.id
+
+        // 合并默认引擎和自定义引擎
+        this.engines = [...defaultEngines, ...customEngines]
+
+        // 尝试保持当前活跃引擎
+        const engine = this.engines.find((e) => e.id === activeEngineId)
+        if (engine) {
+          this.activeEngine = engine
+        }
+      } else {
+        // 没有自定义引擎，使用默认引擎
+        this.engines = defaultEngines
+      }
+
+      // 更新时间戳
+      this.lastEnginesUpdateTime = Date.now()
+    } catch (error) {
+      console.error('刷新搜索引擎列表失败:', error)
+    }
+  }
+
+  /**
+   * 将当前的自定义搜索引擎更新到配置中
+   */
+  private async updateCustomEnginesToConfig(): Promise<void> {
+    try {
+      // 提取所有标记为自定义的引擎
+      const customEngines = this.engines.filter((engine) => engine.isCustom)
+
+      // 更新到配置
+      if (customEngines.length > 0) {
+        const configPresenter = presenter.configPresenter
+        await configPresenter.setCustomSearchEngines(customEngines)
+      }
+    } catch (error) {
+      console.error('更新自定义搜索引擎到配置失败:', error)
     }
   }
 
@@ -443,6 +564,9 @@ export class SearchManager {
   }
 
   async search(conversationId: string, query: string): Promise<SearchResult[]> {
+    // 确保引擎列表是最新的
+    await this.ensureEnginesUpdated()
+
     // 创建用于可能中断搜索的 AbortController
     const abortController = new AbortController()
     this.abortControllers.set(conversationId, abortController)
@@ -568,6 +692,7 @@ export class SearchManager {
     try {
       // 0. 模拟页面滚动，模拟真实阅读体验
       this.simulatePageScrolling(window)
+      console.log('extraing', this.activeEngine)
       const results = await window.webContents.executeJavaScript(`
         (function() {
           ${this.activeEngine.extractorScript}

@@ -40,7 +40,14 @@
     "proxyModeCustom": "自定义代理",
     "customProxyUrl": "自定义代理地址",
     "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
-    "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
+    "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL",
+    "addCustomSearchEngine": "添加自定义搜索引擎",
+    "addCustomSearchEngineDesc": "添加一个新的搜索引擎，需要提供名称和搜索URL。URL中必须包含{query}作为查询占位符。",
+    "searchEngineName": "搜索引擎名称",
+    "searchEngineNamePlaceholder": "请输入搜索引擎名称",
+    "searchEngineUrl": "搜索URL",
+    "searchEngineUrlPlaceholder": "请输入搜索URL，例如: https://example.com/search?q={query}",
+    "searchEngineUrlError": "URL必须包含{query}作为查询占位符"
   },
   "update": {
     "newVersion": "发现新版本",
@@ -164,7 +171,14 @@
       "proxyModeCustom": "自定义代理",
       "customProxyUrl": "自定义代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
-      "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
+      "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL",
+      "addCustomSearchEngine": "添加自定义搜索引擎",
+      "addCustomSearchEngineDesc": "添加一个新的搜索引擎，需要提供名称和搜索URL。URL中必须包含{query}作为查询占位符。",
+      "searchEngineName": "搜索引擎名称",
+      "searchEngineNamePlaceholder": "请输入搜索引擎名称",
+      "searchEngineUrl": "搜索URL",
+      "searchEngineUrlPlaceholder": "请输入搜索URL，例如: https://example.com/search?q={query}",
+      "searchEngineUrlError": "URL必须包含{query}作为查询占位符"
     },
     "data": {
       "title": "数据设置",

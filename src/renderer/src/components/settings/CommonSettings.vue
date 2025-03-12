@@ -26,21 +26,26 @@
           <Icon icon="lucide:search" class="w-4 h-4 text-muted-foreground" />
           <span class="text-sm font-medium">{{ t('settings.common.searchEngine') }}</span>
         </span>
-        <div class="flex-shrink-0 min-w-64 max-w-96">
-          <Select v-model="selectedSearchEngine" class="">
-            <SelectTrigger>
-              <SelectValue :placeholder="t('settings.common.searchEngineSelect')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem
-                v-for="engine in settingsStore.searchEngines"
-                :key="engine.name"
-                :value="engine.name"
-              >
-                {{ engine.name }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+        <div class="flex-shrink-0 flex gap-2">
+          <div class="min-w-52 max-w-96">
+            <Select v-model="selectedSearchEngine" class="">
+              <SelectTrigger>
+                <SelectValue :placeholder="t('settings.common.searchEngineSelect')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem
+                  v-for="engine in settingsStore.searchEngines"
+                  :key="engine.id"
+                  :value="engine.id"
+                >
+                  {{ engine.name }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" size="icon" @click="openAddSearchEngineDialog">
+            <Icon icon="lucide:plus" class="w-4 h-4" />
+          </Button>
         </div>
       </div>
       <!-- 搜索助手模型选择 -->
@@ -117,7 +122,7 @@
           <Switch
             id="artifacts-effect-switch"
             :checked="artifactsEffectEnabled"
-            @update:checked="val => settingsStore.setArtifactsEffectEnabled(Boolean(val))"
+            @update:checked="(val) => settingsStore.setArtifactsEffectEnabled(Boolean(val))"
           />
         </div>
       </div>
@@ -150,6 +155,57 @@
       </Dialog>
     </div>
   </ScrollArea>
+
+  <!-- 添加自定义搜索引擎对话框 -->
+  <Dialog v-model:open="isAddSearchEngineDialogOpen">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{ t('settings.common.addCustomSearchEngine') }}</DialogTitle>
+        <DialogDescription>
+          {{ t('settings.common.addCustomSearchEngineDesc') }}
+        </DialogDescription>
+      </DialogHeader>
+
+      <div class="grid gap-4 py-4">
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="search-engine-name" class="text-right">
+            {{ t('settings.common.searchEngineName') }}
+          </Label>
+          <Input
+            id="search-engine-name"
+            v-model="newSearchEngine.name"
+            class="col-span-3"
+            :placeholder="t('settings.common.searchEngineNamePlaceholder')"
+          />
+        </div>
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label for="search-engine-url" class="text-right">
+            {{ t('settings.common.searchEngineUrl') }}
+          </Label>
+          <div class="col-span-3">
+            <Input
+              id="search-engine-url"
+              v-model="newSearchEngine.searchUrl"
+              :placeholder="t('settings.common.searchEngineUrlPlaceholder')"
+              :class="{ 'border-red-500': showSearchUrlError }"
+            />
+            <div v-if="showSearchUrlError" class="text-xs text-red-500 mt-1">
+              {{ t('settings.common.searchEngineUrlError') }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button variant="outline" @click="closeAddSearchEngineDialog">
+          {{ t('dialog.cancel') }}
+        </Button>
+        <Button type="submit" :disabled="!isValidNewSearchEngine" @click="addCustomSearchEngine">
+          {{ t('dialog.confirm') }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
@@ -180,8 +236,11 @@ import { ChevronDown } from 'lucide-vue-next'
 import ModelSelect from '@/components/ModelSelect.vue'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import type { RENDERER_MODEL_META } from '@shared/presenter'
+import type { SearchEngineTemplate } from '@shared/chat'
 import { Switch } from '@/components/ui/switch'
+import { nanoid } from 'nanoid'
 
 const devicePresenter = usePresenter('devicePresenter')
 const configPresenter = usePresenter('configPresenter')
@@ -189,12 +248,93 @@ const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 const selectedLanguage = ref('system')
-const selectedSearchEngine = ref(settingsStore.activeSearchEngine?.name ?? 'google')
+const selectedSearchEngine = ref(settingsStore.activeSearchEngine?.id ?? 'google')
 const selectedSearchModel = computed(() => settingsStore.searchAssistantModel)
 
 const selectedProxyMode = ref('system')
 const customProxyUrl = ref('')
 const showUrlError = ref(false)
+
+// 新增搜索引擎相关
+const isAddSearchEngineDialogOpen = ref(false)
+const newSearchEngine = ref({
+  name: '',
+  searchUrl: ''
+})
+const showSearchUrlError = ref(false)
+
+const isValidNewSearchEngine = computed(() => {
+  return (
+    newSearchEngine.value.name.trim() !== '' &&
+    newSearchEngine.value.searchUrl.trim() !== '' &&
+    newSearchEngine.value.searchUrl.includes('{query}')
+  )
+})
+
+const openAddSearchEngineDialog = () => {
+  newSearchEngine.value = {
+    name: '',
+    searchUrl: ''
+  }
+  showSearchUrlError.value = false
+  isAddSearchEngineDialogOpen.value = true
+}
+
+const closeAddSearchEngineDialog = () => {
+  isAddSearchEngineDialogOpen.value = false
+}
+
+const addCustomSearchEngine = async () => {
+  if (!isValidNewSearchEngine.value) {
+    if (!newSearchEngine.value.searchUrl.includes('{query}')) {
+      showSearchUrlError.value = true
+    }
+    return
+  }
+
+  // 创建自定义搜索引擎对象
+  const customEngine: SearchEngineTemplate = {
+    id: `custom-${nanoid(6)}`,
+    name: newSearchEngine.value.name.trim(),
+    searchUrl: newSearchEngine.value.searchUrl.trim(),
+    selector: '',
+    extractorScript: '',
+    isCustom: true
+  }
+
+  try {
+    // 获取现有的自定义搜索引擎
+    let customSearchEngines: SearchEngineTemplate[] = []
+    try {
+      customSearchEngines = (await configPresenter.getCustomSearchEngines()) || []
+    } catch (error) {
+      console.error('获取自定义搜索引擎失败:', error)
+      customSearchEngines = []
+    }
+
+    // 添加新的自定义搜索引擎
+    customSearchEngines.push(customEngine)
+
+    // 保存自定义搜索引擎
+    await configPresenter.setCustomSearchEngines(customSearchEngines)
+
+    // 更新全局搜索引擎列表
+    const allEngines = [
+      ...settingsStore.searchEngines.filter((e) => !e.isCustom),
+      ...customSearchEngines
+    ]
+    settingsStore.searchEngines.splice(0, settingsStore.searchEngines.length, ...allEngines)
+
+    // 选择新添加的引擎
+    selectedSearchEngine.value = customEngine.id
+    await settingsStore.setSearchEngine(customEngine.id)
+
+    closeAddSearchEngineDialog()
+  } catch (error) {
+    console.error('添加自定义搜索引擎失败:', error)
+    // TODO: 显示错误提示
+  }
+}
 
 let proxyUrlDebounceTimer: number | null = null
 
@@ -244,7 +384,7 @@ const artifactsEffectEnabled = computed({
 
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language
-  selectedSearchEngine.value = settingsStore.activeSearchEngine?.name ?? 'google'
+  selectedSearchEngine.value = settingsStore.activeSearchEngine?.id ?? 'google'
 
   selectedProxyMode.value = await configPresenter.getProxyMode()
   customProxyUrl.value = await configPresenter.getCustomProxyUrl()

@@ -91,8 +91,10 @@ export type SearchBlock = {
 }
 
 export interface SearchEngineTemplate {
+  id: string
   name: string
   selector: string
   searchUrl: string
   extractorScript: string
+  isCustom?: boolean
 }

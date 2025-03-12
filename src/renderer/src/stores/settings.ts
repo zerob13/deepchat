@@ -166,52 +166,69 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 初始化设置
   const initSettings = async () => {
-    // 获取全部 provider
-    providers.value = await configP.getProviders()
-    defaultProviders.value = await configP.getDefaultProviders()
-    // 获取主题
-    theme.value = (await configP.getSetting('theme')) || 'system'
+    try {
+      // 获取全部 provider
+      providers.value = await configP.getProviders()
+      defaultProviders.value = await configP.getDefaultProviders()
+      // 获取主题
+      theme.value = (await configP.getSetting('theme')) || 'system'
 
-    // 获取语言
-    language.value = (await configP.getSetting('language')) || 'system'
-    // 设置语言
-    locale.value = await configP.getLanguage()
+      // 获取语言
+      language.value = (await configP.getSetting('language')) || 'system'
+      // 设置语言
+      locale.value = await configP.getLanguage()
 
-    // 获取artifacts效果开关状态
-    artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
+      // 获取artifacts效果开关状态
+      artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
+      // 获取搜索引擎
+      searchEngines.value = await threadP.getSearchEngines()
 
-    // 获取全部模型
-    await refreshAllModels()
+      // 加载自定义搜索引擎并合并
+      try {
+        const customEngines = await configP.getCustomSearchEngines()
+        if (customEngines && customEngines.length > 0) {
+          // 移除已有的自定义搜索引擎（避免重复）
+          searchEngines.value = searchEngines.value.filter((e) => !e.isCustom)
+          // 添加自定义搜索引擎
+          searchEngines.value.push(...customEngines)
+        }
+      } catch (error) {
+        console.error('加载自定义搜索引擎失败:', error)
+      }
 
-    // 初始化搜索助手模型
-    await initOrUpdateSearchAssistantModel()
+      // 设置当前活跃的搜索引擎
+      const activeEngineId = (await configP.getSetting<string>('searchEngine')) || 'google'
+      const engine = searchEngines.value.find((e) => e.id === activeEngineId)
+      if (engine) {
+        activeSearchEngine.value = engine
+      } else {
+        // 如果找不到指定的引擎，使用第一个
+        activeSearchEngine.value = searchEngines.value[0]
+      }
+      await threadP.setActiveSearchEngine(activeEngineId)
+      // 获取全部模型
+      await refreshAllModels()
 
-    // 设置 Ollama 事件监听器
-    setupOllamaEventListeners()
+      // 初始化搜索助手模型
+      await initOrUpdateSearchAssistantModel()
 
-    // 设置 artifacts 效果事件监听器
-    setupArtifactsEffectListener()
+      // 设置 Ollama 事件监听器
+      setupOllamaEventListeners()
 
-    // 单独刷新一次 Ollama 模型，确保即使没有启用 Ollama provider 也能获取模型列表
-    if (providers.value.some((p) => p.id === 'ollama')) {
-      await refreshOllamaModels()
+      // 设置 artifacts 效果事件监听器
+      setupArtifactsEffectListener()
+
+      // 单独刷新一次 Ollama 模型，确保即使没有启用 Ollama provider 也能获取模型列表
+      if (providers.value.some((p) => p.id === 'ollama')) {
+        await refreshOllamaModels()
+      }
+
+      // 设置事件监听
+      setupProviderListener()
+      setupUpdateListener()
+    } catch (error) {
+      console.error('初始化设置失败:', error)
     }
-
-    // 获取搜索引擎
-    searchEngines.value = await threadP.getSearchEngines()
-    const savedEngineName = await configP.getSetting<string>('searchEngine')
-    const savedEngine = searchEngines.value.find((e) => e.name === savedEngineName)
-    if (savedEngine) {
-      activeSearchEngine.value = savedEngine
-      threadP.setActiveSearchEngine(savedEngine.name)
-    } else {
-      activeSearchEngine.value = searchEngines.value[0]
-      threadP.setActiveSearchEngine(searchEngines.value[0].name)
-    }
-
-    // 设置事件监听
-    setupProviderListener()
-    setupUpdateListener()
   }
 
   // 刷新所有模型列表
@@ -768,12 +785,12 @@ export const useSettingsStore = defineStore('settings', () => {
       console.error(`Failed to fetch models for provider ${providerId}:`, error)
     }
   }
-  const setSearchEngine = async (engineName: string) => {
-    const engine = searchEngines.value.find((e) => e.name === engineName)
+  const setSearchEngine = async (engineId: string) => {
+    const engine = searchEngines.value.find((e) => e.id === engineId)
     if (engine) {
       activeSearchEngine.value = engine
-      await configP.setSetting('searchEngine', engineName)
-      threadP.setActiveSearchEngine(engineName)
+      await configP.setSetting('searchEngine', engineId)
+      await threadP.setActiveSearchEngine(engineId)
     }
   }
 
@@ -1094,6 +1111,7 @@ export const useSettingsStore = defineStore('settings', () => {
     initSettings()
     setupProviderListener()
     setupUpdateListener()
+    setupSearchEnginesListener()
   })
 
   // 清理可能的事件监听器
@@ -1119,6 +1137,26 @@ export const useSettingsStore = defineStore('settings', () => {
         artifactsEffectEnabled.value = enabled
       }
     )
+  }
+
+  // 添加监听搜索引擎更新的事件
+  const setupSearchEnginesListener = () => {
+    const configP = usePresenter('configPresenter')
+
+    // 使用IPC监听事件
+    window.electron.ipcRenderer.on(CONFIG_EVENTS.SEARCH_ENGINES_UPDATED, async () => {
+      try {
+        const customEngines = await configP.getCustomSearchEngines()
+        if (customEngines && customEngines.length > 0) {
+          // 移除已有的自定义搜索引擎（避免重复）
+          searchEngines.value = searchEngines.value.filter((e) => !e.isCustom)
+          // 添加自定义搜索引擎
+          searchEngines.value.push(...customEngines)
+        }
+      } catch (error) {
+        console.error('更新自定义搜索引擎失败:', error)
+      }
+    })
   }
 
   return {
@@ -1177,6 +1215,7 @@ export const useSettingsStore = defineStore('settings', () => {
     cleanup,
     artifactsEffectEnabled,
     setArtifactsEffectEnabled,
-    setupArtifactsEffectListener
+    setupArtifactsEffectListener,
+    setupSearchEnginesListener
   }
 })

@@ -195,8 +195,8 @@ export class ThreadPresenter implements IThreadPresenter {
   private configPresenter: IConfigPresenter
   private searchManager: SearchManager
   private generatingMessages: Map<string, GeneratingMessageState> = new Map()
-  protected searchAssistantModel: MODEL_META | null = null
-  protected searchAssistantProviderId: string | null = null
+  public searchAssistantModel: MODEL_META | null = null
+  public searchAssistantProviderId: string | null = null
   private searchingMessages: Set<string> = new Set()
 
   constructor(
@@ -340,14 +340,14 @@ export class ThreadPresenter implements IThreadPresenter {
     this.searchAssistantModel = model
     this.searchAssistantProviderId = providerId
   }
-  getSearchEngines(): SearchEngineTemplate[] {
+  async getSearchEngines(): Promise<SearchEngineTemplate[]> {
     return this.searchManager.getEngines()
   }
-  getActiveSearchEngine(): SearchEngineTemplate {
+  async getActiveSearchEngine(): Promise<SearchEngineTemplate> {
     return this.searchManager.getActiveEngine()
   }
-  setActiveSearchEngine(engineName: string) {
-    this.searchManager.setActiveEngine(engineName)
+  async setActiveSearchEngine(engineId: string): Promise<void> {
+    await this.searchManager.setActiveEngine(engineId)
   }
 
   /**

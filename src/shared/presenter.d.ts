@@ -144,6 +144,9 @@ export interface IConfigPresenter {
   setProxyMode(mode: string): void
   getCustomProxyUrl(): string
   setCustomProxyUrl(url: string): void
+  // 自定义搜索引擎
+  getCustomSearchEngines(): Promise<SearchEngineTemplate[]>
+  setCustomSearchEngines(engines: SearchEngineTemplate[]): Promise<void>
   // artifacts效果设置
   getArtifactsEffectEnabled(): boolean
   setArtifactsEffectEnabled(enabled: boolean): void
@@ -330,9 +333,9 @@ export interface IThreadPresenter {
   summaryTitles(modelId?: string): Promise<string>
   clearActiveThread(): Promise<void>
   stopMessageGeneration(messageId: string): Promise<void>
-  getSearchEngines(): SearchEngineTemplate[]
-  getActiveSearchEngine(): SearchEngineTemplate
-  setActiveSearchEngine(engineName: string): void
+  getSearchEngines(): Promise<SearchEngineTemplate[]>
+  getActiveSearchEngine(): Promise<SearchEngineTemplate>
+  setActiveSearchEngine(engineId: string): Promise<void>
   // 搜索助手模型设置
   setSearchAssistantModel(model: MODEL_META, providerId: string): void
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
