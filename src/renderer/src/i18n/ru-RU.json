@@ -149,7 +149,14 @@
       "proxyModeCustom": "Пользовательский прокси",
       "customProxyUrl": "URL пользовательского прокси",
       "customProxyUrlPlaceholder": "Пример: http://127.0.0.1:7890",
-      "invalidProxyUrl": "Неверный URL прокси, введите корректный http/https URL"
+      "invalidProxyUrl": "Неверный URL прокси, введите корректный http/https URL",
+      "addCustomSearchEngine": "Добавить пользовательский поисковый движок",
+      "addCustomSearchEngineDesc": "Добавьте новый поисковый движок, необходимо указать имя и URL для поиска. URL должен содержать {'{'}query{'}'} в качестве заполнителя для запроса.",
+      "searchEngineName": "Название поискового движка",
+      "searchEngineNamePlaceholder": "Введите название поискового движка",
+      "searchEngineUrl": "URL для поиска",
+      "searchEngineUrlPlaceholder": "Например: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL должен содержать {'{'}query{'}'} в качестве заполнителя для запроса"
     },
     "data": {
       "title": "Настройки данных",

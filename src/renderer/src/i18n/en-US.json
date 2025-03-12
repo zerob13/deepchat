@@ -155,7 +155,16 @@
       "proxyModeCustom": "Custom Proxy",
       "customProxyUrl": "Custom Proxy URL",
       "customProxyUrlPlaceholder": "e.g. http://127.0.0.1:7890",
-      "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL"
+      "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL",
+      "addCustomSearchEngine": "Add Custom Search Engine",
+      "addCustomSearchEngineDesc": "To add a new search engine, you need to provide a name and a search URL. The URL must include {'{'}query{'}'} as a query placeholder.",
+      "searchEngineName": "Search Engine Name",
+      "searchEngineNamePlaceholder": "Please enter the search engine name",
+      "searchEngineUrl": "Search URL",
+      "searchEngineUrlPlaceholder": "e.g. https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL must contain {query} as a search placeholder",
+      "deleteCustomSearchEngine": "Delete Custom Search Engine",
+      "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."
     },
     "data": {
       "title": "Data Settings",
@@ -377,5 +386,7 @@
       "importProcess": "Error during import process",
       "unknown": "Unknown error"
     }
-  }
+  },
+  "deleteCustomSearchEngine": "Delete Custom Search Engine",
+  "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."
 }

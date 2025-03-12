@@ -43,8 +43,22 @@
               </SelectContent>
             </Select>
           </div>
-          <Button variant="outline" size="icon" @click="openAddSearchEngineDialog">
+          <Button
+            variant="outline"
+            size="icon"
+            @click="openAddSearchEngineDialog"
+            :title="t('settings.common.addCustomSearchEngine')"
+          >
             <Icon icon="lucide:plus" class="w-4 h-4" />
+          </Button>
+          <Button
+            v-if="isCurrentEngineCustom"
+            variant="outline"
+            size="icon"
+            @click="currentEngine && openDeleteSearchEngineDialog(currentEngine)"
+            :title="t('settings.common.deleteCustomSearchEngine')"
+          >
+            <Icon icon="lucide:trash-2" class="w-4 h-4 text-destructive" />
           </Button>
         </div>
       </div>
@@ -202,6 +216,26 @@
         </Button>
         <Button type="submit" :disabled="!isValidNewSearchEngine" @click="addCustomSearchEngine">
           {{ t('dialog.confirm') }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <!-- 添加删除搜索引擎确认对话框 -->
+  <Dialog v-model:open="isDeleteSearchEngineDialogOpen">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{ t('settings.common.deleteCustomSearchEngine') }}</DialogTitle>
+        <DialogDescription>
+          {{ t('settings.common.deleteCustomSearchEngineDesc', { name: engineToDelete?.name }) }}
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" @click="closeDeleteSearchEngineDialog">
+          {{ t('dialog.cancel') }}
+        </Button>
+        <Button variant="destructive" @click="deleteCustomSearchEngine">
+          {{ t('dialog.delete.confirm') }}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -430,4 +464,74 @@ const handleSearchModelSelect = (model: RENDERER_MODEL_META, providerId: string)
   settingsStore.setSearchAssistantModel(model, providerId)
   modelSelectOpen.value = false
 }
+
+const isDeleteSearchEngineDialogOpen = ref(false)
+const engineToDelete = ref<SearchEngineTemplate | null>(null)
+
+const openDeleteSearchEngineDialog = (engine: SearchEngineTemplate) => {
+  engineToDelete.value = engine
+  isDeleteSearchEngineDialogOpen.value = true
+}
+
+const closeDeleteSearchEngineDialog = () => {
+  isDeleteSearchEngineDialogOpen.value = false
+}
+
+const deleteCustomSearchEngine = async () => {
+  if (!engineToDelete.value) return
+
+  try {
+    // 获取现有的自定义搜索引擎
+    let customSearchEngines: SearchEngineTemplate[] = []
+    try {
+      customSearchEngines = (await configPresenter.getCustomSearchEngines()) || []
+    } catch (error) {
+      console.error('获取自定义搜索引擎失败:', error)
+      customSearchEngines = []
+    }
+
+    // 记录被删除的是否为当前选中的引擎
+    const isDeletingActiveEngine = selectedSearchEngine.value === engineToDelete.value?.id
+
+    // 过滤掉要删除的搜索引擎
+    customSearchEngines = customSearchEngines.filter((e) => e.id !== engineToDelete.value?.id)
+
+    // 保存自定义搜索引擎
+    await configPresenter.setCustomSearchEngines(customSearchEngines)
+
+    // 更新全局搜索引擎列表
+    const allEngines = [
+      ...settingsStore.searchEngines.filter((e) => !e.isCustom),
+      ...customSearchEngines
+    ]
+    settingsStore.searchEngines.splice(0, settingsStore.searchEngines.length, ...allEngines)
+
+    // 如果删除的是当前选中的引擎，则切换到第一个默认引擎
+    if (isDeletingActiveEngine) {
+      // 找到第一个默认引擎 (非自定义引擎)
+      const firstDefaultEngine = settingsStore.searchEngines.find((e) => !e.isCustom)
+      if (firstDefaultEngine) {
+        selectedSearchEngine.value = firstDefaultEngine.id
+        await settingsStore.setSearchEngine(firstDefaultEngine.id)
+      }
+    }
+
+    closeDeleteSearchEngineDialog()
+  } catch (error) {
+    console.error('删除自定义搜索引擎失败:', error)
+    // TODO: 显示错误提示
+  }
+}
+
+// 获取当前选择的搜索引擎对象
+const currentEngine = computed(() => {
+  return (
+    settingsStore.searchEngines.find((engine) => engine.id === selectedSearchEngine.value) || null
+  )
+})
+
+// 判断当前选择的是否为自定义搜索引擎
+const isCurrentEngineCustom = computed(() => {
+  return currentEngine.value?.isCustom || false
+})
 </script>
