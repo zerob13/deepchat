@@ -77,6 +77,8 @@ const setActiveProvider = (providerId: string) => {
 
 const toggleProviderStatus = async (provider: LLM_PROVIDER) => {
   await settingsStore.updateProviderStatus(provider.id, !provider.enable)
+  // 切换状态后，同时打开该服务商的详情页面
+  setActiveProvider(provider.id)
 }
 
 const activeProvider = computed(() => {
