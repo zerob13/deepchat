@@ -531,7 +531,7 @@ export class ConfigPresenter implements IConfigPresenter {
   getSearchPreviewEnabled(): Promise<boolean> {
     const value = this.getSetting<boolean>('searchPreviewEnabled')
     // 默认开启搜索预览
-    return Promise.resolve(value === undefined || value === null ? true : value)
+    return Promise.resolve(value === undefined || value === null ? false : value)
   }
 
   // 设置搜索预览状态
