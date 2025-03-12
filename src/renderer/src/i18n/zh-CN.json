@@ -57,9 +57,9 @@
     "welcome": "欢迎",
     "settings": "设置",
     "settings-common": "通用设置",
-    "settings-provider": "服务商设置",
-    "settings-about": "关于",
-    "settings-database": "数据设置"
+    "settings-database": "数据设置",
+    "settings-provider": "大模型设置",
+    "settings-about": "关于"
   },
   "chat": {
     "input": {
@@ -366,6 +366,7 @@
     "code": "代码",
     "export": "导出"
   },
+<<<<<<< HEAD
   "sync": {
     "success": {
       "importComplete": "数据导入成功，点击确定后将重启应用"
@@ -383,4 +384,11 @@
       "unknown": "未知错误"
     }
   }
+=======
+  "Silicon": "硅基流动",
+  "QwenLM": "千问模型",
+  "Doubao": "豆包",
+  "PPIO": "派欧云",
+  "Moonshot": "月之暗面"
+>>>>>>> dev
 }

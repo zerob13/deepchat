@@ -6,11 +6,12 @@ import {
   MESSAGE_STATUS,
   MESSAGE_METADATA,
   SearchResult,
-  MODEL_META
+  MODEL_META,
+  ISQLitePresenter,
+  IConfigPresenter,
+  ILlmProviderPresenter
 } from '../../../shared/presenter'
-import { ISQLitePresenter } from '../../../shared/presenter'
 import { MessageManager } from './messageManager'
-import { ILlmProviderPresenter } from '../../../shared/presenter'
 import { eventBus } from '@/eventbus'
 import {
   AssistantMessage,
@@ -189,16 +190,18 @@ export class ThreadPresenter implements IThreadPresenter {
   private sqlitePresenter: ISQLitePresenter
   private messageManager: MessageManager
   private llmProviderPresenter: ILlmProviderPresenter
+  private configPresenter: IConfigPresenter
   private searchManager: SearchManager
   private generatingMessages: Map<string, GeneratingMessageState> = new Map()
   private searchAssistantModel: MODEL_META | null = null
   private searchAssistantProviderId: string | null = null
 
-  constructor(sqlitePresenter: ISQLitePresenter, llmProviderPresenter: ILlmProviderPresenter) {
+  constructor(sqlitePresenter: ISQLitePresenter, llmProviderPresenter: ILlmProviderPresenter, configPresenter: IConfigPresenter) {
     this.sqlitePresenter = sqlitePresenter
     this.messageManager = new MessageManager(sqlitePresenter)
     this.llmProviderPresenter = llmProviderPresenter
     this.searchManager = new SearchManager()
+    this.configPresenter = configPresenter
 
     // 初始化时处理所有未完成的消息
     this.initializeUnfinishedMessages()
@@ -932,7 +935,11 @@ export class ThreadPresenter implements IThreadPresenter {
       }
       contextMessages = await this.getContextMessages(conversationId)
     }
-
+    // 任何情况都使用最新配置
+    const webSearchEnabled = this.configPresenter.getSetting('input_webSearch')
+    const thinkEnabled = this.configPresenter.getSetting('input_deepThinking')
+    userMessage.content.search = webSearchEnabled
+    userMessage.content.think = thinkEnabled
     return { conversation, userMessage, contextMessages }
   }
 
@@ -1359,11 +1366,15 @@ export class ThreadPresenter implements IThreadPresenter {
         }
       })
       .filter((item) => item.formattedMessage.content.length > 0)
-    return await this.llmProviderPresenter.summaryTitles(
+    const title = await this.llmProviderPresenter.summaryTitles(
       messagesWithLength.map((item) => item.formattedMessage),
       summaryProviderId || conversation.settings.providerId,
       modelId || conversation.settings.modelId
     )
+    console.log('-------------> title \n', title)
+    const cleanedTitle = title.replace(/<think>.*?<\/think>/g, '').trim()
+    console.log('-------------> cleanedTitle \n', cleanedTitle)
+    return cleanedTitle
   }
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null

@@ -80,6 +80,27 @@ export class FilePresenter implements IFilePresenter {
       } else {
         throw new Error(`无法创建文件适配器: ${fullPath}`)
       }
+    } else {
+      const adapter = this.fileAdapters.get(fullPath)
+      if (adapter) {
+        const content = await adapter.getLLMContent()
+        return {
+          name: adapter.fileMetaData?.fileName ?? '',
+          token: adapter.mimeType?.startsWith('image')
+            ? calculateImageTokens(adapter as ImageFileAdapter)
+            : approximateTokenSize(content || ''),
+          path: adapter.filePath,
+          mimeType: adapter.mimeType ?? '',
+          metadata: adapter.fileMetaData ?? {
+            fileName: '',
+            fileSize: 0,
+            fileDescription: '',
+            fileCreated: new Date(),
+            fileModified: new Date()
+          },
+          content: content || ''
+        }
+      }
     }
     throw new Error(`无法读取文件: ${fullPath}`)
   }
