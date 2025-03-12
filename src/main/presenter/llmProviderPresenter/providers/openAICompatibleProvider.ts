@@ -3,6 +3,9 @@ import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import OpenAI from 'openai'
 import { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources'
 import { ConfigPresenter } from '../../configPresenter'
+import { proxyConfig } from '../../proxyConfig'
+import { HttpsProxyAgent } from 'https-proxy-agent'
+
 
 export class OpenAICompatibleProvider extends BaseLLMProvider {
   protected openai: OpenAI
@@ -12,9 +15,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     super(provider, configPresenter)
+    let proxyUrl = proxyConfig.getProxyUrl()
     this.openai = new OpenAI({
       apiKey: this.provider.apiKey,
-      baseURL: this.provider.baseUrl
+      baseURL: this.provider.baseUrl,
+      httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
     })
     if (OpenAICompatibleProvider.NO_MODELS_API_LIST.includes(this.provider.id.toLowerCase())) {
       this.isNoModelsApi = true
