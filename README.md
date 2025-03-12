@@ -175,6 +175,14 @@ $ npm run build:linux:arm64
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ThinkInAIXYZ/deepchat&type=Date)](https://star-history.com/#ThinkInAIXYZ/deepchat&Date)
 
+## Contributors
+
+Thank you for considering contributing to deepchat! The contribution guide can be found in the [Contribution Guidelines](./CONTRIBUTING.md).
+
+<a href="https://github.com/ThinkInAIXYZ/deepchat/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ThinkInAIXYZ/deepchat" />
+</a>
+
 # 📃 License
 
 [LICENSE](./LICENSE)

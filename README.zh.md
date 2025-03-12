@@ -174,6 +174,14 @@ $ npm run build:linux:arm64
 
 [![Star History Chart](https://api.star-history.com/svg?repos=ThinkInAIXYZ/deepchat&type=Date)](https://star-history.com/#ThinkInAIXYZ/deepchat&Date)
 
+## 贡献者列表
+
+感谢所有参与建设deepchat的贡献者！如果你也想参与，请阅读 [贡献指南](./CONTRIBUTING.md)。
+
+<a href="https://github.com/ThinkInAIXYZ/deepchat/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ThinkInAIXYZ/deepchat" />
+</a>
+
 # 📃 许可证
 
 [LICENSE](./LICENSE)
