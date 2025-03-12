@@ -650,8 +650,11 @@ export class SearchManager {
       this.abortControllers.delete(conversationId)
       return []
     }
-
-    await this.waitForSelector(searchWindow, this.activeEngine.selector)
+    if (this.activeEngine.selector) {
+      await this.waitForSelector(searchWindow, this.activeEngine.selector)
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
     console.log('搜索结果加载完成')
 
     // 检查是否已经被中止
@@ -792,7 +795,7 @@ export class SearchManager {
       console.log('转换后的Markdown长度:', markdownContent.length)
 
       // 限制markdown长度，避免过大
-      const maxMarkdownLength = 5000
+      const maxMarkdownLength = 10000
       if (markdownContent.length > maxMarkdownLength) {
         markdownContent = markdownContent.substring(0, maxMarkdownLength)
       }
