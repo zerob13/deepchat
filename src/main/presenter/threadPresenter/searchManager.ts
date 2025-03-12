@@ -197,7 +197,11 @@ export class SearchManager {
   private wasFullScreen: Map<string, boolean> = new Map()
   private searchWindowWidth = 800
   private abortControllers: Map<string, AbortController> = new Map()
-  constructor() {}
+
+  // 默认空实现，不需要初始化
+  constructor() {
+    // 初始化搜索管理器
+  }
 
   getEngines(): SearchEngineTemplate[] {
     return this.engines
@@ -561,11 +565,220 @@ export class SearchManager {
   }
 
   private async extractSearchResults(window: BrowserWindow): Promise<SearchResult[]> {
-    return await window.webContents.executeJavaScript(`
-      (function() {
-        ${this.activeEngine.extractorScript}
-      })()
-    `)
+    try {
+      // 0. 模拟页面滚动，模拟真实阅读体验
+      this.simulatePageScrolling(window)
+      const results = await window.webContents.executeJavaScript(`
+        (function() {
+          ${this.activeEngine.extractorScript}
+        })()
+      `)
+      // 如果结果为空或长度为0，尝试使用备用方法
+      if (!results || results.length === 0) {
+        console.log('常规提取方法未返回结果，尝试使用备用方法')
+        return await this.fallbackExtractSearchResults(window)
+      }
+
+      return results
+    } catch (error) {
+      console.error('提取搜索结果失败:', error)
+      // 出错时也使用备用方法
+      return []
+    }
+  }
+
+  /**
+   * 备用的搜索结果提取方法，当标准提取方法失败时使用
+   * 使用AI模型分析页面内容提取搜索结果
+   */
+  private async fallbackExtractSearchResults(window: BrowserWindow): Promise<SearchResult[]> {
+    try {
+      // 1. 执行JS提取当前页面的body内容并清理不相关元素
+      const cleanedHtml = await window.webContents.executeJavaScript(`
+        (function() {
+          // 克隆body以避免直接修改页面
+          const tempDiv = document.createElement('div')
+          tempDiv.innerHTML = document.body.innerHTML
+
+          // 移除不需要的元素
+          const elementsToRemove = tempDiv.querySelectorAll('script, style, svg, iframe, nav, footer, header')
+          elementsToRemove.forEach(el => el.parentNode.removeChild(el))
+
+          // 移除广告相关元素
+          const adElements = tempDiv.querySelectorAll('[class*="ad"], [id*="ad"], [class*="banner"], [class*="popup"]')
+          adElements.forEach(el => el.parentNode.removeChild(el))
+
+          // 移除隐藏元素
+          const hiddenElements = tempDiv.querySelectorAll('[style*="display: none"], [style*="display:none"], [style*="visibility: hidden"]')
+          hiddenElements.forEach(el => el.parentNode.removeChild(el))
+
+          // 返回清理后的HTML
+          return tempDiv.innerHTML
+        })()
+      `)
+
+      // 获取页面URL（用于转换相对链接为绝对链接）
+      const pageUrl = await window.webContents.getURL()
+      const pageTitle = await window.webContents.executeJavaScript(`document.title`)
+
+      // 2. 使用ContentEnricher将HTML转换为Markdown
+      let markdownContent = ContentEnricher.convertHtmlToMarkdown(cleanedHtml, pageUrl)
+      console.log('转换后的Markdown长度:', markdownContent.length)
+
+      // 限制markdown长度，避免过大
+      const maxMarkdownLength = 5000
+      if (markdownContent.length > maxMarkdownLength) {
+        markdownContent = markdownContent.substring(0, maxMarkdownLength)
+      }
+
+      // 3. 构建提示词，使用AI模型提取搜索结果
+      const prompt = `
+        请分析<search_result>标签中的搜索引擎返回的markdown内容，并提取出所有搜索结果。每个搜索结果应包含以下字段：
+        - title: 结果标题
+        - url: 结果链接URL
+        - rank: 结果的序号(从1开始)
+        - description: 结果描述或摘要
+        - icon: 结果的图标URL(如果存在)
+
+        搜索页面URL: ${pageUrl}
+        搜索页面标题: ${pageTitle}
+
+        请使用以下JSON数组格式返回结果：
+        [
+          {
+            "title": "结果标题",
+            "url": "结果链接",
+            "rank": 1,
+            "description": "结果描述",
+            "icon": "图标URL"
+          },
+          {
+            "title": "结果标题2",
+            "url": "结果链接2",
+            "rank": 2,
+            "description": "结果描述2",
+            "icon": "图标URL2"
+          },
+          ...
+        ]
+
+        重要提示：
+        1. 仅返回有效的搜索结果，忽略广告、推荐内容等。
+        2. 确保返回的是有效的JSON格式。
+        3. 请尽可能提取出完整的URL，如果链接是相对路径，请基于搜索页面URL构建完整URL。
+        4. 如果无法找到某个字段，请使用空字符串代替。
+        5. 请只返回JSON数组，不要返回其他说明文字。
+        6. 如果提取不到结果，请返回空数组[]。
+
+        <search_result>
+        ${markdownContent}
+        </search_result>
+      `
+
+      // 4. 使用AI模型进行分析
+      const searchAssistantModel = presenter.threadPresenter.searchAssistantModel
+      const searchAssistantProviderId = presenter.threadPresenter.searchAssistantProviderId
+      if (!searchAssistantModel || !searchAssistantProviderId) {
+        throw new Error('搜索助手模型或提供商ID未设置')
+      }
+      const modelResponse = await presenter.llmproviderPresenter.generateCompletion(
+        searchAssistantProviderId,
+        [
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        searchAssistantModel.id || '',
+        0.4
+      )
+      console.log('模型返回的内容:', modelResponse)
+
+      // 5. 解析模型返回的内容
+      try {
+        // 尝试解析JSON
+        const jsonStart = modelResponse.indexOf('[')
+        const jsonEnd = modelResponse.lastIndexOf(']') + 1
+
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+          const jsonStr = modelResponse.substring(jsonStart, jsonEnd)
+          const results = JSON.parse(jsonStr)
+
+          // 验证结果格式
+          if (Array.isArray(results) && results.length > 0) {
+            console.log('AI模型成功提取到搜索结果:', results.length)
+            return results
+          }
+        }
+
+        // 如果无法解析为JSON或格式不正确
+        console.warn('AI模型返回的内容无法解析为有效的搜索结果')
+        return []
+      } catch (error) {
+        console.error('解析AI模型返回内容失败:', error)
+        return []
+      }
+    } catch (error) {
+      console.error('备用提取方法失败:', error)
+      return []
+    }
+  }
+
+  /**
+   * 模拟页面滚动，增强用户体验
+   * @param window 浏览器窗口
+   */
+  private async simulatePageScrolling(window: BrowserWindow): Promise<void> {
+    try {
+      // 获取页面高度
+      const pageHeight = await window.webContents.executeJavaScript(`
+        document.body.scrollHeight
+      `)
+
+      // 获取视窗高度
+      const viewportHeight = await window.webContents.executeJavaScript(`
+        window.innerHeight
+      `)
+
+      // 页面总高度
+      const totalHeight = Math.max(pageHeight, 1000)
+
+      // 计算滚动次数和每次滚动的距离
+      const scrollIterations = 3 // 滚动3次
+      const scrollDistance = Math.min(totalHeight / scrollIterations, viewportHeight * 0.8)
+
+      // 平滑滚动
+      for (let i = 0; i < scrollIterations; i++) {
+        await window.webContents.executeJavaScript(`
+          new Promise((resolve) => {
+            // 获取当前滚动位置
+            const currentScroll = window.scrollY || document.documentElement.scrollTop;
+            // 计算目标位置
+            const targetScroll = currentScroll + ${scrollDistance};
+
+            // 使用平滑滚动
+            window.scrollTo({
+              top: targetScroll,
+              behavior: 'smooth'
+            });
+
+            // 等待滚动完成
+            setTimeout(resolve, 300);
+          })
+        `)
+
+        // 给浏览器一点时间来加载潜在的懒加载内容
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+
+      // 等待一下，让页面完全加载
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      console.log('页面滚动完成')
+    } catch (error) {
+      console.error('模拟页面滚动失败:', error)
+      // 失败也继续处理
+    }
   }
 
   private async enrichResults(results: SearchResult[]): Promise<SearchResult[]> {

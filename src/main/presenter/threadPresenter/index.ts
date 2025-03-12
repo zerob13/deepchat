@@ -195,8 +195,8 @@ export class ThreadPresenter implements IThreadPresenter {
   private configPresenter: IConfigPresenter
   private searchManager: SearchManager
   private generatingMessages: Map<string, GeneratingMessageState> = new Map()
-  private searchAssistantModel: MODEL_META | null = null
-  private searchAssistantProviderId: string | null = null
+  protected searchAssistantModel: MODEL_META | null = null
+  protected searchAssistantProviderId: string | null = null
   private searchingMessages: Set<string> = new Set()
 
   constructor(
