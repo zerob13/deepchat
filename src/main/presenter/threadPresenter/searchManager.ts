@@ -1,9 +1,12 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
 import path from 'path'
 import { SearchEngineTemplate } from '@shared/chat'
 import { ContentEnricher } from './contentEnricher'
 import { SearchResult } from '@shared/presenter'
 import { is } from '@electron-toolkit/utils'
+import { presenter } from '@/presenter'
+import { MAIN_WIN } from '../windowPresenter'
+
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
 const defaultEngines: SearchEngineTemplate[] = [
@@ -186,10 +189,13 @@ const defaultEngines: SearchEngineTemplate[] = [
 
 export class SearchManager {
   private searchWindows: Map<string, BrowserWindow> = new Map()
-  private isDevelopment = process.env.NODE_ENV === 'development'
   private maxConcurrentSearches = 3
   private engines: SearchEngineTemplate[] = defaultEngines
   private activeEngine: SearchEngineTemplate = this.engines[0]
+  private originalWindowSizes: Map<string, { width: number; height: number }> = new Map()
+  private originalWindowPositions: Map<string, { x: number; y: number }> = new Map()
+  private wasFullScreen: Map<string, boolean> = new Map()
+  private searchWindowWidth = 800
 
   constructor() {}
 
@@ -217,23 +223,150 @@ export class SearchManager {
     }
   }
 
-  private initSearchWindow(conversationId: string): BrowserWindow {
+  private async initSearchWindow(conversationId: string): Promise<BrowserWindow> {
     if (this.searchWindows.size >= this.maxConcurrentSearches) {
       // 找到最早创建的窗口并销毁
       const [oldestConversationId] = this.searchWindows.keys()
       this.destroySearchWindow(oldestConversationId)
     }
+    const mainWindow = presenter.windowPresenter.getWindow(MAIN_WIN)
 
+    // 确保mainWindow存在
+    if (!mainWindow) {
+      console.error('主窗口不存在，无法创建搜索窗口')
+      throw new Error('主窗口不存在')
+    }
+
+    // 检查是否处于全屏状态
+    const isFullScreen = mainWindow.isFullScreen()
+    this.wasFullScreen.set(conversationId, isFullScreen)
+
+    // 如果是全屏，先退出全屏
+    if (isFullScreen) {
+      // 保存全屏前的位置和大小（如果可能的话）
+      this.originalWindowSizes.set(conversationId, {
+        width: mainWindow.getBounds().width,
+        height: mainWindow.getBounds().height
+      })
+      this.originalWindowPositions.set(conversationId, {
+        x: mainWindow.getBounds().x,
+        y: mainWindow.getBounds().y
+      })
+
+      // 退出全屏并等待完成
+      mainWindow.setFullScreen(false)
+
+      // 等待退出全屏完成
+      await new Promise<void>((resolve) => {
+        const checkFullScreenState = () => {
+          if (!mainWindow.isFullScreen()) {
+            resolve()
+          } else {
+            setTimeout(checkFullScreenState, 100)
+          }
+        }
+        checkFullScreenState()
+      })
+
+      // 给界面一些时间来重新布局
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    } else {
+      // 不是全屏模式，正常保存当前主窗口位置和大小信息
+      this.originalWindowPositions.set(conversationId, {
+        x: mainWindow.getBounds().x,
+        y: mainWindow.getBounds().y
+      })
+      this.originalWindowSizes.set(conversationId, {
+        width: mainWindow.getBounds().width,
+        height: mainWindow.getBounds().height
+      })
+    }
+
+    // 获取当前屏幕可用空间
+    const mainWindowBounds = mainWindow.getBounds()
+    const displayBounds = screen.getDisplayMatching(mainWindowBounds).workArea
+
+    // 检查是否右侧有足够空间
+    const rightSpace =
+      displayBounds.x + displayBounds.width - (mainWindowBounds.x + mainWindowBounds.width)
+    const needsAdjustment = rightSpace < this.searchWindowWidth + 20 // 加20px作为间隔
+
+    // 如果需要调整窗口
+    if (needsAdjustment) {
+      // 在全屏模式下退出全屏后，优先采用两个窗口铺满屏幕的方式
+      if (isFullScreen) {
+        const totalWidth = displayBounds.width
+        const mainWindowWidth = Math.floor(totalWidth * 0.6) // 主窗口占60%
+        const searchWindowWidth = Math.floor(totalWidth * 0.4) // 搜索窗口占40%
+        this.searchWindowWidth = searchWindowWidth
+
+        // 设置主窗口尺寸和位置（使用Electron内置动画）
+        mainWindow.setBounds(
+          {
+            x: displayBounds.x,
+            y: displayBounds.y,
+            width: mainWindowWidth,
+            height: displayBounds.height
+          },
+          true
+        ) // 添加true启用动画
+      } else {
+        // 非全屏模式下的调整逻辑
+        // 计算左移窗口所需的空间
+        const neededSpace = this.searchWindowWidth + 20 - rightSpace
+
+        // 检查左侧是否有足够空间移动窗口
+        const availableLeftSpace = mainWindowBounds.x - displayBounds.x
+
+        // 优先移动窗口位置
+        if (availableLeftSpace >= neededSpace) {
+          // 有足够空间移动窗口位置
+          const newX = Math.max(displayBounds.x, mainWindowBounds.x - neededSpace)
+          // 使用Electron内置动画
+          mainWindow.setPosition(newX, mainWindowBounds.y, true) // 添加true启用动画
+        } else {
+          // 左侧空间不足，结合移动和缩放
+          // 先尽可能地移动窗口
+          if (availableLeftSpace > 0) {
+            mainWindow.setPosition(displayBounds.x, mainWindowBounds.y, true) // 添加true启用动画
+          }
+
+          // 计算需要缩放的大小
+          const remainingNeededSpace = neededSpace - availableLeftSpace
+          if (remainingNeededSpace > 0) {
+            // 还需要缩放窗口
+            const newWidth = Math.max(
+              400, // 最小主窗口宽度
+              mainWindowBounds.width - remainingNeededSpace
+            )
+            // 使用Electron内置动画
+            mainWindow.setSize(newWidth, mainWindowBounds.height, true) // 添加true启用动画
+          }
+        }
+      }
+
+      // 给窗口一些时间来完成动画
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+
+    console.log('creating search window')
+    // 创建搜索窗口
     const searchWindow = new BrowserWindow({
-      width: 800,
-      height: 600,
-      show: this.isDevelopment,
+      width: this.searchWindowWidth,
+      height: isFullScreen ? displayBounds.height : mainWindowBounds.height,
+      parent: mainWindow,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         devTools: is.dev
       }
     })
+
+    // 获取调整后的主窗口位置
+    const updatedMainBounds = mainWindow.getBounds()
+
+    // 设置搜索窗口位置在主窗口右侧
+    searchWindow.setPosition(updatedMainBounds.x + updatedMainBounds.width, updatedMainBounds.y)
 
     searchWindow.webContents.session.webRequest.onBeforeSendHeaders(
       { urls: ['*://*/*'] },
@@ -253,18 +386,62 @@ export class SearchManager {
     return searchWindow
   }
 
-  private destroySearchWindow(conversationId: string) {
+  private async destroySearchWindow(conversationId: string) {
     const window = this.searchWindows.get(conversationId)
     if (window) {
       window.destroy()
       this.searchWindows.delete(conversationId)
+
+      // 恢复主窗口原始位置和大小
+      const originalSize = this.originalWindowSizes.get(conversationId)
+      const originalPosition = this.originalWindowPositions.get(conversationId)
+      const wasFullScreen = this.wasFullScreen.get(conversationId)
+
+      if (originalSize && originalPosition) {
+        const mainWindow = presenter.windowPresenter.getWindow(MAIN_WIN)
+        if (mainWindow) {
+          if (wasFullScreen) {
+            // 如果原来是全屏，先恢复原始尺寸和位置，再进入全屏
+            mainWindow.setBounds(
+              {
+                x: originalPosition.x,
+                y: originalPosition.y,
+                width: originalSize.width,
+                height: originalSize.height
+              },
+              true
+            ) // 添加true启用动画
+
+            // 给UI一些时间来适应新尺寸
+            await new Promise((resolve) => setTimeout(resolve, 300))
+
+            // 重新进入全屏
+            mainWindow.setFullScreen(true)
+          } else {
+            // 非全屏模式下平滑恢复
+            mainWindow.setBounds(
+              {
+                x: originalPosition.x,
+                y: originalPosition.y,
+                width: originalSize.width,
+                height: originalSize.height
+              },
+              true
+            ) // 添加true启用动画
+          }
+        }
+
+        this.originalWindowSizes.delete(conversationId)
+        this.originalWindowPositions.delete(conversationId)
+        this.wasFullScreen.delete(conversationId)
+      }
     }
   }
 
   async search(conversationId: string, query: string): Promise<SearchResult[]> {
     let searchWindow = this.searchWindows.get(conversationId)
     if (!searchWindow) {
-      searchWindow = this.initSearchWindow(conversationId)
+      searchWindow = await this.initSearchWindow(conversationId)
     }
 
     const searchUrl = this.activeEngine.searchUrl.replace('{query}', encodeURIComponent(query))
@@ -360,5 +537,8 @@ export class SearchManager {
     for (const [conversationId] of this.searchWindows) {
       this.destroySearchWindow(conversationId)
     }
+    this.originalWindowSizes.clear()
+    this.originalWindowPositions.clear()
+    this.wasFullScreen.clear()
   }
 }

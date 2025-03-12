@@ -88,7 +88,7 @@ export class WindowPresenter implements IWindowPresenter {
       },
       frame: false
     })
-
+    mainWindow.setContentProtection(true)
     mainWindow.on('ready-to-show', () => {
       mainWindow.show()
       eventBus.emit(WINDOW_EVENTS.READY_TO_SHOW, mainWindow)
