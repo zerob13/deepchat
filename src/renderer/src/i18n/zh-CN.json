@@ -287,7 +287,9 @@
       "modelsRunning": "运行中的模型",
       "runningModels": "运行中的模型",
       "noRunningModels": "没有运行中的模型",
-      "deleteModel": "删除模型"
+      "deleteModel": "删除模型",
+      "localModels": "本地模型",
+      "noLocalModels": "没有本地模型"
     }
   },
   "welcome": {

@@ -278,7 +278,9 @@
       "modelsRunning": "Models Running",
       "runningModels": "Running Models",
       "noRunningModels": "No Running Models",
-      "deleteModel": "Delete Model"
+      "deleteModel": "Delete Model",
+      "localModels": "Local Models",
+      "noLocalModels": "No Local Models"
     }
   },
   "welcome": {
