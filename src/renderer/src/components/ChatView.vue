@@ -46,7 +46,10 @@ const isGenerating = computed(() => {
 })
 const handleSend = async (msg: UserMessageContent) => {
   await chatStore.sendMessage(msg)
-  scrollToBottom()
+  // 只有当用户在底部时才自动滚动
+  if (!messageList.value?.aboveThreshold) {
+    scrollToBottom()
+  }
 }
 
 const handleFileUpload = () => {

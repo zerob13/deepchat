@@ -84,7 +84,7 @@ const chatStore = useChatStore()
 const scrollToBottom = (smooth = true) => {
   nextTick(() => {
     scrollAnchor.value?.scrollIntoView({
-      behavior: smooth ? 'instant' : 'instant',
+      behavior: smooth ? 'smooth' : 'instant',
       block: 'end'
     })
   })
@@ -99,7 +99,7 @@ const handleScroll = useDebounceFn((event) => {
     const scrollBottom = container.scrollHeight - (container.scrollTop + container.clientHeight)
     aboveThreshold.value = scrollBottom > SCROLL_THRESHOLD
   }
-}, 100)
+}) // 这里需要实时更新，否则，会和scrollToBottom逻辑冲突
 
 // 创建新会话
 const createNewThread = async () => {
@@ -120,7 +120,8 @@ const handleCancel = () => {
 }
 
 defineExpose({
-  scrollToBottom
+  scrollToBottom,
+  aboveThreshold
 })
 
 onMounted(() => {
