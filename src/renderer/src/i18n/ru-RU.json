@@ -71,7 +71,10 @@
       "results": "Найдено {0} веб-страниц",
       "searching": "Поиск...",
       "title": "Результаты поиска",
-      "description": "Найдено {0} связанных результатов"
+      "description": "Найдено {0} связанных результатов",
+      "optimizing": "Извлечение поискового запроса...",
+      "reading": "Поиск и чтение веб-страниц...",
+      "error": "Ошибка поиска"
     }
   },
   "model": {
@@ -137,6 +140,7 @@
       "languageSelect": "Выбор языка",
       "searchEngine": "Поисковый движок",
       "searchEngineSelect": "Выбор поискового движка",
+      "searchPreview": "Предпросмотр поиска",
       "searchAssistantModel": "Поисковый движок",
       "selectModel": "Выбор модели",
       "proxyMode": "Режим прокси",
@@ -146,7 +150,14 @@
       "proxyModeCustom": "Пользовательский прокси",
       "customProxyUrl": "URL пользовательского прокси",
       "customProxyUrlPlaceholder": "Пример: http://127.0.0.1:7890",
-      "invalidProxyUrl": "Неверный URL прокси, введите корректный http/https URL"
+      "invalidProxyUrl": "Неверный URL прокси, введите корректный http/https URL",
+      "addCustomSearchEngine": "Добавить пользовательский поисковый движок",
+      "addCustomSearchEngineDesc": "Добавьте новый поисковый движок, необходимо указать имя и URL для поиска. URL должен содержать {'{'}query{'}'} в качестве заполнителя для запроса.",
+      "searchEngineName": "Название поискового движка",
+      "searchEngineNamePlaceholder": "Введите название поискового движка",
+      "searchEngineUrl": "URL для поиска",
+      "searchEngineUrlPlaceholder": "Например: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL должен содержать {'{'}query{'}'} в качестве заполнителя для запроса"
     },
     "data": {
       "title": "Настройки данных",

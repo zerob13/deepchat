@@ -71,7 +71,10 @@
       "results": "{0}개의 웹 페이지를 찾았습니다",
       "searching": "검색 중...",
       "title": "검색 결과",
-      "description": "{0}개의 관련 결과를 찾았습니다"
+      "description": "{0}개의 관련 결과를 찾았습니다",
+      "optimizing": "검색 의도 추출 중...",
+      "reading": "웹 페이지 검색 중...",
+      "error": "검색 실패"
     }
   },
   "model": {
@@ -143,6 +146,7 @@
       "languageSelect": "언어 선택",
       "searchEngine": "검색 엔진",
       "searchEngineSelect": "검색 엔진 선택",
+      "searchPreview": "검색 미리보기",
       "searchAssistantModel": "검색 보조 모델",
       "selectModel": "모델 선택",
       "proxyMode": "프록시 모드",
@@ -152,7 +156,14 @@
       "proxyModeCustom": "사용자 정의 프록시",
       "customProxyUrl": "사용자 정의 프록시 URL",
       "customProxyUrlPlaceholder": "예: http://127.0.0.1:7890",
-      "invalidProxyUrl": "잘못된 프록시 URL, 유효한 http/https URL을 입력하세요"
+      "invalidProxyUrl": "잘못된 프록시 URL, 유효한 http/https URL을 입력하세요",
+      "addCustomSearchEngine": "사용자 정의 검색 엔진 추가",
+      "addCustomSearchEngineDesc": "새 검색 엔진을 추가하려면 이름과 검색 URL을 제공해야 합니다. URL에는 {'{'}query{'}'}가 쿼리 자리 표시자로 포함되어야 합니다.",
+      "searchEngineName": "검색 엔진 이름",
+      "searchEngineNamePlaceholder": "검색 엔진 이름을 입력하세요",
+      "searchEngineUrl": "검색 URL",
+      "searchEngineUrlPlaceholder": "예: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL에는 {'{'}query{'}'}가 쿼리 자리 표시자로 포함되어야 합니다."
     },
     "data": {
       "title": "데이터 설정",

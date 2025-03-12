@@ -61,7 +61,10 @@
       "results": "已搜索到{0}個網頁",
       "searching": "搜索中...",
       "title": "搜索結果",
-      "description": "共找到 {0} 條相關結果"
+      "description": "共找到 {0} 條相關結果",
+      "optimizing": "正在提取搜索意...",
+      "reading": "正在搜索并阅读网页...",
+      "error": "搜索失败"
     }
   },
   "model": {
@@ -133,6 +136,7 @@
       "languageSelect": "選擇語言",
       "searchEngine": "搜索引擎",
       "searchEngineSelect": "選擇搜索引擎",
+      "searchPreview": "搜索預覽",
       "searchAssistantModel": "搜索助手模型",
       "selectModel": "選擇模型",
       "proxyMode": "代理模式",
@@ -142,7 +146,14 @@
       "proxyModeCustom": "自定義代理",
       "customProxyUrl": "自定義代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
-      "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL"
+      "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL",
+      "addCustomSearchEngine": "添加自訂搜尋引擎",
+      "addCustomSearchEngineDesc": "添加一個新的搜尋引擎，需要提供名稱和搜尋URL。URL中必須包含{'{'}query{'}'}作為查詢佔位符。",
+      "searchEngineName": "搜尋引擎名稱",
+      "searchEngineNamePlaceholder": "請輸入搜尋引擎名稱",
+      "searchEngineUrl": "搜尋URL",
+      "searchEngineUrlPlaceholder": "如: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL必須包含{'{'}query{'}'}作為查詢佔位符"
     },
     "data": {
       "title": "數據設置",

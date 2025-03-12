@@ -6,6 +6,7 @@ import {
   ModelConfig,
   RENDERER_MODEL_META
 } from '@shared/presenter'
+import { SearchEngineTemplate } from '@shared/chat'
 import ElectronStore from 'electron-store'
 import { DEFAULT_PROVIDERS } from './providers'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
@@ -25,9 +26,11 @@ interface IAppSettings {
   proxyMode?: string // 代理模式：system, none, custom
   customProxyUrl?: string // 自定义代理地址
   artifactsEffectEnabled?: boolean // artifacts动画效果是否启用
+  searchPreviewEnabled?: boolean // 搜索预览是否启用
   syncEnabled?: boolean // 是否启用同步功能
   syncFolderPath?: string // 同步文件夹路径
   lastSyncTime?: number // 上次同步时间
+  customSearchEngines?: string // 自定义搜索引擎JSON字符串
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -496,5 +499,48 @@ export class ConfigPresenter implements IConfigPresenter {
   // 设置上次同步时间
   setLastSyncTime(time: number): void {
     this.setSetting('lastSyncTime', time)
+  }
+
+  // 获取自定义搜索引擎
+  async getCustomSearchEngines(): Promise<SearchEngineTemplate[]> {
+    try {
+      const customEnginesJson = this.store.get('customSearchEngines')
+      if (customEnginesJson) {
+        return JSON.parse(customEnginesJson as string)
+      }
+      return []
+    } catch (error) {
+      console.error('获取自定义搜索引擎失败:', error)
+      return []
+    }
+  }
+
+  // 设置自定义搜索引擎
+  async setCustomSearchEngines(engines: SearchEngineTemplate[]): Promise<void> {
+    try {
+      this.store.set('customSearchEngines', JSON.stringify(engines))
+      // 发送事件通知搜索引擎更新
+      eventBus.emit(CONFIG_EVENTS.SEARCH_ENGINES_UPDATED, engines)
+    } catch (error) {
+      console.error('设置自定义搜索引擎失败:', error)
+      throw error
+    }
+  }
+
+  // 获取搜索预览设置状态
+  getSearchPreviewEnabled(): Promise<boolean> {
+    const value = this.getSetting<boolean>('searchPreviewEnabled')
+    // 默认开启搜索预览
+    return Promise.resolve(value === undefined || value === null ? false : value)
+  }
+
+  // 设置搜索预览状态
+  setSearchPreviewEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setSearchPreviewEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('searchPreviewEnabled', boolValue)
   }
 }

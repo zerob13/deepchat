@@ -71,7 +71,10 @@
       "results": "Found {0} web pages",
       "searching": "Searching...",
       "title": "Search Results",
-      "description": "Found {0} related results"
+      "description": "Found {0} related results",
+      "optimizing": "Optimizing search query...",
+      "reading": "Searching and reading web pages...",
+      "error": "Search failed"
     }
   },
   "model": {
@@ -143,6 +146,7 @@
       "languageSelect": "Select Language",
       "searchEngine": "Search Engine",
       "searchEngineSelect": "Select Search Engine",
+      "searchPreview": "Search Preview",
       "searchAssistantModel": "Search Assistant Model",
       "selectModel": "Select Model",
       "proxyMode": "Proxy Mode",
@@ -152,7 +156,16 @@
       "proxyModeCustom": "Custom Proxy",
       "customProxyUrl": "Custom Proxy URL",
       "customProxyUrlPlaceholder": "e.g. http://127.0.0.1:7890",
-      "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL"
+      "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL",
+      "addCustomSearchEngine": "Add Custom Search Engine",
+      "addCustomSearchEngineDesc": "To add a new search engine, you need to provide a name and a search URL. The URL must include {'{'}query{'}'} as a query placeholder.",
+      "searchEngineName": "Search Engine Name",
+      "searchEngineNamePlaceholder": "Please enter the search engine name",
+      "searchEngineUrl": "Search URL",
+      "searchEngineUrlPlaceholder": "e.g. https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL must contain {query} as a search placeholder",
+      "deleteCustomSearchEngine": "Delete Custom Search Engine",
+      "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."
     },
     "data": {
       "title": "Data Settings",
@@ -266,7 +279,9 @@
       "modelsRunning": "Models Running",
       "runningModels": "Running Models",
       "noRunningModels": "No Running Models",
-      "deleteModel": "Delete Model"
+      "deleteModel": "Delete Model",
+      "localModels": "Local Models",
+      "noLocalModels": "No Local Models"
     }
   },
   "welcome": {
@@ -374,5 +389,7 @@
       "importProcess": "Error during import process",
       "unknown": "Unknown error"
     }
-  }
+  },
+  "deleteCustomSearchEngine": "Delete Custom Search Engine",
+  "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."
 }
