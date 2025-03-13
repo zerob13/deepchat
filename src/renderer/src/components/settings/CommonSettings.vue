@@ -691,7 +691,7 @@ const closeTestSearchEngineDialog = () => {
 
 const testSearchEngine = async () => {
   try {
-    await settingsStore.testSearchEngine('天气')
+    settingsStore.testSearchEngine('天气')
     closeTestSearchEngineDialog()
   } catch (error) {
     console.error('测试搜索引擎失败:', error)
