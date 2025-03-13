@@ -1,9 +1,79 @@
-import { IMCPPresenter, MCPConfig, MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
+import {
+  IMCPPresenter,
+  MCPConfig,
+  MCPServerConfig,
+  MCPToolDefinition,
+  MCPToolCall
+} from '@shared/presenter'
 import { ConfigManager } from './configManager'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
+
+// 定义MCP工具接口
+interface MCPTool {
+  id: string
+  name: string
+  type: string
+  description: string
+  serverName: string
+  inputSchema: {
+    properties: Record<string, Record<string, unknown>>
+    [key: string]: unknown
+  }
+}
+
+// 定义各家LLM的工具类型接口
+interface OpenAIToolCall {
+  function: {
+    name: string
+    arguments: string
+  }
+}
+
+interface AnthropicToolUse {
+  name: string
+  input: Record<string, unknown>
+}
+
+interface GeminiFunctionCall {
+  name: string
+  args: Record<string, unknown>
+}
+
+// 定义工具转换接口
+interface OpenAITool {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: {
+      type: string
+      properties: Record<string, Record<string, unknown>>
+    }
+  }
+}
+
+interface AnthropicTool {
+  name: string
+  description: string
+  input_schema: {
+    type: string
+    properties: Record<string, Record<string, unknown>>
+  }
+}
+
+interface GeminiTool {
+  functionDeclarations: Array<{
+    name: string
+    description: string
+    parameters: {
+      type: string
+      properties: Record<string, Record<string, unknown>>
+    }
+  }>
+}
 
 // 完整版的 McpPresenter 实现
 export class McpPresenter implements IMCPPresenter {
@@ -16,7 +86,7 @@ export class McpPresenter implements IMCPPresenter {
     this.configManager = new ConfigManager()
     this.serverManager = new ServerManager(this.configManager)
     this.toolManager = new ToolManager(this.configManager, this.serverManager)
-    
+
     // 应用启动时初始化
     this.initialize()
   }
@@ -25,16 +95,16 @@ export class McpPresenter implements IMCPPresenter {
     try {
       // 加载配置
       const config = await this.configManager.getMcpConfig()
-      
+
       // 如果有默认服务器，尝试启动
       if (config.defaultServer && config.mcpServers[config.defaultServer]) {
         const serverName = config.defaultServer
         console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
-        
+
         try {
           await this.serverManager.startServer(serverName)
           console.log(`[MCP] 默认服务器 ${serverName} 启动成功`)
-          
+
           // 通知渲染进程服务器已启动
           eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
         } catch (error) {
@@ -63,7 +133,7 @@ export class McpPresenter implements IMCPPresenter {
     if (await this.isServerRunning(serverName)) {
       await this.stopServer(serverName)
     }
-    
+
     await this.configManager.removeMcpServer(serverName)
   }
 
@@ -87,14 +157,235 @@ export class McpPresenter implements IMCPPresenter {
     return this.toolManager.getAllToolDefinitions()
   }
 
-  async callTool(request: {
-    id: string
-    type: string
-    function: {
-      name: string
-      arguments: string
-    }
-  }): Promise<{ content: string }> {
+  async callTool(request: MCPToolCall): Promise<{ content: string }> {
     return this.toolManager.callTool(request)
+  }
+
+  // 将MCPToolDefinition转换为MCPTool
+  private mcpToolDefinitionToMcpTool(
+    toolDefinition: MCPToolDefinition,
+    serverName: string
+  ): MCPTool {
+    return {
+      id: toolDefinition.function.name,
+      name: toolDefinition.function.name,
+      type: toolDefinition.type,
+      description: toolDefinition.function.description,
+      serverName,
+      inputSchema: {
+        properties: toolDefinition.function.parameters.properties as Record<
+          string,
+          Record<string, unknown>
+        >,
+        type: toolDefinition.function.parameters.type,
+        required: toolDefinition.function.parameters.required
+      }
+    }
+  }
+
+  // 工具属性过滤函数
+  private filterPropertieAttributes(tool: MCPTool): Record<string, Record<string, unknown>> {
+    const supportedAttributes = [
+      'type',
+      'nullable',
+      'required',
+      'description',
+      'properties',
+      'items',
+      'enum',
+      'anyOf'
+    ]
+
+    const properties = tool.inputSchema.properties
+    const getSubMap = (obj: Record<string, unknown>, keys: string[]): Record<string, unknown> => {
+      return Object.fromEntries(Object.entries(obj).filter(([key]) => keys.includes(key)))
+    }
+
+    const result: Record<string, Record<string, unknown>> = {}
+    for (const [key, val] of Object.entries(properties)) {
+      result[key] = getSubMap(val, supportedAttributes)
+    }
+    return result
+  }
+
+  // 新增工具转换方法
+  /**
+   * 将MCP工具定义转换为OpenAI工具格式
+   * @param mcpTools MCP工具定义数组
+   * @param serverName 服务器名称
+   * @returns OpenAI工具格式的工具定义
+   */
+  async mcpToolsToOpenAITools(
+    mcpTools: MCPToolDefinition[],
+    serverName: string
+  ): Promise<OpenAITool[]> {
+    return mcpTools.map((toolDef) => {
+      const tool = this.mcpToolDefinitionToMcpTool(toolDef, serverName)
+      return {
+        type: 'function',
+        function: {
+          id: tool.id,
+          name: tool.name,
+          description: tool.description,
+          parameters: {
+            type: 'object',
+            properties: this.filterPropertieAttributes(tool)
+          }
+        }
+      }
+    })
+  }
+
+  /**
+   * 将OpenAI工具调用转换回MCP工具调用
+   * @param mcpTools MCP工具定义数组
+   * @param llmTool OpenAI工具调用
+   * @param serverName 服务器名称
+   * @returns 匹配的MCP工具调用
+   */
+  async openAIToolsToMcpTool(
+    mcpTools: MCPToolDefinition[] | undefined,
+    llmTool: OpenAIToolCall,
+    serverName: string
+  ): Promise<MCPToolCall | undefined> {
+    if (!mcpTools) return undefined
+
+    const tool = mcpTools.find((tool) => tool.function.name === llmTool.function.name)
+    if (!tool) {
+      return undefined
+    }
+
+    // 创建MCP工具调用
+    const mcpToolCall: MCPToolCall = {
+      id: `${serverName}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
+      type: tool.type,
+      function: {
+        name: tool.function.name,
+        arguments: llmTool.function.arguments
+      }
+    }
+
+    return mcpToolCall
+  }
+
+  /**
+   * 将MCP工具定义转换为Anthropic工具格式
+   * @param mcpTools MCP工具定义数组
+   * @param serverName 服务器名称
+   * @returns Anthropic工具格式的工具定义
+   */
+  async mcpToolsToAnthropicTools(
+    mcpTools: MCPToolDefinition[],
+    serverName: string
+  ): Promise<AnthropicTool[]> {
+    return mcpTools.map((toolDef) => {
+      const tool = this.mcpToolDefinitionToMcpTool(toolDef, serverName)
+      return {
+        name: tool.id,
+        description: tool.description,
+        input_schema: {
+          type: 'object',
+          properties: this.filterPropertieAttributes(tool)
+        }
+      }
+    })
+  }
+
+  /**
+   * 将Anthropic工具使用转换回MCP工具调用
+   * @param mcpTools MCP工具定义数组
+   * @param toolUse Anthropic工具使用
+   * @param serverName 服务器名称
+   * @returns 匹配的MCP工具调用
+   */
+  async anthropicToolUseToMcpTool(
+    mcpTools: MCPToolDefinition[] | undefined,
+    toolUse: AnthropicToolUse,
+    serverName: string
+  ): Promise<MCPToolCall | undefined> {
+    if (!mcpTools) return undefined
+
+    const tool = mcpTools.find((tool) => tool.function.name === toolUse.name)
+    if (!tool) {
+      return undefined
+    }
+
+    // 创建MCP工具调用
+    const mcpToolCall: MCPToolCall = {
+      id: `${serverName}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
+      type: tool.type,
+      function: {
+        name: tool.function.name,
+        arguments: JSON.stringify(toolUse.input)
+      }
+    }
+
+    return mcpToolCall
+  }
+
+  /**
+   * 将MCP工具定义转换为Gemini工具格式
+   * @param mcpTools MCP工具定义数组
+   * @param serverName 服务器名称
+   * @returns Gemini工具格式的工具定义
+   */
+  async mcpToolsToGeminiTools(
+    mcpTools: MCPToolDefinition[] | undefined,
+    serverName: string
+  ): Promise<GeminiTool[]> {
+    if (!mcpTools || mcpTools.length === 0) {
+      return []
+    }
+
+    const functionDeclarations = mcpTools.map((toolDef) => {
+      const tool = this.mcpToolDefinitionToMcpTool(toolDef, serverName)
+      return {
+        name: tool.id,
+        description: tool.description,
+        parameters: {
+          type: 'OBJECT', // Gemini期望的格式
+          properties: this.filterPropertieAttributes(tool)
+        }
+      }
+    })
+
+    return [
+      {
+        functionDeclarations
+      }
+    ]
+  }
+
+  /**
+   * 将Gemini函数调用转换回MCP工具调用
+   * @param mcpTools MCP工具定义数组
+   * @param fcall Gemini函数调用
+   * @param serverName 服务器名称
+   * @returns 匹配的MCP工具调用
+   */
+  async geminiFunctionCallToMcpTool(
+    mcpTools: MCPToolDefinition[] | undefined,
+    fcall: GeminiFunctionCall | undefined,
+    serverName: string
+  ): Promise<MCPToolCall | undefined> {
+    if (!fcall) return undefined
+    if (!mcpTools) return undefined
+
+    const tool = mcpTools.find((tool) => tool.function.name === fcall.name)
+    if (!tool) {
+      return undefined
+    }
+
+    // 创建MCP工具调用
+    const mcpToolCall: MCPToolCall = {
+      id: `${serverName}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
+      type: tool.type,
+      function: {
+        name: tool.function.name,
+        arguments: JSON.stringify(fcall.args)
+      }
+    }
+
+    return mcpToolCall
   }
 }

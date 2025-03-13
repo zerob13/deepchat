@@ -1,12 +1,7 @@
 import { nanoid } from 'nanoid'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
-import {
-  MCPToolCall,
-  MCPToolDefinition,
-  MCPToolResponse,
-  MCPServerConfig
-} from '@shared/presenter'
+import { MCPToolCall, MCPToolDefinition, MCPToolResponse, MCPServerConfig } from '@shared/presenter'
 import { ConfigManager } from './configManager'
 import { ServerManager } from './serverManager'
 import { McpClient, getDefaultMcpClient } from './mcpClient'
@@ -16,10 +11,7 @@ export class ToolManager {
   private serverManager: ServerManager
   private mcpClient: McpClient | null = null
 
-  constructor(
-    configManager: ConfigManager,
-    serverManager: ServerManager
-  ) {
+  constructor(configManager: ConfigManager, serverManager: ServerManager) {
     this.configManager = configManager
     this.serverManager = serverManager
   }
@@ -30,20 +22,23 @@ export class ToolManager {
       this.mcpClient = await getDefaultMcpClient()
     }
     const tools = await this.mcpClient.listTools()
-    return tools.map(tool => ({
+    return tools.map((tool) => ({
       type: 'function',
       function: {
         name: tool.name,
         description: tool.description,
         parameters: {
           type: 'object',
-          properties: Object.entries(tool.inputSchema).reduce((acc, [key, value]) => {
-            acc[key] = {
-              type: typeof value === 'object' ? 'object' : 'string',
-              description: `Parameter ${key}`
-            }
-            return acc
-          }, {} as Record<string, { type: string; description: string }>),
+          properties: Object.entries(tool.inputSchema).reduce(
+            (acc, [key, value]) => {
+              acc[key] = {
+                type: typeof value === 'object' ? 'object' : 'string',
+                description: `Parameter ${key}`
+              }
+              return acc
+            },
+            {} as Record<string, { type: string; description: string }>
+          ),
           required: Object.keys(tool.inputSchema)
         }
       }
@@ -74,14 +69,14 @@ ${toolsList}
 
 1. 对于文件操作（读取/查看文件），必须使用以下格式：
    "我会使用 filesystem 工具来[读取/查看] [文件路径]"
-   
+
 2. 对于其他工具调用，必须使用以下格式：
    "我需要使用工具'[工具名]'，参数是{[参数JSON]}"
 
 示例：
 - 如果用户说"查看 config.json"，你应该回复：
   "我会使用 filesystem 工具来查看 config.json"
-  
+
 - 如果用户说"读取 test.txt 的内容"，你应该回复：
   "我会使用 filesystem 工具来读取 test.txt"
 
@@ -89,6 +84,7 @@ ${toolsList}
   }
 
   async callTool(toolCall: MCPToolCall): Promise<MCPToolResponse> {
+    console.log('callTool', toolCall)
     try {
       // 获取默认服务器
       const mcpConfig = await this.configManager.getMcpConfig()
@@ -236,7 +232,10 @@ ${toolsList}
           const toolCategory = categoryMatch[1].toLowerCase()
 
           // 根据工具类别和操作类型选择合适的工具
-          if (toolCategory === 'filesystem' && (message.includes('读取') || message.includes('查看'))) {
+          if (
+            toolCategory === 'filesystem' &&
+            (message.includes('读取') || message.includes('查看'))
+          ) {
             // 尝试提取文件路径
             let filePath = 'hello.txt' // 默认为hello.txt
 
