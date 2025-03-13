@@ -116,6 +116,7 @@ import SvgArtifact from './SvgArtifact.vue'
 import MermaidArtifact from './MermaidArtifact.vue'
 import mermaid from 'mermaid'
 import { useI18n } from 'vue-i18n'
+import ReactArtifact from './ReactArtifact.vue'
 
 const artifactStore = useArtifactStore()
 const componentKey = ref(0)
@@ -178,6 +179,8 @@ const artifactComponent = computed(() => {
       return SvgArtifact
     case 'application/vnd.ant.mermaid':
       return MermaidArtifact
+    case 'application/vnd.ant.react':
+      return ReactArtifact
     default:
       return null
   }
@@ -195,6 +198,8 @@ const getFileExtension = (type: string) => {
       return 'svg'
     case 'application/vnd.ant.mermaid':
       return 'mdm'
+    case 'application/vnd.ant.react':
+      return 'jsx'
     default:
       return 'txt'
   }
