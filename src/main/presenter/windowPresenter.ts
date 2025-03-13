@@ -69,8 +69,6 @@ export class WindowPresenter implements IWindowPresenter {
     // 监听内容保护设置变化
     eventBus.on(CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED, (enabled: boolean) => {
       if (this.mainWindow) {
-        this.updateContentProtection(this.mainWindow, enabled)
-
         // 发送通知告知应用程序将重启
         console.log('Content protection setting changed to:', enabled, 'Restarting app...')
 
@@ -186,13 +184,16 @@ export class WindowPresenter implements IWindowPresenter {
   // 添加更新内容保护的方法
   private updateContentProtection(window: BrowserWindow, enabled: boolean): void {
     console.log('更新窗口内容保护状态:', enabled)
-    window.setContentProtection(enabled)
-    window.webContents.setBackgroundThrottling(!enabled)
-    window.webContents.setFrameRate(enabled ? 60 : 120)
-    if (process.platform === 'darwin') {
-      window.setHiddenInMissionControl(enabled)
-      window.setSkipTaskbar(enabled)
+    if (enabled) {
+      window.setContentProtection(enabled)
+      window.webContents.setBackgroundThrottling(!enabled)
+      window.webContents.setFrameRate(60)
+      if (process.platform === 'darwin') {
+        window.setHiddenInMissionControl(enabled)
+        window.setSkipTaskbar(enabled)
+      }
     }
+    // 如果关闭内容保护，则使用默认设置
   }
 
   getWindow(windowName: string): BrowserWindow | undefined {
