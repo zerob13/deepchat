@@ -195,6 +195,8 @@
       "startBackup": "立即备份",
       "backingUp": "备份中...",
       "importData": "导入数据",
+      "incrementImport": "增量导入",
+      "overwriteImport": "覆盖导入",
       "importConfirmTitle": "确认导入数据",
       "importConfirmDescription": "导入将会覆盖当前所有数据，包括聊天记录和设置。请确保已备份重要数据。导入完成后需要重启应用程序。",
       "importing": "导入中...",

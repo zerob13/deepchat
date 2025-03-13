@@ -14,6 +14,14 @@ import {
 } from '@shared/presenter'
 import { MessageAttachmentsTable } from './tables/messageAttachments'
 
+/**
+ * 导入模式枚举
+ */
+export enum ImportMode {
+  INCREMENT = 'increment', // 增量导入
+  OVERWRITE = 'overwrite' // 覆盖导入
+}
+
 type ConversationRow = {
   id: string
   title: string

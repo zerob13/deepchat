@@ -94,11 +94,11 @@ export const useSyncStore = defineStore('sync', () => {
   }
 
   // 导入数据
-  const importData = async () => {
+  const importData = async (mode: 'increment' | 'overwrite' = 'increment') => {
     if (!syncEnabled.value || isImporting.value) return
 
     isImporting.value = true
-    const result = await syncPresenter.importFromSync()
+    const result = await syncPresenter.importFromSync(mode)
     importResult.value = result
     isImporting.value = false
   }

@@ -85,6 +85,18 @@
               {{ t('settings.data.importConfirmDescription') }}
             </DialogDescription>
           </DialogHeader>
+          <div class="p-4">
+            <RadioGroup v-model="importMode" class="flex flex-col gap-2">
+              <div class="flex items-center space-x-2">
+                <RadioGroupItem value="increment" />
+                <Label>{{ t('settings.data.incrementImport') }}</Label>
+              </div>
+              <div class="flex items-center space-x-2">
+                <RadioGroupItem value="overwrite" />
+                <Label>{{ t('settings.data.overwriteImport') }}</Label>
+              </div>
+            </RadioGroup>
+          </div>
           <DialogFooter>
             <Button variant="outline" @click="closeImportDialog">
               {{ t('dialog.cancel') }}
@@ -149,11 +161,14 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Label } from '@/components/ui/label'
 import { useSyncStore } from '@/stores/sync'
 
 const { t } = useI18n()
 const syncStore = useSyncStore()
 const isImportDialogOpen = ref(false)
+const importMode = ref('increment')
 
 // 使用计算属性处理双向绑定
 const syncEnabled = computed({
@@ -174,11 +189,12 @@ onMounted(async () => {
 // 关闭导入对话框
 const closeImportDialog = () => {
   isImportDialogOpen.value = false
+  importMode.value = 'increment' // 重置为默认值
 }
 
 // 处理导入
 const handleImport = async () => {
-  await syncStore.importData()
+  await syncStore.importData(importMode.value)
   closeImportDialog()
 }
 

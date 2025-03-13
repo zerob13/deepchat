@@ -4,6 +4,8 @@ import fs from 'fs'
 import { ISyncPresenter, IConfigPresenter, ISQLitePresenter } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
 import { SYNC_EVENTS } from '@/events'
+import { DataImporter } from '../sqlitePresenter/importData'
+import { ImportMode } from '../sqlitePresenter/index'
 
 // 为配置文件定义接口
 interface AppSettings {
@@ -111,7 +113,9 @@ export class SyncPresenter implements ISyncPresenter {
   /**
    * 从同步文件夹导入数据
    */
-  public async importFromSync(): Promise<{ success: boolean; message: string }> {
+  public async importFromSync(
+    importMode: ImportMode = ImportMode.INCREMENT
+  ): Promise<{ success: boolean; message: string }> {
     // 检查同步文件夹是否存在
     const { exists, path: syncFolderPath } = await this.checkSyncFolder()
     if (!exists) {
@@ -154,9 +158,15 @@ export class SyncPresenter implements ISyncPresenter {
       }
 
       try {
-        // 复制数据库文件到应用目录
-        fs.copyFileSync(dbBackupPath, this.DB_PATH)
-
+        if (importMode === ImportMode.OVERWRITE) {
+          fs.copyFileSync(dbBackupPath, this.DB_PATH)
+        } else {
+          // 使用 DataImporter 导入数据
+          const importer = new DataImporter(dbBackupPath, this.DB_PATH)
+          const importedCount = await importer.importData()
+          console.log(`成功导入 ${importedCount} 个会话`)
+          importer.close()
+        }
         // 合并 app-settings.json 文件 (排除同步相关的设置)
         if (fs.existsSync(appSettingsBackupPath)) {
           // 读取当前的 app-settings

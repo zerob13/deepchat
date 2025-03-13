@@ -185,6 +185,8 @@
       "startBackup": "지금 백업하기",
       "backingUp": "백업 중...",
       "importData": "데이터 가져오기",
+      "incrementImport": "증분 가져오기",
+      "overwriteImport": "덮어쓰기 가져오기",
       "importConfirmTitle": "데이터 가져오기 확인",
       "importConfirmDescription": "가져오기를 실행하면 채팅 기록과 설정을 포함한 모든 현재 데이터가 덮어쓰기됩니다. 중요한 데이터를 백업했는지 확인하세요. 가져오기 후에는 애플리케이션을 다시 시작해야 합니다.",
       "importing": "가져오는 중...",

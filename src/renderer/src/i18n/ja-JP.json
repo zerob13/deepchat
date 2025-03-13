@@ -179,6 +179,8 @@
       "startBackup": "今すぐバックアップ",
       "backingUp": "バックアップ中...",
       "importData": "データをインポート",
+      "incrementImport": "増分インポート",
+      "overwriteImport": "上書きインポート",
       "importConfirmTitle": "データインポートの確認",
       "importConfirmDescription": "インポートすると、チャット履歴や設定を含むすべての現在のデータが上書きされます。重要なデータをバックアップしたことを確認してください。インポート後はアプリケーションを再起動する必要があります。",
       "importing": "インポート中...",

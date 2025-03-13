@@ -185,6 +185,8 @@
       "startBackup": "Backup Now",
       "backingUp": "Backing up...",
       "importData": "Import Data",
+      "incrementImport": "Incremental Import",
+      "overwriteImport": "Overwrite Import",
       "importConfirmTitle": "Confirm Data Import",
       "importConfirmDescription": "Importing will overwrite all current data, including chat history and settings. Make sure you have backed up important data. You'll need to restart the application after import.",
       "importing": "Importing...",
