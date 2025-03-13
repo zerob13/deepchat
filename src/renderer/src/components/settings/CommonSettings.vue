@@ -155,6 +155,22 @@
           />
         </div>
       </div>
+      <!-- 投屏保护开关 -->
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:monitor" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">{{
+            t('settings.common.contentProtection') || '投屏保护'
+          }}</span>
+        </span>
+        <div class="flex-shrink-0">
+          <Switch
+            id="content-protection-switch"
+            :checked="contentProtectionEnabled"
+            @update:checked="handleContentProtectionChange"
+          />
+        </div>
+      </div>
       <!-- 重置数据 -->
       <Dialog v-model:open="isDialogOpen">
         <DialogTrigger as-child>
@@ -251,6 +267,39 @@
         </Button>
         <Button variant="destructive" @click="deleteCustomSearchEngine">
           {{ t('dialog.delete.confirm') }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <!-- 投屏保护切换确认对话框 -->
+  <Dialog v-model:open="isContentProtectionDialogOpen">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{
+          t('settings.common.contentProtectionDialogTitle') || '确认切换投屏保护'
+        }}</DialogTitle>
+        <DialogDescription>
+          <template v-if="newContentProtectionValue">
+            {{ t('settings.common.contentProtectionEnableDesc') }}
+          </template>
+          <template v-else>
+            {{ t('settings.common.contentProtectionDisableDesc') }}
+          </template>
+          <div class="mt-2 font-medium">
+            {{ t('settings.common.contentProtectionRestartNotice') }}
+          </div>
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" @click="cancelContentProtectionChange">
+          {{ t('dialog.cancel') }}
+        </Button>
+        <Button
+          :variant="newContentProtectionValue ? 'default' : 'destructive'"
+          @click="confirmContentProtectionChange"
+        >
+          {{ t('dialog.confirm') }}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -550,7 +599,7 @@ const isCurrentEngineCustom = computed(() => {
   return currentEngine.value?.isCustom || false
 })
 
-// 搜索预览启用状态
+// 搜索预览开关
 const searchPreviewEnabled = computed({
   get: () => {
     return settingsStore.searchPreviewEnabled
@@ -560,9 +609,40 @@ const searchPreviewEnabled = computed({
   }
 })
 
+// 投屏保护开关
+const contentProtectionEnabled = computed({
+  get: () => {
+    return settingsStore.contentProtectionEnabled
+  },
+  set: (value) => {
+    settingsStore.setContentProtectionEnabled(value)
+  }
+})
+
 // 处理搜索预览状态变更
 const handleSearchPreviewChange = (value: boolean) => {
   console.log('切换搜索预览状态:', value)
   settingsStore.setSearchPreviewEnabled(value)
+}
+
+// 处理投屏保护状态变更
+const handleContentProtectionChange = (value: boolean) => {
+  console.log('准备切换投屏保护状态:', value)
+  // 显示确认对话框
+  newContentProtectionValue.value = value
+  isContentProtectionDialogOpen.value = true
+}
+
+// 投屏保护切换确认对话框
+const isContentProtectionDialogOpen = ref(false)
+const newContentProtectionValue = ref(false)
+
+const cancelContentProtectionChange = () => {
+  isContentProtectionDialogOpen.value = false
+}
+
+const confirmContentProtectionChange = () => {
+  settingsStore.setContentProtectionEnabled(newContentProtectionValue.value)
+  isContentProtectionDialogOpen.value = false
 }
 </script>

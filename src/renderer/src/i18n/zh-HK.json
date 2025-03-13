@@ -153,7 +153,17 @@
       "searchEngineNamePlaceholder": "請輸入搜尋引擎名稱",
       "searchEngineUrl": "搜尋URL",
       "searchEngineUrlPlaceholder": "如: https://a.com/search?q={'{'}query{'}'}",
-      "searchEngineUrlError": "URL必須包含{'{'}query{'}'}作為查詢佔位符"
+      "searchEngineUrlError": "URL必須包含{'{'}query{'}'}作為查詢佔位符",
+      "deleteCustomSearchEngine": "刪除自訂搜尋引擎",
+      "deleteCustomSearchEngineDesc": "是否確認刪除自訂搜尋引擎 \"{name}\"？此操作不可恢復。",
+      "theme": "主題",
+      "themeSelect": "選擇主題",
+      "closeToQuit": "點擊關閉按鈕時退出程序",
+      "contentProtection": "投屏保護",
+      "contentProtectionDialogTitle": "確認切換投屏保護",
+      "contentProtectionEnableDesc": "開啟投屏保護可以防止投屏軟件捕獲DeepChat主窗口，用來保護您的內容隱私。請注意，此功能不會徹底隱藏所有界面，請合理合規使用。",
+      "contentProtectionDisableDesc": "關閉投屏保護將允許投屏軟件捕獲DeepChat窗口。",
+      "contentProtectionRestartNotice": "切換此設置將導致程序重啟，請確認是否繼續？"
     },
     "data": {
       "title": "數據設置",

@@ -10,7 +10,7 @@ export class ShortcutPresenter {
   constructor(windowPresenter: WindowPresenter, configPresenter: ConfigPresenter) {
     this.windowPresenter = windowPresenter
     this.configPresenter = configPresenter
-    // console.log('ShortcutPresenter constructor', this.configPresenter)
+    console.log('ShortcutPresenter constructor', this.configPresenter)
   }
 
   registerShortcuts(): void {

@@ -163,7 +163,17 @@
       "searchEngineNamePlaceholder": "검색 엔진 이름을 입력하세요",
       "searchEngineUrl": "검색 URL",
       "searchEngineUrlPlaceholder": "예: https://a.com/search?q={'{'}query{'}'}",
-      "searchEngineUrlError": "URL에는 {'{'}query{'}'}가 쿼리 자리 표시자로 포함되어야 합니다."
+      "searchEngineUrlError": "URL에는 {'{'}query{'}'}가 쿼리 자리 표시자로 포함되어야 합니다.",
+      "deleteCustomSearchEngine": "사용자 정의 검색 엔진 삭제",
+      "deleteCustomSearchEngineDesc": "사용자 정의 검색 엔진 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+      "theme": "테마",
+      "themeSelect": "테마 선택",
+      "closeToQuit": "닫기 버튼을 클릭할 때 프로그램 종료",
+      "contentProtection": "화면 보호",
+      "contentProtectionDialogTitle": "화면 보호 전환 확인",
+      "contentProtectionEnableDesc": "화면 보호를 활성화하면 화면 공유 소프트웨어가 DeepChat 창을 캡쳐할 수 없습니다. 이 기능은 모든 인터페이스를 완전히 숨기지 않습니다. 이 기능을 사용할 때는 항상 규정을 준수하세요.",
+      "contentProtectionDisableDesc": "화면 보호를 비활성화하면 화면 공유 소프트웨어가 DeepChat 창을 캡쳐할 수 있습니다.",
+      "contentProtectionRestartNotice": "이 설정을 변경하면 프로그램이 재시작됩니다. 계속하시겠습니까?"
     },
     "data": {
       "title": "데이터 설정",

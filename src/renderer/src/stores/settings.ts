@@ -34,6 +34,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const activeSearchEngine = ref<SearchEngineTemplate | null>(null)
   const artifactsEffectEnabled = ref<boolean>(false) // 默认值与配置文件一致
   const searchPreviewEnabled = ref<boolean>(true) // 搜索预览是否启用，默认启用
+  const contentProtectionEnabled = ref<boolean>(true) // 投屏保护是否启用，默认启用
 
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])
@@ -185,6 +186,9 @@ export const useSettingsStore = defineStore('settings', () => {
       // 获取artifacts效果开关状态
       artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
 
+      // 获取投屏保护设置
+      contentProtectionEnabled.value = await configP.getContentProtectionEnabled()
+
       // 获取搜索引擎
       searchEngines.value = await threadP.getSearchEngines()
 
@@ -222,6 +226,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
       // 设置 artifacts 效果事件监听器
       setupArtifactsEffectListener()
+
+      // 设置投屏保护事件监听器
+      setupContentProtectionListener()
 
       // 单独刷新一次 Ollama 模型，确保即使没有启用 Ollama provider 也能获取模型列表
       if (providers.value.some((p) => p.id === 'ollama')) {
@@ -455,6 +462,9 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // 在setupProviderListener方法或其他初始化方法附近添加对artifacts效果变更的监听
     setupArtifactsEffectListener()
+
+    // 添加对投屏保护变更的监听
+    setupContentProtectionListener()
   }
 
   // 更新本地模型状态，不触发后端请求
@@ -1177,6 +1187,26 @@ export const useSettingsStore = defineStore('settings', () => {
     })
   }
 
+  // 添加设置contentProtectionEnabled的方法
+  const setContentProtectionEnabled = async (enabled: boolean) => {
+    // 更新本地状态
+    contentProtectionEnabled.value = Boolean(enabled)
+
+    // 调用ConfigPresenter设置值，确保等待Promise完成
+    await configP.setContentProtectionEnabled(enabled)
+  }
+
+  // 设置投屏保护监听器
+  const setupContentProtectionListener = () => {
+    // 监听投屏保护变更事件
+    window.electron.ipcRenderer.on(
+      CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED,
+      (_event, enabled: boolean) => {
+        contentProtectionEnabled.value = enabled
+      }
+    )
+  }
+
   return {
     providers,
     theme,
@@ -1188,6 +1218,7 @@ export const useSettingsStore = defineStore('settings', () => {
     activeSearchEngine,
     artifactsEffectEnabled,
     searchPreviewEnabled,
+    contentProtectionEnabled,
     hasUpdate,
     updateInfo,
     showUpdateDialog,
@@ -1237,6 +1268,8 @@ export const useSettingsStore = defineStore('settings', () => {
     setupArtifactsEffectListener,
     getSearchPreviewEnabled,
     setSearchPreviewEnabled,
-    setupSearchEnginesListener
+    setupSearchEnginesListener,
+    setContentProtectionEnabled,
+    setupContentProtectionListener
   }
 })
