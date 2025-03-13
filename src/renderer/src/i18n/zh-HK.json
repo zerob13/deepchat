@@ -178,6 +178,8 @@
       "startBackup": "立即備份",
       "backingUp": "備份中...",
       "importData": "導入數據",
+      "incrementImport": "增量導入",
+      "overwriteImport": "覆蓋導入",
       "importConfirmTitle": "確認導入數據",
       "importConfirmDescription": "導入將會覆蓋所有當前數據，包括聊天記錄和設置。請確保已備份重要數據。導入後需要重新啟動應用程序。",
       "importing": "導入中...",

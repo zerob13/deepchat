@@ -541,7 +541,7 @@ export interface ISyncPresenter {
   getBackupStatus(): Promise<{ isBackingUp: boolean; lastBackupTime: number }>
 
   // 导入相关操作
-  importFromSync(): Promise<{ success: boolean; message: string }>
+  importFromSync(importMode?: ImportMode): Promise<{ success: boolean; message: string }>
   checkSyncFolder(): Promise<{ exists: boolean; path: string }>
   openSyncFolder(): Promise<void>
 
