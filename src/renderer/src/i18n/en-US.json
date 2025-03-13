@@ -171,7 +171,7 @@
       "closeToQuit": "Exit app when closing window",
       "contentProtection": "Screen Protection",
       "contentProtectionDialogTitle": "Confirm Screen Protection Change",
-      "contentProtectionEnableDesc": "Enabling screen protection prevents screen sharing software from capturing the DeepChat window, protecting your content privacy. Note that this feature will not completely hide all interfaces. Please use this feature responsibly and in compliance with regulations.",
+      "contentProtectionEnableDesc": "Enabling screen protection prevents screen sharing software from capturing the DeepChat window, protecting your content privacy. Note that this feature will not completely hide all interfaces. Please use this feature responsibly and in compliance with regulations. Additionally, not all screen sharing software supports this feature.",
       "contentProtectionDisableDesc": "Disabling screen protection will allow screen sharing software to capture the DeepChat window.",
       "contentProtectionRestartNotice": "Changing this setting will restart the application. Do you want to continue?"
     },

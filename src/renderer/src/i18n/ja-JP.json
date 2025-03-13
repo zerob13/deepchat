@@ -153,7 +153,7 @@
       "invalidProxyUrl": "無効なプロキシURL、有効なhttp/https URLを入力してください",
       "contentProtection": "画面保護",
       "contentProtectionDialogTitle": "画面保護の切り替え確認",
-      "contentProtectionEnableDesc": "画面保護を有効にすると、画面共有ソフトウェアがDeepChatウィンドウをキャプチャするのを防ぎ、コンテンツのプライバシーを保護します。この機能はすべてのインターフェイスを完全に隠すわけではありません。責任を持って規制に準拠して使用してください。",
+      "contentProtectionEnableDesc": "画面保護を有効にすると、画面共有ソフトウェアがDeepChatウィンドウをキャプチャするのを防ぎ、コンテンツのプライバシーを保護します。この機能はすべてのインターフェイスを完全に隠すわけではありません。責任を持って規制に準拠して使用してください。また、画面共有ソフトウェアがこの機能をサポートしない場合があります。",
       "contentProtectionDisableDesc": "画面保護を無効にすると、画面共有ソフトウェアがDeepChatウィンドウをキャプチャできるようになります。",
       "contentProtectionRestartNotice": "この設定を変更するとアプリケーションが再起動します。続行しますか？",
       "addCustomSearchEngine": "カスタム検索エンジンを追加",
