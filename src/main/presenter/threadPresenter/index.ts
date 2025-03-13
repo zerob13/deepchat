@@ -351,6 +351,15 @@ export class ThreadPresenter implements IThreadPresenter {
   }
 
   /**
+   * 测试当前选择的搜索引擎
+   * @param query 测试搜索的关键词，默认为"天气"
+   * @returns 测试是否成功打开窗口
+   */
+  async testSearchEngine(query: string = '天气'): Promise<boolean> {
+    return await this.searchManager.testSearch(query)
+  }
+
+  /**
    * 设置搜索引擎
    * @param engineId 搜索引擎ID
    * @returns 是否设置成功

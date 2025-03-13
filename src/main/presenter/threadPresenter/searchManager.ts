@@ -780,7 +780,18 @@ export class SearchManager {
           // 移除隐藏元素
           const hiddenElements = tempDiv.querySelectorAll('[style*="display: none"], [style*="display:none"], [style*="visibility: hidden"]')
           hiddenElements.forEach(el => el.parentNode.removeChild(el))
-
+          // 移除footer元素
+          const footerElements = tempDiv.querySelectorAll('footer')
+          footerElements.forEach(el => el.parentNode.removeChild(el))
+          // 移除header元素
+          const headerElements = tempDiv.querySelectorAll('header')
+          headerElements.forEach(el => el.parentNode.removeChild(el))
+          // 移除footer的class
+          const footerClassElements = tempDiv.querySelectorAll('.footer')
+          footerClassElements.forEach(el => el.parentNode.removeChild(el))
+          // 移除可能是sidebar的元素
+          const sidebarElements = tempDiv.querySelectorAll('.side-bar, .sidebar, [class*="sidebar"]')
+          sidebarElements.forEach(el => el.parentNode.removeChild(el))
           // 返回清理后的HTML
           return tempDiv.innerHTML
         })()
@@ -790,6 +801,7 @@ export class SearchManager {
       const pageUrl = await window.webContents.getURL()
       const pageTitle = await window.webContents.executeJavaScript(`document.title`)
 
+      console.log('转换前的HTML长度:', cleanedHtml.length)
       // 2. 使用ContentEnricher将HTML转换为Markdown
       let markdownContent = ContentEnricher.convertHtmlToMarkdown(cleanedHtml, pageUrl)
       console.log('转换后的Markdown长度:', markdownContent.length)
@@ -952,6 +964,64 @@ export class SearchManager {
 
   private async enrichResults(results: SearchResult[]): Promise<SearchResult[]> {
     return await ContentEnricher.enrichResults(results)
+  }
+
+  /**
+   * 测试搜索引擎功能
+   * 打开一个窗口进行测试搜索，窗口将保持在前台直到用户关闭
+   * @param query 搜索关键词，默认为"天气"
+   * @returns 是否成功打开测试窗口
+   */
+  async testSearch(query: string = '天气'): Promise<boolean> {
+    try {
+      // 确保引擎列表是最新的
+      await this.ensureEnginesUpdated()
+
+      // 创建一个独立的测试窗口
+      const testWindow = new BrowserWindow({
+        width: 800,
+        height: 600,
+        title: `测试搜索 - ${this.activeEngine.name}`,
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          devTools: is.dev
+        }
+      })
+
+      // 配置User-Agent
+      testWindow.webContents.session.webRequest.onBeforeSendHeaders(
+        { urls: ['*://*/*'] },
+        (details, callback) => {
+          const headers = {
+            ...details.requestHeaders,
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+          callback({ requestHeaders: headers })
+        }
+      )
+
+      // 生成搜索URL
+      const searchUrl = this.activeEngine.searchUrl.replace('{query}', encodeURIComponent(query))
+      console.log('测试搜索URL:', searchUrl)
+
+      // 加载URL
+      await testWindow.loadURL(searchUrl)
+
+      // 保持窗口在前台
+      testWindow.focus()
+
+      // 在窗口关闭时清理资源
+      testWindow.on('closed', () => {
+        console.log('测试搜索窗口已关闭')
+      })
+
+      return true
+    } catch (error) {
+      console.error('测试搜索失败:', error)
+      return false
+    }
   }
 
   /**

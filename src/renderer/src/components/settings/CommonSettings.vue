@@ -60,6 +60,15 @@
           >
             <Icon icon="lucide:trash-2" class="w-4 h-4 text-destructive" />
           </Button>
+          <Button
+            v-if="isCurrentEngineCustom"
+            variant="outline"
+            size="icon"
+            @click="openTestSearchEngineDialog"
+            :title="t('settings.common.testSearchEngine')"
+          >
+            <Icon icon="lucide:flask-conical" class="w-4 h-4" />
+          </Button>
         </div>
       </div>
 
@@ -299,6 +308,29 @@
           :variant="newContentProtectionValue ? 'default' : 'destructive'"
           @click="confirmContentProtectionChange"
         >
+          {{ t('dialog.confirm') }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <!-- 测试搜索引擎确认对话框 -->
+  <Dialog v-model:open="isTestSearchEngineDialogOpen">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{ t('settings.common.testSearchEngine') }}</DialogTitle>
+        <DialogDescription>
+          {{ t('settings.common.testSearchEngineDesc', { engine: currentEngine?.name || '' }) }}
+          <div class="mt-2">
+            {{ t('settings.common.testSearchEngineNote') }}
+          </div>
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" @click="closeTestSearchEngineDialog">
+          {{ t('dialog.cancel') }}
+        </Button>
+        <Button @click="testSearchEngine">
           {{ t('dialog.confirm') }}
         </Button>
       </DialogFooter>
@@ -644,5 +676,25 @@ const cancelContentProtectionChange = () => {
 const confirmContentProtectionChange = () => {
   settingsStore.setContentProtectionEnabled(newContentProtectionValue.value)
   isContentProtectionDialogOpen.value = false
+}
+
+// 测试搜索引擎相关
+const isTestSearchEngineDialogOpen = ref(false)
+
+const openTestSearchEngineDialog = () => {
+  isTestSearchEngineDialogOpen.value = true
+}
+
+const closeTestSearchEngineDialog = () => {
+  isTestSearchEngineDialogOpen.value = false
+}
+
+const testSearchEngine = async () => {
+  try {
+    await settingsStore.testSearchEngine('天气')
+    closeTestSearchEngineDialog()
+  } catch (error) {
+    console.error('测试搜索引擎失败:', error)
+  }
 }
 </script>

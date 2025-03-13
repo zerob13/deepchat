@@ -343,6 +343,8 @@ export interface IThreadPresenter {
   getActiveSearchEngine(): Promise<SearchEngineTemplate>
   setActiveSearchEngine(engineId: string): Promise<void>
   setSearchEngine(engineId: string): Promise<boolean>
+  // 搜索引擎测试
+  testSearchEngine(query?: string): Promise<boolean>
   // 搜索助手模型设置
   setSearchAssistantModel(model: MODEL_META, providerId: string): void
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>

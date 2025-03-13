@@ -165,6 +165,9 @@
       "searchEngineUrlError": "URLには{'{'}query{'}'}をクエリプレースホルダーとして含める必要があります",
       "deleteCustomSearchEngine": "カスタム検索エンジンを削除",
       "deleteCustomSearchEngineDesc": "カスタム検索エンジン \"{name}\" を削除してもよろしいですか？この操作は元に戻せません。",
+      "testSearchEngine": "検索エンジンをテスト",
+      "testSearchEngineDesc": "{engine} 検索エンジンを使用して「天気」のテスト検索を実行します。",
+      "testSearchEngineNote": "検索ページにログインやその他の操作が必要な場合は、テストウィンドウで実行できます。テスト完了後はテストウィンドウを閉じてください。",
       "theme": "テーマ",
       "themeSelect": "テーマを選択",
       "closeToQuit": "閉じるボタンをクリックするとアプリケーションを終了します"

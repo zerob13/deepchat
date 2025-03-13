@@ -804,10 +804,40 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       const success = await threadP.setSearchEngine(engineId)
       if (success) {
+        // 获取最新的引擎列表
         activeSearchEngine.value = searchEngines.value.find((e) => e.id === engineId) || null
       }
     } catch (error) {
-      console.error('设置搜索引擎失败:', error)
+      console.error('设置搜索引擎失败', error)
+    }
+  }
+
+  /**
+   * 刷新搜索引擎列表
+   */
+  const refreshSearchEngines = async () => {
+    try {
+      const engines = await threadP.getSearchEngines()
+      const activeEngine = await threadP.getActiveSearchEngine()
+
+      searchEngines.value = engines
+      activeSearchEngine.value = activeEngine
+    } catch (error) {
+      console.error('刷新搜索引擎列表失败', error)
+    }
+  }
+
+  /**
+   * 测试当前选中的搜索引擎
+   * @param query 测试搜索的关键词，默认为"天气"
+   * @returns 测试是否成功
+   */
+  const testSearchEngine = async (query: string = '天气'): Promise<boolean> => {
+    try {
+      return await threadP.testSearchEngine(query)
+    } catch (error) {
+      console.error('测试搜索引擎失败', error)
+      return false
     }
   }
 
@@ -1270,6 +1300,8 @@ export const useSettingsStore = defineStore('settings', () => {
     setSearchPreviewEnabled,
     setupSearchEnginesListener,
     setContentProtectionEnabled,
-    setupContentProtectionListener
+    setupContentProtectionListener,
+    testSearchEngine,
+    refreshSearchEngines
   }
 })
