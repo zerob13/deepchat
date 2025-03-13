@@ -194,7 +194,7 @@ const closeImportDialog = () => {
 
 // 处理导入
 const handleImport = async () => {
-  await syncStore.importData(importMode.value)
+  await syncStore.importData(importMode.value as 'increment' | 'overwrite')
   closeImportDialog()
 }
 
