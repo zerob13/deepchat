@@ -78,11 +78,8 @@ export class DataImporter {
       )
       .all() as any[]
 
-    try {
-      // 开始事务
-      this.targetDb.prepare('BEGIN TRANSACTION').run()
-
-      // 逐个导入会话及其相关数据
+    // 使用better-sqlite3的transaction API来处理事务
+    const importTransaction = this.targetDb.transaction(() => {
       let importedCount = 0
       for (const conv of conversations) {
         // 如果是增量导入模式，检查会话是否已存在
@@ -96,15 +93,14 @@ export class DataImporter {
         this.importConversation(conv)
         importedCount++
       }
-
-      // 提交事务
-      this.targetDb.prepare('COMMIT').run()
-
-      // 返回导入的会话数量
       return importedCount
+    })
+
+    try {
+      // 执行事务并返回导入的会话数量
+      return importTransaction()
     } catch (error) {
-      // 发生错误时回滚事务
-      this.targetDb.prepare('ROLLBACK').run()
+      // 事务会自动回滚，直接抛出错误
       throw error
     }
   }
