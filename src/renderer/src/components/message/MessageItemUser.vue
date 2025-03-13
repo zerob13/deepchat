@@ -86,8 +86,9 @@ watch(() => props.message.content.text, (newText) => {
   displayText.value = newText
 })
 
-defineEmits<{
+const emit = defineEmits<{
   fileClick: [fileName: string]
+  retry: []
 }>()
 
 const previewFile = (filePath: string) => {
@@ -115,6 +116,9 @@ const saveEdit = async () => {
     
     // Update local display text instead of mutating props
     displayText.value = editedText.value
+    
+    // Emit retry event for MessageItemAssistant to handle
+    emit('retry')
     
     // Exit edit mode
     isEditMode.value = false
