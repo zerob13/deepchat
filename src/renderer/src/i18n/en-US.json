@@ -163,8 +163,8 @@
       "searchEngineName": "Search Engine Name",
       "searchEngineNamePlaceholder": "Enter search engine name",
       "searchEngineUrl": "Search URL",
-      "searchEngineUrlPlaceholder": "Ex: https://a.com/search?q={'{'}query{'}'}",
-      "searchEngineUrlError": "URL must include {'{'}query{'}'} as the query placeholder",
+      "searchEngineUrlPlaceholder": "Ex: https://a.com/search?q={query}",
+      "searchEngineUrlError": "URL must include {query} as the query placeholder",
       "deleteCustomSearchEngine": "Delete Custom Search Engine",
       "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone.",
       "testSearchEngine": "Test Search Engine",
@@ -249,54 +249,15 @@
         },
         "disableAllModels": {
           "title": "Confirm Disable All Models",
-          "content": "Are you sure you want to disable all models for \"{name}\"?",
+          "content": "Are you sure you want to disable all the models for \"{name}\"?",
           "confirm": "Disable All"
         },
-        "configModels": {
-          "title": "Configure Model List"
-        },
-        "verify": {
-          "missingFields": "Please enter API Key and API URL",
-          "failed": "Verification failed",
-          "success": "Verification successful"
-        },
-        "addCustomProvider": {
-          "title": "Add Custom Provider",
-          "description": "Please fill in the necessary information for the provider",
-          "name": "Name",
-          "namePlaceholder": "Please enter the provider name",
-          "apiType": "API Type",
-          "apiTypePlaceholder": "Please select the API type",
-          "apiKey": "API Key",
-          "apiKeyPlaceholder": "Please enter the API Key",
-          "baseUrl": "Base URL",
-          "baseUrlPlaceholder": "Please enter the base URL",
-          "enable": "Enable Provider"
-        },
-        "deleteProvider": {
-          "title": "Delete Provider",
-          "content": "Are you sure you want to delete provider \"{name}\"? This action cannot be undone.",
-          "confirm": "Delete"
-        },
-        "deleteModel": {
-          "title": "Confirm Delete Model",
-          "content": "Are you sure you want to delete model \"{name}\"? This action cannot be undone.",
-          "confirm": "Delete"
-        },
-        "pullModel": {
-          "title": "Pull Model",
-          "pull": "Pull"
+        "removeProvider": {
+          "title": "Confirm Remove Provider",
+          "content": "Are you sure you want to remove the provider \"{name}\"?",
+          "confirm": "Remove"
         }
-      },
-      "pullModels": "Pull Models",
-      "refreshModels": "Refresh Models",
-      "modelsRunning": "Models Running",
-      "runningModels": "Running Models",
-      "noRunningModels": "No Running Models",
-      "deleteModel": "Delete Model",
-      "deleteModelConfirm": "Are you sure you want to delete model \"{name}\"? This action cannot be undone.",
-      "noLocalModels": "No Local Models",
-      "localModels": "Local Models"
+      }
     },
     "mcp": {
       "title": "MCP Settings",
@@ -364,20 +325,6 @@
         "description": "Are you sure you want to delete server {name}? This action cannot be undone.",
         "confirm": "Delete",
         "cancel": "Cancel"
-      },
-      "tools": {
-        "searchPlaceholder": "Search tools...",
-        "noToolsAvailable": "No tools available",
-        "selectTool": "Please select a tool from the left",
-        "path": "Path",
-        "pathPlaceholder": "Enter file path",
-        "searchPattern": "Search Pattern",
-        "searchPatternPlaceholder": "Enter regular expression",
-        "filePattern": "File Pattern",
-        "filePatternPlaceholder": "Enter file pattern, e.g.: *.md",
-        "executeButton": "Execute",
-        "resultTitle": "Execution Result",
-        "runningTool": "Running..."
       }
     },
     "about": {
@@ -386,6 +333,31 @@
       "checkUpdate": "Check Update",
       "checking": "Checking...",
       "latestVersion": "Latest Version"
+    }
+  },
+  "mcp": {
+    "tools": {
+      "searchPlaceholder": "Search for tools...",
+      "noToolsAvailable": "No tools available",
+      "selectTool": "Please select a tool to debug from the left",
+      "path": "Path",
+      "pathPlaceholder": "Enter file path",
+      "searchPattern": "Search pattern",
+      "searchPatternPlaceholder": "Enter regular expression",
+      "filePattern": "File pattern",
+      "filePatternPlaceholder": "Enter file pattern, e.g.: *.md",
+      "executeButton": "Execute",
+      "resultTitle": "Execution result",
+      "runningTool": "Running...",
+      "loading": "Loading...",
+      "error": "Loading failed",
+      "available": "{count} tools available",
+      "none": "No available tools",
+      "title": "MCP Tools",
+      "description": "Tools provided by the MCP server",
+      "loadError": "Failed to load tools",
+      "parameters": "Parameters",
+      "refresh": "Refresh"
     }
   },
   "welcome": {
@@ -400,29 +372,19 @@
       },
       "configuration": {
         "title": "Model Configuration",
-        "description": "Configure the models you want to use"
+        "description": "Configure your model settings"
       },
-      "complete": {
-        "title": "Complete",
-        "description": "All set and ready to go!"
+      "finish": {
+        "title": "All Set",
+        "description": "You're ready to start using DeepChat"
       }
     },
-    "title": "Welcome to DeepChat",
-    "description": "Let's complete the setup process",
-    "provider": {
-      "select": "Select Provider",
-      "apiUrl": "API URL",
-      "apiKey": "API Key",
-      "verifyLink": "Verify Link"
-    },
-    "complete": {
-      "title": "All Done!",
-      "description": "You've completed the setup process, let's get started!"
-    },
-    "buttons": {
-      "getStarted": "Get Started",
+    "common": {
       "next": "Next",
-      "back": "Back"
+      "previous": "Previous",
+      "start": "Start",
+      "skip": "Skip",
+      "finish": "Finish"
     }
   },
   "newThread": {
