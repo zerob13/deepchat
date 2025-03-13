@@ -365,6 +365,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
         // 重置缓冲区
         contentBuffer = ''
+        reasoningBuffer = ''
       }
 
       if (!abortController.signal.aborted) {
