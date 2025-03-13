@@ -535,7 +535,6 @@ export interface ProgressResponse {
   completed?: number
 }
 
-<<<<<<< HEAD
 // MCP相关类型定义
 export interface MCPServerConfig {
   command: string
@@ -597,7 +596,8 @@ export interface IMCPPresenter {
       arguments: string
     }
   }): Promise<{ content: string }>
-=======
+}
+
 export interface ISyncPresenter {
   // 备份相关操作
   startBackup(): Promise<void>
@@ -612,5 +612,4 @@ export interface ISyncPresenter {
   // 初始化和销毁
   init(): void
   destroy(): void
->>>>>>> dev
 }
