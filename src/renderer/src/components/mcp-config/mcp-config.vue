@@ -1,7 +1,6 @@
 <script setup lang="ts">
 // 保持原有的script部分不变
 import { ref, onMounted, computed, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -10,7 +9,6 @@ import { usePresenter } from '@/composables/usePresenter'
 import { MCPConfig, MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
 import McpServerForm from './mcp-server-form.vue'
 
-const { t } = useI18n()
 const mcpPresenter = usePresenter('mcpPresenter')
 
 // 状态

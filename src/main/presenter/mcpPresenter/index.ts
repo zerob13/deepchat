@@ -1,64 +1,90 @@
 import { IMCPPresenter, MCPConfig, MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
+import { ConfigManager } from './configManager'
+import { ServerManager } from './serverManager'
+import { ToolManager } from './toolManager'
+import { eventBus } from '@/eventbus'
+import { MCP_EVENTS } from '@/events'
 
-// 简化版的 McpPresenter 实现，不依赖外部 SDK
+// 完整版的 McpPresenter 实现
 export class McpPresenter implements IMCPPresenter {
-  private mcpConfig: MCPConfig = {
-    mcpServers: {},
-    defaultServer: ''
-  }
+  private configManager: ConfigManager
+  private serverManager: ServerManager
+  private toolManager: ToolManager
 
   constructor() {
-    console.log('初始化简化版 MCP Presenter')
+    console.log('初始化 MCP Presenter')
+    this.configManager = new ConfigManager()
+    this.serverManager = new ServerManager(this.configManager)
+    this.toolManager = new ToolManager(this.configManager, this.serverManager)
+    
+    // 应用启动时初始化
+    this.initialize()
+  }
+
+  private async initialize() {
+    try {
+      // 加载配置
+      const config = await this.configManager.getMcpConfig()
+      
+      // 如果有默认服务器，尝试启动
+      if (config.defaultServer && config.mcpServers[config.defaultServer]) {
+        const serverName = config.defaultServer
+        console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
+        
+        try {
+          await this.serverManager.startServer(serverName)
+          console.log(`[MCP] 默认服务器 ${serverName} 启动成功`)
+          
+          // 通知渲染进程服务器已启动
+          eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
+        } catch (error) {
+          console.error(`[MCP] 默认服务器 ${serverName} 启动失败:`, error)
+        }
+      }
+    } catch (error) {
+      console.error('[MCP] 初始化失败:', error)
+    }
   }
 
   async getMcpConfig(): Promise<MCPConfig> {
-    return this.mcpConfig
+    return this.configManager.getMcpConfig()
   }
 
   async addMcpServer(serverName: string, config: MCPServerConfig): Promise<void> {
-    this.mcpConfig.mcpServers[serverName] = config
-    if (Object.keys(this.mcpConfig.mcpServers).length === 1) {
-      this.mcpConfig.defaultServer = serverName
-    }
+    await this.configManager.addMcpServer(serverName, config)
   }
 
   async updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void> {
-    if (this.mcpConfig.mcpServers[serverName]) {
-      this.mcpConfig.mcpServers[serverName] = {
-        ...this.mcpConfig.mcpServers[serverName],
-        ...config
-      }
-    }
+    await this.configManager.updateMcpServer(serverName, config)
   }
 
   async removeMcpServer(serverName: string): Promise<void> {
-    delete this.mcpConfig.mcpServers[serverName]
-    if (this.mcpConfig.defaultServer === serverName) {
-      const servers = Object.keys(this.mcpConfig.mcpServers)
-      this.mcpConfig.defaultServer = servers.length > 0 ? servers[0] : ''
+    // 如果服务器正在运行，先停止
+    if (await this.isServerRunning(serverName)) {
+      await this.stopServer(serverName)
     }
+    
+    await this.configManager.removeMcpServer(serverName)
   }
 
   async setDefaultServer(serverName: string): Promise<void> {
-    if (this.mcpConfig.mcpServers[serverName]) {
-      this.mcpConfig.defaultServer = serverName
-    }
+    await this.configManager.setDefaultServer(serverName)
   }
 
   async isServerRunning(serverName: string): Promise<boolean> {
-    return false // 简化版始终返回 false
+    return this.serverManager.isServerRunning(serverName)
   }
 
   async startServer(serverName: string): Promise<void> {
-    console.log(`[MCP] 尝试启动服务器: ${serverName}（简化版仅记录日志）`)
+    await this.serverManager.startServer(serverName)
   }
 
   async stopServer(serverName: string): Promise<void> {
-    console.log(`[MCP] 尝试停止服务器: ${serverName}（简化版仅记录日志）`)
+    await this.serverManager.stopServer(serverName)
   }
 
   async getAllToolDefinitions(): Promise<MCPToolDefinition[]> {
-    return [] // 简化版返回空数组
+    return this.toolManager.getAllToolDefinitions()
   }
 
   async callTool(request: {
@@ -69,8 +95,6 @@ export class McpPresenter implements IMCPPresenter {
       arguments: string
     }
   }): Promise<{ content: string }> {
-    return { 
-      content: `工具调用功能暂不可用 (${request.function.name})`
-    }
+    return this.toolManager.callTool(request)
   }
 }

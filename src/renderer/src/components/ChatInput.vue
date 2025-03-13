@@ -71,6 +71,10 @@
               </TooltipTrigger>
               <TooltipContent>{{ t('chat.input.fileSelect') }}</TooltipContent>
             </Tooltip>
+            
+            <!-- MCP 工具列表 -->
+            <McpToolsList />
+            
             <!-- <Tooltip v-show="false">
               <TooltipTrigger>
                 <Button
@@ -202,6 +206,7 @@ import { MessageFile, UserMessageContent } from '@shared/chat'
 import { usePresenter } from '@/composables/usePresenter'
 import { approximateTokenSize } from 'tokenx'
 import { useSettingsStore } from '@/stores/settings'
+import McpToolsList from './mcp-tools-list.vue'
 
 const { t } = useI18n()
 const configPresenter = usePresenter('configPresenter')

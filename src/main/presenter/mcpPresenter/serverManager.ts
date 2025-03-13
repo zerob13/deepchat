@@ -3,6 +3,13 @@ import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
 import { ConfigManager } from './configManager.js'
 
+// 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
+// 通过类型断言或接口扩展来解决
+// 方法1: 使用类型断言
+type MCPEventsType = typeof MCP_EVENTS & {
+  SERVER_STATUS_CHANGED: string
+}
+
 export class ServerManager {
   private runningServers: Map<string, ChildProcess> = new Map()
   private configManager: ConfigManager
@@ -57,7 +64,8 @@ export class ServerManager {
       serverProcess.on('close', (code) => {
         console.log(`[MCP ${name}] Process exited with code ${code}`)
         this.runningServers.delete(name)
-        eventBus.emit(MCP_EVENTS.SERVER_STATUS_CHANGED, { name, status: 'stopped' })
+        // 使用类型断言解决类型检查问题
+        eventBus.emit((MCP_EVENTS as MCPEventsType).SERVER_STATUS_CHANGED, { name, status: 'stopped' })
       })
       
       // 等待服务器启动
@@ -96,7 +104,7 @@ export class ServerManager {
       })
       
       // 触发服务器状态变更事件
-      eventBus.emit(MCP_EVENTS.SERVER_STATUS_CHANGED, { name, status: 'running' })
+      eventBus.emit((MCP_EVENTS as MCPEventsType).SERVER_STATUS_CHANGED, { name, status: 'running' })
     } catch (error) {
       console.error(`Failed to start MCP server ${name}:`, error)
       throw error
@@ -123,7 +131,7 @@ export class ServerManager {
       this.runningServers.delete(name)
       
       // 触发服务器状态变更事件
-      eventBus.emit(MCP_EVENTS.SERVER_STATUS_CHANGED, { name, status: 'stopped' })
+      eventBus.emit((MCP_EVENTS as MCPEventsType).SERVER_STATUS_CHANGED, { name, status: 'stopped' })
     } catch (error: unknown) {
       console.error(`Failed to stop MCP server ${name}:`, error)
       throw error
