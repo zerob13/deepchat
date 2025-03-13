@@ -337,6 +337,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
       const stream = provider.streamCompletions(messages, modelId, temperature)
 
       let contentBuffer = ''
+      let reasoningBuffer = ''
 
       for await (const chunk of stream) {
         if (abortController.signal.aborted) {
@@ -345,9 +346,15 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
 
         // 累积内容到缓冲区
         if (chunk.content) contentBuffer += chunk.content
+        if (chunk.reasoning_content) reasoningBuffer += chunk.reasoning_content
 
         // 处理当前缓冲区的内容
-        await this.processStreamWithTypingEffect(eventId, contentBuffer, '', abortController.signal)
+        await this.processStreamWithTypingEffect(
+          eventId,
+          contentBuffer,
+          reasoningBuffer,
+          abortController.signal
+        )
 
         // 重置缓冲区
         contentBuffer = ''
