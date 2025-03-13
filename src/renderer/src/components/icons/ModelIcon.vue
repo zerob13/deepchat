@@ -46,8 +46,10 @@ import geminiColorIcon from '@/assets/llm-icons/gemini-color.svg?url'
 import githubColorIcon from '@/assets/llm-icons/github.svg?url'
 import azureOpenaiColorIcon from '@/assets/llm-icons/azure-color.svg?url'
 import anthropicColorIcon from '@/assets/llm-icons/anthropic.svg?url'
+import googleColorIcon from '@/assets/llm-icons/google-color.svg?url'
 // 导入所有图标
 const icons = {
+  gemma: googleColorIcon,
   claude: anthropicColorIcon,
   azure: azureOpenaiColorIcon,
   deepseek: deepseekColorIcon,

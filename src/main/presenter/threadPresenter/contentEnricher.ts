@@ -60,7 +60,6 @@ export class ContentEnricher {
 
       // 尝试获取主要内容
       const mainContent = this.extractMainContent($)
-      console.log('maincontent', mainContent)
       // 获取图标
       const icon = this.extractFavicon($, url)
 
@@ -218,5 +217,141 @@ export class ContentEnricher {
     enrichedContent += `</url-content>`
 
     return enrichedContent
+  }
+
+  /**
+   * 将HTML转换为简洁的Markdown格式
+   * 保留链接和结构化数据，减少数据量
+   * @param html HTML内容
+   * @param baseUrl 基础URL，用于解析相对路径
+   * @returns 转换后的Markdown内容
+   */
+  static convertHtmlToMarkdown(html: string, baseUrl: string): string {
+    const $ = cheerio.load(html)
+
+    // 移除不需要的元素
+    $('script, style, nav, header, footer, iframe, .ad, #ad, .advertisement').remove()
+
+    let markdown = ''
+
+    // 提取页面中可能的搜索结果链接和文本
+    const searchResults: { title: string; url: string; text: string }[] = []
+
+    // 1. 查找明显的搜索结果项
+    $('a').each((_, element) => {
+      const $el = $(element)
+      const href = $el.attr('href') || ''
+      const text = $el.text().trim()
+
+      // 跳过空链接和明显的导航链接
+      if (!href || href === '#' || text.length < 3 || href.includes('javascript:')) {
+        return
+      }
+
+      // 转换为绝对URL
+      let url = href
+      try {
+        url = href.startsWith('http') ? href : new URL(href, baseUrl).toString()
+      } catch (error) {
+        // 如果URL构建失败，使用原始href
+        console.error('构建URL失败:', error)
+      }
+
+      // 获取周围的文本作为描述
+      const parent = $el.parent()
+      let description = ''
+
+      // 尝试在父元素或祖先元素中寻找描述性文本
+      if (parent && parent.children().length > 1) {
+        // 克隆父元素并移除所有链接，只保留文本内容
+        const parentClone = parent.clone()
+        parentClone.find('a').remove()
+        description = parentClone.text().trim()
+      }
+
+      if (!description) {
+        // 尝试查找相邻的段落元素
+        const nextParagraph = $el.next('p, div, span')
+        if (nextParagraph.length) {
+          description = nextParagraph.text().trim()
+        }
+      }
+
+      // 清理描述文本
+      description = description.replace(/\s+/g, ' ').trim().substring(0, 200) // 限制描述长度
+
+      searchResults.push({
+        title: text,
+        url,
+        text: description
+      })
+    })
+
+    // 2. 将提取的搜索结果转换为Markdown格式
+    searchResults.forEach((result, index) => {
+      markdown += `## 结果 ${index + 1}\n`
+      markdown += `### [${result.title}](${result.url})\n`
+      markdown += `- URL: ${result.url}\n`
+      if (result.text) {
+        markdown += `- 描述: ${result.text}\n`
+      }
+      markdown += '\n'
+    })
+
+    // 3. 如果没有提取到结构化结果，提取基础HTML结构
+    if (searchResults.length === 0) {
+      // 提取所有可见文本块并保留基本结构
+      $('h1, h2, h3, h4, h5, h6, p, div').each((_, element) => {
+        const $el = $(element)
+        // 跳过空白或很短的文本块
+        const text = $el.text().trim()
+        if (text.length < 5) return
+
+        // 根据元素类型添加标记
+        const tagName = $el.prop('tagName')?.toLowerCase() || ''
+        if (tagName.startsWith('h')) {
+          const level = parseInt(tagName.substring(1))
+          markdown += `${'#'.repeat(level)} ${text}\n\n`
+        } else {
+          markdown += `${text}\n\n`
+        }
+      })
+
+      // 再次提取所有链接
+      $('a').each((_, element) => {
+        const $el = $(element)
+        const href = $el.attr('href') || ''
+        const text = $el.text().trim()
+
+        if (href && href !== '#' && text.length > 0) {
+          let url = href
+          try {
+            url = href.startsWith('http') ? href : new URL(href, baseUrl).toString()
+          } catch (error) {
+            // 如果URL构建失败，使用原始href
+          }
+          markdown += `- [${text}](${url})\n`
+        }
+      })
+    }
+
+    // 4. 最后，添加所有图片的引用
+    $('img').each((_, element) => {
+      const $el = $(element)
+      const src = $el.attr('src') || ''
+      const alt = $el.attr('alt') || '图片'
+
+      if (src) {
+        let imageUrl = src
+        try {
+          imageUrl = src.startsWith('http') ? src : new URL(src, baseUrl).toString()
+        } catch (error) {
+          // 如果URL构建失败，使用原始src
+        }
+        markdown += `![${alt}](${imageUrl})\n`
+      }
+    })
+
+    return markdown
   }
 }

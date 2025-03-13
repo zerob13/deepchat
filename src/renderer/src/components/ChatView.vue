@@ -26,8 +26,10 @@ import ChatInput from './ChatInput.vue'
 import { useRoute } from 'vue-router'
 import { UserMessageContent } from '@shared/chat'
 import { STREAM_EVENTS } from '@/events'
+import { useSettingsStore } from '@/stores/settings'
 
 const route = useRoute()
+const settingsStore = useSettingsStore()
 
 const messageList = ref()
 
@@ -43,8 +45,16 @@ const isGenerating = computed(() => {
   return chatStore.generatingThreadIds.has(chatStore.activeThreadId)
 })
 const handleSend = async (msg: UserMessageContent) => {
-  await chatStore.sendMessage(msg)
+  if (messageList.value) {
+    // 在发送消息前将aboveThreshold设置为false，确保消息发送过程中总是滚动到底部
+    messageList.value.aboveThreshold = false
+  }
   scrollToBottom()
+  await chatStore.sendMessage(msg)
+  // 只有当用户在底部时才自动滚动
+  if (!messageList.value?.aboveThreshold) {
+    scrollToBottom()
+  }
 }
 
 const handleFileUpload = () => {
@@ -69,19 +79,22 @@ onMounted(async () => {
   if (route.query.modelId && route.query.providerId) {
     const threadId = await chatStore.createThread('新会话', {
       modelId: route.query.modelId as string,
-      providerId: route.query.providerId as string
+      providerId: route.query.providerId as string,
+      artifacts: settingsStore.artifactsEffectEnabled ? 1 : 0
     })
     chatStore.setActiveThread(threadId)
   }
 })
 
+// 监听路由变化，创建新线程
 watch(
   () => route.query,
   async () => {
     if (route.query.modelId && route.query.providerId) {
       const threadId = await chatStore.createThread('新会话', {
         modelId: route.query.modelId as string,
-        providerId: route.query.providerId as string
+        providerId: route.query.providerId as string,
+        artifacts: settingsStore.artifactsEffectEnabled ? 1 : 0
       })
       chatStore.setActiveThread(threadId)
     }

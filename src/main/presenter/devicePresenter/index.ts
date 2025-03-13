@@ -131,4 +131,24 @@ export class DevicePresenter implements IDevicePresenter {
       }
     })
   }
+
+  /**
+   * 选择目录
+   * @returns 返回所选目录的路径，如果用户取消则返回null
+   */
+  async selectDirectory(): Promise<{ canceled: boolean; filePaths: string[] }> {
+    return dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory']
+    })
+  }
+
+  /**
+   * 重启应用程序
+   */
+  restartApp(): Promise<void> {
+    console.log('restartApp')
+    app.relaunch()
+    app.exit()
+    return Promise.resolve()
+  }
 }

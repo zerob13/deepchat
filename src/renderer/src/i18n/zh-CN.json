@@ -31,6 +31,7 @@
     "languageSelect": "选择语言",
     "searchEngine": "搜索引擎",
     "searchEngineSelect": "选择搜索引擎",
+    "searchPreview": "搜索预览",
     "searchAssistantModel": "搜索助手模型",
     "selectModel": "选择模型",
     "proxyMode": "代理模式",
@@ -59,6 +60,7 @@
     "settings-common": "通用设置",
     "settings-provider": "服务商设置",
     "settings-mcp": "MCP设置",
+    "settings-database": "数据设置",
     "settings-about": "关于"
   },
   "chat": {
@@ -80,7 +82,10 @@
       "results": "已搜索到{0}个网页",
       "searching": "搜索中...",
       "title": "搜索结果",
-      "description": "共找到 {0} 条相关结果"
+      "description": "共找到 {0} 条相关结果",
+      "optimizing": "正在提取搜索意图...",
+      "reading": "正在搜索并阅读网页...",
+      "error": "搜索失败"
     }
   },
   "model": {
@@ -124,6 +129,7 @@
     "cancel": "取消",
     "confirm": "确认",
     "close": "关闭",
+    "ok": "确定",
     "delete": {
       "title": "确定要删除这个会话吗？",
       "description": "此操作无法撤销，请谨慎操作。",
@@ -151,6 +157,7 @@
       "languageSelect": "选择语言",
       "searchEngine": "搜索引擎",
       "searchEngineSelect": "选择搜索引擎",
+      "searchPreview": "搜索预览",
       "searchAssistantModel": "搜索助手模型",
       "selectModel": "选择模型",
       "proxyMode": "代理模式",
@@ -160,7 +167,46 @@
       "proxyModeCustom": "自定义代理",
       "customProxyUrl": "自定义代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
-      "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL"
+      "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL",
+      "addCustomSearchEngine": "添加自定义搜索引擎",
+      "addCustomSearchEngineDesc": "添加一个新的搜索引擎，需要提供名称和搜索URL。URL中必须包含{query}作为查询占位符。",
+      "searchEngineName": "搜索引擎名称",
+      "searchEngineNamePlaceholder": "请输入搜索引擎名称",
+      "searchEngineUrl": "搜索URL",
+      "searchEngineUrlPlaceholder": "如: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL必须包含{'{'}query{'}'}作为查询占位符",
+      "deleteCustomSearchEngine": "删除自定义搜索引擎",
+      "deleteCustomSearchEngineDesc": "确定要删除自定义搜索引擎 \"{name}\" 吗？此操作无法撤销。",
+      "testSearchEngine": "测试搜索引擎",
+      "testSearchEngineDesc": "即将使用 {engine} 搜索引擎进行测试搜索，将搜索关键词 \"天气\"。",
+      "testSearchEngineNote": "如果搜索页面需要登录或其他操作，您可以在测试窗口中进行。完成测试后请关闭测试窗口。",
+      "theme": "主题",
+      "themeSelect": "选择主题",
+      "closeToQuit": "点击关闭按钮时退出程序",
+      "contentProtection": "投屏保护",
+      "contentProtectionDialogTitle": "投屏保护切换确认",
+      "contentProtectionEnableDesc": "开启投屏保护可以防止投屏软件捕获DeepChat主窗口，用来保护您的内容隐私。请注意，此功能不会彻底隐藏所有界面，请合理合规使用。并且，并不是所有投屏软件都遵守用户隐私设定，该功能可能会在一些不遵守隐私设定的投屏软件上失效，切部分环境中可能会残留一个黑色窗体。",
+      "contentProtectionDisableDesc": "关闭投屏保护将允许投屏软件捕获DeepChat窗口。",
+      "contentProtectionRestartNotice": "切换此设置将导致程序重启，请确认是否继续？"
+    },
+    "data": {
+      "title": "数据设置",
+      "syncEnable": "启用数据同步",
+      "syncFolder": "同步文件夹",
+      "openSyncFolder": "打开同步文件夹",
+      "lastSyncTime": "上次同步时间",
+      "never": "从未同步",
+      "startBackup": "立即备份",
+      "backingUp": "备份中...",
+      "importData": "导入数据",
+      "incrementImport": "增量导入",
+      "overwriteImport": "覆盖导入",
+      "importConfirmTitle": "确认导入数据",
+      "importConfirmDescription": "导入将会覆盖当前所有数据，包括聊天记录和设置。请确保已备份重要数据。导入完成后需要重启应用程序。",
+      "importing": "导入中...",
+      "confirmImport": "确认导入",
+      "importSuccessTitle": "导入成功",
+      "importErrorTitle": "导入失败"
     },
     "model": {
       "title": "模型设置",
@@ -182,8 +228,15 @@
         "description": "设置AI响应的最大长度"
       },
       "artifacts": {
-        "description": "启用 Artifacts 功能可以让 AI 生成更丰富的内容"
-      }
+        "title": "Artifacts效果",
+        "description": "代码块生成动画效果"
+      },
+      "provider": "服务商",
+      "modelList": "模型列表",
+      "selectModel": "选择模型",
+      "providerSetting": "服务商设置",
+      "configureModel": "配置模型",
+      "addModel": "添加模型"
     },
     "provider": {
       "enable": "开启服务",
@@ -254,7 +307,7 @@
       },
       "pullModels": "拉取模型",
       "refreshModels": "刷新模型",
-      "modelsRunning": "模型正在运行",
+      "modelsRunning": "运行中的模型",
       "runningModels": "运行中的模型",
       "noRunningModels": "没有运行中的模型",
       "deleteModel": "删除模型",
@@ -439,5 +492,27 @@
     "preview": "预览",
     "code": "代码",
     "export": "导出"
-  }
+  },
+  "sync": {
+    "success": {
+      "importComplete": "数据导入成功，点击确定后将重启应用"
+    },
+    "error": {
+      "notEnabled": "同步功能未启用",
+      "folderNotExists": "同步文件夹不存在",
+      "noValidBackup": "同步文件夹中没有有效的备份文件",
+      "dbNotExists": "数据库文件不存在",
+      "configNotExists": "配置文件不存在",
+      "tempDbFailed": "临时数据库备份文件创建失败",
+      "tempConfigFailed": "临时配置备份文件创建失败",
+      "importFailed": "导入失败，已恢复原始数据",
+      "importProcess": "导入过程出错",
+      "unknown": "未知错误"
+    }
+  },
+  "Silicon": "硅基流动",
+  "QwenLM": "千问模型",
+  "Doubao": "豆包",
+  "PPIO": "派欧云",
+  "Moonshot": "月之暗面"
 }

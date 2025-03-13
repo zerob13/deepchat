@@ -50,6 +50,7 @@
     "settings-common": "Common Settings",
     "settings-provider": "Provider Settings",
     "settings-mcp": "MCP Settings",
+    "settings-database": "Data Settings",
     "settings-about": "About"
   },
   "chat": {
@@ -71,7 +72,10 @@
       "results": "Found {0} web pages",
       "searching": "Searching...",
       "title": "Search Results",
-      "description": "Found {0} related results"
+      "description": "Found {0} related results",
+      "optimizing": "Optimizing search query...",
+      "reading": "Searching and reading web pages...",
+      "error": "Search failed"
     }
   },
   "model": {
@@ -115,6 +119,7 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "close": "Close",
+    "ok": "OK",
     "delete": {
       "title": "Are you sure you want to delete this chat?",
       "description": "This action cannot be undone, please proceed with caution.",
@@ -139,19 +144,59 @@
       "title": "Common Settings",
       "resetData": "Reset Data",
       "language": "Language",
-      "languageSelect": "Select Language",
+      "languageSelect": "Select language",
       "searchEngine": "Search Engine",
-      "searchEngineSelect": "Select Search Engine",
+      "searchEngineSelect": "Select search engine",
+      "searchPreview": "Search Preview",
       "searchAssistantModel": "Search Assistant Model",
       "selectModel": "Select Model",
       "proxyMode": "Proxy Mode",
-      "proxyModeSelect": "Select Proxy Mode",
+      "proxyModeSelect": "Select proxy mode",
       "proxyModeSystem": "System Proxy",
       "proxyModeNone": "No Proxy",
       "proxyModeCustom": "Custom Proxy",
       "customProxyUrl": "Custom Proxy URL",
-      "customProxyUrlPlaceholder": "e.g. http://127.0.0.1:7890",
-      "invalidProxyUrl": "Invalid proxy URL, please enter a valid http/https URL"
+      "customProxyUrlPlaceholder": "Example: http://127.0.0.1:7890",
+      "invalidProxyUrl": "Invalid proxy URL, please enter valid http/https URL",
+      "addCustomSearchEngine": "Add Custom Search Engine",
+      "addCustomSearchEngineDesc": "Add a new search engine by providing a name and search URL. The URL must include {query} as the query placeholder.",
+      "searchEngineName": "Search Engine Name",
+      "searchEngineNamePlaceholder": "Enter search engine name",
+      "searchEngineUrl": "Search URL",
+      "searchEngineUrlPlaceholder": "Ex: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL must include {'{'}query{'}'} as the query placeholder",
+      "deleteCustomSearchEngine": "Delete Custom Search Engine",
+      "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone.",
+      "testSearchEngine": "Test Search Engine",
+      "testSearchEngineDesc": "A test search for \"weather\" will be performed using the {engine} search engine.",
+      "testSearchEngineNote": "If the search page requires login or other actions, you can perform them in the test window. Please close the test window when you're done.",
+      "theme": "Theme",
+      "themeSelect": "Select theme",
+      "closeToQuit": "Exit app when closing window",
+      "contentProtection": "Screen Protection",
+      "contentProtectionDialogTitle": "Confirm Screen Protection Change",
+      "contentProtectionEnableDesc": "Enabling screen protection prevents screen sharing software from capturing the DeepChat window, protecting your content privacy. Note that this feature will not completely hide all interfaces. Please use this feature responsibly and in compliance with regulations. Additionally, not all screen sharing software supports this feature. Additionally, some environments may leave a black window.",
+      "contentProtectionDisableDesc": "Disabling screen protection will allow screen sharing software to capture the DeepChat window.",
+      "contentProtectionRestartNotice": "Changing this setting will restart the application. Do you want to continue?"
+    },
+    "data": {
+      "title": "Data Settings",
+      "syncEnable": "Enable Data Sync",
+      "syncFolder": "Sync Folder",
+      "openSyncFolder": "Open Sync Folder",
+      "lastSyncTime": "Last Sync Time",
+      "never": "Never",
+      "startBackup": "Backup Now",
+      "backingUp": "Backing up...",
+      "importData": "Import Data",
+      "incrementImport": "Incremental Import",
+      "overwriteImport": "Overwrite Import",
+      "importConfirmTitle": "Confirm Data Import",
+      "importConfirmDescription": "Importing will overwrite all current data, including chat history and settings. Make sure you have backed up important data. You'll need to restart the application after import.",
+      "importing": "Importing...",
+      "confirmImport": "Confirm Import",
+      "importSuccessTitle": "Import Successful",
+      "importErrorTitle": "Import Failed"
     },
     "model": {
       "title": "Model Settings",
@@ -431,5 +476,24 @@
     "preview": "Preview",
     "code": "Code",
     "export": "Export"
-  }
+  },
+  "sync": {
+    "success": {
+      "importComplete": "Data import successful. Click OK to restart the application."
+    },
+    "error": {
+      "notEnabled": "Sync feature is not enabled",
+      "folderNotExists": "Sync folder does not exist",
+      "noValidBackup": "No valid backup files found in sync folder",
+      "dbNotExists": "Database file does not exist",
+      "configNotExists": "Configuration file does not exist",
+      "tempDbFailed": "Failed to create temporary database backup file",
+      "tempConfigFailed": "Failed to create temporary configuration backup file",
+      "importFailed": "Import failed, original data has been restored",
+      "importProcess": "Error during import process",
+      "unknown": "Unknown error"
+    }
+  },
+  "deleteCustomSearchEngine": "Delete Custom Search Engine",
+  "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."
 }

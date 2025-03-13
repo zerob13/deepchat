@@ -1,5 +1,5 @@
 ---
-description: explain the IPC communication event mechanism between the main and renderer process of this electron project.
+description: Best practices for Electron applications,explain the IPC communication event mechanism between the main and renderer process of this electron project.
 globs: src/main/presenter/**/*.ts,src/renderer/stores/**/*.ts,src/shared/*.d.ts
 alwaysApply: false
 ---
@@ -11,4 +11,8 @@ The IPC in the renderer process is implemented in [usePresenter.ts](mdc:src/rend
 
 The IPC messages from the main process to notify the view mainly rely on the EventBus [index.ts](mdc:src/main/presenter/index.ts) to listen for events that need to be notified and then send them to the renderer through the mainWindow.
 
-If you need information about multiple modules, you can refer to the project structure description file [project-folder-structure.mdc](mdc:.cursor/rules/project-folder-structure.mdc)
+- Use context isolation for improved security
+- Implement proper inter-process communication (IPC) patterns
+- Use Electron's built-in APIs for file system and native dialogs
+- Optimize application startup time with lazy loading
+- Implement proper error handling and logging for debugging

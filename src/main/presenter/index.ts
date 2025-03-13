@@ -13,6 +13,7 @@ import { DevicePresenter } from './devicePresenter'
 import { UpgradePresenter } from './upgradePresenter'
 import { FilePresenter } from './filePresenter/FilePresenter'
 import { McpPresenter } from './mcpPresenter'
+import { SyncPresenter } from './syncPresenter'
 import {
   CONFIG_EVENTS,
   CONVERSATION_EVENTS,
@@ -20,7 +21,8 @@ import {
   WINDOW_EVENTS,
   UPDATE_EVENTS,
   OLLAMA_EVENTS,
-  MCP_EVENTS
+  MCP_EVENTS,
+  SYNC_EVENTS
 } from '@/events'
 
 export class Presenter implements IPresenter {
@@ -34,6 +36,7 @@ export class Presenter implements IPresenter {
   shortcutPresenter: ShortcutPresenter
   filePresenter: FilePresenter
   mcpPresenter: McpPresenter
+  syncPresenter: SyncPresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -45,14 +48,20 @@ export class Presenter implements IPresenter {
     const dbDir = path.join(app.getPath('userData'), 'app_db')
     const dbPath = path.join(dbDir, 'chat.db')
     this.sqlitePresenter = new SQLitePresenter(dbPath)
-    this.threadPresenter = new ThreadPresenter(this.sqlitePresenter, this.llmproviderPresenter)
+    this.threadPresenter = new ThreadPresenter(
+      this.sqlitePresenter,
+      this.llmproviderPresenter,
+      this.configPresenter
+    )
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
     this.mcpPresenter = new McpPresenter()
+    this.syncPresenter = new SyncPresenter(this.configPresenter, this.sqlitePresenter)
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }
+
   setupEventBus() {
     // 窗口事件
     eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
@@ -141,6 +150,31 @@ export class Presenter implements IPresenter {
     eventBus.on(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, (progress) => {
       this.windowPresenter.mainWindow?.webContents.send(OLLAMA_EVENTS.PULL_MODEL_PROGRESS, progress)
     })
+
+    // 同步相关事件
+    eventBus.on(SYNC_EVENTS.BACKUP_STARTED, () => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.BACKUP_STARTED)
+    })
+
+    eventBus.on(SYNC_EVENTS.BACKUP_COMPLETED, (time) => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.BACKUP_COMPLETED, time)
+    })
+
+    eventBus.on(SYNC_EVENTS.BACKUP_ERROR, (error) => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.BACKUP_ERROR, error)
+    })
+
+    eventBus.on(SYNC_EVENTS.IMPORT_STARTED, () => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_STARTED)
+    })
+
+    eventBus.on(SYNC_EVENTS.IMPORT_COMPLETED, () => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_COMPLETED)
+    })
+
+    eventBus.on(SYNC_EVENTS.IMPORT_ERROR, (error) => {
+      this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_ERROR, error)
+    })
   }
 
   init() {
@@ -177,6 +211,7 @@ export class Presenter implements IPresenter {
   destroy() {
     this.sqlitePresenter.close()
     this.shortcutPresenter.destroy()
+    this.syncPresenter.destroy()
   }
 }
 

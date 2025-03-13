@@ -49,7 +49,8 @@
     "settings": "設定",
     "settings-common": "一般設定",
     "settings-provider": "プロバイダー設定",
-    "settings-about": "について"
+    "settings-about": "について",
+    "settings-database": "データ設定"
   },
   "chat": {
     "input": {
@@ -70,7 +71,10 @@
       "results": "{0}件のウェブページが見つかりました",
       "searching": "検索中...",
       "title": "検索結果",
-      "description": "{0}件の関連結果が見つかりました"
+      "description": "{0}件の関連結果が見つかりました",
+      "optimizing": "検索意図の抽出中...",
+      "reading": "ウェブページの検索中...",
+      "error": "検索に失敗しました"
     }
   },
   "model": {
@@ -113,6 +117,7 @@
     "cancel": "キャンセル",
     "confirm": "確認",
     "close": "閉じる",
+    "ok": "OK",
     "delete": {
       "title": "このチャットを削除してもよろしいですか？",
       "description": "この操作は元に戻せませんので、慎重に行ってください。",
@@ -135,6 +140,7 @@
       "languageSelect": "言語を選択",
       "searchEngine": "検索エンジン",
       "searchEngineSelect": "検索エンジンを選択",
+      "searchPreview": "検索プレビュー",
       "searchAssistantModel": "検索アシスタントモデル",
       "selectModel": "モデルを選択",
       "proxyMode": "プロキシモード",
@@ -144,7 +150,46 @@
       "proxyModeCustom": "カスタムプロキシ",
       "customProxyUrl": "カスタムプロキシURL",
       "customProxyUrlPlaceholder": "例: http://127.0.0.1:7890",
-      "invalidProxyUrl": "無効なプロキシURL、有効なhttp/https URLを入力してください"
+      "invalidProxyUrl": "無効なプロキシURL、有効なhttp/https URLを入力してください",
+      "contentProtection": "画面保護",
+      "contentProtectionDialogTitle": "画面保護の切り替え確認",
+      "contentProtectionEnableDesc": "画面保護を有効にすると、画面共有ソフトウェアがDeepChatウィンドウをキャプチャするのを防ぎ、コンテンツのプライバシーを保護します。この機能はすべてのインターフェイスを完全に隠すわけではありません。責任を持って規制に準拠して使用してください。また、画面共有ソフトウェアがこの機能をサポートしない場合があります。また、一部の環境では黒いウィンドウが残る可能性があります。",
+      "contentProtectionDisableDesc": "画面保護を無効にすると、画面共有ソフトウェアがDeepChatウィンドウをキャプチャできるようになります。",
+      "contentProtectionRestartNotice": "この設定を変更するとアプリケーションが再起動します。続行しますか？",
+      "addCustomSearchEngine": "カスタム検索エンジンを追加",
+      "addCustomSearchEngineDesc": "新しい検索エンジンを追加するには、名前と検索URLを提供する必要があります。URLには{'{'}query{'}'}をクエリプレースホルダーとして含める必要があります。",
+      "searchEngineName": "検索エンジン名",
+      "searchEngineNamePlaceholder": "検索エンジン名を入力してください",
+      "searchEngineUrl": "検索URL",
+      "searchEngineUrlPlaceholder": "例: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URLには{'{'}query{'}'}をクエリプレースホルダーとして含める必要があります",
+      "deleteCustomSearchEngine": "カスタム検索エンジンを削除",
+      "deleteCustomSearchEngineDesc": "カスタム検索エンジン \"{name}\" を削除してもよろしいですか？この操作は元に戻せません。",
+      "testSearchEngine": "検索エンジンをテスト",
+      "testSearchEngineDesc": "{engine} 検索エンジンを使用して「天気」のテスト検索を実行します。",
+      "testSearchEngineNote": "検索ページにログインやその他の操作が必要な場合は、テストウィンドウで実行できます。テスト完了後はテストウィンドウを閉じてください。",
+      "theme": "テーマ",
+      "themeSelect": "テーマを選択",
+      "closeToQuit": "閉じるボタンをクリックするとアプリケーションを終了します"
+    },
+    "data": {
+      "title": "データ設定",
+      "syncEnable": "データ同期を有効にする",
+      "syncFolder": "同期フォルダ",
+      "openSyncFolder": "同期フォルダを開く",
+      "lastSyncTime": "最終同期時間",
+      "never": "未同期",
+      "startBackup": "今すぐバックアップ",
+      "backingUp": "バックアップ中...",
+      "importData": "データをインポート",
+      "incrementImport": "増分インポート",
+      "overwriteImport": "上書きインポート",
+      "importConfirmTitle": "データインポートの確認",
+      "importConfirmDescription": "インポートすると、チャット履歴や設定を含むすべての現在のデータが上書きされます。重要なデータをバックアップしたことを確認してください。インポート後はアプリケーションを再起動する必要があります。",
+      "importing": "インポート中...",
+      "confirmImport": "インポートを確認",
+      "importSuccessTitle": "インポート成功",
+      "importErrorTitle": "インポート失敗"
     },
     "model": {
       "title": "モデル設定",
@@ -334,5 +379,22 @@
     "preview": "プレビュー",
     "code": "コード",
     "export": "エクスポート"
+  },
+  "sync": {
+    "success": {
+      "importComplete": "データのインポートに成功しました。OKをクリックしてアプリを再起動します。"
+    },
+    "error": {
+      "notEnabled": "同期機能が有効になっていません",
+      "folderNotExists": "同期フォルダが存在しません",
+      "noValidBackup": "同期フォルダに有効なバックアップファイルがありません",
+      "dbNotExists": "データベースファイルが存在しません",
+      "configNotExists": "設定ファイルが存在しません",
+      "tempDbFailed": "一時データベースバックアップファイルの作成に失敗しました",
+      "tempConfigFailed": "一時設定バックアップファイルの作成に失敗しました",
+      "importFailed": "インポートに失敗しました。元のデータが復元されました",
+      "importProcess": "インポート処理中にエラーが発生しました",
+      "unknown": "不明なエラー"
+    }
   }
 }

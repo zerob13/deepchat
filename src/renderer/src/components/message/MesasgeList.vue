@@ -84,7 +84,7 @@ const chatStore = useChatStore()
 const scrollToBottom = (smooth = true) => {
   nextTick(() => {
     scrollAnchor.value?.scrollIntoView({
-      behavior: smooth ? 'instant' : 'instant',
+      behavior: smooth ? 'smooth' : 'instant',
       block: 'end'
     })
   })
@@ -120,7 +120,8 @@ const handleCancel = () => {
 }
 
 defineExpose({
-  scrollToBottom
+  scrollToBottom,
+  aboveThreshold
 })
 
 onMounted(() => {
@@ -136,7 +137,7 @@ onMounted(() => {
       () => height.value,
       () => {
         const lastMessage = props.messages[props.messages.length - 1]
-        if (lastMessage?.status === 'pending') {
+        if (lastMessage?.status === 'pending' && !aboveThreshold.value) {
           scrollToBottom(true)
         }
       }

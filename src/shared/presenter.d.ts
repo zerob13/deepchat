@@ -109,6 +109,7 @@ export interface IPresenter {
   upgradePresenter: IUpgradePresenter
   filePresenter: IFilePresenter
   mcpPresenter: IMCPPresenter
+  syncPresenter: ISyncPresenter
   // llamaCppPresenter: ILlamaCppPresenter
 }
 
@@ -144,6 +145,25 @@ export interface IConfigPresenter {
   setProxyMode(mode: string): void
   getCustomProxyUrl(): string
   setCustomProxyUrl(url: string): void
+  // 自定义搜索引擎
+  getCustomSearchEngines(): Promise<SearchEngineTemplate[]>
+  setCustomSearchEngines(engines: SearchEngineTemplate[]): Promise<void>
+  // artifacts效果设置
+  getArtifactsEffectEnabled(): boolean
+  setArtifactsEffectEnabled(enabled: boolean): void
+  // 搜索预览设置
+  getSearchPreviewEnabled(): Promise<boolean>
+  setSearchPreviewEnabled(enabled: boolean): void
+  // 投屏保护设置
+  getContentProtectionEnabled(): boolean
+  setContentProtectionEnabled(enabled: boolean): void
+  // 同步设置
+  getSyncEnabled(): boolean
+  setSyncEnabled(enabled: boolean): void
+  getSyncFolderPath(): string
+  setSyncFolderPath(folderPath: string): void
+  getLastSyncTime(): number
+  setLastSyncTime(time: number): void
 }
 export type RENDERER_MODEL_META = {
   id: string
@@ -320,9 +340,12 @@ export interface IThreadPresenter {
   summaryTitles(modelId?: string): Promise<string>
   clearActiveThread(): Promise<void>
   stopMessageGeneration(messageId: string): Promise<void>
-  getSearchEngines(): SearchEngineTemplate[]
-  getActiveSearchEngine(): SearchEngineTemplate
-  setActiveSearchEngine(engineName: string): void
+  getSearchEngines(): Promise<SearchEngineTemplate[]>
+  getActiveSearchEngine(): Promise<SearchEngineTemplate>
+  setActiveSearchEngine(engineId: string): Promise<void>
+  setSearchEngine(engineId: string): Promise<boolean>
+  // 搜索引擎测试
+  testSearchEngine(query?: string): Promise<boolean>
   // 搜索助手模型设置
   setSearchAssistantModel(model: MODEL_META, providerId: string): void
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
@@ -387,6 +410,10 @@ export interface IDevicePresenter {
   getMemoryUsage(): Promise<MemoryInfo>
   getDiskSpace(): Promise<DiskInfo>
   resetData(): Promise<void>
+
+  // 目录选择和应用重启
+  selectDirectory(): Promise<{ canceled: boolean; filePaths: string[] }>
+  restartApp(): Promise<void>
 }
 
 export type DeviceInfo = {
@@ -508,6 +535,7 @@ export interface ProgressResponse {
   completed?: number
 }
 
+<<<<<<< HEAD
 // MCP相关类型定义
 export interface MCPServerConfig {
   command: string
@@ -569,4 +597,20 @@ export interface IMCPPresenter {
       arguments: string
     }
   }): Promise<{ content: string }>
+=======
+export interface ISyncPresenter {
+  // 备份相关操作
+  startBackup(): Promise<void>
+  cancelBackup(): Promise<void>
+  getBackupStatus(): Promise<{ isBackingUp: boolean; lastBackupTime: number }>
+
+  // 导入相关操作
+  importFromSync(importMode?: ImportMode): Promise<{ success: boolean; message: string }>
+  checkSyncFolder(): Promise<{ exists: boolean; path: string }>
+  openSyncFolder(): Promise<void>
+
+  // 初始化和销毁
+  init(): void
+  destroy(): void
+>>>>>>> dev
 }

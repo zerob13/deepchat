@@ -14,7 +14,7 @@
           :model-id="provider.id"
           :custom-class="'w-4 h-4 text-muted-foreground'"
         ></ModelIcon>
-        <span class="text-sm font-medium flex-1">{{ provider.name }}</span>
+        <span class="text-sm font-medium flex-1">{{ t(provider.name) }}</span>
         <Switch :checked="provider.enable" @click.stop="toggleProviderStatus(provider)" />
       </div>
       <div
@@ -77,6 +77,8 @@ const setActiveProvider = (providerId: string) => {
 
 const toggleProviderStatus = async (provider: LLM_PROVIDER) => {
   await settingsStore.updateProviderStatus(provider.id, !provider.enable)
+  // 切换状态后，同时打开该服务商的详情页面
+  setActiveProvider(provider.id)
 }
 
 const activeProvider = computed(() => {

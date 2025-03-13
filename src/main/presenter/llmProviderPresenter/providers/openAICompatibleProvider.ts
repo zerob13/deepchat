@@ -3,6 +3,8 @@ import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import OpenAI from 'openai'
 import { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources'
 import { ConfigPresenter } from '../../configPresenter'
+import { proxyConfig } from '../../proxyConfig'
+import { HttpsProxyAgent } from 'https-proxy-agent'
 
 export class OpenAICompatibleProvider extends BaseLLMProvider {
   protected openai: OpenAI
@@ -12,9 +14,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     super(provider, configPresenter)
+    const proxyUrl = proxyConfig.getProxyUrl()
     this.openai = new OpenAI({
       apiKey: this.provider.apiKey,
-      baseURL: this.provider.baseUrl
+      baseURL: this.provider.baseUrl,
+      httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
     })
     if (OpenAICompatibleProvider.NO_MODELS_API_LIST.includes(this.provider.id.toLowerCase())) {
       this.isNoModelsApi = true
@@ -161,7 +165,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     for await (const chunk of stream) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const delta = chunk.choices[0]?.delta as any
-
       // 处理原生 reasoning_content 格式
       if (delta?.reasoning_content) {
         yield {

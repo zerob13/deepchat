@@ -6,6 +6,7 @@ import {
   ModelConfig,
   RENDERER_MODEL_META
 } from '@shared/presenter'
+import { SearchEngineTemplate } from '@shared/chat'
 import ElectronStore from 'electron-store'
 import { DEFAULT_PROVIDERS } from './providers'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
@@ -24,6 +25,13 @@ interface IAppSettings {
   appVersion?: string // 用于版本检查和数据迁移
   proxyMode?: string // 代理模式：system, none, custom
   customProxyUrl?: string // 自定义代理地址
+  artifactsEffectEnabled?: boolean // artifacts动画效果是否启用
+  searchPreviewEnabled?: boolean // 搜索预览是否启用
+  contentProtectionEnabled?: boolean // 投屏保护是否启用
+  syncEnabled?: boolean // 是否启用同步功能
+  syncFolderPath?: string // 同步文件夹路径
+  lastSyncTime?: number // 上次同步时间
+  customSearchEngines?: string // 自定义搜索引擎JSON字符串
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -440,5 +448,119 @@ export class ConfigPresenter implements IConfigPresenter {
   setCustomProxyUrl(url: string): void {
     this.setSetting('customProxyUrl', url)
     eventBus.emit(CONFIG_EVENTS.CUSTOM_PROXY_URL_CHANGED, url)
+  }
+
+  getArtifactsEffectEnabled(): boolean {
+    const value = this.getSetting<boolean>('artifactsEffectEnabled')
+    console.log('getArtifactsEffectEnabled 原始值:', value, '类型:', typeof value)
+    // 只有当值是undefined或null时才使用默认值true
+    // 注意：false是一个有效的boolean值，应该被保留而不是替换为默认值
+    return value === undefined || value === null ? true : value
+  }
+
+  setArtifactsEffectEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setArtifactsEffectEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('artifactsEffectEnabled', boolValue)
+    eventBus.emit(CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED, boolValue)
+  }
+
+  // 获取同步功能状态
+  getSyncEnabled(): boolean {
+    return this.getSetting<boolean>('syncEnabled') || false
+  }
+
+  // 设置同步功能状态
+  setSyncEnabled(enabled: boolean): void {
+    console.log('setSyncEnabled', enabled)
+    this.setSetting('syncEnabled', enabled)
+    eventBus.emit(CONFIG_EVENTS.SYNC_SETTINGS_CHANGED, { enabled })
+  }
+
+  // 获取同步文件夹路径
+  getSyncFolderPath(): string {
+    return (
+      this.getSetting<string>('syncFolderPath') || path.join(app.getPath('home'), 'DeepchatSync')
+    )
+  }
+
+  // 设置同步文件夹路径
+  setSyncFolderPath(folderPath: string): void {
+    this.setSetting('syncFolderPath', folderPath)
+    eventBus.emit(CONFIG_EVENTS.SYNC_SETTINGS_CHANGED, { folderPath })
+  }
+
+  // 获取上次同步时间
+  getLastSyncTime(): number {
+    return this.getSetting<number>('lastSyncTime') || 0
+  }
+
+  // 设置上次同步时间
+  setLastSyncTime(time: number): void {
+    this.setSetting('lastSyncTime', time)
+  }
+
+  // 获取自定义搜索引擎
+  async getCustomSearchEngines(): Promise<SearchEngineTemplate[]> {
+    try {
+      const customEnginesJson = this.store.get('customSearchEngines')
+      if (customEnginesJson) {
+        return JSON.parse(customEnginesJson as string)
+      }
+      return []
+    } catch (error) {
+      console.error('获取自定义搜索引擎失败:', error)
+      return []
+    }
+  }
+
+  // 设置自定义搜索引擎
+  async setCustomSearchEngines(engines: SearchEngineTemplate[]): Promise<void> {
+    try {
+      this.store.set('customSearchEngines', JSON.stringify(engines))
+      // 发送事件通知搜索引擎更新
+      eventBus.emit(CONFIG_EVENTS.SEARCH_ENGINES_UPDATED, engines)
+    } catch (error) {
+      console.error('设置自定义搜索引擎失败:', error)
+      throw error
+    }
+  }
+
+  // 获取搜索预览设置状态
+  getSearchPreviewEnabled(): Promise<boolean> {
+    const value = this.getSetting<boolean>('searchPreviewEnabled')
+    // 默认关闭搜索预览
+    return Promise.resolve(value === undefined || value === null ? false : value)
+  }
+
+  // 设置搜索预览状态
+  setSearchPreviewEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setSearchPreviewEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('searchPreviewEnabled', boolValue)
+  }
+
+  // 获取投屏保护设置状态
+  getContentProtectionEnabled(): boolean {
+    const value = this.getSetting<boolean>('contentProtectionEnabled')
+    // 默认投屏保护关闭
+    return value === undefined || value === null ? false : value
+  }
+
+  // 设置投屏保护状态
+  setContentProtectionEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setContentProtectionEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('contentProtectionEnabled', boolValue)
+    eventBus.emit(CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED, boolValue)
   }
 }

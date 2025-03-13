@@ -6,11 +6,12 @@ import {
   MESSAGE_STATUS,
   MESSAGE_METADATA,
   SearchResult,
-  MODEL_META
+  MODEL_META,
+  ISQLitePresenter,
+  IConfigPresenter,
+  ILlmProviderPresenter
 } from '../../../shared/presenter'
-import { ISQLitePresenter } from '../../../shared/presenter'
 import { MessageManager } from './messageManager'
-import { ILlmProviderPresenter } from '../../../shared/presenter'
 import { eventBus } from '@/eventbus'
 import {
   AssistantMessage,
@@ -48,6 +49,8 @@ interface GeneratingMessageState {
   reasoningStartTime: number | null
   reasoningEndTime: number | null
   lastReasoningTime: number | null
+  isSearching?: boolean
+  isCancelled?: boolean
 }
 const SEARCH_PROMPT_TEMPLATE = `
 # The following content is based on the search results from the user's message:
@@ -72,6 +75,9 @@ When answering, please pay attention to the following points:
 - Use footnote citations at the end of applicable sentences (e.g., [1][2]).
 - Write more than 100 words (2 paragraphs).
 - Avoid directly quoting citations in the answer.
+
+# The user's message is:
+{{USER_QUERY}}
   `
 
 const SEARCH_PROMPT_ARTIFACTS_TEMPLATE = `
@@ -145,6 +151,9 @@ DO NOT use artifacts for:
 - Simple explanations or answers (less than 300 words)
 - Short code snippets (<15 lines)
 - Brief answers that work better as part of the conversation flow
+
+# The user's message is:
+{{USER_QUERY}}
 `
 
 // 格式化搜索结果的函数
@@ -189,16 +198,23 @@ export class ThreadPresenter implements IThreadPresenter {
   private sqlitePresenter: ISQLitePresenter
   private messageManager: MessageManager
   private llmProviderPresenter: ILlmProviderPresenter
+  private configPresenter: IConfigPresenter
   private searchManager: SearchManager
   private generatingMessages: Map<string, GeneratingMessageState> = new Map()
-  private searchAssistantModel: MODEL_META | null = null
-  private searchAssistantProviderId: string | null = null
+  public searchAssistantModel: MODEL_META | null = null
+  public searchAssistantProviderId: string | null = null
+  private searchingMessages: Set<string> = new Set()
 
-  constructor(sqlitePresenter: ISQLitePresenter, llmProviderPresenter: ILlmProviderPresenter) {
+  constructor(
+    sqlitePresenter: ISQLitePresenter,
+    llmProviderPresenter: ILlmProviderPresenter,
+    configPresenter: IConfigPresenter
+  ) {
     this.sqlitePresenter = sqlitePresenter
     this.messageManager = new MessageManager(sqlitePresenter)
     this.llmProviderPresenter = llmProviderPresenter
     this.searchManager = new SearchManager()
+    this.configPresenter = configPresenter
 
     // 初始化时处理所有未完成的消息
     this.initializeUnfinishedMessages()
@@ -330,14 +346,37 @@ export class ThreadPresenter implements IThreadPresenter {
     this.searchAssistantModel = model
     this.searchAssistantProviderId = providerId
   }
-  getSearchEngines(): SearchEngineTemplate[] {
+  async getSearchEngines(): Promise<SearchEngineTemplate[]> {
     return this.searchManager.getEngines()
   }
-  getActiveSearchEngine(): SearchEngineTemplate {
+  async getActiveSearchEngine(): Promise<SearchEngineTemplate> {
     return this.searchManager.getActiveEngine()
   }
-  setActiveSearchEngine(engineName: string) {
-    this.searchManager.setActiveEngine(engineName)
+  async setActiveSearchEngine(engineId: string): Promise<void> {
+    await this.searchManager.setActiveEngine(engineId)
+  }
+
+  /**
+   * 测试当前选择的搜索引擎
+   * @param query 测试搜索的关键词，默认为"天气"
+   * @returns 测试是否成功打开窗口
+   */
+  async testSearchEngine(query: string = '天气'): Promise<boolean> {
+    return await this.searchManager.testSearch(query)
+  }
+
+  /**
+   * 设置搜索引擎
+   * @param engineId 搜索引擎ID
+   * @returns 是否设置成功
+   */
+  async setSearchEngine(engineId: string): Promise<boolean> {
+    try {
+      return await this.searchManager.setActiveEngine(engineId)
+    } catch (error) {
+      console.error('设置搜索引擎失败:', error)
+      return false
+    }
   }
 
   /**
@@ -738,6 +777,26 @@ export class ThreadPresenter implements IThreadPresenter {
     }
   }
 
+  /**
+   * 检查消息是否已被取消
+   * @param messageId 消息ID
+   * @returns 是否已被取消
+   */
+  private isMessageCancelled(messageId: string): boolean {
+    const state = this.generatingMessages.get(messageId)
+    return !state || state.isCancelled === true
+  }
+
+  /**
+   * 如果消息已被取消，则抛出错误
+   * @param messageId 消息ID
+   */
+  private throwIfCancelled(messageId: string): void {
+    if (this.isMessageCancelled(messageId)) {
+      throw new Error('common.error.userCanceledGeneration')
+    }
+  }
+
   private async startStreamSearch(
     conversationId: string,
     messageId: string,
@@ -747,6 +806,9 @@ export class ThreadPresenter implements IThreadPresenter {
     if (!state) {
       throw new Error('找不到生成状态')
     }
+
+    // 检查是否已被取消
+    this.throwIfCancelled(messageId)
 
     // 添加搜索加载状态
     const searchBlock: AssistantMessageBlock = {
@@ -761,9 +823,17 @@ export class ThreadPresenter implements IThreadPresenter {
     state.message.content.unshift(searchBlock)
     await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
 
+    // 标记消息为搜索状态
+    state.isSearching = true
+    this.searchingMessages.add(messageId)
+
     try {
       // 获取历史消息用于上下文
       const contextMessages = await this.getContextMessages(conversationId)
+
+      // 检查是否已被取消
+      this.throwIfCancelled(messageId)
+
       const formattedContext = contextMessages
         .map((msg) => {
           if (msg.role === 'user') {
@@ -776,6 +846,12 @@ export class ThreadPresenter implements IThreadPresenter {
         })
         .join('\n')
 
+      // 检查是否已被取消
+      this.throwIfCancelled(messageId)
+
+      searchBlock.status = 'optimizing'
+      await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+
       // 重写搜索查询
       const optimizedQuery = await this.rewriteUserSearchQuery(
         query,
@@ -784,11 +860,20 @@ export class ThreadPresenter implements IThreadPresenter {
         this.searchManager.getActiveEngine().name
       )
 
-      // 开始搜索
-      const results = await this.searchManager.search(conversationId, optimizedQuery)
+      // 检查是否已被取消
+      this.throwIfCancelled(messageId)
 
       // 更新搜索状态为阅读中
       searchBlock.status = 'reading'
+      await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+
+      // 开始搜索
+      const results = await this.searchManager.search(conversationId, optimizedQuery)
+
+      // 检查是否已被取消
+      this.throwIfCancelled(messageId)
+
+      searchBlock.status = 'loading'
       searchBlock.extra = {
         total: results.length
       }
@@ -796,7 +881,9 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 保存搜索结果
       for (const result of results) {
-        // console.log('保存搜索结果', result)
+        // 检查是否已被取消
+        this.throwIfCancelled(messageId)
+
         await this.sqlitePresenter.addMessageAttachment(
           messageId,
           'search_result',
@@ -810,16 +897,33 @@ export class ThreadPresenter implements IThreadPresenter {
         )
       }
 
+      // 检查是否已被取消
+      this.throwIfCancelled(messageId)
+
       // 更新搜索状态为成功
       searchBlock.status = 'success'
       await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
 
+      // 标记消息搜索完成
+      state.isSearching = false
+      this.searchingMessages.delete(messageId)
+
       return results
     } catch (error) {
+      // 标记消息搜索完成
+      state.isSearching = false
+      this.searchingMessages.delete(messageId)
+
       // 更新搜索状态为错误
       searchBlock.status = 'error'
       searchBlock.content = String(error)
       await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
+
+      if (String(error).includes('userCanceledGeneration')) {
+        // 如果是取消操作导致的错误，确保搜索窗口关闭
+        this.searchManager.stopSearch(state.conversationId)
+      }
+
       return []
     }
   }
@@ -842,20 +946,48 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     try {
+      // 设置消息未取消
+      state.isCancelled = false
+
       // 1. 获取上下文信息
       const { conversation, userMessage, contextMessages } = await this.prepareConversationContext(
         conversationId,
         queryMsgId
       )
 
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
+
       // 2. 处理用户消息内容
       const { userContent, urlResults, imageFiles } =
         await this.processUserMessageContent(userMessage)
 
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
+
       // 3. 处理搜索（如果需要）
-      const searchResults = userMessage.content.search
-        ? await this.startStreamSearch(conversationId, state.message.id, userContent)
-        : null
+      let searchResults: SearchResult[] | null = null
+      if (userMessage.content.search) {
+        try {
+          searchResults = await this.startStreamSearch(
+            conversationId,
+            state.message.id,
+            userContent
+          )
+          // 检查是否已被取消
+          this.throwIfCancelled(state.message.id)
+        } catch (error) {
+          // 如果是用户取消导致的错误，不继续后续步骤
+          if (String(error).includes('userCanceledGeneration')) {
+            return
+          }
+          // 其他错误继续处理（搜索失败不应影响生成）
+          console.error('搜索过程中出错:', error)
+        }
+      }
+
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
 
       // 4. 准备提示内容
       const { finalContent, promptTokens } = this.preparePromptContent(
@@ -868,8 +1000,14 @@ export class ThreadPresenter implements IThreadPresenter {
         imageFiles
       )
 
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
+
       // 5. 更新生成状态
       await this.updateGenerationState(state, promptTokens)
+
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
 
       // 6. 启动流式生成
       const { providerId, modelId, temperature, maxTokens } = conversation.settings
@@ -882,6 +1020,12 @@ export class ThreadPresenter implements IThreadPresenter {
         maxTokens
       )
     } catch (error) {
+      // 检查是否是取消错误
+      if (String(error).includes('userCanceledGeneration')) {
+        console.log('消息生成已被用户取消')
+        return
+      }
+
       console.error('流式生成过程中出错:', error)
       await this.handleMessageError(state.message.id, String(error))
       throw error
@@ -932,7 +1076,11 @@ export class ThreadPresenter implements IThreadPresenter {
       }
       contextMessages = await this.getContextMessages(conversationId)
     }
-
+    // 任何情况都使用最新配置
+    const webSearchEnabled = this.configPresenter.getSetting('input_webSearch')
+    const thinkEnabled = this.configPresenter.getSetting('input_deepThinking')
+    userMessage.content.search = webSearchEnabled
+    userMessage.content.think = thinkEnabled
     return { conversation, userMessage, contextMessages }
   }
 
@@ -1287,9 +1435,24 @@ export class ThreadPresenter implements IThreadPresenter {
   async stopMessageGeneration(messageId: string): Promise<void> {
     const state = this.generatingMessages.get(messageId)
     if (state) {
+      // 设置统一的取消标志
+      state.isCancelled = true
+
+      // 标记消息不再处于搜索状态
+      if (state.isSearching) {
+        this.searchingMessages.delete(messageId)
+
+        // 停止搜索窗口
+        await this.searchManager.stopSearch(state.conversationId)
+      }
+
       // 添加用户取消的消息块
       state.message.content.forEach((block) => {
-        if (block.status === 'loading') {
+        if (
+          block.status === 'loading' ||
+          block.status === 'reading' ||
+          block.status === 'optimizing'
+        ) {
           block.status = 'success'
         }
       })
@@ -1359,11 +1522,15 @@ export class ThreadPresenter implements IThreadPresenter {
         }
       })
       .filter((item) => item.formattedMessage.content.length > 0)
-    return await this.llmProviderPresenter.summaryTitles(
+    const title = await this.llmProviderPresenter.summaryTitles(
       messagesWithLength.map((item) => item.formattedMessage),
       summaryProviderId || conversation.settings.providerId,
       modelId || conversation.settings.modelId
     )
+    console.log('-------------> title \n', title)
+    const cleanedTitle = title.replace(/<think>.*?<\/think>/g, '').trim()
+    console.log('-------------> cleanedTitle \n', cleanedTitle)
+    return cleanedTitle
   }
   async clearActiveThread(): Promise<void> {
     this.activeConversationId = null

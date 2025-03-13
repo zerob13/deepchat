@@ -39,7 +39,8 @@
     "settings": "設置",
     "settings-common": "通用設置",
     "settings-provider": "服務商設置",
-    "settings-about": "關於"
+    "settings-about": "關於",
+    "settings-database": "數據設置"
   },
   "chat": {
     "input": {
@@ -60,7 +61,10 @@
       "results": "已搜索到{0}個網頁",
       "searching": "搜索中...",
       "title": "搜索結果",
-      "description": "共找到 {0} 條相關結果"
+      "description": "共找到 {0} 條相關結果",
+      "optimizing": "正在提取搜索意...",
+      "reading": "正在搜索并阅读网页...",
+      "error": "搜索失败"
     }
   },
   "model": {
@@ -104,6 +108,7 @@
     "cancel": "取消",
     "confirm": "確認",
     "close": "關閉",
+    "ok": "確定",
     "delete": {
       "title": "確定要刪除這個會話嗎？",
       "description": "此操作無法撤銷，請謹慎操作。",
@@ -131,6 +136,7 @@
       "languageSelect": "選擇語言",
       "searchEngine": "搜索引擎",
       "searchEngineSelect": "選擇搜索引擎",
+      "searchPreview": "搜索預覽",
       "searchAssistantModel": "搜索助手模型",
       "selectModel": "選擇模型",
       "proxyMode": "代理模式",
@@ -140,7 +146,46 @@
       "proxyModeCustom": "自定義代理",
       "customProxyUrl": "自定義代理地址",
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
-      "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL"
+      "invalidProxyUrl": "無效的代理地址，請輸入有效的 http/https URL",
+      "addCustomSearchEngine": "添加自訂搜尋引擎",
+      "addCustomSearchEngineDesc": "添加一個新的搜尋引擎，需要提供名稱和搜尋URL。URL中必須包含{'{'}query{'}'}作為查詢佔位符。",
+      "searchEngineName": "搜尋引擎名稱",
+      "searchEngineNamePlaceholder": "請輸入搜尋引擎名稱",
+      "searchEngineUrl": "搜尋URL",
+      "searchEngineUrlPlaceholder": "如: https://a.com/search?q={'{'}query{'}'}",
+      "searchEngineUrlError": "URL必須包含{'{'}query{'}'}作為查詢占位符",
+      "deleteCustomSearchEngine": "刪除自定義搜索引擎",
+      "deleteCustomSearchEngineDesc": "確定要刪除自定義搜索引擎 \"{name}\" 嗎？此操作無法撤銷。",
+      "testSearchEngine": "測試搜索引擎",
+      "testSearchEngineDesc": "即將使用 {engine} 搜索引擎進行測試搜索，將搜索關鍵詞 \"天氣\"。",
+      "testSearchEngineNote": "如果搜索頁面需要登錄或其他操作，您可以在測試窗口中進行。完成測試後請關閉測試窗口。",
+      "theme": "主題",
+      "themeSelect": "選擇主題",
+      "closeToQuit": "點擊關閉按鈕時退出程序",
+      "contentProtection": "投屏保護",
+      "contentProtectionDialogTitle": "確認切換投屏保護",
+      "contentProtectionEnableDesc": "開啟投屏保護可以防止投屏軟件捕獲DeepChat主窗口，用來保護您的內容隱私。請注意，此功能不會徹底隱藏所有界面，請合理合規使用。並且，並不是所有投屏軟件都遵守用戶隱私設定，該功能可能在一些不遵守隱私設定的投屏軟件上失效，且部分環境中可能會殘留一個黑色窗體。",
+      "contentProtectionDisableDesc": "關閉投屏保護將允許投屏軟件捕獲DeepChat窗口。",
+      "contentProtectionRestartNotice": "切換此設置將導致程序重啟，請確認是否繼續？"
+    },
+    "data": {
+      "title": "數據設置",
+      "syncEnable": "啟用數據同步",
+      "syncFolder": "同步資料夾",
+      "openSyncFolder": "打開同步資料夾",
+      "lastSyncTime": "最後同步時間",
+      "never": "從未同步",
+      "startBackup": "立即備份",
+      "backingUp": "備份中...",
+      "importData": "導入數據",
+      "incrementImport": "增量導入",
+      "overwriteImport": "覆蓋導入",
+      "importConfirmTitle": "確認導入數據",
+      "importConfirmDescription": "導入將會覆蓋所有當前數據，包括聊天記錄和設置。請確保已備份重要數據。導入後需要重新啟動應用程序。",
+      "importing": "導入中...",
+      "confirmImport": "確認導入",
+      "importSuccessTitle": "導入成功",
+      "importErrorTitle": "導入失敗"
     },
     "model": {
       "title": "模型設置",
@@ -339,5 +384,22 @@
     "preview": "預覽",
     "code": "代碼",
     "export": "導出"
+  },
+  "sync": {
+    "success": {
+      "importComplete": "數據導入成功，點擊確定後將重啟應用"
+    },
+    "error": {
+      "notEnabled": "同步功能未啟用",
+      "folderNotExists": "同步文件夾不存在",
+      "noValidBackup": "同步文件夾中沒有有效的備份文件",
+      "dbNotExists": "數據庫文件不存在",
+      "configNotExists": "配置文件不存在",
+      "tempDbFailed": "臨時數據庫備份文件創建失敗",
+      "tempConfigFailed": "臨時配置備份文件創建失敗",
+      "importFailed": "導入失敗，已恢復原始數據",
+      "importProcess": "導入過程出錯",
+      "unknown": "未知錯誤"
+    }
   }
 }
