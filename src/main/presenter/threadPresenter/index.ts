@@ -75,6 +75,9 @@ When answering, please pay attention to the following points:
 - Use footnote citations at the end of applicable sentences (e.g., [1][2]).
 - Write more than 100 words (2 paragraphs).
 - Avoid directly quoting citations in the answer.
+
+# The user's message is:
+{{USER_QUERY}}
   `
 
 const SEARCH_PROMPT_ARTIFACTS_TEMPLATE = `

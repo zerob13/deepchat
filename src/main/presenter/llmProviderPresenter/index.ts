@@ -334,6 +334,13 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
     })
 
     try {
+      // console.log(
+      //   'startStreamCompletion',
+      //   providerId,
+      //   modelId,
+      //   temperature,
+      //   JSON.stringify(messages)
+      // )
       const stream = provider.streamCompletions(messages, modelId, temperature)
 
       let contentBuffer = ''
