@@ -5,14 +5,14 @@ export const formatTemplate = (title: string, reactCode: string) => {
     <meta charset="UTF-8" />
     <title>${title}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+    <script src="deepcdn://react.development.js"></script>
+    <script src="deepcdn://react-dom.development.js"></script>
+    <script src="deepcdn://babel.min.js"></script>
+    <script src="deepcdn://lucide.js"></script>
+    <script src="deepcdn://prop-types.min.js"></script>
+    <script src="deepcdn://Recharts.js"></script>
     <link
-      href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
+      href="deepcdn://tailwind.min.css"
       rel="stylesheet"
     />
     <style>
