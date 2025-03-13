@@ -27,7 +27,6 @@ export const defaultModelsSettings = [
     match: ['gemini-1.5-pro'],
     vision: true
   },
-
   // DeepSeek系列模型配置
   {
     id: 'deepseek-vl2',
@@ -38,7 +37,6 @@ export const defaultModelsSettings = [
     match: ['deepseek-vl2'],
     vision: true
   },
-
   {
     id: 'deepseek-r1-distill-qwen-32b',
     name: 'DeepSeek R1 Distill Qwen 32B',

@@ -148,6 +148,9 @@ DO NOT use artifacts for:
 - Simple explanations or answers (less than 300 words)
 - Short code snippets (<15 lines)
 - Brief answers that work better as part of the conversation flow
+
+# The user's message is:
+{{USER_QUERY}}
 `
 
 // 格式化搜索结果的函数
