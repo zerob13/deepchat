@@ -153,6 +153,9 @@ export interface IConfigPresenter {
   // 搜索预览设置
   getSearchPreviewEnabled(): Promise<boolean>
   setSearchPreviewEnabled(enabled: boolean): void
+  // 投屏保护设置
+  getContentProtectionEnabled(): boolean
+  setContentProtectionEnabled(enabled: boolean): void
   // 同步设置
   getSyncEnabled(): boolean
   setSyncEnabled(enabled: boolean): void

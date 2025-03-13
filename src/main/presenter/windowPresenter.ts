@@ -10,6 +10,7 @@ import { TrayPresenter } from './trayPresenter'
 import { CONFIG_EVENTS, WINDOW_EVENTS } from '@/events'
 import contextMenu from '../contextMenuHelper'
 import { getContextMenuLabels } from '@shared/i18n'
+import { presenter } from '.'
 
 export const MAIN_WIN = 'main'
 export class WindowPresenter implements IWindowPresenter {
@@ -65,6 +66,19 @@ export class WindowPresenter implements IWindowPresenter {
       }
     })
 
+    // 监听内容保护设置变化
+    eventBus.on(CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED, (enabled: boolean) => {
+      if (this.mainWindow) {
+        // 发送通知告知应用程序将重启
+        console.log('Content protection setting changed to:', enabled, 'Restarting app...')
+
+        // 延迟一点时间以确保设置已保存并且用户能看到对话框的反馈
+        setTimeout(() => {
+          presenter.devicePresenter.restartApp()
+        }, 1000)
+      }
+    })
+
     console.log('WindowPresenter constructor', this.configPresenter)
   }
 
@@ -88,6 +102,11 @@ export class WindowPresenter implements IWindowPresenter {
       },
       frame: false
     })
+    // 获取内容保护设置的值
+    const contentProtectionEnabled = this.configPresenter.getContentProtectionEnabled()
+    // 更新内容保护设置
+    this.updateContentProtection(mainWindow, contentProtectionEnabled)
+
     mainWindow.on('ready-to-show', () => {
       mainWindow.show()
       eventBus.emit(WINDOW_EVENTS.READY_TO_SHOW, mainWindow)
@@ -161,6 +180,22 @@ export class WindowPresenter implements IWindowPresenter {
 
     return mainWindow
   }
+
+  // 添加更新内容保护的方法
+  private updateContentProtection(window: BrowserWindow, enabled: boolean): void {
+    console.log('更新窗口内容保护状态:', enabled)
+    if (enabled) {
+      window.setContentProtection(enabled)
+      window.webContents.setBackgroundThrottling(!enabled)
+      window.webContents.setFrameRate(60)
+      if (process.platform === 'darwin') {
+        window.setHiddenInMissionControl(enabled)
+        window.setSkipTaskbar(enabled)
+      }
+    }
+    // 如果关闭内容保护，则使用默认设置
+  }
+
   getWindow(windowName: string): BrowserWindow | undefined {
     return this.windows.get(windowName)
   }

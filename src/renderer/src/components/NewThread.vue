@@ -92,7 +92,6 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import ChatInput from './ChatInput.vue'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
@@ -109,7 +108,6 @@ import ChatConfig from './ChatConfig.vue'
 import { usePresenter } from '@/composables/usePresenter'
 const configPresenter = usePresenter('configPresenter')
 const { t } = useI18n()
-const router = useRouter()
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const activeModel = ref({

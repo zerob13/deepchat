@@ -17,7 +17,8 @@ export const CONFIG_EVENTS = {
   CUSTOM_PROXY_URL_CHANGED: 'config:custom-proxy-url-changed',
   ARTIFACTS_EFFECT_CHANGED: 'config:artifacts-effect-changed',
   SYNC_SETTINGS_CHANGED: 'config:sync-settings-changed',
-  SEARCH_ENGINES_UPDATED: 'config:search-engines-updated'
+  SEARCH_ENGINES_UPDATED: 'config:search-engines-updated',
+  CONTENT_PROTECTION_CHANGED: 'config:content-protection-changed'
 }
 
 // 会话相关事件

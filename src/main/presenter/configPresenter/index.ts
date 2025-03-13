@@ -27,6 +27,7 @@ interface IAppSettings {
   customProxyUrl?: string // 自定义代理地址
   artifactsEffectEnabled?: boolean // artifacts动画效果是否启用
   searchPreviewEnabled?: boolean // 搜索预览是否启用
+  contentProtectionEnabled?: boolean // 投屏保护是否启用
   syncEnabled?: boolean // 是否启用同步功能
   syncFolderPath?: string // 同步文件夹路径
   lastSyncTime?: number // 上次同步时间
@@ -466,6 +467,7 @@ export class ConfigPresenter implements IConfigPresenter {
     this.setSetting('artifactsEffectEnabled', boolValue)
     eventBus.emit(CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED, boolValue)
   }
+
   // 获取同步功能状态
   getSyncEnabled(): boolean {
     return this.getSetting<boolean>('syncEnabled') || false
@@ -530,7 +532,7 @@ export class ConfigPresenter implements IConfigPresenter {
   // 获取搜索预览设置状态
   getSearchPreviewEnabled(): Promise<boolean> {
     const value = this.getSetting<boolean>('searchPreviewEnabled')
-    // 默认开启搜索预览
+    // 默认关闭搜索预览
     return Promise.resolve(value === undefined || value === null ? false : value)
   }
 
@@ -542,5 +544,23 @@ export class ConfigPresenter implements IConfigPresenter {
     const boolValue = Boolean(enabled)
 
     this.setSetting('searchPreviewEnabled', boolValue)
+  }
+
+  // 获取投屏保护设置状态
+  getContentProtectionEnabled(): boolean {
+    const value = this.getSetting<boolean>('contentProtectionEnabled')
+    // 默认投屏保护关闭
+    return value === undefined || value === null ? false : value
+  }
+
+  // 设置投屏保护状态
+  setContentProtectionEnabled(enabled: boolean): void {
+    console.log('ConfigPresenter.setContentProtectionEnabled:', enabled, typeof enabled)
+
+    // 确保传入的是布尔值
+    const boolValue = Boolean(enabled)
+
+    this.setSetting('contentProtectionEnabled', boolValue)
+    eventBus.emit(CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED, boolValue)
   }
 }

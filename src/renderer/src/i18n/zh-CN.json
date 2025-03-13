@@ -168,14 +168,22 @@
       "customProxyUrlPlaceholder": "例如: http://127.0.0.1:7890",
       "invalidProxyUrl": "无效的代理地址，请输入有效的 http/https URL",
       "addCustomSearchEngine": "添加自定义搜索引擎",
-      "addCustomSearchEngineDesc": "添加一个新的搜索引擎，需要提供名称和搜索URL。URL中必须包含{'{'}query{'}'}作为查询占位符。",
+      "addCustomSearchEngineDesc": "添加一个新的搜索引擎，需要提供名称和搜索URL。URL中必须包含{query}作为查询占位符。",
       "searchEngineName": "搜索引擎名称",
       "searchEngineNamePlaceholder": "请输入搜索引擎名称",
       "searchEngineUrl": "搜索URL",
       "searchEngineUrlPlaceholder": "如: https://a.com/search?q={'{'}query{'}'}",
       "searchEngineUrlError": "URL必须包含{'{'}query{'}'}作为查询占位符",
       "deleteCustomSearchEngine": "删除自定义搜索引擎",
-      "deleteCustomSearchEngineDesc": "确定要删除自定义搜索引擎 \"{name}\" 吗？此操作无法撤销。"
+      "deleteCustomSearchEngineDesc": "确定要删除自定义搜索引擎 \"{name}\" 吗？此操作无法撤销。",
+      "theme": "主题",
+      "themeSelect": "选择主题",
+      "closeToQuit": "点击关闭按钮时退出程序",
+      "contentProtection": "投屏保护",
+      "contentProtectionDialogTitle": "投屏保护切换确认",
+      "contentProtectionEnableDesc": "开启投屏保护可以防止投屏软件捕获DeepChat主窗口，用来保护您的内容隐私。请注意，此功能不会彻底隐藏所有界面，请合理合规使用。并且，并不是所有投屏软件都遵守用户隐私设定，该功能可能会在一些不遵守隐私设定的投屏软件上失效，切部分环境中可能会残留一个黑色窗体。",
+      "contentProtectionDisableDesc": "关闭投屏保护将允许投屏软件捕获DeepChat窗口。",
+      "contentProtectionRestartNotice": "切换此设置将导致程序重启，请确认是否继续？"
     },
     "data": {
       "title": "数据设置",
@@ -214,8 +222,15 @@
         "description": "设置AI响应的最大长度"
       },
       "artifacts": {
-        "description": "启用 Artifacts 功能可以让 AI 生成更丰富的内容"
-      }
+        "title": "Artifacts效果",
+        "description": "代码块生成动画效果"
+      },
+      "provider": "服务商",
+      "modelList": "模型列表",
+      "selectModel": "选择模型",
+      "providerSetting": "服务商设置",
+      "configureModel": "配置模型",
+      "addModel": "添加模型"
     },
     "provider": {
       "enable": "开启服务",
