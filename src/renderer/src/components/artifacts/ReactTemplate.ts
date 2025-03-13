@@ -5,8 +5,8 @@ export const formatTemplate = (title: string, reactCode: string) => {
     <meta charset="UTF-8" />
     <title>${title}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <script src="deepcdn://react.development.js"></script>
-    <script src="deepcdn://react-dom.development.js"></script>
+    <script src="deepcdn://react.production.min.js"></script>
+    <script src="deepcdn://react-dom.production.min.js"></script>
     <script src="deepcdn://babel.min.js"></script>
     <script src="deepcdn://lucide.js"></script>
     <script src="deepcdn://prop-types.min.js"></script>
