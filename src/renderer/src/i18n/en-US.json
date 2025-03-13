@@ -356,7 +356,7 @@
     "codeSnippet": "Code Snippet",
     "function": "Function",
     "class": "Class",
-    "vueComponent": "Vue Component",
+    "reactComponent": "React Component",
     "moduleImport": "Module Import",
     "variableDefinition": "{name} Variable Definition",
     "markdownDocument": "Markdown Document",

@@ -355,7 +355,7 @@
     "codeSnippet": "程式碼片段",
     "function": "函數",
     "class": "類",
-    "vueComponent": "Vue 元件",
+    "reactComponent": "React 元件",
     "moduleImport": "模組導入",
     "variableDefinition": "{name} 變量定義",
     "markdownDocument": "Markdown 文檔",

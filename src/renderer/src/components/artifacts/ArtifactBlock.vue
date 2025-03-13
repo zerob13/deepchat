@@ -30,6 +30,7 @@ import MarkdownArtifact from './MarkdownArtifact.vue'
 import HTMLArtifact from './HTMLArtifact.vue'
 import SvgArtifact from './SvgArtifact.vue'
 import MermaidArtifact from './MermaidArtifact.vue'
+import ReactArtifact from './ReactArtifact.vue'
 
 const props = defineProps<{
   block: {
@@ -54,6 +55,8 @@ const artifactComponent = computed(() => {
       return SvgArtifact
     case 'application/vnd.ant.mermaid':
       return MermaidArtifact
+    case 'application/vnd.ant.react':
+      return ReactArtifact
     default:
       return null
   }

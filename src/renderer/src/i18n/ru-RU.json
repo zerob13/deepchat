@@ -346,7 +346,7 @@
     "codeSnippet": "Фрагмент кода",
     "function": "Функция",
     "class": "Класс",
-    "vueComponent": "Vue компонент",
+    "reactComponent": "React компонент",
     "moduleImport": "Импорт модуля",
     "variableDefinition": "Определение переменной {name}",
     "markdownDocument": "Документ Markdown",

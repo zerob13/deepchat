@@ -350,7 +350,7 @@
     "codeSnippet": "コードスニペット",
     "function": "関数",
     "class": "クラス",
-    "vueComponent": "Vueコンポーネント",
+    "reactComponent": "Reactコンポーネント",
     "moduleImport": "モジュールインポート",
     "variableDefinition": "{name}変数定義",
     "markdownDocument": "Markdownドキュメント",

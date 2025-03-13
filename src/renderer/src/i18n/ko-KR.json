@@ -355,7 +355,7 @@
     "codeSnippet": "코드 스니펫",
     "function": "함수",
     "class": "클래스",
-    "vueComponent": "Vue 컴포넌트",
+    "reactComponent": "React 컴포넌트",
     "moduleImport": "모듈 가져오기",
     "variableDefinition": "{name} 변수 정의",
     "markdownDocument": "Markdown 문서",
