@@ -357,7 +357,7 @@ export const defaultModelsSettings = [
     id: 'QVQ-72B-Preview',
     name: 'QVQ-72B-Preview',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 32768,
     match: ['QVQ-72B-Preview'],
     vision: true
@@ -366,7 +366,7 @@ export const defaultModelsSettings = [
     id: 'Qwen2-VL-72B-Instruct',
     name: 'Qwen2-VL-72B-Instruct',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 32768,
     match: ['Qwen2-VL-72B-Instruct'],
     vision: true
@@ -376,7 +376,7 @@ export const defaultModelsSettings = [
     id: 'qwen2.5-72b',
     name: 'Qwen 2.5 72B',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 131072,
     match: ['qwen2.5-72b', 'qwen-2.5-72b'],
     vision: false
@@ -385,7 +385,7 @@ export const defaultModelsSettings = [
     id: 'qwen2.5-32b',
     name: 'Qwen 2.5 32B',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 131072,
     match: ['qwen2.5-32b', 'qwen-2.5-32b'],
     vision: false
@@ -394,7 +394,7 @@ export const defaultModelsSettings = [
     id: 'qwen2.5-14b',
     name: 'Qwen 2.5 14B',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 131072,
     match: ['qwen2.5-14b', 'qwen-2.5-14b'],
     vision: false
@@ -403,7 +403,7 @@ export const defaultModelsSettings = [
     id: 'qwen2.5-7b',
     name: 'Qwen 2.5 7B',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 131072,
     match: ['qwen2.5-7b', 'qwen-2.5-7b'],
     vision: false
