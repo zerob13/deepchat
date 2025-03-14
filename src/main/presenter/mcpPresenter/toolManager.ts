@@ -69,7 +69,12 @@ export class ToolManager {
 
       // 解析工具调用参数
       const { name, arguments: argsString } = toolCall.function
-      const args = JSON.parse(argsString)
+      let args = {}
+      try {
+        args = JSON.parse(argsString)
+      } catch (error) {
+        console.warn('Error parsing tool call arguments:', error)
+      }
 
       // 检查权限
       let hasPermission = false

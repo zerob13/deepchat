@@ -138,7 +138,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // 获取MCP工具定义
     const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
     const tools = await presenter.mcpPresenter.mcpToolsToOpenAITools(mcpTools, this.provider.id)
-    console.log('tools', tools)
 
     // 记录已处理的工具响应ID
     const processedToolCallIds = new Set<string>()

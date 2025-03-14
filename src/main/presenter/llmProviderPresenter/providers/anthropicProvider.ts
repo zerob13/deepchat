@@ -3,6 +3,18 @@ import { BaseLLMProvider } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import Anthropic from '@anthropic-ai/sdk'
 import { ChatMessage } from '../baseProvider'
+import { presenter } from '@/presenter'
+import { HttpsProxyAgent } from 'https-proxy-agent'
+import { proxyConfig } from '../../proxyConfig'
+import { RawMessageStreamEvent } from '@anthropic-ai/sdk/resources'
+import { Stream } from '@anthropic-ai/sdk/streaming'
+
+// 定义Anthropic工具使用的接口
+interface AnthropicToolUse {
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
 
 export class AnthropicProvider extends BaseLLMProvider {
   private anthropic!: Anthropic
@@ -17,9 +29,11 @@ export class AnthropicProvider extends BaseLLMProvider {
     if (this.provider.enable) {
       try {
         const apiKey = this.provider.apiKey || process.env.ANTHROPIC_API_KEY
+        const proxyUrl = proxyConfig.getProxyUrl()
         this.anthropic = new Anthropic({
           apiKey: apiKey,
-          baseURL: this.provider.baseUrl || 'https://api.anthropic.com'
+          baseURL: this.provider.baseUrl || 'https://api.anthropic.com',
+          httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
         })
         await super.init()
       } catch (error) {
@@ -181,6 +195,7 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
 只输出标题，不要有任何额外文字。
 `
     const response = await this.generateText(prompt, modelId, 0.3, 50)
+
     return response.content.trim()
   }
 
@@ -193,20 +208,101 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
     try {
       const formattedMessages = this.formatMessages(messages)
 
-      const response = await this.anthropic.messages.create({
+      // 获取MCP工具定义
+      const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
+
+      // 将MCP工具转换为Anthropic工具格式
+      const anthropicTools =
+        mcpTools.length > 0
+          ? await presenter.mcpPresenter.mcpToolsToAnthropicTools(mcpTools, this.provider.id)
+          : undefined
+
+      // 创建基本请求参数
+      const requestParams: Anthropic.Messages.MessageCreateParams = {
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
         messages: formattedMessages
-      })
+      }
 
-      return {
-        content: response.content.reduce((acc, item) => {
-          if (item.type === 'text') {
-            return acc + item.text
+      // 如果有可用工具，添加到请求中 (使用类型断言处理类型不匹配问题)
+      if (anthropicTools && anthropicTools.length > 0) {
+        // @ts-ignore - 类型不匹配，但格式是正确的
+        requestParams.tools = anthropicTools
+      }
+
+      const response = await this.anthropic.messages.create(requestParams)
+
+      // 检查是否包含工具使用
+      // @ts-ignore - Anthropic SDK 类型定义中没有包含 tool_uses 字段，但接口响应中可能存在
+      const toolUse = response.tool_uses?.[0] as AnthropicToolUse | undefined
+
+      if (toolUse) {
+        // 将Anthropic工具调用转换为MCP工具调用
+        const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
+          mcpTools,
+          { name: toolUse.name, input: toolUse.input },
+          this.provider.id
+        )
+
+        if (mcpToolCall) {
+          // 调用工具并获取响应
+          const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
+
+          // 获取助手的初始响应文本
+          const initialResponseText = response.content
+            .filter((block) => block.type === 'text')
+            .map((block) => (block.type === 'text' ? block.text : ''))
+            .join('')
+
+          // 添加工具响应到消息中
+          formattedMessages.push({
+            role: 'assistant',
+            content: [{ type: 'text', text: initialResponseText }]
+          })
+
+          formattedMessages.push({
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Tool response: ${typeof toolResponse.content === 'string' ? toolResponse.content : JSON.stringify(toolResponse.content)}`
+              }
+            ]
+          })
+
+          // 继续对话
+          const finalParams = {
+            model: modelId,
+            max_tokens: maxTokens || 1024,
+            temperature: temperature || 0.7,
+            messages: formattedMessages
           }
-          return acc
-        }, ''),
+
+          // 如果有可用工具，添加到请求中 (使用类型断言处理类型不匹配问题)
+          if (anthropicTools && anthropicTools.length > 0) {
+            // @ts-ignore - 类型不匹配，但格式是正确的
+            finalParams.tools = anthropicTools
+          }
+
+          const finalResponse = await this.anthropic.messages.create(finalParams)
+
+          return {
+            content: finalResponse.content
+              .filter((block) => block.type === 'text')
+              .map((block) => (block.type === 'text' ? block.text : ''))
+              .join(''),
+            reasoning_content: undefined
+          }
+        }
+      }
+
+      // 常规响应处理
+      return {
+        content: response.content
+          .filter((block) => block.type === 'text')
+          .map((block) => (block.type === 'text' ? block.text : ''))
+          .join(''),
         reasoning_content: undefined
       }
     } catch (error) {
@@ -245,12 +341,10 @@ ${text}
       })
 
       return {
-        content: response.content.reduce((acc, item) => {
-          if (item.type === 'text') {
-            return acc + item.text
-          }
-          return acc
-        }, ''),
+        content: response.content
+          .filter((block) => block.type === 'text')
+          .map((block) => (block.type === 'text' ? block.text : ''))
+          .join(''),
         reasoning_content: undefined
       }
     } catch (error) {
@@ -279,7 +373,9 @@ ${context}
       })
 
       const suggestions = response.content
-        .reduce((acc, item) => (item.type === 'text' ? acc + item.text : acc), '')
+        .filter((block) => block.type === 'text')
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
         .split('\n')
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
@@ -301,16 +397,195 @@ ${context}
     const formattedMessages = this.formatMessages(messages)
 
     try {
-      const stream = await this.anthropic.messages.create({
+      // 获取MCP工具定义
+      const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
+
+      // 将MCP工具转换为Anthropic工具格式
+      const anthropicTools =
+        mcpTools.length > 0
+          ? await presenter.mcpPresenter.mcpToolsToAnthropicTools(mcpTools, this.provider.id)
+          : undefined
+
+      // 记录已处理的工具响应ID
+      const processedToolIds = new Set<string>()
+
+      // 维护消息上下文
+      const conversationMessages = [...formattedMessages]
+
+      // 创建流
+      const streamParams = {
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
         messages: formattedMessages,
         stream: true
-      })
+      }
+
+      // 使用类型断言处理类型不匹配问题
+      if (anthropicTools && anthropicTools.length > 0) {
+        // @ts-ignore - 类型不匹配，但格式是正确的
+        streamParams.tools = anthropicTools
+      }
+
+      let stream = (await this.anthropic.messages.create(
+        streamParams
+      )) as Stream<RawMessageStreamEvent>
+
+      // 收集工具调用信息
+      let pendingToolUse: {
+        id: string
+        name: string
+        input: Record<string, unknown>
+      } | null = null
+      let currentContent = ''
 
       for await (const chunk of stream) {
+        // 处理工具使用开始事件
+        if (chunk.type === 'content_block_start') {
+          // @ts-ignore - Anthropic SDK 类型定义中没有明确工具相关字段的类型
+          if (chunk.content_block?.type === 'tool_use') {
+            pendingToolUse = {
+              // @ts-ignore - 访问 content_block.id 不在类型定义中
+              id: chunk.content_block.id,
+              name: '',
+              input: {}
+            }
+            continue
+          }
+        }
+
+        // 处理工具使用更新事件
+        // @ts-ignore - delta.type 为 'tool_use_delta' 在当前类型定义中不存在
+        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'tool_use_delta') {
+          if (pendingToolUse) {
+            // @ts-ignore - delta.name 不在类型定义中
+            if (chunk.delta.name) {
+              // @ts-ignore - 访问 delta.name 不在类型定义中
+              pendingToolUse.name = chunk.delta.name
+            }
+
+            // @ts-ignore - delta.input 不在类型定义中
+            if (chunk.delta.input) {
+              pendingToolUse.input = {
+                ...pendingToolUse.input,
+                // @ts-ignore - 访问 delta.input 不在类型定义中
+                ...chunk.delta.input
+              }
+            }
+            continue
+          }
+        }
+
+        // 处理工具使用完成事件
+        if (chunk.type === 'content_block_stop') {
+          // @ts-ignore - content_block 可能不在类型定义中或类型不匹配
+          if (chunk.content_block?.type === 'tool_use') {
+            if (pendingToolUse && !processedToolIds.has(pendingToolUse.id)) {
+              processedToolIds.add(pendingToolUse.id)
+
+              // 将Anthropic工具使用转换为MCP工具调用
+              const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
+                mcpTools,
+                { name: pendingToolUse.name, input: pendingToolUse.input },
+                this.provider.id
+              )
+
+              if (mcpToolCall) {
+                // 通知前端正在调用工具
+                yield {
+                  content: `[使用工具: ${pendingToolUse.name}]`,
+                  reasoning_content: undefined
+                }
+
+                try {
+                  // 调用工具
+                  const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
+
+                  // 添加工具响应到对话
+                  conversationMessages.push({
+                    role: 'assistant',
+                    content: [{ type: 'text', text: currentContent }]
+                  })
+
+                  conversationMessages.push({
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'text',
+                        text: `Tool response: ${typeof toolResponse.content === 'string' ? toolResponse.content : JSON.stringify(toolResponse.content)}`
+                      }
+                    ]
+                  })
+
+                  // 重置并创建新的流
+                  currentContent = ''
+
+                  // 创建新的流参数
+                  const newStreamParams = {
+                    model: modelId,
+                    max_tokens: maxTokens || 1024,
+                    temperature: temperature || 0.7,
+                    messages: conversationMessages,
+                    stream: true
+                  }
+
+                  // 使用类型断言处理类型不匹配问题
+                  if (anthropicTools && anthropicTools.length > 0) {
+                    // @ts-ignore - 类型不匹配，但格式是正确的
+                    newStreamParams.tools = anthropicTools
+                  }
+
+                  stream = (await this.anthropic.messages.create(
+                    newStreamParams
+                  )) as Stream<RawMessageStreamEvent>
+
+                  // 处理新的流
+                  for await (const newChunk of stream) {
+                    if (
+                      newChunk.type === 'content_block_delta' &&
+                      newChunk.delta.type === 'text_delta'
+                    ) {
+                      currentContent += newChunk.delta.text
+                      yield {
+                        content: newChunk.delta.text,
+                        reasoning_content: undefined
+                      }
+                    }
+                  }
+
+                  // 流结束标记
+                  yield {
+                    content: undefined,
+                    reasoning_content: undefined
+                  }
+
+                  return
+                } catch (error) {
+                  console.error('Tool call error:', error)
+                  const errorMessage = error instanceof Error ? error.message : String(error)
+
+                  yield {
+                    content: `工具调用失败: ${errorMessage}`,
+                    reasoning_content: undefined
+                  }
+
+                  // 流结束标记
+                  yield {
+                    content: undefined,
+                    reasoning_content: undefined
+                  }
+
+                  return
+                }
+              }
+            }
+          }
+          continue
+        }
+
+        // 处理文本内容
         if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+          currentContent += chunk.delta.text
           yield {
             content: chunk.delta.text,
             reasoning_content: undefined
@@ -318,6 +593,7 @@ ${context}
         }
       }
 
+      // 流结束标记
       yield {
         content: undefined,
         reasoning_content: undefined

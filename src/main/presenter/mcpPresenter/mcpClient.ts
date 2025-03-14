@@ -239,7 +239,7 @@ export class McpClient {
     }
 
     try {
-      // 处理路径参数
+      // // 处理路径参数
       const processedArgs = { ...args }
       if (this.workingDirectory && 'path' in processedArgs) {
         const userPath = processedArgs.path as string
@@ -252,7 +252,7 @@ export class McpClient {
       // 调用工具
       const result = (await this.client.callTool({
         name: toolName,
-        arguments: processedArgs
+        arguments: args
       })) as ToolCallResult
 
       // 检查结果

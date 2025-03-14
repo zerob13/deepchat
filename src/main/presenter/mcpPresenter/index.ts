@@ -187,7 +187,7 @@ export class McpPresenter implements IMCPPresenter {
     toolDefinition: MCPToolDefinition,
     serverName: string
   ): MCPTool {
-    const openaiTool = {
+    const mcpTool = {
       id: toolDefinition.function.name,
       name: toolDefinition.function.name,
       type: toolDefinition.type,
@@ -202,8 +202,7 @@ export class McpPresenter implements IMCPPresenter {
         required: toolDefinition.function.parameters.required
       }
     }
-    console.log('openaiTool', toolDefinition, openaiTool)
-    return openaiTool
+    return mcpTool
   }
 
   // 工具属性过滤函数
@@ -211,7 +210,6 @@ export class McpPresenter implements IMCPPresenter {
     const supportedAttributes = [
       'type',
       'nullable',
-      'required',
       'description',
       'properties',
       'items',
@@ -228,6 +226,7 @@ export class McpPresenter implements IMCPPresenter {
     for (const [key, val] of Object.entries(properties)) {
       result[key] = getSubMap(val, supportedAttributes)
     }
+
     return result
   }
 
@@ -242,7 +241,7 @@ export class McpPresenter implements IMCPPresenter {
     mcpTools: MCPToolDefinition[],
     serverName: string
   ): Promise<OpenAITool[]> {
-    return mcpTools.map((toolDef) => {
+    const openaiTools: OpenAITool[] = mcpTools.map((toolDef) => {
       const tool = this.mcpToolDefinitionToMcpTool(toolDef, serverName)
       return {
         type: 'function',
@@ -254,9 +253,12 @@ export class McpPresenter implements IMCPPresenter {
             type: 'object',
             properties: this.filterPropertieAttributes(tool)
           }
-        }
+        },
+        required: tool.inputSchema.required
       }
     })
+    console.log('openaiTools', JSON.stringify(openaiTools))
+    return openaiTools
   }
 
   /**
