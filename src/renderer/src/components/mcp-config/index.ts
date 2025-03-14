@@ -1,5 +1,5 @@
-import McpConfig from './mcp-config.vue'
-import McpServerForm from './mcp-server-form.vue'
+import McpConfig from './mcpConfig.vue'
+import McpServerForm from './mcpServerForm.vue'
 
 export { McpConfig, McpServerForm }
 export default McpConfig

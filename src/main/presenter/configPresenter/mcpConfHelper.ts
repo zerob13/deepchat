@@ -21,7 +21,7 @@ const DEFAULT_MCP_SERVERS = {
       icons: '🧠',
       autoApprove: ['all'],
       disable: false,
-      type: 'stdio'
+      type: 'stdio' as 'stdio' | 'sse'
     }
   },
   defaultServer: 'memory'

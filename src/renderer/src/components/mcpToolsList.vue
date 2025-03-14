@@ -52,7 +52,7 @@ onMounted(async () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                class="flex items-center justify-center w-7 h-7 rounded-lg border border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                class="flex items-center justify-center h-7 rounded-lg border border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors px-2"
               >
                 <Icon v-if="isLoading" icon="lucide:loader" class="w-4 h-4 animate-spin" />
                 <Icon
@@ -60,7 +60,13 @@ onMounted(async () => {
                   icon="lucide:alert-circle"
                   class="w-4 h-4 text-destructive"
                 />
-                <Icon v-else icon="lucide:wrench" class="w-4 h-4" />
+                <Icon v-else icon="lucide:hammer" class="w-4 h-4" />
+
+                <span
+                  v-if="hasTools && !isLoading && !isError"
+                  class="text-muted-foreground text-sm pl-2"
+                  >{{ toolCount }}</span
+                >
               </button>
             </TooltipTrigger>
             <TooltipContent>
@@ -70,14 +76,6 @@ onMounted(async () => {
               <p v-else>{{ t('mcp.tools.none') }}</p>
             </TooltipContent>
           </Tooltip>
-
-          <!-- 工具数量标记 -->
-          <div
-            v-if="hasTools && !isLoading && !isError"
-            class="absolute -top-2 -right-2 flex items-center justify-center min-w-[1.2rem] h-[1.2rem] rounded-full bg-primary text-primary-foreground text-xs font-medium"
-          >
-            {{ toolCount }}
-          </div>
         </div>
       </PopoverTrigger>
 

@@ -7,7 +7,7 @@
           {{ t('settings.mcp.description') }}
         </p>
       </div>
-      
+
       <div class="border rounded-lg p-4">
         <McpConfig />
       </div>
@@ -17,7 +17,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { McpConfig } from '@/components/mcp-config'
+import McpConfig from '@/components/mcp-config/mcpConfig.vue'
 
 const { t } = useI18n()
-</script> 
+</script>
