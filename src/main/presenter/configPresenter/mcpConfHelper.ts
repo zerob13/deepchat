@@ -12,7 +12,7 @@ interface IMcpSettings {
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
     filesystem: {
-      command: 'electron',
+      command: 'node',
       args: ['./resources/mcp/filesystem.mjs', './docs'],
       env: {},
       descriptions: '访问和管理本地文件系统',

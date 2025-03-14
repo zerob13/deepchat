@@ -2,6 +2,8 @@ import { spawn, ChildProcess } from 'child_process'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
 import { IConfigPresenter } from '@shared/presenter'
+import { app } from 'electron'
+import path from 'path'
 
 // 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
 // 通过类型断言或接口扩展来解决
@@ -13,9 +15,16 @@ type MCPEventsType = typeof MCP_EVENTS & {
 export class ServerManager {
   private runningServers: Map<string, ChildProcess> = new Map()
   private configPresenter: IConfigPresenter
+  private nodeExecutable: string
 
   constructor(configPresenter: IConfigPresenter) {
     this.configPresenter = configPresenter
+    const basePath = path.join(app.getAppPath(), 'resources', 'mcp', 'runtime', 'node')
+    if (process.env.platform === 'win32') {
+      this.nodeExecutable = path.join(basePath, 'node.exe')
+    } else {
+      this.nodeExecutable = path.join(basePath, 'bin', 'node')
+    }
   }
 
   async startServer(name: string): Promise<void> {
@@ -38,8 +47,8 @@ export class ServerManager {
       const args = [...serverConfig.args]
 
       // 如果命令是electron，则将命令更改为Node.js
-      if (serverConfig.command === 'electron') {
-        serverConfig.command = process.execPath // Electron 的 Node.js 可执行文件
+      if (serverConfig.command === 'node' || serverConfig.command === 'electron') {
+        serverConfig.command = this.nodeExecutable // runtime Node.js 可执行文件
       }
 
       // 启动服务器进程
