@@ -164,6 +164,13 @@ export interface IConfigPresenter {
   setSyncFolderPath(folderPath: string): void
   getLastSyncTime(): number
   setLastSyncTime(time: number): void
+  // MCP配置相关方法
+  getMcpConfig(): Promise<MCPConfig>
+  setMcpConfig(config: MCPConfig): Promise<void>
+  addMcpServer(name: string, config: MCPServerConfig): Promise<void>
+  removeMcpServer(name: string): Promise<void>
+  updateMcpServer(name: string, config: Partial<MCPServerConfig>): Promise<void>
+  setDefaultServer(name: string): Promise<void>
 }
 export type RENDERER_MODEL_META = {
   id: string

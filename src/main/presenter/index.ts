@@ -56,7 +56,7 @@ export class Presenter implements IPresenter {
     this.upgradePresenter = new UpgradePresenter()
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
-    this.mcpPresenter = new McpPresenter()
+    this.mcpPresenter = new McpPresenter(this.configPresenter)
     this.syncPresenter = new SyncPresenter(this.configPresenter, this.sqlitePresenter)
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()

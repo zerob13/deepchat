@@ -10,6 +10,7 @@ import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
+import { IConfigPresenter } from '@shared/presenter'
 
 // 定义MCP工具接口
 interface MCPTool {
@@ -77,15 +78,26 @@ interface GeminiTool {
 
 // 完整版的 McpPresenter 实现
 export class McpPresenter implements IMCPPresenter {
-  private configManager: ConfigManager
+  private configManager: ConfigManager | null = null
   private serverManager: ServerManager
   private toolManager: ToolManager
+  private configPresenter: IConfigPresenter
 
-  constructor() {
+  constructor(configPresenter?: IConfigPresenter) {
     console.log('初始化 MCP Presenter')
-    this.configManager = new ConfigManager()
-    this.serverManager = new ServerManager(this.configManager)
-    this.toolManager = new ToolManager(this.configManager, this.serverManager)
+
+    // 如果提供了configPresenter实例，则使用它，否则保持与当前方式兼容
+    if (configPresenter) {
+      this.configPresenter = configPresenter
+    } else {
+      // 这里需要处理项目环境下的循环引用问题，通过延迟初始化解决
+      // McpPresenter会在Presenter初始化过程中创建，此时presenter还不可用
+      // 我们在initialize方法中会设置configPresenter
+      this.configPresenter = {} as IConfigPresenter
+    }
+
+    this.serverManager = new ServerManager(this.configPresenter)
+    this.toolManager = new ToolManager(this.configPresenter, this.serverManager)
 
     // 应用启动时初始化
     this.initialize()
@@ -93,8 +105,19 @@ export class McpPresenter implements IMCPPresenter {
 
   private async initialize() {
     try {
+      // 如果没有提供configPresenter，从presenter中获取
+      if (!this.configPresenter.getLanguage) {
+        // 通过动态导入解决循环依赖
+        const { presenter } = await import('@/presenter')
+        this.configPresenter = presenter.configPresenter
+
+        // 重新创建管理器
+        this.serverManager = new ServerManager(this.configPresenter)
+        this.toolManager = new ToolManager(this.configPresenter, this.serverManager)
+      }
+
       // 加载配置
-      const config = await this.configManager.getMcpConfig()
+      const config = await this.configPresenter.getMcpConfig()
 
       // 如果有默认服务器，尝试启动
       if (config.defaultServer && config.mcpServers[config.defaultServer]) {
@@ -117,15 +140,15 @@ export class McpPresenter implements IMCPPresenter {
   }
 
   async getMcpConfig(): Promise<MCPConfig> {
-    return this.configManager.getMcpConfig()
+    return this.configPresenter.getMcpConfig()
   }
 
   async addMcpServer(serverName: string, config: MCPServerConfig): Promise<void> {
-    await this.configManager.addMcpServer(serverName, config)
+    await this.configPresenter.addMcpServer(serverName, config)
   }
 
   async updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void> {
-    await this.configManager.updateMcpServer(serverName, config)
+    await this.configPresenter.updateMcpServer(serverName, config)
   }
 
   async removeMcpServer(serverName: string): Promise<void> {
@@ -134,11 +157,11 @@ export class McpPresenter implements IMCPPresenter {
       await this.stopServer(serverName)
     }
 
-    await this.configManager.removeMcpServer(serverName)
+    await this.configPresenter.removeMcpServer(serverName)
   }
 
   async setDefaultServer(serverName: string): Promise<void> {
-    await this.configManager.setDefaultServer(serverName)
+    await this.configPresenter.setDefaultServer(serverName)
   }
 
   async isServerRunning(serverName: string): Promise<boolean> {

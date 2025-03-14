@@ -1,18 +1,23 @@
 import { nanoid } from 'nanoid'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
-import { MCPToolCall, MCPToolDefinition, MCPToolResponse, MCPServerConfig } from '@shared/presenter'
-import { ConfigManager } from './configManager'
+import {
+  MCPToolCall,
+  MCPToolDefinition,
+  MCPToolResponse,
+  MCPServerConfig,
+  IConfigPresenter
+} from '@shared/presenter'
 import { ServerManager } from './serverManager'
 import { McpClient, getDefaultMcpClient } from './mcpClient'
 
 export class ToolManager {
-  private configManager: ConfigManager
+  private configPresenter: IConfigPresenter
   private serverManager: ServerManager
   private mcpClient: McpClient | null = null
 
-  constructor(configManager: ConfigManager, serverManager: ServerManager) {
-    this.configManager = configManager
+  constructor(configPresenter: IConfigPresenter, serverManager: ServerManager) {
+    this.configPresenter = configPresenter
     this.serverManager = serverManager
   }
 
@@ -22,6 +27,9 @@ export class ToolManager {
       this.mcpClient = await getDefaultMcpClient()
     }
     const tools = await this.mcpClient.listTools()
+    if (!tools) {
+      return []
+    }
     return tools.map((tool) => ({
       type: 'function',
       function: {
@@ -48,7 +56,7 @@ export class ToolManager {
   // 获取工具定义的系统提示词
   public async getToolsSystemPrompt(): Promise<string> {
     // 从配置文件获取服务器描述
-    const mcpConfig = await this.configManager.getMcpConfig()
+    const mcpConfig = await this.configPresenter.getMcpConfig()
 
     // 生成工具列表
     const toolsList = Object.entries(mcpConfig.mcpServers)
@@ -87,7 +95,7 @@ ${toolsList}
     console.log('callTool', toolCall)
     try {
       // 获取默认服务器
-      const mcpConfig = await this.configManager.getMcpConfig()
+      const mcpConfig = await this.configPresenter.getMcpConfig()
       const defaultServerName = mcpConfig.defaultServer
 
       if (!defaultServerName || !mcpConfig.mcpServers[defaultServerName]) {
@@ -187,7 +195,7 @@ ${toolsList}
   }> {
     try {
       // 获取默认服务器
-      const mcpConfig = await this.configManager.getMcpConfig()
+      const mcpConfig = await this.configPresenter.getMcpConfig()
       const defaultServerName = mcpConfig.defaultServer
 
       if (!defaultServerName || !mcpConfig.mcpServers[defaultServerName]) {
