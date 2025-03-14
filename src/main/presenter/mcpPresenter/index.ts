@@ -5,7 +5,6 @@ import {
   MCPToolDefinition,
   MCPToolCall
 } from '@shared/presenter'
-import { ConfigManager } from './configManager'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
 import { eventBus } from '@/eventbus'
@@ -78,7 +77,6 @@ interface GeminiTool {
 
 // 完整版的 McpPresenter 实现
 export class McpPresenter implements IMCPPresenter {
-  private configManager: ConfigManager | null = null
   private serverManager: ServerManager
   private toolManager: ToolManager
   private configPresenter: IConfigPresenter
