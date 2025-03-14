@@ -20,7 +20,8 @@ const DEFAULT_MCP_SERVERS = {
       descriptions: '内存存储服务',
       icons: '🧠',
       autoApprove: ['all'],
-      disable: false
+      disable: false,
+      type: 'stdio'
     }
   },
   defaultServer: 'memory'

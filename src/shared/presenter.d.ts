@@ -551,6 +551,8 @@ export interface MCPServerConfig {
   icons: string
   autoApprove: string[]
   disable?: boolean
+  baseUrl?: string
+  type: 'sse' | 'stdio'
 }
 
 export interface MCPConfig {
