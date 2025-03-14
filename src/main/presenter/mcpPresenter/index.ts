@@ -20,6 +20,7 @@ interface MCPTool {
   serverName: string
   inputSchema: {
     properties: Record<string, Record<string, unknown>>
+    required: string[]
     [key: string]: unknown
   }
 }
@@ -61,6 +62,7 @@ interface AnthropicTool {
   input_schema: {
     type: string
     properties: Record<string, Record<string, unknown>>
+    required: string[]
   }
 }
 
@@ -68,10 +70,7 @@ interface GeminiTool {
   functionDeclarations: Array<{
     name: string
     description: string
-    parameters: {
-      type: string
-      properties: Record<string, Record<string, unknown>>
-    }
+    parameters: Record<string, unknown>
   }>
 }
 
@@ -311,7 +310,8 @@ export class McpPresenter implements IMCPPresenter {
         description: tool.description,
         input_schema: {
           type: 'object',
-          properties: this.filterPropertieAttributes(tool)
+          properties: tool.inputSchema.properties,
+          required: tool.inputSchema.required as string[]
         }
       }
     })

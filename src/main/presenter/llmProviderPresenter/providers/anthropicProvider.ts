@@ -182,7 +182,7 @@ export class AnthropicProvider extends BaseLLMProvider {
         })
       }
     }
-
+    console.log(JSON.stringify(formattedMessages))
     return formattedMessages
   }
 
@@ -399,7 +399,6 @@ ${context}
     try {
       // 获取MCP工具定义
       const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
-
       // 将MCP工具转换为Anthropic工具格式
       const anthropicTools =
         mcpTools.length > 0
@@ -419,13 +418,17 @@ ${context}
         temperature: temperature || 0.7,
         messages: formattedMessages,
         stream: true
-      }
+      } as Anthropic.Messages.MessageCreateParamsStreaming
 
       // 使用类型断言处理类型不匹配问题
       if (anthropicTools && anthropicTools.length > 0) {
         // @ts-ignore - 类型不匹配，但格式是正确的
         streamParams.tools = anthropicTools
       }
+      if (modelId.includes('claude-3-7')) {
+        streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
+      }
+      // console.info('streamParams', streamParams)
 
       let stream = (await this.anthropic.messages.create(
         streamParams

@@ -50,17 +50,8 @@ export class ToolManager {
           description: tool.description,
           parameters: {
             type: 'object',
-            properties: Object.entries(tool.inputSchema).reduce(
-              (acc, [key, value]) => {
-                acc[key] = {
-                  type: typeof value === 'object' ? 'object' : 'string',
-                  description: `Parameter ${key}`
-                }
-                return acc
-              },
-              {} as Record<string, { type: string; description: string }>
-            ),
-            required: Object.keys(tool.inputSchema)
+            properties: tool.inputSchema.properties || {},
+            required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
           }
         }
       }))
