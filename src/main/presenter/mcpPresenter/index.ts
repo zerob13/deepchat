@@ -332,6 +332,7 @@ export class McpPresenter implements IMCPPresenter {
     if (!mcpTools) return undefined
 
     const tool = mcpTools.find((tool) => tool.function.name === toolUse.name)
+    console.log('tool', tool, toolUse)
     if (!tool) {
       return undefined
     }

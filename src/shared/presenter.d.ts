@@ -446,10 +446,12 @@ export type DiskInfo = {
 export type LLMResponse = {
   content: string
   reasoning_content?: string
+  tool_calling_content?: string
 }
 export type LLMResponseStream = {
   content?: string
   reasoning_content?: string
+  tool_calling_content?: string
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>
