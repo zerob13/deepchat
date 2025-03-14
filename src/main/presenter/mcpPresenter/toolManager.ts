@@ -5,7 +5,6 @@ import {
   MCPToolCall,
   MCPToolDefinition,
   MCPToolResponse,
-  MCPServerConfig,
   IConfigPresenter
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'
@@ -51,44 +50,6 @@ export class ToolManager {
         }
       }
     }))
-  }
-
-  // 获取工具定义的系统提示词
-  public async getToolsSystemPrompt(): Promise<string> {
-    // 从配置文件获取服务器描述
-    const mcpConfig = await this.configPresenter.getMcpConfig()
-
-    // 生成工具列表
-    const toolsList = Object.entries(mcpConfig.mcpServers)
-      .filter(
-        ([, serverConfig]: [string, MCPServerConfig]) =>
-          !serverConfig.disable && serverConfig.descriptions
-      ) // 过滤掉禁用的和没有描述的
-      .map(([name, serverConfig]: [string, MCPServerConfig]) => {
-        return `- ${name}${serverConfig.icons ? ` ${serverConfig.icons}` : ''}: ${serverConfig.descriptions}`
-      })
-      .join('\n')
-
-    return `你有以下工具类别可以使用:
-
-${toolsList}
-
-当用户的意图需要使用工具时，你必须严格按照以下格式回复:
-
-1. 对于文件操作（读取/查看文件），必须使用以下格式：
-   "我会使用 filesystem 工具来[读取/查看] [文件路径]"
-
-2. 对于其他工具调用，必须使用以下格式：
-   "我需要使用工具'[工具名]'，参数是{[参数JSON]}"
-
-示例：
-- 如果用户说"查看 config.json"，你应该回复：
-  "我会使用 filesystem 工具来查看 config.json"
-
-- 如果用户说"读取 test.txt 的内容"，你应该回复：
-  "我会使用 filesystem 工具来读取 test.txt"
-
-注意：必须严格按照这些格式回复，否则工具调用将无法被正确识别。`
   }
 
   async callTool(toolCall: MCPToolCall): Promise<MCPToolResponse> {

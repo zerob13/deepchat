@@ -226,6 +226,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
                 if (toolCallDelta.function.arguments) {
                   existingToolCall.function.arguments += toolCallDelta.function.arguments
+                  console.log(
+                    'existingToolCall.function.arguments',
+                    existingToolCall.function.arguments
+                  )
                 }
               }
             } else {

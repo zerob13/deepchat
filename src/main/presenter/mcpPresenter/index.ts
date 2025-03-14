@@ -187,7 +187,7 @@ export class McpPresenter implements IMCPPresenter {
     toolDefinition: MCPToolDefinition,
     serverName: string
   ): MCPTool {
-    return {
+    const openaiTool = {
       id: toolDefinition.function.name,
       name: toolDefinition.function.name,
       type: toolDefinition.type,
@@ -202,6 +202,8 @@ export class McpPresenter implements IMCPPresenter {
         required: toolDefinition.function.parameters.required
       }
     }
+    console.log('openaiTool', toolDefinition, openaiTool)
+    return openaiTool
   }
 
   // 工具属性过滤函数
