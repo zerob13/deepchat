@@ -24,6 +24,64 @@ const runtimeDir = path.resolve(__dirname, '../resources/mcp/runtime')
 const nodeDir = path.join(runtimeDir, 'node')
 
 /**
+ * 检查是否已经下载过指定平台和架构的Node.js
+ * @param {string} platform 平台
+ * @param {string} arch 架构
+ * @param {string} version Node.js版本
+ * @returns {Promise<boolean>} 是否已下载
+ */
+async function isNodeAlreadyInstalled(platform, arch, version) {
+  try {
+    // 检查标记文件
+    const markerFile = path.join(nodeDir, `${platform}_${arch}`)
+
+    if (await fs.pathExists(markerFile)) {
+      const installedVersion = await fs.readFile(markerFile, 'utf8')
+
+      // 检查版本是否匹配
+      if (installedVersion.trim() === version) {
+        // 再检查node可执行文件是否存在
+        const nodeBin =
+          platform === 'win32' ? path.join(nodeDir, 'node.exe') : path.join(nodeDir, 'bin', 'node')
+
+        if (await fs.pathExists(nodeBin)) {
+          try {
+            // 尝试运行node -v 检查版本
+            const nodePath = nodeBin.replace(/(\s+)/g, '\\$1') // 处理路径中的空格
+            const { stdout } = await execAsync(`"${nodePath}" -v`)
+
+            if (stdout.trim() === version) {
+              console.log(`已检测到 Node.js ${version} (${platform}-${arch})，跳过下载`)
+              return true
+            }
+          } catch (err) {
+            // 执行失败，可能是权限问题或文件损坏
+            console.log(`Node.js 执行测试失败，将重新下载: ${err.message}`)
+          }
+        }
+      }
+    }
+
+    return false
+  } catch (error) {
+    console.error('检查Node.js安装状态失败:', error)
+    return false
+  }
+}
+
+/**
+ * 创建标记文件
+ * @param {string} platform 平台
+ * @param {string} arch 架构
+ * @param {string} version Node.js版本
+ */
+async function createMarkerFile(platform, arch, version) {
+  const markerFile = path.join(nodeDir, `${platform}_${arch}`)
+  await fs.writeFile(markerFile, version)
+  console.log(`创建标记文件: ${markerFile}`)
+}
+
+/**
  * 获取平台标识符，用于下载对应版本
  */
 function getPlatformIdentifier(platform, arch) {
@@ -139,6 +197,16 @@ async function main() {
     const arch = process.env.npm_config_arch || process.arch
     const nodeVersion = process.env.NODE_VERSION || DEFAULT_NODE_VERSION
 
+    console.log(`检查 Node.js ${nodeVersion} 用于 ${platform}-${arch}`)
+
+    // 确保目录存在
+    await fs.ensureDir(nodeDir)
+
+    // 检查是否已安装
+    if (await isNodeAlreadyInstalled(platform, arch, nodeVersion)) {
+      return
+    }
+
     console.log(`准备下载 Node.js ${nodeVersion} 用于 ${platform}-${arch}`)
 
     // 构建下载URL
@@ -151,9 +219,8 @@ async function main() {
     const tempDir = path.join(os.tmpdir(), 'deepchat-node-runtime-temp')
     const downloadPath = path.join(tempDir, fileName)
 
-    // 确保目录存在
+    // 确保临时目录存在
     await fs.ensureDir(tempDir)
-    await fs.ensureDir(nodeDir)
 
     // 下载文件
     await downloadFile(downloadUrl, downloadPath)
@@ -197,6 +264,9 @@ async function main() {
         }
       }
     }
+
+    // 创建标记文件
+    await createMarkerFile(platform, arch, nodeVersion)
 
     // 清理临时文件
     await fs.remove(tempDir)
