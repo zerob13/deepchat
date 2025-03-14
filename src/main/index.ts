@@ -1,8 +1,10 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, protocol } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { presenter } from './presenter'
 import { proxyConfig } from './presenter/proxyConfig'
 import { ProxyMode } from './presenter/proxyConfig'
+import path from 'path'
+import fs from 'fs'
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100')
@@ -67,6 +69,41 @@ app.whenReady().then(() => {
   app.on('browser-window-blur', () => {
     presenter.shortcutPresenter.unregisterShortcuts()
   })
+
+  protocol.handle('deepcdn', (request) => {
+    try {
+      const filePath = request.url.slice('deepcdn://'.length)
+      const fullPath = path.join(app.getAppPath(), 'resources', 'cdn', filePath)
+      // 根据文件扩展名决定MIME类型
+      let mimeType = 'application/octet-stream'
+      if (filePath.endsWith('.js')) {
+        mimeType = 'text/javascript'
+      } else if (filePath.endsWith('.css')) {
+        mimeType = 'text/css'
+      }
+
+      // 检查文件是否存在
+      if (!fs.existsSync(fullPath)) {
+        return new Response(`找不到文件: ${filePath}`, {
+          status: 404,
+          headers: { 'Content-Type': 'text/plain' }
+        })
+      }
+
+      // 读取文件并返回响应
+      const fileContent = fs.readFileSync(fullPath)
+      return new Response(fileContent, {
+        headers: { 'Content-Type': mimeType }
+      })
+    } catch (error: unknown) {
+      console.error('处理deepcdn请求时出错:', error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      return new Response(`服务器错误: ${errorMessage}`, {
+        status: 500,
+        headers: { 'Content-Type': 'text/plain' }
+      })
+    }
+  })
 })
 
 // Quit when all windows are closed, except on macOS. There, it's common
@@ -82,6 +119,3 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   presenter.destroy()
 })
-
-// In this file you can include the rest of your app"s specific main process
-// code. You can also put them in separate files and require them here.

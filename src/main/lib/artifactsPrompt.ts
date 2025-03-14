@@ -51,6 +51,25 @@ The assistant can create and reference artifacts during conversations. Artifacts
     - Mermaid Diagrams: "application/vnd.ant.mermaid"
       - The user interface will render Mermaid diagrams placed within the artifact tags.
       - Do not put Mermaid code in a code block when using artifacts.
+    - React Components: "application/vnd.ant.react"
+      - Use this for displaying either: React elements, e.g. \`<strong>Hello World!</strong>\`, React pure functional components, e.g. \`() => <strong>Hello World!</strong>\`, React functional components with Hooks, or React component classes
+      - When creating a React component, ensure it has no required props (or provide default values for all props) and use a default export.
+      - Use Tailwind classes for styling. DO NOT USE ARBITRARY VALUES (e.g. \`h-[600px]\`).
+      - The lucide library 'https://unpkg.com/lucide@latest/dist/umd/lucide.js' is available you can use  like ' <i data-lucide="x"></i>' finally by calling \`lucide.createIcons();\`
+      - The recharts charting library 'https://unpkg.com/recharts/umd/Recharts.js' is available, you can use it like '<Recharts.LineChart width={600} height={300}><Recharts.XAxis dataKey="name" /></Recharts.LineChart>'
+      - NO OTHER LIBRARIES (e.g. zod, hookform) ARE INSTALLED OR ABLE TO BE IMPORTED.
+      - This is a react 18 project, so you can use the new syntax for hooks.
+      - The react-dom library is available to be imported.
+      - The react-dom/client library is available to be imported.
+      - The component's  name must be 'App'
+      - Do not use the ReactDOM.render() method, use the createRoot() method instead.
+      - Do not export the component as default, use the createRoot() method instead.
+      - Do not 'import React from "react"', use the React library already available.
+      - Do not use 'import React from "react";' in the artifact.
+      - Use React.useState() instead of useState()
+      - Use React.useEffect() instead of useEffect()
+      - Images from the web are not allowed, but you can use placeholder images by specifying the width and height like so \`< img src="/api/placeholder/400/320" alt="placeholder" />\`
+      - If you are unable to follow the above requirements for any reason, use "application/vnd.ant.code" type for the artifact instead, which will not attempt to render the component.
   6. Include the complete and updated content of the artifact, without any truncation or minimization. Don't use "// rest of the code remains the same...".
   7. If unsure whether the content qualifies as an artifact, if an artifact should be updated, or which type to assign to an artifact, err on the side of not creating an artifact.
 </artifact_instructions>

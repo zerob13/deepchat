@@ -62,7 +62,7 @@ const t = (() => {
       if (key === 'artifacts.codeSnippet') return '代码片段'
       if (key === 'artifacts.function') return '函数'
       if (key === 'artifacts.class') return '类'
-      if (key === 'artifacts.vueComponent') return 'Vue组件'
+      if (key === 'artifacts.reactComponent') return 'React组件'
       if (key === 'artifacts.moduleImport') return '模块导入'
       if (key === 'artifacts.variableDefinition') return `变量：${values?.name || ''}`
       if (key === 'artifacts.markdownDocument') return 'Markdown文档'
@@ -255,8 +255,8 @@ const displayTitle = computed(() => {
             codeTitle += t('artifacts.class')
           } else {
             // 尝试识别主要的代码特征
-            if (content.includes('export default')) {
-              codeTitle = t('artifacts.vueComponent')
+            if (content.includes('root.render(<App />);')) {
+              codeTitle = t('artifacts.reactComponent')
             } else if (content.includes('import') && content.includes('from')) {
               codeTitle = t('artifacts.moduleImport')
             } else if (
@@ -347,6 +347,8 @@ const artifactDesc = computed(() => {
       return 'svg'
     case 'application/vnd.ant.mermaid':
       return 'mermaid'
+    case 'application/vnd.ant.react':
+      return 'react'
     default:
       return 'unknown'
   }

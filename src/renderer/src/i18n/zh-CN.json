@@ -479,7 +479,7 @@
     "codeSnippet": "代码片段",
     "function": " 函数",
     "class": " 类",
-    "vueComponent": "Vue 组件",
+    "reactComponent": "React 组件",
     "moduleImport": "模块导入",
     "variableDefinition": "{name} 变量定义",
     "markdownDocument": "Markdown 文档",
