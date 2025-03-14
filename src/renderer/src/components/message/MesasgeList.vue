@@ -11,8 +11,18 @@
         :class="{ 'opacity-0': !visible }"
       >
         <template v-for="(msg, index) in messages" :key="index">
-          <MessageItemAssistant v-if="msg.role === 'assistant'" :key="index" :message="msg" />
-          <MessageItemUser v-if="msg.role === 'user'" :key="index" :message="msg" />
+          <MessageItemAssistant 
+            v-if="msg.role === 'assistant'" 
+            :key="index" 
+            :message="msg" 
+            :ref="setAssistantRef(index)"
+          />
+          <MessageItemUser 
+            v-if="msg.role === 'user'" 
+            :key="index" 
+            :message="msg" 
+            @retry="handleRetry(index)" 
+          />
         </template>
       </div>
       <div ref="scrollAnchor" class="h-8" />
@@ -61,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch, computed } from 'vue'
+import { ref, onMounted, nextTick, watch, computed, reactive } from 'vue'
 import MessageItemAssistant from './MessageItemAssistant.vue'
 import MessageItemUser from './MessageItemUser.vue'
 import { AssistantMessage, UserMessage } from '@shared/chat'
@@ -81,6 +91,17 @@ const messageList = ref<HTMLDivElement>()
 const scrollAnchor = ref<HTMLDivElement>()
 const visible = ref(false)
 const chatStore = useChatStore()
+// Store refs as Record to avoid type checking issues
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const assistantRefs = reactive<Record<number, any>>({})
+
+// Helper function to set refs
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const setAssistantRef = (index: number) => (el: any) => {
+  if (el) {
+    assistantRefs[index] = el;
+  }
+}
 const scrollToBottom = (smooth = true) => {
   nextTick(() => {
     scrollAnchor.value?.scrollIntoView({
@@ -117,6 +138,24 @@ const showCancelButton = computed(() => {
 const handleCancel = () => {
   if (!chatStore.activeThreadId) return
   chatStore.cancelGenerating(chatStore.activeThreadId)
+}
+
+// Handle retry event from MessageItemUser
+const handleRetry = (index: number) => {
+  // Find the next assistant message after this user message
+  for (let i = index + 1; i < props.messages.length; i++) {
+    if (props.messages[i].role === 'assistant') {
+      try {
+        const assistantRef = assistantRefs[i]
+        if (assistantRef && typeof assistantRef.handleAction === 'function') {
+          assistantRef.handleAction('retry')
+          break
+        }
+      } catch (error) {
+        console.error('Failed to trigger retry action:', error)
+      }
+    }
+  }
 }
 
 defineExpose({

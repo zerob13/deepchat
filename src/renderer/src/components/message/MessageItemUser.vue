@@ -26,7 +26,13 @@
             @click="previewFile(file.path)"
           />
         </div>
-        <div class="text-sm whitespace-pre-wrap break-all">{{ message.content.text }}</div>
+        <div v-if="isEditMode" class="text-sm w-full">
+          <textarea
+            v-model="editedText"
+            class="w-full min-h-[80px] p-1 border rounded bg-background dark:bg-muted-foreground/10 whitespace-pre-wrap break-all resize-y"
+          ></textarea>
+        </div>
+        <div v-else class="text-sm whitespace-pre-wrap break-all">{{ displayText }}</div>
         <!-- disable for now -->
         <!-- <div class="flex flex-row gap-1.5 text-xs text-muted-foreground">
           <span v-if="message.content.search">联网搜索</span>
@@ -38,8 +44,12 @@
         :usage="message.usage"
         :loading="false"
         :is-assistant="false"
+        :is-edit-mode="isEditMode"
         @delete="handleAction('delete')"
         @copy="handleAction('copy')"
+        @edit="startEdit"
+        @save="saveEdit"
+        @cancel="cancelEdit"
       />
     </div>
   </div>
@@ -53,20 +63,73 @@ import FileItem from '../FileItem.vue'
 import MessageToolbar from './MessageToolbar.vue'
 import { useChatStore } from '@/stores/chat'
 import { usePresenter } from '@/composables/usePresenter'
+import { ref, watch } from 'vue'
 
 const chatStore = useChatStore()
 const windowPresenter = usePresenter('windowPresenter')
+const threadPresenter = usePresenter('threadPresenter')
 
 const props = defineProps<{
   message: UserMessage
 }>()
 
-defineEmits<{
+const isEditMode = ref(false)
+const editedText = ref('')
+const originalText = ref('')
+const displayText = ref('')
+
+// Initialize display text with message content
+displayText.value = props.message.content.text
+
+// Update displayText whenever message content changes
+watch(() => props.message.content.text, (newText) => {
+  displayText.value = newText
+})
+
+const emit = defineEmits<{
   fileClick: [fileName: string]
+  retry: []
 }>()
 
 const previewFile = (filePath: string) => {
   windowPresenter.previewFile(filePath)
+}
+
+const startEdit = () => {
+  isEditMode.value = true
+  editedText.value = props.message.content.text
+  originalText.value = props.message.content.text
+}
+
+const saveEdit = async () => {
+  if (editedText.value.trim() === '') return
+
+  try {
+    // Create a new content object with the edited text
+    const newContent = {
+      ...props.message.content,
+      text: editedText.value
+    }
+    
+    // Update the message in the database using editMessage method
+    await threadPresenter.editMessage(props.message.id, JSON.stringify(newContent))
+    
+    // Update local display text instead of mutating props
+    displayText.value = editedText.value
+    
+    // Emit retry event for MessageItemAssistant to handle
+    emit('retry')
+    
+    // Exit edit mode
+    isEditMode.value = false
+  } catch (error) {
+    console.error('Failed to save edit:', error)
+  }
+}
+
+const cancelEdit = () => {
+  editedText.value = originalText.value
+  isEditMode.value = false
 }
 
 const handleAction = (action: 'delete' | 'copy') => {
