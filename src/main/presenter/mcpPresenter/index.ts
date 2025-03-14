@@ -52,6 +52,7 @@ interface OpenAITool {
     parameters: {
       type: string
       properties: Record<string, Record<string, unknown>>
+      required: string[]
     }
   }
 }
@@ -251,10 +252,10 @@ export class McpPresenter implements IMCPPresenter {
           description: tool.description,
           parameters: {
             type: 'object',
-            properties: this.filterPropertieAttributes(tool)
+            properties: this.filterPropertieAttributes(tool),
+            required: tool.inputSchema.required || []
           }
-        },
-        required: tool.inputSchema.required
+        }
       }
     })
     console.log('openaiTools', JSON.stringify(openaiTools))
