@@ -21,7 +21,8 @@
       "cleanMessagesFailed": "清空会话消息失败",
       "userCanceledGeneration": "用户取消了生成",
       "sessionInterrupted": "会话意外中断，生成未完成",
-      "noModelResponse": "模型未返回任何内容，可能是超时了"
+      "noModelResponse": "模型未返回任何内容，可能是超时了",
+      "invalidJson": "无效的JSON格式"
     },
     "resetDataConfirmTitle": "确定要重置所有数据吗？",
     "resetDataConfirmDescription": "这将会把所有数据恢复到默认设置。此操作无法撤销。",
@@ -379,7 +380,7 @@
       "setDefault": "设为默认",
       "isDefault": "默认服务器",
       "default": "默认",
-      "setAsDefault": "设为默认",
+      "setAsDefault": "设为默认服务器",
       "removeServer": "删除服务器",
       "confirmRemoveServer": "确定要删除服务器 {name} 吗？此操作无法撤销。",
       "confirmDelete": {
@@ -408,9 +409,9 @@
       "searchPatternPlaceholder": "输入正则表达式",
       "filePattern": "文件模式",
       "filePatternPlaceholder": "输入文件模式，例如: *.md",
-      "executeButton": "执行",
+      "executeButton": "执行工具",
       "resultTitle": "执行结果",
-      "runningTool": "正在执行...",
+      "runningTool": "正在执行工具",
       "loading": "加载中...",
       "error": "加载失败",
       "available": "{count}个工具可用",
@@ -419,7 +420,9 @@
       "description": "MCP服务器提供的工具",
       "loadError": "加载工具失败",
       "parameters": "参数",
-      "refresh": "刷新"
+      "refresh": "刷新",
+      "jsonInputPlaceholder": "输入JSON格式的参数",
+      "invalidJsonFormat": "无效的JSON格式"
     }
   },
   "welcome": {

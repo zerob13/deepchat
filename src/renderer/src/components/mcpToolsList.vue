@@ -1,46 +1,25 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { usePresenter } from '@/composables/usePresenter'
-import { MCPToolDefinition } from '@shared/presenter'
+import { useMcpStore } from '@/stores/mcp'
 
 const { t } = useI18n()
-const mcpPresenter = usePresenter('mcpPresenter')
-
-// 状态
-const tools = ref<MCPToolDefinition[]>([])
-const isLoading = ref(false)
-const isError = ref(false)
-const errorMessage = ref('')
+const mcpStore = useMcpStore()
 
 // 计算属性
-const toolCount = computed(() => tools.value.length)
-const hasTools = computed(() => toolCount.value > 0)
-
-// 加载工具
-const loadTools = async () => {
-  try {
-    isLoading.value = true
-    isError.value = false
-    errorMessage.value = ''
-
-    // 获取所有工具定义
-    tools.value = await mcpPresenter.getAllToolDefinitions()
-  } catch (error) {
-    console.error('Failed to load MCP tools:', error)
-    isError.value = true
-    errorMessage.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    isLoading.value = false
-  }
-}
+const isLoading = computed(() => mcpStore.toolsLoading)
+const isError = computed(() => mcpStore.toolsError)
+const errorMessage = computed(() => mcpStore.toolsErrorMessage)
+const tools = computed(() => mcpStore.tools)
+const toolCount = computed(() => mcpStore.toolCount)
+const hasTools = computed(() => mcpStore.hasTools)
 
 // 生命周期钩子
 onMounted(async () => {
-  await loadTools()
+  await mcpStore.loadTools()
 })
 </script>
 
@@ -124,7 +103,7 @@ onMounted(async () => {
         </div>
 
         <div class="p-2 border-t flex justify-end">
-          <button class="text-xs text-primary hover:underline" @click="loadTools">
+          <button class="text-xs text-primary hover:underline" @click="mcpStore.loadTools">
             {{ t('mcp.tools.refresh') }}
           </button>
         </div>

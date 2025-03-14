@@ -9,9 +9,44 @@ export class ServerManager {
     this.configPresenter = configPresenter
   }
 
+  // 获取默认服务器名称
+  async getDefaultServerName(): Promise<string | null> {
+    const mcpConfig = await this.configPresenter.getMcpConfig()
+    const defaultServerName = mcpConfig.defaultServer
+
+    if (!defaultServerName || !mcpConfig.mcpServers[defaultServerName]) {
+      return null
+    }
+
+    return defaultServerName
+  }
+
+  // 获取默认客户端（不自动启动服务）
+  async getDefaultClient(): Promise<McpClient | null> {
+    const defaultServerName = await this.getDefaultServerName()
+
+    if (!defaultServerName) {
+      return null
+    }
+
+    // 返回已存在的客户端实例，无论是否运行
+    return this.getClient(defaultServerName) || null
+  }
+
+  // 获取正在运行的客户端
+  async getRunningClients(): Promise<McpClient[]> {
+    const clients: McpClient[] = []
+    for (const [name, client] of this.clients.entries()) {
+      if (this.isServerRunning(name)) {
+        clients.push(client)
+      }
+    }
+    return clients
+  }
+
   async startServer(name: string): Promise<void> {
     // 如果服务器已经在运行，则不需要再次启动
-    if (this.clients.has(name) && (await this.clients.get(name)!.isServerRunning())) {
+    if (this.clients.has(name) && this.isServerRunning(name)) {
       console.info(`MCP服务器 ${name} 已经在运行中`)
       return
     }
@@ -65,7 +100,7 @@ export class ServerManager {
     }
   }
 
-  async isServerRunning(name: string): Promise<boolean> {
+  isServerRunning(name: string): boolean {
     const client = this.clients.get(name)
     if (!client) {
       return false

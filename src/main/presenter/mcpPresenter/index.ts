@@ -105,10 +105,6 @@ export class McpPresenter implements IMCPPresenter {
     try {
       // 如果没有提供configPresenter，从presenter中获取
       if (!this.configPresenter.getLanguage) {
-        // 通过动态导入解决循环依赖
-        const { presenter } = await import('@/presenter')
-        this.configPresenter = presenter.configPresenter
-
         // 重新创建管理器
         this.serverManager = new ServerManager(this.configPresenter)
         this.toolManager = new ToolManager(this.configPresenter, this.serverManager)
@@ -153,6 +149,7 @@ export class McpPresenter implements IMCPPresenter {
     // 如果服务器正在运行，先停止
     if (await this.isServerRunning(serverName)) {
       await this.stopServer(serverName)
+      // 通知渲染进程服务器已停止
     }
 
     await this.configPresenter.removeMcpServer(serverName)
@@ -163,15 +160,19 @@ export class McpPresenter implements IMCPPresenter {
   }
 
   async isServerRunning(serverName: string): Promise<boolean> {
-    return this.serverManager.isServerRunning(serverName)
+    return Promise.resolve(this.serverManager.isServerRunning(serverName))
   }
 
   async startServer(serverName: string): Promise<void> {
     await this.serverManager.startServer(serverName)
+    // 通知渲染进程服务器已启动
+    eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
   }
 
   async stopServer(serverName: string): Promise<void> {
     await this.serverManager.stopServer(serverName)
+    // 通知渲染进程服务器已停止
+    eventBus.emit(MCP_EVENTS.SERVER_STOPPED, serverName)
   }
 
   async getAllToolDefinitions(): Promise<MCPToolDefinition[]> {

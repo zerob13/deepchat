@@ -244,20 +244,59 @@
       "dialog": {
         "disableModel": {
           "title": "Confirm Disable Model",
-          "content": "Are you sure you want to disable the model \"{name}\"?",
+          "content": "Are you sure you want to disable model \"{name}\"?",
           "confirm": "Disable"
         },
         "disableAllModels": {
           "title": "Confirm Disable All Models",
-          "content": "Are you sure you want to disable all the models for \"{name}\"?",
+          "content": "Are you sure you want to disable all models?",
           "confirm": "Disable All"
         },
-        "removeProvider": {
-          "title": "Confirm Remove Provider",
-          "content": "Are you sure you want to remove the provider \"{name}\"?",
-          "confirm": "Remove"
+        "configModels": {
+          "title": "Configure Model List"
+        },
+        "verify": {
+          "missingFields": "Please enter API Key and API URL",
+          "failed": "Verification failed",
+          "success": "Verification successful"
+        },
+        "addCustomProvider": {
+          "title": "Add Custom Provider",
+          "description": "Please fill in the necessary information for the provider",
+          "name": "Name",
+          "namePlaceholder": "Please enter the provider name",
+          "apiType": "API Type",
+          "apiTypePlaceholder": "Please select the API type",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "Please enter the API key",
+          "baseUrl": "API Base URL",
+          "baseUrlPlaceholder": "Please enter the API base URL",
+          "enable": "Enable Provider"
+        },
+        "deleteProvider": {
+          "title": "Confirm Delete Provider",
+          "content": "Are you sure you want to delete provider \"{name}\"? This action cannot be undone.",
+          "confirm": "Delete"
+        },
+        "deleteModel": {
+          "title": "Confirm Delete Model",
+          "content": "Are you sure you want to delete model \"{name}\"? This action cannot be undone.",
+          "confirm": "Delete"
+        },
+        "pullModel": {
+          "title": "Pull Model",
+          "pull": "Pull"
         }
-      }
+      },
+      "pullModels": "Pull Models",
+      "refreshModels": "Refresh Models",
+      "modelsRunning": "Running Models",
+      "runningModels": "Running Models",
+      "noRunningModels": "No Running Models",
+      "deleteModel": "Delete Model",
+      "deleteModelConfirm": "Are you sure you want to delete model \"{name}\"? This action cannot be undone.",
+      "noLocalModels": "No Local Models",
+      "localModels": "Local Models"
     },
     "mcp": {
       "title": "MCP Settings",

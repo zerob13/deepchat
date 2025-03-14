@@ -22,7 +22,7 @@ interface ToolCallResult {
 }
 
 // 定义工具列表的接口
-interface Tool {
+export interface Tool {
   name: string
   description: string
   inputSchema: Record<string, unknown>
@@ -224,7 +224,7 @@ export class McpClient {
   }
 
   // 检查服务器是否正在运行
-  async isServerRunning(): Promise<boolean> {
+  isServerRunning(): boolean {
     return this.isConnected && !!this.client
   }
 
@@ -340,30 +340,3 @@ export async function createMcpClient(serverName: string): Promise<McpClient> {
   // 创建并返回 MCP 客户端
   return new McpClient(serverName, serverConfig as unknown as Record<string, unknown>)
 }
-
-// 获取默认 MCP 客户端
-export async function getDefaultMcpClient(): Promise<McpClient> {
-  // 从configPresenter获取MCP配置
-  const mcpConfig = await presenter.configPresenter.getMcpConfig()
-
-  // 获取默认服务器名称
-  const defaultServerName = mcpConfig.defaultServer
-  if (!defaultServerName) {
-    throw new Error('未配置默认MCP服务器')
-  }
-
-  // 创建并返回默认 MCP 客户端
-  return createMcpClient(defaultServerName)
-}
-
-// 示例调用
-// (async () => {
-//   try {
-//     const client = await getDefaultMcpClient();
-//     const result = await client.callTool("read_file", { path: "example.txt" });
-//     console.log("MCP Result:", result);
-//     await client.disconnect();
-//   } catch (error) {
-//     console.error("Error:", error);
-//   }
-// })();
