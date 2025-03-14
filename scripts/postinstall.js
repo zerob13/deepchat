@@ -277,6 +277,6 @@ async function main() {
     process.exit(1)
   }
 }
-
+console.log('postinstall')
 // 执行主函数
-main()
+// main()

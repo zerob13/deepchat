@@ -16,6 +16,7 @@ export class ServerManager {
   private runningServers: Map<string, ChildProcess> = new Map()
   private configPresenter: IConfigPresenter
   private nodeExecutable: string
+  private npxExecutable: string
 
   constructor(configPresenter: IConfigPresenter) {
     this.configPresenter = configPresenter
@@ -24,6 +25,12 @@ export class ServerManager {
       this.nodeExecutable = path.join(basePath, 'node.exe')
     } else {
       this.nodeExecutable = path.join(basePath, 'bin', 'node')
+    }
+    const npxPath = path.join(basePath, 'bin', 'npx')
+    if (process.env.platform === 'win32') {
+      this.npxExecutable = path.join(basePath, 'npx.exe')
+    } else {
+      this.npxExecutable = npxPath
     }
   }
 
@@ -49,6 +56,10 @@ export class ServerManager {
       // 如果命令是electron，则将命令更改为Node.js
       if (serverConfig.command === 'node' || serverConfig.command === 'electron') {
         serverConfig.command = this.nodeExecutable // runtime Node.js 可执行文件
+      }
+
+      if (serverConfig.command === 'npx') {
+        serverConfig.command = this.npxExecutable // runtime npx 可执行文件
       }
 
       // 启动服务器进程

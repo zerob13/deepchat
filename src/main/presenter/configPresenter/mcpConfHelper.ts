@@ -9,17 +9,10 @@ interface IMcpSettings {
   defaultServer: string
   [key: string]: unknown // 允许任意键
 }
+
+// const filesystemPath = path.join(app.getAppPath(), 'resources', 'mcp', 'filesystem.mjs')
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
-    filesystem: {
-      command: 'node',
-      args: ['./resources/mcp/filesystem.mjs', './docs'],
-      env: {},
-      descriptions: '访问和管理本地文件系统',
-      icons: '🗂️',
-      autoApprove: ['all'],
-      disable: false
-    },
     memory: {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-memory'],
@@ -30,7 +23,7 @@ const DEFAULT_MCP_SERVERS = {
       disable: false
     }
   },
-  defaultServer: 'filesystem'
+  defaultServer: 'memory'
 }
 
 export class McpConfHelper {
