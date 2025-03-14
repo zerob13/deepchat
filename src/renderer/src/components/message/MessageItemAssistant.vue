@@ -155,4 +155,9 @@ const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next') => 
     }
   }
 }
+
+// Expose the handleAction method to parent components
+defineExpose({
+  handleAction
+})
 </script>
