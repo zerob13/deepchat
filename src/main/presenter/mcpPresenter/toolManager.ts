@@ -43,18 +43,29 @@ export class ToolManager {
       }
 
       // 转换为MCPToolDefinition格式
-      return tools.map((tool) => ({
-        type: 'function',
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: {
-            type: 'object',
-            properties: tool.inputSchema.properties || {},
-            required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
+      const results: MCPToolDefinition[] = []
+      for (const tool of tools) {
+        const properties = tool.inputSchema.properties || {}
+        const toolProperties = { ...properties }
+        for (const key in toolProperties) {
+          if (!toolProperties[key].description) {
+            toolProperties[key].description = 'Params of ' + key
           }
         }
-      }))
+        results.push({
+          type: 'function',
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: {
+              type: 'object',
+              properties: toolProperties,
+              required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
+            }
+          }
+        })
+      }
+      return results
     } catch (error) {
       console.error('获取工具定义失败:', error)
       return []
