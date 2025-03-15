@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 export interface ProcessedPart {
-  type: 'text' | 'thinking' | 'artifact'
+  type: 'text' | 'thinking' | 'artifact' | 'tool_call'
   content: string
   loading?: boolean
   artifact?: {
@@ -14,6 +14,9 @@ export interface ProcessedPart {
       | 'application/vnd.ant.mermaid'
     language?: string
   }
+  tool_call?: {
+    status: 'calling' | 'response' | 'end' | 'error'
+  }
 }
 export const useBlockContent = (props: {
   block: {
@@ -22,6 +25,16 @@ export const useBlockContent = (props: {
     timestamp: number
   }
 }) => {
+  // 辅助函数: 从后向前找到满足条件的元素索引
+  function findLastIndex<T>(array: T[], predicate: (value: T) => boolean): number {
+    for (let i = array.length - 1; i >= 0; i--) {
+      if (predicate(array[i])) {
+        return i
+      }
+    }
+    return -1
+  }
+
   const processedContent = computed<ProcessedPart[]>(() => {
     if (!props.block.content) return [{ type: 'text', content: '' }]
     // if (props.block.status === 'loading') {
@@ -202,7 +215,127 @@ export const useBlockContent = (props: {
       }
     }
 
-    // 添加剩余的普通文本
+    // 处理工具调用标签
+    // 工具调用标签处理逻辑修改为使用这些正则表达式单独匹配各种标签
+    const toolCallRegex = /<tool_call>/g
+    const toolCallResponseRegex = /<tool_response>/g
+    const toolCallEndRegex = /<tool_call_end>/g
+    const toolCallErrorRegex = /<tool_call_error>/g
+
+    // 重新设置content和lastIndex
+    content = props.block.content
+    lastIndex = 0
+
+    // 临时数组，用于存储待处理的标签及其位置
+    const tagPositions: Array<{ type: string; position: number }> = []
+
+    // 查找所有工具调用相关的标签
+    let tagMatch: RegExpExecArray | null
+
+    // 查找所有 tool_call 标签
+    while ((tagMatch = toolCallRegex.exec(content)) !== null) {
+      tagPositions.push({ type: 'tool_call', position: tagMatch.index })
+    }
+
+    // 查找所有 tool_call_response 标签
+    while ((tagMatch = toolCallResponseRegex.exec(content)) !== null) {
+      tagPositions.push({ type: 'tool_call_response', position: tagMatch.index })
+    }
+
+    // 查找所有 tool_call_end 标签
+    while ((tagMatch = toolCallEndRegex.exec(content)) !== null) {
+      tagPositions.push({ type: 'tool_call_end', position: tagMatch.index })
+    }
+
+    // 查找所有 tool_call_error 标签
+    while ((tagMatch = toolCallErrorRegex.exec(content)) !== null) {
+      tagPositions.push({ type: 'tool_call_error', position: tagMatch.index })
+    }
+
+    // 按位置排序标签
+    tagPositions.sort((a, b) => a.position - b.position)
+
+    // 处理按顺序排列的标签
+    for (const tag of tagPositions) {
+      // 处理标签前的文本
+      if (tag.position > lastIndex) {
+        const text = content.substring(lastIndex, tag.position)
+        if (text.trim()) {
+          parts.push({
+            type: 'text',
+            content: text
+          })
+        }
+      }
+
+      if (tag.type === 'tool_call') {
+        // 获取 tool_call 标签之后的内容，直到下一个标签
+        const nextTagPosition =
+          tagPositions.find((t) => t.position > tag.position)?.position || content.length
+        const toolCallContent = content.substring(
+          tag.position + '<tool_call>'.length,
+          nextTagPosition
+        )
+
+        // 创建新的工具调用部分
+        parts.push({
+          type: 'tool_call',
+          content: toolCallContent.trim(),
+          loading: true,
+          tool_call: {
+            status: 'calling'
+          }
+        })
+      } else if (tag.type === 'tool_call_response') {
+        // 寻找最近的一个工具调用部分
+        const lastToolCallIndex = findLastIndex(parts, (part) => part.type === 'tool_call')
+
+        if (lastToolCallIndex !== -1) {
+          // 获取 tool_call_response 标签之后的内容，直到下一个标签
+          const nextTagPosition =
+            tagPositions.find((t) => t.position > tag.position)?.position || content.length
+          const responseContent = content.substring(
+            tag.position + '<tool_response>'.length,
+            nextTagPosition
+          )
+
+          // 更新最近的工具调用部分
+          parts[lastToolCallIndex].content += '\n' + responseContent.trim()
+          parts[lastToolCallIndex].tool_call!.status = 'response'
+        }
+      } else if (tag.type === 'tool_call_end') {
+        // 寻找最近的一个工具调用部分
+        const lastToolCallIndex = findLastIndex(parts, (part) => part.type === 'tool_call')
+
+        if (lastToolCallIndex !== -1) {
+          // 更新最近的工具调用部分为已完成状态
+          parts[lastToolCallIndex].loading = false
+          parts[lastToolCallIndex].tool_call!.status = 'end'
+        }
+      } else if (tag.type === 'tool_call_error') {
+        // 寻找最近的一个工具调用部分
+        const lastToolCallIndex = findLastIndex(parts, (part) => part.type === 'tool_call')
+
+        if (lastToolCallIndex !== -1) {
+          // 更新最近的工具调用部分为错误状态
+          parts[lastToolCallIndex].loading = false
+          parts[lastToolCallIndex].tool_call!.status = 'error'
+        }
+      }
+
+      // 更新lastIndex到当前标签之后
+      lastIndex =
+        tag.position +
+        (tag.type === 'tool_call'
+          ? '<tool_call>'.length
+          : tag.type === 'tool_call_response'
+            ? '<tool_response>'.length
+            : tag.type === 'tool_call_end'
+              ? '<tool_call_end>'.length
+              : '<tool_call_error>'.length)
+    }
+
+    // 处理剩余的文本
     if (lastIndex < content.length) {
       const text = content.substring(lastIndex)
       if (text.trim()) {
