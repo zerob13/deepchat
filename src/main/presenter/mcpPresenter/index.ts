@@ -180,7 +180,11 @@ export class McpPresenter implements IMCPPresenter {
   }
 
   async getAllToolDefinitions(): Promise<MCPToolDefinition[]> {
-    return this.toolManager.getAllToolDefinitions()
+    const mcpConfig = await this.configPresenter.getMcpConfig()
+    if (mcpConfig.mcpEnabled) {
+      return this.toolManager.getAllToolDefinitions()
+    }
+    return []
   }
 
   async callTool(request: MCPToolCall): Promise<{ content: string }> {
