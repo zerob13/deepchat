@@ -500,12 +500,12 @@
   },
   "sync": {
     "success": {
-      "importComplete": "數據導入成功，點擊確定後將重啟應用"
+      "importComplete": "數據導入成功，點擊確定後將重新啟動應用"
     },
     "error": {
       "notEnabled": "同步功能未啟用",
-      "folderNotExists": "同步文件夾不存在",
-      "noValidBackup": "同步文件夾中沒有有效的備份文件",
+      "folderNotExists": "同步資料夾不存在",
+      "noValidBackup": "同步資料夾中沒有有效的備份文件",
       "dbNotExists": "數據庫文件不存在",
       "configNotExists": "配置文件不存在",
       "tempDbFailed": "臨時數據庫備份文件創建失敗",
@@ -514,5 +514,14 @@
       "importProcess": "導入過程出錯",
       "unknown": "未知錯誤"
     }
+  },
+  "toolCall": {
+    "calling": "工具調用中",
+    "response": "工具響應中",
+    "end": "工具調用完成",
+    "error": "工具調用錯誤",
+    "title": "工具調用",
+    "clickToView": "點擊查看詳情",
+    "functionName": "函數名稱"
   }
 }
