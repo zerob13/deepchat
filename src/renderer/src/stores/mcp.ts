@@ -27,8 +27,12 @@ export const useMcpStore = defineStore('mcp', () => {
   // MCP配置
   const config = ref<MCPConfig>({
     mcpServers: {},
-    defaultServer: ''
+    defaultServer: '',
+    mcpEnabled: false // 添加MCP启用状态
   })
+
+  // MCP全局启用状态
+  const mcpEnabled = computed(() => config.value.mcpEnabled)
 
   // 服务器状态
   const serverStatuses = ref<Record<string, boolean>>({})
@@ -76,6 +80,27 @@ export const useMcpStore = defineStore('mcp', () => {
     }
   }
 
+  // 设置MCP启用状态
+  const setMcpEnabled = async (enabled: boolean) => {
+    try {
+      await mcpPresenter.setMcpEnabled(enabled)
+      config.value.mcpEnabled = enabled
+
+      // 如果启用MCP，自动加载工具
+      if (enabled) {
+        await loadTools()
+      } else {
+        // 如果禁用MCP，清空工具列表
+        tools.value = []
+      }
+
+      return true
+    } catch (error) {
+      console.error('Failed to set MCP enabled state:', error)
+      return false
+    }
+  }
+
   // 更新所有服务器状态
   const updateAllServerStatuses = async () => {
     for (const serverName of Object.keys(config.value.mcpServers)) {
@@ -87,7 +112,9 @@ export const useMcpStore = defineStore('mcp', () => {
   const updateServerStatus = async (serverName: string) => {
     try {
       serverStatuses.value[serverName] = await mcpPresenter.isServerRunning(serverName)
-      loadTools()
+      if (config.value.mcpEnabled) {
+        loadTools()
+      }
     } catch (error) {
       console.error(`Failed to get server status for ${serverName}:`, error)
       serverStatuses.value[serverName] = false
@@ -166,6 +193,12 @@ export const useMcpStore = defineStore('mcp', () => {
 
   // 加载工具列表
   const loadTools = async () => {
+    // 如果MCP未启用，则不加载工具
+    if (!config.value.mcpEnabled) {
+      tools.value = []
+      return false
+    }
+
     try {
       toolsLoading.value = true
       toolsError.value = false
@@ -320,6 +353,7 @@ export const useMcpStore = defineStore('mcp', () => {
     toolLoadingStates,
     toolInputs,
     toolResults,
+    mcpEnabled,
 
     // 计算属性
     serverList,
@@ -337,6 +371,7 @@ export const useMcpStore = defineStore('mcp', () => {
     toggleServer,
     loadTools,
     updateToolInput,
-    callTool
+    callTool,
+    setMcpEnabled
   }
 })

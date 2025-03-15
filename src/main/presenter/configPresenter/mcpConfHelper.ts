@@ -7,6 +7,7 @@ import ElectronStore from 'electron-store'
 interface IMcpSettings {
   mcpServers: Record<string, MCPServerConfig>
   defaultServer: string
+  mcpEnabled: boolean // 添加MCP启用状态字段
   [key: string]: unknown // 允许任意键
 }
 
@@ -24,7 +25,8 @@ const DEFAULT_MCP_SERVERS = {
       type: 'stdio' as 'stdio' | 'sse'
     }
   },
-  defaultServer: 'memory'
+  defaultServer: 'memory',
+  mcpEnabled: false // 默认关闭MCP功能
 }
 
 export class McpConfHelper {
@@ -36,16 +38,22 @@ export class McpConfHelper {
       name: 'mcp-settings',
       defaults: {
         mcpServers: DEFAULT_MCP_SERVERS.mcpServers,
-        defaultServer: DEFAULT_MCP_SERVERS.defaultServer
+        defaultServer: DEFAULT_MCP_SERVERS.defaultServer,
+        mcpEnabled: DEFAULT_MCP_SERVERS.mcpEnabled // 设置默认值
       }
     })
   }
 
   // 获取MCP配置
-  getMcpConfig(): Promise<{ mcpServers: Record<string, MCPServerConfig>; defaultServer: string }> {
+  getMcpConfig(): Promise<{
+    mcpServers: Record<string, MCPServerConfig>
+    defaultServer: string
+    mcpEnabled: boolean
+  }> {
     return Promise.resolve({
       mcpServers: this.mcpStore.get('mcpServers') || DEFAULT_MCP_SERVERS.mcpServers,
-      defaultServer: this.mcpStore.get('defaultServer') || DEFAULT_MCP_SERVERS.defaultServer
+      defaultServer: this.mcpStore.get('defaultServer') || DEFAULT_MCP_SERVERS.defaultServer,
+      mcpEnabled: this.mcpStore.get('mcpEnabled') ?? DEFAULT_MCP_SERVERS.mcpEnabled
     })
   }
 
@@ -53,10 +61,28 @@ export class McpConfHelper {
   async setMcpConfig(config: {
     mcpServers: Record<string, MCPServerConfig>
     defaultServer: string
+    mcpEnabled: boolean
   }): Promise<void> {
     this.mcpStore.set('mcpServers', config.mcpServers)
     this.mcpStore.set('defaultServer', config.defaultServer)
+    this.mcpStore.set('mcpEnabled', config.mcpEnabled)
     eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, config)
+  }
+
+  // 获取MCP启用状态
+  getMcpEnabled(): Promise<boolean> {
+    return Promise.resolve(this.mcpStore.get('mcpEnabled') ?? DEFAULT_MCP_SERVERS.mcpEnabled)
+  }
+
+  // 设置MCP启用状态
+  async setMcpEnabled(enabled: boolean): Promise<void> {
+    this.mcpStore.set('mcpEnabled', enabled)
+    const mcpConfig = {
+      mcpServers: this.mcpStore.get('mcpServers'),
+      defaultServer: this.mcpStore.get('defaultServer'),
+      mcpEnabled: enabled
+    }
+    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, mcpConfig)
   }
 
   // 添加MCP服务器

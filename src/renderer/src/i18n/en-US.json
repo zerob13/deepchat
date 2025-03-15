@@ -301,6 +301,9 @@
     "mcp": {
       "title": "MCP Settings",
       "description": "Manage and configure MCP (Model Control Protocol) servers and tools",
+      "enabledTitle": "Enable MCP",
+      "enabledDescription": "Enable or disable MCP functionality and tools",
+      "enableToAccess": "Please enable MCP to access configuration options",
       "tabs": {
         "servers": "Servers",
         "tools": "Tools"
@@ -402,7 +405,11 @@
       "description": "Tools provided by the MCP server",
       "loadError": "Failed to load tools",
       "parameters": "Parameters",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "disabled": "MCP is disabled",
+      "enableToUse": "Please enable MCP to use tools",
+      "enabled": "Enable MCP",
+      "enabledDescription": "Enable MCP functionality to use tool calls"
     }
   },
   "welcome": {

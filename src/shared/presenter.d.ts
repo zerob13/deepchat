@@ -560,6 +560,7 @@ export interface MCPServerConfig {
 export interface MCPConfig {
   mcpServers: Record<string, MCPServerConfig>
   defaultServer: string
+  mcpEnabled: boolean
 }
 
 export interface MCPToolDefinition {
@@ -607,6 +608,8 @@ export interface IMCPPresenter {
       arguments: string
     }
   }): Promise<{ content: string }>
+  setMcpEnabled(enabled: boolean): Promise<void>
+  getMcpEnabled(): Promise<boolean>
 }
 
 export interface ISyncPresenter {

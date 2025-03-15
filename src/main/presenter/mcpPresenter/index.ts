@@ -504,4 +504,17 @@ export class McpPresenter implements IMCPPresenter {
 
     return mcpToolCall
   }
+
+  // 获取MCP启用状态
+  async getMcpEnabled(): Promise<boolean> {
+    const mcpConfig = await this.configPresenter.getMcpConfig()
+    return mcpConfig.mcpEnabled
+  }
+
+  // 设置MCP启用状态
+  async setMcpEnabled(enabled: boolean): Promise<void> {
+    const mcpConfig = await this.configPresenter.getMcpConfig()
+    mcpConfig.mcpEnabled = enabled
+    await this.configPresenter.setMcpConfig(mcpConfig)
+  }
 }

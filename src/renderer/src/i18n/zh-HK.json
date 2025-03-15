@@ -289,6 +289,9 @@
     "mcp": {
       "title": "MCP設置",
       "description": "管理和配置MCP（Model Control Protocol）服務器和工具",
+      "enabledTitle": "啟用MCP",
+      "enabledDescription": "啟用或禁用MCP功能和工具",
+      "enableToAccess": "請先啟用MCP以訪問配置選項",
       "tabs": {
         "servers": "服務器",
         "tools": "工具"
@@ -379,9 +382,9 @@
       "searchPatternPlaceholder": "輸入正則表達式",
       "filePattern": "文件模式",
       "filePatternPlaceholder": "輸入文件模式，例如: *.md",
-      "executeButton": "執行",
+      "executeButton": "執行工具",
       "resultTitle": "執行結果",
-      "runningTool": "正在執行...",
+      "runningTool": "正在執行工具",
       "loading": "加載中...",
       "error": "加載失敗",
       "available": "{count}個工具可用",
@@ -390,7 +393,11 @@
       "description": "MCP服務器提供的工具",
       "loadError": "加載工具失敗",
       "parameters": "參數",
-      "refresh": "刷新"
+      "refresh": "刷新",
+      "disabled": "MCP已禁用",
+      "enableToUse": "請先啟用MCP以使用工具",
+      "enabled": "啟用MCP",
+      "enabledDescription": "啟用MCP功能以使用工具調用"
     }
   },
   "welcome": {

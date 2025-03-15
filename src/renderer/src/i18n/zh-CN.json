@@ -319,6 +319,9 @@
     "mcp": {
       "title": "MCP设置",
       "description": "管理和配置MCP（Model Control Protocol）服务器和工具",
+      "enabledTitle": "启用MCP",
+      "enabledDescription": "启用或禁用MCP功能和工具",
+      "enableToAccess": "请先启用MCP以访问配置选项",
       "tabs": {
         "servers": "服务器",
         "tools": "工具"
@@ -421,6 +424,10 @@
       "loadError": "加载工具失败",
       "parameters": "参数",
       "refresh": "刷新",
+      "disabled": "MCP已禁用",
+      "enableToUse": "请先启用MCP以使用工具",
+      "enabled": "启用MCP",
+      "enabledDescription": "启用MCP功能以使用工具调用",
       "jsonInputPlaceholder": "输入JSON格式的参数",
       "invalidJsonFormat": "无效的JSON格式"
     }

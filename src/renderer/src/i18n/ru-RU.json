@@ -291,6 +291,9 @@
     "mcp": {
       "title": "Настройки MCP",
       "description": "Управление и настройка серверов и инструментов MCP (Model Control Protocol)",
+      "enabledTitle": "Включить MCP",
+      "enabledDescription": "Включение или отключение функций и инструментов MCP",
+      "enableToAccess": "Пожалуйста, включите MCP для доступа к настройкам",
       "tabs": {
         "servers": "Серверы",
         "tools": "Инструменты"
@@ -377,7 +380,7 @@
       "selectTool": "Выберите инструмент для отладки слева",
       "path": "Путь",
       "pathPlaceholder": "Введите путь к файлу",
-      "searchPattern": "Поисковый шаблон",
+      "searchPattern": "Шаблон поиска",
       "searchPatternPlaceholder": "Введите регулярное выражение",
       "filePattern": "Шаблон файла",
       "filePatternPlaceholder": "Введите шаблон файла, например: *.md",
@@ -386,13 +389,17 @@
       "runningTool": "Выполнение...",
       "loading": "Загрузка...",
       "error": "Ошибка загрузки",
-      "available": "{count} инструментов доступно",
+      "available": "Доступно инструментов: {count}",
       "none": "Нет доступных инструментов",
       "title": "Инструменты MCP",
       "description": "Инструменты, предоставляемые сервером MCP",
-      "loadError": "Ошибка загрузки инструментов",
+      "loadError": "Не удалось загрузить инструменты",
       "parameters": "Параметры",
-      "refresh": "Обновить"
+      "refresh": "Обновить",
+      "disabled": "MCP отключен",
+      "enableToUse": "Включите MCP для использования инструментов",
+      "enabled": "Включить MCP",
+      "enabledDescription": "Включить функциональность MCP для использования вызовов инструментов"
     }
   },
   "welcome": {
