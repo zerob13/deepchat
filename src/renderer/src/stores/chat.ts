@@ -425,7 +425,6 @@ export const useChatStore = defineStore('chat', () => {
     content?: string
     reasoning_content?: string
   }) => {
-    console.info('handleStreamResponse', msg)
     // 从缓存中查找消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {

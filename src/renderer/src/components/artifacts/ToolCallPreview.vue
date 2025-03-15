@@ -14,7 +14,7 @@
         class="flex-shrink-0 px-3 h-10 rounded-lg rounded-l-none flex justify-center items-center"
       >
         <Icon
-          v-if="block.loading && blockStatus === 'pending'"
+          v-if="block.loading && (blockStatus === 'loading' || !blockStatus)"
           icon="lucide:loader-2"
           class="w-4 h-4 animate-spin text-muted-foreground"
         />
@@ -65,7 +65,7 @@ const t = (() => {
 
 const props = defineProps<{
   block: ProcessedPart
-  blockStatus: 'pending' | 'success' | 'error'
+  blockStatus?: 'loading' | 'success' | 'error'
 }>()
 
 const getToolCallTitle = () => {
@@ -79,13 +79,13 @@ const isBlockError = () => {
   if (props.block.tool_call?.status === 'error') {
     return true
   }
-  if (props.blockStatus !== 'pending' && props.block.loading) {
+  if (props.blockStatus !== 'loading' && props.block.loading) {
     return true
   }
-  if (props.blockStatus !== 'pending' && props.block.tool_call?.status === 'calling') {
+  if (props.blockStatus !== 'loading' && props.block.tool_call?.status === 'calling') {
     return true
   }
-  if (props.blockStatus !== 'pending' && props.block.tool_call?.status === 'response') {
+  if (props.blockStatus !== 'loading' && props.block.tool_call?.status === 'response') {
     return true
   }
   return false
