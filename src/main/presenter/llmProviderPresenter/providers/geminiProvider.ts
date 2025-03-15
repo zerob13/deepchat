@@ -588,7 +588,7 @@ export class GeminiProvider extends BaseLLMProvider {
           try {
             // 通知正在调用工具
             yield {
-              content: `\n<tool_call>\n`,
+              content: `\n<tool_call name="${functionName}">\n`,
               reasoning_content: undefined,
               tool_calling_content: functionName
             }
@@ -602,7 +602,7 @@ export class GeminiProvider extends BaseLLMProvider {
 
             // 通知工具响应结果
             yield {
-              content: `\n<tool_response>\n`,
+              content: `\n<tool_response name="${functionName}">\n`,
               reasoning_content: undefined,
               tool_calling_content: functionName
             }
@@ -622,7 +622,7 @@ export class GeminiProvider extends BaseLLMProvider {
 
             // 通知继续对话
             yield {
-              content: `\n<tool_call_end>\n`,
+              content: `\n<tool_call_end name="${functionName}">\n`,
               reasoning_content: undefined,
               tool_calling_content: functionName
             }
@@ -649,7 +649,7 @@ export class GeminiProvider extends BaseLLMProvider {
             const errorMessage = error instanceof Error ? error.message : String(error)
 
             yield {
-              content: `\n<tool_call_error>\n`,
+              content: `\n<tool_call_error name="${functionName}" error="${errorMessage}">\n`,
               reasoning_content: undefined,
               tool_calling_content: errorMessage
             }

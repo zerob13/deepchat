@@ -1,27 +1,38 @@
 <template>
   <div>
     <div
-      class="flex w-64 max-w-full shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50"
+      class="flex w-[360px] h-[40px] max-w-full shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50"
       :class="{ 'cursor-pointer': !props.block.loading }"
-      @click="handleClick"
     >
-      <div
-        class="flex-shrink-0 w-10 h-10 rounded-lg rounded-r-none inline-flex flex-row justify-center items-center bg-muted border-r"
-      >
-        <Icon icon="lucide:hammer" class="w-5 h-5 text-muted-foreground" />
+      <div class="flex-grow w-0 pl-2">
+        <h4 class="text-xs font-medium leading-none text-accent-foreground">
+          {{ getToolCallTitle() }}
+        </h4>
       </div>
-      <div class="flex-grow w-0">
-        <p class="text-xs text-muted-foreground mt-0.5">{{ getToolCallStatus() }}</p>
-      </div>
+      <div class="text-xs text-muted-foreground">{{ getToolCallStatus() }}</div>
       <div
         class="flex-shrink-0 px-3 h-10 rounded-lg rounded-l-none flex justify-center items-center"
       >
         <Icon
-          v-if="props.block.loading"
+          v-if="block.loading && blockStatus === 'pending'"
           icon="lucide:loader-2"
-          class="w-5 h-5 animate-spin text-muted-foreground"
+          class="w-4 h-4 animate-spin text-muted-foreground"
         />
-        <Icon v-else icon="lucide:chevron-right" class="w-5 h-5 text-muted-foreground" />
+        <Icon
+          v-else-if="block.tool_call && block.tool_call.status === 'end'"
+          icon="lucide:check"
+          class="w-4 h-4 bg-green-500 rounded-full text-white p-0.5 dark:bg-green-800"
+        />
+        <Icon
+          v-else-if="block.tool_call && isBlockError()"
+          icon="lucide:x"
+          class="w-4 h-4 text-white p-0.5 bg-red-500 rounded-full dark:bg-red-800"
+        />
+        <Icon
+          v-else-if="showPermissionIcon()"
+          icon="lucide:hand"
+          class="w-4 h-4 p-0.5 bg-yellow-500 text-white rounded-full dark:bg-yellow-800"
+        />
       </div>
     </div>
   </div>
@@ -54,25 +65,36 @@ const t = (() => {
 
 const props = defineProps<{
   block: ProcessedPart
+  blockStatus: 'pending' | 'success' | 'error'
 }>()
 
-// const getToolCallTitle = () => {
-//   // 尝试从内容中提取工具名称
-//   const content = props.block.content
-//   const functionMatch = content.match(/function\s*:\s*([a-zA-Z_][a-zA-Z0-9_]*)/i)
+const getToolCallTitle = () => {
+  // 尝试从内容中提取工具名称
+  const title = props.block.tool_call?.name
+  // 返回默认的工具调用标题
+  return t('toolCall.title') + (title ? `: ${title}` : '')
+}
 
-//   if (functionMatch && functionMatch[1]) {
-//     // 返回提取的函数名称，这是一个动态值，不需要翻译
-//     return functionMatch[1]
-//   }
-
-//   // 返回默认的工具调用标题
-//   return t('toolCall.title')
-// }
-
+const isBlockError = () => {
+  if (props.block.tool_call?.status === 'error') {
+    return true
+  }
+  if (props.blockStatus !== 'pending' && props.block.loading) {
+    return true
+  }
+  if (props.blockStatus !== 'pending' && props.block.tool_call?.status === 'calling') {
+    return true
+  }
+  if (props.blockStatus !== 'pending' && props.block.tool_call?.status === 'response') {
+    return true
+  }
+  return false
+}
 const getToolCallStatus = () => {
   if (!props.block.tool_call) return ''
-
+  if (isBlockError()) {
+    return t('toolCall.error')
+  }
   switch (props.block.tool_call.status) {
     case 'calling':
       return t('toolCall.calling')
@@ -83,14 +105,15 @@ const getToolCallStatus = () => {
     case 'error':
       return t('toolCall.error')
     default:
-      return ''
+      // 处理其他可能的状态，包括未来可能添加的'permission'
+      return t(`toolCall.${props.block.tool_call.status}`) || ''
   }
 }
 
-const handleClick = () => {
-  if (!props.block.loading) {
-    // 这里可以添加点击后的逻辑，比如展示详细内容
-    console.log(t('toolCall.clickToView'), props.block)
-  }
+// 辅助函数，用于判断是否显示权限图标
+const showPermissionIcon = () => {
+  // 这里只是示意，实际上需要根据具体的业务逻辑来实现
+  // 例如，可以根据某些属性来判断是否需要显示权限图标
+  return false // 暂时默认不显示，等待后续实现
 }
 </script>

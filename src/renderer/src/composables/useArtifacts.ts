@@ -16,6 +16,8 @@ export interface ProcessedPart {
   }
   tool_call?: {
     status: 'calling' | 'response' | 'end' | 'error'
+    name?: string
+    error?: string
   }
 }
 export const useBlockContent = (props: {
@@ -217,39 +219,79 @@ export const useBlockContent = (props: {
 
     // 处理工具调用标签
     // 工具调用标签处理逻辑修改为使用这些正则表达式单独匹配各种标签
-    const toolCallRegex = /<tool_call>/g
-    const toolCallResponseRegex = /<tool_response>/g
-    const toolCallEndRegex = /<tool_call_end>/g
-    const toolCallErrorRegex = /<tool_call_error>/g
+    // 更新正则表达式以支持带属性的标签
+    const toolCallRegex = /<tool_call(?:\s+([^>]*))?>/g
+    const toolCallResponseRegex = /<tool_response(?:\s+([^>]*))?>/g
+    const toolCallEndRegex = /<tool_call_end(?:\s+([^>]*))?>/g
+    const toolCallErrorRegex = /<tool_call_error(?:\s+([^>]*))?>/g
 
     // 重新设置content和lastIndex
     content = props.block.content
     lastIndex = 0
 
     // 临时数组，用于存储待处理的标签及其位置
-    const tagPositions: Array<{ type: string; position: number }> = []
+    const tagPositions: Array<{
+      type: string
+      position: number
+      attributes?: Record<string, string>
+    }> = []
+
+    // 辅助函数：解析标签属性
+    function parseAttributes(attributesStr?: string): Record<string, string> {
+      const attributes: Record<string, string> = {}
+      if (!attributesStr) return attributes
+
+      // 匹配所有name="value"形式的属性
+      const attributeRegex = /(\w+)="([^"]*)"/g
+      let attrMatch: RegExpExecArray | null
+      while ((attrMatch = attributeRegex.exec(attributesStr)) !== null) {
+        const [, name, value] = attrMatch
+        attributes[name] = value
+      }
+      return attributes
+    }
 
     // 查找所有工具调用相关的标签
     let tagMatch: RegExpExecArray | null
 
     // 查找所有 tool_call 标签
     while ((tagMatch = toolCallRegex.exec(content)) !== null) {
-      tagPositions.push({ type: 'tool_call', position: tagMatch.index })
+      const attributes = parseAttributes(tagMatch[1])
+      tagPositions.push({
+        type: 'tool_call',
+        position: tagMatch.index,
+        attributes
+      })
     }
 
     // 查找所有 tool_response 标签
     while ((tagMatch = toolCallResponseRegex.exec(content)) !== null) {
-      tagPositions.push({ type: 'tool_response', position: tagMatch.index })
+      const attributes = parseAttributes(tagMatch[1])
+      tagPositions.push({
+        type: 'tool_response',
+        position: tagMatch.index,
+        attributes
+      })
     }
 
     // 查找所有 tool_call_end 标签
     while ((tagMatch = toolCallEndRegex.exec(content)) !== null) {
-      tagPositions.push({ type: 'tool_call_end', position: tagMatch.index })
+      const attributes = parseAttributes(tagMatch[1])
+      tagPositions.push({
+        type: 'tool_call_end',
+        position: tagMatch.index,
+        attributes
+      })
     }
 
     // 查找所有 tool_call_error 标签
     while ((tagMatch = toolCallErrorRegex.exec(content)) !== null) {
-      tagPositions.push({ type: 'tool_call_error', position: tagMatch.index })
+      const attributes = parseAttributes(tagMatch[1])
+      tagPositions.push({
+        type: 'tool_call_error',
+        position: tagMatch.index,
+        attributes
+      })
     }
 
     // 按位置排序标签
@@ -275,14 +317,14 @@ export const useBlockContent = (props: {
           }
         }
 
+        // 计算标签结束位置
+        const tagEndIndex = content.indexOf('>', tag.position) + 1
+
         // 获取 tool_call 标签之后的内容，直到下一个标签或文本结束
         const nextTagPosition =
           i < tagPositions.length - 1 ? tagPositions[i + 1].position : content.length
 
-        const toolCallContent = content.substring(
-          tag.position + '<tool_call>'.length,
-          nextTagPosition
-        )
+        const toolCallContent = content.substring(tagEndIndex, nextTagPosition)
 
         // 创建新的工具调用部分
         parts.push({
@@ -290,7 +332,9 @@ export const useBlockContent = (props: {
           content: toolCallContent.trim(),
           loading: true,
           tool_call: {
-            status: 'calling'
+            status: 'calling',
+            name: tag.attributes?.name,
+            error: tag.attributes?.error
           }
         })
 
@@ -301,18 +345,28 @@ export const useBlockContent = (props: {
         const lastToolCallIndex = findLastIndex(parts, (part) => part.type === 'tool_call')
 
         if (lastToolCallIndex !== -1) {
+          // 计算标签结束位置
+          const tagEndIndex = content.indexOf('>', tag.position) + 1
+
           // 获取 tool_response 标签之后的内容，直到下一个标签
           const nextTagPosition =
             i < tagPositions.length - 1 ? tagPositions[i + 1].position : content.length
 
-          const responseContent = content.substring(
-            tag.position + '<tool_response>'.length,
-            nextTagPosition
-          )
+          const responseContent = content.substring(tagEndIndex, nextTagPosition)
 
           // 更新最近的工具调用部分
           parts[lastToolCallIndex].content += '\n' + responseContent.trim()
           parts[lastToolCallIndex].tool_call!.status = 'response'
+
+          // 如果有新的属性，保留现有属性并添加新属性
+          if (tag.attributes) {
+            if (tag.attributes.name) {
+              parts[lastToolCallIndex].tool_call!.name = tag.attributes.name
+            }
+            if (tag.attributes.error) {
+              parts[lastToolCallIndex].tool_call!.error = tag.attributes.error
+            }
+          }
 
           // 更新已处理标签位置，但不将此位置作为文本分割点
           lastProcessedTagPosition = nextTagPosition
@@ -325,10 +379,23 @@ export const useBlockContent = (props: {
           // 更新最近的工具调用部分为已完成状态
           parts[lastToolCallIndex].loading = false
           parts[lastToolCallIndex].tool_call!.status = 'end'
+
+          // 如果有新的属性，保留现有属性并添加新属性
+          if (tag.attributes) {
+            if (tag.attributes.name) {
+              parts[lastToolCallIndex].tool_call!.name = tag.attributes.name
+            }
+            if (tag.attributes.error) {
+              parts[lastToolCallIndex].tool_call!.error = tag.attributes.error
+            }
+          }
         }
 
+        // 计算标签结束位置
+        const tagEndIndex = content.indexOf('>', tag.position) + 1
+
         // 更新已处理标签位置
-        lastProcessedTagPosition = tag.position + '<tool_call_end>'.length
+        lastProcessedTagPosition = tagEndIndex
       } else if (tag.type === 'tool_call_error') {
         // 寻找最近的一个工具调用部分
         const lastToolCallIndex = findLastIndex(parts, (part) => part.type === 'tool_call')
@@ -337,10 +404,23 @@ export const useBlockContent = (props: {
           // 更新最近的工具调用部分为错误状态
           parts[lastToolCallIndex].loading = false
           parts[lastToolCallIndex].tool_call!.status = 'error'
+
+          // 如果有新的属性，保留现有属性并添加新属性
+          if (tag.attributes) {
+            if (tag.attributes.name) {
+              parts[lastToolCallIndex].tool_call!.name = tag.attributes.name
+            }
+            if (tag.attributes.error) {
+              parts[lastToolCallIndex].tool_call!.error = tag.attributes.error
+            }
+          }
         }
 
+        // 计算标签结束位置
+        const tagEndIndex = content.indexOf('>', tag.position) + 1
+
         // 更新已处理标签位置
-        lastProcessedTagPosition = tag.position + '<tool_call_error>'.length
+        lastProcessedTagPosition = tagEndIndex
       }
     }
 

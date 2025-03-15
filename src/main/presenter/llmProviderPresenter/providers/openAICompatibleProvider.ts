@@ -299,7 +299,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
               // 通知调用工具 - 扩展LLMResponseStream类型
               yield {
-                content: '\n<tool_call_end>\n' // 提供一个空内容以符合LLMResponseStream类型
+                content: `\n<tool_call_end name="${toolCall.function.name}">\n` // 提供一个空内容以符合LLMResponseStream类型
                 // 注意：tool_call属性可能需要添加到LLMResponseStream接口
               }
 
@@ -327,7 +327,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
               // 通知工具调用失败 - 扩展LLMResponseStream类型
               yield {
-                content: '\n<tool_call_error>\n' // 提供一个空内容以符合LLMResponseStream类型
+                content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n` // 提供一个空内容以符合LLMResponseStream类型
                 // 注意：tool_call_status属性可能需要添加到LLMResponseStream接口
               }
 

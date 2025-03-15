@@ -25,7 +25,7 @@
         />
       </div>
       <div v-if="part.type === 'tool_call' && part.tool_call" class="my-1">
-        <ToolCallPreview :block="part" />
+        <ToolCallPreview :block="part" :block-status="props.block.status" />
       </div>
     </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />

@@ -544,7 +544,8 @@
     "error": "工具调用错误",
     "title": "工具调用",
     "clickToView": "点击查看详情",
-    "functionName": "函数名称"
+    "functionName": "函数名称",
+    "permission": "请求权限中"
   },
   "Silicon": "硅基流动",
   "QwenLM": "千问模型",

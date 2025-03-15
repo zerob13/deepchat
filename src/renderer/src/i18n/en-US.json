@@ -515,7 +515,8 @@
     "error": "Tool Call Error",
     "title": "Tool Call",
     "clickToView": "Click to view details",
-    "functionName": "Function Name"
+    "functionName": "Function Name",
+    "permission": "Requesting Permission"
   },
   "deleteCustomSearchEngine": "Delete Custom Search Engine",
   "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."

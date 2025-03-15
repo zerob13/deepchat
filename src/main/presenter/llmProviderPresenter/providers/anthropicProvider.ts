@@ -549,7 +549,7 @@ ${context}
 
                 if (mcpToolCall) {
                   yield {
-                    content: `\n<tool_call>\n`,
+                    content: `\n<tool_call name="${toolCall.name}">\n`,
                     reasoning_content: undefined,
                     tool_calling_content: toolCall.name
                   }
@@ -563,7 +563,7 @@ ${context}
                         : JSON.stringify(toolResponse.content)
 
                     yield {
-                      content: `\n<tool_response>\n`,
+                      content: `\n<tool_response name="${toolCall.name}">\n`,
                       reasoning_content: undefined,
                       tool_calling_content: toolCall.name
                     }
@@ -583,7 +583,7 @@ ${context}
                     const errorMessage = error instanceof Error ? error.message : String(error)
 
                     yield {
-                      content: `\n<tool_call_error>\n`,
+                      content: `\n<tool_call_error name="${toolCall.name}" error="${errorMessage}">\n`,
                       reasoning_content: undefined,
                       tool_calling_content: toolCall.name
                     }
@@ -604,7 +604,7 @@ ${context}
               // 如果有工具结果，继续对话
               if (toolResults.length > 0) {
                 yield {
-                  content: `\n<tool_call_end>\n`,
+                  content: `\n<tool_call_end name="${toolCalls[currentToolIndex].name}">\n`,
                   reasoning_content: undefined
                 }
 
