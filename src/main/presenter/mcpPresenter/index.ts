@@ -262,7 +262,7 @@ export class McpPresenter implements IMCPPresenter {
         }
       }
     })
-    console.log('openaiTools', JSON.stringify(openaiTools))
+    // console.log('openaiTools', JSON.stringify(openaiTools))
     return openaiTools
   }
 

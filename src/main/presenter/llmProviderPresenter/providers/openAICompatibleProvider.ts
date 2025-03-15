@@ -191,6 +191,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       for await (const chunk of stream) {
         const choice = chunk.choices[0]
 
+        // console.log('openai chunk', JSON.stringify(choice))
         // 检查是否有函数调用
         if (choice?.delta?.tool_calls && choice.delta.tool_calls.length > 0) {
           // 初始化tool_calls数组（如果尚未初始化）
@@ -200,8 +201,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
           // 更新工具调用
           for (const toolCallDelta of choice.delta.tool_calls) {
-            console.log('toolCallDelta', toolCallDelta)
-
             // 使用索引作为主要标识符
             const indexKey = toolCallDelta.index !== undefined ? toolCallDelta.index : 0
             const existingToolCall = pendingToolCalls.find(
@@ -274,7 +273,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
           // 处理工具调用并获取工具响应
           for (const toolCall of pendingToolCalls) {
-            console.log('toolCall', toolCall)
             if (processedToolCallIds.has(toolCall.id)) {
               continue
             }
@@ -301,7 +299,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
               // 通知调用工具 - 扩展LLMResponseStream类型
               yield {
-                content: '' // 提供一个空内容以符合LLMResponseStream类型
+                content: '\n<tool_call_end>\n' // 提供一个空内容以符合LLMResponseStream类型
                 // 注意：tool_call属性可能需要添加到LLMResponseStream接口
               }
 
@@ -329,7 +327,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
               // 通知工具调用失败 - 扩展LLMResponseStream类型
               yield {
-                content: '' // 提供一个空内容以符合LLMResponseStream类型
+                content: '\n<tool_call_error>\n' // 提供一个空内容以符合LLMResponseStream类型
                 // 注意：tool_call_status属性可能需要添加到LLMResponseStream接口
               }
 

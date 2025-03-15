@@ -474,12 +474,6 @@ ${context}
             currentToolIndex = toolCalls.length - 1
             waitingForToolResponse = true
 
-            // 通知工具调用开始
-            yield {
-              content: `\n[正在准备调用工具: ${toolName}]\n`,
-              reasoning_content: undefined
-            }
-
             continue
           }
           continue
@@ -491,7 +485,7 @@ ${context}
           if (accumulatedJson && currentToolIndex >= 0 && currentToolIndex < toolCalls.length) {
             try {
               // 尝试解析完整的JSON字符串
-              console.log('解析完整JSON:', accumulatedJson)
+              // console.log('解析完整JSON:', accumulatedJson)
 
               // 移除可能的前导/尾随空格并检查是否是有效的JSON格式
               const jsonStr = accumulatedJson.trim()
@@ -555,8 +549,9 @@ ${context}
 
                 if (mcpToolCall) {
                   yield {
-                    content: `\n[调用工具: ${toolCall.name}]\n`,
-                    reasoning_content: undefined
+                    content: `\n<tool_call>\n`,
+                    reasoning_content: undefined,
+                    tool_calling_content: toolCall.name
                   }
 
                   try {
@@ -568,8 +563,9 @@ ${context}
                         : JSON.stringify(toolResponse.content)
 
                     yield {
-                      content: `\n[工具响应: ${responseContent}]\n`,
-                      reasoning_content: undefined
+                      content: `\n<tool_response>\n`,
+                      reasoning_content: undefined,
+                      tool_calling_content: toolCall.name
                     }
 
                     // 添加工具结果到继续对话的消息列表中
@@ -587,8 +583,9 @@ ${context}
                     const errorMessage = error instanceof Error ? error.message : String(error)
 
                     yield {
-                      content: `\n[工具调用失败: ${errorMessage}]\n`,
-                      reasoning_content: undefined
+                      content: `\n<tool_call_error>\n`,
+                      reasoning_content: undefined,
+                      tool_calling_content: toolCall.name
                     }
 
                     toolResults.push({
@@ -607,7 +604,7 @@ ${context}
               // 如果有工具结果，继续对话
               if (toolResults.length > 0) {
                 yield {
-                  content: `\n[继续对话...]\n`,
+                  content: `\n<tool_call_end>\n`,
                   reasoning_content: undefined
                 }
 

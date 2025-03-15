@@ -572,12 +572,6 @@ export class GeminiProvider extends BaseLLMProvider {
 
       // 处理函数调用
       if (functionCallDetected && functionName) {
-        // 通知用户正在调用工具
-        yield {
-          content: `\n[正在准备调用工具: ${functionName}]\n`,
-          reasoning_content: undefined
-        }
-
         // 将Gemini函数调用转换为MCP工具调用
         const geminiFunctionCall = {
           name: functionName,
@@ -594,8 +588,9 @@ export class GeminiProvider extends BaseLLMProvider {
           try {
             // 通知正在调用工具
             yield {
-              content: `\n[调用工具: ${functionName}]\n`,
-              reasoning_content: undefined
+              content: `\n<tool_call>\n`,
+              reasoning_content: undefined,
+              tool_calling_content: functionName
             }
 
             // 调用工具并获取响应
@@ -607,8 +602,9 @@ export class GeminiProvider extends BaseLLMProvider {
 
             // 通知工具响应结果
             yield {
-              content: `\n[工具响应: ${responseContent}]\n`,
-              reasoning_content: undefined
+              content: `\n<tool_response>\n`,
+              reasoning_content: undefined,
+              tool_calling_content: functionName
             }
 
             // 创建一个带有工具响应的新消息
@@ -626,8 +622,9 @@ export class GeminiProvider extends BaseLLMProvider {
 
             // 通知继续对话
             yield {
-              content: `\n[继续对话...]\n`,
-              reasoning_content: undefined
+              content: `\n<tool_call_end>\n`,
+              reasoning_content: undefined,
+              tool_calling_content: functionName
             }
 
             // 创建一个新的流生成请求
@@ -652,8 +649,9 @@ export class GeminiProvider extends BaseLLMProvider {
             const errorMessage = error instanceof Error ? error.message : String(error)
 
             yield {
-              content: `\n[工具调用失败: ${errorMessage}]\n\n让我尝试直接回答你的问题。\n`,
-              reasoning_content: undefined
+              content: `\n<tool_call_error>\n`,
+              reasoning_content: undefined,
+              tool_calling_content: errorMessage
             }
 
             // 如果工具调用失败，尝试直接回答
