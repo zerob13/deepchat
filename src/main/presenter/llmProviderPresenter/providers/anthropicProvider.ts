@@ -145,11 +145,11 @@ export class AnthropicProvider extends BaseLLMProvider {
             if (content.type === 'image_url') {
               return {
                 type: 'image',
-                source: content.image_url!.url.startsWith('data:image')
+                source: content.image_url?.url?.startsWith('data:image')
                   ? {
                       type: 'base64',
-                      data: content.image_url!.url,
-                      media_type: content.image_url!.url.split(';')[0].split(':')[1] as
+                      data: content.image_url.url,
+                      media_type: content.image_url.url.split(';')[0].split(':')[1] as
                         | 'image/jpeg'
                         | 'image/png'
                         | 'image/gif'
