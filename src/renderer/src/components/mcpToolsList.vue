@@ -37,52 +37,46 @@ onMounted(async () => {
   <TooltipProvider>
     <Popover>
       <PopoverTrigger>
-        <div class="relative">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                id="mcp-btn"
-                variant="outline"
-                class="h-7 text-xs rounded-lg p-2"
-                :class="{
-                  'text-muted-foreground': !mcpEnabled,
-                  'text-primary': mcpEnabled
-                }"
-                :disabled="!mcpEnabled"
-              >
-                <Icon v-if="isLoading" icon="lucide:loader" class="w-4 h-4 animate-spin" />
-                <Icon
-                  v-else-if="isError"
-                  icon="lucide:alert-circle"
-                  class="w-4 h-4 text-destructive"
-                />
-                <Icon v-else icon="lucide:hammer" class="w-4 h-4" />
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              id="mcp-btn"
+              variant="outline"
+              :class="[
+                'flex w-7 border border-border rounded-lg shadow-sm items-center gap-1.5 px-2 h-full',
+                mcpEnabled
+                  ? 'dark:!bg-primary bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                  : 'text-muted-foreground '
+              ]"
+              size="icon"
+            >
+              <Icon v-if="isLoading" icon="lucide:loader" class="w-4 h-4 animate-spin" />
+              <Icon
+                v-else-if="isError"
+                icon="lucide:alert-circle"
+                class="w-4 h-4 text-destructive"
+              />
+              <Icon v-else icon="lucide:hammer" class="w-4 h-4" />
 
-                <span
-                  v-if="hasTools && !isLoading && !isError"
-                  :class="{ 'text-muted-foreground': !mcpEnabled, 'text-primary': mcpEnabled }"
-                  class="text-sm hover:text-accent-foreground"
-                  >{{ toolCount }}</span
-                >
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p v-if="!mcpEnabled">{{ t('mcp.tools.disabled') }}</p>
-              <p v-else-if="isLoading">{{ t('mcp.tools.loading') }}</p>
-              <p v-else-if="isError">{{ t('mcp.tools.error') }}</p>
-              <p v-else-if="hasTools">{{ t('mcp.tools.available', { count: toolCount }) }}</p>
-              <p v-else>{{ t('mcp.tools.none') }}</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
+              <span
+                v-if="hasTools && !isLoading && !isError"
+                :class="{ 'text-muted-foreground': !mcpEnabled, 'text-primary': mcpEnabled }"
+                class="text-sm hover:text-accent-foreground"
+                >{{ toolCount }}</span
+              >
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p v-if="!mcpEnabled">{{ t('mcp.tools.disabled') }}</p>
+            <p v-else-if="isLoading">{{ t('mcp.tools.loading') }}</p>
+            <p v-else-if="isError">{{ t('mcp.tools.error') }}</p>
+            <p v-else-if="hasTools">{{ t('mcp.tools.available', { count: toolCount }) }}</p>
+            <p v-else>{{ t('mcp.tools.none') }}</p>
+          </TooltipContent>
+        </Tooltip>
       </PopoverTrigger>
 
-      <PopoverContent class="w-80 p-0" align="end">
-        <div class="p-4 border-b">
-          <h3 class="text-sm font-medium">{{ t('mcp.tools.title') }}</h3>
-          <p class="text-xs text-muted-foreground mt-1">{{ t('mcp.tools.description') }}</p>
-        </div>
-
+      <PopoverContent class="w-80 p-0" align="start">
         <!-- MCP启用开关 -->
         <div class="p-4 border-b flex items-center justify-between">
           <div>
@@ -90,9 +84,9 @@ onMounted(async () => {
             <div class="text-xs text-muted-foreground">{{ t('mcp.tools.enabledDescription') }}</div>
           </div>
           <Switch
+            aria-label="启用MCP"
             :checked="mcpEnabled"
             @update:checked="handleMcpEnabledChange"
-            aria-label="启用MCP"
           />
         </div>
 
