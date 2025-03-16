@@ -131,14 +131,11 @@ export const getMarkdown = (msgId: string, t: (key: string) => string) => {
   // Add rendering rule for references
   md.renderer.rules.reference = (tokens, idx) => {
     const id = tokens[idx].content
-    return `<span class="reference-link" 
-    data-reference-id="${id}" 
-    role="button" 
+    return `<span class="reference-link"
+    data-reference-id="${id}"
+    role="button"
     tabindex="0"
-    title="Click to view reference"
-    onclick="window.dispatchEvent(new CustomEvent('reference-click',{detail:{msgId:'${msgId}',refId:'${id}', event: event}}))"
-    onmouseover="window.dispatchEvent(new CustomEvent('reference-hover',{detail:{msgId:'${msgId}',refId:'${id}',isHover:true, event: event}}))"
-    onmouseout="window.dispatchEvent(new CustomEvent('reference-hover',{detail:{msgId:'${msgId}',refId:'${id}',isHover:false, event: event}}))">${id}</span>`
+    title="Click to view reference">${id}</span>`
   }
 
   // Register custom rule

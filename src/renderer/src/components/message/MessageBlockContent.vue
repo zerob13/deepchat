@@ -8,6 +8,8 @@
         :id="id"
         class="prose prose-sm dark:prose-invert max-w-full break-words"
         @click="handleCopyClick"
+        @mouseover="handleHover($event, true)"
+        @mouseout="handleHover($event, false)"
         @contextmenu="handleContextMenu"
         v-html="renderContent(part.content)"
       ></div>
@@ -29,7 +31,6 @@
       </div>
     </template>
     <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />
-    <ReferencePreview :show="showPreview" :content="previewContent" :rect="previewRect" />
   </div>
 </template>
 
@@ -41,7 +42,6 @@ import { v4 as uuidv4 } from 'uuid'
 
 import { usePresenter } from '@/composables/usePresenter'
 import { SearchResult } from '@shared/presenter'
-import ReferencePreview from './ReferencePreview.vue'
 import LoadingCursor from '@/components/LoadingCursor.vue'
 
 const threadPresenter = usePresenter('threadPresenter')
@@ -53,6 +53,7 @@ import ToolCallPreview from '../artifacts/ToolCallPreview.vue'
 import { useCodeEditor } from '@/composables/useCodeEditor'
 import { useBlockContent } from '@/composables/useArtifacts'
 import { useArtifactStore } from '@/stores/artifact'
+import { useReferenceStore } from '@/stores/reference'
 
 const artifactStore = useArtifactStore()
 const props = defineProps<{
@@ -73,9 +74,7 @@ const { initCodeEditors, cleanupEditors } = useCodeEditor(id.value)
 const loadingCursor = ref<InstanceType<typeof LoadingCursor> | null>(null)
 const messageBlock = ref<HTMLDivElement>()
 
-const previewContent = ref<SearchResult | undefined>()
-const showPreview = ref(false)
-const previewRect = ref<DOMRect>()
+const referenceStore = useReferenceStore()
 
 const { t } = useI18n()
 
@@ -88,10 +87,26 @@ const refreshLoadingCursor = () => {
 }
 
 const md = getMarkdown(id.value, t)
+const handleReferenceHover = ({ msgId, refId, isHover, event }) => {
+  const rect = (event.target as HTMLElement).getBoundingClientRect()
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-;(window as any).addEventListener('reference-click', (e: CustomEvent) => {
-  const { msgId, refId } = e.detail
+  if (msgId !== id.value) {
+    referenceStore.hideReference()
+    return
+  }
+  console.log(id.value, msgId, refId, isHover, rect)
+  const index = parseInt(refId) - 1
+  // console.log(id, isHover, rect)
+  if (searchResults.value && searchResults.value[index]) {
+    if (isHover) {
+      referenceStore.showReference(searchResults.value[index], rect)
+    } else {
+      referenceStore.hideReference()
+    }
+  }
+}
+
+const handleReferenceClick = ({ msgId, refId }) => {
   if (msgId !== id.value) {
     return
   }
@@ -101,32 +116,7 @@ const md = getMarkdown(id.value, t)
     // console.log('Navigate to:', searchResults.value[index])
     window.open(searchResults.value[index].url, '_blank')
   }
-})
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-;(window as any).addEventListener('reference-hover', (e: CustomEvent) => {
-  const { msgId, refId, isHover, event } = e.detail
-  const rect = (event.target as HTMLElement).getBoundingClientRect()
-  if (msgId !== id.value) {
-    if (!isHover) {
-      previewContent.value = undefined
-      showPreview.value = false
-    }
-    return
-  }
-  const index = parseInt(refId) - 1
-  // console.log(id, isHover, rect)
-  if (searchResults.value && searchResults.value[index]) {
-    if (isHover) {
-      previewContent.value = searchResults.value[index]
-      previewRect.value = rect
-      showPreview.value = true
-    } else {
-      previewContent.value = undefined
-      showPreview.value = false
-    }
-  }
-})
+}
 
 // Handle copy functionality
 const handleCopyClick = async (e: MouseEvent) => {
@@ -147,8 +137,27 @@ const handleCopyClick = async (e: MouseEvent) => {
       }
     }
   }
+  if (target.classList.contains('reference-link')) {
+    const refId = target.getAttribute('data-reference-id')
+    if (refId) {
+      console.log('reference-link', refId)
+      handleReferenceClick({ msgId: id.value, refId })
+    }
+  }
 }
 
+const handleHover = (e: MouseEvent, isHover: boolean) => {
+  const target = e.target as HTMLElement
+  if (target.classList.contains('reference-link')) {
+    console.log('reference-link', target.getAttribute('data-reference-id'))
+    handleReferenceHover({
+      msgId: id.value,
+      refId: target.getAttribute('data-reference-id'),
+      isHover,
+      event: e
+    })
+  }
+}
 const renderContent = (content: string) => {
   refreshLoadingCursor()
   // 处理常规内容或代码块
@@ -233,11 +242,21 @@ watch(
 onMounted(async () => {
   if (props.isSearchResult) {
     searchResults.value = await threadPresenter.getSearchResults(props.messageId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).addEventListener('reference-click', handleReferenceClick)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).addEventListener('reference-hover', handleReferenceHover)
   }
 })
 
 onUnmounted(() => {
   cleanupEditors()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(window as any).removeEventListener('reference-click', handleReferenceClick)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(window as any).removeEventListener('reference-hover', handleReferenceHover)
 })
 </script>
 
