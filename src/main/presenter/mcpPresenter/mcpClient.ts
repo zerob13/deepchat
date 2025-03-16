@@ -66,16 +66,16 @@ export class McpClient {
 
       // 创建合适的transport
       if (this.serverConfig.type === 'stdio') {
-        let command = this.serverConfig.command as string
+        const command = this.serverConfig.command as string
 
-        if (command === 'npx') {
-          // 根据平台确定可执行文件路径
-          if (process.platform === 'win32') {
-            command = 'npx.cmd'
-          } else {
-            command = 'npx'
-          }
-        }
+        // if (command === 'npx') {
+        //   // 根据平台确定可执行文件路径
+        //   if (process.platform === 'win32') {
+        //     command = 'npx.cmd'
+        //   } else {
+        //     command = 'npx'
+        //   }
+        // }
 
         // 修复env类型问题
         const env: Record<string, string> = {}
