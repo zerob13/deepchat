@@ -1,19 +1,12 @@
 <template>
-  <div class="w-full h-full overflow-y-auto p-4">
-    <div class="space-y-6">
-      <div>
-        <h2 class="text-lg font-semibold mb-2">{{ t('settings.mcp.title') }}</h2>
-        <p class="text-sm text-muted-foreground mb-4">
-          {{ t('settings.mcp.description') }}
-        </p>
-      </div>
-
+  <div class="w-full h-full overflow-y-auto">
+    <div class="space-y-2">
       <!-- MCP全局开关 -->
-      <div class="border rounded-lg p-4">
+      <div class="p-4">
         <div class="flex items-center justify-between">
           <div>
-            <h3 class="text-base font-medium">{{ t('settings.mcp.enabledTitle') }}</h3>
-            <p class="text-sm text-muted-foreground mt-1">
+            <h3 class="text-sm font-medium">{{ t('settings.mcp.enabledTitle') }}</h3>
+            <p class="text-xs text-muted-foreground mt-1">
               {{ t('settings.mcp.enabledDescription') }}
             </p>
           </div>
@@ -22,10 +15,10 @@
       </div>
 
       <!-- MCP配置 -->
-      <div v-if="mcpEnabled" class="border rounded-lg p-4">
+      <div v-if="mcpEnabled" class="border-t">
         <McpConfig />
       </div>
-      <div v-else class="border rounded-lg p-4 text-center text-muted-foreground">
+      <div v-else class="p-4 text-center text-secondary-foreground text-sm">
         {{ t('settings.mcp.enableToAccess') }}
       </div>
     </div>

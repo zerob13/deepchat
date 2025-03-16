@@ -519,5 +519,19 @@
     "permission": "Requesting Permission"
   },
   "deleteCustomSearchEngine": "Delete Custom Search Engine",
-  "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone."
+  "deleteCustomSearchEngineDesc": "Are you sure you want to delete the custom search engine \"{name}\"? This action cannot be undone.",
+  "components": {
+    "emojiPicker": {
+      "search": "Search emoji",
+      "smileys": "Smileys & Emotion",
+      "people": "People & Body",
+      "animals": "Animals & Nature",
+      "food": "Food & Drink",
+      "travel": "Travel & Places",
+      "activities": "Activities",
+      "objects": "Objects",
+      "symbols": "Symbols",
+      "flags": "Flags"
+    }
+  }
 }

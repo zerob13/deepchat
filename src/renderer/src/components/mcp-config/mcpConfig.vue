@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger
@@ -153,7 +152,7 @@ onMounted(async () => {
     <!-- 选项卡 -->
     <div class="flex border-b mb-4 px-4">
       <button
-        class="px-4 py-2 text-sm"
+        class="px-3 py-1.5 text-sm"
         :class="
           activeTab === 'servers'
             ? 'border-b-2 border-primary font-medium text-primary'
@@ -164,7 +163,7 @@ onMounted(async () => {
         {{ t('settings.mcp.tabs.servers') }}
       </button>
       <button
-        class="px-4 py-2 text-sm ml-4"
+        class="px-3 py-1.5 text-sm ml-2"
         :class="
           activeTab === 'tools'
             ? 'border-b-2 border-primary font-medium text-primary'
@@ -182,18 +181,15 @@ onMounted(async () => {
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-base font-medium">{{ t('settings.mcp.serverList') }}</h3>
           <Dialog v-model:open="isAddServerDialogOpen">
-            <DialogTrigger asChild>
+            <DialogTrigger as-child>
               <Button variant="outline" size="sm">
                 <Icon icon="lucide:plus" class="mr-2 h-4 w-4" />
                 {{ t('settings.mcp.addServer') }}
               </Button>
             </DialogTrigger>
-            <DialogContent class="sm:max-w-[425px]">
-              <DialogHeader>
+            <DialogContent class="w-[640px] px-0 h-[80vh] flex flex-col">
+              <DialogHeader class="px-4 flex-shrink-0">
                 <DialogTitle>{{ t('settings.mcp.addServerDialog.title') }}</DialogTitle>
-                <DialogDescription>{{
-                  t('settings.mcp.addServerDialog.description')
-                }}</DialogDescription>
               </DialogHeader>
               <McpServerForm @submit="handleAddServer" />
             </DialogContent>
@@ -217,15 +213,15 @@ onMounted(async () => {
             :key="server.name"
             class="border rounded-lg overflow-hidden"
           >
-            <div class="flex items-center p-8">
+            <div class="flex items-center p-4">
               <div class="flex-1">
                 <div>
                   <div class="flex items-center">
-                    <span class="text-2xl mr-3">{{ server.icons }}</span>
-                    <h4 class="text-xl font-medium">{{ server.name }}</h4>
+                    <span class="text-xl mr-2">{{ server.icons }}</span>
+                    <h4 class="text-sm font-medium">{{ server.name }}</h4>
                     <span
                       :class="[
-                        'ml-3 px-3 py-1 text-sm rounded-full',
+                        'ml-2 px-2 py-0.5 text-xs rounded-full',
                         server.isRunning
                           ? 'bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100'
                           : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100'
@@ -234,7 +230,7 @@ onMounted(async () => {
                       {{ server.isRunning ? t('settings.mcp.running') : t('settings.mcp.stopped') }}
                     </span>
                   </div>
-                  <p class="text-base text-muted-foreground mt-2">{{ server.descriptions }}</p>
+                  <p class="text-xs text-muted-foreground mt-1">{{ server.descriptions }}</p>
                 </div>
               </div>
               <div class="flex items-center space-x-6">
@@ -326,14 +322,14 @@ onMounted(async () => {
                 </TooltipProvider>
               </div>
             </div>
-            <div class="bg-muted px-8 py-4">
+            <div class="bg-muted px-4 py-2">
               <div class="flex justify-between items-center">
-                <div class="text-sm font-mono overflow-x-auto whitespace-nowrap">
+                <div class="text-xs font-mono overflow-x-auto whitespace-nowrap">
                   {{ server.command }} {{ server.args.join(' ') }}
                 </div>
                 <span
                   v-if="server.isDefault"
-                  class="ml-3 px-3 py-1 text-sm bg-primary text-primary-foreground rounded-full shrink-0"
+                  class="ml-2 px-2 py-0.5 text-xs bg-primary text-primary-foreground rounded-full shrink-0"
                 >
                   {{ t('settings.mcp.default') }}
                 </span>
@@ -346,13 +342,13 @@ onMounted(async () => {
       <!-- 调试工具选项卡 -->
       <div
         v-if="activeTab === 'tools'"
-        class="h-full overflow-hidden grid grid-cols-[240px_1fr] gap-4"
+        class="h-full overflow-hidden grid grid-cols-[200px_1fr] gap-2"
       >
         <!-- 左侧工具列表 -->
-        <div class="h-full overflow-y-auto border-r pr-4">
+        <div class="h-full overflow-y-auto border-r pr-2">
           <input
             type="text"
-            class="w-full h-8 px-2 text-sm rounded-md border mb-3"
+            class="w-full h-7 px-2 text-xs rounded-md border mb-2"
             :placeholder="t('mcp.tools.searchPlaceholder')"
           />
 
@@ -390,22 +386,21 @@ onMounted(async () => {
           </div>
 
           <div v-else>
-            <div class="mb-4">
-              <h3 class="text-base font-medium">{{ selectedTool.function.name }}</h3>
-              <p class="text-sm text-muted-foreground">{{ selectedTool.function.description }}</p>
+            <div class="mb-3">
+              <h3 class="text-sm font-medium">{{ selectedTool.function.name }}</h3>
+              <p class="text-xs text-muted-foreground">{{ selectedTool.function.description }}</p>
             </div>
 
             <!-- 工具参数输入 -->
-            <div class="space-y-4 mb-4">
-              <!-- JSON参数输入 -->
-              <div class="space-y-1.5">
-                <label class="text-sm font-medium">
+            <div class="space-y-3 mb-3">
+              <div class="space-y-1">
+                <label class="text-xs font-medium">
                   {{ t('mcp.tools.parameters') }}
                   <span class="text-red-500">*</span>
                 </label>
                 <textarea
                   v-model="localToolInputs[selectedTool.function.name]"
-                  class="flex h-32 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+                  class="flex h-24 w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-xs shadow-sm transition-colors file:border-0 file:bg-transparent file:text-xs file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
                   placeholder="{}"
                   :class="{ 'border-red-500': jsonError[selectedTool.function.name] }"
                   @input="
@@ -415,9 +410,6 @@ onMounted(async () => {
                     )
                   "
                 ></textarea>
-                <p v-if="jsonError[selectedTool.function.name]" class="text-xs text-red-500">
-                  {{ t('common.error.requestFailed') }} - 无效的JSON格式
-                </p>
               </div>
             </div>
 
@@ -458,10 +450,9 @@ onMounted(async () => {
 
   <!-- 编辑服务器对话框 -->
   <Dialog v-model:open="isEditServerDialogOpen">
-    <DialogContent class="sm:max-w-[425px]">
-      <DialogHeader>
+    <DialogContent class="w-[640px] px-0 h-[80vh] flex flex-col">
+      <DialogHeader class="px-4 flex-shrink-0">
         <DialogTitle>{{ t('settings.mcp.editServerDialog.title') }}</DialogTitle>
-        <DialogDescription>{{ t('settings.mcp.editServerDialog.description') }}</DialogDescription>
       </DialogHeader>
       <McpServerForm
         v-if="selectedServer && mcpStore.config.mcpServers[selectedServer]"
