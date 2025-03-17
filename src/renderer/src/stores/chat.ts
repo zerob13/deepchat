@@ -252,9 +252,9 @@ export const useChatStore = defineStore('chat', () => {
             threads.value.push(newThread)
           }
         })
-        // 按日期排序
-        threads.value.sort((a, b) => new Date(b.dt).getTime() - new Date(a.dt).getTime())
       }
+      // 按日期排序
+      threads.value.sort((a, b) => new Date(b.dt).getTime() - new Date(a.dt).getTime())
     } catch (error) {
       console.error('加载会话列表失败:', error)
       throw error
