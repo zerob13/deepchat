@@ -9,6 +9,7 @@ import {
 import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import { Ollama, Message, ShowResponse } from 'ollama'
+import { presenter } from '@/presenter'
 
 export class OllamaProvider extends BaseLLMProvider {
   private ollama: Ollama
@@ -223,7 +224,21 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): AsyncGenerator<LLMResponseStream> {
     try {
-      const stream = await this.ollama.chat({
+      // 获取MCP工具定义
+      const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
+      const tools = await presenter.mcpPresenter.mcpToolsToOpenAITools(mcpTools, this.provider.id)
+
+      // 记录已处理的工具响应ID
+      const processedToolCallIds = new Set<string>()
+
+      // 维护消息上下文
+      const conversationMessages = [...messages]
+
+      // 记录是否需要继续对话
+      let needContinueConversation = false
+
+      // 启动初始流
+      let stream = await this.ollama.chat({
         model: modelId,
         messages: messages.map((m) => ({
           role: m.role,
@@ -233,19 +248,304 @@ export class OllamaProvider extends BaseLLMProvider {
           temperature: temperature || 0.7,
           num_predict: maxTokens
         },
+        tools: tools,
         stream: true
       })
 
-      for await (const chunk of stream) {
-        if (chunk.message?.content) {
-          yield {
-            content: chunk.message.content,
-            reasoning_content: undefined
+      let hasCheckedFirstChunk = false
+      let hasReasoningContent = false
+      let buffer = ''
+      let isInThinkTag = false
+      let initialBuffer = '' // 用于累积开头的内容
+      const WINDOW_SIZE = 10 // 滑动窗口大小
+
+      // 辅助函数：清理标签并返回清理后的位置
+      const cleanTag = (text: string, tag: string): { cleanedPosition: number; found: boolean } => {
+        const tagIndex = text.indexOf(tag)
+        if (tagIndex === -1) return { cleanedPosition: 0, found: false }
+
+        // 查找标签结束位置（跳过可能的空白字符）
+        let endPosition = tagIndex + tag.length
+        while (endPosition < text.length && /\s/.test(text[endPosition])) {
+          endPosition++
+        }
+        return { cleanedPosition: endPosition, found: true }
+      }
+
+      // 收集完整的助手响应
+      let fullAssistantResponse = ''
+      let pendingToolCalls: Array<{
+        id: string
+        function: { name: string; arguments: string }
+        type: 'function'
+        index: number
+      }> = []
+
+      while (true) {
+        for await (const chunk of stream) {
+          const choice = chunk.message
+
+          // 处理工具调用
+          if (choice?.tool_calls && choice.tool_calls.length > 0) {
+            // 初始化tool_calls数组（如果尚未初始化）
+            if (!pendingToolCalls) {
+              pendingToolCalls = []
+            }
+
+            // 更新工具调用
+            for (const toolCall of choice.tool_calls) {
+              const existingToolCall = pendingToolCalls.find((tc) => tc.id === toolCall.id)
+
+              if (existingToolCall) {
+                // 更新现有工具调用
+                if (toolCall.function) {
+                  if (toolCall.function.name && !existingToolCall.function.name) {
+                    existingToolCall.function.name = toolCall.function.name
+                  }
+
+                  if (toolCall.function.arguments) {
+                    existingToolCall.function.arguments = toolCall.function.arguments
+                  }
+                }
+              } else {
+                // 添加新的工具调用
+                pendingToolCalls.push({
+                  id: toolCall.id,
+                  type: 'function',
+                  index: pendingToolCalls.length,
+                  function: {
+                    name: toolCall.function.name,
+                    arguments: toolCall.function.arguments
+                  }
+                })
+              }
+            }
+
+            // 通知工具调用更新
+            yield {
+              content: ''
+            }
+
+            continue
           }
+
+          // 处理工具调用完成的情况
+          if (choice?.content === null && pendingToolCalls.length > 0) {
+            needContinueConversation = true
+
+            // 添加助手消息到上下文
+            conversationMessages.push({
+              role: 'assistant',
+              content: fullAssistantResponse,
+              tool_calls: pendingToolCalls
+            })
+
+            // 处理工具调用并获取工具响应
+            for (const toolCall of pendingToolCalls) {
+              if (processedToolCallIds.has(toolCall.id)) {
+                continue
+              }
+
+              processedToolCallIds.add(toolCall.id)
+
+              try {
+                // 转换为MCP工具
+                const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
+                  mcpTools,
+                  {
+                    function: {
+                      name: toolCall.function.name,
+                      arguments: toolCall.function.arguments
+                    }
+                  },
+                  this.provider.id
+                )
+
+                if (!mcpTool) {
+                  console.warn(`Tool not found: ${toolCall.function.name}`)
+                  continue
+                }
+
+                // 通知调用工具
+                yield {
+                  content: `\n<tool_call_end name="${toolCall.function.name}">\n`
+                }
+
+                // 调用工具
+                const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
+
+                // 将工具响应添加到消息中
+                conversationMessages.push({
+                  role: 'tool',
+                  content:
+                    typeof toolCallResponse.content === 'string'
+                      ? toolCallResponse.content
+                      : JSON.stringify(toolCallResponse.content),
+                  tool_call_id: toolCall.id
+                })
+              } catch (error: unknown) {
+                const errorMessage = error instanceof Error ? error.message : '未知错误'
+                console.error(`Error calling tool ${toolCall.function.name}:`, error)
+
+                // 通知工具调用失败
+                yield {
+                  content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n`
+                }
+
+                // 添加错误响应到消息中
+                conversationMessages.push({
+                  role: 'tool',
+                  content: `Error: ${errorMessage}`,
+                  tool_call_id: toolCall.id
+                })
+              }
+            }
+
+            // 重置变量，准备继续对话
+            pendingToolCalls = []
+            fullAssistantResponse = ''
+            break
+          }
+
+          // 处理普通内容
+          const content = choice?.content || ''
+          if (!content) continue
+
+          // 累积完整响应
+          fullAssistantResponse += content
+
+          // 检查是否包含 <think> 标签
+          if (!hasCheckedFirstChunk) {
+            initialBuffer += content
+            if (
+              initialBuffer.includes('<think>') ||
+              (initialBuffer.length >= 6 && !'<think>'.startsWith(initialBuffer.trimStart()))
+            ) {
+              hasCheckedFirstChunk = true
+              const trimmedContent = initialBuffer.trimStart()
+              hasReasoningContent = trimmedContent.includes('<think>')
+
+              if (!hasReasoningContent) {
+                yield {
+                  content: initialBuffer
+                }
+                initialBuffer = ''
+              } else {
+                buffer = initialBuffer
+                initialBuffer = ''
+                if (buffer.includes('<think>')) {
+                  isInThinkTag = true
+                  const thinkStart = buffer.indexOf('<think>')
+                  if (thinkStart > 0) {
+                    yield {
+                      content: buffer.substring(0, thinkStart)
+                    }
+                  }
+                  const { cleanedPosition } = cleanTag(buffer, '<think>')
+                  buffer = buffer.substring(cleanedPosition)
+                }
+              }
+              continue
+            } else {
+              continue
+            }
+          }
+
+          if (!hasReasoningContent) {
+            yield {
+              content: content
+            }
+            continue
+          }
+
+          if (!isInThinkTag && buffer.includes('<think>')) {
+            isInThinkTag = true
+            const thinkStart = buffer.indexOf('<think>')
+            if (thinkStart > 0) {
+              yield {
+                content: buffer.substring(0, thinkStart)
+              }
+            }
+            const { cleanedPosition } = cleanTag(buffer, '<think>')
+            buffer = buffer.substring(cleanedPosition)
+          } else if (isInThinkTag) {
+            buffer += content
+            const { found: hasEndTag, cleanedPosition } = cleanTag(buffer, '</think>')
+            if (hasEndTag) {
+              const thinkEnd = buffer.indexOf('</think>')
+              if (thinkEnd > 0) {
+                yield {
+                  reasoning_content: buffer.substring(0, thinkEnd)
+                }
+              }
+              buffer = buffer.substring(cleanedPosition)
+              isInThinkTag = false
+              hasReasoningContent = false
+
+              if (buffer) {
+                yield {
+                  content: buffer
+                }
+                buffer = ''
+              }
+            } else {
+              if (buffer.length > WINDOW_SIZE) {
+                const contentToYield = buffer.slice(0, -WINDOW_SIZE)
+                yield {
+                  reasoning_content: contentToYield
+                }
+                buffer = buffer.slice(-WINDOW_SIZE)
+              }
+            }
+          } else {
+            buffer += content
+            yield {
+              content: buffer
+            }
+            buffer = ''
+          }
+        }
+
+        // 如果需要继续对话，创建新的流
+        if (needContinueConversation) {
+          needContinueConversation = false
+          stream = await this.ollama.chat({
+            model: modelId,
+            messages: conversationMessages.map((m) => ({
+              role: m.role,
+              content: m.content,
+              tool_calls: m.tool_calls
+            })),
+            options: {
+              temperature: temperature || 0.7,
+              num_predict: maxTokens
+            },
+            tools: tools,
+            stream: true
+          })
+        } else {
+          // 对话结束
+          break
         }
       }
 
-      // 最终流结束时不需要传递 isEnd 参数
+      // 处理剩余的 buffer
+      if (initialBuffer) {
+        yield {
+          content: initialBuffer
+        }
+      }
+      if (buffer) {
+        if (isInThinkTag) {
+          yield {
+            reasoning_content: buffer
+          }
+        } else {
+          yield {
+            content: buffer
+          }
+        }
+      }
     } catch (error) {
       console.error('Ollama stream completions failed:', error)
       throw error
