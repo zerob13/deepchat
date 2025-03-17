@@ -1528,7 +1528,8 @@ export class ThreadPresenter implements IThreadPresenter {
       modelId || conversation.settings.modelId
     )
     console.log('-------------> title \n', title)
-    const cleanedTitle = title.replace(/<think>.*?<\/think>/g, '').trim()
+    let cleanedTitle = title.replace(/<think>.*?<\/think>/g, '').trim()
+    cleanedTitle = cleanedTitle.replace(/^<think>/, '').trim()
     console.log('-------------> cleanedTitle \n', cleanedTitle)
     return cleanedTitle
   }
