@@ -469,13 +469,13 @@ const addCustomSearchEngine = async () => {
 let proxyUrlDebounceTimer: number | null = null
 
 const languageOptions = [
-  { value: 'system', label: '🌐 跟随系统' },
-  { value: 'zh-CN', label: '🇨🇳 简体中文' },
-  { value: 'en-US', label: '🇺🇸 English (US)' },
-  { value: 'zh-HK', label: '🇭🇰 繁體中文' },
-  { value: 'ko-KR', label: '🇰🇷 한국어' },
-  { value: 'ru-RU', label: '🇷🇺 Русский' },
-  { value: 'ja-JP', label: '🇯🇵 日本語' }
+  { value: 'system', label: '跟随系统' },
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en-US', label: 'English (US)' },
+  { value: 'zh-HK', label: '繁體中文' },
+  { value: 'ko-KR', label: '한국어' },
+  { value: 'ru-RU', label: 'Русский' },
+  { value: 'ja-JP', label: '日本語' }
 ]
 
 const proxyModes = [
