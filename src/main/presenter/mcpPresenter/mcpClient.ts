@@ -56,8 +56,10 @@ export class McpClient {
       this.workingDirectory = serverConfig.args[1] as string
     }
 
-    const runtimePath = path.join(app.getAppPath(), 'resources', 'mcp', 'runtime', 'node')
-
+    const runtimePath = path
+      .join(app.getAppPath(), 'runtime', 'node')
+      .replace('app.asar', 'app.asar.unpacked')
+    console.log('runtimePath', runtimePath)
     // 检查运行时文件是否存在
     if (process.platform === 'win32') {
       const nodeExe = path.join(runtimePath, 'node.exe')
