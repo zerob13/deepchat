@@ -51,14 +51,14 @@ export const DEFAULT_PROVIDERS: LLM_PROVIDER_BASE[] = [
     name: 'QwenLM',
     apiType: 'qwenlm',
     apiKey: '',
-    baseUrl: 'https://chat.qwenlm.ai/api/',
+    baseUrl: 'https://chat.qwenlm.ai/api',
     enable: false,
     websites: {
       official: 'https://chat.qwenlm.ai',
       apiKey: 'https://chat.qwenlm.ai',
       docs: 'https://chat.qwenlm.ai',
       models: 'https://chat.qwenlm.ai',
-      defaultBaseUrl: 'https://chat.qwenlm.ai/api/'
+      defaultBaseUrl: 'https://chat.qwenlm.ai/api'
     }
   },
   {
