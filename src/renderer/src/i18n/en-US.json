@@ -358,7 +358,16 @@
         "submit": "Submit",
         "add": "Add",
         "update": "Update",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "jsonConfigIntro": "You can paste a JSON configuration directly or choose to configure the server manually.",
+        "jsonConfig": "JSON Configuration",
+        "jsonConfigPlaceholder": "Paste your MCP server configuration in JSON format",
+        "jsonConfigExample": "JSON Configuration Example",
+        "parseSuccess": "Configuration Parsed",
+        "configImported": "Configuration imported successfully",
+        "parseError": "Parse Error",
+        "skipToManual": "Skip to Manual Configuration",
+        "parseAndContinue": "Parse & Continue"
       },
       "deleteServer": "Delete Server",
       "editServer": "Edit Server",

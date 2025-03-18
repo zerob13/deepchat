@@ -16,8 +16,10 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { MCPServerConfig } from '@shared/presenter'
 import { EmojiPicker } from '@/components/ui/emoji-picker'
+import { useToast } from '@/components/ui/toast'
 
 const { t } = useI18n()
+const { toast } = useToast()
 
 const props = defineProps<{
   serverName?: string
@@ -52,6 +54,10 @@ const autoApproveWrite = ref(
     false
 )
 
+// 简单表单状态
+const currentStep = ref(props.editMode ? 'detailed' : 'simple')
+const jsonConfig = ref('')
+
 // 当type变更时处理baseUrl的显示逻辑
 const showBaseUrl = computed(() => type.value === 'sse')
 
@@ -61,6 +67,65 @@ const handleAutoApproveAllChange = (checked: boolean) => {
     autoApproveRead.value = true
     autoApproveWrite.value = true
   }
+}
+
+// JSON配置解析
+const parseJsonConfig = () => {
+  try {
+    const parsedConfig = JSON.parse(jsonConfig.value)
+    if (!parsedConfig.mcpServers || typeof parsedConfig.mcpServers !== 'object') {
+      throw new Error('Invalid MCP server configuration format')
+    }
+
+    // 获取第一个服务器的配置
+    const serverEntries = Object.entries(parsedConfig.mcpServers)
+    if (serverEntries.length === 0) {
+      throw new Error('No MCP servers found in configuration')
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [serverName, serverConfig] = serverEntries[0] as [string, any]
+
+    // 填充表单数据
+    name.value = serverName
+    command.value = serverConfig.command || 'npx'
+    args.value = serverConfig.args?.join(' ') || ''
+    env.value = JSON.stringify(serverConfig.env || {}, null, 2)
+    descriptions.value = serverConfig.descriptions || ''
+    icons.value = serverConfig.icons || '📁'
+    type.value = serverConfig.type || 'stdio'
+    baseUrl.value = serverConfig.baseUrl || ''
+
+    // 权限设置
+    autoApproveAll.value = serverConfig.autoApprove?.includes('all') || false
+    autoApproveRead.value =
+      serverConfig.autoApprove?.includes('read') ||
+      serverConfig.autoApprove?.includes('all') ||
+      false
+    autoApproveWrite.value =
+      serverConfig.autoApprove?.includes('write') ||
+      serverConfig.autoApprove?.includes('all') ||
+      false
+
+    // 切换到详细表单
+    currentStep.value = 'detailed'
+
+    toast({
+      title: t('settings.mcp.serverForm.parseSuccess'),
+      description: t('settings.mcp.serverForm.configImported')
+    })
+  } catch (error) {
+    toast({
+      title: t('settings.mcp.serverForm.parseError'),
+      description: error instanceof Error ? error.message : String(error),
+      variant: 'destructive'
+    })
+  }
+}
+
+// 切换到详细表单
+const goToDetailedForm = () => {
+  currentStep.value = 'detailed'
 }
 
 // 验证
@@ -115,10 +180,51 @@ const handleSubmit = () => {
 
   emit('submit', name.value.trim(), serverConfig)
 }
+
+const placeholder = `mcp配置示例
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        ...
+      ]
+    }
+  }
+}`
 </script>
 
 <template>
-  <form class="space-y-2 h-full flex flex-col" @submit.prevent="handleSubmit">
+  <!-- 简单表单 -->
+  <form v-if="currentStep === 'simple'" class="space-y-4 h-full flex flex-col">
+    <ScrollArea class="h-0 flex-grow">
+      <div class="space-y-4 px-4 pb-4">
+        <div class="text-sm">
+          {{ t('settings.mcp.serverForm.jsonConfigIntro') }}
+        </div>
+
+        <div class="space-y-2">
+          <Label class="text-xs text-muted-foreground" for="json-config">
+            {{ t('settings.mcp.serverForm.jsonConfig') }}
+          </Label>
+          <Textarea id="json-config" v-model="jsonConfig" rows="10" :placeholder="placeholder" />
+        </div>
+      </div>
+    </ScrollArea>
+
+    <div class="flex justify-between pt-2 border-t px-4">
+      <Button type="button" variant="outline" size="sm" @click="goToDetailedForm">
+        {{ t('settings.mcp.serverForm.skipToManual') }}
+      </Button>
+      <Button type="button" size="sm" @click="parseJsonConfig">
+        {{ t('settings.mcp.serverForm.parseAndContinue') }}
+      </Button>
+    </div>
+  </form>
+
+  <!-- 详细表单 -->
+  <form v-else class="space-y-2 h-full flex flex-col" @submit.prevent="handleSubmit">
     <ScrollArea class="h-0 flex-grow">
       <div class="space-y-2 px-4 pb-4">
         <!-- 服务器名称 -->
