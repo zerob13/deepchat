@@ -137,7 +137,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     // 获取MCP工具定义
     const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
-    const tools = await presenter.mcpPresenter.mcpToolsToOpenAITools(mcpTools, this.provider.id)
+    const tools =
+      mcpTools.length > 0
+        ? await presenter.mcpPresenter.mcpToolsToOpenAITools(mcpTools, this.provider.id)
+        : undefined
 
     // 记录已处理的工具响应ID
     const processedToolCallIds = new Set<string>()
@@ -148,15 +151,22 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // 记录是否需要继续对话
     let needContinueConversation = false
 
-    // 启动初始流
-    let stream = await this.openai.chat.completions.create({
+    // 创建基本请求参数
+    const requestParams: OpenAI.Chat.ChatCompletionCreateParams = {
       messages: messages as ChatCompletionMessageParam[],
       model: modelId,
       stream: true,
       temperature: temperature,
-      max_tokens: maxTokens,
-      tools: tools
-    })
+      max_tokens: maxTokens
+    }
+
+    // 只有在有工具且工具列表不为空时才添加工具参数
+    if (tools && tools.length > 0) {
+      requestParams.tools = tools
+    }
+
+    // 启动初始流
+    let stream = await this.openai.chat.completions.create(requestParams)
 
     let hasCheckedFirstChunk = false
     let hasReasoningContent = false
@@ -467,14 +477,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       // 如果需要继续对话，创建新的流
       if (needContinueConversation) {
         needContinueConversation = false
-        stream = await this.openai.chat.completions.create({
-          messages: conversationMessages as ChatCompletionMessageParam[],
-          model: modelId,
-          stream: true,
-          temperature: temperature,
-          max_tokens: maxTokens,
-          tools: tools
-        })
+        stream = await this.openai.chat.completions.create(requestParams)
       } else {
         // 对话结束
         break

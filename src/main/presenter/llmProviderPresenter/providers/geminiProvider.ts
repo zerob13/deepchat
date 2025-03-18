@@ -480,19 +480,23 @@ export class GeminiProvider extends BaseLLMProvider {
       const formattedParts = this.formatGeminiMessages(messages)
 
       // 创建流式生成请求
-      // 直接使用 @ts-ignore，因为 Gemini SDK 类型定义与实际 API 有差异
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const requestParams: any = {
+        contents: formattedParts
+      }
+
+      // 只有在有工具且工具列表不为空时才添加工具参数
+      if (geminiTools && geminiTools.length > 0) {
+        requestParams.tools = geminiTools
+        requestParams.toolConfig = {
+          functionCallingConfig: {
+            mode: 'AUTO' // 允许模型自动决定是否调用工具
+          }
+        }
+      }
+
       // @ts-ignore - Gemini SDK类型定义与实际API有差异
-      const result = await model.generateContentStream({
-        contents: formattedParts,
-        tools: geminiTools,
-        toolConfig: geminiTools
-          ? {
-              functionCallingConfig: {
-                mode: 'AUTO' // 允许模型自动决定是否调用工具
-              }
-            }
-          : undefined
-      })
+      const result = await model.generateContentStream(requestParams)
 
       // 处理流式响应
       let buffer = ''

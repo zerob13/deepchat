@@ -406,6 +406,7 @@ ${context}
     try {
       // 获取MCP工具定义
       const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
+
       // 将MCP工具转换为Anthropic工具格式
       const anthropicTools =
         mcpTools.length > 0
@@ -421,7 +422,7 @@ ${context}
         stream: true
       } as Anthropic.Messages.MessageCreateParamsStreaming
 
-      // 添加工具到参数中
+      // 只有在有工具且工具列表不为空时才添加工具参数
       if (anthropicTools && anthropicTools.length > 0) {
         // @ts-ignore - 类型不匹配，但格式是正确的
         streamParams.tools = anthropicTools
@@ -636,7 +637,7 @@ ${context}
                   stream: true
                 } as Anthropic.Messages.MessageCreateParamsStreaming
 
-                // 添加工具到新参数
+                // 只有在有工具且工具列表不为空时才添加工具参数
                 if (anthropicTools && anthropicTools.length > 0) {
                   // @ts-ignore - 类型不匹配，但格式是正确的
                   newStreamParams.tools = anthropicTools

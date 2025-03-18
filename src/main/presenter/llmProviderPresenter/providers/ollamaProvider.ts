@@ -4,12 +4,33 @@ import {
   LLMResponseStream,
   MODEL_META,
   OllamaModel,
-  ProgressResponse
+  ProgressResponse,
+  MCPToolDefinition
 } from '@shared/presenter'
 import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import { ConfigPresenter } from '../../configPresenter'
 import { Ollama, Message, ShowResponse } from 'ollama'
 import { presenter } from '@/presenter'
+
+// 定义 Ollama 工具类型
+interface OllamaTool {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: {
+      type: 'object'
+      properties: {
+        [key: string]: {
+          type: string
+          description: string
+          enum?: string[]
+        }
+      }
+      required: string[]
+    }
+  }
+}
 
 export class OllamaProvider extends BaseLLMProvider {
   private ollama: Ollama
@@ -247,7 +268,8 @@ export class OllamaProvider extends BaseLLMProvider {
           temperature: temperature || 0.7,
           num_predict: maxTokens
         },
-        stream: true
+        stream: true,
+        tools: mcpTools.length > 0 ? await this.convertToOllamaTools(mcpTools) : undefined
       })
 
       let hasCheckedFirstChunk = false
@@ -282,7 +304,6 @@ export class OllamaProvider extends BaseLLMProvider {
       while (true) {
         for await (const chunk of stream) {
           const choice = chunk.message
-
           // 处理工具调用
           if (choice?.tool_calls && choice.tool_calls.length > 0) {
             // 初始化tool_calls数组（如果尚未初始化）
@@ -332,7 +353,10 @@ export class OllamaProvider extends BaseLLMProvider {
           }
 
           // 处理工具调用完成的情况
-          if (choice?.content === null && pendingToolCalls.length > 0) {
+          if (
+            (choice?.content?.length == 0 || choice?.content === null) &&
+            pendingToolCalls.length > 0
+          ) {
             needContinueConversation = true
 
             // 添加助手消息到上下文
@@ -367,17 +391,18 @@ export class OllamaProvider extends BaseLLMProvider {
                   continue
                 }
 
+                yield {
+                  content: `\n<tool_call name="${toolCall.function.name}">\n`
+                }
+                // 调用工具
+                const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
                 // 通知调用工具
                 yield {
                   content: `\n<tool_call_end name="${toolCall.function.name}">\n`
                 }
-
-                // 调用工具
-                const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
-
                 // 将工具响应添加到消息中
                 conversationMessages.push({
-                  role: 'assistant',
+                  role: 'tool',
                   content:
                     typeof toolCallResponse.content === 'string'
                       ? toolCallResponse.content
@@ -394,7 +419,7 @@ export class OllamaProvider extends BaseLLMProvider {
 
                 // 添加错误响应到消息中
                 conversationMessages.push({
-                  role: 'assistant',
+                  role: 'tool',
                   content: `Error: ${errorMessage}`
                 })
               }
@@ -515,7 +540,8 @@ export class OllamaProvider extends BaseLLMProvider {
               temperature: temperature || 0.7,
               num_predict: maxTokens
             },
-            stream: true
+            stream: true,
+            tools: mcpTools.length > 0 ? await this.convertToOllamaTools(mcpTools) : undefined
           })
         } else {
           // 对话结束
@@ -682,5 +708,51 @@ export class OllamaProvider extends BaseLLMProvider {
       console.error(`Failed to show Ollama model info for ${modelName}:`, (error as Error).message)
       throw error
     }
+  }
+
+  // 辅助方法：将 MCP 工具转换为 Ollama 工具格式
+  private async convertToOllamaTools(mcpTools: MCPToolDefinition[]): Promise<OllamaTool[]> {
+    const openAITools = await presenter.mcpPresenter.mcpToolsToOpenAITools(
+      mcpTools,
+      this.provider.id
+    )
+    return openAITools.map((rawTool) => {
+      const tool = rawTool as unknown as {
+        function: {
+          name: string
+          description?: string
+          parameters: { properties: Record<string, unknown>; required?: string[] }
+        }
+      }
+      const properties = tool.function.parameters.properties || {}
+      const convertedProperties: Record<
+        string,
+        { type: string; description: string; enum?: string[] }
+      > = {}
+
+      for (const [key, value] of Object.entries(properties)) {
+        if (typeof value === 'object' && value !== null) {
+          const param = value as { type: unknown; description: unknown; enum?: string[] }
+          convertedProperties[key] = {
+            type: String(param.type || 'string'),
+            description: String(param.description || ''),
+            ...(param.enum ? { enum: param.enum } : {})
+          }
+        }
+      }
+
+      return {
+        type: 'function' as const,
+        function: {
+          name: tool.function.name,
+          description: tool.function.description || '',
+          parameters: {
+            type: 'object' as const,
+            properties: convertedProperties,
+            required: tool.function.parameters.required || []
+          }
+        }
+      }
+    })
   }
 }
