@@ -105,21 +105,37 @@ export const useBlockContent = (props: {
       // antArtifact 标签 (未闭合)
       {
         name: 'artifact-unclosed',
-        regex: /<antArtifact\s+([^>]*)>([^<]*)/s,
+        // 匹配开始的标签和属性，后面跟着所有剩余内容
+        regex:
+          /<antArtifact\s+(?=.*\btype="([^"]+)")(?=.*\bidentifier="([^"]+)")(?=.*\btitle="([^"]+)")(?:\s+language="([^"]+)")?\s*(?:[^>]*?)>([\s\S]*)/s,
         process: (match: RegExpExecArray) => {
-          const attributesStr = match[1]
-          const content = match[2].trim()
-          const attributes = parseAttributes(attributesStr)
+          // 提取完整的标签内容用于属性匹配
+          const openingTag = match[0].substring(0, match[0].indexOf('>') + 1)
+          const typeMatch = openingTag.match(/type="([^"]+)"/)
+          const identifierMatch = openingTag.match(/identifier="([^"]+)"/)
+          const titleMatch = openingTag.match(/title="([^"]+)"/)
+          const languageMatch = openingTag.match(/language="([^"]+)"/)
+
+          // 提取内容部分 - 直接使用捕获组获取内容，更可靠
+          const content = match[5] ? match[5].trim() : ''
+
+          // 添加调试日志
+          console.log('Processing unclosed artifact:', {
+            type: typeMatch ? typeMatch[1] : 'text/markdown',
+            identifier: identifierMatch ? identifierMatch[1] : '',
+            title: titleMatch ? titleMatch[1] : '',
+            contentLength: content.length
+          })
 
           return {
             type: 'artifact' as const,
             content,
             loading: true,
             artifact: {
-              identifier: attributes.identifier || '',
-              title: attributes.title || '',
-              type: (attributes.type || 'text/markdown') as ArtifactType,
-              language: attributes.language
+              identifier: identifierMatch ? identifierMatch[1] : '',
+              title: titleMatch ? titleMatch[1] : '',
+              type: typeMatch ? (typeMatch[1] as ArtifactType) : 'text/markdown',
+              language: languageMatch ? languageMatch[1] : undefined
             }
           }
         }
@@ -355,7 +371,17 @@ export const useBlockContent = (props: {
           // 移动到标签结束位置
           if (pattern.name.includes('unclosed')) {
             // 未闭合标签，移动到匹配内容之后
-            currentPosition = earliestMatch.index + match[0].length
+            if (pattern.name === 'artifact-unclosed') {
+              // 对于未闭合的artifact标签，将剩余的所有内容都归属于它
+              console.log(
+                'Setting currentPosition to end of content for unclosed artifact at index:',
+                earliestMatch.index
+              )
+              console.log('Content length:', content.length)
+              currentPosition = content.length
+            } else {
+              currentPosition = earliestMatch.index + match[0].length
+            }
           } else {
             // 闭合标签，移动到结束标签之后
             const fullTagLength =
