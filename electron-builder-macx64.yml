@@ -21,6 +21,8 @@ files:
   - '!*.config.ts'
 asarUnpack:
   - resources/**
+  - '**/node_modules/sharp/**/*'
+  - '**/node_modules/@img/**/*'
 afterSign: scripts/notarize.js
 afterPack: scripts/afterPack.js
 mac:

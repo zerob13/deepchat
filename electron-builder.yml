@@ -21,6 +21,8 @@ files:
   - '!*.config.ts'
 asarUnpack:
   - resources/**
+  - '**/node_modules/sharp/**/*'
+  - '**/node_modules/@img/**/*'
 win:
   executableName: DeepChat
 nsis:

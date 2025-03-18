@@ -18,6 +18,11 @@ export default defineConfig({
         '@': resolve('src/main/'),
         '@shared': resolve('src/shared')
       }
+    },
+    build: {
+      rollupOptions: {
+        external: ['sharp']
+      }
     }
   },
   preload: {
