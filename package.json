@@ -27,7 +27,8 @@
     "build:linux:x64": "npm run build && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build && electron-builder --linux --arm64",
     "afterSign": "scripts/notarize.js",
-    "installRuntime": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 --no-docs --no-dev --no-sourcemaps"
+    "installRuntime": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 --no-docs --no-dev --no-sourcemaps",
+    "cleanRuntime": "rm -rf resources/mcp/runtime/node"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -123,6 +123,7 @@ export class McpClient {
             }
           }
         }
+        console.log('final command', command)
 
         // 修复env类型问题
         const env: Record<string, string> = {}
