@@ -39,34 +39,39 @@ export class McpConfHelper {
       defaults: {
         mcpServers: DEFAULT_MCP_SERVERS.mcpServers,
         defaultServer: DEFAULT_MCP_SERVERS.defaultServer,
-        mcpEnabled: DEFAULT_MCP_SERVERS.mcpEnabled // 设置默认值
+        mcpEnabled: DEFAULT_MCP_SERVERS.mcpEnabled
       }
     })
   }
 
-  // 获取MCP配置
-  getMcpConfig(): Promise<{
-    mcpServers: Record<string, MCPServerConfig>
-    defaultServer: string
-    mcpEnabled: boolean
-  }> {
-    return Promise.resolve({
-      mcpServers: this.mcpStore.get('mcpServers') || DEFAULT_MCP_SERVERS.mcpServers,
-      defaultServer: this.mcpStore.get('defaultServer') || DEFAULT_MCP_SERVERS.defaultServer,
-      mcpEnabled: this.mcpStore.get('mcpEnabled') ?? DEFAULT_MCP_SERVERS.mcpEnabled
+  // 获取MCP服务器配置
+  getMcpServers(): Promise<Record<string, MCPServerConfig>> {
+    return Promise.resolve(this.mcpStore.get('mcpServers') || DEFAULT_MCP_SERVERS.mcpServers)
+  }
+
+  // 设置MCP服务器配置
+  async setMcpServers(servers: Record<string, MCPServerConfig>): Promise<void> {
+    this.mcpStore.set('mcpServers', servers)
+    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, {
+      mcpServers: servers,
+      defaultServer: this.mcpStore.get('defaultServer'),
+      mcpEnabled: this.mcpStore.get('mcpEnabled')
     })
   }
 
-  // 设置MCP配置
-  async setMcpConfig(config: {
-    mcpServers: Record<string, MCPServerConfig>
-    defaultServer: string
-    mcpEnabled: boolean
-  }): Promise<void> {
-    this.mcpStore.set('mcpServers', config.mcpServers)
-    this.mcpStore.set('defaultServer', config.defaultServer)
-    this.mcpStore.set('mcpEnabled', config.mcpEnabled)
-    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, config)
+  // 获取默认服务器
+  getMcpDefaultServer(): Promise<string> {
+    return Promise.resolve(this.mcpStore.get('defaultServer') || DEFAULT_MCP_SERVERS.defaultServer)
+  }
+
+  // 设置默认服务器
+  async setMcpDefaultServer(serverName: string): Promise<void> {
+    this.mcpStore.set('defaultServer', serverName)
+    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, {
+      mcpServers: this.mcpStore.get('mcpServers'),
+      defaultServer: serverName,
+      mcpEnabled: this.mcpStore.get('mcpEnabled')
+    })
   }
 
   // 获取MCP启用状态
@@ -77,84 +82,43 @@ export class McpConfHelper {
   // 设置MCP启用状态
   async setMcpEnabled(enabled: boolean): Promise<void> {
     this.mcpStore.set('mcpEnabled', enabled)
-    const mcpConfig = {
+    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, {
       mcpServers: this.mcpStore.get('mcpServers'),
       defaultServer: this.mcpStore.get('defaultServer'),
       mcpEnabled: enabled
-    }
-    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, mcpConfig)
+    })
   }
 
   // 添加MCP服务器
   async addMcpServer(name: string, config: MCPServerConfig): Promise<void> {
-    const mcpServers = this.mcpStore.get('mcpServers')
+    const mcpServers = await this.getMcpServers()
     mcpServers[name] = config
-    this.mcpStore.set('mcpServers', mcpServers)
-
-    const mcpConfig = {
-      mcpServers: mcpServers,
-      defaultServer: this.mcpStore.get('defaultServer')
-    }
-    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, mcpConfig)
+    await this.setMcpServers(mcpServers)
   }
 
   // 移除MCP服务器
   async removeMcpServer(name: string): Promise<void> {
-    const mcpServers = this.mcpStore.get('mcpServers')
+    const mcpServers = await this.getMcpServers()
     delete mcpServers[name]
-    this.mcpStore.set('mcpServers', mcpServers)
+    await this.setMcpServers(mcpServers)
 
     // 如果删除的是默认服务器，则清空默认服务器设置
-    if (this.mcpStore.get('defaultServer') === name) {
-      this.mcpStore.set('defaultServer', '')
+    const defaultServer = await this.getMcpDefaultServer()
+    if (defaultServer === name) {
+      await this.setMcpDefaultServer('')
     }
-
-    const mcpConfig = {
-      mcpServers: mcpServers,
-      defaultServer: this.mcpStore.get('defaultServer')
-    }
-    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, mcpConfig)
   }
 
   // 更新MCP服务器配置
   async updateMcpServer(name: string, config: Partial<MCPServerConfig>): Promise<void> {
-    const mcpServers = this.mcpStore.get('mcpServers')
-
-    // 确保服务器存在
+    const mcpServers = await this.getMcpServers()
     if (!mcpServers[name]) {
       throw new Error(`MCP server ${name} not found`)
     }
-
-    // 更新配置
     mcpServers[name] = {
       ...mcpServers[name],
       ...config
     }
-
-    this.mcpStore.set('mcpServers', mcpServers)
-
-    const mcpConfig = {
-      mcpServers: mcpServers,
-      defaultServer: this.mcpStore.get('defaultServer')
-    }
-    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, mcpConfig)
-  }
-
-  // 设置默认MCP服务器
-  async setDefaultServer(name: string): Promise<void> {
-    const mcpServers = this.mcpStore.get('mcpServers')
-
-    // 确保服务器存在
-    if (!mcpServers[name]) {
-      throw new Error(`MCP server ${name} not found`)
-    }
-
-    this.mcpStore.set('defaultServer', name)
-
-    const mcpConfig = {
-      mcpServers: mcpServers,
-      defaultServer: name
-    }
-    eventBus.emit(MCP_EVENTS.CONFIG_CHANGED, mcpConfig)
+    await this.setMcpServers(mcpServers)
   }
 }

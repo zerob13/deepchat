@@ -397,7 +397,8 @@
       "disabled": "MCP已禁用",
       "enableToUse": "請先啟用MCP以使用工具",
       "enabled": "啟用MCP",
-      "enabledDescription": "啟用MCP功能以使用工具調用"
+      "enabledDescription": "啟用MCP功能以使用工具調用",
+      "empty": "空"
     }
   },
   "welcome": {

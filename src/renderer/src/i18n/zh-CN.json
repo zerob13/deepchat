@@ -429,7 +429,8 @@
       "enabled": "启用MCP",
       "enabledDescription": "启用MCP功能以使用工具调用",
       "jsonInputPlaceholder": "输入JSON格式的参数",
-      "invalidJsonFormat": "无效的JSON格式"
+      "invalidJsonFormat": "无效的JSON格式",
+      "empty": "空"
     }
   },
   "welcome": {

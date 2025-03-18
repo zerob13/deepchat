@@ -8,7 +8,9 @@ const props = defineProps<{
 
 // Get the current selected tab index and update function from parent
 const selectedIndex = inject('selectedIndex', ref(0))
-const updateSelectedIndex = inject('updateSelectedIndex', (index: number) => {})
+const updateSelectedIndex = inject('updateSelectedIndex', (index: number) => {
+  console.log('updateSelectedIndex', index)
+})
 
 // For simplicity in this component, we'll rely on the provided value
 // or just use the parent's selectedIndex state

@@ -6,6 +6,8 @@ import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
 import path from 'path'
 import { presenter } from '@/presenter'
+import { app } from 'electron'
+import fs from 'fs'
 
 // 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
 type MCPEventsType = typeof MCP_EVENTS & {
@@ -43,6 +45,7 @@ export class McpClient {
   private isConnected: boolean = false
   private workingDirectory: string | null = null
   private connectionTimeout: NodeJS.Timeout | null = null
+  private nodeRuntimePath: string | null = null
 
   constructor(serverName: string, serverConfig: Record<string, unknown>) {
     this.serverName = serverName
@@ -51,6 +54,27 @@ export class McpClient {
     // 从配置中获取工作目录
     if (Array.isArray(serverConfig.args) && serverConfig.args.length > 1) {
       this.workingDirectory = serverConfig.args[1] as string
+    }
+
+    const runtimePath = path.join(app.getAppPath(), 'resources', 'mcp', 'runtime', 'node')
+
+    // 检查运行时文件是否存在
+    if (process.platform === 'win32') {
+      const nodeExe = path.join(runtimePath, 'node.exe')
+      const npxCmd = path.join(runtimePath, 'npx.cmd')
+      if (fs.existsSync(nodeExe) && fs.existsSync(npxCmd)) {
+        this.nodeRuntimePath = runtimePath
+      } else {
+        this.nodeRuntimePath = null
+      }
+    } else {
+      const nodeBin = path.join(runtimePath, 'bin', 'node')
+      const npxBin = path.join(runtimePath, 'bin', 'npx')
+      if (fs.existsSync(nodeBin) && fs.existsSync(npxBin)) {
+        this.nodeRuntimePath = runtimePath
+      } else {
+        this.nodeRuntimePath = null
+      }
     }
   }
 
@@ -66,7 +90,7 @@ export class McpClient {
 
       // 创建合适的transport
       if (this.serverConfig.type === 'stdio') {
-        const command = this.serverConfig.command as string
+        let command = this.serverConfig.command as string
 
         // if (command === 'npx') {
         //   // 根据平台确定可执行文件路径
@@ -76,6 +100,29 @@ export class McpClient {
         //     command = 'npx'
         //   }
         // }
+        if (this.nodeRuntimePath) {
+          if (command === 'node') {
+            if (process.platform === 'win32') {
+              command = path.join(this.nodeRuntimePath, 'node.exe')
+            } else {
+              command = path.join(this.nodeRuntimePath, 'bin', 'node')
+            }
+          }
+          if (command === 'npm') {
+            if (process.platform === 'win32') {
+              command = path.join(this.nodeRuntimePath, 'npm.cmd')
+            } else {
+              command = path.join(this.nodeRuntimePath, 'bin', 'npm')
+            }
+          }
+          if (command === 'npx') {
+            if (process.platform === 'win32') {
+              command = path.join(this.nodeRuntimePath, 'npx.cmd')
+            } else {
+              command = path.join(this.nodeRuntimePath, 'bin', 'npx')
+            }
+          }
+        }
 
         // 修复env类型问题
         const env: Record<string, string> = {}
@@ -328,11 +375,11 @@ export class McpClient {
 
 // 工厂函数，用于创建 MCP 客户端
 export async function createMcpClient(serverName: string): Promise<McpClient> {
-  // 从configPresenter获取MCP配置
-  const mcpConfig = await presenter.configPresenter.getMcpConfig()
+  // 从configPresenter获取MCP服务器配置
+  const servers = await presenter.configPresenter.getMcpServers()
 
   // 获取服务器配置
-  const serverConfig = mcpConfig.mcpServers[serverName]
+  const serverConfig = servers[serverName]
   if (!serverConfig) {
     throw new Error(`在配置中未找到MCP服务器 ${serverName}`)
   }

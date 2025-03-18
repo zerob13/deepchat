@@ -130,6 +130,7 @@ const callTool = async (toolName: string) => {
     console.error('调用工具出错:', error)
     localToolResults.value[toolName] = String(error)
   }
+  return
 }
 
 // 监听标签切换

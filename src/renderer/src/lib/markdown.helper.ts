@@ -31,6 +31,7 @@ import mathjax3 from 'markdown-it-mathjax3'
 export const getMarkdown = (msgId: string, t: (key: string) => string) => {
   // import footnote from 'markdown-it-footnote'
   // Create markdown-it instance with configuration
+  console.log('getmarkdown', msgId)
   const md = new MarkdownIt({
     html: true,
     linkify: true,

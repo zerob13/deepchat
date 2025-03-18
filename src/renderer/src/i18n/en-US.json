@@ -409,7 +409,8 @@
       "disabled": "MCP is disabled",
       "enableToUse": "Please enable MCP to use tools",
       "enabled": "Enable MCP",
-      "enabledDescription": "Enable MCP functionality to use tool calls"
+      "enabledDescription": "Enable MCP functionality to use tool calls",
+      "empty": "Empty"
     }
   },
   "welcome": {

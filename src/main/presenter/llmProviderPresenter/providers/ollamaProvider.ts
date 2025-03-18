@@ -226,13 +226,15 @@ export class OllamaProvider extends BaseLLMProvider {
     try {
       // 获取MCP工具定义
       const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
-      const tools = await presenter.mcpPresenter.mcpToolsToOpenAITools(mcpTools, this.provider.id)
 
       // 记录已处理的工具响应ID
       const processedToolCallIds = new Set<string>()
 
       // 维护消息上下文
-      const conversationMessages = [...messages]
+      const conversationMessages = [...messages].map((m) => ({
+        role: m.role,
+        content: m.content
+      })) as Message[]
 
       // 记录是否需要继续对话
       let needContinueConversation = false
@@ -240,15 +242,11 @@ export class OllamaProvider extends BaseLLMProvider {
       // 启动初始流
       let stream = await this.ollama.chat({
         model: modelId,
-        messages: messages.map((m) => ({
-          role: m.role,
-          content: m.content
-        })),
+        messages: conversationMessages,
         options: {
           temperature: temperature || 0.7,
           num_predict: maxTokens
         },
-        tools: tools,
         stream: true
       })
 
@@ -294,7 +292,9 @@ export class OllamaProvider extends BaseLLMProvider {
 
             // 更新工具调用
             for (const toolCall of choice.tool_calls) {
-              const existingToolCall = pendingToolCalls.find((tc) => tc.id === toolCall.id)
+              const existingToolCall = pendingToolCalls.find(
+                (tc) => tc.id === toolCall.function.name
+              )
 
               if (existingToolCall) {
                 // 更新现有工具调用
@@ -304,18 +304,20 @@ export class OllamaProvider extends BaseLLMProvider {
                   }
 
                   if (toolCall.function.arguments) {
-                    existingToolCall.function.arguments = toolCall.function.arguments
+                    existingToolCall.function.arguments = JSON.stringify(
+                      toolCall.function.arguments
+                    )
                   }
                 }
               } else {
                 // 添加新的工具调用
                 pendingToolCalls.push({
-                  id: toolCall.id,
+                  id: toolCall.function.name,
                   type: 'function',
                   index: pendingToolCalls.length,
                   function: {
                     name: toolCall.function.name,
-                    arguments: toolCall.function.arguments
+                    arguments: JSON.stringify(toolCall.function.arguments)
                   }
                 })
               }
@@ -336,8 +338,7 @@ export class OllamaProvider extends BaseLLMProvider {
             // 添加助手消息到上下文
             conversationMessages.push({
               role: 'assistant',
-              content: fullAssistantResponse,
-              tool_calls: pendingToolCalls
+              content: fullAssistantResponse
             })
 
             // 处理工具调用并获取工具响应
@@ -376,12 +377,11 @@ export class OllamaProvider extends BaseLLMProvider {
 
                 // 将工具响应添加到消息中
                 conversationMessages.push({
-                  role: 'tool',
+                  role: 'assistant',
                   content:
                     typeof toolCallResponse.content === 'string'
                       ? toolCallResponse.content
-                      : JSON.stringify(toolCallResponse.content),
-                  tool_call_id: toolCall.id
+                      : JSON.stringify(toolCallResponse.content)
                 })
               } catch (error: unknown) {
                 const errorMessage = error instanceof Error ? error.message : '未知错误'
@@ -394,9 +394,8 @@ export class OllamaProvider extends BaseLLMProvider {
 
                 // 添加错误响应到消息中
                 conversationMessages.push({
-                  role: 'tool',
-                  content: `Error: ${errorMessage}`,
-                  tool_call_id: toolCall.id
+                  role: 'assistant',
+                  content: `Error: ${errorMessage}`
                 })
               }
             }
@@ -511,16 +510,11 @@ export class OllamaProvider extends BaseLLMProvider {
           needContinueConversation = false
           stream = await this.ollama.chat({
             model: modelId,
-            messages: conversationMessages.map((m) => ({
-              role: m.role,
-              content: m.content,
-              tool_calls: m.tool_calls
-            })),
+            messages: conversationMessages,
             options: {
               temperature: temperature || 0.7,
               num_predict: maxTokens
             },
-            tools: tools,
             stream: true
           })
         } else {

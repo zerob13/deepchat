@@ -402,7 +402,8 @@
       "disabled": "MCPは無効です",
       "enableToUse": "ツールを使用するにはMCPを有効にしてください",
       "enabled": "MCPを有効化",
-      "enabledDescription": "ツール呼び出しを使用するためにMCP機能を有効にします"
+      "enabledDescription": "ツール呼び出しを使用するためにMCP機能を有効にします",
+      "empty": "空"
     }
   },
   "welcome": {

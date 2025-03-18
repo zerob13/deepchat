@@ -407,7 +407,8 @@
       "disabled": "MCP가 비활성화됨",
       "enableToUse": "도구를 사용하려면 MCP를 활성화하세요",
       "enabled": "MCP 활성화",
-      "enabledDescription": "도구 호출을 사용하도록 MCP 기능 활성화"
+      "enabledDescription": "도구 호출을 사용하도록 MCP 기능 활성화",
+      "empty": "비어있음"
     }
   },
   "welcome": {

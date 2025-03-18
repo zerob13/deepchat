@@ -1,10 +1,4 @@
-import {
-  IMCPPresenter,
-  MCPConfig,
-  MCPServerConfig,
-  MCPToolDefinition,
-  MCPToolCall
-} from '@shared/presenter'
+import { IMCPPresenter, MCPServerConfig, MCPToolDefinition, MCPToolCall } from '@shared/presenter'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
 import { eventBus } from '@/eventbus'
@@ -115,11 +109,14 @@ export class McpPresenter implements IMCPPresenter {
       }
 
       // 加载配置
-      const config = await this.configPresenter.getMcpConfig()
+      const [servers, defaultServer] = await Promise.all([
+        this.configPresenter.getMcpServers(),
+        this.configPresenter.getMcpDefaultServer()
+      ])
 
       // 如果有默认服务器，尝试启动
-      if (config.defaultServer && config.mcpServers[config.defaultServer]) {
-        const serverName = config.defaultServer
+      if (defaultServer && servers[defaultServer]) {
+        const serverName = defaultServer
         console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
 
         try {
@@ -137,30 +134,38 @@ export class McpPresenter implements IMCPPresenter {
     }
   }
 
-  async getMcpConfig(): Promise<MCPConfig> {
-    return this.configPresenter.getMcpConfig()
+  // 获取MCP服务器配置
+  getMcpServers(): Promise<Record<string, MCPServerConfig>> {
+    return this.configPresenter.getMcpServers()
   }
 
+  // 获取默认MCP服务器
+  getMcpDefaultServer(): Promise<string> {
+    return this.configPresenter.getMcpDefaultServer()
+  }
+
+  // 设置默认MCP服务器
+  async setMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.setMcpDefaultServer(serverName)
+  }
+
+  // 添加MCP服务器
   async addMcpServer(serverName: string, config: MCPServerConfig): Promise<void> {
     await this.configPresenter.addMcpServer(serverName, config)
   }
 
+  // 更新MCP服务器配置
   async updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void> {
     await this.configPresenter.updateMcpServer(serverName, config)
   }
 
+  // 移除MCP服务器
   async removeMcpServer(serverName: string): Promise<void> {
     // 如果服务器正在运行，先停止
     if (await this.isServerRunning(serverName)) {
       await this.stopServer(serverName)
-      // 通知渲染进程服务器已停止
     }
-
     await this.configPresenter.removeMcpServer(serverName)
-  }
-
-  async setDefaultServer(serverName: string): Promise<void> {
-    await this.configPresenter.setDefaultServer(serverName)
   }
 
   async isServerRunning(serverName: string): Promise<boolean> {
@@ -180,8 +185,8 @@ export class McpPresenter implements IMCPPresenter {
   }
 
   async getAllToolDefinitions(): Promise<MCPToolDefinition[]> {
-    const mcpConfig = await this.configPresenter.getMcpConfig()
-    if (mcpConfig.mcpEnabled) {
+    const enabled = await this.configPresenter.getMcpEnabled()
+    if (enabled) {
       return this.toolManager.getAllToolDefinitions()
     }
     return []
@@ -511,14 +516,11 @@ export class McpPresenter implements IMCPPresenter {
 
   // 获取MCP启用状态
   async getMcpEnabled(): Promise<boolean> {
-    const mcpConfig = await this.configPresenter.getMcpConfig()
-    return mcpConfig.mcpEnabled
+    return this.configPresenter.getMcpEnabled()
   }
 
   // 设置MCP启用状态
   async setMcpEnabled(enabled: boolean): Promise<void> {
-    const mcpConfig = await this.configPresenter.getMcpConfig()
-    mcpConfig.mcpEnabled = enabled
-    await this.configPresenter.setMcpConfig(mcpConfig)
+    await this.configPresenter.setMcpEnabled(enabled)
   }
 }

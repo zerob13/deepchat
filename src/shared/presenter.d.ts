@@ -165,12 +165,15 @@ export interface IConfigPresenter {
   getLastSyncTime(): number
   setLastSyncTime(time: number): void
   // MCP配置相关方法
-  getMcpConfig(): Promise<MCPConfig>
-  setMcpConfig(config: MCPConfig): Promise<void>
+  getMcpServers(): Promise<Record<string, MCPServerConfig>>
+  setMcpServers(servers: Record<string, MCPServerConfig>): Promise<void>
+  getMcpDefaultServer(): Promise<string>
+  setMcpDefaultServer(serverName: string): Promise<void>
+  getMcpEnabled(): Promise<boolean>
+  setMcpEnabled(enabled: boolean): Promise<void>
   addMcpServer(name: string, config: MCPServerConfig): Promise<void>
   removeMcpServer(name: string): Promise<void>
   updateMcpServer(name: string, config: Partial<MCPServerConfig>): Promise<void>
-  setDefaultServer(name: string): Promise<void>
 }
 export type RENDERER_MODEL_META = {
   id: string
@@ -591,11 +594,12 @@ export interface MCPToolResponse {
 }
 
 export interface IMCPPresenter {
-  getMcpConfig(): Promise<MCPConfig>
+  getMcpServers(): Promise<Record<string, MCPServerConfig>>
+  getMcpDefaultServer(): Promise<string>
+  setMcpDefaultServer(serverName: string): Promise<void>
   addMcpServer(serverName: string, config: MCPServerConfig): Promise<void>
   updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void>
   removeMcpServer(serverName: string): Promise<void>
-  setDefaultServer(serverName: string): Promise<void>
   isServerRunning(serverName: string): Promise<boolean>
   startServer(serverName: string): Promise<void>
   stopServer(serverName: string): Promise<void>

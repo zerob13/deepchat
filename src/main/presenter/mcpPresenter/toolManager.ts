@@ -99,15 +99,14 @@ export class ToolManager {
     console.log('callTool', toolCall)
     try {
       // 获取默认服务器名称和配置
-      const mcpConfig = await this.configPresenter.getMcpConfig()
       const defaultServerName = await this.serverManager.getDefaultServerName()
-
       if (!defaultServerName) {
         throw new Error('No default MCP server configured')
       }
 
-      // 获取服务器配置和权限设置
-      const serverConfig = mcpConfig.mcpServers[defaultServerName]
+      // 获取服务器配置
+      const servers = await this.configPresenter.getMcpServers()
+      const serverConfig = servers[defaultServerName]
       const autoApprove = serverConfig.autoApprove || []
 
       // 解析工具调用参数

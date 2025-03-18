@@ -15,7 +15,7 @@
     "dev": "electron-vite dev --watch",
     "dev:linux": "electron-vite dev --watch --noSandbox",
     "build": "npm run typecheck && electron-vite build",
-    "postinstall": "node scripts/postinstall.js && electron-builder install-app-deps",
+    "postinstall": "npm run installRuntime && node scripts/postinstall.js && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:win:x64": "npm run build && electron-builder --win --x64",
@@ -26,7 +26,8 @@
     "build:linux": "npm run build && electron-builder --linux",
     "build:linux:x64": "npm run build && electron-builder --linux --x64",
     "build:linux:arm64": "npm run build && electron-builder --linux --arm64",
-    "afterSign": "scripts/notarize.js"
+    "afterSign": "scripts/notarize.js",
+    "installRuntime": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 --no-docs --no-dev --no-sourcemaps"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -102,6 +103,7 @@
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "text-encoding": "^0.7.0",
+    "tiny-runtime-injector": "^0.0.1",
     "tokenx": "^0.4.1",
     "turndown": "^7.2.0",
     "undici": "^7.4.0",

@@ -11,14 +11,14 @@ export class ServerManager {
 
   // 获取默认服务器名称
   async getDefaultServerName(): Promise<string | null> {
-    const mcpConfig = await this.configPresenter.getMcpConfig()
-    const defaultServerName = mcpConfig.defaultServer
+    const defaultServer = await this.configPresenter.getMcpDefaultServer()
+    const servers = await this.configPresenter.getMcpServers()
 
-    if (!defaultServerName || !mcpConfig.mcpServers[defaultServerName]) {
+    if (!defaultServer || !servers[defaultServer]) {
       return null
     }
 
-    return defaultServerName
+    return defaultServer
   }
 
   // 获取默认客户端（不自动启动服务）
@@ -51,8 +51,8 @@ export class ServerManager {
       return
     }
 
-    const mcpConfig = await this.configPresenter.getMcpConfig()
-    const serverConfig = mcpConfig.mcpServers[name]
+    const servers = await this.configPresenter.getMcpServers()
+    const serverConfig = servers[name]
 
     if (!serverConfig) {
       throw new Error(`MCP server ${name} not found`)

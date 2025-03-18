@@ -574,17 +574,34 @@ export class ConfigPresenter implements IConfigPresenter {
 
   // ===================== MCP配置相关方法 =====================
 
-  // 获取MCP配置
-  getMcpConfig(): Promise<{ mcpServers: Record<string, MCPServerConfig>; defaultServer: string }> {
-    return this.mcpConfHelper.getMcpConfig()
+  // 获取MCP服务器配置
+  getMcpServers(): Promise<Record<string, MCPServerConfig>> {
+    return this.mcpConfHelper.getMcpServers()
   }
 
-  // 设置MCP配置
-  async setMcpConfig(config: {
-    mcpServers: Record<string, MCPServerConfig>
-    defaultServer: string
-  }): Promise<void> {
-    return this.mcpConfHelper.setMcpConfig(config)
+  // 设置MCP服务器配置
+  async setMcpServers(servers: Record<string, MCPServerConfig>): Promise<void> {
+    return this.mcpConfHelper.setMcpServers(servers)
+  }
+
+  // 获取默认MCP服务器
+  getMcpDefaultServer(): Promise<string> {
+    return this.mcpConfHelper.getMcpDefaultServer()
+  }
+
+  // 设置默认MCP服务器
+  async setMcpDefaultServer(serverName: string): Promise<void> {
+    return this.mcpConfHelper.setMcpDefaultServer(serverName)
+  }
+
+  // 获取MCP启用状态
+  getMcpEnabled(): Promise<boolean> {
+    return this.mcpConfHelper.getMcpEnabled()
+  }
+
+  // 设置MCP启用状态
+  async setMcpEnabled(enabled: boolean): Promise<void> {
+    return this.mcpConfHelper.setMcpEnabled(enabled)
   }
 
   // 添加MCP服务器
@@ -600,10 +617,5 @@ export class ConfigPresenter implements IConfigPresenter {
   // 更新MCP服务器配置
   async updateMcpServer(name: string, config: Partial<MCPServerConfig>): Promise<void> {
     return this.mcpConfHelper.updateMcpServer(name, config)
-  }
-
-  // 设置默认MCP服务器
-  async setDefaultServer(name: string): Promise<void> {
-    return this.mcpConfHelper.setDefaultServer(name)
   }
 }

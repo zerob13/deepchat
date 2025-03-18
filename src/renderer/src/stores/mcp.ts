@@ -69,7 +69,17 @@ export const useMcpStore = defineStore('mcp', () => {
   const loadConfig = async () => {
     try {
       configLoading.value = true
-      config.value = await mcpPresenter.getMcpConfig()
+      const [servers, defaultServer, enabled] = await Promise.all([
+        mcpPresenter.getMcpServers(),
+        mcpPresenter.getMcpDefaultServer(),
+        mcpPresenter.getMcpEnabled()
+      ])
+
+      config.value = {
+        mcpServers: servers,
+        defaultServer: defaultServer,
+        mcpEnabled: enabled
+      }
 
       // 获取服务器运行状态
       await updateAllServerStatuses()
@@ -160,7 +170,7 @@ export const useMcpStore = defineStore('mcp', () => {
   // 设置默认服务器
   const setDefaultServer = async (serverName: string) => {
     try {
-      await mcpPresenter.setDefaultServer(serverName)
+      await mcpPresenter.setMcpDefaultServer(serverName)
       await loadConfig()
       return true
     } catch (error) {
