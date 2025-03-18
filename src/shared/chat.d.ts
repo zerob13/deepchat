@@ -72,6 +72,7 @@ export type AssistantMessageBlock = {
       | 'text/html'
       | 'image/svg+xml'
       | 'application/vnd.ant.mermaid'
+      | 'application/vnd.ant.react'
     language?: string
   }
 }

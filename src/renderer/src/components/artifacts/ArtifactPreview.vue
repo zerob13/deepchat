@@ -288,6 +288,8 @@ const displayTitle = computed(() => {
     }
     case 'image/svg+xml':
       return t('artifacts.svgImage')
+    case 'application/vnd.ant.react':
+      return t('artifacts.reactComponent')
     default:
       return title || t('artifacts.unknownDocument')
   }
@@ -329,6 +331,8 @@ const getArtifactIcon = (type: string | undefined) => {
       return 'lucide:image'
     case 'application/vnd.ant.mermaid':
       return 'lucide:git-branch'
+    case 'application/vnd.ant.react':
+      return 'lucide:square-dashed-bottom-code'
     default:
       return 'lucide:file'
   }

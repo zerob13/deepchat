@@ -121,7 +121,10 @@ export class AnthropicProvider extends BaseLLMProvider {
     }
   }
 
-  private formatMessages(messages: ChatMessage[]): Anthropic.MessageParam[] {
+  private formatMessages(messages: ChatMessage[]): {
+    system?: string
+    messages: Anthropic.MessageParam[]
+  } {
     const formattedMessages: Anthropic.MessageParam[] = []
     let systemContent = ''
 
@@ -170,27 +173,11 @@ export class AnthropicProvider extends BaseLLMProvider {
       }
     }
 
-    // 如果有系统消息，添加到第一个用户消息前
-    if (systemContent) {
-      if (formattedMessages.length > 0 && formattedMessages[0].role === 'user') {
-        // 在现有内容前添加系统消息
-        const existingContent = formattedMessages[0].content
-        formattedMessages[0].content = [
-          { type: 'text' as const, text: systemContent },
-          ...(Array.isArray(existingContent)
-            ? existingContent
-            : [{ type: 'text' as const, text: String(existingContent) }])
-        ]
-      } else {
-        // 创建新的用户消息
-        formattedMessages.unshift({
-          role: 'user',
-          content: [{ type: 'text' as const, text: systemContent }]
-        })
-      }
+    console.log(JSON.stringify({ system: systemContent || undefined, messages: formattedMessages }))
+    return {
+      system: systemContent || undefined,
+      messages: formattedMessages
     }
-    console.log(JSON.stringify(formattedMessages))
-    return formattedMessages
   }
 
   public async summaryTitles(messages: ChatMessage[], modelId: string): Promise<string> {
@@ -229,7 +216,13 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
-        messages: formattedMessages
+        messages: formattedMessages.messages
+      }
+
+      // 如果有系统消息，添加到请求参数中
+      if (formattedMessages.system) {
+        // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+        requestParams.system = formattedMessages.system
       }
 
       // 如果有可用工具，添加到请求中 (使用类型断言处理类型不匹配问题)
@@ -263,12 +256,12 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
             .join('')
 
           // 添加工具响应到消息中
-          formattedMessages.push({
+          formattedMessages.messages.push({
             role: 'assistant',
             content: [{ type: 'text', text: initialResponseText }]
           })
 
-          formattedMessages.push({
+          formattedMessages.messages.push({
             role: 'user',
             content: [
               {
@@ -283,7 +276,13 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
             model: modelId,
             max_tokens: maxTokens || 1024,
             temperature: temperature || 0.7,
-            messages: formattedMessages
+            messages: formattedMessages.messages
+          }
+
+          // 如果有系统消息，添加到请求参数中
+          if (formattedMessages.system) {
+            // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+            finalParams.system = formattedMessages.system
           }
 
           // 如果有可用工具，添加到请求中 (使用类型断言处理类型不匹配问题)
@@ -322,7 +321,8 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
     text: string,
     modelId: string,
     temperature?: number,
-    maxTokens?: number
+    maxTokens?: number,
+    systemPrompt?: string
   ): Promise<LLMResponse> {
     const prompt = `请对以下内容进行摘要:
 
@@ -330,22 +330,31 @@ ${text}
 
 请提供一个简洁明了的摘要。`
 
-    return this.generateText(prompt, modelId, temperature, maxTokens)
+    return this.generateText(prompt, modelId, temperature, maxTokens, systemPrompt)
   }
 
   async generateText(
     prompt: string,
     modelId: string,
     temperature?: number,
-    maxTokens?: number
+    maxTokens?: number,
+    systemPrompt?: string
   ): Promise<LLMResponse> {
     try {
-      const response = await this.anthropic.messages.create({
+      const requestParams: Anthropic.Messages.MessageCreateParams = {
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
-        messages: [{ role: 'user', content: prompt }]
-      })
+        messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: prompt }] }]
+      }
+
+      // 如果提供了系统提示，添加到请求中
+      if (systemPrompt) {
+        // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+        requestParams.system = systemPrompt
+      }
+
+      const response = await this.anthropic.messages.create(requestParams)
 
       return {
         content: response.content
@@ -364,7 +373,8 @@ ${text}
     context: string,
     modelId: string,
     temperature?: number,
-    maxTokens?: number
+    maxTokens?: number,
+    systemPrompt?: string
   ): Promise<string[]> {
     const prompt = `
 根据下面的上下文，给出3个可能的回复建议，每个建议一行，不要有编号或者额外的解释：
@@ -372,12 +382,20 @@ ${text}
 ${context}
 `
     try {
-      const response = await this.anthropic.messages.create({
+      const requestParams: Anthropic.Messages.MessageCreateParams = {
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
-        messages: [{ role: 'user', content: prompt }]
-      })
+        messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: prompt }] }]
+      }
+
+      // 如果提供了系统提示，添加到请求中
+      if (systemPrompt) {
+        // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+        requestParams.system = systemPrompt
+      }
+
+      const response = await this.anthropic.messages.create(requestParams)
 
       const suggestions = response.content
         .filter((block) => block.type === 'text')
@@ -418,9 +436,15 @@ ${context}
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
-        messages: formattedMessages,
+        messages: formattedMessages.messages,
         stream: true
       } as Anthropic.Messages.MessageCreateParamsStreaming
+
+      // 如果有系统消息，添加到请求参数中
+      if (formattedMessages.system) {
+        // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+        streamParams.system = formattedMessages.system
+      }
 
       // 只有在有工具且工具列表不为空时才添加工具参数
       if (anthropicTools && anthropicTools.length > 0) {
@@ -620,7 +644,7 @@ ${context}
 
                 // 添加助手的初始响应
                 const newMessages = [
-                  ...formattedMessages,
+                  ...formattedMessages.messages,
                   {
                     role: 'assistant',
                     content: [{ type: 'text', text: currentContent }]
@@ -636,6 +660,12 @@ ${context}
                   messages: newMessages,
                   stream: true
                 } as Anthropic.Messages.MessageCreateParamsStreaming
+
+                // 如果有系统消息，添加到请求参数中
+                if (formattedMessages.system) {
+                  // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+                  newStreamParams.system = formattedMessages.system
+                }
 
                 // 只有在有工具且工具列表不为空时才添加工具参数
                 if (anthropicTools && anthropicTools.length > 0) {
@@ -769,7 +799,8 @@ ${context}
     text: string,
     modelId: string,
     temperature?: number,
-    maxTokens?: number
+    maxTokens?: number,
+    systemPrompt?: string
   ): AsyncGenerator<LLMResponseStream> {
     const prompt = `请对以下内容进行摘要:
 
@@ -777,23 +808,32 @@ ${text}
 
 请提供一个简洁明了的摘要。`
 
-    yield* this.streamGenerateText(prompt, modelId, temperature, maxTokens)
+    yield* this.streamGenerateText(prompt, modelId, temperature, maxTokens, systemPrompt)
   }
 
   async *streamGenerateText(
     prompt: string,
     modelId: string,
     temperature?: number,
-    maxTokens?: number
+    maxTokens?: number,
+    systemPrompt?: string
   ): AsyncGenerator<LLMResponseStream> {
     try {
-      const stream = await this.anthropic.messages.create({
+      const streamParams: Anthropic.Messages.MessageCreateParamsStreaming = {
         model: modelId,
         max_tokens: maxTokens || 1024,
         temperature: temperature || 0.7,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: prompt }] }],
         stream: true
-      })
+      }
+
+      // 如果提供了系统提示，添加到请求中
+      if (systemPrompt) {
+        // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+        streamParams.system = systemPrompt
+      }
+
+      const stream = await this.anthropic.messages.create(streamParams)
 
       for await (const chunk of stream) {
         if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {

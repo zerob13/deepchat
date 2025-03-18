@@ -12,6 +12,7 @@ export interface ProcessedPart {
       | 'text/html'
       | 'image/svg+xml'
       | 'application/vnd.ant.mermaid'
+      | 'application/vnd.ant.react'
     language?: string
   }
   tool_call?: {
@@ -80,10 +81,11 @@ export const useBlockContent = (props: {
         loading: false
       })
 
-      //console.log(match[0], '\n\n', match[1])
+      // console.log(match[0], '\n\n', match[1])
 
       lastIndex = match.index + match[0].length
     }
+    console.log(lastIndex, hasMatchedClosedThinkingTags)
 
     // 如果没有找到闭合的思考标签，尝试查找未闭合的 antThinking 标签
     if (!hasMatchedClosedThinkingTags) {
@@ -141,7 +143,6 @@ export const useBlockContent = (props: {
       const languageMatch = fullTag.match(/language="([^"]+)"/)
       // 修复内容匹配，使用非贪婪模式匹配所有内容
       const closedContentMatch = fullTag.match(/<antArtifact[^>]*>([\s\S]*?)<\/antArtifact>/s)
-
       // 添加 artifact 内容
       parts.push({
         type: 'artifact',
@@ -154,6 +155,7 @@ export const useBlockContent = (props: {
                 | 'text/markdown'
                 | 'text/html'
                 | 'image/svg+xml'
+                | 'application/vnd.ant.react'
                 | 'application/vnd.ant.mermaid')
             : 'text/markdown',
           title: titleMatch ? titleMatch[1] : '',
@@ -203,6 +205,7 @@ export const useBlockContent = (props: {
               ? (typeMatch[1] as
                   | 'application/vnd.ant.code'
                   | 'text/markdown'
+                  | 'application/vnd.ant.react'
                   | 'text/html'
                   | 'image/svg+xml'
                   | 'application/vnd.ant.mermaid')
@@ -427,6 +430,7 @@ export const useBlockContent = (props: {
     // 处理剩余的文本
     if (lastProcessedTagPosition < content.length) {
       const text = content.substring(lastProcessedTagPosition)
+      console.log('ddd', lastProcessedTagPosition, text)
       if (text.trim()) {
         parts.push({
           type: 'text',
