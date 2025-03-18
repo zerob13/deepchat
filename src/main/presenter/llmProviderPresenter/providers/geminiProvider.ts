@@ -5,7 +5,8 @@ import {
   GenerativeModel,
   Part,
   Content,
-  GenerateContentRequest
+  GenerateContentRequest,
+  GenerationConfig
 } from '@google/generative-ai'
 import { ConfigPresenter } from '../../configPresenter'
 import { presenter } from '@/presenter'
@@ -213,8 +214,10 @@ export class GeminiProvider extends BaseLLMProvider {
     const generationConfig = {
       temperature,
       maxOutputTokens: maxTokens
+    } as GenerationConfig & { responseModalities?: string[] }
+    if (modelId == 'gemini-2.0-flash-exp-image-generation') {
+      generationConfig.responseModalities = ['Text', 'Image']
     }
-
     return this.genAI.getGenerativeModel(
       {
         model: modelId,
@@ -537,6 +540,7 @@ export class GeminiProvider extends BaseLLMProvider {
       let currentContent = ''
 
       for await (const chunk of result.stream) {
+        console.log('gchunk', chunk)
         // 检查是否包含函数调用
         // @ts-ignore - SDK类型定义不完整
         if (chunk.candidates && chunk.candidates[0]?.content?.parts?.[0]?.functionCall) {
@@ -550,7 +554,34 @@ export class GeminiProvider extends BaseLLMProvider {
           break
         }
 
-        const content = chunk.text()
+        // 使用官方文档解析方式解析chunk
+        let content = ''
+        if (chunk.candidates && chunk.candidates[0]?.content?.parts) {
+          for (const part of chunk.candidates[0].content.parts) {
+            if (part.text) {
+              content += part.text
+            } else if (part.inlineData) {
+              // 如果有图像数据，转换为markdown图像格式
+              const imageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+              const markdownImage = `\n![geminiPic](${imageBase64})\n`
+              // 将markdown格式的图片添加到内容中
+              content += markdownImage
+
+              // 同时保留原始图像数据，以便渲染层可以使用
+              yield {
+                content: '',
+                image_data: {
+                  data: part.inlineData.data,
+                  mimeType: part.inlineData.mimeType
+                }
+              }
+            }
+          }
+        } else {
+          // 兼容处理，如果没有按预期结构，尝试使用text()方法
+          content = chunk.text() || ''
+        }
+
         if (!content) continue
 
         currentContent += content
@@ -747,7 +778,35 @@ export class GeminiProvider extends BaseLLMProvider {
       })
 
       for await (const chunk of result.stream) {
-        const content = chunk.text()
+        // 使用官方文档解析方式解析chunk
+        let content = ''
+        if (chunk.candidates && chunk.candidates[0]?.content?.parts) {
+          for (const part of chunk.candidates[0].content.parts) {
+            if (part.text) {
+              content += part.text
+            } else if (part.inlineData) {
+              // 如果有图像数据，转换为markdown图像格式
+              const imageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+              const markdownImage = `\n![geminiPic](${imageBase64})\n`
+
+              // 将markdown格式的图片添加到内容中
+              content += markdownImage
+
+              // 同时保留原始图像数据，以便渲染层可以使用
+              yield {
+                content: markdownImage,
+                image_data: {
+                  data: part.inlineData.data,
+                  mimeType: part.inlineData.mimeType
+                }
+              }
+            }
+          }
+        } else {
+          // 兼容处理，如果没有按预期结构，尝试使用text()方法
+          content = chunk.text() || ''
+        }
+
         if (!content) continue
 
         yield {
@@ -783,7 +842,35 @@ export class GeminiProvider extends BaseLLMProvider {
       })
 
       for await (const chunk of result.stream) {
-        const content = chunk.text()
+        // 使用官方文档解析方式解析chunk
+        let content = ''
+        if (chunk.candidates && chunk.candidates[0]?.content?.parts) {
+          for (const part of chunk.candidates[0].content.parts) {
+            if (part.text) {
+              content += part.text
+            } else if (part.inlineData) {
+              // 如果有图像数据，转换为markdown图像格式
+              const imageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+              const markdownImage = `\n![geminiPic](${imageBase64})\n`
+
+              // 将markdown格式的图片添加到内容中
+              content += markdownImage
+
+              // 同时保留原始图像数据，以便渲染层可以使用
+              yield {
+                content: markdownImage,
+                image_data: {
+                  data: part.inlineData.data,
+                  mimeType: part.inlineData.mimeType
+                }
+              }
+            }
+          }
+        } else {
+          // 兼容处理，如果没有按预期结构，尝试使用text()方法
+          content = chunk.text() || ''
+        }
+
         if (!content) continue
 
         yield {

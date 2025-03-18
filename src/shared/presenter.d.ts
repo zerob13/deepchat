@@ -455,6 +455,10 @@ export type LLMResponseStream = {
   content?: string
   reasoning_content?: string
   tool_calling_content?: string
+  image_data?: {
+    data: string
+    mimeType: string
+  }
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>
