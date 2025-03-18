@@ -28,6 +28,12 @@
     "build:linux:arm64": "npm run build && electron-builder --linux --arm64",
     "afterSign": "scripts/notarize.js",
     "installRuntime": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 --no-docs --no-dev --no-sourcemaps",
+    "installRuntime:win:x64": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 -a x64 -p win32 --no-docs --no-dev --no-sourcemaps",
+    "installRuntime:win:arm64": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 -a arm64 -p win32 --no-docs --no-dev --no-sourcemaps",
+    "installRuntime:mac:arm64": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 -a x64 -p darwin --no-docs --no-dev --no-sourcemaps",
+    "installRuntime:mac:x64": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 -a x64 -p darwin --no-docs --no-dev --no-sourcemaps",
+    "installRuntime:linux:x64": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 -a x64 -p linux --no-docs --no-dev --no-sourcemaps",
+    "installRuntime:linux:arm64": "tiny-runtime-injector -d resources/mcp/runtime/node -n v22.9.0 -a arm64 -p linux --no-docs --no-dev --no-sourcemaps",
     "cleanRuntime": "rm -rf resources/mcp/runtime/node"
   },
   "dependencies": {
