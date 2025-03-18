@@ -422,7 +422,7 @@
       "empty": "Empty"
     }
   },
-  "welcome": {
+ "welcome": {
     "steps": {
       "welcome": {
         "title": "Welcome",
@@ -434,19 +434,29 @@
       },
       "configuration": {
         "title": "Model Configuration",
-        "description": "Configure your model settings"
+        "description": "Configure the models you want to use"
       },
-      "finish": {
-        "title": "All Set",
-        "description": "You're ready to start using DeepChat"
+      "complete": {
+        "title": "Complete",
+        "description": "All set and ready to go!"
       }
     },
-    "common": {
+    "title": "Welcome to DeepChat",
+    "description": "Let's complete the setup process",
+    "provider": {
+      "select": "Select Provider",
+      "apiUrl": "API URL",
+      "apiKey": "API Key",
+      "verifyLink": "Verify Link"
+    },
+    "complete": {
+      "title": "All Done!",
+      "description": "You've completed the setup process, let's get started!"
+    },
+    "buttons": {
+      "getStarted": "Get Started",
       "next": "Next",
-      "previous": "Previous",
-      "start": "Start",
-      "skip": "Skip",
-      "finish": "Finish"
+      "back": "Back"
     }
   },
   "newThread": {
