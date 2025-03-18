@@ -419,8 +419,6 @@ ${context}
     temperature?: number,
     maxTokens?: number
   ): AsyncGenerator<LLMResponseStream> {
-    const formattedMessages = this.formatMessages(messages)
-
     try {
       // 获取MCP工具定义
       const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
@@ -431,348 +429,354 @@ ${context}
           ? await presenter.mcpPresenter.mcpToolsToAnthropicTools(mcpTools, this.provider.id)
           : undefined
 
-      // 创建流参数
-      const streamParams = {
-        model: modelId,
-        max_tokens: maxTokens || 1024,
-        temperature: temperature || 0.7,
-        messages: formattedMessages.messages,
-        stream: true
-      } as Anthropic.Messages.MessageCreateParamsStreaming
+      // 添加工具调用计数
+      let toolCallCount = 0
+      const MAX_TOOL_CALLS = 25 // 最大工具调用次数限制
 
-      // 如果有系统消息，添加到请求参数中
-      if (formattedMessages.system) {
-        // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
-        streamParams.system = formattedMessages.system
-      }
+      // 维护消息上下文
+      const currentMessages = [...messages]
+      const formattedMessagesObject = this.formatMessages(currentMessages)
 
-      // 只有在有工具且工具列表不为空时才添加工具参数
-      if (anthropicTools && anthropicTools.length > 0) {
-        // @ts-ignore - 类型不匹配，但格式是正确的
-        streamParams.tools = anthropicTools
-      }
+      // 记录是否需要继续对话
+      let needContinueConversation = false
 
-      // Claude 3.7 添加思考功能
-      if (modelId.includes('claude-3-7')) {
-        streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
-      }
-
-      // 收集工具调用
-      const toolCalls: Array<{
-        id: string
-        name: string
-        input: Record<string, unknown>
-      }> = []
-      let currentContent = ''
       // 存储思考内容
-      let reasoningContent = ''
-      // 存储当前正在处理的工具调用索引
-      let currentToolIndex = -1
-      // 是否在等待工具返回
-      let waitingForToolResponse = false
-      // 存储累积的 JSON 字符串
-      let accumulatedJson = ''
+      let totalReasoningContent = ''
 
-      // 创建Anthropic流
-      const stream = await this.anthropic.messages.create(streamParams)
+      // 主循环，支持多轮工具调用
+      while (true) {
+        // 创建流参数
+        const streamParams = {
+          model: modelId,
+          max_tokens: maxTokens || 1024,
+          temperature: temperature || 0.7,
+          messages: formattedMessagesObject.messages,
+          stream: true
+        } as Anthropic.Messages.MessageCreateParamsStreaming
 
-      // 处理流中的各种事件
-      for await (const chunk of stream) {
-        console.log('chunk', chunk)
-
-        // 处理消息开始
-        if (chunk.type === 'message_start') {
-          // 可以记录消息ID等信息，如果需要的话
-          continue
+        // 如果有系统消息，添加到请求参数中
+        if (formattedMessagesObject.system) {
+          // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
+          streamParams.system = formattedMessagesObject.system
         }
 
-        // 处理内容块开始
-        if (chunk.type === 'content_block_start') {
-          // 重置累积的 JSON 字符串
-          accumulatedJson = ''
+        // 只有在有工具且工具列表不为空时才添加工具参数
+        if (anthropicTools && anthropicTools.length > 0) {
+          // @ts-ignore - 类型不匹配，但格式是正确的
+          streamParams.tools = anthropicTools
+        }
 
-          // 处理工具使用开始
-          // @ts-ignore - Anthropic SDK 类型定义不完整
-          if (chunk.content_block?.type === 'tool_use') {
-            // @ts-ignore - content_block 不在类型定义中
-            const toolId = chunk.content_block.id
-            // @ts-ignore - content_block 不在类型定义中
-            const toolName = chunk.content_block.name || ''
+        // Claude 3.7 添加思考功能
+        if (modelId.includes('claude-3-7')) {
+          streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
+        }
 
-            toolCalls.push({
-              id: toolId,
-              name: toolName,
-              input: {}
-            })
+        // 收集工具调用
+        const toolCalls: Array<{
+          id: string
+          name: string
+          input: Record<string, unknown>
+        }> = []
+        let currentContent = ''
+        // 存储当前响应的思考内容
+        let currentReasoningContent = ''
+        // 存储当前正在处理的工具调用索引
+        let currentToolIndex = -1
+        // 是否在等待工具返回
+        let waitingForToolResponse = false
+        // 存储累积的 JSON 字符串
+        let accumulatedJson = ''
 
-            currentToolIndex = toolCalls.length - 1
-            waitingForToolResponse = true
+        // 重置继续对话标志
+        needContinueConversation = false
 
+        // 创建Anthropic流
+        const stream = await this.anthropic.messages.create(streamParams)
+
+        // 处理流中的各种事件
+        for await (const chunk of stream) {
+          console.log('chunk', chunk)
+
+          // 处理消息开始
+          if (chunk.type === 'message_start') {
+            // 可以记录消息ID等信息，如果需要的话
             continue
           }
-          continue
-        }
 
-        // 处理内容块结束
-        if (chunk.type === 'content_block_stop') {
-          // 如果有累积的JSON字符串且当前有正在处理的工具调用
-          if (accumulatedJson && currentToolIndex >= 0 && currentToolIndex < toolCalls.length) {
-            try {
-              // 尝试解析完整的JSON字符串
-              // console.log('解析完整JSON:', accumulatedJson)
+          // 处理内容块开始
+          if (chunk.type === 'content_block_start') {
+            // 重置累积的 JSON 字符串
+            accumulatedJson = ''
 
-              // 移除可能的前导/尾随空格并检查是否是有效的JSON格式
-              const jsonStr = accumulatedJson.trim()
-              if (jsonStr && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
-                try {
-                  const jsonObject = JSON.parse(jsonStr)
-                  if (jsonObject && typeof jsonObject === 'object') {
-                    toolCalls[currentToolIndex].input = {
-                      ...toolCalls[currentToolIndex].input,
-                      ...jsonObject
+            // 处理工具使用开始
+            // @ts-ignore - Anthropic SDK 类型定义不完整
+            if (chunk.content_block?.type === 'tool_use') {
+              // @ts-ignore - content_block 不在类型定义中
+              const toolId = chunk.content_block.id
+              // @ts-ignore - content_block 不在类型定义中
+              const toolName = chunk.content_block.name || ''
+
+              toolCalls.push({
+                id: toolId,
+                name: toolName,
+                input: {}
+              })
+
+              currentToolIndex = toolCalls.length - 1
+              waitingForToolResponse = true
+
+              continue
+            }
+            continue
+          }
+
+          // 处理内容块结束
+          if (chunk.type === 'content_block_stop') {
+            // 如果有累积的JSON字符串且当前有正在处理的工具调用
+            if (accumulatedJson && currentToolIndex >= 0 && currentToolIndex < toolCalls.length) {
+              try {
+                // 尝试解析完整的JSON字符串
+                // console.log('解析完整JSON:', accumulatedJson)
+
+                // 移除可能的前导/尾随空格并检查是否是有效的JSON格式
+                const jsonStr = accumulatedJson.trim()
+                if (jsonStr && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
+                  try {
+                    const jsonObject = JSON.parse(jsonStr)
+                    if (jsonObject && typeof jsonObject === 'object') {
+                      toolCalls[currentToolIndex].input = {
+                        ...toolCalls[currentToolIndex].input,
+                        ...jsonObject
+                      }
                     }
-                  }
-                } catch (e) {
-                  console.error('解析完整JSON失败:', e)
+                  } catch (e) {
+                    console.error('解析完整JSON失败:', e)
 
-                  // 尝试提取部分键值对
-                  // 例如 {"path": "src/main"} 格式的提取
-                  const keyValuePairs = jsonStr.match(/"([^"]+)":\s*"([^"]+)"/g)
-                  if (keyValuePairs) {
-                    for (const pair of keyValuePairs) {
-                      const match = pair.match(/"([^"]+)":\s*"([^"]+)"/)
-                      if (match && match.length >= 3) {
-                        const key = match[1]
-                        const value = match[2]
-                        toolCalls[currentToolIndex].input[key] = value
+                    // 尝试提取部分键值对
+                    // 例如 {"path": "src/main"} 格式的提取
+                    const keyValuePairs = jsonStr.match(/"([^"]+)":\s*"([^"]+)"/g)
+                    if (keyValuePairs) {
+                      for (const pair of keyValuePairs) {
+                        const match = pair.match(/"([^"]+)":\s*"([^"]+)"/)
+                        if (match && match.length >= 3) {
+                          const key = match[1]
+                          const value = match[2]
+                          toolCalls[currentToolIndex].input[key] = value
+                        }
                       }
                     }
                   }
                 }
-              }
-            } catch (e) {
-              console.error('处理累积JSON失败:', e)
-            }
-
-            // 重置累积的JSON
-            accumulatedJson = ''
-          }
-          continue
-        }
-
-        // 处理消息状态更新
-        if (chunk.type === 'message_delta') {
-          // 检查是否因为工具调用而停止
-          if (chunk.delta?.stop_reason === 'tool_use') {
-            // 工具调用导致停止，需要处理工具调用
-            if (waitingForToolResponse && toolCalls.length > 0) {
-              // 处理所有等待的工具调用
-              const toolResults: Anthropic.MessageParam[] = []
-
-              for (const toolCall of toolCalls) {
-                if (!toolCall.name) continue
-
-                // 将Anthropic工具使用转换为MCP工具调用
-                console.log('执行工具调用:', toolCall)
-
-                const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
-                  mcpTools,
-                  { name: toolCall.name, input: toolCall.input },
-                  this.provider.id
-                )
-
-                if (mcpToolCall) {
-                  yield {
-                    content: `\n<tool_call name="${toolCall.name}">\n`,
-                    reasoning_content: undefined,
-                    tool_calling_content: toolCall.name
-                  }
-
-                  try {
-                    // 调用工具并获取响应
-                    const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
-                    const responseContent =
-                      typeof toolResponse.content === 'string'
-                        ? toolResponse.content
-                        : JSON.stringify(toolResponse.content)
-
-                    yield {
-                      content: `\n<tool_response name="${toolCall.name}">\n`,
-                      reasoning_content: undefined,
-                      tool_calling_content: toolCall.name
-                    }
-
-                    // 添加工具结果到继续对话的消息列表中
-                    toolResults.push({
-                      role: 'user',
-                      content: [
-                        {
-                          type: 'text',
-                          text: `Tool response: ${responseContent}`
-                        }
-                      ]
-                    })
-                  } catch (error) {
-                    console.error('工具调用失败:', error)
-                    const errorMessage = error instanceof Error ? error.message : String(error)
-
-                    yield {
-                      content: `\n<tool_call_error name="${toolCall.name}" error="${errorMessage}">\n`,
-                      reasoning_content: undefined,
-                      tool_calling_content: toolCall.name
-                    }
-
-                    toolResults.push({
-                      role: 'user',
-                      content: [
-                        {
-                          type: 'text',
-                          text: `Tool response error: ${errorMessage}`
-                        }
-                      ]
-                    })
-                  }
-                }
+              } catch (e) {
+                console.error('处理累积JSON失败:', e)
               }
 
-              // 如果有工具结果，继续对话
-              if (toolResults.length > 0) {
-                yield {
-                  content: `\n<tool_call_end name="${toolCalls[currentToolIndex].name}">\n`,
-                  reasoning_content: undefined
-                }
-
-                // 添加助手的初始响应
-                const newMessages = [
-                  ...formattedMessages.messages,
-                  {
-                    role: 'assistant',
-                    content: [{ type: 'text', text: currentContent }]
-                  },
-                  ...toolResults
-                ]
-
-                // 创建新的流参数
-                const newStreamParams = {
-                  model: modelId,
-                  max_tokens: maxTokens || 1024,
-                  temperature: temperature || 0.7,
-                  messages: newMessages,
-                  stream: true
-                } as Anthropic.Messages.MessageCreateParamsStreaming
-
-                // 如果有系统消息，添加到请求参数中
-                if (formattedMessages.system) {
-                  // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
-                  newStreamParams.system = formattedMessages.system
-                }
-
-                // 只有在有工具且工具列表不为空时才添加工具参数
-                if (anthropicTools && anthropicTools.length > 0) {
-                  // @ts-ignore - 类型不匹配，但格式是正确的
-                  newStreamParams.tools = anthropicTools
-                }
-
-                // 创建新的流
-                const newStream = await this.anthropic.messages.create(newStreamParams)
-
-                // 处理新的流
-                for await (const newChunk of newStream) {
-                  console.log('工具响应后的新chunk:', newChunk)
-
-                  if (
-                    newChunk.type === 'content_block_delta' &&
-                    newChunk.delta.type === 'text_delta'
-                  ) {
-                    yield {
-                      content: newChunk.delta.text,
-                      reasoning_content: undefined
-                    }
-                  }
-                }
-              }
-
-              // 重置工具调用状态
-              waitingForToolResponse = false
-              toolCalls.length = 0
-              currentToolIndex = -1
+              // 重置累积的JSON
               accumulatedJson = ''
             }
+            continue
           }
-          continue
-        }
 
-        // 处理消息结束
-        if (chunk.type === 'message_stop') {
-          // 消息完全结束
-          continue
-        }
+          // 处理消息状态更新
+          if (chunk.type === 'message_delta') {
+            // 检查是否因为工具调用而停止
+            if (chunk.delta?.stop_reason === 'tool_use') {
+              // 工具调用导致停止，需要处理工具调用
+              if (waitingForToolResponse && toolCalls.length > 0) {
+                needContinueConversation = true
 
-        // 处理工具使用更新 - input_json_delta
-        // @ts-ignore - 类型定义中没有工具相关字段
-        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'input_json_delta') {
-          if (currentToolIndex >= 0 && currentToolIndex < toolCalls.length) {
-            // @ts-ignore - partial_json 不在类型定义中
-            const partialJson = chunk.delta.partial_json
+                // 添加助手消息到上下文
+                const assistantMessage: Anthropic.MessageParam = {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: currentContent }]
+                }
+                formattedMessagesObject.messages.push(assistantMessage)
 
-            if (partialJson) {
-              // 累积JSON片段
-              accumulatedJson += partialJson
-            }
-          }
-          continue
-        }
+                // 处理所有等待的工具调用
+                for (const toolCall of toolCalls) {
+                  if (!toolCall.name) continue
 
-        // 处理工具使用更新 - tool_use_delta
-        // @ts-ignore - 类型定义中没有工具相关字段
-        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'tool_use_delta') {
-          if (currentToolIndex >= 0) {
-            const toolCall = toolCalls[currentToolIndex]
-            // @ts-ignore - delta 不在类型定义中
-            if (chunk.delta.name) {
-              // @ts-ignore - 访问 delta.name
-              toolCall.name = chunk.delta.name
-            }
+                  // 增加工具调用计数
+                  toolCallCount++
 
-            // @ts-ignore - delta.input 不在类型定义中
-            if (chunk.delta.input) {
-              toolCall.input = {
-                ...toolCall.input,
-                // @ts-ignore - 访问 delta.input
-                ...chunk.delta.input
+                  // 检查是否达到最大工具调用次数
+                  if (toolCallCount >= MAX_TOOL_CALLS) {
+                    yield {
+                      content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`,
+                      reasoning_content: undefined
+                    }
+                    needContinueConversation = false
+                    break
+                  }
+
+                  // 将Anthropic工具使用转换为MCP工具调用
+                  console.log('执行工具调用:', toolCall)
+
+                  const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
+                    mcpTools,
+                    { name: toolCall.name, input: toolCall.input },
+                    this.provider.id
+                  )
+
+                  if (mcpToolCall) {
+                    yield {
+                      content: `\n<tool_call name="${toolCall.name}">\n`,
+                      reasoning_content: undefined,
+                      tool_calling_content: toolCall.name
+                    }
+
+                    try {
+                      // 调用工具并获取响应
+                      const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
+                      const responseContent =
+                        typeof toolResponse.content === 'string'
+                          ? toolResponse.content
+                          : JSON.stringify(toolResponse.content)
+
+                      yield {
+                        content: `\n<tool_response name="${toolCall.name}">\n`,
+                        reasoning_content: undefined,
+                        tool_calling_content: toolCall.name
+                      }
+
+                      // 添加工具结果到消息列表
+                      formattedMessagesObject.messages.push({
+                        role: 'user',
+                        content: [
+                          {
+                            type: 'text',
+                            text: `Tool response: ${responseContent}`
+                          }
+                        ]
+                      })
+
+                      yield {
+                        content: `\n<tool_call_end name="${toolCall.name}">\n`,
+                        reasoning_content: undefined
+                      }
+                    } catch (error) {
+                      console.error('工具调用失败:', error)
+                      const errorMessage = error instanceof Error ? error.message : String(error)
+
+                      yield {
+                        content: `\n<tool_call_error name="${toolCall.name}" error="${errorMessage}">\n`,
+                        reasoning_content: undefined,
+                        tool_calling_content: toolCall.name
+                      }
+
+                      // 添加错误响应到消息中
+                      formattedMessagesObject.messages.push({
+                        role: 'user',
+                        content: [
+                          {
+                            type: 'text',
+                            text: `Tool response error: ${errorMessage}`
+                          }
+                        ]
+                      })
+                    }
+                  }
+                }
+
+                // 如果达到最大工具调用次数，停止对话
+                if (toolCallCount >= MAX_TOOL_CALLS) {
+                  break
+                }
+
+                // 重置工具调用状态
+                waitingForToolResponse = false
+                toolCalls.length = 0
+                currentToolIndex = -1
+                accumulatedJson = ''
+                break
               }
             }
+            continue
           }
-          continue
-        }
 
-        // 处理常规文本内容
-        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-          currentContent += chunk.delta.text
-          yield {
-            content: chunk.delta.text,
-            reasoning_content: undefined
+          // 处理消息结束
+          if (chunk.type === 'message_stop') {
+            // 消息完全结束
+            needContinueConversation = false
+            continue
           }
-        }
 
-        // 处理思考内容（如果有）
-        // @ts-ignore - 类型定义中没有thinking相关字段
-        if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'thinking_delta') {
-          // @ts-ignore - delta.thinking不在类型定义中
-          reasoningContent += chunk.delta.thinking
-          yield {
-            content: undefined,
+          // 处理工具使用更新 - input_json_delta
+          // @ts-ignore - 类型定义中没有工具相关字段
+          if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'input_json_delta') {
+            if (currentToolIndex >= 0 && currentToolIndex < toolCalls.length) {
+              // @ts-ignore - partial_json 不在类型定义中
+              const partialJson = chunk.delta.partial_json
+
+              if (partialJson) {
+                // 累积JSON片段
+                accumulatedJson += partialJson
+              }
+            }
+            continue
+          }
+
+          // 处理工具使用更新 - tool_use_delta
+          // @ts-ignore - 类型定义中没有工具相关字段
+          if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'tool_use_delta') {
+            if (currentToolIndex >= 0) {
+              const toolCall = toolCalls[currentToolIndex]
+              // @ts-ignore - delta 不在类型定义中
+              if (chunk.delta.name) {
+                // @ts-ignore - 访问 delta.name
+                toolCall.name = chunk.delta.name
+              }
+
+              // @ts-ignore - delta.input 不在类型定义中
+              if (chunk.delta.input) {
+                toolCall.input = {
+                  ...toolCall.input,
+                  // @ts-ignore - 访问 delta.input
+                  ...chunk.delta.input
+                }
+              }
+            }
+            continue
+          }
+
+          // 处理常规文本内容
+          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            currentContent += chunk.delta.text
+            yield {
+              content: chunk.delta.text,
+              reasoning_content: undefined
+            }
+          }
+
+          // 处理思考内容（如果有）
+          // @ts-ignore - 类型定义中没有thinking相关字段
+          if (chunk.type === 'content_block_delta' && chunk.delta?.type === 'thinking_delta') {
             // @ts-ignore - delta.thinking不在类型定义中
-            reasoning_content: chunk.delta.thinking
+            const thinkingText = chunk.delta.thinking
+            currentReasoningContent += thinkingText
+            yield {
+              content: undefined,
+              reasoning_content: thinkingText
+            }
           }
+        }
+
+        // 累积总的思考内容
+        if (currentReasoningContent) {
+          totalReasoningContent += currentReasoningContent
+        }
+
+        // 如果没有工具调用或不需要继续对话，结束循环
+        if (!needContinueConversation || toolCallCount >= MAX_TOOL_CALLS) {
+          break
         }
       }
 
-      // 输出摘要信息（如果有）
-      if (reasoningContent) {
+      // 输出累积的思考内容（如果有）
+      if (totalReasoningContent) {
         yield {
           content: undefined,
-          reasoning_content: reasoningContent
+          reasoning_content: totalReasoningContent
         }
       }
 

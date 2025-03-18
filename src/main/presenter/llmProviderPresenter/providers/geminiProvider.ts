@@ -502,249 +502,260 @@ export class GeminiProvider extends BaseLLMProvider {
           ? await presenter.mcpPresenter.mcpToolsToGeminiTools(mcpTools, this.provider.id)
           : undefined
 
+      // 添加工具调用计数
+      let toolCallCount = 0
+      const MAX_TOOL_CALLS = 25 // 最大工具调用次数限制
+
+      // 维护消息上下文
+      const conversationMessages: ChatMessage[] = [...messages]
+
+      // 记录是否需要继续对话
+      let needContinueConversation = false
+
       // 每次创建新的模型实例，并传入生成配置
       const model = this.getModel(modelId, temperature, maxTokens)
-      const formattedParts = this.formatGeminiMessages(messages)
 
-      // 创建流式生成请求
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const requestParams: any = {
-        contents: formattedParts.contents
-      }
-      if (formattedParts.systemInstruction) {
-        requestParams.systemInstruction = formattedParts.systemInstruction
-      }
+      // 主循环，支持多轮工具调用
+      while (true) {
+        const formattedParts = this.formatGeminiMessages(conversationMessages)
 
-      // 只有在有工具且工具列表不为空时才添加工具参数
-      if (geminiTools && geminiTools.length > 0) {
-        requestParams.tools = geminiTools
-        requestParams.toolConfig = {
-          functionCallingConfig: {
-            mode: 'AUTO' // 允许模型自动决定是否调用工具
+        // 创建流式生成请求
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const requestParams: any = {
+          contents: formattedParts.contents
+        }
+        if (formattedParts.systemInstruction) {
+          requestParams.systemInstruction = formattedParts.systemInstruction
+        }
+
+        // 只有在有工具且工具列表不为空时才添加工具参数
+        if (geminiTools && geminiTools.length > 0) {
+          requestParams.tools = geminiTools
+          requestParams.toolConfig = {
+            functionCallingConfig: {
+              mode: 'AUTO' // 允许模型自动决定是否调用工具
+            }
           }
         }
-      }
 
-      // @ts-ignore - Gemini SDK类型定义与实际API有差异
-      const result = await model.generateContentStream(requestParams)
+        // @ts-ignore - Gemini SDK类型定义与实际API有差异
+        const result = await model.generateContentStream(requestParams)
 
-      // 处理流式响应
-      let buffer = ''
-      let isInThinkTag = false
-      let thinkContent = ''
-      let hasThinkTag = false
-      // 用于存储函数调用信息
-      let functionCallDetected = false
-      let functionName = ''
-      let functionArgs = {}
-      let currentContent = ''
+        // 处理流式响应
+        let buffer = ''
+        let isInThinkTag = false
+        let thinkContent = ''
+        let hasThinkTag = false
+        // 用于存储函数调用信息
+        let functionCallDetected = false
+        let functionName = ''
+        let functionArgs = {}
+        let currentContent = ''
 
-      for await (const chunk of result.stream) {
-        console.log('gchunk', chunk)
-        // 检查是否包含函数调用
-        // @ts-ignore - SDK类型定义不完整
-        if (chunk.candidates && chunk.candidates[0]?.content?.parts?.[0]?.functionCall) {
+        // 重置继续对话标志
+        needContinueConversation = false
+
+        for await (const chunk of result.stream) {
+          console.log('gchunk', chunk)
+          // 检查是否包含函数调用
           // @ts-ignore - SDK类型定义不完整
-          const functionCall = chunk.candidates[0].content.parts[0].functionCall
-          functionCallDetected = true
-          functionName = functionCall.name
-          functionArgs = functionCall.args || {}
+          if (chunk.candidates && chunk.candidates[0]?.content?.parts?.[0]?.functionCall) {
+            // @ts-ignore - SDK类型定义不完整
+            const functionCall = chunk.candidates[0].content.parts[0].functionCall
+            functionCallDetected = true
+            functionName = functionCall.name
+            functionArgs = functionCall.args || {}
 
-          // 停止继续处理流，转为处理工具调用
-          break
-        }
+            // 停止继续处理流，转为处理工具调用
+            break
+          }
 
-        // 使用官方文档解析方式解析chunk
-        let content = ''
-        if (chunk.candidates && chunk.candidates[0]?.content?.parts) {
-          for (const part of chunk.candidates[0].content.parts) {
-            if (part.text) {
-              content += part.text
-            } else if (part.inlineData) {
-              // 如果有图像数据，转换为markdown图像格式
-              const imageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-              const markdownImage = `\n![geminiPic](${imageBase64})\n`
-              // 将markdown格式的图片添加到内容中
-              content += markdownImage
+          // 使用官方文档解析方式解析chunk
+          let content = ''
+          if (chunk.candidates && chunk.candidates[0]?.content?.parts) {
+            for (const part of chunk.candidates[0].content.parts) {
+              if (part.text) {
+                content += part.text
+              } else if (part.inlineData) {
+                // 如果有图像数据，转换为markdown图像格式
+                const imageBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+                const markdownImage = `\n![geminiPic](${imageBase64})\n`
+                // 将markdown格式的图片添加到内容中
+                content += markdownImage
 
-              // 同时保留原始图像数据，以便渲染层可以使用
-              yield {
-                content: '',
-                image_data: {
-                  data: part.inlineData.data,
-                  mimeType: part.inlineData.mimeType
+                // 同时保留原始图像数据，以便渲染层可以使用
+                yield {
+                  content: '',
+                  image_data: {
+                    data: part.inlineData.data,
+                    mimeType: part.inlineData.mimeType
+                  }
                 }
               }
+            }
+          } else {
+            // 兼容处理，如果没有按预期结构，尝试使用text()方法
+            content = chunk.text() || ''
+          }
+
+          if (!content) continue
+
+          currentContent += content
+          buffer += content
+
+          // 检查是否包含 <think> 标签
+          if (buffer.includes('<think>') && !hasThinkTag) {
+            hasThinkTag = true
+            const thinkStart = buffer.indexOf('<think>')
+
+            // 发送 <think> 前的内容
+            if (thinkStart > 0) {
+              yield {
+                content: buffer.substring(0, thinkStart)
+              }
+            }
+
+            buffer = buffer.substring(thinkStart + 7)
+            isInThinkTag = true
+            continue
+          }
+
+          // 检查是否有结束标签 </think>
+          if (isInThinkTag && buffer.includes('</think>')) {
+            const thinkEnd = buffer.indexOf('</think>')
+            thinkContent += buffer.substring(0, thinkEnd)
+
+            // 发送推理内容
+            yield {
+              reasoning_content: thinkContent
+            }
+
+            // 重置并准备处理 </think> 后的内容
+            buffer = buffer.substring(thinkEnd + 8)
+            isInThinkTag = false
+            continue
+          }
+
+          // 如果我们在 <think> 标签内，累积推理内容
+          if (isInThinkTag) {
+            thinkContent += content
+            continue
+          }
+          // 否则，正常发送内容
+          yield {
+            content
+          }
+        }
+
+        // 处理函数调用
+        if (functionCallDetected && functionName) {
+          // 增加工具调用计数
+          toolCallCount++
+
+          // 检查是否达到最大工具调用次数
+          if (toolCallCount >= MAX_TOOL_CALLS) {
+            yield {
+              content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`
+            }
+            needContinueConversation = false
+            break
+          }
+
+          // 将Gemini函数调用转换为MCP工具调用
+          const geminiFunctionCall = {
+            name: functionName,
+            args: functionArgs
+          }
+
+          const mcpToolCall = await presenter.mcpPresenter.geminiFunctionCallToMcpTool(
+            mcpTools,
+            geminiFunctionCall,
+            this.provider.id
+          )
+
+          if (mcpToolCall) {
+            try {
+              // 通知正在调用工具
+              yield {
+                content: `\n<tool_call name="${functionName}">\n`,
+                reasoning_content: undefined,
+                tool_calling_content: functionName
+              }
+
+              // 调用工具并获取响应
+              const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
+              const responseContent =
+                typeof toolResponse.content === 'string'
+                  ? toolResponse.content
+                  : JSON.stringify(toolResponse.content)
+
+              // 通知工具响应结果
+              yield {
+                content: `\n<tool_response name="${functionName}">\n`,
+                reasoning_content: undefined,
+                tool_calling_content: functionName
+              }
+
+              // 添加助手消息到上下文
+              conversationMessages.push({
+                role: 'assistant',
+                content: currentContent || `我将使用${functionName}工具来回答你的问题。`
+              } as ChatMessage)
+
+              // 添加工具结果到上下文
+              conversationMessages.push({
+                role: 'user',
+                content: `工具 ${functionName} 的调用结果：${responseContent}`
+              } as ChatMessage)
+
+              // 通知继续对话
+              yield {
+                content: `\n<tool_call_end name="${functionName}">\n`,
+                reasoning_content: undefined,
+                tool_calling_content: functionName
+              }
+
+              // 设置需要继续对话的标志
+              needContinueConversation = true
+            } catch (error) {
+              console.error('工具调用失败:', error)
+              const errorMessage = error instanceof Error ? error.message : String(error)
+
+              yield {
+                content: `\n<tool_call_error name="${functionName}" error="${errorMessage}">\n`,
+                reasoning_content: undefined,
+                tool_calling_content: errorMessage
+              }
+
+              // 添加错误消息到上下文
+              conversationMessages.push({
+                role: 'assistant',
+                content: currentContent || `我尝试使用${functionName}工具，但出现了错误。`
+              } as ChatMessage)
+
+              conversationMessages.push({
+                role: 'user',
+                content: `工具 ${functionName} 调用失败：${errorMessage}`
+              } as ChatMessage)
+
+              // 设置需要继续对话的标志，即使工具调用失败也继续
+              needContinueConversation = true
             }
           }
         } else {
-          // 兼容处理，如果没有按预期结构，尝试使用text()方法
-          content = chunk.text() || ''
-        }
-
-        if (!content) continue
-
-        currentContent += content
-        buffer += content
-
-        // 检查是否包含 <think> 标签
-        if (buffer.includes('<think>') && !hasThinkTag) {
-          hasThinkTag = true
-          const thinkStart = buffer.indexOf('<think>')
-
-          // 发送 <think> 前的内容
-          if (thinkStart > 0) {
-            yield {
-              content: buffer.substring(0, thinkStart)
-            }
+          // 如果没有工具调用，添加助手消息到上下文并结束对话
+          if (currentContent) {
+            conversationMessages.push({
+              role: 'assistant',
+              content: currentContent
+            } as ChatMessage)
           }
-
-          buffer = buffer.substring(thinkStart + 7)
-          isInThinkTag = true
-          continue
+          needContinueConversation = false
         }
 
-        // 检查是否有结束标签 </think>
-        if (isInThinkTag && buffer.includes('</think>')) {
-          const thinkEnd = buffer.indexOf('</think>')
-          thinkContent += buffer.substring(0, thinkEnd)
-
-          // 发送推理内容
-          yield {
-            reasoning_content: thinkContent
-          }
-
-          // 重置并准备处理 </think> 后的内容
-          buffer = buffer.substring(thinkEnd + 8)
-          isInThinkTag = false
-          continue
-        }
-
-        // 如果我们在 <think> 标签内，累积推理内容
-        if (isInThinkTag) {
-          thinkContent += content
-          continue
-        }
-        // 否则，正常发送内容
-        yield {
-          content
-        }
-      }
-
-      // 处理函数调用
-      if (functionCallDetected && functionName) {
-        // 将Gemini函数调用转换为MCP工具调用
-        const geminiFunctionCall = {
-          name: functionName,
-          args: functionArgs
-        }
-
-        const mcpToolCall = await presenter.mcpPresenter.geminiFunctionCallToMcpTool(
-          mcpTools,
-          geminiFunctionCall,
-          this.provider.id
-        )
-
-        if (mcpToolCall) {
-          try {
-            // 通知正在调用工具
-            yield {
-              content: `\n<tool_call name="${functionName}">\n`,
-              reasoning_content: undefined,
-              tool_calling_content: functionName
-            }
-
-            // 调用工具并获取响应
-            const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
-            const responseContent =
-              typeof toolResponse.content === 'string'
-                ? toolResponse.content
-                : JSON.stringify(toolResponse.content)
-
-            // 通知工具响应结果
-            yield {
-              content: `\n<tool_response name="${functionName}">\n`,
-              reasoning_content: undefined,
-              tool_calling_content: functionName
-            }
-
-            // 创建一个带有工具响应的新消息
-            const newMessages: ChatMessage[] = [
-              ...messages.map((m) => ({ ...m })), // 复制原始消息
-              {
-                role: 'assistant',
-                content: currentContent || `我将使用${functionName}工具来回答你的问题。`
-              } as ChatMessage,
-              {
-                role: 'user',
-                content: `工具 ${functionName} 的调用结果：${responseContent}`
-              } as ChatMessage
-            ]
-
-            // 通知继续对话
-            yield {
-              content: `\n<tool_call_end name="${functionName}">\n`,
-              reasoning_content: undefined,
-              tool_calling_content: functionName
-            }
-
-            // 创建一个新的流生成请求
-            const newFormattedParts = this.formatGeminiMessages(newMessages)
-            const generateContentParams = {
-              contents: newFormattedParts.contents
-            } as GenerateContentRequest
-            // @ts-ignore - Gemini SDK类型定义与实际API有差异
-            if (newFormattedParts.systemInstruction) {
-              generateContentParams.systemInstruction = newFormattedParts.systemInstruction
-            }
-            const continuationResult = await model.generateContentStream(generateContentParams)
-
-            // 处理新的流响应
-            for await (const newChunk of continuationResult.stream) {
-              const newContent = newChunk.text()
-              if (!newContent) continue
-
-              yield {
-                content: newContent,
-                reasoning_content: undefined
-              }
-            }
-          } catch (error) {
-            console.error('工具调用失败:', error)
-            const errorMessage = error instanceof Error ? error.message : String(error)
-
-            yield {
-              content: `\n<tool_call_error name="${functionName}" error="${errorMessage}">\n`,
-              reasoning_content: undefined,
-              tool_calling_content: errorMessage
-            }
-
-            // 如果工具调用失败，尝试直接回答
-            // @ts-ignore - Gemini SDK类型定义与实际API有差异
-            const fallbackResult = await model.generateContentStream({
-              contents: [
-                ...formattedParts.contents,
-                {
-                  role: 'user',
-                  parts: [
-                    {
-                      text: `请注意，我尝试调用工具失败了（错误：${errorMessage}）。请直接回答用户的问题，不要使用工具。`
-                    }
-                  ]
-                }
-              ]
-            })
-
-            for await (const fallbackChunk of fallbackResult.stream) {
-              const fallbackContent = fallbackChunk.text()
-              if (!fallbackContent) continue
-
-              yield {
-                content: fallbackContent,
-                reasoning_content: undefined
-              }
-            }
-          }
+        // 如果不需要继续对话或已达到最大工具调用次数，则结束循环
+        if (!needContinueConversation || toolCallCount >= MAX_TOOL_CALLS) {
+          break
         }
       }
     } catch (error) {

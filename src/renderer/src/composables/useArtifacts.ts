@@ -159,6 +159,11 @@ export const useBlockContent = (props: {
         name: 'tool_call_error',
         regex: /<tool_call_error(?:\s+([^>]*))?>/,
         process: null // 特殊处理
+      },
+      {
+        name: 'maximum_tool_calls_reached',
+        regex: /<maximum_tool_calls_reached(?:\s+([^>]*))?>/,
+        process: null // 特殊处理
       }
     ]
 
@@ -215,7 +220,8 @@ export const useBlockContent = (props: {
             'tool_response',
             'tool_call_end',
             'tool_call_error',
-            'tool_call'
+            'tool_call',
+            'maximum_tool_calls_reached'
           ]
 
           for (const tagName of toolRelatedPatterns) {
@@ -257,7 +263,8 @@ export const useBlockContent = (props: {
               'tool_response',
               'tool_call_end',
               'tool_call_error',
-              'tool_call'
+              'tool_call',
+              'maximum_tool_calls_reached'
             ]
 
             for (const tagName of toolRelatedPatterns) {
@@ -333,6 +340,13 @@ export const useBlockContent = (props: {
           }
 
           // 移动到标签结束位置
+          currentPosition = content.indexOf('>', earliestMatch.index) + 1
+        } else if (pattern.name === 'maximum_tool_calls_reached') {
+          // 使用标签的处理函数
+          parts.push({
+            type: 'text',
+            content: 'Maximum tool calls reached'
+          })
           currentPosition = content.indexOf('>', earliestMatch.index) + 1
         } else if (pattern.process) {
           // 使用标签的处理函数

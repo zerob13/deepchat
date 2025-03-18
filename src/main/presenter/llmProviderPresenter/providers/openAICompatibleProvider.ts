@@ -151,6 +151,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // 记录是否需要继续对话
     let needContinueConversation = false
 
+    // 添加工具调用计数
+    let toolCallCount = 0
+    const MAX_TOOL_CALLS = 25 // 最大工具调用次数限制
+
     // 创建基本请求参数
     const requestParams: OpenAI.Chat.ChatCompletionCreateParams = {
       messages: messages as ChatCompletionMessageParam[],
@@ -290,6 +294,18 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             processedToolCallIds.add(toolCall.id)
 
             try {
+              // 增加工具调用计数
+              toolCallCount++
+
+              // 检查是否达到最大工具调用次数
+              if (toolCallCount >= MAX_TOOL_CALLS) {
+                yield {
+                  content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`
+                }
+                needContinueConversation = false
+                break
+              }
+
               // 转换为MCP工具
               const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
                 mcpTools,
@@ -348,6 +364,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
                 tool_call_id: toolCall.id
               })
             }
+          }
+
+          // 如果达到最大工具调用次数，则跳出循环
+          if (toolCallCount >= MAX_TOOL_CALLS) {
+            break
           }
 
           // 重置变量，准备继续对话
@@ -472,6 +493,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           }
           buffer = ''
         }
+      }
+
+      // 如果达到最大工具调用次数，则跳出循环
+      if (toolCallCount >= MAX_TOOL_CALLS) {
+        break
       }
 
       // 如果需要继续对话，创建新的流
