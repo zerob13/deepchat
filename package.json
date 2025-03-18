@@ -15,7 +15,7 @@
     "dev": "electron-vite dev --watch",
     "dev:linux": "electron-vite dev --watch --noSandbox",
     "build": "npm run typecheck && electron-vite build",
-    "postinstall": "npm run installRuntime && node scripts/postinstall.js && electron-builder install-app-deps",
+    "postinstall": "node scripts/postinstall.js && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:win:x64": "npm run build && electron-builder --win --x64",
