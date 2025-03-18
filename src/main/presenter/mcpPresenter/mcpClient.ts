@@ -63,7 +63,7 @@ export class McpClient {
     // 检查运行时文件是否存在
     if (process.platform === 'win32') {
       const nodeExe = path.join(runtimePath, 'node.exe')
-      const npxCmd = path.join(runtimePath, 'npx')
+      const npxCmd = path.join(runtimePath, 'npx.cmd')
       if (fs.existsSync(nodeExe) && fs.existsSync(npxCmd)) {
         this.nodeRuntimePath = runtimePath
       } else {
@@ -112,14 +112,14 @@ export class McpClient {
           }
           if (command === 'npm') {
             if (process.platform === 'win32') {
-              command = path.join(this.nodeRuntimePath, 'npm')
+              command = path.join(this.nodeRuntimePath, 'npm.cmd')
             } else {
               command = path.join(this.nodeRuntimePath, 'bin', 'npm')
             }
           }
           if (command === 'npx') {
             if (process.platform === 'win32') {
-              command = path.join(this.nodeRuntimePath, 'npx')
+              command = path.join(this.nodeRuntimePath, 'npx.cmd')
             } else {
               command = path.join(this.nodeRuntimePath, 'bin', 'npx')
             }
