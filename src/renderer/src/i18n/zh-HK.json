@@ -346,7 +346,16 @@
         "submit": "提交",
         "add": "添加",
         "update": "更新",
-        "cancel": "取消"
+        "cancel": "取消",
+        "jsonConfigIntro": "您可以直接粘貼JSON配置或選擇手動配置伺服器。",
+        "jsonConfig": "JSON配置",
+        "jsonConfigPlaceholder": "請粘貼MCP伺服器的JSON格式配置",
+        "jsonConfigExample": "JSON配置示例",
+        "parseSuccess": "配置解析成功",
+        "configImported": "配置導入成功",
+        "parseError": "解析錯誤",
+        "skipToManual": "跳過至手動配置",
+        "parseAndContinue": "解析並繼續"
       },
       "deleteServer": "刪除伺服器",
       "editServer": "編輯伺服器",

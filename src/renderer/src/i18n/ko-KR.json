@@ -356,7 +356,16 @@
         "submit": "제출",
         "add": "추가",
         "update": "업데이트",
-        "cancel": "취소"
+        "cancel": "취소",
+        "jsonConfigIntro": "JSON 구성을 직접 붙여넣거나 서버를 수동으로 구성하는 것 중에서 선택할 수 있습니다.",
+        "jsonConfig": "JSON 구성",
+        "jsonConfigPlaceholder": "MCP 서버의 JSON 형식 구성을 붙여넣으세요",
+        "jsonConfigExample": "JSON 구성 예시",
+        "parseSuccess": "구성 파싱 성공",
+        "configImported": "구성을 성공적으로 가져왔습니다",
+        "parseError": "파싱 오류",
+        "skipToManual": "수동 구성으로 건너뛰기",
+        "parseAndContinue": "파싱 및 계속"
       },
       "deleteServer": "서버 삭제",
       "editServer": "서버 편집",
