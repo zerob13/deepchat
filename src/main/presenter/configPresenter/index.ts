@@ -47,7 +47,8 @@ const defaultProviders = DEFAULT_PROVIDERS.map((provider) => ({
   apiType: provider.apiType,
   apiKey: provider.apiKey,
   baseUrl: provider.baseUrl,
-  enable: provider.enable
+  enable: provider.enable,
+  websites: provider.websites
 }))
 
 // 定义 storeKey 常量
