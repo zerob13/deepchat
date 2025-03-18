@@ -303,7 +303,6 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
         if (abortController.signal.aborted) {
           break
         }
-
         eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId,
           ...chunk

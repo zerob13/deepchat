@@ -1,6 +1,24 @@
 export const defaultModelsSettings = [
   // Gemini 系列模型
   {
+    id: 'gemini-2.0-flash-exp-image-generation',
+    name: 'Gemini 2.0 Flash Exp Image Generation',
+    temperature: 0.7,
+    maxTokens: 8192,
+    contextLength: 1048576,
+    match: ['gemini-2.0-flash-exp-image-generation'],
+    vision: true
+  },
+  {
+    id: 'gemini-2.0-pro-exp-02-05',
+    name: 'Gemini 2.0 Pro Exp 02-05',
+    temperature: 0.7,
+    maxTokens: 8192,
+    contextLength: 2048576,
+    match: ['gemini-2.0-pro-exp-02-05'],
+    vision: true
+  },
+  {
     id: 'gemini-2.0-flash',
     name: 'Gemini 2.0 Flash',
     temperature: 0.7,

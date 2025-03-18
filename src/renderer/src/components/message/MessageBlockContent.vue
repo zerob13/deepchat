@@ -13,7 +13,6 @@
         @contextmenu="handleContextMenu"
         v-html="renderContent(part.content)"
       ></div>
-      <!-- <ArtifactThinking v-if="part.type === 'thinking'" /> -->
       <ArtifactThinking v-if="part.type === 'thinking' && part.loading" />
       <div v-if="part.type === 'artifact' && part.artifact" class="my-1">
         <ArtifactPreview
