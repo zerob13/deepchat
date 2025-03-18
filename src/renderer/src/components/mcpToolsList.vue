@@ -43,7 +43,7 @@ onMounted(async () => {
               id="mcp-btn"
               variant="outline"
               :class="[
-                'flex w-7 border border-border rounded-lg shadow-sm items-center gap-1.5 px-2 h-full',
+                'flex border border-border rounded-lg shadow-sm items-center gap-1.5 h-full px-2 w-auto',
                 mcpEnabled
                   ? 'dark:!bg-primary bg-primary border-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
                   : 'text-muted-foreground '
@@ -60,7 +60,7 @@ onMounted(async () => {
 
               <span
                 v-if="hasTools && !isLoading && !isError"
-                :class="{ 'text-muted-foreground': !mcpEnabled, 'text-primary': mcpEnabled }"
+                :class="{ 'text-muted-foreground': !mcpEnabled, 'text-white': mcpEnabled }"
                 class="text-sm hover:text-accent-foreground"
                 >{{ toolCount }}</span
               >
