@@ -1,6 +1,12 @@
 import { LLM_PROVIDER, LLMResponse, LLMResponseStream, MODEL_META } from '@shared/presenter'
 import { BaseLLMProvider, ChatMessage } from '../baseProvider'
-import { GoogleGenerativeAI, GenerativeModel, Part, Content } from '@google/generative-ai'
+import {
+  GoogleGenerativeAI,
+  GenerativeModel,
+  Part,
+  Content,
+  GenerateContentRequest
+} from '@google/generative-ai'
 import { ConfigPresenter } from '../../configPresenter'
 import { presenter } from '@/presenter'
 
@@ -202,7 +208,10 @@ export class GeminiProvider extends BaseLLMProvider {
   }
 
   // 将 ChatMessage 转换为 Gemini 格式的消息
-  private formatGeminiMessages(messages: ChatMessage[]): Content[] {
+  private formatGeminiMessages(messages: ChatMessage[]): {
+    systemInstruction: string
+    contents: Content[]
+  } {
     // 提取系统消息
     const systemMessages = messages.filter((msg) => msg.role === 'system')
     let systemContent = ''
@@ -212,14 +221,6 @@ export class GeminiProvider extends BaseLLMProvider {
 
     // 创建Gemini内容数组
     const formattedContents: Content[] = []
-
-    // 如果有系统消息，将其作为第一条用户消息
-    if (systemContent) {
-      formattedContents.push({
-        role: 'user',
-        parts: [{ text: systemContent }]
-      })
-    }
 
     // 处理非系统消息
     const nonSystemMessages = messages.filter((msg) => msg.role !== 'system')
@@ -268,7 +269,7 @@ export class GeminiProvider extends BaseLLMProvider {
       }
     }
 
-    return formattedContents
+    return { systemInstruction: systemContent, contents: formattedContents }
   }
 
   // 处理响应，提取思考内容
@@ -324,9 +325,13 @@ export class GeminiProvider extends BaseLLMProvider {
       // 每次创建新的模型实例，并传入生成配置
       const model = this.getModel(modelId, temperature, maxTokens)
       const formattedParts = this.formatGeminiMessages(messages)
-      const result = await model.generateContent({
-        contents: formattedParts
-      })
+      const generateContentParams = {
+        contents: formattedParts.contents
+      } as GenerateContentRequest
+      if (formattedParts.systemInstruction) {
+        generateContentParams.systemInstruction = formattedParts.systemInstruction
+      }
+      const result = await model.generateContent(generateContentParams)
       const text = result.response.text()
 
       return this.processResponse(text)
@@ -482,7 +487,10 @@ export class GeminiProvider extends BaseLLMProvider {
       // 创建流式生成请求
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const requestParams: any = {
-        contents: formattedParts
+        contents: formattedParts.contents
+      }
+      if (formattedParts.systemInstruction) {
+        requestParams.systemInstruction = formattedParts.systemInstruction
       }
 
       // 只有在有工具且工具列表不为空时才添加工具参数
@@ -633,10 +641,14 @@ export class GeminiProvider extends BaseLLMProvider {
 
             // 创建一个新的流生成请求
             const newFormattedParts = this.formatGeminiMessages(newMessages)
+            const generateContentParams = {
+              contents: newFormattedParts.contents
+            } as GenerateContentRequest
             // @ts-ignore - Gemini SDK类型定义与实际API有差异
-            const continuationResult = await model.generateContentStream({
-              contents: newFormattedParts
-            })
+            if (newFormattedParts.systemInstruction) {
+              generateContentParams.systemInstruction = newFormattedParts.systemInstruction
+            }
+            const continuationResult = await model.generateContentStream(generateContentParams)
 
             // 处理新的流响应
             for await (const newChunk of continuationResult.stream) {
@@ -662,7 +674,7 @@ export class GeminiProvider extends BaseLLMProvider {
             // @ts-ignore - Gemini SDK类型定义与实际API有差异
             const fallbackResult = await model.generateContentStream({
               contents: [
-                ...formattedParts,
+                ...formattedParts.contents,
                 {
                   role: 'user',
                   parts: [
