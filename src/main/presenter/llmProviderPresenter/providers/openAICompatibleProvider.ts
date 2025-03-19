@@ -238,10 +238,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
                 if (toolCallDelta.function.arguments) {
                   existingToolCall.function.arguments += toolCallDelta.function.arguments
-                  console.log(
-                    'existingToolCall.function.arguments',
-                    existingToolCall.function.arguments
-                  )
                 }
               }
             } else {
@@ -503,6 +499,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       // 如果需要继续对话，创建新的流
       if (needContinueConversation) {
         needContinueConversation = false
+        requestParams.messages = conversationMessages
         stream = await this.openai.chat.completions.create(requestParams)
       } else {
         // 对话结束
