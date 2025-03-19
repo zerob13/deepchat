@@ -4,6 +4,7 @@ import lucideIcons from '@iconify-json/lucide/icons.json'
 import vscodeIcons from '@iconify-json/vscode-icons/icons.json'
 import { createPinia } from 'pinia'
 import zhCN from './i18n/zh-CN.json'
+import zhTW from './i18n/zh-TW.json'
 import enUS from './i18n/en-US.json'
 import zhHK from './i18n/zh-HK.json'
 import jaJP from './i18n/ja-JP.json'
@@ -20,6 +21,7 @@ const i18n = createI18n({
   legacy: false,
   messages: {
     'zh-CN': zhCN,
+    'zh-TW': zhTW,
     'en-US': enUS,
     'zh-HK': zhHK,
     'ja-JP': jaJP,
