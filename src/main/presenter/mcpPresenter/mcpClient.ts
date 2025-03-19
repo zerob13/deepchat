@@ -9,6 +9,7 @@ import { presenter } from '@/presenter'
 import { app } from 'electron'
 import fs from 'fs'
 import { proxyConfig } from '@/presenter/proxyConfig'
+import axios from 'axios'
 
 // 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
 type MCPEventsType = typeof MCP_EVENTS & {
@@ -37,6 +38,12 @@ interface Resource {
   text: string
 }
 
+const NPM_REGISTRY_LIST = [
+  'https://registry.npmjs.org/',
+  'https://r.cnpmjs.org/',
+  'https://registry.npmmirror.com/'
+]
+
 // MCP 客户端类
 export class McpClient {
   private client: Client | null = null
@@ -47,6 +54,7 @@ export class McpClient {
   private workingDirectory: string | null = null
   private connectionTimeout: NodeJS.Timeout | null = null
   private nodeRuntimePath: string | null = null
+  private npmRegistry: string | null = null
 
   constructor(serverName: string, serverConfig: Record<string, unknown>) {
     this.serverName = serverName
@@ -79,6 +87,68 @@ export class McpClient {
         this.nodeRuntimePath = null
       }
     }
+    this.testNpmRegistrySpeed().then((registry) => {
+      console.log('npm registry', registry)
+      this.npmRegistry = registry
+    })
+  }
+
+  async testNpmRegistrySpeed(): Promise<string> {
+    const timeout = 5000
+    const testPackage = 'tiny-runtime-injector'
+
+    // 获取代理配置
+    const proxyUrl = proxyConfig.getProxyUrl()
+    const proxyOptions = proxyUrl
+      ? { proxy: { host: new URL(proxyUrl).hostname, port: parseInt(new URL(proxyUrl).port) } }
+      : {}
+
+    const results = await Promise.all(
+      NPM_REGISTRY_LIST.map(async (registry) => {
+        const start = Date.now()
+        let success = false
+        let isTimeout = false
+        let time = 0
+
+        try {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+          const response = await axios.get(`${registry}${testPackage}`, {
+            ...proxyOptions,
+            signal: controller.signal
+          })
+
+          clearTimeout(timeoutId)
+          success = response.status >= 200 && response.status < 300
+          time = Date.now() - start
+        } catch (error) {
+          time = Date.now() - start
+          isTimeout = (error instanceof Error && error.name === 'AbortError') || time >= timeout
+        }
+
+        return {
+          registry,
+          success,
+          time,
+          isTimeout
+        }
+      })
+    )
+
+    // 过滤出成功的请求，并按响应时间排序
+    const successfulResults = results
+      .filter((result) => result.success)
+      .sort((a, b) => a.time - b.time)
+    console.log('npm registry check results', successfulResults)
+    // 如果所有请求都失败，返回默认的registry
+    if (successfulResults.length === 0) {
+      console.log('所有npm registry测试失败，使用默认registry')
+      return NPM_REGISTRY_LIST[0]
+    }
+
+    // 返回响应最快的registry
+    return successfulResults[0].registry
   }
 
   // 连接到 MCP 服务器
@@ -155,6 +225,9 @@ export class McpClient {
           env.http_proxy = proxyUrl
           env.https_proxy = proxyUrl
           // console.log('设置代理环境变量:', proxyUrl)
+        }
+        if (this.npmRegistry) {
+          env.npm_config_registry = this.npmRegistry
         }
         console.log('mcp env', env)
         this.transport = new StdioClientTransport({
