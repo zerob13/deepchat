@@ -495,7 +495,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       if (toolCallCount >= MAX_TOOL_CALLS) {
         break
       }
-
+      console.log('current toolCallCount', toolCallCount, conversationMessages)
       // 如果需要继续对话，创建新的流
       if (needContinueConversation) {
         needContinueConversation = false
