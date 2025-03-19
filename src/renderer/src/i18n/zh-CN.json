@@ -8,6 +8,7 @@
     "newChat": "新会话",
     "newTopic": "新话题",
     "cancel": "取消",
+    "confirm": "确认",
     "enabled": "已启用",
     "disabled": "已禁用",
     "disclaimer": "免责声明",
@@ -395,12 +396,19 @@
       "setAsDefault": "设为默认服务器",
       "removeServer": "删除服务器",
       "confirmRemoveServer": "确定要删除服务器 {name} 吗？此操作无法撤销。",
+      "removeServerDialog": {
+        "title": "删除服务器"
+      },
       "confirmDelete": {
         "title": "确认删除",
         "description": "确定要删除服务器 {name} 吗？此操作无法撤销。",
         "confirm": "删除",
         "cancel": "取消"
-      }
+      },
+      "resetToDefault": "恢复默认服务",
+      "resetConfirmTitle": "恢复默认服务",
+      "resetConfirmDescription": "此操作将恢复所有默认服务器，同时保留您自定义的服务器。对默认服务器的任何修改将会丢失。",
+      "resetConfirm": "恢复"
     },
     "about": {
       "title": "关于我们",

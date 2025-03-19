@@ -60,6 +60,8 @@ const jsonConfig = ref('')
 
 // 当type变更时处理baseUrl的显示逻辑
 const showBaseUrl = computed(() => type.value === 'sse')
+// 添加计算属性来控制命令相关字段的显示
+const showCommandFields = computed(() => type.value === 'stdio')
 
 // 当选择 all 时，自动选中其他权限
 const handleAutoApproveAllChange = (checked: boolean) => {
@@ -130,8 +132,12 @@ const goToDetailedForm = () => {
 
 // 验证
 const isNameValid = computed(() => name.value.trim().length > 0)
-const isCommandValid = computed(() => command.value.trim().length > 0)
-const isArgsValid = computed(() => args.value.trim().length > 0)
+const isCommandValid = computed(() => {
+  // 对于SSE类型，命令不是必需的
+  if (type.value === 'sse') return true
+  // 对于STDIO类型，命令是必需的
+  return command.value.trim().length > 0
+})
 const isEnvValid = computed(() => {
   try {
     JSON.parse(env.value)
@@ -145,14 +151,18 @@ const isBaseUrlValid = computed(() => {
   return baseUrl.value.trim().length > 0
 })
 
-const isFormValid = computed(
-  () =>
-    isNameValid.value &&
-    isCommandValid.value &&
-    isArgsValid.value &&
-    isEnvValid.value &&
-    isBaseUrlValid.value
-)
+const isFormValid = computed(() => {
+  // 基本验证：名称必须有效
+  if (!isNameValid.value) return false
+
+  // 对于SSE类型，只需要名称和baseUrl有效
+  if (type.value === 'sse') {
+    return isNameValid.value && isBaseUrlValid.value
+  }
+
+  // 对于STDIO类型，需要名称和命令有效，以及环境变量格式正确
+  return isNameValid.value && isCommandValid.value && isEnvValid.value
+})
 
 // 提交表单
 const handleSubmit = () => {
@@ -167,15 +177,49 @@ const handleSubmit = () => {
     if (autoApproveWrite.value) autoApprove.push('write')
   }
 
-  const serverConfig: MCPServerConfig = {
-    command: command.value.trim(),
-    args: args.value.split(/\s+/).filter(Boolean),
-    env: JSON.parse(env.value),
+  // 创建基本配置（必需的字段）
+  const baseConfig = {
     descriptions: descriptions.value.trim(),
     icons: icons.value.trim(),
     autoApprove,
-    type: type.value,
-    ...(type.value === 'sse' ? { baseUrl: baseUrl.value.trim() } : {})
+    type: type.value
+  }
+
+  // 创建符合MCPServerConfig接口的配置对象
+  let serverConfig: MCPServerConfig
+
+  if (type.value === 'sse') {
+    // SSE类型的服务器
+    serverConfig = {
+      ...baseConfig,
+      command: '', // 提供空字符串作为默认值
+      args: [], // 提供空数组作为默认值
+      env: {}, // 提供空对象作为默认值
+      baseUrl: baseUrl.value.trim()
+    }
+  } else {
+    // STDIO类型的服务器
+    try {
+      serverConfig = {
+        ...baseConfig,
+        command: command.value.trim(),
+        args: args.value.split(/\s+/).filter(Boolean),
+        env: JSON.parse(env.value)
+      }
+    } catch (error) {
+      // 如果JSON解析失败，使用空对象
+      serverConfig = {
+        ...baseConfig,
+        command: command.value.trim(),
+        args: args.value.split(/\s+/).filter(Boolean),
+        env: {}
+      }
+      toast({
+        title: t('settings.mcp.serverForm.jsonParseError'),
+        description: String(error),
+        variant: 'destructive'
+      })
+    }
   }
 
   emit('submit', name.value.trim(), serverConfig)
@@ -281,7 +325,7 @@ const placeholder = `mcp配置示例
         </div>
 
         <!-- 命令 -->
-        <div class="space-y-2">
+        <div class="space-y-2" v-if="showCommandFields">
           <Label class="text-xs text-muted-foreground" for="server-command">{{
             t('settings.mcp.serverForm.command')
           }}</Label>
@@ -294,7 +338,7 @@ const placeholder = `mcp配置示例
         </div>
 
         <!-- 参数 -->
-        <div class="space-y-2">
+        <div class="space-y-2" v-if="showCommandFields">
           <Label class="text-xs text-muted-foreground" for="server-args">{{
             t('settings.mcp.serverForm.args')
           }}</Label>
@@ -302,12 +346,11 @@ const placeholder = `mcp配置示例
             id="server-args"
             v-model="args"
             :placeholder="t('settings.mcp.serverForm.argsPlaceholder')"
-            required
           />
         </div>
 
         <!-- 环境变量 -->
-        <div class="space-y-2">
+        <div class="space-y-2" v-if="showCommandFields">
           <Label class="text-xs text-muted-foreground" for="server-env">{{
             t('settings.mcp.serverForm.env')
           }}</Label>
@@ -317,7 +360,6 @@ const placeholder = `mcp配置示例
             rows="5"
             :placeholder="t('settings.mcp.serverForm.envPlaceholder')"
             :class="{ 'border-red-500': !isEnvValid }"
-            required
           />
         </div>
 

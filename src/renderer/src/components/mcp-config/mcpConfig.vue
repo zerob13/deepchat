@@ -7,7 +7,9 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger
+  DialogTrigger,
+  DialogFooter,
+  DialogDescription
 } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMcpStore } from '@/stores/mcp'
@@ -24,6 +26,8 @@ const { t } = useI18n()
 const activeTab = ref<'servers' | 'tools'>('servers')
 const isAddServerDialogOpen = ref(false)
 const isEditServerDialogOpen = ref(false)
+const isResetConfirmDialogOpen = ref(false)
+const isRemoveConfirmDialogOpen = ref(false)
 const selectedServer = ref<string>('')
 const selectedTool = ref<MCPToolDefinition | null>(null)
 
@@ -79,10 +83,15 @@ const handleEditServer = async (serverName: string, serverConfig: Partial<MCPSer
 
 // 删除服务器
 const handleRemoveServer = async (serverName: string) => {
-  if (!confirm(t('settings.mcp.confirmRemoveServer', { name: serverName }))) {
-    return
-  }
+  selectedServer.value = serverName
+  isRemoveConfirmDialogOpen.value = true
+}
+
+// 确认删除服务器
+const confirmRemoveServer = async () => {
+  const serverName = selectedServer.value
   await mcpStore.removeServer(serverName)
+  isRemoveConfirmDialogOpen.value = false
 }
 
 // 设置默认服务器
@@ -99,6 +108,16 @@ const handleToggleServer = async (serverName: string) => {
     alert(
       `${serverName} ${isRunning ? t('settings.mcp.stopped') : t('settings.mcp.running')}${t('common.error.requestFailed')}`
     )
+  }
+}
+
+// 恢复默认服务
+const handleResetToDefaultServers = async () => {
+  const success = await mcpStore.resetToDefaultServers()
+  if (success) {
+    isResetConfirmDialogOpen.value = false
+  } else {
+    alert(t('common.error.requestFailed'))
   }
 }
 
@@ -183,20 +202,47 @@ onMounted(async () => {
       <div v-if="activeTab === 'servers'" class="h-full overflow-y-auto">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-base font-medium">{{ t('settings.mcp.serverList') }}</h3>
-          <Dialog v-model:open="isAddServerDialogOpen">
-            <DialogTrigger as-child>
-              <Button variant="outline" size="sm">
-                <Icon icon="lucide:plus" class="mr-2 h-4 w-4" />
-                {{ t('settings.mcp.addServer') }}
-              </Button>
-            </DialogTrigger>
-            <DialogContent class="w-[640px] px-0 h-[80vh] flex flex-col">
-              <DialogHeader class="px-4 flex-shrink-0">
-                <DialogTitle>{{ t('settings.mcp.addServerDialog.title') }}</DialogTitle>
-              </DialogHeader>
-              <McpServerForm @submit="handleAddServer" />
-            </DialogContent>
-          </Dialog>
+          <div class="flex space-x-2">
+            <Dialog v-model:open="isResetConfirmDialogOpen">
+              <DialogTrigger as-child>
+                <Button variant="outline" size="sm">
+                  <Icon icon="lucide:refresh-cw" class="mr-2 h-4 w-4" />
+                  {{ t('settings.mcp.resetToDefault') }}
+                </Button>
+              </DialogTrigger>
+              <DialogContent class="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>{{ t('settings.mcp.resetConfirmTitle') }}</DialogTitle>
+                  <DialogDescription>
+                    {{ t('settings.mcp.resetConfirmDescription') }}
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <Button variant="outline" @click="isResetConfirmDialogOpen = false">
+                    {{ t('common.cancel') }}
+                  </Button>
+                  <Button variant="default" @click="handleResetToDefaultServers">
+                    {{ t('settings.mcp.resetConfirm') }}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog v-model:open="isAddServerDialogOpen">
+              <DialogTrigger as-child>
+                <Button variant="outline" size="sm">
+                  <Icon icon="lucide:plus" class="mr-2 h-4 w-4" />
+                  {{ t('settings.mcp.addServer') }}
+                </Button>
+              </DialogTrigger>
+              <DialogContent class="w-[640px] px-0 h-[80vh] flex flex-col">
+                <DialogHeader class="px-4 flex-shrink-0">
+                  <DialogTitle>{{ t('settings.mcp.addServerDialog.title') }}</DialogTitle>
+                </DialogHeader>
+                <McpServerForm @submit="handleAddServer" />
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         <div v-if="mcpStore.configLoading" class="flex justify-center py-8">
@@ -468,6 +514,26 @@ onMounted(async () => {
         :edit-mode="true"
         @submit="(name, config) => handleEditServer(name, config)"
       />
+    </DialogContent>
+  </Dialog>
+
+  <!-- 删除服务器确认对话框 -->
+  <Dialog v-model:open="isRemoveConfirmDialogOpen">
+    <DialogContent class="sm:max-w-[425px]">
+      <DialogHeader>
+        <DialogTitle>{{ t('settings.mcp.removeServerDialog.title') }}</DialogTitle>
+        <DialogDescription>
+          {{ t('settings.mcp.confirmRemoveServer', { name: selectedServer }) }}
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" @click="isRemoveConfirmDialogOpen = false">
+          {{ t('common.cancel') }}
+        </Button>
+        <Button variant="destructive" @click="confirmRemoveServer">
+          {{ t('common.confirm') }}
+        </Button>
+      </DialogFooter>
     </DialogContent>
   </Dialog>
 </template>

@@ -153,7 +153,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     // 添加工具调用计数
     let toolCallCount = 0
-    const MAX_TOOL_CALLS = 25 // 最大工具调用次数限制
+    const MAX_TOOL_CALLS = BaseLLMProvider.MAX_TOOL_CALLS // 最大工具调用次数限制
 
     // 创建基本请求参数
     const requestParams: OpenAI.Chat.ChatCompletionCreateParams = {
@@ -238,10 +238,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
                 if (toolCallDelta.function.arguments) {
                   existingToolCall.function.arguments += toolCallDelta.function.arguments
-                  console.log(
-                    'existingToolCall.function.arguments',
-                    existingToolCall.function.arguments
-                  )
                 }
               }
             } else {
@@ -499,10 +495,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       if (toolCallCount >= MAX_TOOL_CALLS) {
         break
       }
-
+      console.log('current toolCallCount', toolCallCount, conversationMessages)
       // 如果需要继续对话，创建新的流
       if (needContinueConversation) {
         needContinueConversation = false
+        requestParams.messages = conversationMessages
         stream = await this.openai.chat.completions.create(requestParams)
       } else {
         // 对话结束

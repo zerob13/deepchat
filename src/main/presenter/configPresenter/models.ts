@@ -59,7 +59,7 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1-distill-qwen-32b',
     name: 'DeepSeek R1 Distill Qwen 32B',
     temperature: 0.7,
-    maxTokens: 16384,
+    maxTokens: 4096,
     contextLength: 32768,
     match: ['deepseek-r1-distill-qwen-32b'],
     vision: false
@@ -68,7 +68,7 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1-distill-qwen-14b',
     name: 'DeepSeek R1 Distill Qwen 14B',
     temperature: 0.7,
-    maxTokens: 16384,
+    maxTokens: 4096,
     contextLength: 32768,
     match: ['deepseek-r1-distill-qwen-14b'],
     vision: false
@@ -77,7 +77,7 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1-distill-qwen-7b',
     name: 'DeepSeek R1 Distill Qwen 7B',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 32768,
     match: ['deepseek-r1-distill-qwen-7b'],
     vision: false
@@ -86,8 +86,8 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1-distill-qwen-1.5b',
     name: 'DeepSeek R1 Distill Qwen 1.5B',
     temperature: 0.6,
-    maxTokens: 32768,
-    contextLength: 131072,
+    maxTokens: 4096,
+    contextLength: 65536,
     match: ['deepseek-r1-distill-qwen-1.5b', 'deepseek-r1-distill-qwen-1-5b'],
     vision: false
   },
@@ -95,8 +95,8 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1-distill-llama-8b',
     name: 'DeepSeek R1 Distill Llama 8B',
     temperature: 0.6,
-    maxTokens: 32768,
-    contextLength: 131072,
+    maxTokens: 4096,
+    contextLength: 65536,
     match: ['deepseek-r1-distill-llama-8b'],
     vision: false
   },
@@ -104,7 +104,7 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1-distill-llama-70b',
     name: 'DeepSeek R1 Distill Llama 70B',
     temperature: 0.6,
-    maxTokens: 32768,
+    maxTokens: 4096,
     contextLength: 65536,
     match: ['deepseek-r1-distill-llama-70b'],
     vision: false
@@ -113,7 +113,7 @@ export const defaultModelsSettings = [
     id: 'deepseek-r1',
     name: 'DeepSeek R1',
     temperature: 0.6,
-    maxTokens: 32768,
+    maxTokens: 4096,
     contextLength: 65536,
     match: ['deepseek-r1', 'deepseek-r1-zero'],
     vision: false
@@ -140,7 +140,7 @@ export const defaultModelsSettings = [
     id: 'deepseek-v3',
     name: 'DeepSeek V3',
     temperature: 0.6,
-    maxTokens: 8192,
+    maxTokens: 4096,
     contextLength: 65536,
     match: ['deepseek-v3'],
     vision: false

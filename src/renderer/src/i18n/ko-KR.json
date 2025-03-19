@@ -10,6 +10,7 @@
     "newChat": "새 채팅",
     "newTopic": "새 주제",
     "cancel": "취소",
+    "confirm": "확인",
     "close": "닫기",
     "error": {
       "requestFailed": "요청 실패...",
@@ -374,13 +375,20 @@
       "default": "기본",
       "setAsDefault": "기본 설정",
       "removeServer": "서버 삭제",
-      "confirmRemoveServer": "서버 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+      "confirmRemoveServer": "서버 {name}을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+      "removeServerDialog": {
+        "title": "서버 삭제"
+      },
       "confirmDelete": {
         "title": "삭제 확인",
-        "description": "서버 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+        "description": "서버 {name}을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
         "confirm": "삭제",
         "cancel": "취소"
-      }
+      },
+      "resetToDefault": "기본값으로 재설정",
+      "resetConfirmTitle": "기본 서버로 재설정",
+      "resetConfirmDescription": "이 작업은 사용자 정의 서버를 유지하면서 모든 기본 서버를 복원합니다. 기본 서버에 대한 모든 수정 사항이 손실됩니다.",
+      "resetConfirm": "재설정"
     },
     "about": {
       "title": "우리에 대해",

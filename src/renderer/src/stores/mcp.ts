@@ -182,6 +182,18 @@ export const useMcpStore = defineStore('mcp', () => {
     }
   }
 
+  // 恢复默认服务配置
+  const resetToDefaultServers = async () => {
+    try {
+      await mcpPresenter.resetToDefaultServers()
+      await loadConfig()
+      return true
+    } catch (error) {
+      console.error('Failed to reset to default MCP servers:', error)
+      return false
+    }
+  }
+
   // 启动/停止服务器
   const toggleServer = async (serverName: string) => {
     try {
@@ -387,6 +399,7 @@ export const useMcpStore = defineStore('mcp', () => {
     updateServer,
     removeServer,
     setDefaultServer,
+    resetToDefaultServers,
     toggleServer,
     loadTools,
     updateToolInput,

@@ -617,6 +617,11 @@ export class ConfigPresenter implements IConfigPresenter {
 
   // 更新MCP服务器配置
   async updateMcpServer(name: string, config: Partial<MCPServerConfig>): Promise<void> {
-    return this.mcpConfHelper.updateMcpServer(name, config)
+    await this.mcpConfHelper.updateMcpServer(name, config)
+  }
+
+  // 提供getMcpConfHelper方法，用于获取MCP配置助手
+  getMcpConfHelper(): McpConfHelper {
+    return this.mcpConfHelper
   }
 }

@@ -10,6 +10,7 @@
     "newChat": "New Chat",
     "newTopic": "New Topic",
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "close": "Close",
     "error": {
       "requestFailed": "Request failed...",
@@ -377,12 +378,19 @@
       "setAsDefault": "Set as Default",
       "removeServer": "Remove Server",
       "confirmRemoveServer": "Are you sure you want to delete server {name}? This action cannot be undone.",
+      "removeServerDialog": {
+        "title": "Delete Server"
+      },
       "confirmDelete": {
         "title": "Confirm Delete",
         "description": "Are you sure you want to delete server {name}? This action cannot be undone.",
         "confirm": "Delete",
         "cancel": "Cancel"
-      }
+      },
+      "resetToDefault": "Reset to Default",
+      "resetConfirmTitle": "Reset to Default Servers",
+      "resetConfirmDescription": "This will restore all default servers while keeping your custom servers. Any modifications to default servers will be lost.",
+      "resetConfirm": "Reset"
     },
     "about": {
       "title": "About Us",
@@ -422,7 +430,7 @@
       "empty": "Empty"
     }
   },
- "welcome": {
+  "welcome": {
     "steps": {
       "welcome": {
         "title": "Welcome",

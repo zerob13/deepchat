@@ -2,6 +2,7 @@ import { eventBus } from '@/eventbus'
 import { MCPServerConfig } from '@shared/presenter'
 import { MCP_EVENTS } from '@/events'
 import ElectronStore from 'electron-store'
+import { app } from 'electron'
 
 // MCP设置的接口
 interface IMcpSettings {
@@ -14,6 +15,16 @@ interface IMcpSettings {
 // const filesystemPath = path.join(app.getAppPath(), 'resources', 'mcp', 'filesystem.mjs')
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
+    filesystem: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', app.getPath('home')],
+      env: {},
+      descriptions: '',
+      icons: '📁',
+      autoApprove: ['all'],
+      type: 'stdio' as 'stdio' | 'sse',
+      disable: true
+    },
     memory: {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-memory'],
@@ -23,6 +34,24 @@ const DEFAULT_MCP_SERVERS = {
       autoApprove: ['all'],
       disable: false,
       type: 'stdio' as 'stdio' | 'sse'
+    },
+    bitcoin: {
+      command: 'npx',
+      args: ['-y', 'bitcoin-mcp@latest'],
+      env: {},
+      descriptions: '查询比特币',
+      icons: '💰',
+      autoApprove: ['all'],
+      type: 'stdio' as 'stdio' | 'sse'
+    },
+    airbnb: {
+      descriptions: 'Airbnb',
+      icons: '🏠',
+      autoApprove: ['all'],
+      type: 'stdio' as 'stdio' | 'sse',
+      command: 'npx',
+      args: ['-y', '@openbnb/mcp-server-airbnb', '--ignore-robots-txt'],
+      env: {}
     }
   },
   defaultServer: 'memory',
@@ -120,5 +149,22 @@ export class McpConfHelper {
       ...config
     }
     await this.setMcpServers(mcpServers)
+  }
+
+  // 恢复默认服务器配置
+  async resetToDefaultServers(): Promise<void> {
+    const currentServers = await this.getMcpServers()
+    const updatedServers = { ...currentServers }
+
+    // 遍历所有默认服务，有则覆盖，无则新增
+    for (const [serverName, serverConfig] of Object.entries(DEFAULT_MCP_SERVERS.mcpServers)) {
+      updatedServers[serverName] = serverConfig
+    }
+
+    // 更新服务器配置
+    await this.setMcpServers(updatedServers)
+
+    // 恢复默认服务器设置
+    await this.setMcpDefaultServer(DEFAULT_MCP_SERVERS.defaultServer)
   }
 }

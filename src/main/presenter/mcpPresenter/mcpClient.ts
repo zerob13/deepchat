@@ -8,6 +8,7 @@ import path from 'path'
 import { presenter } from '@/presenter'
 import { app } from 'electron'
 import fs from 'fs'
+import { proxyConfig } from '@/presenter/proxyConfig'
 
 // 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
 type MCPEventsType = typeof MCP_EVENTS & {
@@ -148,6 +149,14 @@ export class McpClient {
           )
         }
 
+        // 从proxyConfig获取代理URL并设置环境变量
+        const proxyUrl = proxyConfig.getProxyUrl()
+        if (proxyUrl) {
+          env.http_proxy = proxyUrl
+          env.https_proxy = proxyUrl
+          // console.log('设置代理环境变量:', proxyUrl)
+        }
+        console.log('mcp env', env)
         this.transport = new StdioClientTransport({
           command,
           args: this.serverConfig.args as string[],
