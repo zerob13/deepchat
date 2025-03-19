@@ -431,7 +431,7 @@ ${context}
 
       // 添加工具调用计数
       let toolCallCount = 0
-      const MAX_TOOL_CALLS = 25 // 最大工具调用次数限制
+      const MAX_TOOL_CALLS = BaseLLMProvider.MAX_TOOL_CALLS // 最大工具调用次数限制
 
       // 维护消息上下文
       const currentMessages = [...messages]

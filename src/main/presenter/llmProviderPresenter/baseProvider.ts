@@ -17,6 +17,9 @@ export interface ChatMessage {
 }
 
 export abstract class BaseLLMProvider {
+  // 最大工具调用次数限制
+  protected static readonly MAX_TOOL_CALLS = 10
+
   protected provider: LLM_PROVIDER
   protected models: MODEL_META[] = []
   protected customModels: MODEL_META[] = []
@@ -26,6 +29,11 @@ export abstract class BaseLLMProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     this.provider = provider
     this.configPresenter = configPresenter
+  }
+
+  // 获取最大工具调用次数
+  public static getMaxToolCalls(): number {
+    return BaseLLMProvider.MAX_TOOL_CALLS
   }
 
   protected async init() {

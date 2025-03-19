@@ -153,7 +153,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     // 添加工具调用计数
     let toolCallCount = 0
-    const MAX_TOOL_CALLS = 25 // 最大工具调用次数限制
+    const MAX_TOOL_CALLS = BaseLLMProvider.MAX_TOOL_CALLS // 最大工具调用次数限制
 
     // 创建基本请求参数
     const requestParams: OpenAI.Chat.ChatCompletionCreateParams = {
