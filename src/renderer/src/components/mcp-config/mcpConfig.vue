@@ -27,6 +27,7 @@ const activeTab = ref<'servers' | 'tools'>('servers')
 const isAddServerDialogOpen = ref(false)
 const isEditServerDialogOpen = ref(false)
 const isResetConfirmDialogOpen = ref(false)
+const isRemoveConfirmDialogOpen = ref(false)
 const selectedServer = ref<string>('')
 const selectedTool = ref<MCPToolDefinition | null>(null)
 
@@ -82,10 +83,15 @@ const handleEditServer = async (serverName: string, serverConfig: Partial<MCPSer
 
 // 删除服务器
 const handleRemoveServer = async (serverName: string) => {
-  if (!confirm(t('settings.mcp.confirmRemoveServer', { name: serverName }))) {
-    return
-  }
+  selectedServer.value = serverName
+  isRemoveConfirmDialogOpen.value = true
+}
+
+// 确认删除服务器
+const confirmRemoveServer = async () => {
+  const serverName = selectedServer.value
   await mcpStore.removeServer(serverName)
+  isRemoveConfirmDialogOpen.value = false
 }
 
 // 设置默认服务器
@@ -502,6 +508,26 @@ onMounted(async () => {
         :edit-mode="true"
         @submit="(name, config) => handleEditServer(name, config)"
       />
+    </DialogContent>
+  </Dialog>
+
+  <!-- 删除服务器确认对话框 -->
+  <Dialog v-model:open="isRemoveConfirmDialogOpen">
+    <DialogContent class="sm:max-w-[425px]">
+      <DialogHeader>
+        <DialogTitle>{{ t('settings.mcp.removeServerDialog.title') }}</DialogTitle>
+        <DialogDescription>
+          {{ t('settings.mcp.confirmRemoveServer', { name: selectedServer }) }}
+        </DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" @click="isRemoveConfirmDialogOpen = false">
+          {{ t('common.cancel') }}
+        </Button>
+        <Button variant="destructive" @click="confirmRemoveServer">
+          {{ t('common.confirm') }}
+        </Button>
+      </DialogFooter>
     </DialogContent>
   </Dialog>
 </template>

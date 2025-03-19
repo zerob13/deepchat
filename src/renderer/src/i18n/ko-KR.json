@@ -10,6 +10,7 @@
     "newChat": "새 채팅",
     "newTopic": "새 주제",
     "cancel": "취소",
+    "confirm": "확인",
     "close": "닫기",
     "error": {
       "requestFailed": "요청 실패...",
@@ -375,6 +376,9 @@
       "setAsDefault": "기본 설정",
       "removeServer": "서버 삭제",
       "confirmRemoveServer": "서버 {name}을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
+      "removeServerDialog": {
+        "title": "서버 삭제"
+      },
       "confirmDelete": {
         "title": "삭제 확인",
         "description": "서버 {name}을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",

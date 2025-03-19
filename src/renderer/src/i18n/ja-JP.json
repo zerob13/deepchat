@@ -10,6 +10,7 @@
     "newChat": "新しいチャット",
     "newTopic": "新しいトピック",
     "cancel": "キャンセル",
+    "confirm": "確認",
     "close": "閉じる",
     "error": {
       "requestFailed": "リクエストに失敗しました...",
@@ -370,6 +371,9 @@
       "setAsDefault": "デフォルトに設定",
       "removeServer": "サーバーを削除",
       "confirmRemoveServer": "サーバー {name} を削除してもよろしいですか？この操作は取り消せません。",
+      "removeServerDialog": {
+        "title": "サーバーを削除"
+      },
       "confirmDelete": {
         "title": "削除の確認",
         "description": "サーバー {name} を削除してもよろしいですか？この操作は取り消せません。",

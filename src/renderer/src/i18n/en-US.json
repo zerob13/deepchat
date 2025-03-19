@@ -10,6 +10,7 @@
     "newChat": "New Chat",
     "newTopic": "New Topic",
     "cancel": "Cancel",
+    "confirm": "Confirm",
     "close": "Close",
     "error": {
       "requestFailed": "Request failed...",
@@ -377,6 +378,9 @@
       "setAsDefault": "Set as Default",
       "removeServer": "Remove Server",
       "confirmRemoveServer": "Are you sure you want to delete server {name}? This action cannot be undone.",
+      "removeServerDialog": {
+        "title": "Delete Server"
+      },
       "confirmDelete": {
         "title": "Confirm Delete",
         "description": "Are you sure you want to delete server {name}? This action cannot be undone.",
