@@ -174,6 +174,7 @@ export interface IConfigPresenter {
   addMcpServer(name: string, config: MCPServerConfig): Promise<void>
   removeMcpServer(name: string): Promise<void>
   updateMcpServer(name: string, config: Partial<MCPServerConfig>): Promise<void>
+  getMcpConfHelper(): any // 用于获取MCP配置助手
 }
 export type RENDERER_MODEL_META = {
   id: string
@@ -618,6 +619,7 @@ export interface IMCPPresenter {
   }): Promise<{ content: string }>
   setMcpEnabled(enabled: boolean): Promise<void>
   getMcpEnabled(): Promise<boolean>
+  resetToDefaultServers(): Promise<void>
 }
 
 export interface ISyncPresenter {

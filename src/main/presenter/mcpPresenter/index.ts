@@ -521,6 +521,10 @@ export class McpPresenter implements IMCPPresenter {
 
   // 设置MCP启用状态
   async setMcpEnabled(enabled: boolean): Promise<void> {
-    await this.configPresenter.setMcpEnabled(enabled)
+    await this.configPresenter?.setMcpEnabled(enabled)
+  }
+
+  async resetToDefaultServers(): Promise<void> {
+    await this.configPresenter?.getMcpConfHelper().resetToDefaultServers()
   }
 }

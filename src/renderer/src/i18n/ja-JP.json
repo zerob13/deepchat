@@ -369,13 +369,17 @@
       "default": "デフォルト",
       "setAsDefault": "デフォルトに設定",
       "removeServer": "サーバーを削除",
-      "confirmRemoveServer": "サーバー \"{name}\" を削除してもよろしいですか？この操作は元に戻せません。",
+      "confirmRemoveServer": "サーバー {name} を削除してもよろしいですか？この操作は取り消せません。",
       "confirmDelete": {
-        "title": "削除確認",
-        "description": "サーバー \"{name}\" を削除してもよろしいですか？この操作は元に戻せません。",
+        "title": "削除の確認",
+        "description": "サーバー {name} を削除してもよろしいですか？この操作は取り消せません。",
         "confirm": "削除",
         "cancel": "キャンセル"
-      }
+      },
+      "resetToDefault": "デフォルトに戻す",
+      "resetConfirmTitle": "デフォルトサーバーに戻す",
+      "resetConfirmDescription": "この操作は、カスタムサーバーを保持したまま、すべてのデフォルトサーバーを復元します。デフォルトサーバーへの変更はすべて失われます。",
+      "resetConfirm": "リセット"
     },
     "about": {
       "title": "私たちについて",

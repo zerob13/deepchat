@@ -400,7 +400,11 @@
         "description": "确定要删除服务器 {name} 吗？此操作无法撤销。",
         "confirm": "删除",
         "cancel": "取消"
-      }
+      },
+      "resetToDefault": "恢复默认服务",
+      "resetConfirmTitle": "恢复默认服务",
+      "resetConfirmDescription": "此操作将恢复所有默认服务器，同时保留您自定义的服务器。对默认服务器的任何修改将会丢失。",
+      "resetConfirm": "恢复"
     },
     "about": {
       "title": "关于我们",

@@ -22,7 +22,8 @@ const DEFAULT_MCP_SERVERS = {
       descriptions: '',
       icons: '📁',
       autoApprove: ['all'],
-      type: 'stdio'
+      type: 'stdio' as 'stdio' | 'sse',
+      disable: true
     },
     memory: {
       command: 'npx',
@@ -148,5 +149,22 @@ export class McpConfHelper {
       ...config
     }
     await this.setMcpServers(mcpServers)
+  }
+
+  // 恢复默认服务器配置
+  async resetToDefaultServers(): Promise<void> {
+    const currentServers = await this.getMcpServers()
+    const updatedServers = { ...currentServers }
+
+    // 遍历所有默认服务，有则覆盖，无则新增
+    for (const [serverName, serverConfig] of Object.entries(DEFAULT_MCP_SERVERS.mcpServers)) {
+      updatedServers[serverName] = serverConfig
+    }
+
+    // 更新服务器配置
+    await this.setMcpServers(updatedServers)
+
+    // 恢复默认服务器设置
+    await this.setMcpDefaultServer(DEFAULT_MCP_SERVERS.defaultServer)
   }
 }

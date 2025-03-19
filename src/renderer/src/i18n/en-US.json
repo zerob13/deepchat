@@ -382,7 +382,11 @@
         "description": "Are you sure you want to delete server {name}? This action cannot be undone.",
         "confirm": "Delete",
         "cancel": "Cancel"
-      }
+      },
+      "resetToDefault": "Reset to Default",
+      "resetConfirmTitle": "Reset to Default Servers",
+      "resetConfirmDescription": "This will restore all default servers while keeping your custom servers. Any modifications to default servers will be lost.",
+      "resetConfirm": "Reset"
     },
     "about": {
       "title": "About Us",
@@ -422,7 +426,7 @@
       "empty": "Empty"
     }
   },
- "welcome": {
+  "welcome": {
     "steps": {
       "welcome": {
         "title": "Welcome",
