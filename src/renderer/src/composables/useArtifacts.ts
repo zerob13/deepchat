@@ -318,7 +318,11 @@ export const useBlockContent = (props: {
             currentPosition = content.indexOf('>', earliestMatch.index) + 1
           }
         } else if (pattern.name === 'tool_call_end') {
-          if (currentToolCallIndex !== -1 && parts[currentToolCallIndex].type === 'tool_call') {
+          if (
+            currentToolCallIndex !== -1 &&
+            parts[currentToolCallIndex].type === 'tool_call' &&
+            parts[currentToolCallIndex].tool_call!.status !== 'end'
+          ) {
             // 更新为完成状态
             parts[currentToolCallIndex].loading = false
             parts[currentToolCallIndex].tool_call!.status = 'end'
@@ -333,12 +337,30 @@ export const useBlockContent = (props: {
                 parts[currentToolCallIndex].tool_call!.error = attributes.error
               }
             }
+          } else {
+            // 补偿机制：找不到对应的tool_call，创建一个新的
+            const attributes = parseAttributes(match[1])
+            parts.push({
+              type: 'tool_call',
+              content: '',
+              loading: false,
+              tool_call: {
+                status: 'end',
+                name: attributes?.name,
+                error: attributes?.error
+              }
+            })
+            currentToolCallIndex = parts.length - 1
           }
 
           // 移动到标签结束位置
           currentPosition = content.indexOf('>', earliestMatch.index) + 1
         } else if (pattern.name === 'tool_call_error') {
-          if (currentToolCallIndex !== -1 && parts[currentToolCallIndex].type === 'tool_call') {
+          if (
+            currentToolCallIndex !== -1 &&
+            parts[currentToolCallIndex].type === 'tool_call' &&
+            parts[currentToolCallIndex].tool_call!.status !== 'end'
+          ) {
             // 更新为错误状态
             parts[currentToolCallIndex].loading = false
             parts[currentToolCallIndex].tool_call!.status = 'error'
@@ -353,6 +375,20 @@ export const useBlockContent = (props: {
                 parts[currentToolCallIndex].tool_call!.error = attributes.error
               }
             }
+          } else {
+            // 补偿机制：找不到对应的tool_call，创建一个新的
+            const attributes = parseAttributes(match[1])
+            parts.push({
+              type: 'tool_call',
+              content: '',
+              loading: false,
+              tool_call: {
+                status: 'error',
+                name: attributes?.name,
+                error: attributes?.error
+              }
+            })
+            currentToolCallIndex = parts.length - 1
           }
 
           // 移动到标签结束位置

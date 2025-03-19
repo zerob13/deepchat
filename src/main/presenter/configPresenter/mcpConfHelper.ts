@@ -23,6 +23,24 @@ const DEFAULT_MCP_SERVERS = {
       autoApprove: ['all'],
       disable: false,
       type: 'stdio' as 'stdio' | 'sse'
+    },
+    bitcoin: {
+      command: 'npx',
+      args: ['-y', 'bitcoin-mcp@latest'],
+      env: {},
+      descriptions: '查询比特币',
+      icons: '💰',
+      autoApprove: ['all'],
+      type: 'stdio' as 'stdio' | 'sse'
+    },
+    airbnb: {
+      descriptions: 'Airbnb',
+      icons: '🏠',
+      autoApprove: ['all'],
+      type: 'stdio' as 'stdio' | 'sse',
+      command: 'npx',
+      args: ['-y', '@openbnb/mcp-server-airbnb', '--ignore-robots-txt'],
+      env: {}
     }
   },
   defaultServer: 'memory',
