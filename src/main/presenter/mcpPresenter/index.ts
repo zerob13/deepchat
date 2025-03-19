@@ -1,4 +1,10 @@
-import { IMCPPresenter, MCPServerConfig, MCPToolDefinition, MCPToolCall } from '@shared/presenter'
+import {
+  IMCPPresenter,
+  MCPServerConfig,
+  MCPToolDefinition,
+  MCPToolCall,
+  McpClient
+} from '@shared/presenter'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
 import { eventBus } from '@/eventbus'
@@ -137,6 +143,44 @@ export class McpPresenter implements IMCPPresenter {
   // 获取MCP服务器配置
   getMcpServers(): Promise<Record<string, MCPServerConfig>> {
     return this.configPresenter.getMcpServers()
+  }
+
+  // 获取所有MCP服务器
+  async getMcpClients(): Promise<McpClient[]> {
+    const clients = await this.toolManager.getRunningClients()
+    const clientsList: McpClient[] = []
+    for (const client of clients) {
+      const results: MCPToolDefinition[] = []
+      const tools = await client.listTools()
+      for (const tool of tools) {
+        const properties = tool.inputSchema.properties || {}
+        const toolProperties = { ...properties }
+        for (const key in toolProperties) {
+          if (!toolProperties[key].description) {
+            toolProperties[key].description = 'Params of ' + key
+          }
+        }
+        results.push({
+          type: 'function',
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: {
+              type: 'object',
+              properties: toolProperties,
+              required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
+            }
+          }
+        })
+      }
+      clientsList.push({
+        name: client.serverName,
+        icon: client.serverConfig['icons'] as string,
+        isRunning: client.isServerRunning(),
+        tools: results
+      })
+    }
+    return clientsList
   }
 
   // 获取默认MCP服务器

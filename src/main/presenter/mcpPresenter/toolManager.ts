@@ -19,6 +19,10 @@ export class ToolManager {
     this.serverManager = serverManager
   }
 
+  public async getRunningClients(): Promise<McpClient[]> {
+    return this.serverManager.getRunningClients()
+  }
+
   // 获取所有工具定义
   public async getAllToolDefinitions(): Promise<MCPToolDefinition[]> {
     // 获取运行中的默认客户端

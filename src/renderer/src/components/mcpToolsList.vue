@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useMcpStore } from '@/stores/mcp'
 import { Button } from './ui/button'
 import { Switch } from './ui/switch'
+import { Badge } from './ui/badge'
 
 const { t } = useI18n()
 const mcpStore = useMcpStore()
@@ -25,10 +26,23 @@ const handleMcpEnabledChange = async (enabled: boolean) => {
   await mcpStore.setMcpEnabled(enabled)
 }
 
+const clientList = computed(() =>
+  mcpStore.clients
+    .filter((client) => client.isRunning)
+    .map((client) => {
+      return {
+        name: client.name,
+        icon: client.icon,
+        tools: client.tools
+      }
+    })
+)
+
 // 生命周期钩子
 onMounted(async () => {
   if (mcpEnabled.value) {
     await mcpStore.loadTools()
+    await mcpStore.loadClients()
   }
 })
 </script>
@@ -78,7 +92,7 @@ onMounted(async () => {
 
       <PopoverContent class="w-80 p-0" align="start">
         <!-- MCP启用开关 -->
-        <div class="p-4 border-b flex items-center justify-between">
+        <div class="p-2 border-b flex items-center justify-between">
           <div>
             <div class="text-sm font-medium">{{ t('mcp.tools.enabled') }}</div>
             <div class="text-xs text-muted-foreground">{{ t('mcp.tools.enabledDescription') }}</div>
@@ -91,39 +105,34 @@ onMounted(async () => {
         </div>
 
         <div class="max-h-[300px] overflow-y-auto">
-          <div v-if="!mcpEnabled" class="p-4 text-sm text-muted-foreground text-center">
+          <div v-if="!mcpEnabled" class="p-2 text-sm text-muted-foreground text-center">
             {{ t('mcp.tools.enableToUse') }}
           </div>
           <div v-else-if="isLoading" class="flex justify-center items-center py-8">
             <Icon icon="lucide:loader" class="w-6 h-6 animate-spin" />
           </div>
-          <div v-else-if="isError" class="p-4 text-sm text-destructive">
+          <div v-else-if="isError" class="p-2 text-sm text-destructive">
             {{ t('mcp.tools.loadError') }}: {{ errorMessage }}
           </div>
-          <div v-else-if="tools.length === 0" class="p-4 text-sm text-muted-foreground text-center">
+          <div v-else-if="tools.length === 0" class="p-2 text-sm text-muted-foreground text-center">
             {{ t('mcp.tools.empty') }}
           </div>
           <div v-else class="divide-y">
-            <div v-for="tool in tools" :key="tool.function.name" class="p-3 hover:bg-accent">
-              <div class="font-medium text-sm">{{ tool.function.name }}</div>
-              <div class="text-xs text-muted-foreground mt-1">{{ tool.function.description }}</div>
-
-              <!-- 参数列表 -->
-              <div v-if="tool.function.parameters?.properties" class="mt-2">
-                <div class="text-xs font-medium text-muted-foreground mb-1">
-                  {{ t('mcp.tools.parameters') }}:
-                </div>
-                <div class="space-y-1">
-                  <div
-                    v-for="(param, paramName) in tool.function.parameters.properties"
-                    :key="paramName"
-                    class="text-xs flex"
-                  >
-                    <span class="font-mono mr-1">{{ paramName }}</span>
-                    <span class="text-muted-foreground">{{ param.description }}</span>
+            <div v-for="server in clientList" :key="server.name" class="w-full">
+              <Popover class="w-full">
+                <PopoverTrigger class="w-full">
+                  <div class="p-2 hover:bg-accent flex items-center w-full">
+                    <span class="mr-2">{{ server.icon }}</span
+                    ><span class="flex-grow truncate text-left text-sm">{{ server.name }}</span
+                    ><Badge variant="outline">{{ server.tools.length }}</Badge>
                   </div>
-                </div>
-              </div>
+                </PopoverTrigger>
+                <PopoverContent align="start" class="p-2 max-h-[300px] overflow-y-auto">
+                  <div v-for="tool in server.tools" :key="tool.function.name" class="py-1">
+                    <div class="font-medium text-sm">{{ tool.function.name }}</div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
         </div>

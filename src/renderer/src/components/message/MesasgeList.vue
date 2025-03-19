@@ -111,10 +111,10 @@ const setAssistantRef = (index: number) => (el: any) => {
     assistantRefs[index] = el
   }
 }
-const scrollToBottom = (smooth = true) => {
+const scrollToBottom = () => {
   nextTick(() => {
     scrollAnchor.value?.scrollIntoView({
-      behavior: smooth ? 'smooth' : 'instant',
+      behavior: 'instant',
       block: 'end'
     })
   })
@@ -175,7 +175,7 @@ defineExpose({
 onMounted(() => {
   nextTick(() => {
     setTimeout(() => {
-      scrollToBottom(false)
+      scrollToBottom()
       nextTick(() => {
         visible.value = true
       })
@@ -186,7 +186,7 @@ onMounted(() => {
       () => {
         const lastMessage = props.messages[props.messages.length - 1]
         if (lastMessage?.status === 'pending' && !aboveThreshold.value) {
-          scrollToBottom(true)
+          scrollToBottom()
         }
       }
     )

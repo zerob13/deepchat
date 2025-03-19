@@ -137,6 +137,7 @@ const callTool = async (toolName: string) => {
 watch(activeTab, async (newTab) => {
   if (newTab === 'tools') {
     await mcpStore.loadTools()
+    await mcpStore.loadClients()
   }
 })
 
@@ -144,6 +145,7 @@ watch(activeTab, async (newTab) => {
 onMounted(async () => {
   if (activeTab.value === 'tools') {
     await mcpStore.loadTools()
+    await mcpStore.loadClients()
   }
 })
 </script>
@@ -234,13 +236,14 @@ onMounted(async () => {
                   <p class="text-xs text-muted-foreground mt-1">{{ server.descriptions }}</p>
                 </div>
               </div>
-              <div class="flex items-center space-x-6">
+              <div class="flex items-center gap-2">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         variant="outline"
-                        size="sm"
+                        size="icon"
+                        class="h-8 w-8 rounded-lg"
                         :disabled="mcpStore.configLoading"
                         @click="handleToggleServer(server.name)"
                       >
@@ -273,7 +276,8 @@ onMounted(async () => {
                     <TooltipTrigger asChild>
                       <Button
                         variant="outline"
-                        size="sm"
+                        size="icon"
+                        class="h-8 w-8 rounded-lg"
                         :disabled="server.isDefault || mcpStore.configLoading"
                         @click="handleSetDefaultServer(server.name)"
                       >
@@ -291,7 +295,8 @@ onMounted(async () => {
                     <TooltipTrigger asChild>
                       <Button
                         variant="outline"
-                        size="sm"
+                        size="icon"
+                        class="h-8 w-8 rounded-lg"
                         :disabled="mcpStore.configLoading"
                         @click="openEditServerDialog(server.name)"
                       >
@@ -309,7 +314,8 @@ onMounted(async () => {
                     <TooltipTrigger asChild>
                       <Button
                         variant="outline"
-                        size="sm"
+                        size="icon"
+                        class="h-8 w-8 rounded-lg"
                         :disabled="mcpStore.configLoading"
                         @click="handleRemoveServer(server.name)"
                       >

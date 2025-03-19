@@ -2,7 +2,7 @@ import { ref, computed, onMounted } from 'vue'
 import { defineStore } from 'pinia'
 import { usePresenter } from '@/composables/usePresenter'
 import { MCP_EVENTS } from '@/events'
-import type { MCPConfig, MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
+import type { McpClient, MCPConfig, MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
 
 // 自定义类型定义
 interface MCPToolCallRequest {
@@ -38,6 +38,7 @@ export const useMcpStore = defineStore('mcp', () => {
   const serverStatuses = ref<Record<string, boolean>>({})
   const serverLoadingStates = ref<Record<string, boolean>>({})
   const configLoading = ref(false)
+  const clients = ref<McpClient[]>([])
 
   // 工具相关状态
   const tools = ref<MCPToolDefinition[]>([])
@@ -99,6 +100,7 @@ export const useMcpStore = defineStore('mcp', () => {
       // 如果启用MCP，自动加载工具
       if (enabled) {
         await loadTools()
+        await loadClients()
       } else {
         // 如果禁用MCP，清空工具列表
         tools.value = []
@@ -124,6 +126,7 @@ export const useMcpStore = defineStore('mcp', () => {
       serverStatuses.value[serverName] = await mcpPresenter.isServerRunning(serverName)
       if (config.value.mcpEnabled) {
         loadTools()
+        loadClients()
       }
     } catch (error) {
       console.error(`Failed to get server status for ${serverName}:`, error)
@@ -199,6 +202,10 @@ export const useMcpStore = defineStore('mcp', () => {
     } finally {
       serverLoadingStates.value[serverName] = false
     }
+  }
+
+  const loadClients = async () => {
+    clients.value = (await mcpPresenter.getMcpClients()) ?? []
   }
 
   // 加载工具列表
@@ -369,6 +376,8 @@ export const useMcpStore = defineStore('mcp', () => {
     serverList,
     toolCount,
     hasTools,
+    clients,
+    loadClients,
 
     // 方法
     loadConfig,

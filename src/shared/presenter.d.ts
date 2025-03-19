@@ -19,6 +19,13 @@ export type SQLITE_MESSAGE = {
   variants?: SQLITE_MESSAGE[]
 }
 
+export interface McpClient {
+  name: string
+  icon: string
+  isRunning: boolean
+  tools: MCPToolDefinition[]
+}
+
 export interface ModelConfig {
   maxTokens: number
   contextLength: number
@@ -599,6 +606,7 @@ export interface MCPToolResponse {
 
 export interface IMCPPresenter {
   getMcpServers(): Promise<Record<string, MCPServerConfig>>
+  getMcpClients(): Promise<McpClient[]>
   getMcpDefaultServer(): Promise<string>
   setMcpDefaultServer(serverName: string): Promise<void>
   addMcpServer(serverName: string, config: MCPServerConfig): Promise<void>

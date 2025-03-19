@@ -40,8 +40,8 @@ interface Resource {
 export class McpClient {
   private client: Client | null = null
   private transport: Transport | null = null
-  private serverName: string
-  private serverConfig: Record<string, unknown>
+  public serverName: string
+  public serverConfig: Record<string, unknown>
   private isConnected: boolean = false
   private workingDirectory: string | null = null
   private connectionTimeout: NodeJS.Timeout | null = null

@@ -1,0 +1,196 @@
+{
+  "name": "Daishi",
+  "lastModified": "2025-03-14T07:15:30Z",
+  "thumbnailUrl": "https://s3-alpha.figma.com/thumbnails/186fbcf7-aaa8-450e-b301-2412f45a0635?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAQ4GOSFWCUXI2UGDG%2F20250316%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Date=20250316T120000Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=d48225bf3404b29504fbca9efa50d6d276f670c4b7cc05a0105fe9419bb7d716",
+  "nodes": [
+    {
+      "id": "120:219",
+      "name": "Group 14",
+      "type": "GROUP",
+      "layout": "layout_CR2BEE",
+      "borderRadius": "0px 0px 0px 0px",
+      "children": [
+        {
+          "id": "120:206",
+          "name": "Rectangle 23",
+          "type": "RECTANGLE",
+          "fills": "fill_O38PSN",
+          "layout": "layout_CR2BEE",
+          "borderRadius": "24px"
+        },
+        {
+          "id": "120:208",
+          "name": "Clip path group",
+          "type": "GROUP",
+          "layout": "layout_CR2BEE",
+          "children": [
+            {
+              "id": "120:209",
+              "name": "clip0_11886_19138",
+              "type": "GROUP",
+              "layout": "layout_CR2BEE",
+              "children": [
+                {
+                  "id": "120:210",
+                  "name": "Vector",
+                  "type": "IMAGE-SVG",
+                  "fills": "fill_PJLLXK",
+                  "layout": "layout_CR2BEE"
+                }
+              ]
+            },
+            {
+              "id": "120:211",
+              "name": "Group",
+              "type": "GROUP",
+              "layout": "layout_CR2BEE",
+              "children": [
+                {
+                  "id": "120:212",
+                  "name": "Vector",
+                  "type": "IMAGE-SVG",
+                  "fills": "fill_UIBOMA",
+                  "layout": "layout_CR2BEE"
+                },
+                {
+                  "id": "120:213",
+                  "name": "Vector",
+                  "type": "IMAGE-SVG",
+                  "fills": "fill_Z7KUAH",
+                  "layout": "layout_CR2BEE"
+                },
+                {
+                  "id": "120:214",
+                  "name": "Vector",
+                  "type": "IMAGE-SVG",
+                  "fills": "fill_AP4G3L",
+                  "layout": "layout_CR2BEE",
+                  "opacity": 0.4000000059604645
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "globalVars": {
+    "styles": {
+      "layout_CR2BEE": {
+        "mode": "none",
+        "sizing": {}
+      },
+      "fill_O38PSN": [
+        "#F8FAFC"
+      ],
+      "fill_PJLLXK": [
+        "#000000"
+      ],
+      "fill_UIBOMA": [
+        {
+          "type": "GRADIENT_LINEAR",
+          "gradientHandlePositions": [
+            {
+              "x": 0.1467822186992077,
+              "y": 0.931753371375799
+            },
+            {
+              "x": 1.1299446935477546,
+              "y": 0.14556566445194785
+            },
+            {
+              "x": 0.6296764597800755,
+              "y": 1.3319187923636946
+            }
+          ],
+          "gradientStops": [
+            {
+              "position": 0,
+              "color": {
+                "hex": "#1FB597",
+                "opacity": 1
+              }
+            },
+            {
+              "position": 1,
+              "color": {
+                "hex": "#91EB50",
+                "opacity": 1
+              }
+            }
+          ]
+        }
+      ],
+      "fill_Z7KUAH": [
+        {
+          "type": "GRADIENT_LINEAR",
+          "gradientHandlePositions": [
+            {
+              "x": 2497.9821454087023,
+              "y": 2072.296284947976
+            },
+            {
+              "x": 2555.6388202107682,
+              "y": 2014.6483828414443
+            },
+            {
+              "x": 2526.806096461968,
+              "y": 2101.1246192534913
+            }
+          ],
+          "gradientStops": [
+            {
+              "position": 0,
+              "color": {
+                "hex": "#1FB597",
+                "opacity": 1
+              }
+            },
+            {
+              "position": 1,
+              "color": {
+                "hex": "#91EB50",
+                "opacity": 1
+              }
+            }
+          ]
+        }
+      ],
+      "fill_AP4G3L": [
+        {
+          "type": "GRADIENT_LINEAR",
+          "gradientHandlePositions": [
+            {
+              "x": 0.021814618035290584,
+              "y": 0.7809521127214918
+            },
+            {
+              "x": 0.5987091071538377,
+              "y": 0.45162269153583745
+            },
+            {
+              "x": 0.1845687149619749,
+              "y": 1.0727855141512366
+            }
+          ],
+          "gradientStops": [
+            {
+              "position": 0,
+              "color": {
+                "hex": "#1B1464",
+                "opacity": 1
+              }
+            },
+            {
+              "position": 1,
+              "color": {
+                "hex": "#1B1464",
+                "opacity": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
