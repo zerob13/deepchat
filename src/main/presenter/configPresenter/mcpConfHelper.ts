@@ -2,6 +2,7 @@ import { eventBus } from '@/eventbus'
 import { MCPServerConfig } from '@shared/presenter'
 import { MCP_EVENTS } from '@/events'
 import ElectronStore from 'electron-store'
+import { app } from 'electron'
 
 // MCP设置的接口
 interface IMcpSettings {
@@ -14,6 +15,15 @@ interface IMcpSettings {
 // const filesystemPath = path.join(app.getAppPath(), 'resources', 'mcp', 'filesystem.mjs')
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
+    filesystem: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', app.getPath('home')],
+      env: {},
+      descriptions: '',
+      icons: '📁',
+      autoApprove: ['all'],
+      type: 'stdio'
+    },
     memory: {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-memory'],
