@@ -5,22 +5,26 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
-  - '!.upload/*'
-  - '!doc/*'
+  - '!docs/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!keys/*'
-  - '!static/*'
-  - '!.gitlab-ci.yml'
-  - '!test.js'
-  - '!electron-builder-test.yml'
-  - '!electron-builder.tmp.yml'
+  - '!scripts/*'
+  - '!.github/*'
+  - '!electron-builder.yml'
+  - '!electron-builder-macx64.yml'
   - '!test/*'
   - '!*.config.ts'
+  - '!*.config.js'
 asarUnpack:
-  - resources/**
+  - '**/node_modules/sharp/**/*'
+  - '**/node_modules/@img/**/*'
+extraResources:
+  - from: ./runtime/
+    to: app.asar.unpacked/runtime
+    filter: ['**/*']
 afterSign: scripts/notarize.js
 afterPack: scripts/afterPack.js
 mac:

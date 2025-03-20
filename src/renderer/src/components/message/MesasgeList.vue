@@ -11,17 +11,17 @@
         :class="{ 'opacity-0': !visible }"
       >
         <template v-for="(msg, index) in messages" :key="index">
-          <MessageItemAssistant 
-            v-if="msg.role === 'assistant'" 
-            :key="index" 
-            :message="msg" 
+          <MessageItemAssistant
+            v-if="msg.role === 'assistant'"
+            :key="index"
+            :message="msg"
             :ref="setAssistantRef(index)"
           />
-          <MessageItemUser 
-            v-if="msg.role === 'user'" 
-            :key="index" 
-            :message="msg" 
-            @retry="handleRetry(index)" 
+          <MessageItemUser
+            v-if="msg.role === 'user'"
+            :key="index"
+            :message="msg"
+            @retry="handleRetry(index)"
           />
         </template>
       </div>
@@ -67,6 +67,12 @@
         </Button>
       </transition>
     </div>
+    <ReferencePreview
+      class="pointer-events-none"
+      :show="referenceStore.showPreview"
+      :content="referenceStore.currentReference"
+      :rect="referenceStore.previewRect"
+    />
   </div>
 </template>
 
@@ -80,11 +86,14 @@ import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import { useChatStore } from '@/stores/chat'
 import { useI18n } from 'vue-i18n'
-
+import { useReferenceStore } from '@/stores/reference'
+import ReferencePreview from './ReferencePreview.vue'
 const { t } = useI18n()
 const props = defineProps<{
   messages: UserMessage[] | AssistantMessage[]
 }>()
+
+const referenceStore = useReferenceStore()
 
 const messagesContainer = ref<HTMLDivElement>()
 const messageList = ref<HTMLDivElement>()
@@ -99,13 +108,13 @@ const assistantRefs = reactive<Record<number, any>>({})
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const setAssistantRef = (index: number) => (el: any) => {
   if (el) {
-    assistantRefs[index] = el;
+    assistantRefs[index] = el
   }
 }
-const scrollToBottom = (smooth = true) => {
+const scrollToBottom = () => {
   nextTick(() => {
     scrollAnchor.value?.scrollIntoView({
-      behavior: smooth ? 'smooth' : 'instant',
+      behavior: 'instant',
       block: 'end'
     })
   })
@@ -166,7 +175,7 @@ defineExpose({
 onMounted(() => {
   nextTick(() => {
     setTimeout(() => {
-      scrollToBottom(false)
+      scrollToBottom()
       nextTick(() => {
         visible.value = true
       })
@@ -177,7 +186,7 @@ onMounted(() => {
       () => {
         const lastMessage = props.messages[props.messages.length - 1]
         if (lastMessage?.status === 'pending' && !aboveThreshold.value) {
-          scrollToBottom(true)
+          scrollToBottom()
         }
       }
     )

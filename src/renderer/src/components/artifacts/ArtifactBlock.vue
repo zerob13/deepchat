@@ -75,6 +75,8 @@ const artifactClass = computed(() => {
       return ''
     case 'application/vnd.ant.mermaid':
       return ''
+    case 'application/vnd.ant.react':
+      return ''
     default:
       return ''
   }
