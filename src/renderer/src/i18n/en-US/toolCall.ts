@@ -1,8 +1,8 @@
 export default {
-  calling: 'Tool Calling',
-  response: 'Tool Responding',
-  end: 'Tool Call Completed',
-  error: 'Tool Call Error',
+  calling: 'Calling',
+  response: 'Running',
+  end: 'Completed',
+  error: 'Error',
   title: 'Tool Call',
   clickToView: 'Click to view details',
   functionName: 'Function Name',

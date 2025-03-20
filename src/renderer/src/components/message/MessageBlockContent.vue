@@ -322,6 +322,7 @@ onUnmounted(() => {
 
 .prose .code-editor .cm-editor {
   background-color: #1e1e1e;
+  font-family: 'JetBrains Mono', Consolas, 'Courier New', monospace !important;
 }
 
 .prose .code-editor .cm-content {

@@ -1,8 +1,8 @@
 const toolCall = {
-  calling: 'ツール呼び出し中',
-  response: 'ツール応答中',
-  end: 'ツール呼び出し完了',
-  error: 'ツール呼び出しエラー',
+  calling: '呼び出し中',
+  response: '実行中',
+  end: '完了',
+  error: 'エラー',
   title: 'ツール呼び出し',
   clickToView: '詳細を表示するにはクリック',
   functionName: '関数名',
