@@ -290,7 +290,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
                   index: i,
                   function: {
                     name: toolCall.function.name || '',
-                    arguments: toolCall.function.arguments || ''
+                    arguments: toolCall.function.arguments || '{}'
                   }
                 })
               }
@@ -617,6 +617,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           (tc) => tc.index === indexKey || (tc.id && tc.id === toolCallDelta.id)
         )
 
+        console.log('update', existingToolCall, indexKey)
         if (existingToolCall) {
           // 更新现有工具调用
           if (toolCallDelta.id && !existingToolCall.id) {
@@ -644,7 +645,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             index: indexKey,
             function: {
               name: toolCallDelta.function?.name || '',
-              arguments: toolCallDelta.function?.arguments || '{}'
+              arguments: toolCallDelta.function?.arguments || ''
             }
           })
         }
