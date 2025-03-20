@@ -195,7 +195,14 @@ export abstract class BaseLLMProvider {
           const content = match.replace(/<function_call>|<\/function_call>/g, '').trim()
           try {
             const parsedCall = JSON.parse(content)
-            return parsedCall.function_call
+            return {
+              id: parsedCall.function_call.name,
+              type: 'function',
+              function: {
+                name: parsedCall.function_call.name,
+                arguments: JSON.stringify(parsedCall.function_call.arguments)
+              }
+            }
           } catch (parseError) {
             console.error('Error parsing function call JSON:', parseError)
             return null

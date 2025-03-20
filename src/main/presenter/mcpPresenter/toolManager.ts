@@ -118,8 +118,11 @@ export class ToolManager {
       let args = {}
       try {
         args = JSON.parse(argsString)
-      } catch (error) {
-        console.warn('Error parsing tool call arguments:', error)
+      } catch (error: unknown) {
+        console.warn(
+          'Error parsing tool call arguments:',
+          error instanceof Error ? error.message : String(error)
+        )
       }
 
       // 检查权限
