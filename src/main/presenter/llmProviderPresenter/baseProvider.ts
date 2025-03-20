@@ -1,4 +1,11 @@
-import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@shared/presenter'
+import {
+  LLM_PROVIDER,
+  MODEL_META,
+  LLMResponse,
+  LLMResponseStream,
+  MCPToolDefinition,
+  MCPToolCall
+} from '@shared/presenter'
 import { ConfigPresenter } from '../configPresenter'
 
 // 定义ChatMessage接口用于统一消息格式
@@ -143,6 +150,64 @@ export abstract class BaseLLMProvider {
 
   public getCustomModels(): MODEL_META[] {
     return this.customModels
+  }
+
+  protected getFunctionCallWrapPrompt(tools: MCPToolDefinition[]): string {
+    return `
+    你将根据用户的问题，选择合适的工具，并调用工具来解决问题，工具会以一个JSON数组的格式提供给你，内容在tool_list标签中:
+    <tool_list>
+  ${JSON.stringify(tools)}
+    </tool_list>
+    当用户的意图需要使用工具时，你必须严格按照以下格式回复，保证函数调用的信息在function_call的标签中,每个标签有且只能有一个调用:
+<function_call>
+{
+  "function_call": {
+    "name": "<函数名称>",
+    "arguments": { /* 参数对象，要求为有效 JSON 格式 */ }
+  }
+}
+</function_call>
+    例如，如果你需要调用函数 "getWeather" 并传入 "location" 和 "date"，请返回如下格式：
+    <function_call>
+   {
+      "function_call": {
+        "name": "getWeather",
+        "arguments": { "location": "Beijing", "date": "2025-03-20" }
+      }
+    }
+    </function_call>
+    `
+  }
+
+  protected parseFunctionCalls(response: string): MCPToolCall[] {
+    try {
+      // 使用正则表达式匹配所有的function_call标签对
+      const functionCallMatches = response.match(/<function_call>(.*?)<\/function_call>/gs)
+
+      // 如果没有匹配到任何函数调用，返回空数组
+      if (!functionCallMatches) {
+        return []
+      }
+
+      // 解析每个匹配到的函数调用并组成数组
+      const toolCalls = functionCallMatches
+        .map((match) => {
+          const content = match.replace(/<function_call>|<\/function_call>/g, '').trim()
+          try {
+            const parsedCall = JSON.parse(content)
+            return parsedCall.function_call
+          } catch (parseError) {
+            console.error('Error parsing function call JSON:', parseError)
+            return null
+          }
+        })
+        .filter((call) => call !== null)
+
+      return toolCalls
+    } catch (error) {
+      console.error('Error parsing function calls:', error)
+      return []
+    }
   }
 
   // 验证提供商API是否可用
