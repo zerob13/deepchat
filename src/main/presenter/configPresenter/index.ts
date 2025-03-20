@@ -302,7 +302,8 @@ export class ConfigPresenter implements IConfigPresenter {
       maxTokens: 4096,
       contextLength: 4096,
       temperature: 0.7,
-      vision: false
+      vision: false,
+      functionCall: false
     }
   }
 

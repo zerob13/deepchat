@@ -22,7 +22,8 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
         maxTokens: config.maxTokens,
         contextLength: config.contextLength,
         temperature: config.temperature,
-        vision: config.vision
+        vision: config.vision,
+        functionCall: config.functionCall || false
       }
     }
   }

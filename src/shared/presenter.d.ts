@@ -31,6 +31,7 @@ export interface ModelConfig {
   contextLength: number
   temperature: number
   vision: boolean
+  functionCall: boolean
 }
 
 export interface IWindowPresenter {
