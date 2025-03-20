@@ -556,10 +556,10 @@
     }
   },
   "toolCall": {
-    "calling": "工具调用中",
-    "response": "工具响应中",
-    "end": "工具调用完成",
-    "error": "工具调用错误",
+    "calling": "调用中",
+    "response": "运行中",
+    "end": "完成",
+    "error": "错误",
     "title": "工具调用",
     "clickToView": "点击查看详情",
     "functionName": "函数名称",

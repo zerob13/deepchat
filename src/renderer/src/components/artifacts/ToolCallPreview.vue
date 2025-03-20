@@ -4,14 +4,15 @@
       class="flex w-[360px] h-[40px] max-w-full shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground"
     >
       <div class="flex-grow w-0 pl-2">
-        <h4 class="text-xs font-medium leading-none text-accent-foreground">
-          {{ getToolCallTitle() }}
+        <h4
+          class="text-xs font-medium leading-none text-accent-foreground flex flex-row gap-2 items-center"
+        >
+          <Icon icon="lucide:hammer" class="w-4 h-4 text-muted-foreground" />
+          {{ props.block.tool_call?.name ?? '' }}
         </h4>
       </div>
       <div class="text-xs text-muted-foreground">{{ getToolCallStatus() }}</div>
-      <div
-        class="flex-shrink-0 px-3 h-10 rounded-lg rounded-l-none flex justify-center items-center"
-      >
+      <div class="flex-shrink-0 px-2 rounded-lg rounded-l-none flex justify-center items-center">
         <Icon
           v-if="block.loading && (blockStatus === 'loading' || !blockStatus)"
           icon="lucide:loader-2"
@@ -66,13 +67,6 @@ const props = defineProps<{
   block: ProcessedPart
   blockStatus?: 'loading' | 'success' | 'error'
 }>()
-
-const getToolCallTitle = () => {
-  // 尝试从内容中提取工具名称
-  const title = props.block.tool_call?.name
-  // 返回默认的工具调用标题
-  return t('toolCall.title') + (title ? `: ${title}` : '')
-}
 
 const isBlockError = () => {
   if (props.block.tool_call?.status === 'error') {
