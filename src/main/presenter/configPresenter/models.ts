@@ -149,7 +149,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-chat'],
     vision: false,
-    functionCall: true
+    // https://github.com/deepseek-ai/DeepSeek-V3/issues/15 use mock function call
+    functionCall: false
   },
   {
     id: 'deepseek-v3',
@@ -159,6 +160,7 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-v3'],
     vision: false,
+    // https://github.com/deepseek-ai/DeepSeek-V3/issues/15 use mock function call
     functionCall: false
   },
   {
