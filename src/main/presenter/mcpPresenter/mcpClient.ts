@@ -322,7 +322,11 @@ export class McpClient {
       }
 
       // 返回结果文本
-      return result.content && result.content[0] ? result.content[0].text : ''
+      if (result.content) {
+        return JSON.stringify(result.content)
+      } else {
+        return ''
+      }
     } catch (error) {
       console.error(`调用MCP工具 ${toolName} 失败:`, error)
       throw error
