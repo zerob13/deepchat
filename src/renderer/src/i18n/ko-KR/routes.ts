@@ -1,0 +1,10 @@
+export default {
+  chat: '채팅',
+  welcome: '환영합니다',
+  settings: '설정',
+  'settings-common': '일반 설정',
+  'settings-provider': '제공자 설정',
+  'settings-about': '정보',
+  'settings-database': '데이터 설정',
+  'settings-mcp': 'MCP 설정'
+}
