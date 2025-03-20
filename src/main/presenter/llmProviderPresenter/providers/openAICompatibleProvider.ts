@@ -193,14 +193,14 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     let hasCheckedFirstChunk = false
     let hasReasoningContent = false
-    let buffer = ''
+    let buffer = '' //最终需要发送上去的buffer
     let isInThinkTag = false
     let initialBuffer = '' // 用于累积开头的内容
     const WINDOW_SIZE = 10 // 滑动窗口大小
 
     // 处理不支持functionCall模型的相关变量
     let isInFunctionCallTag = false
-    let functionCallBuffer = ''
+    let functionCallBuffer = '' // 用于累积function_call标签内的内容
 
     // 辅助函数：清理标签并返回清理后的位置
     const cleanTag = (text: string, tag: string): { cleanedPosition: number; found: boolean } => {
@@ -226,7 +226,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     while (true) {
       for await (const chunk of stream) {
-        console.log('chunk', chunk)
         const choice = chunk.choices[0]
 
         // 原生支持function call的模型处理
@@ -242,7 +241,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           }
           continue
         }
-        console.log('pendingToolCalls', pendingToolCalls)
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const delta = choice?.delta as any
@@ -254,14 +252,15 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           continue
         }
 
-        const content = delta?.content || ''
+        let content = delta?.content || ''
+
         if (!content) continue
 
         // 累积完整响应
         fullAssistantResponse += content
 
         // 如果模型不支持function call，检查<function_call>标签
-        if (!supportsFunctionCall) {
+        if (!supportsFunctionCall && mcpTools.length > 0) {
           const result = this.processFunctionCallTagInContent(
             content,
             isInFunctionCallTag,
@@ -270,6 +269,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
           isInFunctionCallTag = result.isInFunctionCallTag
           functionCallBuffer = result.functionCallBuffer
+
+          // 如果有需要作为普通内容发出的缓存
+          if (result.pendingContent) {
+            // console.log('check func', result.pendingContent, functionCallBuffer)
+            content = result.pendingContent
+          }
 
           // 如果找到了完整的function call
           if (result.completeFunctionCall) {
@@ -478,14 +483,24 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             console.log('toolCallResponse', toolCallResponse)
 
             // 将工具响应添加到消息中
-            conversationMessages.push({
-              role: 'tool',
-              content:
-                typeof toolCallResponse.content === 'string'
-                  ? toolCallResponse.content
-                  : JSON.stringify(toolCallResponse.content),
-              tool_call_id: toolCall.id
-            })
+            if (supportsFunctionCall) {
+              conversationMessages.push({
+                role: 'tool',
+                content:
+                  typeof toolCallResponse.content === 'string'
+                    ? toolCallResponse.content
+                    : JSON.stringify(toolCallResponse.content),
+                tool_call_id: toolCall.id
+              })
+            } else {
+              conversationMessages.push({
+                role: 'user',
+                content:
+                  typeof toolCallResponse.content === 'string'
+                    ? toolCallResponse.content
+                    : JSON.stringify(toolCallResponse.content)
+              })
+            }
 
             // 通知工具调用完成 - 扩展LLMResponseStream类型
             yield {
@@ -503,11 +518,18 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             }
 
             // 添加错误响应到消息中
-            conversationMessages.push({
-              role: 'tool',
-              content: `Error: ${errorMessage}`,
-              tool_call_id: toolCall.id
-            })
+            if (supportsFunctionCall) {
+              conversationMessages.push({
+                role: 'tool',
+                content: `Error: ${errorMessage}`,
+                tool_call_id: toolCall.id
+              })
+            } else {
+              conversationMessages.push({
+                role: 'user',
+                content: `tool call Error: ${errorMessage}`
+              })
+            }
           }
         }
 
@@ -522,14 +544,8 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         functionCallBuffer = ''
         isInFunctionCallTag = false
 
-        // 如果模型不支持原生function call，需要重新处理消息
-        if (!supportsFunctionCall && mcpTools.length > 0) {
-          // 需要重新准备带有工具调用提示的消息
-          processedMessages = this.prepareFunctionCallPrompt(conversationMessages, mcpTools)
-          requestParams.messages = processedMessages
-        } else {
-          requestParams.messages = conversationMessages
-        }
+        // 由于systemprompt已经处理过了，这里不需要重新处理消息
+        requestParams.messages = conversationMessages
         console.log('requestParams new', requestParams)
         // 创建新的流
         stream = await this.openai.chat.completions.create(requestParams)
@@ -554,6 +570,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         yield {
           content: buffer
         }
+      }
+    }
+    // 如果结束时还有未完成的function_call缓存，将其作为普通内容输出
+    if (functionCallBuffer && isInFunctionCallTag) {
+      yield {
+        content: functionCallBuffer.startsWith('<') ? functionCallBuffer : `<${functionCallBuffer}`
       }
     }
   }
@@ -682,23 +704,18 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     isInFunctionCallTag: boolean
     functionCallBuffer: string
     completeFunctionCall: string | null
+    pendingContent: string // 需要作为普通内容发出的缓存
   } {
     const result = {
       isInFunctionCallTag,
       functionCallBuffer,
-      completeFunctionCall: null as string | null
+      completeFunctionCall: null as string | null,
+      pendingContent: '' // 非function_call标签的内容
     }
 
-    // 如果不在function call标签内，检查开始标签
-    if (!isInFunctionCallTag) {
-      const tagStartIndex = content.indexOf('<function_call>')
-      if (tagStartIndex !== -1) {
-        // 找到开始标签
-        result.isInFunctionCallTag = true
-        result.functionCallBuffer = content.substring(tagStartIndex + '<function_call>'.length)
-      }
-    } else {
-      // 已经在标签内，累积内容
+    // 检查结束标签，如果已经在标签内
+    if (isInFunctionCallTag) {
+      // 已经在标签内，继续累积内容
       result.functionCallBuffer += content
 
       // 检查结束标签
@@ -707,11 +724,93 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         // 找到完整的function call
         result.completeFunctionCall = `<function_call>${result.functionCallBuffer.substring(0, tagEndIndex)}</function_call>`
 
-        // 重置状态
-        result.isInFunctionCallTag = false
-        result.functionCallBuffer = result.functionCallBuffer.substring(
+        // 保存标签后的内容作为普通内容
+        result.pendingContent = result.functionCallBuffer.substring(
           tagEndIndex + '</function_call>'.length
         )
+
+        // 重置状态
+        result.isInFunctionCallTag = false
+        result.functionCallBuffer = ''
+      }
+      return result
+    }
+
+    // 不在标签内，首先检查是否有"<"字符
+    let currentPos = 0
+    const contentLength = content.length
+
+    while (currentPos < contentLength) {
+      // 查找下一个"<"字符
+      const lessThanPos = content.indexOf('<', currentPos)
+
+      // 如果没有找到"<"，将剩余内容作为普通内容
+      if (lessThanPos === -1) {
+        result.pendingContent += content.substring(currentPos)
+        break
+      }
+
+      // 将"<"之前的内容作为普通内容
+      result.pendingContent += content.substring(currentPos, lessThanPos)
+
+      // 检查是否可能是<function_call>标签的开始
+      const remainingContent = content.substring(lessThanPos)
+      const functionCallTag = '<function_call>'
+
+      // 如果剩余内容以<function_call>开头
+      if (remainingContent.startsWith(functionCallTag)) {
+        // 确认是function_call标签
+        result.isInFunctionCallTag = true
+        result.functionCallBuffer = remainingContent.substring(functionCallTag.length)
+        currentPos = contentLength // 已处理完整个内容
+        break
+      }
+      // 如果剩余内容可能是<function_call>的一部分（比如只有"<func"）
+      else if (functionCallTag.startsWith(remainingContent)) {
+        // 可能是不完整的函数调用标签开始，缓存起来等待下一个chunk
+        result.functionCallBuffer = remainingContent
+        result.isInFunctionCallTag = true
+        currentPos = contentLength // 已处理完整个内容
+        break
+      }
+      // 如果部分匹配<function_call>的开头
+      else if (remainingContent.length < functionCallTag.length) {
+        const partialTag = remainingContent
+        if (functionCallTag.startsWith(partialTag)) {
+          // 可能是不完整的标签开始，缓存起来等待下一个chunk
+          result.functionCallBuffer = partialTag
+          result.isInFunctionCallTag = true
+          currentPos = contentLength // 已处理完整个内容
+          break
+        } else {
+          // 不是标签开始，作为普通内容处理
+          result.pendingContent += partialTag
+          currentPos = contentLength
+          break
+        }
+      }
+      // 如果以<开头但不是<function_call>
+      else {
+        // 检查是否部分匹配
+        let isPotentialMatch = true
+        for (let i = 0; i < Math.min(functionCallTag.length, remainingContent.length); i++) {
+          if (functionCallTag[i] !== remainingContent[i]) {
+            isPotentialMatch = false
+            break
+          }
+        }
+
+        if (isPotentialMatch && remainingContent.length < functionCallTag.length) {
+          // 可能是不完整的标签，缓存并等待
+          result.functionCallBuffer = remainingContent
+          result.isInFunctionCallTag = true
+          currentPos = contentLength
+          break
+        } else {
+          // 不是标签，继续处理
+          result.pendingContent += '<'
+          currentPos = lessThanPos + 1
+        }
       }
     }
 
