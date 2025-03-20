@@ -120,6 +120,17 @@ export class McpPresenter implements IMCPPresenter {
         this.configPresenter.getMcpDefaultServer()
       ])
 
+      // 先测试npm registry速度
+      console.log('[MCP] 测试npm registry速度...')
+      try {
+        await this.serverManager.testNpmRegistrySpeed()
+        console.log(
+          `[MCP] npm registry速度测试完成，选择最佳registry: ${this.serverManager.getNpmRegistry()}`
+        )
+      } catch (error) {
+        console.error('[MCP] npm registry速度测试失败:', error)
+      }
+
       // 如果有默认服务器，尝试启动
       if (defaultServer && servers[defaultServer]) {
         const serverName = defaultServer

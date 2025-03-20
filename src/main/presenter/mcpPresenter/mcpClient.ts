@@ -9,7 +9,6 @@ import { presenter } from '@/presenter'
 import { app } from 'electron'
 import fs from 'fs'
 import { proxyConfig } from '@/presenter/proxyConfig'
-import axios from 'axios'
 
 // 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
 type MCPEventsType = typeof MCP_EVENTS & {
@@ -38,12 +37,6 @@ interface Resource {
   text: string
 }
 
-const NPM_REGISTRY_LIST = [
-  'https://registry.npmjs.org/',
-  'https://r.cnpmjs.org/',
-  'https://registry.npmmirror.com/'
-]
-
 // MCP 客户端类
 export class McpClient {
   private client: Client | null = null
@@ -56,9 +49,14 @@ export class McpClient {
   private nodeRuntimePath: string | null = null
   private npmRegistry: string | null = null
 
-  constructor(serverName: string, serverConfig: Record<string, unknown>) {
+  constructor(
+    serverName: string,
+    serverConfig: Record<string, unknown>,
+    npmRegistry: string | null = null
+  ) {
     this.serverName = serverName
     this.serverConfig = serverConfig
+    this.npmRegistry = npmRegistry
 
     // 从配置中获取工作目录
     if (Array.isArray(serverConfig.args) && serverConfig.args.length > 1) {
@@ -87,68 +85,6 @@ export class McpClient {
         this.nodeRuntimePath = null
       }
     }
-    this.testNpmRegistrySpeed().then((registry) => {
-      console.log('npm registry', registry)
-      this.npmRegistry = registry
-    })
-  }
-
-  async testNpmRegistrySpeed(): Promise<string> {
-    const timeout = 5000
-    const testPackage = 'tiny-runtime-injector'
-
-    // 获取代理配置
-    const proxyUrl = proxyConfig.getProxyUrl()
-    const proxyOptions = proxyUrl
-      ? { proxy: { host: new URL(proxyUrl).hostname, port: parseInt(new URL(proxyUrl).port) } }
-      : {}
-
-    const results = await Promise.all(
-      NPM_REGISTRY_LIST.map(async (registry) => {
-        const start = Date.now()
-        let success = false
-        let isTimeout = false
-        let time = 0
-
-        try {
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), timeout)
-
-          const response = await axios.get(`${registry}${testPackage}`, {
-            ...proxyOptions,
-            signal: controller.signal
-          })
-
-          clearTimeout(timeoutId)
-          success = response.status >= 200 && response.status < 300
-          time = Date.now() - start
-        } catch (error) {
-          time = Date.now() - start
-          isTimeout = (error instanceof Error && error.name === 'AbortError') || time >= timeout
-        }
-
-        return {
-          registry,
-          success,
-          time,
-          isTimeout
-        }
-      })
-    )
-
-    // 过滤出成功的请求，并按响应时间排序
-    const successfulResults = results
-      .filter((result) => result.success)
-      .sort((a, b) => a.time - b.time)
-    console.log('npm registry check results', successfulResults)
-    // 如果所有请求都失败，返回默认的registry
-    if (successfulResults.length === 0) {
-      console.log('所有npm registry测试失败，使用默认registry')
-      return NPM_REGISTRY_LIST[0]
-    }
-
-    // 返回响应最快的registry
-    return successfulResults[0].registry
   }
 
   // 连接到 MCP 服务器
@@ -165,14 +101,6 @@ export class McpClient {
       if (this.serverConfig.type === 'stdio') {
         let command = this.serverConfig.command as string
 
-        // if (command === 'npx') {
-        //   // 根据平台确定可执行文件路径
-        //   if (process.platform === 'win32') {
-        //     command = 'npx.cmd'
-        //   } else {
-        //     command = 'npx'
-        //   }
-        // }
         if (this.nodeRuntimePath) {
           if (command === 'node') {
             if (process.platform === 'win32') {
@@ -469,6 +397,8 @@ export async function createMcpClient(serverName: string): Promise<McpClient> {
     throw new Error(`在配置中未找到MCP服务器 ${serverName}`)
   }
 
-  // 创建并返回 MCP 客户端
-  return new McpClient(serverName, serverConfig as unknown as Record<string, unknown>)
+  // 创建并返回 MCP 客户端，传入null作为npmRegistry
+  // 注意：这个函数应该只用于直接创建客户端实例的情况
+  // 正常情况下应该通过ServerManager创建，以便使用测试后的npm registry
+  return new McpClient(serverName, serverConfig as unknown as Record<string, unknown>, null)
 }

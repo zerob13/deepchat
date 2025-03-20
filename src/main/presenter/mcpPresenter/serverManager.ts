@@ -1,12 +1,87 @@
 import { IConfigPresenter } from '@shared/presenter'
 import { McpClient } from './mcpClient'
+import axios from 'axios'
+import { proxyConfig } from '@/presenter/proxyConfig'
+
+const NPM_REGISTRY_LIST = [
+  'https://registry.npmjs.org/',
+  'https://r.cnpmjs.org/',
+  'https://registry.npmmirror.com/'
+]
 
 export class ServerManager {
   private clients: Map<string, McpClient> = new Map()
   private configPresenter: IConfigPresenter
+  private npmRegistry: string | null = null
 
   constructor(configPresenter: IConfigPresenter) {
     this.configPresenter = configPresenter
+  }
+
+  // 测试npm registry速度并返回最佳选择
+  async testNpmRegistrySpeed(): Promise<string> {
+    const timeout = 5000
+    const testPackage = 'tiny-runtime-injector'
+
+    // 获取代理配置
+    const proxyUrl = proxyConfig.getProxyUrl()
+    const proxyOptions = proxyUrl
+      ? { proxy: { host: new URL(proxyUrl).hostname, port: parseInt(new URL(proxyUrl).port) } }
+      : {}
+
+    const results = await Promise.all(
+      NPM_REGISTRY_LIST.map(async (registry) => {
+        const start = Date.now()
+        let success = false
+        let isTimeout = false
+        let time = 0
+
+        try {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+          const response = await axios.get(`${registry}${testPackage}`, {
+            ...proxyOptions,
+            signal: controller.signal
+          })
+
+          clearTimeout(timeoutId)
+          success = response.status >= 200 && response.status < 300
+          time = Date.now() - start
+        } catch (error) {
+          time = Date.now() - start
+          isTimeout = (error instanceof Error && error.name === 'AbortError') || time >= timeout
+        }
+
+        return {
+          registry,
+          success,
+          time,
+          isTimeout
+        }
+      })
+    )
+
+    // 过滤出成功的请求，并按响应时间排序
+    const successfulResults = results
+      .filter((result) => result.success)
+      .sort((a, b) => a.time - b.time)
+    console.log('npm registry check results', successfulResults)
+
+    // 如果所有请求都失败，返回默认的registry
+    if (successfulResults.length === 0) {
+      console.log('所有npm registry测试失败，使用默认registry')
+      return NPM_REGISTRY_LIST[0]
+    }
+
+    // 返回响应最快的registry
+    this.npmRegistry = successfulResults[0].registry
+    return this.npmRegistry
+  }
+
+  // 获取npm registry
+  getNpmRegistry(): string | null {
+    return this.npmRegistry
   }
 
   // 获取默认服务器名称
@@ -61,8 +136,12 @@ export class ServerManager {
     try {
       console.info(`正在启动MCP服务器 ${name}...`)
 
-      // 创建并保存客户端实例
-      const client = new McpClient(name, serverConfig as unknown as Record<string, unknown>)
+      // 创建并保存客户端实例，传入npm registry
+      const client = new McpClient(
+        name,
+        serverConfig as unknown as Record<string, unknown>,
+        this.npmRegistry
+      )
       this.clients.set(name, client)
 
       // 连接到服务器，这将启动服务
