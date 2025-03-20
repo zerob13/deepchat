@@ -187,7 +187,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (tools && tools.length > 0 && supportsFunctionCall) {
       requestParams.tools = tools
     }
-    console.log('requestParams', requestParams)
+    // console.log('requestParams', requestParams)
     // 启动初始流
     let stream = await this.openai.chat.completions.create(requestParams)
 
@@ -546,7 +546,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
         // 由于systemprompt已经处理过了，这里不需要重新处理消息
         requestParams.messages = conversationMessages
-        console.log('requestParams new', requestParams)
+        // console.log('requestParams new', requestParams)
         // 创建新的流
         stream = await this.openai.chat.completions.create(requestParams)
       } else {
