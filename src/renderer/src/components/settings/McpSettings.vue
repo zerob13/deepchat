@@ -1,26 +1,24 @@
 <template>
-  <div class="w-full h-full overflow-y-auto">
-    <div class="space-y-2">
-      <!-- MCP全局开关 -->
-      <div class="p-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h3 class="text-sm font-medium">{{ t('settings.mcp.enabledTitle') }}</h3>
-            <p class="text-xs text-muted-foreground mt-1">
-              {{ t('settings.mcp.enabledDescription') }}
-            </p>
-          </div>
-          <Switch :checked="mcpEnabled" @update:checked="handleMcpEnabledChange" />
+  <div class="w-full h-full overflow-y-auto flex flex-col">
+    <!-- MCP全局开关 -->
+    <div class="p-4 flex-shrink-0">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-medium">{{ t('settings.mcp.enabledTitle') }}</h3>
+          <p class="text-xs text-muted-foreground mt-1">
+            {{ t('settings.mcp.enabledDescription') }}
+          </p>
         </div>
+        <Switch :checked="mcpEnabled" @update:checked="handleMcpEnabledChange" />
       </div>
+    </div>
 
-      <!-- MCP配置 -->
-      <div v-if="mcpEnabled" class="border-t">
-        <McpConfig />
-      </div>
-      <div v-else class="p-4 text-center text-secondary-foreground text-sm">
-        {{ t('settings.mcp.enableToAccess') }}
-      </div>
+    <!-- MCP配置 -->
+    <div v-if="mcpEnabled" class="border-t flex-grow">
+      <McpConfig />
+    </div>
+    <div v-else class="p-4 text-center text-secondary-foreground text-sm">
+      {{ t('settings.mcp.enableToAccess') }}
     </div>
   </div>
 </template>

@@ -97,6 +97,9 @@
               <TooltipTrigger>
                 <span
                   class="search-engine-select overflow-hidden flex items-center h-7 rounded-lg shadow-sm border border-border transition-all duration-300"
+                  :class="{
+                    'border-primary': settings.webSearch
+                  }"
                 >
                   <Button
                     variant="outline"
@@ -296,11 +299,11 @@ const emitSend = () => {
 
     emit('send', messageContent)
     inputText.value = ''
-    
+
     // 清理已上传的文件
     if (selectedFiles.value.length > 0) {
       // 清理每个文件资源
-      selectedFiles.value.forEach(file => {
+      selectedFiles.value.forEach((file) => {
         if (file.path) {
           filePresenter.onFileRemoved(file.path).catch((err) => {
             console.error('清理文件资源失败:', err)

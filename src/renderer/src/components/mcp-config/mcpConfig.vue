@@ -2,6 +2,8 @@
 import { ref, onMounted, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Dialog,
   DialogContent,
@@ -197,7 +199,7 @@ onMounted(async () => {
       </button>
     </div>
 
-    <div class="flex-1 overflow-hidden px-4">
+    <div class="flex-grow overflow-hidden px-4">
       <!-- 服务器配置选项卡 -->
       <div v-if="activeTab === 'servers'" class="h-full overflow-y-auto">
         <div class="flex justify-between items-center mb-4">
@@ -256,11 +258,11 @@ onMounted(async () => {
           {{ t('settings.mcp.noServersFound') }}
         </div>
 
-        <div v-else class="space-y-6">
+        <div v-else class="space-y-4 pb-4">
           <div
             v-for="server in mcpStore.serverList"
             :key="server.name"
-            class="border rounded-lg overflow-hidden"
+            class="border rounded-lg overflow-hidden bg-card"
           >
             <div class="flex items-center p-4">
               <div class="flex-1">
@@ -289,7 +291,7 @@ onMounted(async () => {
                       <Button
                         variant="outline"
                         size="icon"
-                        class="h-8 w-8 rounded-lg"
+                        class="h-8 w-8 rounded-lg text-muted-foreground"
                         :disabled="mcpStore.configLoading"
                         @click="handleToggleServer(server.name)"
                       >
@@ -323,7 +325,7 @@ onMounted(async () => {
                       <Button
                         variant="outline"
                         size="icon"
-                        class="h-8 w-8 rounded-lg"
+                        class="h-8 w-8 rounded-lg text-muted-foreground"
                         :disabled="server.isDefault || mcpStore.configLoading"
                         @click="handleSetDefaultServer(server.name)"
                       >
@@ -342,7 +344,7 @@ onMounted(async () => {
                       <Button
                         variant="outline"
                         size="icon"
-                        class="h-8 w-8 rounded-lg"
+                        class="h-8 w-8 rounded-lg text-muted-foreground"
                         :disabled="mcpStore.configLoading"
                         @click="openEditServerDialog(server.name)"
                       >
@@ -361,7 +363,7 @@ onMounted(async () => {
                       <Button
                         variant="outline"
                         size="icon"
-                        class="h-8 w-8 rounded-lg"
+                        class="h-8 w-8 rounded-lg text-muted-foreground"
                         :disabled="mcpStore.configLoading"
                         @click="handleRemoveServer(server.name)"
                       >
@@ -375,7 +377,7 @@ onMounted(async () => {
                 </TooltipProvider>
               </div>
             </div>
-            <div class="bg-muted px-4 py-2">
+            <div class="bg-muted dark:bg-zinc-800 px-4 py-2">
               <div class="flex justify-between items-center">
                 <div class="text-xs font-mono overflow-x-auto whitespace-nowrap">
                   {{ server.command }} {{ server.args.join(' ') }}
@@ -398,38 +400,39 @@ onMounted(async () => {
         class="h-full overflow-hidden grid grid-cols-[200px_1fr] gap-2"
       >
         <!-- 左侧工具列表 -->
-        <div class="h-full overflow-y-auto border-r pr-2">
-          <input
+        <div class="h-full border-r pr-2 flex flex-col">
+          <Input
             type="text"
             class="w-full h-7 px-2 text-xs rounded-md border mb-2"
             :placeholder="t('mcp.tools.searchPlaceholder')"
           />
+          <ScrollArea class="w-full h-0 grow">
+            <div v-if="mcpStore.toolsLoading" class="flex justify-center py-4">
+              <Icon icon="lucide:loader" class="h-6 w-6 animate-spin" />
+            </div>
 
-          <div v-if="mcpStore.toolsLoading" class="flex justify-center py-4">
-            <Icon icon="lucide:loader" class="h-6 w-6 animate-spin" />
-          </div>
-
-          <div
-            v-else-if="mcpStore.tools.length === 0"
-            class="text-center py-4 text-sm text-muted-foreground"
-          >
-            {{ t('mcp.tools.noToolsAvailable') }}
-          </div>
-
-          <div v-else class="space-y-1">
             <div
-              v-for="tool in mcpStore.tools"
-              :key="tool.function.name"
-              class="p-2 rounded-md cursor-pointer hover:bg-accent text-sm"
-              :class="{ 'bg-accent': selectedTool?.function.name === tool.function.name }"
-              @click="selectTool(tool)"
+              v-else-if="mcpStore.tools.length === 0"
+              class="text-center py-4 text-sm text-muted-foreground"
             >
-              <div class="font-medium">{{ tool.function.name }}</div>
-              <div class="text-xs text-muted-foreground line-clamp-2 mt-1">
-                {{ tool.function.description }}
+              {{ t('mcp.tools.noToolsAvailable') }}
+            </div>
+
+            <div v-else class="space-y-1">
+              <div
+                v-for="tool in mcpStore.tools"
+                :key="tool.function.name"
+                class="p-2 rounded-md cursor-pointer hover:bg-accent text-sm"
+                :class="{ 'bg-accent': selectedTool?.function.name === tool.function.name }"
+                @click="selectTool(tool)"
+              >
+                <div class="font-medium">{{ tool.function.name }}</div>
+                <div class="text-xs text-muted-foreground line-clamp-2 mt-1">
+                  {{ tool.function.description }}
+                </div>
               </div>
             </div>
-          </div>
+          </ScrollArea>
         </div>
 
         <!-- 右侧操作区域 -->
