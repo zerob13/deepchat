@@ -1,10 +1,14 @@
-import { clipboard, contextBridge, webUtils } from 'electron'
+import { clipboard, contextBridge, nativeImage, webUtils } from 'electron'
 import { exposeElectronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
 const api = {
   copyText: (text: string) => {
     clipboard.writeText(text)
+  },
+  copyImage: (image: string) => {
+    const img = nativeImage.createFromDataURL(image)
+    clipboard.writeImage(img)
   },
   getPathForFile: (file: File) => {
     return webUtils.getPathForFile(file)

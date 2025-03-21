@@ -55,6 +55,15 @@
           <Icon icon="lucide:copy" class="w-4 h-4" />
         </Button>
         <Button
+          variant="ghost"
+          v-show="isAssistant"
+          size="icon"
+          class="w-4 h-4 text-muted-foreground hover:text-primary hover:bg-transparent"
+          @click="emit('copyImage')"
+        >
+          <Icon icon="lucide:images" class="w-4 h-4" />
+        </Button>
+        <Button
           v-show="isAssistant"
           variant="ghost"
           size="icon"
@@ -120,6 +129,7 @@ const emit = defineEmits<{
   (e: 'retry'): void
   (e: 'delete'): void
   (e: 'copy'): void
+  (e: 'copyImage'): void
   (e: 'prev'): void
   (e: 'next'): void
   (e: 'edit'): void
