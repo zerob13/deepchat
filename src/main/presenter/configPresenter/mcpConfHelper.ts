@@ -23,7 +23,7 @@ const DEFAULT_MCP_SERVERS = {
       icons: '📁',
       autoApprove: ['read'],
       type: 'stdio' as 'stdio' | 'sse',
-      disable: true
+      disable: false
     },
     memory: {
       command: 'npx',
@@ -32,7 +32,7 @@ const DEFAULT_MCP_SERVERS = {
       descriptions: '内存存储服务',
       icons: '🧠',
       autoApprove: ['all'],
-      disable: false,
+      disable: true,
       type: 'stdio' as 'stdio' | 'sse'
     },
     bitcoin: {
@@ -54,7 +54,7 @@ const DEFAULT_MCP_SERVERS = {
       env: {}
     }
   },
-  defaultServer: 'memory',
+  defaultServer: 'filesystem',
   mcpEnabled: false // 默认关闭MCP功能
 }
 
