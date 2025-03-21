@@ -105,22 +105,16 @@ export class McpClient {
           if (command === 'node') {
             if (process.platform === 'win32') {
               command = path.join(this.nodeRuntimePath, 'node.exe')
-            } else {
-              command = path.join(this.nodeRuntimePath, 'bin', 'node')
             }
           }
           if (command === 'npm') {
             if (process.platform === 'win32') {
               command = path.join(this.nodeRuntimePath, 'npm.cmd')
-            } else {
-              command = path.join(this.nodeRuntimePath, 'bin', 'npm')
             }
           }
           if (command === 'npx') {
             if (process.platform === 'win32') {
               command = path.join(this.nodeRuntimePath, 'npx.cmd')
-            } else {
-              command = path.join(this.nodeRuntimePath, 'bin', 'npx')
             }
           }
         }
@@ -156,6 +150,30 @@ export class McpClient {
         }
         if (this.npmRegistry) {
           env.npm_config_registry = this.npmRegistry
+        }
+        if (process.platform === 'darwin') {
+          ;[
+            '/bin',
+            '/usr/bin',
+            '/usr/local/bin',
+            '/usr/local/sbin',
+            '/opt/homebrew/bin',
+            '/opt/homebrew/sbin',
+            '/usr/local/opt/node/bin',
+            '/opt/local/bin'
+          ].forEach((path) => {
+            env.PATH = path + ':' + env.PATH
+          })
+        }
+        if (process.platform === 'linux') {
+          ;['/bin', '/usr/bin', '/usr/local/bin'].forEach((path) => {
+            env.PATH = path + ':' + env.PATH
+          })
+        }
+        if (this.nodeRuntimePath) {
+          if (process.platform !== 'win32') {
+            env.PATH = this.nodeRuntimePath + '/bin' + ':' + env.PATH
+          }
         }
         console.log('mcp env', env)
         this.transport = new StdioClientTransport({
