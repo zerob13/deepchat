@@ -172,7 +172,7 @@ export class McpClient {
           })
         }
         if (process.platform === 'win32') {
-          ;[`${HOME_DIR}\\.cargo\\bin`].forEach((path) => {
+          ;[`${HOME_DIR}\\.cargo\\bin`,`${HOME_DIR}\\.local\\bin`].forEach((path) => {
             env.PATH = path + ';' + env.PATH
           })
         }
