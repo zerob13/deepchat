@@ -83,37 +83,22 @@ export class ToolManager {
     if (autoApprove.includes('all')) {
       return true
     }
-
-    // 根据操作类型检查特定权限
-    switch (toolName) {
-      case 'get_file_content':
-      case 'list_directory':
-      case 'read_file':
-        // 读取操作需要 'read' 权限
-        return autoApprove.includes('read')
-      case 'write_file':
-        // 写入操作需要 'write' 权限
-        return autoApprove.includes('write')
-      default:
-        // 未知操作默认不授权
-        return false
+    if (toolName.includes('read') || toolName.includes('list') || toolName.includes('get')) {
+      return autoApprove.includes('read')
     }
+    if (
+      toolName.includes('write') ||
+      toolName.includes('create') ||
+      toolName.includes('update') ||
+      toolName.includes('delete')
+    ) {
+      return autoApprove.includes('write')
+    }
+    return true
   }
 
   async callTool(toolCall: MCPToolCall): Promise<MCPToolResponse> {
-    console.log('callTool', toolCall)
     try {
-      // 获取默认服务器名称和配置
-      const defaultServerName = await this.serverManager.getDefaultServerName()
-      if (!defaultServerName) {
-        throw new Error('No default MCP server configured')
-      }
-
-      // 获取服务器配置
-      const servers = await this.configPresenter.getMcpServers()
-      const serverConfig = servers[defaultServerName]
-      const autoApprove = serverConfig.autoApprove || []
-
       // 解析工具调用参数
       const { name, arguments: argsString } = toolCall.function
       let args: Record<string, unknown> | null = null
@@ -135,6 +120,46 @@ export class ToolManager {
         }
       }
 
+      // 获取正在运行的客户端
+      const clients = await this.serverManager.getRunningClients()
+
+      if (!clients || clients.length === 0) {
+        return {
+          toolCallId: toolCall.id,
+          content: `Error: MCP服务未运行，请先启动服务`
+        }
+      }
+
+      // 查找包含该工具的客户端
+      let targetClient: McpClient | null = null
+      let toolServerName: string | null = null
+
+      for (const client of clients) {
+        const clientTools = await client.listTools()
+        if (clientTools) {
+          for (const tool of clientTools) {
+            if (tool.name === name) {
+              targetClient = client
+              toolServerName = client.serverName
+              break
+            }
+          }
+        }
+        if (targetClient) break
+      }
+
+      if (!targetClient || !toolServerName) {
+        return {
+          toolCallId: toolCall.id,
+          content: `Error: 未找到工具 ${name}`
+        }
+      }
+
+      // 获取服务器配置
+      const servers = await this.configPresenter.getMcpServers()
+      const serverConfig = servers[toolServerName]
+      const autoApprove = serverConfig?.autoApprove || []
+      console.log('autoApprove', autoApprove, toolServerName)
       // 检查权限
       const hasPermission = this.checkToolPermission(name, autoApprove)
 
@@ -146,35 +171,8 @@ export class ToolManager {
         }
       }
 
-      // 获取正在运行的默认客户端
-      const clients = await this.serverManager.getRunningClients()
-
-      if (!clients) {
-        return {
-          toolCallId: toolCall.id,
-          content: `Error: MCP服务未运行，请先启动服务`
-        }
-      }
-      let client: McpClient | null = null
-      for (const c of clients) {
-        const clientTools = await c.listTools()
-        if (clientTools) {
-          for (const tool of clientTools) {
-            if (tool.name === name) {
-              client = c
-              break
-            }
-          }
-        }
-      }
-      if (!client) {
-        return {
-          toolCallId: toolCall.id,
-          content: `Error: 未找到工具 ${name}`
-        }
-      }
       // 调用 MCP 工具
-      const result = await client.callTool(name, args || {})
+      const result = await targetClient.callTool(name, args || {})
 
       // 返回工具调用结果
       const response: MCPToolResponse = {
