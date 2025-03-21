@@ -433,6 +433,16 @@ export const defaultModelsSettings = [
 
   // Qwen系列
   {
+    id: 'qwq-32b',
+    name: 'Qwen 32B',
+    temperature: 0.7,
+    maxTokens: 4096,
+    contextLength: 32768,
+    match: ['qwq-32b'],
+    vision: false,
+    functionCall: false
+  },
+  {
     id: 'QVQ-72B-Preview',
     name: 'QVQ-72B-Preview',
     temperature: 0.7,
@@ -461,7 +471,7 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-72b', 'qwen-2.5-72b'],
     vision: false,
-    functionCall: true
+    functionCall: false
   },
   {
     id: 'qwen2.5-32b',
@@ -471,7 +481,7 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-32b', 'qwen-2.5-32b'],
     vision: false,
-    functionCall: true
+    functionCall: false
   },
   {
     id: 'qwen2.5-14b',
@@ -481,7 +491,7 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-14b', 'qwen-2.5-14b'],
     vision: false,
-    functionCall: true
+    functionCall: false
   },
   {
     id: 'qwen2.5-7b',
@@ -491,7 +501,7 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-7b', 'qwen-2.5-7b'],
     vision: false,
-    functionCall: true
+    functionCall: false
   },
   {
     id: 'qwen2.5',
@@ -501,7 +511,7 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['qwen2.5-', 'qwen-2.5-'],
     vision: false,
-    functionCall: true
+    functionCall: false
   },
   {
     id: 'qwen',
@@ -511,7 +521,7 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['qwen-'],
     vision: false,
-    functionCall: true
+    functionCall: false
   },
 
   // Yi系列
