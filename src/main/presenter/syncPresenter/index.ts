@@ -22,6 +22,7 @@ export class SyncPresenter implements ISyncPresenter {
   private backupTimer: NodeJS.Timeout | null = null
   private readonly BACKUP_DELAY = 60 * 1000 // 60秒无变更后触发备份
   private readonly APP_SETTINGS_PATH = path.join(app.getPath('userData'), 'app-settings.json')
+  private readonly MCP_SETTINGS_PATH = path.join(app.getPath('userData'), 'mcp-settings.json')
   private readonly PROVIDER_MODELS_DIR_PATH = path.join(app.getPath('userData'), 'provider_models')
   private readonly DB_PATH = path.join(app.getPath('userData'), 'app_db', 'chat.db')
 
@@ -142,7 +143,7 @@ export class SyncPresenter implements ISyncPresenter {
       const tempDbPath = path.join(app.getPath('temp'), `chat_${Date.now()}.db`)
       const tempAppSettingsPath = path.join(app.getPath('temp'), `app_settings_${Date.now()}.json`)
       const tempProviderModelsPath = path.join(app.getPath('temp'), `provider_models_${Date.now()}`)
-
+      const tempMcpSettingsPath = path.join(app.getPath('temp'), `mcp_settings_${Date.now()}.json`)
       // 创建临时备份
       if (fs.existsSync(this.DB_PATH)) {
         fs.copyFileSync(this.DB_PATH, tempDbPath)
@@ -150,6 +151,10 @@ export class SyncPresenter implements ISyncPresenter {
 
       if (fs.existsSync(this.APP_SETTINGS_PATH)) {
         fs.copyFileSync(this.APP_SETTINGS_PATH, tempAppSettingsPath)
+      }
+
+      if (fs.existsSync(this.MCP_SETTINGS_PATH)) {
+        fs.copyFileSync(this.MCP_SETTINGS_PATH, tempMcpSettingsPath)
       }
 
       // 如果 provider_models 目录存在，备份整个目录
@@ -220,6 +225,10 @@ export class SyncPresenter implements ISyncPresenter {
           fs.copyFileSync(tempAppSettingsPath, this.APP_SETTINGS_PATH)
         }
 
+        if (fs.existsSync(tempMcpSettingsPath)) {
+          fs.copyFileSync(tempMcpSettingsPath, this.MCP_SETTINGS_PATH)
+        }
+
         if (fs.existsSync(tempProviderModelsPath)) {
           if (fs.existsSync(this.PROVIDER_MODELS_DIR_PATH)) {
             this.removeDirectory(this.PROVIDER_MODELS_DIR_PATH)
@@ -237,6 +246,10 @@ export class SyncPresenter implements ISyncPresenter {
 
         if (fs.existsSync(tempAppSettingsPath)) {
           fs.unlinkSync(tempAppSettingsPath)
+        }
+
+        if (fs.existsSync(tempMcpSettingsPath)) {
+          fs.unlinkSync(tempMcpSettingsPath)
         }
 
         if (fs.existsSync(tempProviderModelsPath)) {
@@ -276,10 +289,14 @@ export class SyncPresenter implements ISyncPresenter {
         syncFolderPath,
         `provider_models_${Date.now()}.tmp`
       )
+      const tempMcpSettingsBackupPath = path.join(
+        syncFolderPath,
+        `mcp_settings_${Date.now()}.json.tmp`
+      )
       const finalDbBackupPath = path.join(syncFolderPath, 'chat.db')
       const finalAppSettingsBackupPath = path.join(syncFolderPath, 'app-settings.json')
       const finalProviderModelsBackupPath = path.join(syncFolderPath, 'provider_models')
-
+      const finalMcpSettingsBackupPath = path.join(syncFolderPath, 'mcp-settings.json')
       // 确保数据库文件存在
       if (!fs.existsSync(this.DB_PATH)) {
         console.warn('数据库文件不存在:', this.DB_PATH)
@@ -313,7 +330,10 @@ export class SyncPresenter implements ISyncPresenter {
           'utf-8'
         )
       }
-
+      // 备份 MCP 设置
+      if (fs.existsSync(this.MCP_SETTINGS_PATH)) {
+        fs.copyFileSync(this.MCP_SETTINGS_PATH, tempMcpSettingsBackupPath)
+      }
       // 备份 provider_models 目录
       if (fs.existsSync(this.PROVIDER_MODELS_DIR_PATH)) {
         // 确保临时目录存在
@@ -330,6 +350,9 @@ export class SyncPresenter implements ISyncPresenter {
       if (!fs.existsSync(tempAppSettingsBackupPath)) {
         throw new Error('sync.error.tempConfigFailed')
       }
+      if (!fs.existsSync(tempMcpSettingsBackupPath)) {
+        throw new Error('sync.error.tempMcpSettingsFailed')
+      }
 
       // 重命名临时文件为最终文件
       if (fs.existsSync(finalDbBackupPath)) {
@@ -345,10 +368,14 @@ export class SyncPresenter implements ISyncPresenter {
         this.removeDirectory(finalProviderModelsBackupPath)
       }
 
+      if (fs.existsSync(finalMcpSettingsBackupPath)) {
+        fs.unlinkSync(finalMcpSettingsBackupPath)
+      }
+
       // 确保临时文件存在后再执行重命名
       fs.renameSync(tempDbBackupPath, finalDbBackupPath)
       fs.renameSync(tempAppSettingsBackupPath, finalAppSettingsBackupPath)
-
+      fs.renameSync(tempMcpSettingsBackupPath, finalMcpSettingsBackupPath)
       // 重命名 provider_models 临时目录
       if (fs.existsSync(tempProviderModelsBackupPath)) {
         fs.renameSync(tempProviderModelsBackupPath, finalProviderModelsBackupPath)

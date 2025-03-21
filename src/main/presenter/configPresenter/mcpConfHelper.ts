@@ -21,7 +21,7 @@ const DEFAULT_MCP_SERVERS = {
       env: {},
       descriptions: '',
       icons: '📁',
-      autoApprove: ['all'],
+      autoApprove: ['read'],
       type: 'stdio' as 'stdio' | 'sse',
       disable: true
     },
