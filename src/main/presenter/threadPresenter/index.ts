@@ -27,7 +27,7 @@ import { SearchManager } from './searchManager'
 import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
-import { ChatMessage } from '../llmProviderPresenter/baseProvider'
+import { ChatMessage, ChatMessageContent } from '../llmProviderPresenter/baseProvider'
 import { ARTIFACTS_PROMPT } from '@/lib/artifactsPrompt'
 
 const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
@@ -1093,7 +1093,7 @@ export class ThreadPresenter implements IThreadPresenter {
     // 处理文本内容
     const userContent = `
       ${userMessage.content.text}
-      ${getFileContext(userMessage.content.files.filter((file) => !file.mime?.startsWith('image/')))}
+      ${getFileContext(userMessage.content.files.filter((file) => !file.mimeType.startsWith('image')))}
     `
 
     // 从用户消息中提取并丰富URL内容
@@ -1104,7 +1104,7 @@ export class ThreadPresenter implements IThreadPresenter {
       userMessage.content.files?.filter((file) => {
         // 根据文件类型、MIME类型或扩展名过滤图片文件
         const isImage =
-          file.mime?.startsWith('image/') ||
+          file.mimeType.startsWith('data:image') ||
           /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(file.name || '')
         return isImage
       }) || []
@@ -1317,13 +1317,72 @@ export class ThreadPresenter implements IThreadPresenter {
         mergedMessages.length > 0 &&
         mergedMessages[mergedMessages.length - 1].role === currentMessage.role
       ) {
-        mergedMessages[mergedMessages.length - 1].content += `\n${currentMessage.content}`
+        mergedMessages[mergedMessages.length - 1].content = this.mergeMessageContent(
+          currentMessage.content,
+          mergedMessages[mergedMessages.length - 1].content
+        )
       } else {
         mergedMessages.push({ ...currentMessage })
       }
     }
 
     return mergedMessages
+  }
+
+  private mergeMessageContent(
+    currentMessageContent: string | ChatMessageContent[],
+    previousMessageContent: string | ChatMessageContent[]
+  ) {
+    let mergedContent: ChatMessageContent[] | string
+    if (Array.isArray(currentMessageContent)) {
+      if (Array.isArray(previousMessageContent)) {
+        mergedContent = [
+          ...(previousMessageContent.filter(
+            (item) => item.type !== 'text'
+          ) as ChatMessageContent[]),
+          {
+            type: 'text',
+            text: `${previousMessageContent
+              .filter((item) => item.type === 'text')
+              .map((item) => item.text)
+              .join('\n')}\n${currentMessageContent
+              .filter((item) => item.type === 'text')
+              .map((item) => item.text)
+              .join('\n')}`
+          },
+          ...(currentMessageContent.filter((item) => item.type !== 'text') as ChatMessageContent[])
+        ] as ChatMessageContent[]
+      } else {
+        mergedContent = [
+          {
+            type: 'text',
+            text: `${previousMessageContent}\n${currentMessageContent
+              .filter((item) => item.type === 'text')
+              .map((item) => item.text)
+              .join('\n')}`
+          },
+          ...(currentMessageContent.filter((item) => item.type !== 'text') as ChatMessageContent[])
+        ]
+      }
+    } else {
+      if (Array.isArray(previousMessageContent)) {
+        mergedContent = [
+          ...(previousMessageContent.filter(
+            (item) => item.type !== 'text'
+          ) as ChatMessageContent[]),
+          {
+            type: 'text',
+            text: `${previousMessageContent
+              .filter((item) => item.type == 'text')
+              .map((item) => item.text)
+              .join(`\n`)}\n${currentMessageContent}`
+          }
+        ] as ChatMessageContent[]
+      } else {
+        mergedContent = `${previousMessageContent}\n${currentMessageContent}`
+      }
+    }
+    return mergedContent
   }
 
   // 更新生成状态

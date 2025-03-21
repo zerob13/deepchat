@@ -11,16 +11,16 @@ import { ConfigPresenter } from '../configPresenter'
 // 定义ChatMessage接口用于统一消息格式
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
-  content:
-    | string
-    | {
-        type: 'text' | 'image_url'
-        text?: string
-        image_url?: {
-          url: string
-          detail?: 'auto' | 'low' | 'high'
-        }
-      }[]
+  content: string | ChatMessageContent[]
+}
+
+export interface ChatMessageContent {
+  type: 'text' | 'image_url'
+  text?: string
+  image_url?: {
+    url: string
+    detail?: 'auto' | 'low' | 'high'
+  }
 }
 
 export abstract class BaseLLMProvider {
