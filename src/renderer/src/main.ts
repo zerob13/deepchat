@@ -3,13 +3,13 @@ import { addCollection } from '@iconify/vue'
 import lucideIcons from '@iconify-json/lucide/icons.json'
 import vscodeIcons from '@iconify-json/vscode-icons/icons.json'
 import { createPinia } from 'pinia'
-import zhCN from './i18n/zh-CN.json'
-import zhTW from './i18n/zh-TW.json'
-import enUS from './i18n/en-US.json'
-import zhHK from './i18n/zh-HK.json'
-import jaJP from './i18n/ja-JP.json'
-import koKR from './i18n/ko-KR.json'
-import ruRU from './i18n/ru-RU.json'
+import zhCN from './i18n/zh-CN'
+import zhTW from './i18n/zh-TW'
+import enUS from './i18n/en-US'
+import zhHK from './i18n/zh-HK'
+import koKR from './i18n/ko-KR'
+import jaJP from './i18n/ja-JP'
+import ruRU from './i18n/ru-RU'
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
@@ -27,8 +27,8 @@ const i18n = createI18n({
     'ja-JP': jaJP,
     'ko-KR': koKR,
     'ru-RU': ruRU,
-    'zh': zhCN,
-    'en': enUS
+    zh: zhCN,
+    en: enUS
   }
 })
 // 添加整个图标集合到本地

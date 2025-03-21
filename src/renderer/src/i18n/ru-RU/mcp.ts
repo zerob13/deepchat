@@ -1,0 +1,30 @@
+export default {
+  tools: {
+    searchPlaceholder: 'Поиск инструментов...',
+    noToolsAvailable: 'Нет доступных инструментов',
+    selectTool: 'Выберите инструмент для отладки слева',
+    path: 'Путь',
+    pathPlaceholder: 'Введите путь к файлу',
+    searchPattern: 'Шаблон поиска',
+    searchPatternPlaceholder: 'Введите регулярное выражение',
+    filePattern: 'Шаблон файла',
+    filePatternPlaceholder: 'Введите шаблон файла, например: *.md',
+    executeButton: 'Выполнить',
+    resultTitle: 'Результат выполнения',
+    runningTool: 'Выполнение...',
+    loading: 'Загрузка...',
+    error: 'Ошибка загрузки',
+    available: 'Доступно инструментов: {count}',
+    none: 'Нет доступных инструментов',
+    title: 'Инструменты MCP',
+    description: 'Инструменты, предоставляемые сервером MCP',
+    loadError: 'Не удалось загрузить инструменты',
+    parameters: 'Параметры',
+    refresh: 'Обновить',
+    disabled: 'MCP отключен',
+    enableToUse: 'Включите MCP для использования инструментов',
+    enabled: 'Включить MCP',
+    enabledDescription: 'Включить функциональность MCP для использования вызовов инструментов',
+    empty: 'Пусто'
+  }
+}
