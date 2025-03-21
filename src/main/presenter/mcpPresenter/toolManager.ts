@@ -123,6 +123,7 @@ export class ToolManager {
           'Error parsing tool call arguments:',
           error instanceof Error ? error.message : String(error)
         )
+        throw error
       }
 
       // 检查权限
