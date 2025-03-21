@@ -9,6 +9,7 @@ import {
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'
 import { McpClient, Tool } from './mcpClient'
+import { jsonrepair } from 'jsonrepair'
 
 export class ToolManager {
   private configPresenter: IConfigPresenter
@@ -115,7 +116,7 @@ export class ToolManager {
 
       // 解析工具调用参数
       const { name, arguments: argsString } = toolCall.function
-      let args = {}
+      let args: Record<string, unknown> | null = null
       try {
         args = JSON.parse(argsString)
       } catch (error: unknown) {
@@ -123,7 +124,15 @@ export class ToolManager {
           'Error parsing tool call arguments:',
           error instanceof Error ? error.message : String(error)
         )
-        throw error
+        args = null
+      }
+      if (args == null) {
+        try {
+          args = JSON.parse(jsonrepair(argsString))
+        } catch (e: unknown) {
+          console.error('Error parsing tool call arguments:', e)
+          args = {}
+        }
       }
 
       // 检查权限
