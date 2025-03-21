@@ -174,7 +174,7 @@ export class ToolManager {
         }
       }
       // 调用 MCP 工具
-      const result = await client.callTool(name, args)
+      const result = await client.callTool(name, args || {})
 
       // 返回工具调用结果
       const response: MCPToolResponse = {
