@@ -114,25 +114,28 @@
   </tr>
 </table>
 
-## 即将推出（TODO）
+## 其他特性
 
-- [x] 支持 Ollama 本地模型管理
-- [ ] 支持 llama.cpp 本地模型
-- [x] 支持本地文件处理
-- [x] Mermaid 图表可视化
-- [x] 搜索集成（本地+云端API）
-- [ ] MCP支持
-- [x] 多模态模型支持
-- [ ] 本地聊天数据同步和加密
+- 支持 Ollama 本地模型管理
+- 支持本地文件处理
+- Artifacts 支持
+- 自定义任意搜索引擎（通过模型解析，无需API适配）
+- MCP支持（内置npx，无需额外安装node环境）
+- 多模态模型支持
+- 本地聊天数据备份与恢复
+- 支持OpenAi、Gemini、Anthropic三种格式的任意模型提供方
 
 ## 开发
 
 请先阅读 [贡献指南](./CONTRIBUTING.zh.md)
+Windows 和 Linux 由 Github Action 打包
+Mac相关签名打包查看 [Mac 打包指南](https://github.com/ThinkInAIXYZ/deepchat/wiki/Mac-%E6%89%93%E5%8C%85%E6%8C%87%E5%8D%97)
 
 ### 安装依赖
 
 ```bash
 $ npm install
+$ npm run installRuntime
 # for windows x64
 $ npm install --cpu=x64 --os=win32 sharp
 # for mac apple silicon

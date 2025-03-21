@@ -115,25 +115,28 @@
   </tr>
 </table>
 
-## TODO List
+## Other Features
 
-- [x] Support for Ollama local model management
-- [ ] Support for llama.cpp local model
-- [x] Support for local file processing
-- [x] Mermaid chart visualization
-- [x] Search integration (local + cloud API)
-- [ ] MCP support
-- [x] Multi-modal model support
-- [ ] Local chat data synchronization and encryption
+- Support for local model management with Ollama
+- Support for local file processing
+- Artifacts support
+- Customizable search engines (parsed through models, no API adaptation required)
+- MCP support (built-in npx, no additional node environment installation needed)
+- Support for multimodality models
+- Local chat data backup and recovery
+- Compatibility with any model provider in OpenAI, Gemini, and Anthropic API formats
 
 ## Development
 
 Please read the [Contribution Guidelines](./CONTRIBUTING.md)
+Windows and Linux are packaged by GitHub Action.
+For Mac-related signing and packaging, please refer to the [Mac Release Guide](https://github.com/ThinkInAIXYZ/deepchat/wiki/Mac-Release-Guide).
 
 ### Install dependencies
 
 ```bash
 $ npm install
+$ npm run installRuntime
 # for windows x64
 $ npm install --cpu=x64 --os=win32 sharp
 # for mac apple silicon
