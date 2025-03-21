@@ -8,6 +8,7 @@ import { presenter } from '@/presenter'
 import { MAIN_WIN } from '../windowPresenter'
 import { eventBus } from '@/eventbus'
 import { CONFIG_EVENTS } from '@/events'
+import { jsonrepair } from 'jsonrepair'
 
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
@@ -893,71 +894,18 @@ export class SearchManager {
         } else if (jsonStart >= 0) {
           // 找到了开始的 '[' 但没有找到匹配的结束 ']'
           // 这种情况下尝试逐个解析JSON对象
-          console.log('检测到不完整的JSON数组，尝试逐个解析对象')
 
           // 从jsonStart开始的子字符串
           const incompleteJsonStr = modelResponse.substring(jsonStart)
 
           // 结果数组
-          const results: SearchResult[] = []
-
-          // 尝试逐个解析对象
-          let currentPos = 1 // 跳过 '['
-          let objectStart = incompleteJsonStr.indexOf('{', currentPos)
-
-          while (objectStart !== -1) {
-            try {
-              // 寻找对象的结束位置
-              let openBraces = 1
-              let objectEnd = objectStart + 1
-
-              while (openBraces > 0 && objectEnd < incompleteJsonStr.length) {
-                if (incompleteJsonStr[objectEnd] === '{') {
-                  openBraces++
-                } else if (incompleteJsonStr[objectEnd] === '}') {
-                  openBraces--
-                }
-                objectEnd++
-              }
-
-              if (openBraces === 0) {
-                // 成功找到完整的对象
-                const objectStr = incompleteJsonStr.substring(objectStart, objectEnd)
-                try {
-                  const obj = JSON.parse(objectStr)
-
-                  // 验证对象结构，确保它有必要的字段
-                  if (typeof obj === 'object' && obj !== null && 'title' in obj && 'url' in obj) {
-                    // 确保rank字段存在，如果不存在则添加
-                    if (!('rank' in obj)) {
-                      obj.rank = results.length + 1
-                    }
-                    // 确保description和icon字段存在，如果不存在则添加空字符串
-                    if (!('description' in obj)) {
-                      obj.description = ''
-                    }
-                    if (!('icon' in obj)) {
-                      obj.icon = ''
-                    }
-
-                    results.push(obj as SearchResult)
-                  }
-                } catch (objError) {
-                  // 单个对象解析失败，继续下一个
-                  console.warn('单个对象解析失败:', objectStr)
-                }
-
-                // 移动到当前对象之后寻找下一个对象
-                currentPos = objectEnd
-                objectStart = incompleteJsonStr.indexOf('{', currentPos)
-              } else {
-                // 找不到匹配的 '}' 结束符，结束循环
-                break
-              }
-            } catch (loopError) {
-              console.error('对象解析循环出错:', loopError)
-              break
-            }
+          let results: SearchResult[] = []
+          try {
+            console.log('try to repair json')
+            results = JSON.parse(jsonrepair(incompleteJsonStr))
+          } catch (e: unknown) {
+            console.error('Error parsing AI model response:', e)
+            results = []
           }
 
           if (results.length > 0) {
