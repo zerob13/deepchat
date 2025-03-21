@@ -119,7 +119,7 @@ export class McpClient {
           }
         }
         console.log('final command', command)
-
+        const HOME_DIR = app.getPath('home')
         // 修复env类型问题
         const env: Record<string, string> = {}
         // 只复制非undefined的环境变量
@@ -160,19 +160,27 @@ export class McpClient {
             '/opt/homebrew/bin',
             '/opt/homebrew/sbin',
             '/usr/local/opt/node/bin',
-            '/opt/local/bin'
+            '/opt/local/bin',
+            `${HOME_DIR}/.cargo/bin`
           ].forEach((path) => {
             env.PATH = path + ':' + env.PATH
           })
         }
         if (process.platform === 'linux') {
-          ;['/bin', '/usr/bin', '/usr/local/bin'].forEach((path) => {
+          ;['/bin', '/usr/bin', '/usr/local/bin', `${HOME_DIR}/.cargo/bin`].forEach((path) => {
             env.PATH = path + ':' + env.PATH
+          })
+        }
+        if (process.platform === 'win32') {
+          ;[`${HOME_DIR}\\.cargo\\bin`].forEach((path) => {
+            env.PATH = path + ';' + env.PATH
           })
         }
         if (this.nodeRuntimePath) {
           if (process.platform !== 'win32') {
             env.PATH = this.nodeRuntimePath + '/bin' + ':' + env.PATH
+          } else {
+            env.PATH = this.nodeRuntimePath + ';' + env.PATH
           }
         }
         console.log('mcp env', env)
