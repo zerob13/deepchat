@@ -397,7 +397,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     const totalResult = this.db.prepare('SELECT COUNT(*) as count FROM conversations').get() as {
       count: number
     }
-
+    console.log('分页', page, pageSize, offset)
     // 获取分页数据
     const results = this.db
       .prepare(
@@ -413,13 +413,14 @@ export class SQLitePresenter implements ISQLitePresenter {
         max_tokens as maxTokens,
         provider_id as providerId,
         model_id as modelId,
-        is_new
+        is_new,
+        artifacts
       FROM conversations
       ORDER BY updated_at DESC
       LIMIT ? OFFSET ?
     `
       )
-      .all(pageSize, offset) as (ConversationRow & { is_new: number })[]
+      .all(pageSize, offset) as (ConversationRow & { is_new: number, artifacts: number })[]
 
     return {
       total: totalResult.count,

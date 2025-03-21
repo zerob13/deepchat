@@ -178,7 +178,7 @@ export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
   const generatingThreadIds = ref(new Set<string>())
   // const currentPage = ref(1)
-  const pageSize = ref(300)
+  const pageSize = ref(20)
   const hasMore = ref(true)
   const isSidebarOpen = ref(false)
 

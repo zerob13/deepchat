@@ -1,6 +1,7 @@
 <template>
-  <div class="w-60 h-full bg-muted overflow-y-auto p-2 space-y-3 border-r">
-    <div>
+  <div class="w-60 h-full bg-muted overflow-hidden p-2 space-y-3 border-r flex flex-col">
+    <!-- 固定在顶部的"新会话"按钮 -->
+    <div class="flex-none">
       <Button
         variant="outline"
         size="sm"
@@ -12,7 +13,8 @@
       </Button>
     </div>
 
-    <ScrollArea ref="scrollAreaRef" class="space-y-3" @scroll="handleScroll">
+    <!-- 可滚动的会话列表 -->
+    <ScrollArea ref="scrollAreaRef" class="flex-1" @scroll="handleScroll">
       <!-- 最近 -->
       <div v-for="thread in chatStore.threads" :key="thread.dt" class="space-y-1.5 mb-3">
         <div class="text-xs font-bold text-secondary-foreground px-2">{{ thread.dt }}</div>
@@ -119,11 +121,15 @@ const renameDialog = ref(false)
 const renameThread = ref<CONVERSATION | null>(null)
 const cleanMessagesDialog = ref(false)
 const cleanMessagesThread = ref<CONVERSATION | null>(null)
+const currentPage = ref(1) // 当前页码
 
 // 创建新会话
 const createNewThread = async () => {
   try {
     await chatStore.clearActiveThread()
+    // 创建新会话后重新加载第一页
+    currentPage.value = 1
+    await chatStore.loadThreads(1)
   } catch (error) {
     console.error(t('common.error.createChatFailed'), error)
   }
@@ -134,9 +140,10 @@ const handleScroll = async (event: Event) => {
   const target = event.target as HTMLElement
   const { scrollTop, scrollHeight, clientHeight } = target
 
-  // 当滚动到距离底部 50px 时加载更多
-  if (scrollHeight - scrollTop - clientHeight < 50 && !chatStore.isLoading && chatStore.hasMore) {
-    await chatStore.loadThreads(Math.ceil(chatStore.threads.length / 20) + 1)
+  // 当滚动到距离底部 30px 时加载更多
+  if (scrollHeight - scrollTop - clientHeight < 30 && !chatStore.isLoading && chatStore.hasMore) {
+    currentPage.value++
+    await chatStore.loadThreads(currentPage.value)
   }
 }
 
@@ -181,7 +188,11 @@ const handleThreadDelete = async () => {
       return
     }
     await threadP.deleteConversation(deleteThread.value.id)
-    chatStore.loadThreads(1)
+    
+    // 删除后重新加载第一页
+    currentPage.value = 1
+    await chatStore.loadThreads(1)
+    
     if (chatStore.threads.length > 0 && chatStore.threads[0].dtThreads.length > 0) {
       chatStore.setActiveThread(chatStore.threads[0].dtThreads[0].id)
     } else {
@@ -241,6 +252,7 @@ const handleRenameDialogCancel = () => {
 
 // 在组件挂载时加载会话列表
 onMounted(async () => {
+  currentPage.value = 1 // 重置页码
   await chatStore.loadThreads(1)
 })
 </script>
