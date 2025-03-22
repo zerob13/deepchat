@@ -48,7 +48,7 @@ jobs:
           name: deepchat-${{ matrix.platform }}
           path: |
             dist/*
-            !dist/win-unpacked
+            !dist/win-${{ matrix.arch }}-unpacked
 
   build-linux:
     if: github.event.inputs.platform == 'all' || contains(github.event.inputs.platform, 'linux')

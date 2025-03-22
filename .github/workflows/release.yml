@@ -130,7 +130,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.RELEASE_TAG }}
-          artifacts: 'prepared_artifacts/*-x64.exe'
+          artifacts: 'prepared_artifacts/*-x64-setup.exe'
           allowUpdates: true
           omitNameDuringUpdate: true
           omitBodyDuringUpdate: true
@@ -141,7 +141,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.RELEASE_TAG }}
-          artifacts: 'prepared_artifacts/*-arm64.exe'
+          artifacts: 'prepared_artifacts/*-arm64-setup.exe'
           allowUpdates: true
           omitNameDuringUpdate: true
           omitBodyDuringUpdate: true
