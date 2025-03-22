@@ -1,0 +1,170 @@
+name: Release Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: '选择要发布的平台'
+        type: boolean
+        default: true
+      release_tag:
+        description: '发布标签（留空使用最新tag）'
+        required: false
+        type: string
+      win_x64:
+        description: '发布 Windows x64 版本'
+        type: boolean
+        default: false
+      win_arm64:
+        description: '发布 Windows arm64 版本'
+        type: boolean
+        default: false
+      linux_x64:
+        description: '发布 Linux x64 版本'
+        type: boolean
+        default: false
+      workflow_id:
+        description: '构建工作流程 ID'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get release tag
+        id: get_tag
+        run: |
+          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+            TAG=$(git describe --tags --abbrev=0 || echo "v1.0.0")
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: false
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifacts from workflow
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow_conclusion: success
+          run_id: ${{ github.event.inputs.workflow_id }}
+          path: artifacts
+
+      # 确保Windows x64文件名包含架构标识
+      - name: Prepare Windows x64 artifacts
+        if: github.event.inputs.win_x64 == 'true'
+        run: |
+          mkdir -p prepared_artifacts
+          for file in artifacts/deepchat-win-x64/*.exe; do
+            filename=$(basename "$file")
+            # 如果文件名不包含x64，则添加
+            if [[ "$filename" != *"-x64-"* && "$filename" != *"_x64_"* ]]; then
+              newname="${filename/.exe/-x64.exe}"
+              cp "$file" "prepared_artifacts/$newname"
+            else
+              cp "$file" "prepared_artifacts/"
+            fi
+          done
+
+      # 确保Windows arm64文件名包含架构标识
+      - name: Prepare Windows arm64 artifacts
+        if: github.event.inputs.win_arm64 == 'true'
+        run: |
+          mkdir -p prepared_artifacts
+          for file in artifacts/deepchat-win-arm64/*.exe; do
+            filename=$(basename "$file")
+            # 如果文件名不包含arm64，则添加
+            if [[ "$filename" != *"-arm64-"* && "$filename" != *"_arm64_"* ]]; then
+              newname="${filename/.exe/-arm64.exe}"
+              cp "$file" "prepared_artifacts/$newname"
+            else
+              cp "$file" "prepared_artifacts/"
+            fi
+          done
+
+      # 确保Linux x64文件名包含架构标识
+      - name: Prepare Linux x64 artifacts
+        if: github.event.inputs.linux_x64 == 'true'
+        run: |
+          mkdir -p prepared_artifacts
+          # 处理AppImage文件
+          for file in artifacts/deepchat-linux-x64/*.AppImage; do
+            filename=$(basename "$file")
+            # 如果文件名不包含x64，则添加
+            if [[ "$filename" != *"-x64"* && "$filename" != *"_x64"* ]]; then
+              newname="${filename/.AppImage/-x64.AppImage}"
+              cp "$file" "prepared_artifacts/$newname"
+            else
+              cp "$file" "prepared_artifacts/"
+            fi
+          done
+          # 处理tar.gz文件
+          for file in artifacts/deepchat-linux-x64/*.tar.gz; do
+            filename=$(basename "$file")
+            # 如果文件名不包含x64，则添加
+            if [[ "$filename" != *"-x64"* && "$filename" != *"_x64"* ]]; then
+              newname="${filename/.tar.gz/-x64.tar.gz}"
+              cp "$file" "prepared_artifacts/$newname"
+            else
+              cp "$file" "prepared_artifacts/"
+            fi
+          done
+
+      - name: Upload Windows x64 exe
+        if: github.event.inputs.win_x64 == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'prepared_artifacts/*-x64.exe'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows arm64 exe
+        if: github.event.inputs.win_arm64 == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'prepared_artifacts/*-arm64.exe'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux AppImage
+        if: github.event.inputs.linux_x64 == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'prepared_artifacts/*.AppImage'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux tar.gz
+        if: github.event.inputs.linux_x64 == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'prepared_artifacts/*.tar.gz'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}

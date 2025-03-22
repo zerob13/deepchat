@@ -28,7 +28,7 @@ extraResources:
 win:
   executableName: DeepChat
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: ${name}-${version}-${arch}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -54,7 +54,7 @@ linux:
   maintainer: ThinkInAIXYZ
   category: Utility
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: true
 publish:
   provider: generic
