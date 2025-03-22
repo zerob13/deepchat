@@ -12,6 +12,10 @@ on:
           - all
           - windows
           - linux
+      release_tag:
+        description: '发布标签（留空使用最新tag）'
+        required: false
+        type: string
 
 jobs:
   build-windows:
@@ -83,3 +87,111 @@ jobs:
           path: |
             dist/*
             !dist/linux-unpacked
+
+  release-windows:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'all' || contains(github.event.inputs.platform, 'windows')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get release tag
+        id: get_tag
+        run: |
+          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+            TAG=$(git describe --tags --abbrev=0 || echo "v1.0.0")
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: false
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows x64 exe
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'artifacts/deepchat-win-x64/*.exe'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows arm64 exe
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'artifacts/deepchat-win-arm64/*.exe'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  release-linux:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    if: github.event.inputs.platform == 'all' || contains(github.event.inputs.platform, 'linux')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get release tag
+        id: get_tag
+        run: |
+          if [ -z "${{ github.event.inputs.release_tag }}" ]; then
+            TAG=$(git describe --tags --abbrev=0 || echo "v1.0.0")
+          else
+            TAG="${{ github.event.inputs.release_tag }}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          name: Release ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: false
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux AppImage
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'artifacts/deepchat-linux-x64/*.AppImage'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux tar.gz
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          artifacts: 'artifacts/deepchat-linux-x64/*.tar.gz'
+          allowUpdates: true
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          token: ${{ secrets.GITHUB_TOKEN }}
