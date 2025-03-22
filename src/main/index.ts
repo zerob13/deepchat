@@ -5,6 +5,8 @@ import { proxyConfig } from './presenter/proxyConfig'
 import { ProxyMode } from './presenter/proxyConfig'
 import path from 'path'
 import fs from 'fs'
+import { eventBus } from './eventbus'
+import { WINDOW_EVENTS } from './events'
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100')
@@ -63,11 +65,13 @@ app.whenReady().then(() => {
   // 监听应用程序获得焦点事件
   app.on('browser-window-focus', () => {
     presenter.shortcutPresenter.registerShortcuts()
+    eventBus.emit(WINDOW_EVENTS.APP_FOCUS)
   })
 
   // 监听应用程序失去焦点事件
   app.on('browser-window-blur', () => {
     presenter.shortcutPresenter.unregisterShortcuts()
+    eventBus.emit(WINDOW_EVENTS.APP_BLUR)
   })
 
   protocol.handle('deepcdn', (request) => {
