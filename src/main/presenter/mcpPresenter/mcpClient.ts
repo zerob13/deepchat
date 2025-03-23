@@ -120,12 +120,25 @@ export class McpClient {
         }
         console.log('final command', command)
         const HOME_DIR = app.getPath('home')
+        // 定义允许的环境变量白名单
+        const allowedEnvVars = [
+          'PATH',
+          'path',
+          'npm_config_registry',
+          'npm_config_cache',
+          'npm_config_prefix',
+          'npm_config_tmp',
+          'NPM_CONFIG_REGISTRY',
+          'NPM_CONFIG_CACHE',
+          'NPM_CONFIG_PREFIX',
+          'NPM_CONFIG_TMP'
+        ]
         // 修复env类型问题
         const env: Record<string, string> = {}
         // 只复制非undefined的环境变量
         if (process.env) {
           Object.entries(process.env).forEach(([key, value]) => {
-            if (value !== undefined) {
+            if (value !== undefined && allowedEnvVars.includes(key)) {
               env[key] = value
             }
           })
@@ -134,8 +147,11 @@ export class McpClient {
         if (this.serverConfig.env) {
           Object.entries(this.serverConfig.env as Record<string, string>).forEach(
             ([key, value]) => {
+              // 检查环境变量是否在白名单中或以npm_config_开头
               if (value !== undefined) {
                 env[key] = value
+              } else {
+                console.log(`忽略非白名单环境变量: ${key}`)
               }
             }
           )
@@ -172,7 +188,7 @@ export class McpClient {
           })
         }
         if (process.platform === 'win32') {
-          ;[`${HOME_DIR}\\.cargo\\bin`,`${HOME_DIR}\\.local\\bin`].forEach((path) => {
+          ;[`${HOME_DIR}\\.cargo\\bin`, `${HOME_DIR}\\.local\\bin`].forEach((path) => {
             env.PATH = path + ';' + env.PATH
           })
         }
