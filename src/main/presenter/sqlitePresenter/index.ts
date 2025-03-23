@@ -397,7 +397,6 @@ export class SQLitePresenter implements ISQLitePresenter {
     const totalResult = this.db.prepare('SELECT COUNT(*) as count FROM conversations').get() as {
       count: number
     }
-    console.log('分页', page, pageSize, offset)
     // 获取分页数据
     const results = this.db
       .prepare(

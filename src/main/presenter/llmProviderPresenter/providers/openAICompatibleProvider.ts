@@ -191,7 +191,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (tools && tools.length > 0 && supportsFunctionCall) {
       requestParams.tools = tools
     }
-    console.log('requestParams', requestParams)
+    // console.log('requestParams', requestParams)
     // 启动初始流
     let stream = await this.openai.chat.completions.create(requestParams)
 
@@ -231,7 +231,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     while (true) {
       for await (const chunk of stream) {
         const choice = chunk.choices[0]
-        console.log('choice', choice)
         // 原生支持function call的模型处理
         if (
           supportsFunctionCall &&
