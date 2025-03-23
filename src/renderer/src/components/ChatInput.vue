@@ -64,7 +64,7 @@
                     type="file"
                     class="hidden"
                     multiple
-                    accept="application/json,application/javascript,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/vnd.ms-excel.sheet.binary.macroEnabled.12,application/vnd.apple.numbers,text/markdown,application/x-yaml,application/xml,application/typescript,application/x-sh,text/*,application/pdf,image/jpeg,image/jpg,image/png,image/gif,image/webp,image/bmp,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/html,text/css,application/xhtml+xml"
+                    accept="application/json,application/javascript,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/vnd.ms-excel.sheet.binary.macroEnabled.12,application/vnd.apple.numbers,text/markdown,application/x-yaml,application/xml,application/typescript,text/typescript,text/x-typescript,application/x-typescript,application/x-sh,text/*,application/pdf,image/jpeg,image/jpg,image/png,image/gif,image/webp,image/bmp,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/html,text/css,application/xhtml+xml,.js,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.rs,.swift,.kt,.scala,.pl,.lua,.sh,.json,.yaml,.yml,.xml,.html,.htm,.css,.md"
                     @change="handleFileSelect"
                   />
                 </Button>
@@ -277,14 +277,20 @@ const handleFileSelect = async (e: Event) => {
         const fileInfo: MessageFile = await filePresenter.prepareFile(path)
         if (fileInfo) {
           selectedFiles.value.push(fileInfo)
+        } else {
+          console.error('File info is null:', file.name)
         }
       } catch (error) {
         console.error('文件准备失败:', error)
-        return
+        // Don't return here, continue processing other files
       }
     }
-    emit('file-upload', selectedFiles.value)
+    if (selectedFiles.value.length > 0) {
+      emit('file-upload', selectedFiles.value)
+    }
   }
+  // Reset the input
+  e.target.value = ''
 }
 
 const emitSend = () => {

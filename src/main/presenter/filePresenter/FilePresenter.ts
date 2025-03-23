@@ -10,15 +10,20 @@ import { IFilePresenter } from '../../../shared/presenter'
 import { MessageFile } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { ImageFileAdapter } from './ImageFileAdapter'
+import { v4 as uuidv4 } from 'uuid'
 
 export class FilePresenter implements IFilePresenter {
   private userDataPath: string
   private fileAdapters: Map<string, BaseFileAdapter>
   private maxFileSize: number = 1024 * 1024 * 30 // 30 MB
+  private tempDir: string
 
   constructor() {
     this.userDataPath = app.getPath('userData')
+    this.tempDir = path.join(this.userDataPath, 'temp')
     this.fileAdapters = new Map<string, BaseFileAdapter>()
+    // Ensure temp directory exists
+    fs.mkdir(this.tempDir, { recursive: true }).catch(console.error)
   }
 
   async readFile(relativePath: string): Promise<string> {
@@ -38,6 +43,17 @@ export class FilePresenter implements IFilePresenter {
   }
 
   async createFileAdapter(filePath: string): Promise<BaseFileAdapter> {
+    const ext = path.extname(filePath).toLowerCase()
+
+    // Special handling for .ts files that might be misidentified as video/mp2t
+    if (ext === '.ts' || ext === '.tsx') {
+      const adapterMap = getMimeTypeAdapterMap()
+      const tsAdapter = adapterMap.get('application/typescript')
+      if (tsAdapter) {
+        return new tsAdapter(filePath, this.maxFileSize)
+      }
+    }
+
     const mimeType = mime.lookup(filePath)
     if (!mimeType) {
       throw new Error('无法确定文件类型')
@@ -54,55 +70,75 @@ export class FilePresenter implements IFilePresenter {
 
   async prepareFile(absPath: string): Promise<MessageFile> {
     const fullPath = path.join(absPath)
-    if (!this.fileAdapters.has(fullPath)) {
-      const adapter = await this.createFileAdapter(fullPath)
-      if (adapter) {
-        await adapter.processFile()
-        this.fileAdapters.set(fullPath, adapter)
-        const content = await adapter.getLLMContent()
-        // console.info('new file adapter created', adapter)
-        return {
-          name: adapter.fileMetaData?.fileName ?? '',
-          token: adapter.mimeType?.startsWith('image')
-            ? calculateImageTokens(adapter as ImageFileAdapter)
-            : approximateTokenSize(content || ''),
-          path: adapter.filePath,
-          mimeType: adapter.mimeType ?? '',
-          metadata: adapter.fileMetaData ?? {
-            fileName: '',
-            fileSize: 0,
-            fileDescription: '',
-            fileCreated: new Date(),
-            fileModified: new Date()
-          },
-          content: content || ''
+    try {
+      if (!this.fileAdapters.has(fullPath)) {
+        const adapter = await this.createFileAdapter(fullPath)
+        if (adapter) {
+          await adapter.processFile()
+          this.fileAdapters.set(fullPath, adapter)
+          const content = await adapter.getLLMContent()
+          const result = {
+            name: adapter.fileMetaData?.fileName ?? '',
+            token: adapter.mimeType?.startsWith('image')
+              ? calculateImageTokens(adapter as ImageFileAdapter)
+              : approximateTokenSize(content || ''),
+            path: adapter.filePath,
+            mimeType: adapter.mimeType ?? '',
+            metadata: adapter.fileMetaData ?? {
+              fileName: '',
+              fileSize: 0,
+              fileDescription: '',
+              fileCreated: new Date(),
+              fileModified: new Date()
+            },
+            content: content || ''
+          }
+          // If this is a temp file, clean it up
+          if (fullPath.startsWith(this.tempDir)) {
+            await fs.unlink(fullPath).catch(console.error)
+            this.fileAdapters.delete(fullPath)
+          }
+          return result
+        } else {
+          throw new Error(`无法创建文件适配器: ${fullPath}`)
         }
       } else {
-        throw new Error(`无法创建文件适配器: ${fullPath}`)
-      }
-    } else {
-      const adapter = this.fileAdapters.get(fullPath)
-      if (adapter) {
-        const content = await adapter.getLLMContent()
-        return {
-          name: adapter.fileMetaData?.fileName ?? '',
-          token: adapter.mimeType?.startsWith('image')
-            ? calculateImageTokens(adapter as ImageFileAdapter)
-            : approximateTokenSize(content || ''),
-          path: adapter.filePath,
-          mimeType: adapter.mimeType ?? '',
-          metadata: adapter.fileMetaData ?? {
-            fileName: '',
-            fileSize: 0,
-            fileDescription: '',
-            fileCreated: new Date(),
-            fileModified: new Date()
-          },
-          content: content || ''
+        const adapter = this.fileAdapters.get(fullPath)
+        if (adapter) {
+          const content = await adapter.getLLMContent()
+          const result = {
+            name: adapter.fileMetaData?.fileName ?? '',
+            token: adapter.mimeType?.startsWith('image')
+              ? calculateImageTokens(adapter as ImageFileAdapter)
+              : approximateTokenSize(content || ''),
+            path: adapter.filePath,
+            mimeType: adapter.mimeType ?? '',
+            metadata: adapter.fileMetaData ?? {
+              fileName: '',
+              fileSize: 0,
+              fileDescription: '',
+              fileCreated: new Date(),
+              fileModified: new Date()
+            },
+            content: content || ''
+          }
+          // If this is a temp file, clean it up
+          if (fullPath.startsWith(this.tempDir)) {
+            await fs.unlink(fullPath).catch(console.error)
+            this.fileAdapters.delete(fullPath)
+          }
+          return result
         }
       }
+      throw new Error(`无法读取文件: ${fullPath}`)
+    } catch (error) {
+      // Clean up temp file in case of error
+      if (fullPath.startsWith(this.tempDir)) {
+        await fs.unlink(fullPath).catch(console.error)
+        this.fileAdapters.delete(fullPath)
+      }
+      throw error
     }
-    throw new Error(`无法读取文件: ${fullPath}`)
   }
 
   /**
@@ -132,6 +168,14 @@ export class FilePresenter implements IFilePresenter {
     const type = mimeType.split('/')[0]
     const wildcardMatch = adapterMap.get(`${type}/*`)
     return wildcardMatch
+  }
+
+  async writeTemp(file: { name: string, content: string }): Promise<string> {
+    const ext = path.extname(file.name)
+    const tempName = `${uuidv4()}${ext}`
+    const tempPath = path.join(this.tempDir, tempName)
+    await fs.writeFile(tempPath, file.content, 'utf-8')
+    return tempPath
   }
 }
 
