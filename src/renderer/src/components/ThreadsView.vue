@@ -1,6 +1,7 @@
 <template>
-  <div class="w-60 h-full bg-muted overflow-y-auto p-2 space-y-3 border-r">
-    <div>
+  <div class="w-60 h-full bg-muted overflow-hidden p-2 space-y-3 border-r flex flex-col">
+    <!-- 固定在顶部的"新会话"按钮 -->
+    <div class="flex-none">
       <Button
         variant="outline"
         size="sm"
@@ -12,7 +13,8 @@
       </Button>
     </div>
 
-    <ScrollArea ref="scrollAreaRef" class="space-y-3" @scroll="handleScroll">
+    <!-- 可滚动的会话列表 -->
+    <ScrollArea ref="scrollAreaRef" class="flex-1" @scroll="handleScroll">
       <!-- 最近 -->
       <div v-for="thread in chatStore.threads" :key="thread.dt" class="space-y-1.5 mb-3">
         <div class="text-xs font-bold text-secondary-foreground px-2">{{ thread.dt }}</div>
@@ -94,17 +96,9 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import ThreadItem from './ThreadItem.vue'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useChatStore } from '@/stores/chat'
 import { CONVERSATION } from '@shared/presenter'
@@ -119,11 +113,15 @@ const renameDialog = ref(false)
 const renameThread = ref<CONVERSATION | null>(null)
 const cleanMessagesDialog = ref(false)
 const cleanMessagesThread = ref<CONVERSATION | null>(null)
+const currentPage = ref(1) // 当前页码
 
 // 创建新会话
 const createNewThread = async () => {
   try {
     await chatStore.clearActiveThread()
+    // 创建新会话后重新加载第一页
+    currentPage.value = 1
+    await chatStore.loadThreads(1)
   } catch (error) {
     console.error(t('common.error.createChatFailed'), error)
   }
@@ -131,12 +129,29 @@ const createNewThread = async () => {
 
 // 处理滚动事件
 const handleScroll = async (event: Event) => {
+  // 通过event.target获取滚动元素
   const target = event.target as HTMLElement
   const { scrollTop, scrollHeight, clientHeight } = target
+  // 使用viewportRef直接获取
+  const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
+  const viewportScrollTop = viewportElement?.scrollTop || 0
+  const viewportScrollHeight = viewportElement?.scrollHeight || 0
+  const viewportClientHeight = viewportElement?.clientHeight || 0
+  // console.log('滚动检测数据:', { 
+  //   scrollTop, scrollHeight, clientHeight, 
+  //   viewportScrollTop, viewportScrollHeight, viewportClientHeight,
+  //   diff: viewportScrollHeight - viewportScrollTop - viewportClientHeight,
+  //   isLoading: chatStore.isLoading,
+  //   hasMore: chatStore.hasMore
+  // })
 
-  // 当滚动到距离底部 50px 时加载更多
-  if (scrollHeight - scrollTop - clientHeight < 50 && !chatStore.isLoading && chatStore.hasMore) {
-    await chatStore.loadThreads(Math.ceil(chatStore.threads.length / 20) + 1)
+  // 使用viewport的滚动位置判断
+  if (viewportScrollHeight - viewportScrollTop - viewportClientHeight < 30 && 
+      !chatStore.isLoading && 
+      chatStore.hasMore) {
+    currentPage.value++
+    console.log('触发加载更多, 下一页:', currentPage.value)
+    await chatStore.loadThreads(currentPage.value)
   }
 }
 
@@ -181,7 +196,11 @@ const handleThreadDelete = async () => {
       return
     }
     await threadP.deleteConversation(deleteThread.value.id)
-    chatStore.loadThreads(1)
+    
+    // 删除后重新加载第一页
+    currentPage.value = 1
+    await chatStore.loadThreads(1)
+    
     if (chatStore.threads.length > 0 && chatStore.threads[0].dtThreads.length > 0) {
       chatStore.setActiveThread(chatStore.threads[0].dtThreads[0].id)
     } else {
@@ -241,7 +260,19 @@ const handleRenameDialogCancel = () => {
 
 // 在组件挂载时加载会话列表
 onMounted(async () => {
+  currentPage.value = 1 // 重置页码
   await chatStore.loadThreads(1)
+  
+  // 使用nextTick确保DOM已更新
+  nextTick(() => {
+    const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
+    if (viewportElement) {
+      console.log('设置直接DOM滚动监听')
+      viewportElement.addEventListener('scroll', (event) => {
+        handleScroll(event)
+      })
+    }
+  })
 })
 </script>
 

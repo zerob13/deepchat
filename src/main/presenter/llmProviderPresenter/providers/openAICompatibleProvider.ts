@@ -231,7 +231,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     while (true) {
       for await (const chunk of stream) {
         const choice = chunk.choices[0]
-
         // 原生支持function call的模型处理
         if (
           supportsFunctionCall &&
