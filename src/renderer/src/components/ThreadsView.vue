@@ -99,14 +99,6 @@ import ThreadItem from './ThreadItem.vue'
 import { ref, onMounted } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useChatStore } from '@/stores/chat'
 import { CONVERSATION } from '@shared/presenter'
@@ -137,12 +129,28 @@ const createNewThread = async () => {
 
 // 处理滚动事件
 const handleScroll = async (event: Event) => {
+  // 通过event.target获取滚动元素
   const target = event.target as HTMLElement
   const { scrollTop, scrollHeight, clientHeight } = target
+  // 使用viewportRef直接获取
+  const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
+  const viewportScrollTop = viewportElement?.scrollTop || 0
+  const viewportScrollHeight = viewportElement?.scrollHeight || 0
+  const viewportClientHeight = viewportElement?.clientHeight || 0
+  // console.log('滚动检测数据:', { 
+  //   scrollTop, scrollHeight, clientHeight, 
+  //   viewportScrollTop, viewportScrollHeight, viewportClientHeight,
+  //   diff: viewportScrollHeight - viewportScrollTop - viewportClientHeight,
+  //   isLoading: chatStore.isLoading,
+  //   hasMore: chatStore.hasMore
+  // })
 
-  // 当滚动到距离底部 30px 时加载更多
-  if (scrollHeight - scrollTop - clientHeight < 30 && !chatStore.isLoading && chatStore.hasMore) {
+  // 使用viewport的滚动位置判断
+  if (viewportScrollHeight - viewportScrollTop - viewportClientHeight < 30 && 
+      !chatStore.isLoading && 
+      chatStore.hasMore) {
     currentPage.value++
+    console.log('触发加载更多, 下一页:', currentPage.value)
     await chatStore.loadThreads(currentPage.value)
   }
 }
@@ -254,6 +262,17 @@ const handleRenameDialogCancel = () => {
 onMounted(async () => {
   currentPage.value = 1 // 重置页码
   await chatStore.loadThreads(1)
+  
+  // 添加直接DOM元素的滚动监听，作为备用方案
+  setTimeout(() => {
+    const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
+    if (viewportElement) {
+      console.log('设置直接DOM滚动监听')
+      viewportElement.addEventListener('scroll', (event) => {
+        handleScroll(event)
+      })
+    }
+  }, 300)
 })
 </script>
 
