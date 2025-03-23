@@ -131,7 +131,9 @@ export class McpClient {
           'NPM_CONFIG_REGISTRY',
           'NPM_CONFIG_CACHE',
           'NPM_CONFIG_PREFIX',
-          'NPM_CONFIG_TMP'
+          'NPM_CONFIG_TMP',
+          'GRPC_PROXY',
+          'grpc_proxy'
         ]
         // 修复env类型问题
         const env: Record<string, string> = {}
@@ -162,6 +164,7 @@ export class McpClient {
         if (proxyUrl) {
           env.http_proxy = proxyUrl
           env.https_proxy = proxyUrl
+          env.grpc_proxy = proxyUrl
           // console.log('设置代理环境变量:', proxyUrl)
         }
         if (this.npmRegistry) {

@@ -58,6 +58,8 @@ export class ProxyConfig {
         process.env.https_proxy = this.proxyUrl
         process.env.HTTP_PROXY = this.proxyUrl
         process.env.HTTPS_PROXY = this.proxyUrl
+        process.env.GRPC_PROXY = this.proxyUrl
+        process.env.grpc_proxy = this.proxyUrl
         setGlobalDispatcher(new ProxyAgent(this.proxyUrl || ''))
       }
     } catch (error) {
@@ -82,6 +84,8 @@ export class ProxyConfig {
     process.env.https_proxy = proxyUrl
     process.env.HTTP_PROXY = proxyUrl
     process.env.HTTPS_PROXY = proxyUrl
+    process.env.GRPC_PROXY = proxyUrl
+    process.env.grpc_proxy = proxyUrl
     session.defaultSession.setProxy({ proxyRules: proxyUrl })
     setGlobalDispatcher(new ProxyAgent(proxyUrl))
   }
