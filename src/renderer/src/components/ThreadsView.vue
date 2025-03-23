@@ -96,7 +96,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import ThreadItem from './ThreadItem.vue'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
@@ -263,8 +263,8 @@ onMounted(async () => {
   currentPage.value = 1 // 重置页码
   await chatStore.loadThreads(1)
   
-  // 添加直接DOM元素的滚动监听，作为备用方案
-  setTimeout(() => {
+  // 使用nextTick确保DOM已更新
+  nextTick(() => {
     const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
     if (viewportElement) {
       console.log('设置直接DOM滚动监听')
@@ -272,7 +272,7 @@ onMounted(async () => {
         handleScroll(event)
       })
     }
-  }, 300)
+  })
 })
 </script>
 
