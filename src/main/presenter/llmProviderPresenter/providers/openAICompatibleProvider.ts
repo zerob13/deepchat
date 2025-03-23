@@ -7,7 +7,11 @@ import {
 } from '@shared/presenter'
 import { BaseLLMProvider, ChatMessage } from '../baseProvider'
 import OpenAI from 'openai'
-import { ChatCompletionMessage, ChatCompletionMessageParam } from 'openai/resources'
+import {
+  ChatCompletionContentPartText,
+  ChatCompletionMessage,
+  ChatCompletionMessageParam
+} from 'openai/resources'
 import { ConfigPresenter } from '../../configPresenter'
 import { proxyConfig } from '../../proxyConfig'
 import { HttpsProxyAgent } from 'https-proxy-agent'
@@ -669,28 +673,20 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     // 获取function call的提示
     const functionCallPrompt = this.getFunctionCallWrapPrompt(mcpTools)
 
-    // 查找system消息
-    const systemMessageIndex = result.findIndex((m) => m.role === 'system')
-
-    if (systemMessageIndex >= 0) {
-      // 有system消息，附加function call提示
-      const systemMessage = result[systemMessageIndex]
-      const originalContent =
-        typeof systemMessage.content === 'string'
-          ? systemMessage.content
-          : JSON.stringify(systemMessage.content)
-
-      // 合并提示
-      result[systemMessageIndex] = {
-        role: 'system',
-        content: `${functionCallPrompt}\n\n${originalContent}`
+    const userMessage = result.findLast((message) => message.role === 'user')
+    if (userMessage?.role === 'user') {
+      // result.push(userMessage)
+      if (Array.isArray(userMessage.content)) {
+        const firstTextIndex = userMessage.content.findIndex((content) => content.type === 'text')
+        if (firstTextIndex !== -1) {
+          userMessage.content[firstTextIndex] = {
+            text: `${functionCallPrompt}\n\n${(userMessage.content[firstTextIndex] as ChatCompletionContentPartText).text}`,
+            type: 'text'
+          }
+        }
+      } else {
+        userMessage.content = `${functionCallPrompt}\n\n${userMessage.content}`
       }
-    } else {
-      // 没有system消息，创建一个
-      result.unshift({
-        role: 'system',
-        content: functionCallPrompt
-      })
     }
 
     return result

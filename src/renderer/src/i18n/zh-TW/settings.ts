@@ -168,5 +168,106 @@ export default {
     deleteModelConfirm: '是否確認刪除模型「{name}」？此操作無法復原。',
     localModels: '本機模型',
     noLocalModels: '沒有本機模型'
+  },
+  mcp: {
+    title: 'MCP設定',
+    description: '管理和配置MCP（模型控制協議）伺服器和工具',
+    enabledTitle: '啟用MCP',
+    enabledDescription: '啟用或停用MCP功能和工具',
+    enableToAccess: '請先啟用MCP以訪問配置選項',
+    tabs: {
+      servers: '伺服器',
+      tools: '工具'
+    },
+    serverList: '伺服器列表',
+    addServer: '新增伺服器',
+    running: '運行中',
+    stopped: '已停止',
+    stopServer: '停止伺服器',
+    startServer: '啟動伺服器',
+    noServersFound: '未找到伺服器',
+    addServerDialog: {
+      title: '新增伺服器',
+      description: '配置新的MCP伺服器'
+    },
+    editServerDialog: {
+      title: '編輯伺服器',
+      description: '編輯MCP伺服器配置'
+    },
+    serverForm: {
+      name: '伺服器名稱',
+      namePlaceholder: '輸入伺服器名稱',
+      nameRequired: '伺服器名稱不能為空',
+      type: '伺服器類型',
+      typePlaceholder: '選擇伺服器類型',
+      typeStdio: '標準輸入輸出',
+      typeSse: '伺服器發送事件',
+      baseUrl: '基礎網址',
+      baseUrlPlaceholder: '輸入伺服器基礎網址（如：http://localhost:3000）',
+      command: '命令',
+      commandPlaceholder: '輸入命令',
+      commandRequired: '命令不能為空',
+      args: '參數',
+      argsPlaceholder: '輸入參數，用空格分隔',
+      argsRequired: '參數不能為空',
+      env: '環境變數',
+      envPlaceholder: '輸入JSON格式的環境變數',
+      envInvalid: '環境變數必須是有效的JSON格式',
+      description: '描述',
+      descriptionPlaceholder: '輸入伺服器描述',
+      descriptions: '描述',
+      descriptionsPlaceholder: '輸入伺服器描述',
+      icon: '圖示',
+      iconPlaceholder: '輸入圖示',
+      icons: '圖示',
+      iconsPlaceholder: '輸入圖示',
+      autoApprove: '自動授權',
+      autoApproveAll: '全部',
+      autoApproveRead: '讀取',
+      autoApproveWrite: '寫入',
+      autoApproveHelp: '選擇需要自動授權的操作類型，無需用戶確認即可執行',
+      submit: '提交',
+      add: '新增',
+      update: '更新',
+      cancel: '取消',
+      jsonConfigIntro: '您可以直接粘貼JSON配置或選擇手動配置伺服器。',
+      jsonConfig: 'JSON配置',
+      jsonConfigPlaceholder: '請粘貼MCP伺服器的JSON格式配置',
+      jsonConfigExample: 'JSON配置範例',
+      parseSuccess: '配置解析成功',
+      configImported: '配置導入成功',
+      parseError: '解析錯誤',
+      skipToManual: '跳過至手動配置',
+      parseAndContinue: '解析並繼續'
+    },
+    deleteServer: '刪除伺服器',
+    editServer: '編輯伺服器',
+    setDefault: '設為預設',
+    isDefault: '預設伺服器',
+    default: '預設',
+    setAsDefault: '設為預設伺服器',
+    removeServer: '刪除伺服器',
+    confirmRemoveServer: '確定要刪除伺服器 {name} 嗎？此操作無法撤銷。',
+    removeServerDialog: {
+      title: '刪除伺服器'
+    },
+    confirmDelete: {
+      title: '確認刪除',
+      description: '確定要刪除伺服器 {name} 嗎？此操作無法撤銷。',
+      confirm: '刪除',
+      cancel: '取消'
+    },
+    resetToDefault: '恢復預設服務',
+    resetConfirmTitle: '恢復預設服務',
+    resetConfirmDescription:
+      '此操作將恢復所有預設伺服器，同時保留您自訂的伺服器。對預設伺服器的任何修改將會丟失。',
+    resetConfirm: '恢復'
+  },
+  about: {
+    title: '關於我們',
+    version: '版本',
+    checkUpdate: '檢查更新',
+    checking: '檢查中...',
+    latestVersion: '最新版本'
   }
 }

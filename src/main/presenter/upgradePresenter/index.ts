@@ -1,7 +1,7 @@
 import { app, shell } from 'electron'
 import { IUpgradePresenter, UpdateStatus, UpdateProgress } from '@shared/presenter'
 import { eventBus } from '@/eventbus'
-import { UPDATE_EVENTS } from '@/events'
+import { UPDATE_EVENTS, WINDOW_EVENTS } from '@/events'
 import axios from 'axios'
 import { compare } from 'compare-versions'
 
@@ -43,9 +43,23 @@ export class UpgradePresenter implements IUpgradePresenter {
   private _error: string | null = null
   private _versionInfo: VersionInfo | null = null
   private _baseUrl: string
+  private _lastCheckTime: number = 0 // 上次检查更新的时间戳
 
   constructor() {
     this._baseUrl = getVersionCheckBaseUrl()
+
+    // 监听应用获得焦点事件
+    eventBus.on(WINDOW_EVENTS.APP_FOCUS, this.handleAppFocus.bind(this))
+  }
+
+  // 处理应用获得焦点事件
+  private handleAppFocus(): void {
+    const now = Date.now()
+    const twelveHoursInMs = 12 * 60 * 60 * 1000 // 12小时的毫秒数
+    // 如果距离上次检查更新超过12小时，则重新检查
+    if (now - this._lastCheckTime > twelveHoursInMs) {
+      this.checkUpdate()
+    }
   }
 
   async checkUpdate(): Promise<void> {
@@ -61,9 +75,12 @@ export class UpgradePresenter implements IUpgradePresenter {
       const versionUrl = `${this._baseUrl}${platformString}.json`
 
       const response = await axios.get<VersionInfo>(versionUrl)
-      console.info(response.data)
+      console.info('check update response', response.data)
       const remoteVersion = response.data
       const currentVersion = app.getVersion()
+
+      // 更新上次检查时间
+      this._lastCheckTime = Date.now()
 
       // 比较版本号
       if (compare(remoteVersion.version, currentVersion, '>')) {
