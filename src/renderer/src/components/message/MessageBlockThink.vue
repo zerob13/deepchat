@@ -20,7 +20,7 @@
     </div>
     <div v-show="!collapse" ref="messageBlock" class="w-full relative">
       <div
-        class="prose prose-sm dark:prose-invert w-full max-w-full leading-7"
+        class="prose prose-sm dark:prose-invert w-full max-w-full leading-7 break-all"
         v-html="renderedContent"
       ></div>
       <LoadingCursor v-show="block.status === 'loading'" ref="loadingCursor" />

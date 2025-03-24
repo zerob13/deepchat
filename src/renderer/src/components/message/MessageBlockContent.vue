@@ -6,7 +6,7 @@
       <div
         v-if="part.type === 'text'"
         :id="id"
-        class="prose prose-sm dark:prose-invert max-w-full break-words"
+        class="prose prose-sm dark:prose-invert max-w-full break-all"
         @click="handleCopyClick"
         @mouseover="handleHover($event, true)"
         @mouseout="handleHover($event, false)"

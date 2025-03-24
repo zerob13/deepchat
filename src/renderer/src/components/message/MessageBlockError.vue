@@ -6,7 +6,7 @@
       <Icon icon="lucide:info" class="w-4 h-4 text-red-700" />
       <span class="flex-grow">{{ t('common.error.requestFailed') }}</span>
     </div>
-    <div class="prose prose-sm max-w-full whitespace-pre-wrap leading-7">
+    <div class="prose prose-sm max-w-full break-all whitespace-pre-wrap leading-7">
       {{ t(block.content) }}
     </div>
   </div>

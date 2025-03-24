@@ -2,7 +2,7 @@
   <div ref="messageBlock" class="markdown-content-wrapper relative w-full">
     <div
       :id="id"
-      class="markdown-content prose prose-sm dark:prose-invert max-w-full break-words"
+      class="markdown-content prose prose-sm dark:prose-invert max-w-full break-all"
       v-html="renderedContent"
     ></div>
   </div>
