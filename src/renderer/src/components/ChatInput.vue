@@ -290,7 +290,9 @@ const handleFileSelect = async (e: Event) => {
     }
   }
   // Reset the input
-  e.target.value = ''
+  if (e.target) {
+    ;(e.target as HTMLInputElement).value = ''
+  }
 }
 
 const emitSend = () => {

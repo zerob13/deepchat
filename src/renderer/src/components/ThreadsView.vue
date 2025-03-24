@@ -128,17 +128,17 @@ const createNewThread = async () => {
 }
 
 // 处理滚动事件
-const handleScroll = async (event: Event) => {
+const handleScroll = async (_event: Event) => {
   // 通过event.target获取滚动元素
-  const target = event.target as HTMLElement
-  const { scrollTop, scrollHeight, clientHeight } = target
+  // const target = event.target as HTMLElement
+  // const { scrollTop, scrollHeight, clientHeight } = target
   // 使用viewportRef直接获取
   const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
   const viewportScrollTop = viewportElement?.scrollTop || 0
   const viewportScrollHeight = viewportElement?.scrollHeight || 0
   const viewportClientHeight = viewportElement?.clientHeight || 0
-  // console.log('滚动检测数据:', { 
-  //   scrollTop, scrollHeight, clientHeight, 
+  // console.log('滚动检测数据:', {
+  //   scrollTop, scrollHeight, clientHeight,
   //   viewportScrollTop, viewportScrollHeight, viewportClientHeight,
   //   diff: viewportScrollHeight - viewportScrollTop - viewportClientHeight,
   //   isLoading: chatStore.isLoading,
@@ -146,9 +146,11 @@ const handleScroll = async (event: Event) => {
   // })
 
   // 使用viewport的滚动位置判断
-  if (viewportScrollHeight - viewportScrollTop - viewportClientHeight < 30 && 
-      !chatStore.isLoading && 
-      chatStore.hasMore) {
+  if (
+    viewportScrollHeight - viewportScrollTop - viewportClientHeight < 30 &&
+    !chatStore.isLoading &&
+    chatStore.hasMore
+  ) {
     currentPage.value++
     console.log('触发加载更多, 下一页:', currentPage.value)
     await chatStore.loadThreads(currentPage.value)
@@ -196,11 +198,11 @@ const handleThreadDelete = async () => {
       return
     }
     await threadP.deleteConversation(deleteThread.value.id)
-    
+
     // 删除后重新加载第一页
     currentPage.value = 1
     await chatStore.loadThreads(1)
-    
+
     if (chatStore.threads.length > 0 && chatStore.threads[0].dtThreads.length > 0) {
       chatStore.setActiveThread(chatStore.threads[0].dtThreads[0].id)
     } else {
@@ -262,7 +264,7 @@ const handleRenameDialogCancel = () => {
 onMounted(async () => {
   currentPage.value = 1 // 重置页码
   await chatStore.loadThreads(1)
-  
+
   // 使用nextTick确保DOM已更新
   nextTick(() => {
     const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
