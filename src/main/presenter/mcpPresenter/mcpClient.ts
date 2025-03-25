@@ -171,10 +171,10 @@ export class McpClient {
         if (this.npmRegistry) {
           env.npm_config_registry = this.npmRegistry
         }
-        if (!env.PATH) {
-          env.PATH = ''
-        }
         if (process.platform === 'darwin') {
+          if (!env.PATH) {
+            env.PATH = ''
+          }
           ;[
             '/bin',
             '/usr/bin',
@@ -190,6 +190,9 @@ export class McpClient {
           })
         }
         if (process.platform === 'linux') {
+          if (!env.PATH) {
+            env.PATH = ''
+          }
           ;['/bin', '/usr/bin', '/usr/local/bin', `${HOME_DIR}/.cargo/bin`].forEach((path) => {
             env.PATH = path + ':' + env.PATH
           })
