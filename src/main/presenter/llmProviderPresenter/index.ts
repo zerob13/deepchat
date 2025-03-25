@@ -20,6 +20,7 @@ import { GithubProvider } from './providers/githubProvider'
 import { OllamaProvider } from './providers/ollamaProvider'
 import { AnthropicProvider } from './providers/anthropicProvider'
 import { ShowResponse } from 'ollama'
+import { CONFIG_EVENTS } from '@/events'
 // 导入其他provider...
 
 // 流的状态
@@ -51,6 +52,13 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   constructor(configPresenter: ConfigPresenter) {
     this.configPresenter = configPresenter
     this.init()
+    // 监听代理更新事件
+    eventBus.on(CONFIG_EVENTS.PROXY_RESOLVED, () => {
+      // 遍历所有活跃的 provider 实例，调用 onProxyResolved
+      for (const provider of this.providerInstances.values()) {
+        provider.onProxyResolved()
+      }
+    })
   }
 
   private init() {

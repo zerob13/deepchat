@@ -17,11 +17,9 @@ import { proxyConfig } from '../../proxyConfig'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { presenter } from '@/presenter'
 import { getModelConfig } from '../modelConfigs'
-import { eventBus } from '@/eventbus'
-import { CONFIG_EVENTS } from '@/events'
 
 export class OpenAICompatibleProvider extends BaseLLMProvider {
-  protected openai: OpenAI
+  protected openai!: OpenAI
   private isNoModelsApi: boolean = false
   // 添加不支持 OpenAI 标准接口的供应商黑名单
   private static readonly NO_MODELS_API_LIST = ['doubao']
@@ -38,13 +36,14 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       this.isNoModelsApi = true
     }
     this.init()
-    eventBus.on(CONFIG_EVENTS.PROXY_RESOLVED, () => {
-      // 如果刷新了代理，需要重建
-      this.openai = new OpenAI({
-        apiKey: this.provider.apiKey,
-        baseURL: this.provider.baseUrl,
-        httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
-      })
+  }
+
+  public onProxyResolved(): void {
+    const proxyUrl = proxyConfig.getProxyUrl()
+    this.openai = new OpenAI({
+      apiKey: this.provider.apiKey,
+      baseURL: this.provider.baseUrl,
+      httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
     })
   }
 

@@ -781,4 +781,7 @@ export class OllamaProvider extends BaseLLMProvider {
       }
     })
   }
+  public onProxyResolved(): void {
+    console.log('ollama onProxyResolved')
+  }
 }

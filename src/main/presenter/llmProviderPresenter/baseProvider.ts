@@ -217,6 +217,8 @@ export abstract class BaseLLMProvider {
     }
   }
 
+  public abstract onProxyResolved(): void
+
   // 验证提供商API是否可用
   public abstract check(): Promise<{ isOk: boolean; errorMsg: string | null }>
 
