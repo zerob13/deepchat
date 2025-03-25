@@ -122,6 +122,7 @@ export class StdioClientTransport implements Transport {
       })
 
       this._process.on('error', (error) => {
+        console.warn('error', error)
         if (error.name === 'AbortError') {
           // Expected when close() is called.
           this.onclose?.()
@@ -137,11 +138,13 @@ export class StdioClientTransport implements Transport {
       })
 
       this._process.on('close', (_code) => {
+        console.warn('close', _code)
         this._process = undefined
         this.onclose?.()
       })
 
       this._process.stdin?.on('error', (error) => {
+        console.warn('stdin error', error)
         this.onerror?.(error)
       })
 
@@ -151,6 +154,7 @@ export class StdioClientTransport implements Transport {
       })
 
       this._process.stdout?.on('error', (error) => {
+        console.warn('stdout error', error)
         this.onerror?.(error)
       })
     })

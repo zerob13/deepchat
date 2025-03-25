@@ -192,7 +192,7 @@ export class McpClient {
         if (this.serverConfig.env) {
           Object.entries(this.serverConfig.env as Record<string, string>).forEach(
             ([key, value]) => {
-              if (value !== undefined && allowedEnvVars.includes(key)) {
+              if (value !== undefined) {
                 // 如果是PATH相关变量，合并到主PATH中
                 if (['PATH', 'Path', 'path'].includes(key)) {
                   const currentPathKey = process.platform === 'win32' ? 'Path' : 'PATH'
@@ -203,8 +203,6 @@ export class McpClient {
                 } else {
                   env[key] = value
                 }
-              } else {
-                console.log(`忽略非白名单环境变量: ${key}`)
               }
             }
           )
