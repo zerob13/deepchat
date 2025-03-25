@@ -102,6 +102,14 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
 import { useChatStore } from '@/stores/chat'
 import { CONVERSATION } from '@shared/presenter'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 
 const { t } = useI18n()
 const chatStore = useChatStore()
