@@ -142,6 +142,26 @@ export const defaultModelsSettings = [
     functionCall: false
   },
   {
+    id: 'deepseek-chat-v3-0324',
+    name: 'DeepSeek Chat v3 0324',
+    temperature: 0.6,
+    maxTokens: 8192,
+    contextLength: 65536,
+    match: ['deepseek-chat-v3-0324'],
+    vision: false,
+    functionCall: true
+  },
+  {
+    id: 'deepseek-v3-0324',
+    name: 'DeepSeek v3 0324',
+    temperature: 0.6,
+    maxTokens: 8192,
+    contextLength: 65536,
+    match: ['deepseek-v3-0324'],
+    vision: false,
+    functionCall: true
+  },
+  {
     id: 'deepseek-chat',
     name: 'DeepSeek chat',
     temperature: 0.6,
@@ -149,8 +169,7 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-chat'],
     vision: false,
-    // https://github.com/deepseek-ai/DeepSeek-V3/issues/15 use mock function call
-    functionCall: false
+    functionCall: true
   },
   {
     id: 'deepseek-v3',
