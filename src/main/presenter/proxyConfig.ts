@@ -62,6 +62,7 @@ export class ProxyConfig {
         process.env.grpc_proxy = this.proxyUrl
         setGlobalDispatcher(new ProxyAgent(this.proxyUrl || ''))
       }
+      eventBus.emit(CONFIG_EVENTS.PROXY_RESOLVED)
     } catch (error) {
       console.error('Failed to resolve proxy:', error)
       return

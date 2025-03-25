@@ -1,7 +1,8 @@
 import axios from 'axios'
 import * as cheerio from 'cheerio'
 import { SearchResult } from '../../../shared/presenter'
-
+import { HttpsProxyAgent } from 'https-proxy-agent'
+import { proxyConfig } from '@/presenter/proxyConfig'
 // 统一的搜索结果类型
 
 /**
@@ -42,13 +43,15 @@ export class ContentEnricher {
     const timeout = 5000 // 5秒超时
 
     try {
+      const proxyUrl = proxyConfig.getProxyUrl()
       // 使用axios获取页面内容
       const response = await axios.get(url, {
         timeout,
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        },
+        httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
       })
 
       const $ = cheerio.load(response.data)

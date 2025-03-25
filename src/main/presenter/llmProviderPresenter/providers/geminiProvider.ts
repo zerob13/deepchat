@@ -10,6 +10,8 @@ import {
 } from '@google/generative-ai'
 import { ConfigPresenter } from '../../configPresenter'
 import { presenter } from '@/presenter'
+import { eventBus } from '@/eventbus'
+import { CONFIG_EVENTS } from '@/events'
 
 export class GeminiProvider extends BaseLLMProvider {
   private genAI: GoogleGenerativeAI
@@ -18,6 +20,9 @@ export class GeminiProvider extends BaseLLMProvider {
     super(provider, configPresenter)
     this.genAI = new GoogleGenerativeAI(this.provider.apiKey)
     this.init()
+    eventBus.on(CONFIG_EVENTS.PROXY_RESOLVED, () => {
+      this.init()
+    })
   }
 
   // 实现BaseLLMProvider中的抽象方法fetchProviderModels

@@ -6,7 +6,8 @@ import { ChatMessage } from '../baseProvider'
 import { presenter } from '@/presenter'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { proxyConfig } from '../../proxyConfig'
-
+import { eventBus } from '@/eventbus'
+import { CONFIG_EVENTS } from '@/events'
 // 定义Anthropic工具使用的接口
 interface AnthropicToolUse {
   id: string
@@ -21,6 +22,10 @@ export class AnthropicProvider extends BaseLLMProvider {
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     super(provider, configPresenter)
     this.init()
+    eventBus.on(CONFIG_EVENTS.PROXY_RESOLVED, () => {
+      // 如果刷新了代理，需要重建
+      this.init()
+    })
   }
 
   protected async init() {

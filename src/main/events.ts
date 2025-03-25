@@ -18,7 +18,8 @@ export const CONFIG_EVENTS = {
   ARTIFACTS_EFFECT_CHANGED: 'config:artifacts-effect-changed',
   SYNC_SETTINGS_CHANGED: 'config:sync-settings-changed',
   SEARCH_ENGINES_UPDATED: 'config:search-engines-updated',
-  CONTENT_PROTECTION_CHANGED: 'config:content-protection-changed'
+  CONTENT_PROTECTION_CHANGED: 'config:content-protection-changed',
+  PROXY_RESOLVED: 'config:proxy-resolved'
 }
 
 // 会话相关事件
