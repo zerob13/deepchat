@@ -103,6 +103,9 @@ const handleSetDefaultServer = async (serverName: string) => {
 
 // 启动/停止服务器
 const handleToggleServer = async (serverName: string) => {
+  if (mcpStore.serverLoadingStates[serverName]) {
+    return
+  }
   const success = await mcpStore.toggleServer(serverName)
   if (!success) {
     // 显示错误提示

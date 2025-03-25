@@ -121,8 +121,12 @@ export class ServerManager {
 
   async startServer(name: string): Promise<void> {
     // 如果服务器已经在运行，则不需要再次启动
-    if (this.clients.has(name) && this.isServerRunning(name)) {
-      console.info(`MCP服务器 ${name} 已经在运行中`)
+    if (this.clients.has(name)) {
+      if (this.isServerRunning(name)) {
+        console.info(`MCP服务器 ${name} 已经在运行中`)
+      } else {
+        console.info(`MCP服务器 ${name} 正在启动中...`)
+      }
       return
     }
 
