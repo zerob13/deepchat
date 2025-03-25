@@ -394,6 +394,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 更新 provider
   const updateProvider = async (id: string, provider: LLM_PROVIDER) => {
+    // 删除 provider 的 websites 字段
+    delete provider.websites
     await configP.setProviderById(id, provider)
     providers.value = await configP.getProviders()
     // 如果 provider 的启用状态发生变化，刷新模型列表
@@ -664,6 +666,7 @@ export const useSettingsStore = defineStore('settings', () => {
       ...currentProvider,
       ...updates
     }
+    delete updatedProvider.websites
 
     await configP.setProviderById(providerId, updatedProvider)
 
