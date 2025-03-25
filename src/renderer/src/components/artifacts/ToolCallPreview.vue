@@ -1,7 +1,7 @@
 <template>
   <div>
     <div
-      class="flex w-[360px] h-[40px] max-w-full shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground"
+      class="flex w-[360px] h-[40px] max-w-full break-all shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground"
     >
       <div class="flex-grow w-0 pl-2">
         <h4

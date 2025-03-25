@@ -1,7 +1,7 @@
 <template>
   <div>
     <div
-      class="flex w-96 max-w-full shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50 cursor-pointer"
+      class="flex w-96 max-w-full break-all shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground hover:bg-accent/50 cursor-pointer"
       @click="handleClick"
     >
       <div
