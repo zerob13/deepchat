@@ -24,7 +24,7 @@
 docker build -t deepchat-builder -f Dockerfile.build.linux .
 
 # 运行构建
-docker run --rm -v $(pwd):/app deepchat-builder
+docker run --rm -v $(pwd):/app/dist deepchat-builder
 ```
 
 ### 构建产物
