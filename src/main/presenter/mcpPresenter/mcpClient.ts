@@ -204,9 +204,9 @@ export class McpClient {
         }
         if (this.nodeRuntimePath) {
           if (process.platform !== 'win32') {
-            env.Path = this.nodeRuntimePath + '/bin' + ':' + env.Path
+            env.PATH = this.nodeRuntimePath + '/bin' + ':' + env.PATH
           } else {
-            env.PATH = this.nodeRuntimePath + ';' + env.PATH
+            env.Path = this.nodeRuntimePath + ';' + env.Path
           }
         }
         console.log('mcp env', env)
