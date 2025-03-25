@@ -40,7 +40,7 @@ mac:
     - target: dmg
       arch: x64
 dmg:
-  artifactName: ${name}-${version}-${arch}.${ext}
+  artifactName: ${name}-${version}-mac-${arch}.${ext}
 npmRebuild: true
 publish:
   provider: generic
