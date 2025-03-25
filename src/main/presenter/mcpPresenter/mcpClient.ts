@@ -204,7 +204,7 @@ export class McpClient {
         }
         if (this.nodeRuntimePath) {
           if (process.platform !== 'win32') {
-            env.PATH = this.nodeRuntimePath + '/bin' + ':' + env.PATH
+            env.Path = this.nodeRuntimePath + '/bin' + ':' + env.Path
           } else {
             env.PATH = this.nodeRuntimePath + ';' + env.PATH
           }
