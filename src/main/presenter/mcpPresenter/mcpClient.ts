@@ -124,6 +124,7 @@ export class McpClient {
         const allowedEnvVars = [
           'PATH',
           'path',
+          'Path',
           'npm_config_registry',
           'npm_config_cache',
           'npm_config_prefix',
@@ -194,8 +195,11 @@ export class McpClient {
           })
         }
         if (process.platform === 'win32') {
+          if (!env.Path) {
+            env.Path = ''
+          }
           ;[`${HOME_DIR}\\.cargo\\bin`, `${HOME_DIR}\\.local\\bin`].forEach((path) => {
-            env.PATH = path + ';' + env.PATH
+            env.Path = path + ';' + env.Path
           })
         }
         if (this.nodeRuntimePath) {
