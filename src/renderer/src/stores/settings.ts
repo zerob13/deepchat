@@ -852,7 +852,10 @@ export const useSettingsStore = defineStore('settings', () => {
         ...toRaw(provider),
         custom: true
       }
-      const newProviders = [...currentProviders, newProivider]
+      const newProviders = [...currentProviders, newProivider].map((p) => {
+        delete p.websites
+        return p
+      })
       await configP.setProviders(newProviders)
       providers.value = newProviders
 
@@ -871,7 +874,12 @@ export const useSettingsStore = defineStore('settings', () => {
   const removeProvider = async (providerId: string): Promise<void> => {
     try {
       const currentProviders = await configP.getProviders()
-      const filteredProviders = currentProviders.filter((p) => p.id !== providerId)
+      const filteredProviders = currentProviders
+        .filter((p) => p.id !== providerId)
+        .map((p) => {
+          delete p.websites
+          return p
+        })
       await configP.setProviders(filteredProviders)
       providers.value = filteredProviders
       await refreshAllModels()
