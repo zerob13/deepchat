@@ -49,6 +49,40 @@ export class McpClient {
   private nodeRuntimePath: string | null = null
   private npmRegistry: string | null = null
 
+  // 处理PATH环境变量的函数
+  private normalizePathEnv(paths: string[]): { key: string; value: string } {
+    const isWindows = process.platform === 'win32'
+    const separator = isWindows ? ';' : ':'
+    const pathKey = isWindows ? 'Path' : 'PATH'
+
+    // 合并所有路径
+    const pathValue = paths.filter(Boolean).join(separator)
+
+    return { key: pathKey, value: pathValue }
+  }
+
+  // 获取系统特定的默认路径
+  private getDefaultPaths(homeDir: string): string[] {
+    if (process.platform === 'darwin') {
+      return [
+        '/bin',
+        '/usr/bin',
+        '/usr/local/bin',
+        '/usr/local/sbin',
+        '/opt/homebrew/bin',
+        '/opt/homebrew/sbin',
+        '/usr/local/opt/node/bin',
+        '/opt/local/bin',
+        `${homeDir}/.cargo/bin`
+      ]
+    } else if (process.platform === 'linux') {
+      return ['/bin', '/usr/bin', '/usr/local/bin', `${homeDir}/.cargo/bin`]
+    } else {
+      // Windows
+      return [`${homeDir}\\.cargo\\bin`, `${homeDir}\\.local\\bin`]
+    }
+  }
+
   constructor(
     serverName: string,
     serverConfig: Record<string, unknown>,
@@ -99,27 +133,10 @@ export class McpClient {
 
       // 创建合适的transport
       if (this.serverConfig.type === 'stdio') {
-        let command = this.serverConfig.command as string
-
-        if (this.nodeRuntimePath) {
-          if (command === 'node') {
-            if (process.platform === 'win32') {
-              command = path.join(this.nodeRuntimePath, 'node.exe')
-            }
-          }
-          if (command === 'npm') {
-            if (process.platform === 'win32') {
-              command = path.join(this.nodeRuntimePath, 'npm.cmd')
-            }
-          }
-          if (command === 'npx') {
-            if (process.platform === 'win32') {
-              command = path.join(this.nodeRuntimePath, 'npx.cmd')
-            }
-          }
-        }
+        const command = this.serverConfig.command as string
         console.log('final command', command)
         const HOME_DIR = app.getPath('home')
+
         // 定义允许的环境变量白名单
         const allowedEnvVars = [
           'PATH',
@@ -136,23 +153,56 @@ export class McpClient {
           'GRPC_PROXY',
           'grpc_proxy'
         ]
+
         // 修复env类型问题
         const env: Record<string, string> = {}
+
         // 只复制非undefined的环境变量
         if (process.env) {
+          const existingPaths: string[] = []
+
+          // 收集所有PATH相关的值
           Object.entries(process.env).forEach(([key, value]) => {
-            if (value !== undefined && allowedEnvVars.includes(key)) {
-              env[key] = value
+            if (value !== undefined) {
+              if (['PATH', 'Path', 'path'].includes(key)) {
+                existingPaths.push(value)
+              } else if (allowedEnvVars.includes(key) && !['PATH', 'Path', 'path'].includes(key)) {
+                env[key] = value
+              }
             }
           })
+
+          // 获取默认路径
+          const defaultPaths = this.getDefaultPaths(HOME_DIR)
+
+          // 合并所有路径
+          const allPaths = [...defaultPaths, ...existingPaths]
+          if (this.nodeRuntimePath) {
+            allPaths.push(
+              process.platform === 'win32' ? this.nodeRuntimePath : `${this.nodeRuntimePath}/bin`
+            )
+          }
+
+          // 规范化并设置PATH
+          const { key, value } = this.normalizePathEnv(allPaths)
+          env[key] = value
         }
+
         // 添加自定义环境变量
         if (this.serverConfig.env) {
           Object.entries(this.serverConfig.env as Record<string, string>).forEach(
             ([key, value]) => {
-              // 检查环境变量是否在白名单中或以npm_config_开头
-              if (value !== undefined) {
-                env[key] = value
+              if (value !== undefined && allowedEnvVars.includes(key)) {
+                // 如果是PATH相关变量，合并到主PATH中
+                if (['PATH', 'Path', 'path'].includes(key)) {
+                  const currentPathKey = process.platform === 'win32' ? 'Path' : 'PATH'
+                  const separator = process.platform === 'win32' ? ';' : ':'
+                  env[currentPathKey] = env[currentPathKey]
+                    ? `${value}${separator}${env[currentPathKey]}`
+                    : value
+                } else {
+                  env[key] = value
+                }
               } else {
                 console.log(`忽略非白名单环境变量: ${key}`)
               }
@@ -166,7 +216,6 @@ export class McpClient {
           env.http_proxy = proxyUrl
           env.https_proxy = proxyUrl
           env.grpc_proxy = proxyUrl
-          // console.log('设置代理环境变量:', proxyUrl)
         }
         if (this.npmRegistry) {
           env.npm_config_registry = this.npmRegistry
