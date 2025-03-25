@@ -470,9 +470,9 @@ ${context}
         }
 
         // Claude 3.7 添加思考功能
-        if (modelId.includes('claude-3-7')) {
-          streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
-        }
+        // if (modelId.includes('claude-3-7')) {
+        //   streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
+        // }
 
         // 收集工具调用
         const toolCalls: Array<{

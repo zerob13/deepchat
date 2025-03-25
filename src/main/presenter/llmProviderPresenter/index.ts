@@ -19,6 +19,7 @@ import { GeminiProvider } from './providers/geminiProvider'
 import { GithubProvider } from './providers/githubProvider'
 import { OllamaProvider } from './providers/ollamaProvider'
 import { AnthropicProvider } from './providers/anthropicProvider'
+import { DoubaoProvider } from './providers/doubaoProvider'
 import { ShowResponse } from 'ollama'
 import { CONFIG_EVENTS } from '@/events'
 // 导入其他provider...
@@ -86,6 +87,8 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
             instance = new OllamaProvider(provider, this.configPresenter)
           } else if (provider.apiType === 'anthropic') {
             instance = new AnthropicProvider(provider, this.configPresenter)
+          } else if (provider.apiType === 'doubao') {
+            instance = new DoubaoProvider(provider, this.configPresenter)
           } else {
             console.warn(`Unknown provider type: ${provider.apiType}`)
             continue
@@ -179,6 +182,9 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
           break
         case 'anthropic':
           instance = new AnthropicProvider(provider, this.configPresenter)
+          break
+        case 'doubao':
+          instance = new DoubaoProvider(provider, this.configPresenter)
           break
         default:
           instance = new OpenAICompatibleProvider(provider, this.configPresenter)

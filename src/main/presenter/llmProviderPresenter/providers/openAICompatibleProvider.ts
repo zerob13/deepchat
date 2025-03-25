@@ -22,7 +22,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   protected openai!: OpenAI
   private isNoModelsApi: boolean = false
   // 添加不支持 OpenAI 标准接口的供应商黑名单
-  private static readonly NO_MODELS_API_LIST = ['doubao']
+  private static readonly NO_MODELS_API_LIST: string[] = []
 
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     super(provider, configPresenter)
