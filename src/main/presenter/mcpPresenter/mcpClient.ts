@@ -170,6 +170,9 @@ export class McpClient {
         if (this.npmRegistry) {
           env.npm_config_registry = this.npmRegistry
         }
+        if (!env.PATH) {
+          env.PATH = ''
+        }
         if (process.platform === 'darwin') {
           ;[
             '/bin',
