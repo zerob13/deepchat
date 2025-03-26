@@ -29,6 +29,16 @@ export class GeminiProvider extends BaseLLMProvider {
     // Gemini没有获取模型的API，返回硬编码的模型列表
     return [
       {
+        id: 'gemini-2.5-pro-exp-03-25',
+        name: 'Gemini 2.5 Pro Exp 03-05',
+        group: 'default',
+        providerId: this.provider.id,
+        isCustom: false,
+        contextLength: 2048576,
+        maxTokens: 8192,
+        description: 'Gemini 2.5 Pro Exp 03-05 模型'
+      },
+      {
         id: 'models/gemini-2.0-flash',
         name: 'Gemini 2.0 Flash',
         group: 'default',
@@ -77,6 +87,15 @@ export class GeminiProvider extends BaseLLMProvider {
         contextLength: 2097152,
         maxTokens: 8192,
         description: 'Gemini 1.5 Pro 模型（更强大、支持多模态）'
+      },
+      {
+        id: 'gemini-2.0-flash-exp-image-generation',
+        name: 'Gemini 2.0 Flash Exp Image Generation',
+        group: 'default',
+        providerId: this.provider.id,
+        isCustom: false,
+        contextLength: 1048576,
+        maxTokens: 8192
       }
     ]
   }
@@ -135,14 +154,14 @@ export class GeminiProvider extends BaseLLMProvider {
         // 更新 Gemini 模型列表为最新版本
         this.models = [
           {
-            id: 'gemini-2.0-pro-exp-02-05',
-            name: 'Gemini 2.0 Pro Exp 02-05',
+            id: 'gemini-2.5-pro-exp-03-25',
+            name: 'Gemini 2.5 Pro Exp 03-05',
             group: 'default',
             providerId: this.provider.id,
             isCustom: false,
             contextLength: 2048576,
             maxTokens: 8192,
-            description: 'Gemini 2.0 Pro Exp 02-05 模型'
+            description: 'Gemini 2.5 Pro Exp 03-05 模型'
           },
           {
             id: 'models/gemini-2.0-flash',
