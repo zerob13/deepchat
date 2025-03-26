@@ -408,13 +408,23 @@ export class OllamaProvider extends BaseLLMProvider {
                 }
 
                 yield {
-                  content: `\n<tool_call name="${toolCall.function.name}">\n`
+                  content: `\n<tool_call_start name="${toolCall.function.name}">\n`,
+                  tool_call_name: toolCall.function.name,
+                  tool_call_params: toolCall.function.arguments,
+                  tool_call_id: `ollama-${toolCall.id}`
                 }
                 // 调用工具
                 const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
-                // 通知调用工具
+                // 通知调用工具结束
                 yield {
-                  content: `\n<tool_call_end name="${toolCall.function.name}">\n`
+                  content: `\n<tool_call_end name="${toolCall.function.name}">\n`,
+                  tool_call_name: toolCall.function.name,
+                  tool_call_params: toolCall.function.arguments,
+                  tool_call_response:
+                    typeof toolCallResponse.content === 'string'
+                      ? toolCallResponse.content
+                      : JSON.stringify(toolCallResponse.content),
+                  tool_call_id: `ollama-${toolCall.id}`
                 }
                 // 将工具响应添加到消息中
                 conversationMessages.push({
@@ -430,7 +440,11 @@ export class OllamaProvider extends BaseLLMProvider {
 
                 // 通知工具调用失败
                 yield {
-                  content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n`
+                  content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n`,
+                  tool_call_name: toolCall.function.name,
+                  tool_call_params: toolCall.function.arguments,
+                  tool_call_response: errorMessage,
+                  tool_call_id: `ollama-${toolCall.id}`
                 }
 
                 // 添加错误响应到消息中

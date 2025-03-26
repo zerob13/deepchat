@@ -623,9 +623,11 @@ ${context}
 
                   if (mcpToolCall) {
                     yield {
-                      content: `\n<tool_call name="${toolCall.name}">\n`,
+                      content: `\n<tool_call_start name="${toolCall.name}">\n`,
                       reasoning_content: undefined,
-                      tool_calling_content: toolCall.name
+                      tool_call_name: toolCall.name,
+                      tool_call_params: JSON.stringify(toolCall.input),
+                      tool_call_id: `anthropic-${toolCall.id}`
                     }
 
                     try {
@@ -635,12 +637,6 @@ ${context}
                         typeof toolResponse.content === 'string'
                           ? toolResponse.content
                           : JSON.stringify(toolResponse.content)
-
-                      yield {
-                        content: `\n<tool_response name="${toolCall.name}">\n`,
-                        reasoning_content: undefined,
-                        tool_calling_content: toolCall.name
-                      }
 
                       // 添加工具结果到消息列表
                       formattedMessagesObject.messages.push({
@@ -655,7 +651,11 @@ ${context}
 
                       yield {
                         content: `\n<tool_call_end name="${toolCall.name}">\n`,
-                        reasoning_content: undefined
+                        reasoning_content: undefined,
+                        tool_call_name: toolCall.name,
+                        tool_call_params: JSON.stringify(toolCall.input),
+                        tool_call_response: responseContent,
+                        tool_call_id: `anthropic-${toolCall.id}`
                       }
                     } catch (error) {
                       console.error('工具调用失败:', error)
@@ -664,7 +664,10 @@ ${context}
                       yield {
                         content: `\n<tool_call_error name="${toolCall.name}" error="${errorMessage}">\n`,
                         reasoning_content: undefined,
-                        tool_calling_content: toolCall.name
+                        tool_call_name: toolCall.name,
+                        tool_call_params: JSON.stringify(toolCall.input),
+                        tool_call_response: errorMessage,
+                        tool_call_id: `anthropic-${toolCall.id}`
                       }
 
                       // 添加错误响应到消息中

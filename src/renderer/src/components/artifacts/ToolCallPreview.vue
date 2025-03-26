@@ -1,4 +1,6 @@
 <template>
+  <!-- 此文件已经废弃，只用于兼容展示旧的tool_call 请勿修改此文件 -->
+  <!-- This file is deprecated and is only for compatibility to display old tool_calls. Please do not modify this file -->
   <div>
     <div
       class="flex w-[360px] h-[40px] max-w-full break-all shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground"
