@@ -6,5 +6,6 @@ export default {
   'settings-provider': 'Provider Settings',
   'settings-mcp': 'MCP Settings',
   'settings-database': 'Data Settings',
-  'settings-about': 'About'
+  'settings-about': 'About',
+  'settings-shortcut': 'Shortcuts'
 }
