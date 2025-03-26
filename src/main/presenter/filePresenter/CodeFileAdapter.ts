@@ -10,6 +10,7 @@ export class CodeFileAdapter extends BaseFileAdapter {
     super(filePath)
     this.maxFileSize = maxFileSize
     this.fileContent = undefined
+    this.mimeType = 'text/code' //set a default mime type
   }
 
   protected getFileDescription(): string | undefined {
@@ -138,33 +139,11 @@ export class CodeFileAdapter extends BaseFileAdapter {
   }
 
   public async getLLMContent(): Promise<string | undefined> {
-    const fullPath = path.join(this.filePath)
-    const stats = await fs.stat(fullPath)
     const content = await this.getContent()
     const language = this.getLanguageFromExt()
-
-    const fileDescription = `# File Description
-
-  ## Basic File Information
-
-  * **File Name:** ${path.basename(this.filePath)}
-  * **File Type:** ${this.getFileDescription()}
-  * **File Format:** ${path.extname(this.filePath).substring(1)}
-  * **Programming Language:** ${language}
-  * **File Size:** ${stats.size} bytes
-  * **Creation Date:** ${stats.birthtime.toISOString().split('T')[0]}
-  * **Updated Date:** ${stats.mtime.toISOString().split('T')[0]}
-  `
-    if (content) {
-      return `${fileDescription}
-
-## File Content
+    return `
   \`\`\`${language}
   ${content}
-  \`\`\`
-  `
-    } else {
-      return fileDescription
-    }
+  \`\`\``
   }
 }

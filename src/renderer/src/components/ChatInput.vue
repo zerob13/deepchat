@@ -274,7 +274,7 @@ const handleFileSelect = async (e: Event) => {
     for (const file of files) {
       const path = window.api.getPathForFile(file)
       try {
-        const fileInfo: MessageFile = await filePresenter.prepareFile(path)
+        const fileInfo: MessageFile = await filePresenter.prepareFile(path, file.type)
         if (fileInfo) {
           selectedFiles.value.push(fileInfo)
         } else {
