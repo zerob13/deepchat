@@ -699,10 +699,13 @@ export class GeminiProvider extends BaseLLMProvider {
           if (mcpToolCall) {
             try {
               // 通知正在调用工具
+              const toolCallId = `gemini-${Date.now()}`
               yield {
-                content: `\n<tool_call name="${functionName}">\n`,
+                content: `\n<tool_call_start name="${functionName}">\n`,
                 reasoning_content: undefined,
-                tool_calling_content: functionName
+                tool_call_name: functionName,
+                tool_call_params: JSON.stringify(functionArgs),
+                tool_call_id: toolCallId
               }
 
               // 调用工具并获取响应
@@ -711,13 +714,6 @@ export class GeminiProvider extends BaseLLMProvider {
                 typeof toolResponse.content === 'string'
                   ? toolResponse.content
                   : JSON.stringify(toolResponse.content)
-
-              // 通知工具响应结果
-              yield {
-                content: `\n<tool_response name="${functionName}">\n`,
-                reasoning_content: undefined,
-                tool_calling_content: functionName
-              }
 
               // 添加助手消息到上下文
               conversationMessages.push({
@@ -731,11 +727,14 @@ export class GeminiProvider extends BaseLLMProvider {
                 content: `工具 ${functionName} 的调用结果：${responseContent}`
               } as ChatMessage)
 
-              // 通知继续对话
+              // 通知工具调用结束
               yield {
                 content: `\n<tool_call_end name="${functionName}">\n`,
                 reasoning_content: undefined,
-                tool_calling_content: functionName
+                tool_call_name: functionName,
+                tool_call_params: JSON.stringify(functionArgs),
+                tool_call_response: responseContent,
+                tool_call_id: toolCallId
               }
 
               // 设置需要继续对话的标志
@@ -747,7 +746,10 @@ export class GeminiProvider extends BaseLLMProvider {
               yield {
                 content: `\n<tool_call_error name="${functionName}" error="${errorMessage}">\n`,
                 reasoning_content: undefined,
-                tool_calling_content: errorMessage
+                tool_call_name: functionName,
+                tool_call_params: JSON.stringify(functionArgs),
+                tool_call_response: errorMessage,
+                tool_call_id: `gemini-${Date.now()}`
               }
 
               // 添加错误消息到上下文
