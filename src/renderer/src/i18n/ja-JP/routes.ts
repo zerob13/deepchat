@@ -6,7 +6,8 @@ const routes = {
   'settings-provider': 'プロバイダー設定',
   'settings-about': 'について',
   'settings-database': 'データ設定',
-  'settings-mcp': 'MCP設定'
+  'settings-mcp': 'MCP設定',
+  'settings-shortcut': 'ショートカット'
 }
 
 export default routes

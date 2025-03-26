@@ -6,5 +6,6 @@ export default {
   'settings-provider': '제공자 설정',
   'settings-about': '정보',
   'settings-database': '데이터 설정',
-  'settings-mcp': 'MCP 설정'
+  'settings-mcp': 'MCP 설정',
+  'settings-shortcut': '단축키'
 }

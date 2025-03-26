@@ -35,6 +35,10 @@ export default {
     theme: '主题',
     themeSelect: '选择主题',
     closeToQuit: '点击关闭按钮时退出程序',
+    shortcut: {
+      title: '快捷键设置',
+      newChat: '新建聊天'
+    },
     contentProtection: '投屏保护',
     contentProtectionDialogTitle: '投屏保护切换确认',
     contentProtectionEnableDesc:

@@ -6,5 +6,6 @@ export default {
   'settings-provider': '服务商设置',
   'settings-mcp': 'MCP设置',
   'settings-database': '数据设置',
-  'settings-about': '关于'
+  'settings-about': '关于',
+  'settings-shortcut': '快捷键'
 }

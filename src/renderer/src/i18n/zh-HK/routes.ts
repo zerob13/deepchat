@@ -5,5 +5,6 @@ export default {
   'settings-common': '通用設置',
   'settings-provider': '服務商設置',
   'settings-about': '關於',
-  'settings-database': '數據設置'
+  'settings-database': '數據設置',
+  'settings-shortcut': '快捷鍵'
 }

@@ -110,6 +110,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
+import {CONVERSATION_EVENTS} from "@/events";
 
 const { t } = useI18n()
 const chatStore = useChatStore()
@@ -270,6 +271,10 @@ const handleRenameDialogCancel = () => {
 
 // 在组件挂载时加载会话列表
 onMounted(async () => {
+  // 监听创建新会话事件
+  window.electron.ipcRenderer.on(CONVERSATION_EVENTS.CREATED, async () => {
+    await createNewThread()
+  })
   currentPage.value = 1 // 重置页码
   await chatStore.loadThreads(1)
 
