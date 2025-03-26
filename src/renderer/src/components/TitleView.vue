@@ -72,9 +72,11 @@ import ChatConfig from './ChatConfig.vue'
 import ModelSelect from './ModelSelect.vue'
 import ModelIcon from './icons/ModelIcon.vue'
 import { MODEL_META } from '@shared/presenter'
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { useChatStore } from '@/stores/chat'
+import { usePresenter } from '@/composables/usePresenter'
+const configPresenter = usePresenter('configPresenter')
 
 const { t } = useI18n()
 const chatStore = useChatStore()
@@ -85,6 +87,8 @@ const contextLength = ref(chatStore.chatConfig.contextLength)
 const maxTokens = ref(chatStore.chatConfig.maxTokens)
 const systemPrompt = ref(chatStore.chatConfig.systemPrompt)
 const artifacts = ref(chatStore.chatConfig.artifacts)
+const contextLengthLimit = ref(chatStore.chatConfig.contextLength)
+const maxTokensLimit = ref(chatStore.chatConfig.maxTokens)
 
 // Independent update functions
 const updateTemperature = (value: number) => {
@@ -154,7 +158,7 @@ type Model = {
   tags: string[]
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     model?: Model
   }>(),
@@ -172,6 +176,14 @@ const handleModelUpdate = (model: MODEL_META) => {
   console.log('model', model)
   modelSelectOpen.value = false
 }
+
+onMounted(async () => {
+  if (props.model) {
+    const config = await configPresenter.getModelDefaultConfig(props.model.id)
+    contextLengthLimit.value = config.contextLength
+    maxTokensLimit.value = config.maxTokens
+  }
+})
 </script>
 
 <style scoped></style>

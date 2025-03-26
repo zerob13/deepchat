@@ -10,6 +10,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 
 // Define props to receive config from parent
 const props = defineProps<{
+  contextLengthLimit?: number
+  maxTokensLimit?: number
   temperature: number
   contextLength: number
   maxTokens: number
@@ -128,7 +130,12 @@ const formatSize = (size: number): string => {
           </div>
           <span class="text-xs text-muted-foreground">{{ formatSize(contextLengthValue[0]) }}</span>
         </div>
-        <Slider v-model="contextLengthValue" :min="2048" :max="65536" :step="1024" />
+        <Slider
+          v-model="contextLengthValue"
+          :min="2048"
+          :max="contextLengthLimit ?? 16384"
+          :step="1024"
+        />
       </div>
 
       <!-- Response Length -->
@@ -152,7 +159,7 @@ const formatSize = (size: number): string => {
           </div>
           <span class="text-xs text-muted-foreground">{{ formatSize(maxTokensValue[0]) }}</span>
         </div>
-        <Slider v-model="maxTokensValue" :min="1024" :max="8192" :step="128" />
+        <Slider v-model="maxTokensValue" :min="1024" :max="maxTokensLimit ?? 8192" :step="128" />
       </div>
       <!-- Artifacts Toggle -->
       <div class="space-y-2 px-2">

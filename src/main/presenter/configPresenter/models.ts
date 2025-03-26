@@ -199,7 +199,7 @@ export const defaultModelsSettings = [
     name: 'Claude 3.7 Sonnet',
     temperature: 0.7,
     maxTokens: 64000,
-    contextLength: 65536,
+    contextLength: 204800,
     match: ['claude-3-7-sonnet', 'claude-3.7-sonnet'],
     vision: true,
     functionCall: true
@@ -209,7 +209,7 @@ export const defaultModelsSettings = [
     name: 'Claude 3.5 Sonnet',
     temperature: 0.7,
     maxTokens: 8192,
-    contextLength: 65536,
+    contextLength: 204800,
     match: ['claude-3-5-sonnet', 'claude-3.5-sonnet'],
     vision: true,
     functionCall: true
@@ -219,7 +219,7 @@ export const defaultModelsSettings = [
     name: 'Claude 3 Opus',
     temperature: 0.7,
     maxTokens: 4096,
-    contextLength: 65536,
+    contextLength: 204800,
     match: ['claude-3-opus', 'claude-3.opus'],
     vision: true,
     functionCall: true
@@ -229,7 +229,7 @@ export const defaultModelsSettings = [
     name: 'Claude 3 Haiku',
     temperature: 0.7,
     maxTokens: 4096,
-    contextLength: 65536,
+    contextLength: 204800,
     match: ['claude-3-haiku', 'claude-3.haiku', 'claude-3-5-haiku', 'claude-3.5-haiku'],
     vision: true,
     functionCall: true

@@ -79,6 +79,8 @@
                   v-model:max-tokens="maxTokens"
                   v-model:system-prompt="systemPrompt"
                   v-model:artifacts="artifacts"
+                  :context-length-limit="contextLengthLimit"
+                  :max-tokens-limit="maxTokensLimit"
                 />
               </PopoverContent>
             </Popover>
@@ -124,7 +126,9 @@ const activeModel = ref({
 
 const temperature = ref(0.6)
 const contextLength = ref(16384)
+const contextLengthLimit = ref(16384)
 const maxTokens = ref(4096)
+const maxTokensLimit = ref(4096)
 const systemPrompt = ref('')
 const artifacts = ref(settingsStore.artifactsEffectEnabled ? 1 : 0)
 
@@ -137,10 +141,11 @@ watch(
   async () => {
     // console.log('activeModel', activeModel.value)
     const config = await configPresenter.getModelDefaultConfig(activeModel.value.id)
-    // console.log('config', config)
     temperature.value = config.temperature
     contextLength.value = config.contextLength
     maxTokens.value = config.maxTokens
+    contextLengthLimit.value = config.contextLength
+    maxTokensLimit.value = config.maxTokens
     // console.log('temperature', temperature.value)
     // console.log('contextLength', contextLength.value)
     // console.log('maxTokens', maxTokens.value)
