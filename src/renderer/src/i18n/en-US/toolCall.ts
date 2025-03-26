@@ -6,5 +6,7 @@ export default {
   title: 'Tool Call',
   clickToView: 'Click to view details',
   functionName: 'Function Name',
-  permission: 'Requesting Permission'
+  permission: 'Requesting Permission',
+  params: 'Function Parameters',
+  responseData: 'Response Data'
 }

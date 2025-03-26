@@ -67,7 +67,9 @@
 
         <!-- 响应 -->
         <div v-if="block.tool_call?.response" class="space-y-1">
-          <h5 class="text-xs font-medium text-accent-foreground">{{ t('toolCall.response') }}</h5>
+          <h5 class="text-xs font-medium text-accent-foreground">
+            {{ t('toolCall.responseData') }}
+          </h5>
           <div class="text-sm text-primary p-2 bg-muted rounded-md overflow-auto max-h-48">
             <pre class="whitespace-pre-wrap break-all">{{
               formatJson(block.tool_call.response)

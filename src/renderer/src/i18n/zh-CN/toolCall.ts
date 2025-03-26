@@ -6,5 +6,7 @@ export default {
   title: '工具调用',
   clickToView: '点击查看详情',
   functionName: '函数名称',
-  permission: '请求权限中'
+  permission: '请求权限中',
+  params: '函数参数',
+  responseData: '函数响应'
 }

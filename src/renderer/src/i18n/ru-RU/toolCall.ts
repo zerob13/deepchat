@@ -6,5 +6,7 @@ export default {
   title: 'Вызов инструмента',
   clickToView: 'Нажмите, чтобы просмотреть детали',
   functionName: 'Имя функции',
-  permission: 'Запрос разрешения'
+  permission: 'Запрос разрешения',
+  params: 'Параметры функции',
+  responseData: 'Данные ответа'
 }

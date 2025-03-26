@@ -6,5 +6,7 @@ export default {
   title: '도구 호출',
   clickToView: '세부 정보를 보려면 클릭하세요',
   functionName: '함수 이름',
-  permission: '권한 요청 중'
+  permission: '권한 요청 중',
+  params: '함수 매개변수',
+  responseData: '응답 데이터'
 }
