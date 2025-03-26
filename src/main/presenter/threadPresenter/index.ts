@@ -220,7 +220,14 @@ export class ThreadPresenter implements IThreadPresenter {
     this.initializeUnfinishedMessages()
 
     eventBus.on(STREAM_EVENTS.RESPONSE, async (msg) => {
-      const { eventId, content, reasoning_content } = msg
+      const {
+        eventId,
+        content,
+        reasoning_content,
+        tool_call_name,
+        tool_call_params,
+        tool_call_response
+      } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
         // 记录第一个token的时间
@@ -243,7 +250,45 @@ export class ThreadPresenter implements IThreadPresenter {
         }
 
         const lastBlock = state.message.content[state.message.content.length - 1]
-        if (content) {
+
+        // 处理工具调用
+        if (tool_call_name) {
+          // 如果是工具调用相关的响应，创建或更新工具调用块
+          const toolCallBlock = state.message.content.find(
+            (block) =>
+              block.type === 'tool_call' &&
+              block.tool_call?.name === tool_call_name &&
+              block.status === 'loading'
+          )
+
+          if (toolCallBlock && toolCallBlock.type === 'tool_call') {
+            // 更新现有工具调用块
+            if (tool_call_params && !toolCallBlock.tool_call.params) {
+              toolCallBlock.tool_call.params = tool_call_params
+            }
+            if (tool_call_response) {
+              toolCallBlock.tool_call.response = tool_call_response
+              toolCallBlock.status = 'success'
+            }
+          } else {
+            // 创建新的工具调用块
+            if (lastBlock) {
+              lastBlock.status = 'success'
+            }
+            state.message.content.push({
+              type: 'tool_call',
+              content: '',
+              status: 'loading',
+              timestamp: Date.now(),
+              tool_call: {
+                name: tool_call_name,
+                params: tool_call_params,
+                response: tool_call_response
+              }
+            })
+          }
+        } else if (content) {
+          // 处理普通内容
           if (lastBlock && lastBlock.type === 'content') {
             lastBlock.content += content
           } else {
@@ -258,7 +303,9 @@ export class ThreadPresenter implements IThreadPresenter {
             })
           }
         }
+
         if (reasoning_content) {
+          // 处理推理内容
           if (lastBlock && lastBlock.type === 'reasoning_content') {
             lastBlock.content += reasoning_content
           } else {

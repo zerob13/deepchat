@@ -37,6 +37,13 @@
             :message-id="message.id"
             :block="block"
           />
+          <div
+            v-else-if="block.type === 'tool_call'"
+            class="flex flex-row items-center gap-2 text-xs text-muted-foreground"
+          >
+            <Icon icon="lucide:tool" class="w-4 h-4" />
+            {{ block.tool_call.name }}{{ block.tool_call.params }}{{ block.tool_call.response }}
+          </div>
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>

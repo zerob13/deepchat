@@ -424,14 +424,57 @@ export const useChatStore = defineStore('chat', () => {
     eventId: string
     content?: string
     reasoning_content?: string
+    tool_call_name?: string
+    tool_call_params?: string
+    tool_call_response?: string
   }) => {
     // 从缓存中查找消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
       const curMsg = cached.message as AssistantMessage
       if (curMsg.content) {
+        // 处理工具调用
+        if (msg.tool_call_name) {
+          // 查找是否已存在该工具调用的块
+          const existingToolCallBlock = curMsg.content.find(
+            (block) =>
+              block.type === 'tool_call' &&
+              block.tool_call?.name === msg.tool_call_name &&
+              block.status === 'loading'
+          )
+
+          if (existingToolCallBlock && existingToolCallBlock.type === 'tool_call') {
+            // 更新现有工具调用块
+            if (msg.tool_call_params && !existingToolCallBlock.tool_call.params) {
+              existingToolCallBlock.tool_call.params = msg.tool_call_params
+            }
+
+            if (msg.tool_call_response) {
+              existingToolCallBlock.tool_call.response = msg.tool_call_response
+              existingToolCallBlock.status = 'success'
+            }
+          } else {
+            // 创建新的工具调用块
+            const lastBlock = curMsg.content[curMsg.content.length - 1]
+            if (lastBlock) {
+              lastBlock.status = 'success'
+            }
+
+            curMsg.content.push({
+              type: 'tool_call',
+              content: '',
+              status: 'loading',
+              timestamp: Date.now(),
+              tool_call: {
+                name: msg.tool_call_name,
+                params: msg.tool_call_params,
+                response: msg.tool_call_response
+              }
+            })
+          }
+        }
         // 处理普通内容
-        if (msg.content) {
+        else if (msg.content) {
           const lastContentBlock = curMsg.content[curMsg.content.length - 1]
           if (lastContentBlock && lastContentBlock.type === 'content') {
             lastContentBlock.content += msg.content

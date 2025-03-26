@@ -468,6 +468,9 @@ export type LLMResponseStream = {
     data: string
     mimeType: string
   }
+  tool_call_name?: string
+  tool_call_params?: string
+  tool_call_response?: string
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>

@@ -58,7 +58,7 @@ export type MessageFile = {
 }
 
 export type AssistantMessageBlock = {
-  type: 'content' | 'search' | 'reasoning_content' | 'error'
+  type: 'content' | 'search' | 'reasoning_content' | 'error' | 'tool_call'
   content?: string
   extra?: Record<string, string | number | object[]>
   status: 'success' | 'loading' | 'cancel' | 'error' | 'reading' | 'optimizing'
@@ -75,6 +75,7 @@ export type AssistantMessageBlock = {
       | 'application/vnd.ant.react'
     language?: string
   }
+  tool_call?: { name?: string; params?: string; response?: string }
 }
 // 搜索相关的消息块类型
 export type SearchBlock = {
