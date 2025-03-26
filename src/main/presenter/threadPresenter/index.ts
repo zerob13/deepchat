@@ -455,6 +455,7 @@ export class ThreadPresenter implements IThreadPresenter {
     title: string,
     settings: Partial<CONVERSATION_SETTINGS> = {}
   ): Promise<string> {
+    console.log('createConversation', title, settings)
     const latestConversation = await this.getLatestConversation()
 
     if (latestConversation) {
@@ -483,6 +484,18 @@ export class ThreadPresenter implements IThreadPresenter {
     }
     if (settings.artifacts) {
       mergedSettings.artifacts = settings.artifacts
+    }
+    if (settings.maxTokens) {
+      mergedSettings.maxTokens = settings.maxTokens
+    }
+    if (settings.temperature) {
+      mergedSettings.temperature = settings.temperature
+    }
+    if (settings.contextLength) {
+      mergedSettings.contextLength = settings.contextLength
+    }
+    if (settings.systemPrompt) {
+      mergedSettings.systemPrompt = settings.systemPrompt
     }
     const conversationId = await this.sqlitePresenter.createConversation(title, mergedSettings)
     await this.setActiveConversation(conversationId)

@@ -1,5 +1,8 @@
 <template>
-  <div ref="messageNode" :class="['flex flex-row py-4 pl-4 pr-11 group gap-2 w-full', 'justify-start']">
+  <div
+    ref="messageNode"
+    :class="['flex flex-row py-4 pl-4 pr-11 group gap-2 w-full', 'justify-start']"
+  >
     <ModelIcon
       :model-id="message.model_id"
       custom-class="flex-shrink-0 w-5 h-5 block rounded-md bg-background"
@@ -66,13 +69,14 @@ import MessageInfo from './MessageInfo.vue'
 import { useChatStore } from '@/stores/chat'
 import ModelIcon from '@/components/icons/ModelIcon.vue'
 import { Icon } from '@iconify/vue'
-import { toBlob } from 'html-to-image';
-
+import { toBlob } from 'html-to-image'
+import { useDark } from '@vueuse/core'
 
 const props = defineProps<{
   message: AssistantMessage
 }>()
 
+const isDark = useDark()
 const chatStore = useChatStore()
 const currentVariantIndex = ref(0)
 
@@ -80,8 +84,6 @@ const messageNode = useTemplateRef('messageNode')
 
 // 获取当前会话ID
 const currentThreadId = computed(() => chatStore.activeThreadId || '')
-
-
 
 // 计算当前消息的所有变体（包括缓存中的）
 const allVariants = computed(() => {
@@ -164,7 +166,7 @@ const handleAction = (action: 'retry' | 'delete' | 'copy' | 'prev' | 'next' | 'c
     if (messageNode.value) {
       toBlob(messageNode.value, {
         quality: 1,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: isDark ? '#000000' : '#FFFFFF'
       }).then((blob) => {
         if (blob) {
           const rd = new FileReader()
