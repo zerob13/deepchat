@@ -424,6 +424,7 @@ export const useChatStore = defineStore('chat', () => {
     eventId: string
     content?: string
     reasoning_content?: string
+    tool_call_id?: string
     tool_call_name?: string
     tool_call_params?: string
     tool_call_response?: string
@@ -433,27 +434,10 @@ export const useChatStore = defineStore('chat', () => {
     if (cached) {
       const curMsg = cached.message as AssistantMessage
       if (curMsg.content) {
-        // 处理工具调用
-        if (msg.tool_call_name) {
-          // 查找是否已存在该工具调用的块
-          const existingToolCallBlock = curMsg.content.find(
-            (block) =>
-              block.type === 'tool_call' &&
-              block.tool_call?.name === msg.tool_call_name &&
-              block.status === 'loading'
-          )
-
-          if (existingToolCallBlock && existingToolCallBlock.type === 'tool_call') {
-            // 更新现有工具调用块
-            if (msg.tool_call_params && !existingToolCallBlock.tool_call.params) {
-              existingToolCallBlock.tool_call.params = msg.tool_call_params
-            }
-
-            if (msg.tool_call_response) {
-              existingToolCallBlock.tool_call.response = msg.tool_call_response
-              existingToolCallBlock.status = 'success'
-            }
-          } else {
+        // 处理工具调用标签内容
+        if (msg.content && msg.content.includes('<tool_call')) {
+          // 检查是否为工具调用开始
+          if (msg.content.includes('<tool_call_start') && msg.tool_call_name) {
             // 创建新的工具调用块
             const lastBlock = curMsg.content[curMsg.content.length - 1]
             if (lastBlock) {
@@ -466,11 +450,68 @@ export const useChatStore = defineStore('chat', () => {
               status: 'loading',
               timestamp: Date.now(),
               tool_call: {
+                id: msg.tool_call_id,
                 name: msg.tool_call_name,
-                params: msg.tool_call_params,
-                response: msg.tool_call_response
+                params: msg.tool_call_params || ''
               }
             })
+          }
+          // 检查是否为工具调用结束或错误
+          else if (
+            (msg.content.includes('<tool_call_end') || msg.content.includes('<tool_call_error')) &&
+            msg.tool_call_name
+          ) {
+            // 查找对应的工具调用块
+            const existingToolCallBlock = curMsg.content.find(
+              (block) =>
+                block.type === 'tool_call' &&
+                ((msg.tool_call_id && block.tool_call?.id === msg.tool_call_id) ||
+                  block.tool_call?.name === msg.tool_call_name) &&
+                block.status === 'loading'
+            )
+
+            if (existingToolCallBlock && existingToolCallBlock.type === 'tool_call') {
+              // 检查是否为工具调用错误
+              if (msg.content.includes('<tool_call_error')) {
+                existingToolCallBlock.status = 'error'
+                existingToolCallBlock.tool_call.response = msg.tool_call_response || '执行失败'
+              } else {
+                // 正常结束，标记为成功
+                existingToolCallBlock.status = 'success'
+                if (msg.tool_call_response) {
+                  existingToolCallBlock.tool_call.response = msg.tool_call_response
+                }
+              }
+            }
+          }
+        }
+        // 处理没有明确标记但有工具调用数据的情况
+        else if (msg.tool_call_id && msg.tool_call_name && !msg.content) {
+          // 使用 tool_call_id 或 tool_call_name 查找对应的工具调用块
+          const existingToolCallBlock = curMsg.content.find(
+            (block) =>
+              block.type === 'tool_call' &&
+              ((msg.tool_call_id && block.tool_call?.id === msg.tool_call_id) ||
+                block.tool_call?.name === msg.tool_call_name) &&
+              block.status === 'loading'
+          )
+
+          if (existingToolCallBlock && existingToolCallBlock.type === 'tool_call') {
+            // 更新现有工具调用块
+            if (msg.tool_call_id) {
+              existingToolCallBlock.tool_call.id = msg.tool_call_id
+            }
+            if (msg.tool_call_name) {
+              existingToolCallBlock.tool_call.name = msg.tool_call_name
+            }
+            if (msg.tool_call_params && !existingToolCallBlock.tool_call.params) {
+              existingToolCallBlock.tool_call.params = msg.tool_call_params
+            }
+
+            if (msg.tool_call_response) {
+              existingToolCallBlock.tool_call.response = msg.tool_call_response
+              existingToolCallBlock.status = 'success'
+            }
           }
         }
         // 处理普通内容

@@ -224,6 +224,7 @@ export class ThreadPresenter implements IThreadPresenter {
         eventId,
         content,
         reasoning_content,
+        tool_call_id,
         tool_call_name,
         tool_call_params,
         tool_call_response
@@ -252,17 +253,70 @@ export class ThreadPresenter implements IThreadPresenter {
         const lastBlock = state.message.content[state.message.content.length - 1]
 
         // 处理工具调用
-        if (tool_call_name) {
-          // 如果是工具调用相关的响应，创建或更新工具调用块
+        if (content && content.includes('<tool_call')) {
+          // 检查是否为工具调用开始
+          if (content.includes('<tool_call_start') && tool_call_name) {
+            // 创建新的工具调用块
+            if (lastBlock) {
+              lastBlock.status = 'success'
+            }
+
+            state.message.content.push({
+              type: 'tool_call',
+              content: '',
+              status: 'loading',
+              timestamp: Date.now(),
+              tool_call: {
+                id: tool_call_id,
+                name: tool_call_name,
+                params: tool_call_params || ''
+              }
+            })
+          }
+          // 检查是否为工具调用结束或错误
+          else if (
+            (content.includes('<tool_call_end') || content.includes('<tool_call_error')) &&
+            tool_call_name
+          ) {
+            // 查找对应的工具调用块
+            const toolCallBlock = state.message.content.find(
+              (block) =>
+                block.type === 'tool_call' &&
+                (block.tool_call?.id === tool_call_id ||
+                  block.tool_call?.name === tool_call_name) &&
+                block.status === 'loading'
+            )
+
+            if (toolCallBlock && toolCallBlock.type === 'tool_call') {
+              // 检查是否为工具调用错误
+              if (content.includes('<tool_call_error')) {
+                toolCallBlock.status = 'error'
+                toolCallBlock.tool_call.response = tool_call_response || '执行失败'
+              } else {
+                // 正常结束，标记为成功
+                toolCallBlock.status = 'success'
+                if (tool_call_response) {
+                  toolCallBlock.tool_call.response = tool_call_response
+                }
+              }
+            }
+          }
+        }
+        // 处理没有明确标记但有工具调用数据的情况
+        else if (tool_call_id && tool_call_name && !content) {
+          // 使用 tool_call_id 查找对应的工具调用块
           const toolCallBlock = state.message.content.find(
             (block) =>
               block.type === 'tool_call' &&
-              block.tool_call?.name === tool_call_name &&
+              (block.tool_call?.id === tool_call_id || block.tool_call?.name === tool_call_name) &&
               block.status === 'loading'
           )
 
           if (toolCallBlock && toolCallBlock.type === 'tool_call') {
             // 更新现有工具调用块
+            toolCallBlock.tool_call.id = tool_call_id
+            toolCallBlock.tool_call.name = tool_call_name
+
             if (tool_call_params && !toolCallBlock.tool_call.params) {
               toolCallBlock.tool_call.params = tool_call_params
             }
@@ -270,22 +324,6 @@ export class ThreadPresenter implements IThreadPresenter {
               toolCallBlock.tool_call.response = tool_call_response
               toolCallBlock.status = 'success'
             }
-          } else {
-            // 创建新的工具调用块
-            if (lastBlock) {
-              lastBlock.status = 'success'
-            }
-            state.message.content.push({
-              type: 'tool_call',
-              content: '',
-              status: 'loading',
-              timestamp: Date.now(),
-              tool_call: {
-                name: tool_call_name,
-                params: tool_call_params,
-                response: tool_call_response
-              }
-            })
           }
         } else if (content) {
           // 处理普通内容

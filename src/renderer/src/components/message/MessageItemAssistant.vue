@@ -37,13 +37,12 @@
             :message-id="message.id"
             :block="block"
           />
-          <div
+          <MessageBlockToolCall
             v-else-if="block.type === 'tool_call'"
-            class="flex flex-row items-center gap-2 text-xs text-muted-foreground"
-          >
-            <Icon icon="lucide:tool" class="w-4 h-4" />
-            {{ block.tool_call.name }}{{ block.tool_call.params }}{{ block.tool_call.response }}
-          </div>
+            :block="block"
+            :message-id="message.id"
+            :thread-id="currentThreadId"
+          />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>
@@ -70,6 +69,7 @@ import { AssistantMessage } from '@shared/chat'
 import MessageBlockContent from './MessageBlockContent.vue'
 import MessageBlockThink from './MessageBlockThink.vue'
 import MessageBlockSearch from './MessageBlockSearch.vue'
+import MessageBlockToolCall from './MessageBlockToolCall.vue'
 import MessageBlockError from './MessageBlockError.vue'
 import MessageToolbar from './MessageToolbar.vue'
 import MessageInfo from './MessageInfo.vue'

@@ -448,6 +448,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
         // 处理工具调用
         for (const toolCall of pendingToolCalls) {
+          const toolCallRenderId = toolCall.id || `manual-${Date.now()}-${toolCall.index}`
           if (processedToolCallIds.has(toolCall.id)) {
             continue
           }
@@ -483,12 +484,18 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
               console.warn(`Tool not found: ${toolCall.function.name}`)
               continue
             }
-
+            yield {
+              content: `\n<tool_call_start name="${toolCall.function.name}">\n`,
+              tool_call_id: toolCallRenderId,
+              tool_call_name: toolCall.function.name,
+              tool_call_params: toolCall.function.arguments
+            }
             // 调用工具
             const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
             console.log('toolCallResponse', toolCallResponse)
             yield {
               content: `\n<tool_call_end name="${toolCall.function.name}">\n`,
+              tool_call_id: toolCallRenderId,
               tool_call_response: toolCallResponse.content,
               tool_call_name: toolCall.function.name,
               tool_call_params: toolCall.function.arguments
@@ -507,16 +514,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
               conversationMessages.push({
                 role: 'user',
                 content:
-                  typeof toolCallResponse.content === 'string'
+                  `\n<tool_call_response name="${toolCall.function.name}" id="${toolCallRenderId}">\n` +
+                  (typeof toolCallResponse.content === 'string'
                     ? toolCallResponse.content
-                    : JSON.stringify(toolCallResponse.content)
+                    : JSON.stringify(toolCallResponse.content)) +
+                  `\n</tool_call_response>\n`
               })
-            }
-
-            // 通知工具调用完成 - 扩展LLMResponseStream类型
-            yield {
-              content: '' // 提供一个空内容以符合LLMResponseStream类型
-              // 注意：tool_call_response属性可能需要添加到LLMResponseStream接口
             }
           } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : '未知错误'
@@ -525,6 +528,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             // 通知工具调用失败 - 扩展LLMResponseStream类型
             yield {
               content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n`,
+              tool_call_id: toolCallRenderId,
               tool_call_name: toolCall.function.name,
               tool_call_params: toolCall.function.arguments,
               tool_call_response: errorMessage

@@ -471,6 +471,7 @@ export type LLMResponseStream = {
   tool_call_name?: string
   tool_call_params?: string
   tool_call_response?: string
+  tool_call_id?: string
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>
