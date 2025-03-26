@@ -35,6 +35,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const artifactsEffectEnabled = ref<boolean>(false) // 默认值与配置文件一致
   const searchPreviewEnabled = ref<boolean>(true) // 搜索预览是否启用，默认启用
   const contentProtectionEnabled = ref<boolean>(true) // 投屏保护是否启用，默认启用
+  const shortcuts = ref<{ id: string; key: string }[]>([])
 
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])
@@ -167,6 +168,15 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 初始化设置
+  // 更新快捷键配置
+  const updateShortcut = async (id: string, key: string) => {
+    const shortcut = shortcuts.value.find(s => s.id === id)
+    if (shortcut) {
+      shortcut.key = key
+      await configP.setSetting('shortcuts', shortcuts.value)
+    }
+  }
+
   const initSettings = async () => {
     try {
       // 获取全部 provider
@@ -191,6 +201,12 @@ export const useSettingsStore = defineStore('settings', () => {
 
       // 获取搜索引擎
       searchEngines.value = await threadP.getSearchEngines()
+
+      // 获取快捷键配置
+      shortcuts.value = await configP.getSetting('shortcuts') || [{
+        id: 'new_chat',
+        key: /Mac|iPod|iPhone|iPad/.test(window.navigator.platform) ? 'Command+N' : 'Control+N'
+      }]
 
       // 加载自定义搜索引擎并合并
       try {
@@ -1267,6 +1283,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTheme,
     updateLanguage,
     initSettings,
+    updateShortcut,
     searchModels,
     refreshAllModels,
     updateModelStatus,

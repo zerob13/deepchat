@@ -77,6 +77,15 @@ const router = createRouter({
             titleKey: 'routes.settings-about',
             icon: 'lucide:info'
           }
+        },
+        {
+          path: 'shortcut',
+          name: 'settings-shortcut',
+          component: () => import('@/components/settings/ShortcutSettings.vue'),
+          meta: {
+            titleKey: 'routes.settings-shortcut',
+            icon: 'lucide:keyboard'
+          }
         }
       ]
     }
