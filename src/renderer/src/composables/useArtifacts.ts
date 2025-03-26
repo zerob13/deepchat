@@ -120,12 +120,12 @@ export const useBlockContent = (props: {
           const content = match[5] ? match[5].trim() : ''
 
           // 添加调试日志
-          console.log('Processing unclosed artifact:', {
-            type: typeMatch ? typeMatch[1] : 'text/markdown',
-            identifier: identifierMatch ? identifierMatch[1] : '',
-            title: titleMatch ? titleMatch[1] : '',
-            contentLength: content.length
-          })
+          // console.log('Processing unclosed artifact:', {
+          //   type: typeMatch ? typeMatch[1] : 'text/markdown',
+          //   identifier: identifierMatch ? identifierMatch[1] : '',
+          //   title: titleMatch ? titleMatch[1] : '',
+          //   contentLength: content.length
+          // })
 
           return {
             type: 'artifact' as const,
@@ -409,11 +409,11 @@ export const useBlockContent = (props: {
             // 未闭合标签，移动到匹配内容之后
             if (pattern.name === 'artifact-unclosed') {
               // 对于未闭合的artifact标签，将剩余的所有内容都归属于它
-              console.log(
-                'Setting currentPosition to end of content for unclosed artifact at index:',
-                earliestMatch.index
-              )
-              console.log('Content length:', content.length)
+              // console.log(
+              //   'Setting currentPosition to end of content for unclosed artifact at index:',
+              //   earliestMatch.index
+              // )
+              // console.log('Content length:', content.length)
               currentPosition = content.length
             } else {
               currentPosition = earliestMatch.index + match[0].length
