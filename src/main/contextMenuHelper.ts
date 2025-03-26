@@ -1,4 +1,6 @@
-import { BrowserWindow, Menu, MenuItemConstructorOptions, WebContents } from 'electron'
+import { BrowserWindow, Menu, MenuItemConstructorOptions, WebContents, dialog, net } from 'electron'
+import path from 'path'
+import sharp from 'sharp'
 
 interface ContextMenuOptions {
   window: BrowserWindow
@@ -42,7 +44,7 @@ export default function contextMenu(options: ContextMenuOptions): () => void {
 
   // 处理上下文菜单事件
   const handleContextMenu = (event: Electron.Event, params: Electron.ContextMenuParams) => {
-    // console.log('contextMenu: 触发上下文菜单事件', params.x, params.y, params.mediaType)
+    console.log('contextMenu: 触发上下文菜单事件', params.x, params.y, params.mediaType)
 
     if (isDisposed) {
       console.log('contextMenu: 已销毁，忽略事件')
@@ -60,6 +62,111 @@ export default function contextMenu(options: ContextMenuOptions): () => void {
 
     // 准备默认菜单项 - 提供一些基础菜单项
     let menuItems: MenuItemConstructorOptions[] = []
+
+    // 处理图片右键菜单
+    if (params.mediaType === 'image') {
+      // 图片复制选项
+      menuItems.push({
+        id: 'copyImage',
+        label: options.labels?.copyImage || '复制图片',
+        click: () => {
+          const webContents = getWebContents(options.window)
+          webContents.copyImageAt(params.x, params.y)
+          console.log('contextMenu: 复制图片', params.srcURL)
+        }
+      })
+
+      // 图片另存为选项
+      menuItems.push({
+        id: 'saveImage',
+        label: options.labels?.saveImage || '图片另存为...',
+        click: async () => {
+          try {
+            // 获取文件名和URL
+            const url = params.srcURL || ''
+            let fileName = 'image.png'
+            let imageBuffer: Buffer | null = null
+
+            // 检查是否为base64格式
+            const isBase64 = url.startsWith('data:image/')
+            if (!isBase64) {
+              // 普通URL使用路径中的文件名
+              fileName = path.basename(url || 'image.png')
+            } else {
+              // base64URL使用默认文件名
+              // 尝试从MIME类型识别扩展名
+              const mimeMatch = url.match(/^data:image\/([a-zA-Z0-9]+);base64,/)
+              if (mimeMatch && mimeMatch[1]) {
+                const ext = mimeMatch[1].toLowerCase()
+                fileName = `image.${ext === 'jpeg' ? 'jpg' : ext}`
+              }
+            }
+
+            // 打开保存对话框
+            const { canceled, filePath } = await dialog.showSaveDialog({
+              defaultPath: fileName,
+              filters: [
+                { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+                { name: '所有文件', extensions: ['*'] }
+              ]
+            })
+
+            if (canceled || !filePath) {
+              return
+            }
+
+            console.log('contextMenu: 开始保存图片到', filePath)
+
+            // 获取图片数据
+            if (isBase64) {
+              // 处理base64数据
+              const base64Data = url.split(',')[1]
+              if (!base64Data) {
+                throw new Error('无效的base64图片数据')
+              }
+              imageBuffer = Buffer.from(base64Data, 'base64')
+            } else {
+              // 处理普通URL
+              const response = await net.fetch(url)
+              if (!response.ok) {
+                throw new Error(`下载图片失败: ${response.status}`)
+              }
+              imageBuffer = Buffer.from(await response.arrayBuffer())
+            }
+
+            if (!imageBuffer) {
+              throw new Error('无法获取图片数据')
+            }
+
+            // 使用sharp处理图片并保存
+            const fileExt = path.extname(filePath).toLowerCase().substring(1)
+
+            // 根据目标文件扩展名处理图片格式
+            const sharpInstance = sharp(imageBuffer)
+
+            if (fileExt === 'jpg' || fileExt === 'jpeg') {
+              await sharpInstance.jpeg({ quality: 90 }).toFile(filePath)
+            } else if (fileExt === 'png') {
+              await sharpInstance.png().toFile(filePath)
+            } else if (fileExt === 'webp') {
+              await sharpInstance.webp().toFile(filePath)
+            } else if (fileExt === 'gif') {
+              await sharpInstance.gif().toFile(filePath)
+            } else {
+              // 默认保存为原始格式
+              await sharpInstance.toFile(filePath)
+            }
+
+            console.log('contextMenu: 保存图片成功', filePath)
+          } catch (error) {
+            console.error('contextMenu: 保存图片失败', error)
+          }
+        }
+      })
+
+      // 添加分隔符
+      menuItems.push({ type: 'separator' })
+    }
 
     // 根据 labels 设置添加基础菜单项
     if (params.isEditable) {
