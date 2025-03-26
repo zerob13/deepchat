@@ -1,7 +1,7 @@
 import { app, globalShortcut } from 'electron'
 import { WindowPresenter } from './windowPresenter'
 import { ConfigPresenter } from './configPresenter'
-import {CONVERSATION_EVENTS} from "../../renderer/src/events";
+import { CONVERSATION_EVENTS } from '@/events'
 
 export class ShortcutPresenter {
   private windowPresenter: WindowPresenter

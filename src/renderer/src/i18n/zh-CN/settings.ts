@@ -1,9 +1,7 @@
 export default {
   title: '设置',
   shortcut: {
-    title: '快捷键设置',
-    newChat: '新会话',
-    recording: '请按下快捷键...',
+    title: '快捷键',
   },
   common: {
     title: '通用设置',
