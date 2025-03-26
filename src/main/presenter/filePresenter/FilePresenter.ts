@@ -42,7 +42,7 @@ export class FilePresenter implements IFilePresenter {
     await fs.unlink(fullPath)
   }
 
-  async createFileAdapter(filePath: string): Promise<BaseFileAdapter> {
+  async createFileAdapter(filePath: string, typeInfo?: string): Promise<BaseFileAdapter> {
     const ext = path.extname(filePath).toLowerCase()
 
     // Special handling for .ts files that might be misidentified as video/mp2t
@@ -53,10 +53,14 @@ export class FilePresenter implements IFilePresenter {
         return new tsAdapter(filePath, this.maxFileSize)
       }
     }
-
-    const mimeType = mime.lookup(filePath)
-    if (!mimeType) {
-      throw new Error('无法确定文件类型')
+    let mimeType: string | null = null
+    if (typeof typeInfo === 'string') {
+      mimeType = typeInfo
+    } else {
+      mimeType = mime.lookup(filePath)
+      if (!mimeType) {
+        throw new Error('无法确定文件类型'+filePath)
+      }
     }
 
     const adapterMap = getMimeTypeAdapterMap()
@@ -68,18 +72,18 @@ export class FilePresenter implements IFilePresenter {
     return new AdapterConstructor(filePath, this.maxFileSize)
   }
 
-  async prepareFile(absPath: string): Promise<MessageFile> {
+  async prepareFile(absPath: string, typeInfo?: string): Promise<MessageFile> {
     const fullPath = path.join(absPath)
     try {
       if (!this.fileAdapters.has(fullPath)) {
-        const adapter = await this.createFileAdapter(fullPath)
+        const adapter = await this.createFileAdapter(fullPath, typeInfo)
         if (adapter) {
           await adapter.processFile()
           this.fileAdapters.set(fullPath, adapter)
           const content = await adapter.getLLMContent()
           const result = {
             name: adapter.fileMetaData?.fileName ?? '',
-            token: adapter.mimeType?.startsWith('image')
+            token: adapter.mimeType && adapter.mimeType.startsWith('image')
               ? calculateImageTokens(adapter as ImageFileAdapter)
               : approximateTokenSize(content || ''),
             path: adapter.filePath,
@@ -108,7 +112,7 @@ export class FilePresenter implements IFilePresenter {
           const content = await adapter.getLLMContent()
           const result = {
             name: adapter.fileMetaData?.fileName ?? '',
-            token: adapter.mimeType?.startsWith('image')
+            token: adapter.mimeType && adapter.mimeType.startsWith('image')
               ? calculateImageTokens(adapter as ImageFileAdapter)
               : approximateTokenSize(content || ''),
             path: adapter.filePath,

@@ -31,6 +31,7 @@ export const getMimeTypeAdapterMap = (): Map<string, FileAdapterConstructor> => 
   map.set('video/mp2t', CodeFileAdapter)
   map.set('application/x-sh', CodeFileAdapter)
   map.set('text/x-python', CodeFileAdapter)
+  map.set('text/x-python-script', CodeFileAdapter)
   map.set('text/x-java', CodeFileAdapter)
   map.set('text/x-c', CodeFileAdapter)
   map.set('text/x-cpp', CodeFileAdapter)
