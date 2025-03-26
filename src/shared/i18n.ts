@@ -14,7 +14,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: '剪切',
     selectAll: '全选',
     undo: '撤销',
-    redo: '重做'
+    redo: '重做',
+    saveImage: '图片另存为...',
+    copyImage: '复制图片'
   },
   'zh-TW': {
     copy: '複製',
@@ -22,7 +24,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: '剪下',
     selectAll: '全選',
     undo: '復原',
-    redo: '重做'
+    redo: '重做',
+    saveImage: '圖片另存為...',
+    copyImage: '複製圖片'
   },
   'en-US': {
     copy: 'Copy',
@@ -30,7 +34,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: 'Cut',
     selectAll: 'Select All',
     undo: 'Undo',
-    redo: 'Redo'
+    redo: 'Redo',
+    saveImage: 'Save Image...',
+    copyImage: 'Copy Image'
   },
   ja: {
     copy: 'コピー',
@@ -38,7 +44,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: '切り取り',
     selectAll: 'すべて選択',
     undo: '元に戻す',
-    redo: 'やり直し'
+    redo: 'やり直し',
+    saveImage: '画像を保存...',
+    copyImage: '画像をコピー'
   },
   ko: {
     copy: '복사',
@@ -46,7 +54,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: '잘라내기',
     selectAll: '모두 선택',
     undo: '실행 취소',
-    redo: '다시 실행'
+    redo: '다시 실행',
+    saveImage: '이미지 저장...',
+    copyImage: '이미지 복사'
   },
   fr: {
     copy: 'Copier',
@@ -54,7 +64,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: 'Couper',
     selectAll: 'Tout sélectionner',
     undo: 'Annuler',
-    redo: 'Rétablir'
+    redo: 'Rétablir',
+    saveImage: "Enregistrer l'image...",
+    copyImage: "Copier l'image"
   },
   de: {
     copy: 'Kopieren',
@@ -62,7 +74,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: 'Ausschneiden',
     selectAll: 'Alles auswählen',
     undo: 'Rückgängig',
-    redo: 'Wiederholen'
+    redo: 'Wiederholen',
+    saveImage: 'Bild speichern...',
+    copyImage: 'Bild kopieren'
   },
   es: {
     copy: 'Copiar',
@@ -70,7 +84,9 @@ export const contextMenuTranslations: Record<string, TranslationMap> = {
     cut: 'Cortar',
     selectAll: 'Seleccionar todo',
     undo: 'Deshacer',
-    redo: 'Rehacer'
+    redo: 'Rehacer',
+    saveImage: 'Guardar imagen...',
+    copyImage: 'Copiar imagen'
   }
 }
 
