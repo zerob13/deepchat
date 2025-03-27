@@ -15,11 +15,7 @@
         @enabled-change="(enabled) => handleModelEnabledChange(model, enabled)"
       />
     </div>
-    <div
-      v-for="(model, idx) in addModelList"
-      :key="model.modelId + idx"
-      class="flex flex-row gap-2 items-center"
-    >
+    <div v-for="(model, idx) in addModelList" :key="idx" class="flex flex-row gap-2 items-center">
       <Input v-model="model.modelName" :placeholder="t('model.add.namePlaceholder')" />
       <Input v-model="model.modelId" :placeholder="t('model.add.idPlaceholder')" />
       <Input
