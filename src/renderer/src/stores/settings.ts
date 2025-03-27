@@ -169,6 +169,7 @@ export const useSettingsStore = defineStore('settings', () => {
   // 初始化设置
   const initSettings = async () => {
     try {
+      loggingEnabled.value = await configP.getLoggingEnabled()
       // 获取全部 provider
       providers.value = await configP.getProviders()
       defaultProviders.value = await configP.getDefaultProviders()
@@ -1248,6 +1249,18 @@ export const useSettingsStore = defineStore('settings', () => {
     )
   }
 
+  // 日志开关状态
+  const loggingEnabled = ref<boolean>(false)
+
+  // 设置日志开关状态
+  const setLoggingEnabled = async (enabled: boolean) => {
+    // 更新本地状态
+    loggingEnabled.value = Boolean(enabled)
+
+    // 调用ConfigPresenter设置值
+    await configP.setLoggingEnabled(enabled)
+  }
+
   return {
     providers,
     theme,
@@ -1260,6 +1273,7 @@ export const useSettingsStore = defineStore('settings', () => {
     artifactsEffectEnabled,
     searchPreviewEnabled,
     contentProtectionEnabled,
+    loggingEnabled,
     hasUpdate,
     updateInfo,
     showUpdateDialog,
@@ -1312,6 +1326,7 @@ export const useSettingsStore = defineStore('settings', () => {
     setupSearchEnginesListener,
     setContentProtectionEnabled,
     setupContentProtectionListener,
+    setLoggingEnabled,
     testSearchEngine,
     refreshSearchEngines
   }

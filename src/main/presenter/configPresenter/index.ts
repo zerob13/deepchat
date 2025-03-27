@@ -33,6 +33,7 @@ interface IAppSettings {
   syncFolderPath?: string // 同步文件夹路径
   lastSyncTime?: number // 上次同步时间
   customSearchEngines?: string // 自定义搜索引擎JSON字符串
+  loggingEnabled?: boolean // 日志记录是否启用
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -84,6 +85,7 @@ export class ConfigPresenter implements IConfigPresenter {
         syncEnabled: false,
         syncFolderPath: path.join(this.userDataPath, 'sync'),
         lastSyncTime: 0,
+        loggingEnabled: false,
         appVersion: this.currentAppVersion
       }
     })
@@ -572,6 +574,14 @@ export class ConfigPresenter implements IConfigPresenter {
   setContentProtectionEnabled(enabled: boolean): void {
     this.setSetting('contentProtectionEnabled', enabled)
     eventBus.emit(CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED, enabled)
+  }
+
+  getLoggingEnabled(): boolean {
+    return this.getSetting<boolean>('loggingEnabled') ?? false
+  }
+
+  setLoggingEnabled(enabled: boolean): void {
+    this.setSetting('loggingEnabled', enabled)
   }
 
   // ===================== MCP配置相关方法 =====================

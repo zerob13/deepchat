@@ -4,12 +4,20 @@ import path from 'path'
 import { is } from '@electron-toolkit/utils'
 
 // 配置日志文件路径
-if (!is.dev) {
-  // 使用logger记录而不是console
-  const userData = app?.getPath('userData') || ''
-  if (userData) {
-    log.transports.file.resolvePathFn = () => path.join(userData, 'logs/main.log')
-  }
+// 使用logger记录而不是console
+const userData = app?.getPath('userData') || ''
+if (userData) {
+  log.transports.file.resolvePathFn = () => path.join(userData, 'logs/main.log')
+}
+
+// 获取日志开关状态
+let loggingEnabled = false
+
+// 导出设置日志开关的方法
+export function setLoggingEnabled(enabled: boolean): void {
+  loggingEnabled = enabled
+  // 如果禁用日志，将文件日志级别设置为 false
+  log.transports.file.level = enabled ? 'info' : false
 }
 
 // 配置控制台日志
@@ -39,57 +47,67 @@ function hookConsole() {
     warn: console.warn,
     info: console.info,
     debug: console.debug,
-    trace: console.trace,
-    verbose: console.verbose
+    trace: console.trace
   }
 
   // 替换console方法
   console.log = (...args: any[]) => {
-    logger.info(...args)
+    // 只有在启用日志或开发模式下才记录日志
+    if (loggingEnabled || is.dev) {
+      logger.info(...args)
+    }
     if (is.dev) {
       originalConsole.log(...args)
     }
   }
 
   console.error = (...args: any[]) => {
-    logger.error(...args)
+    // 只有在启用日志或开发模式下才记录日志
+    if (loggingEnabled || is.dev) {
+      logger.error(...args)
+    }
     if (is.dev) {
       originalConsole.error(...args)
     }
   }
 
   console.warn = (...args: any[]) => {
-    logger.warn(...args)
+    // 只有在启用日志或开发模式下才记录日志
+    if (loggingEnabled || is.dev) {
+      logger.warn(...args)
+    }
     if (is.dev) {
       originalConsole.warn(...args)
     }
   }
 
   console.info = (...args: any[]) => {
-    logger.info(...args)
+    // 只有在启用日志或开发模式下才记录日志
+    if (loggingEnabled || is.dev) {
+      logger.info(...args)
+    }
     if (is.dev) {
       originalConsole.info(...args)
     }
   }
 
   console.debug = (...args: any[]) => {
-    logger.debug(...args)
+    // 只有在启用日志或开发模式下才记录日志
+    if (loggingEnabled || is.dev) {
+      logger.debug(...args)
+    }
     if (is.dev) {
       originalConsole.debug(...args)
     }
   }
 
   console.trace = (...args: any[]) => {
-    logger.debug(...args)
+    // 只有在启用日志或开发模式下才记录日志
+    if (loggingEnabled || is.dev) {
+      logger.debug(...args)
+    }
     if (is.dev) {
       originalConsole.trace(...args)
-    }
-  }
-
-  console.verbose = (...args: any[]) => {
-    logger.verbose(...args)
-    if (is.dev && originalConsole.verbose) {
-      originalConsole.verbose(...args)
     }
   }
 

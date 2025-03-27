@@ -180,6 +180,21 @@
           />
         </div>
       </div>
+
+      <!-- 日志开关 -->
+      <div class="flex flex-row p-2 items-center gap-2 px-2">
+        <span class="flex flex-row items-center gap-2 flex-grow w-full">
+          <Icon icon="lucide:file-text" class="w-4 h-4 text-muted-foreground" />
+          <span class="text-sm font-medium">{{t('settings.common.loggingEnabled') || '启用日志'}}</span>
+        </span>
+        <div class="flex-shrink-0">
+          <Switch
+            id="logging-switch"
+            :checked="loggingEnabled"
+            @update:checked="handleLoggingChange"
+          />
+        </div>
+      </div>
       <!-- 重置数据 -->
       <Dialog v-model:open="isDialogOpen">
         <DialogTrigger as-child>
@@ -652,6 +667,16 @@ const contentProtectionEnabled = computed({
   }
 })
 
+// 日志开关
+const loggingEnabled = computed({
+  get: () => {
+    return settingsStore.loggingEnabled
+  },
+  set: (value) => {
+    settingsStore.setLoggingEnabled(value)
+  }
+})
+
 // 处理搜索预览状态变更
 const handleSearchPreviewChange = (value: boolean) => {
   console.log('切换搜索预览状态:', value)
@@ -664,6 +689,12 @@ const handleContentProtectionChange = (value: boolean) => {
   // 显示确认对话框
   newContentProtectionValue.value = value
   isContentProtectionDialogOpen.value = true
+}
+
+// 处理日志开关状态变更
+const handleLoggingChange = (value: boolean) => {
+  console.log('切换日志状态:', value)
+  settingsStore.setLoggingEnabled(value)
 }
 
 // 投屏保护切换确认对话框
