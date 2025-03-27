@@ -185,7 +185,7 @@
       <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
           <Icon icon="lucide:file-text" class="w-4 h-4 text-muted-foreground" />
-          <span class="text-sm font-medium">{{t('settings.common.loggingEnabled') || '启用日志'}}</span>
+          <span class="text-sm font-medium">{{ t('settings.common.loggingEnabled') }}</span>
         </span>
         <div class="flex-shrink-0">
           <Switch
@@ -194,6 +194,32 @@
             @update:checked="handleLoggingChange"
           />
         </div>
+      </div>
+
+      <!-- 日志开关确认对话框 -->
+      <Dialog :open="isLoggingDialogOpen" @update:open="cancelLoggingChange">
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{{ t('settings.common.loggingDialogTitle') }}</DialogTitle>
+            <DialogDescription>
+              <div class="space-y-2">
+                <p>{{ newLoggingValue ? t('settings.common.loggingEnableDesc') : t('settings.common.loggingDisableDesc') }}</p>
+                <p>{{ t('settings.common.loggingRestartNotice') }}</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" @click="cancelLoggingChange">{{ t('common.cancel') }}</Button>
+            <Button @click="confirmLoggingChange">{{ t('common.confirm') }}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <div
+        class="p-2 flex flex-row items-center gap-2 hover:bg-accent rounded-lg cursor-pointer"
+        @click="openLogFolder"
+      >
+        <Icon icon="lucide:external-link" class="w-4 h-4 text-muted-foreground" />
+        <span class="text-sm font-medium">{{ t('settings.common.openLogFolder') }}</span>
       </div>
       <!-- 重置数据 -->
       <Dialog v-model:open="isDialogOpen">
@@ -691,10 +717,29 @@ const handleContentProtectionChange = (value: boolean) => {
   isContentProtectionDialogOpen.value = true
 }
 
+// 日志开关相关
+const isLoggingDialogOpen = ref(false)
+const newLoggingValue = ref(false)
+
 // 处理日志开关状态变更
 const handleLoggingChange = (value: boolean) => {
-  console.log('切换日志状态:', value)
-  settingsStore.setLoggingEnabled(value)
+  console.log('准备切换日志状态:', value)
+  // 显示确认对话框
+  newLoggingValue.value = value
+  isLoggingDialogOpen.value = true
+}
+
+const cancelLoggingChange = () => {
+  isLoggingDialogOpen.value = false
+}
+
+const confirmLoggingChange = () => {
+  settingsStore.setLoggingEnabled(newLoggingValue.value)
+  isLoggingDialogOpen.value = false
+}
+
+const openLogFolder = () => {
+  configPresenter.openLoggingFolder()
 }
 
 // 投屏保护切换确认对话框

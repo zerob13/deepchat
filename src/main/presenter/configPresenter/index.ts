@@ -12,10 +12,11 @@ import ElectronStore from 'electron-store'
 import { DEFAULT_PROVIDERS } from './providers'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import path from 'path'
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import fs from 'fs'
 import { CONFIG_EVENTS } from '@/events'
 import { McpConfHelper } from './mcpConfHelper'
+import { presenter } from '@/presenter'
 
 // 定义应用设置的接口
 interface IAppSettings {
@@ -490,6 +491,24 @@ export class ConfigPresenter implements IConfigPresenter {
     return this.getSetting<boolean>('syncEnabled') || false
   }
 
+  // 获取日志文件夹路径
+  getLoggingFolderPath(): string {
+    return path.join(this.userDataPath, 'logs')
+  }
+
+  // 打开日志文件夹
+  async openLoggingFolder(): Promise<void> {
+    const loggingFolderPath = this.getLoggingFolderPath()
+
+    // 如果文件夹不存在，先创建它
+    if (!fs.existsSync(loggingFolderPath)) {
+      fs.mkdirSync(loggingFolderPath, { recursive: true })
+    }
+
+    // 打开文件夹
+    await shell.openPath(loggingFolderPath)
+  }
+
   // 设置同步功能状态
   setSyncEnabled(enabled: boolean): void {
     console.log('setSyncEnabled', enabled)
@@ -582,6 +601,9 @@ export class ConfigPresenter implements IConfigPresenter {
 
   setLoggingEnabled(enabled: boolean): void {
     this.setSetting('loggingEnabled', enabled)
+    setTimeout(() => {
+      presenter.devicePresenter.restartApp()
+    }, 1000)
   }
 
   // ===================== MCP配置相关方法 =====================
