@@ -7,6 +7,7 @@ import path from 'path'
 import fs from 'fs'
 import { eventBus } from './eventbus'
 import { WINDOW_EVENTS } from './events'
+import '@shared/logger'
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100')
