@@ -35,6 +35,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const artifactsEffectEnabled = ref<boolean>(false) // 默认值与配置文件一致
   const searchPreviewEnabled = ref<boolean>(true) // 搜索预览是否启用，默认启用
   const contentProtectionEnabled = ref<boolean>(true) // 投屏保护是否启用，默认启用
+  const isRefreshingModels = ref<boolean>(false) // 是否正在刷新模型列表
 
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])
@@ -243,124 +244,146 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  // 刷新所有模型列表
-  const refreshAllModels = async () => {
-    const activeProviders = providers.value.filter((p) => p.enable)
-    allProviderModels.value = []
-    enabledModels.value = []
-    customModels.value = []
+  // 刷新单个提供商的自定义模型
+  const refreshCustomModels = async (providerId: string): Promise<void> => {
+    try {
+      // 获取自定义模型列表
+      const customModelsList = await llmP.getCustomModels(providerId)
 
-    // 刷新 Ollama 模型
-    if (activeProviders.some((p) => p.id === 'ollama')) {
-      await refreshOllamaModels()
-    }
-
-    for (const provider of activeProviders) {
-      // 如果是 Ollama 提供者，已经在 refreshOllamaModels 中处理过了
-      if (provider.id === 'ollama') continue
-
-      try {
-        // 获取在线模型
-        let models = await configP.getProviderModels(provider.id)
-        if (!models || models.length === 0) {
-          const modelMetas = await llmP.getModelList(provider.id)
-          if (modelMetas) {
-            models = modelMetas.map((meta) => ({
-              id: meta.id,
-              name: meta.name,
-              contextLength: meta.contextLength || 4096,
-              maxTokens: meta.maxTokens || 2048,
-              provider: provider.id,
-              group: meta.group,
-              enabled: false,
-              isCustom: meta.isCustom,
-              providerId: provider.id
-            }))
-          }
-        }
-
-        // 获取模型状态并合并
-        const modelsWithStatus = await Promise.all(
-          models.map(async (model) => {
-            // 获取模型状态
-            const enabled = await configP.getModelStatus(provider.id, model.id)
-            return {
-              ...model,
-              enabled
-            }
-          })
-        )
-
-        // 获取自定义模型
-        const customModelsList = await llmP.getCustomModels(provider.id)
-        // 获取自定义模型状态并合并
-        const customModelsWithStatus = await Promise.all(
-          customModelsList.map(async (model) => {
-            // 获取模型状态
-            const enabled = await configP.getModelStatus(provider.id, model.id)
-
-            return {
-              ...model,
-              enabled,
-              isCustom: true
-            } as RENDERER_MODEL_META
-          })
-        )
-
-        const existingIndex = customModels.value.findIndex(
-          (item) => item.providerId === provider.id
-        )
-        if (existingIndex !== -1) {
-          customModels.value[existingIndex].models = customModelsWithStatus
-        } else {
-          customModels.value.push({
-            providerId: provider.id,
-            models: customModelsWithStatus
-          })
-        }
-
-        // 合并在线和自定义模型
-        const allModels = [
-          ...modelsWithStatus,
-          ...customModelsWithStatus.map((model) => ({
+      // 获取自定义模型状态并合并
+      const customModelsWithStatus = await Promise.all(
+        customModelsList.map(async (model) => {
+          // 获取模型状态
+          const enabled = await configP.getModelStatus(providerId, model.id)
+          return {
             ...model,
+            enabled,
+            providerId,
             isCustom: true
-          }))
-        ]
-        const findAllProviderModelIndex = allProviderModels.value.findIndex(
-          (item) => item.providerId === provider.id
-        )
-        if (findAllProviderModelIndex !== -1) {
-          allProviderModels.value[findAllProviderModelIndex].models = allModels
-        } else {
-          allProviderModels.value.push({
-            providerId: provider.id,
-            models: allModels
-          })
-        }
+          } as RENDERER_MODEL_META
+        })
+      )
 
-        const existingEnabledIndex = enabledModels.value.findIndex(
-          (item) => item.providerId === provider.id
-        )
-        const enabledModelsData = {
-          providerId: provider.id,
-          models: allModels.filter((model) => model.enabled !== false)
-        }
-        if (provider.id === 'ollama') {
-          // ollama 管理由 ollama 接管
-          enabledModelsData.models = allModels
-        }
-        if (existingEnabledIndex !== -1) {
-          enabledModels.value[existingEnabledIndex].models = enabledModelsData.models
-        } else {
-          enabledModels.value.push(enabledModelsData)
-        }
-      } catch (error) {
-        console.error(`Failed to fetch models for provider ${provider.id}:`, error)
+      // 更新自定义模型列表
+      const customIndex = customModels.value.findIndex((item) => item.providerId === providerId)
+      if (customIndex !== -1) {
+        customModels.value[customIndex].models = customModelsWithStatus
+      } else {
+        customModels.value.push({
+          providerId,
+          models: customModelsWithStatus
+        })
       }
-    }
 
-    // 刷新模型列表后，检查并更新搜索助手模型
+      // 更新全局模型列表中的自定义模型
+      const allProviderIndex = allProviderModels.value.findIndex(
+        (item) => item.providerId === providerId
+      )
+      if (allProviderIndex !== -1) {
+        // 保留非自定义模型，添加新的自定义模型
+        const currentModels = allProviderModels.value[allProviderIndex].models
+        const standardModels = currentModels.filter((model) => !model.isCustom)
+        allProviderModels.value[allProviderIndex].models = [
+          ...standardModels,
+          ...customModelsWithStatus
+        ]
+      }
+
+      // 更新已启用的模型列表
+      const enabledIndex = enabledModels.value.findIndex((item) => item.providerId === providerId)
+      if (enabledIndex !== -1) {
+        // 保留非自定义模型，添加新的已启用自定义模型
+        const currentModels = enabledModels.value[enabledIndex].models
+        const standardModels = currentModels.filter((model) => !model.isCustom)
+        const enabledCustomModels = customModelsWithStatus.filter((model) => model.enabled)
+        enabledModels.value[enabledIndex].models = [...standardModels, ...enabledCustomModels]
+      }
+
+      // 检查并更新搜索助手模型
+      await checkAndUpdateSearchAssistantModel()
+    } catch (error) {
+      console.error(`刷新自定义模型失败: ${providerId}`, error)
+    }
+  }
+
+  // 刷新单个提供商的标准模型
+  const refreshStandardModels = async (providerId: string): Promise<void> => {
+    try {
+      // 获取在线模型
+      let models = await configP.getProviderModels(providerId)
+      if (!models || models.length === 0) {
+        const modelMetas = await llmP.getModelList(providerId)
+        if (modelMetas) {
+          models = modelMetas.map((meta) => ({
+            id: meta.id,
+            name: meta.name,
+            contextLength: meta.contextLength || 4096,
+            maxTokens: meta.maxTokens || 2048,
+            provider: providerId,
+            group: meta.group,
+            enabled: false,
+            isCustom: meta.isCustom || false,
+            providerId
+          }))
+        }
+      }
+
+      // 获取模型状态并合并
+      const modelsWithStatus = await Promise.all(
+        models.map(async (model) => {
+          // 获取模型状态
+          const enabled = await configP.getModelStatus(providerId, model.id)
+          return {
+            ...model,
+            enabled,
+            providerId,
+            isCustom: model.isCustom || false
+          }
+        })
+      )
+
+      // 更新全局模型列表中的标准模型
+      const allProviderIndex = allProviderModels.value.findIndex(
+        (item) => item.providerId === providerId
+      )
+      if (allProviderIndex !== -1) {
+        // 保留自定义模型，更新标准模型
+        const currentModels = allProviderModels.value[allProviderIndex].models
+        const customModels = currentModels.filter((model) => model.isCustom)
+        allProviderModels.value[allProviderIndex].models = [...modelsWithStatus, ...customModels]
+      } else {
+        // 提供商不存在，添加新条目
+        allProviderModels.value.push({
+          providerId,
+          models: modelsWithStatus
+        })
+      }
+
+      // 更新已启用的模型列表
+      const enabledIndex = enabledModels.value.findIndex((item) => item.providerId === providerId)
+      const enabledModelsData = modelsWithStatus.filter((model) => model.enabled)
+      if (enabledIndex !== -1) {
+        // 保留自定义模型，更新标准模型
+        const currentModels = enabledModels.value[enabledIndex].models
+        const customModels = currentModels.filter((model) => model.isCustom)
+        enabledModels.value[enabledIndex].models = [...enabledModelsData, ...customModels]
+      } else if (enabledModelsData.length > 0) {
+        // 提供商不存在，添加新条目
+        enabledModels.value.push({
+          providerId,
+          models: enabledModelsData
+        })
+      }
+
+      // 检查并更新搜索助手模型
+      await checkAndUpdateSearchAssistantModel()
+    } catch (error) {
+      console.error(`刷新标准模型失败: ${providerId}`, error)
+    }
+  }
+
+  // 检查并更新搜索助手模型
+  const checkAndUpdateSearchAssistantModel = async (): Promise<void> => {
     if (searchAssistantModelRef.value) {
       const provider = enabledModels.value.find(
         (p) => p.providerId === searchAssistantProviderRef.value
@@ -374,6 +397,53 @@ export const useSettingsStore = defineStore('settings', () => {
     } else {
       // 如果还没有设置搜索助手模型，设置一个
       await initOrUpdateSearchAssistantModel()
+    }
+  }
+
+  // 优化刷新模型列表的逻辑
+  const refreshProviderModels = async (providerId: string): Promise<void> => {
+    // 优先检查提供商是否启用
+    const provider = providers.value.find((p) => p.id === providerId)
+    if (!provider || !provider.enable) return
+
+    // Ollama 提供商的特殊处理
+    if (providerId === 'ollama') {
+      await refreshOllamaModels()
+      return
+    }
+
+    // 并行刷新标准模型和自定义模型
+    await Promise.all([refreshStandardModels(providerId), refreshCustomModels(providerId)])
+  }
+
+  // 刷新所有模型列表
+  const refreshAllModels = async () => {
+    // 如果已经在刷新模型列表，直接返回
+    if (isRefreshingModels.value) {
+      return
+    }
+
+    // 设置正在刷新标志
+    isRefreshingModels.value = true
+
+    try {
+      const activeProviders = providers.value.filter((p) => p.enable)
+      allProviderModels.value = []
+      enabledModels.value = []
+      customModels.value = []
+
+      // 依次刷新每个提供商的模型
+      for (const provider of activeProviders) {
+        await refreshProviderModels(provider.id)
+      }
+
+      // 检查并更新搜索助手模型
+      await checkAndUpdateSearchAssistantModel()
+    } catch (error) {
+      console.error('刷新所有模型列表失败:', error)
+    } finally {
+      // 重置正在刷新标志
+      isRefreshingModels.value = false
     }
   }
 
@@ -530,28 +600,14 @@ export const useSettingsStore = defineStore('settings', () => {
     return await llmP.check(providerId)
   }
 
-  // 添加自定义模型
-  const addCustomModel = async (
-    providerId: string,
-    model: Omit<RENDERER_MODEL_META, 'providerId' | 'isCustom' | 'group'>
-  ) => {
-    try {
-      const newModel = await llmP.addCustomModel(providerId, model)
-      await configP.addCustomModel(providerId, newModel)
-      await refreshAllModels()
-      return newModel
-    } catch (error) {
-      console.error('Failed to add custom model:', error)
-      throw error
-    }
-  }
-
   // 删除自定义模型
   const removeCustomModel = async (providerId: string, modelId: string) => {
     try {
+      await configP.removeCustomModel(providerId, modelId)
       const success = await llmP.removeCustomModel(providerId, modelId)
+      console.log('removeCustomModel', providerId, modelId, success)
       if (success) {
-        await refreshAllModels()
+        await refreshCustomModels(providerId) // 只刷新自定义模型
       }
       return success
     } catch (error) {
@@ -570,11 +626,27 @@ export const useSettingsStore = defineStore('settings', () => {
       // 不包含启用状态的常规更新
       const success = await llmP.updateCustomModel(providerId, modelId, updates)
       if (success) {
-        await refreshAllModels()
+        await refreshCustomModels(providerId) // 只刷新自定义模型
       }
       return success
     } catch (error) {
       console.error('Failed to update custom model:', error)
+      throw error
+    }
+  }
+
+  // 添加自定义模型
+  const addCustomModel = async (
+    providerId: string,
+    model: Omit<RENDERER_MODEL_META, 'providerId' | 'isCustom' | 'group'>
+  ) => {
+    try {
+      const newModel = await llmP.addCustomModel(providerId, model)
+      await configP.addCustomModel(providerId, newModel)
+      await refreshCustomModels(providerId) // 只刷新自定义模型
+      return newModel
+    } catch (error) {
+      console.error('Failed to add custom model:', error)
       throw error
     }
   }
@@ -706,103 +778,6 @@ export const useSettingsStore = defineStore('settings', () => {
     await updateProviderConfig(providerId, { enable })
   }
 
-  // 优化刷新模型列表的逻辑
-  const refreshProviderModels = async (providerId: string): Promise<void> => {
-    const provider = providers.value.find((p) => p.id === providerId)
-    if (!provider || !provider.enable) return
-
-    try {
-      // 获取在线模型
-      let models = await configP.getProviderModels(providerId)
-      if (!models || models.length === 0) {
-        const modelMetas = await llmP.getModelList(providerId)
-        if (modelMetas) {
-          models = modelMetas.map((meta) => ({
-            id: meta.id,
-            name: meta.name,
-            contextLength: meta.contextLength || 4096,
-            maxTokens: meta.maxTokens || 2048,
-            provider: providerId,
-            group: meta.group,
-            isCustom: meta.isCustom || false,
-            providerId
-          }))
-        }
-      }
-
-      // 获取模型状态并合并
-      const modelsWithStatus = await Promise.all(
-        models.map(async (model) => {
-          // 获取模型状态
-          const enabled = await configP.getModelStatus(providerId, model.id)
-
-          return {
-            ...model,
-            enabled,
-            providerId,
-            isCustom: model.isCustom || false
-          }
-        })
-      )
-
-      // 更新模型列表
-      const existingIndex = allProviderModels.value.findIndex(
-        (item) => item.providerId === providerId
-      )
-      if (existingIndex !== -1) {
-        allProviderModels.value[existingIndex].models = modelsWithStatus
-      } else {
-        allProviderModels.value.push({
-          providerId,
-          models: modelsWithStatus
-        })
-      }
-
-      // 更新已启用的模型列表
-      const enabledIndex = enabledModels.value.findIndex((item) => item.providerId === providerId)
-      if (enabledIndex !== -1) {
-        enabledModels.value[enabledIndex].models = modelsWithStatus.filter(
-          (model) => model.enabled !== false
-        )
-      } else {
-        enabledModels.value.push({
-          providerId,
-          models: modelsWithStatus.filter((model) => model.enabled !== false)
-        })
-      }
-
-      // 同时更新自定义模型
-      const customModelsList = await llmP.getCustomModels(providerId)
-      if (customModelsList && customModelsList.length > 0) {
-        // 获取自定义模型状态并合并
-        const customModelsWithStatus = await Promise.all(
-          customModelsList.map(async (model) => {
-            // 获取模型状态
-            const enabled = await configP.getModelStatus(providerId, model.id)
-
-            return {
-              ...model,
-              enabled,
-              providerId,
-              isCustom: true
-            }
-          })
-        )
-
-        const customIndex = customModels.value.findIndex((item) => item.providerId === providerId)
-        if (customIndex !== -1) {
-          customModels.value[customIndex].models = customModelsWithStatus
-        } else {
-          customModels.value.push({
-            providerId,
-            models: customModelsWithStatus
-          })
-        }
-      }
-    } catch (error) {
-      console.error(`Failed to fetch models for provider ${providerId}:`, error)
-    }
-  }
   const setSearchEngine = async (engineId: string) => {
     try {
       const success = await threadP.setSearchEngine(engineId)
