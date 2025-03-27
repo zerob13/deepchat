@@ -133,7 +133,10 @@ export interface IConfigPresenter {
   getEnabledProviders(): LLM_PROVIDER[]
   getModelDefaultConfig(modelId: string): ModelConfig
   getAllEnabledModels(): Promise<{ providerId: string; models: RENDERER_MODEL_META[] }[]>
-
+  // 日志设置
+  getLoggingEnabled(): boolean
+  setLoggingEnabled(enabled: boolean): void
+  openLoggingFolder(): void
   // 自定义模型管理
   getCustomModels(providerId: string): MODEL_META[]
   setCustomModels(providerId: string, models: MODEL_META[]): void
