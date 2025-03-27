@@ -20,6 +20,15 @@
     >
       <Icon icon="lucide:circle-check" class="w-4 h-4 text-green-500" />
     </Button>
+    <Button
+      v-if="isCustomModel"
+      variant="link"
+      size="icon"
+      class="w-7 h-7 text-xs text-normal rounded-lg"
+      @click="onDeleteModel"
+    >
+      <Icon icon="lucide:trash-2" class="w-4 h-4 text-destructive" />
+    </Button>
   </div>
 </template>
 
@@ -32,11 +41,14 @@ defineProps<{
   modelId: string
   group?: string
   enabled: boolean
+  isCustomModel?: boolean
 }>()
 
 const emit = defineEmits<{
   enabledChange: [boolean]
+  deleteModel: []
 }>()
 
 const onEnabledChange = (enabled: boolean) => emit('enabledChange', enabled)
+const onDeleteModel = () => emit('deleteModel')
 </script>

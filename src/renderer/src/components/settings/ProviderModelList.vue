@@ -12,7 +12,9 @@
         :model-name="model.name"
         :model-id="model.id"
         :enabled="model.enabled ?? false"
+        :is-custom-model="true"
         @enabled-change="(enabled) => handleModelEnabledChange(model, enabled)"
+        @delete-model="() => handleDeleteCustomModel(model)"
       />
     </div>
     <div v-for="(model, idx) in addModelList" :key="idx" class="flex flex-row gap-2 items-center">
@@ -202,6 +204,14 @@ const confirmAdd = async (idx: number) => {
 
 const handleModelEnabledChange = (model: RENDERER_MODEL_META, enabled: boolean) => {
   emit('enabledChange', model, enabled)
+}
+
+const handleDeleteCustomModel = async (model: RENDERER_MODEL_META) => {
+  try {
+    await settingsStore.removeCustomModel(model.providerId, model.id)
+  } catch (error) {
+    console.error('Failed to delete custom model:', error)
+  }
 }
 
 // 启用提供商下所有模型
