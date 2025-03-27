@@ -188,13 +188,18 @@ const removeEdit = (idx: number) => {
 
 const confirmAdd = async (idx: number) => {
   const model = addModelList.value[idx]
+  if (!model.modelId || !model.modelName) {
+    console.error('模型ID和名称为必填项')
+    return
+  }
+
   try {
     await settingsStore.addCustomModel(props.providers[0].id, {
       id: model.modelId,
       name: model.modelName,
       enabled: true,
-      contextLength: model.contextLength,
-      maxTokens: model.maxTokens
+      contextLength: model.contextLength || 4096,
+      maxTokens: model.maxTokens || 2048
     })
     removeEdit(idx)
   } catch (error) {
