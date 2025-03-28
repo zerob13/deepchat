@@ -3,8 +3,7 @@ import {
   MODEL_META,
   LLMResponse,
   LLMResponseStream,
-  MCPToolDefinition,
-  MCPToolCall
+  MCPToolDefinition
 } from '@shared/presenter'
 import { ConfigPresenter } from '../configPresenter'
 
@@ -179,7 +178,9 @@ export abstract class BaseLLMProvider {
     `
   }
 
-  protected parseFunctionCalls(response: string): MCPToolCall[] {
+  protected parseFunctionCalls(
+    response: string
+  ): { id: string; type: string; function: { name: string; arguments: string } }[] {
     try {
       // 使用正则表达式匹配所有的function_call标签对
       const functionCallMatches = response.match(/<function_call>(.*?)<\/function_call>/gs)

@@ -197,9 +197,9 @@ export type RENDERER_MODEL_META = {
   isCustom: boolean
   contextLength: number
   maxTokens: number
-  vision: boolean
-  functionCall: boolean
-  reasoning: boolean
+  vision?: boolean
+  functionCall?: boolean
+  reasoning?: boolean
 }
 export type MODEL_META = {
   id: string
