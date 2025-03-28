@@ -160,5 +160,17 @@
     "vite-plugin-vue-devtools": "^7.7.1",
     "vue": "^3.5.13",
     "vue-tsc": "^2.2.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ],
+    "ignoredBuiltDependencies": [
+      "better-sqlite3-multiple-ciphers",
+      "esbuild",
+      "maplibre-gl",
+      "sharp",
+      "vue-demi"
+    ]
   }
 }
