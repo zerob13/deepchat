@@ -9,19 +9,30 @@
       {{ t(block.content) }}
       {{ block }}
     </div>
+    <Button @click="handleClick"> continue </Button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
+import { Button } from '@/components/ui/button'
+import { useChatStore } from '@/stores/chat'
 
 const { t } = useI18n()
+const chatStore = useChatStore()
 
-defineProps<{
+const props = defineProps<{
+  messageId: string
+  conversationId: string
   block: {
     content: string
     action_type?: string
   }
 }>()
+
+const handleClick = () => {
+  console.log('handleClick')
+  chatStore.continueStream(props.conversationId, props.messageId)
+}
 </script>

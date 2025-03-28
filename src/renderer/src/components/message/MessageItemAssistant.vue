@@ -43,7 +43,12 @@
             :message-id="message.id"
             :thread-id="currentThreadId"
           />
-          <MessageBlockAction v-else-if="block.type === 'action'" :block="block" />
+          <MessageBlockAction
+            v-else-if="block.type === 'action'"
+            :message-id="message.id"
+            :conversation-id="currentThreadId"
+            :block="block"
+          />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>

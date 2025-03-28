@@ -763,7 +763,14 @@ export const useChatStore = defineStore('chat', () => {
       console.error('取消生成失败:', error)
     }
   }
-
+  const continueStream = async (conversationId: string, messageId: string) => {
+    if (!conversationId || !messageId) return
+    try {
+      await threadP.continueStreamCompletion(conversationId, messageId)
+    } catch (error) {
+      console.error('继续生成失败:', error)
+    }
+  }
   const clearAllMessages = async (threadId: string) => {
     if (!threadId) return
     try {
@@ -859,6 +866,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     clearActiveThread,
     cancelGenerating,
-    clearAllMessages
+    clearAllMessages,
+    continueStream
   }
 })
