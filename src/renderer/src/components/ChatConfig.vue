@@ -159,7 +159,12 @@ const formatSize = (size: number): string => {
           </div>
           <span class="text-xs text-muted-foreground">{{ formatSize(maxTokensValue[0]) }}</span>
         </div>
-        <Slider v-model="maxTokensValue" :min="1024" :max="maxTokensLimit ?? 8192" :step="128" />
+        <Slider
+          v-model="maxTokensValue"
+          :min="1024"
+          :max="!maxTokensLimit || maxTokensLimit < 8192 ? 8192 : maxTokensLimit"
+          :step="128"
+        />
       </div>
       <!-- Artifacts Toggle -->
       <div class="space-y-2 px-2">
