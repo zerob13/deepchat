@@ -288,6 +288,7 @@ export class McpClient {
       const timeoutPromise = new Promise<void>((_, reject) => {
         this.connectionTimeout = setTimeout(
           () => {
+            console.error(`连接到MCP服务器 ${this.serverName} 超时`)
             reject(new Error(`连接到MCP服务器 ${this.serverName} 超时`))
           },
           5 * 60 * 1000
