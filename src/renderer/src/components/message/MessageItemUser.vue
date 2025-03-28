@@ -1,5 +1,5 @@
 <template>
-  <div :class="['flex flex-row-reverse group p-4 pl-11 gap-2']">
+  <div v-show="!message.content.continue" :class="['flex flex-row-reverse group p-4 pl-11 gap-2']">
     <!-- 头像 -->
     <div class="w-5 h-5 bg-muted rounded-md overflow-hidden">
       <img v-if="message.avatar" :src="message.avatar" class="w-full h-full" :alt="message.role" />
@@ -32,11 +32,15 @@
             class="w-full min-h-[80px] p-1 border rounded bg-background dark:bg-muted-foreground/10 whitespace-pre-wrap break-all resize-y"
           ></textarea>
         </div>
-        <div v-else-if="message.content.continue" class="text-sm whitespace-pre-wrap break-all">
+        <div v-else class="text-sm whitespace-pre-wrap break-all">{{ displayText }}</div>
+        <!-- <div
+          v-else-if="message.content.continue"
+          class="text-sm whitespace-pre-wrap break-all flex flex-row flex-wrap items-center gap-2"
+        >
           <Icon icon="lucide:info" class="w-4 h-4" />
           <span>用户选择继续对话</span>
         </div>
-        <div v-else class="text-sm whitespace-pre-wrap break-all">{{ displayText }}</div>
+         -->
         <!-- disable for now -->
         <!-- <div class="flex flex-row gap-1.5 text-xs text-muted-foreground">
           <span v-if="message.content.search">联网搜索</span>

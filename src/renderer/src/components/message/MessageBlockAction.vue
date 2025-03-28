@@ -1,15 +1,33 @@
 <template>
   <div
-    class="text-xs bg-red-100 text-red-700 rounded-lg border border-red-400 flex flex-col gap-2 px-2 py-2"
+    class="flex flex-col w-[360px] break-all shadow-sm my-2 items-start p-2 gap-2 rounded-lg border bg-card text-card-foreground"
   >
-    <div class="flex flex-row gap-2 items-center cursor-pointer">
-      <Icon icon="lucide:info" class="w-4 h-4 text-red-700" />
+    <div v-if="block.extra?.needContinue" class="flex flex-row items-center gap-2 w-full">
+      <div class="flex flex-row gap-2 items-center cursor-pointer">
+        <Icon icon="lucide:info" class="w-4 h-4 text-red-500/80" />
+      </div>
+      <div
+        class="prose prose-sm max-w-full break-all whitespace-pre-wrap leading-7 text-left text-card-foreground"
+      >
+        {{ t(block.content) }}
+      </div>
     </div>
-    <div class="prose prose-sm max-w-full break-all whitespace-pre-wrap leading-7">
-      {{ t(block.content) }}
-      {{ block }}
+
+    <Button
+      v-if="block.extra?.needContinue"
+      class="bg-primary rounded-lg hover:bg-indigo-600/50 h-8"
+      size="sm"
+      @click="handleClick"
+    >
+      <Icon icon="lucide:check" class="w-4 h-4" />
+      {{ t('components.messageBlockAction.continue') }}
+    </Button>
+    <div
+      v-if="!block.extra?.needContinue"
+      class="text-xs text-gray-500 flex flex-row gap-2 items-center"
+    >
+      <Icon icon="lucide:check" class="w-4 h-4" />{{ t('components.messageBlockAction.continued') }}
     </div>
-    <Button @click="handleClick" v-if="block.extra?.needContinue"> continue </Button>
   </div>
 </template>
 

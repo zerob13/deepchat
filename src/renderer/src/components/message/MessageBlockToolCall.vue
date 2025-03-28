@@ -1,69 +1,70 @@
 <template>
   <div class="my-1">
     <div
-      class="flex h-[40px] w-[360px] break-all shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground"
+      class="flex flex-col h-min-[40px] hover:bg-muted cursor-pointer pt-3 overflow-hidden w-[360px] break-all shadow-sm my-2 items-start gap-3 rounded-lg border bg-card text-card-foreground"
+      @click="toggleExpanded"
     >
-      <div class="flex-grow w-0 pl-2">
-        <h4
-          class="text-xs font-medium leading-none text-accent-foreground flex flex-row gap-2 items-center"
-        >
-          <Icon icon="lucide:hammer" class="w-4 h-4 text-muted-foreground" />
-          {{ block.tool_call?.name ?? '' }}
-        </h4>
-      </div>
-      <div class="text-xs text-muted-foreground">{{ getToolCallStatus() }}</div>
-      <div class="flex-shrink-0 px-2 rounded-lg rounded-l-none flex justify-center items-center">
-        <Icon
-          v-if="block.status === 'loading'"
-          icon="lucide:loader-2"
-          class="w-4 h-4 animate-spin text-muted-foreground"
-        />
-        <Icon
-          v-else-if="block.status === 'success'"
-          icon="lucide:check"
-          class="w-4 h-4 bg-green-500 rounded-full text-white p-0.5 dark:bg-green-800"
-        />
-        <Icon
-          v-else-if="block.status === 'error'"
-          icon="lucide:x"
-          class="w-4 h-4 text-white p-0.5 bg-red-500 rounded-full dark:bg-red-800"
-        />
-        <Icon
-          v-else-if="showPermissionIcon()"
-          icon="lucide:hand"
-          class="w-4 h-4 p-0.5 bg-yellow-500 text-white rounded-full dark:bg-yellow-800"
-        />
-        <Icon
-          v-else
-          :icon="isExpanded ? 'lucide:chevron-up' : 'lucide:chevron-down'"
-          class="w-4 h-4 text-muted-foreground"
-        />
-      </div>
-    </div>
-
-    <transition
-      enter-active-class="transition-all duration-200"
-      enter-from-class="opacity-0 -translate-y-2"
-      enter-to-class="opacity-100 translate-y-0"
-      leave-active-class="transition-all duration-200"
-      leave-from-class="opacity-100 translate-y-0"
-      leave-to-class="opacity-0 -translate-y-2"
-    >
-      <div
-        v-if="simpleIn"
-        class="flex-row gap-1 bg-secondary text-muted-foreground transition-colors duration-200 dark:bg-card hover:text-foreground rounded-md inline-flex max-w-[33rem] items-center cursor-pointer select-none"
-        @click="toggleExpanded"
-      >
-        <div class="text-xs inline-flex px-2 py-1 flex-row gap-2 items-center max-w-64">
+      <div class="flex flex-row items-center gap-2 w-full">
+        <div class="flex-grow w-0 pl-2">
+          <h4
+            class="text-xs font-medium leading-none text-accent-foreground flex flex-row gap-2 items-center"
+          >
+            <Icon icon="lucide:hammer" class="w-4 h-4 text-muted-foreground" />
+            {{ block.tool_call?.name ?? '' }}
+          </h4>
+        </div>
+        <div class="text-xs text-muted-foreground">{{ getToolCallStatus() }}</div>
+        <div class="flex-shrink-0 pr-2 rounded-lg rounded-l-none flex justify-center items-center">
           <Icon
-            icon="lucide:arrow-up-from-dot"
-            class="w-3 h-3 text-secondary-foreground shrink-0"
+            v-if="block.status === 'loading'"
+            icon="lucide:loader-2"
+            class="w-4 h-4 animate-spin text-muted-foreground"
           />
-          <span class="truncate">{{ simpleIn }}</span>
-          <Icon icon="lucide:chevron-right" class="w-3 h-3 text-secondary-foreground shrink-0" />
+          <Icon
+            v-else-if="block.status === 'success'"
+            icon="lucide:check"
+            class="w-4 h-4 bg-green-500 rounded-full text-white p-0.5 dark:bg-green-800"
+          />
+          <Icon
+            v-else-if="block.status === 'error'"
+            icon="lucide:x"
+            class="w-4 h-4 text-white p-0.5 bg-red-500 rounded-full dark:bg-red-800"
+          />
+          <Icon
+            v-else-if="showPermissionIcon()"
+            icon="lucide:hand"
+            class="w-4 h-4 p-0.5 bg-yellow-500 text-white rounded-full dark:bg-yellow-800"
+          />
+          <Icon
+            v-else
+            :icon="isExpanded ? 'lucide:chevron-up' : 'lucide:chevron-down'"
+            class="w-4 h-4 text-muted-foreground"
+          />
         </div>
       </div>
-    </transition>
+      <transition
+        enter-active-class="transition-all duration-200"
+        enter-from-class="opacity-0 -translate-y-2"
+        enter-to-class="opacity-100 translate-y-0"
+        leave-active-class="transition-all duration-200"
+        leave-from-class="opacity-100 translate-y-0"
+        leave-to-class="opacity-0 -translate-y-2"
+      >
+        <div
+          v-if="simpleIn"
+          class="flex-row w-full gap-1 bg-muted dark:bg-background text-secondary-foreground transition-colors duration-200 inline-flex max-w-[33rem] items-center cursor-pointer select-none"
+        >
+          <div class="text-xs inline-flex px-2 py-1 flex-row gap-2 items-center max-w-64">
+            <Icon
+              icon="lucide:arrow-up-from-dot"
+              class="w-3 h-3 text-secondary-foreground shrink-0"
+            />
+            <span class="truncate">{{ simpleIn }}</span>
+          </div>
+        </div>
+        <div v-else class="h-0"></div>
+      </transition>
+    </div>
 
     <!-- 详细内容区域 -->
     <transition

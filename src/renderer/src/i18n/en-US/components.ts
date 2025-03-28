@@ -10,5 +10,9 @@ export default {
     objects: 'Objects',
     symbols: 'Symbols',
     flags: 'Flags'
+  },
+  messageBlockAction: {
+    continue: 'Continue',
+    continued: 'Continued'
   }
 }
