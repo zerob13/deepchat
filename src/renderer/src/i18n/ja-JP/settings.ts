@@ -26,6 +26,11 @@ const settings = {
       '画面保護を無効にすると、画面共有ソフトウェアがDeepChatウィンドウをキャプチャできるようになります。',
     contentProtectionRestartNotice:
       'この設定を変更するとアプリケーションが再起動します。続行しますか？',
+    loggingEnabled: 'ログを有効にする',
+    loggingDialogTitle: 'ログ設定の変更確認',
+    loggingEnableDesc: 'ログを有効にすると、問題の診断とアプリケーションの改善に役立ちます。ログファイルには機密情報が含まれる可能性があります。',
+    loggingDisableDesc: 'ログを無効にすると、アプリケーションログの収集が停止します。',
+    loggingRestartNotice: 'この設定を変更するとアプリケーションが再起動します。続行しますか？',
     addCustomSearchEngine: 'カスタム検索エンジンを追加',
     addCustomSearchEngineDesc:
       "新しい検索エンジンを追加するには、名前と検索URLを提供する必要があります。URLには{'{'}query{'}'}をクエリプレースホルダーとして含める必要があります。",

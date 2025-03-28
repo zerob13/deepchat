@@ -22,7 +22,8 @@ export default {
     userCanceledGeneration: '사용자가 생성을 취소했습니다',
     sessionInterrupted: '세션이 예기치 않게 중단되었습니다. 생성이 완료되지 않았습니다',
     noModelResponse: '모델에서 콘텐츠를 반환하지 않았습니다. 시간 초과되었을 수 있습니다',
-    invalidJson: '무효한 JSON 형식'
+    invalidJson: '무효한 JSON 형식',
+    maximumToolCallsReached: '최대 도구 호출 횟수에 도달했습니다'
   },
   resetDataConfirmTitle: '모든 데이터 초기화?',
   resetDataConfirmDescription:

@@ -109,6 +109,9 @@
             :model-id="model.id"
             :group="model.group"
             :enabled="model.enabled ?? false"
+            :vision="model.vision ?? false"
+            :function-call="model.functionCall ?? false"
+            :reasoning="model.reasoning ?? false"
             @enabled-change="handleModelEnabledChange(model, $event)"
           />
         </div>

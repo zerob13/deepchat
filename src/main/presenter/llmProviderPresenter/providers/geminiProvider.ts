@@ -36,6 +36,9 @@ export class GeminiProvider extends BaseLLMProvider {
         isCustom: false,
         contextLength: 2048576,
         maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false,
         description: 'Gemini 2.5 Pro Exp 03-05 模型'
       },
       {
@@ -46,6 +49,9 @@ export class GeminiProvider extends BaseLLMProvider {
         isCustom: false,
         contextLength: 1048576,
         maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false,
         description: 'Gemini 2.0 Flash 模型'
       },
       {
@@ -56,6 +62,9 @@ export class GeminiProvider extends BaseLLMProvider {
         isCustom: false,
         contextLength: 1048576,
         maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false,
         description: 'Gemini 2.0 Flash-Lite 模型（更轻量级）'
       },
       {
@@ -66,6 +75,9 @@ export class GeminiProvider extends BaseLLMProvider {
         isCustom: false,
         contextLength: 1048576,
         maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false,
         description: 'Gemini 1.5 Flash 模型（更快速、性价比更高）'
       },
       {
@@ -76,6 +88,9 @@ export class GeminiProvider extends BaseLLMProvider {
         isCustom: false,
         contextLength: 1048576,
         maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false,
         description: 'Gemini 1.5 Flash-8B 模型（8B 参数版本）'
       },
       {
@@ -86,6 +101,9 @@ export class GeminiProvider extends BaseLLMProvider {
         isCustom: false,
         contextLength: 2097152,
         maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false,
         description: 'Gemini 1.5 Pro 模型（更强大、支持多模态）'
       },
       {
@@ -95,7 +113,10 @@ export class GeminiProvider extends BaseLLMProvider {
         providerId: this.provider.id,
         isCustom: false,
         contextLength: 1048576,
-        maxTokens: 8192
+        maxTokens: 8192,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       }
     ]
   }
@@ -161,6 +182,9 @@ export class GeminiProvider extends BaseLLMProvider {
             isCustom: false,
             contextLength: 2048576,
             maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false,
             description: 'Gemini 2.5 Pro Exp 03-05 模型'
           },
           {
@@ -171,6 +195,9 @@ export class GeminiProvider extends BaseLLMProvider {
             isCustom: false,
             contextLength: 1048576,
             maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false,
             description: 'Gemini 2.0 Flash 模型'
           },
           {
@@ -181,6 +208,9 @@ export class GeminiProvider extends BaseLLMProvider {
             isCustom: false,
             contextLength: 1048576,
             maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false,
             description: 'Gemini 2.0 Flash-Lite 模型（更轻量级）'
           },
           {
@@ -191,6 +221,9 @@ export class GeminiProvider extends BaseLLMProvider {
             isCustom: false,
             contextLength: 1048576,
             maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false,
             description: 'Gemini 1.5 Flash 模型（更快速、性价比更高）'
           },
           {
@@ -201,6 +234,9 @@ export class GeminiProvider extends BaseLLMProvider {
             isCustom: false,
             contextLength: 1048576,
             maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false,
             description: 'Gemini 1.5 Flash-8B 模型（8B 参数版本）'
           },
           {
@@ -211,6 +247,9 @@ export class GeminiProvider extends BaseLLMProvider {
             isCustom: false,
             contextLength: 2097152,
             maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false,
             description: 'Gemini 1.5 Pro 模型（更强大、支持多模态）'
           },
           {
@@ -220,7 +259,10 @@ export class GeminiProvider extends BaseLLMProvider {
             providerId: this.provider.id,
             isCustom: false,
             contextLength: 1048576,
-            maxTokens: 8192
+            maxTokens: 8192,
+            vision: true,
+            functionCall: true,
+            reasoning: false
           }
         ]
         await this.autoEnableModelsIfNeeded()
@@ -672,18 +714,6 @@ export class GeminiProvider extends BaseLLMProvider {
 
         // 处理函数调用
         if (functionCallDetected && functionName) {
-          // 增加工具调用计数
-          toolCallCount++
-
-          // 检查是否达到最大工具调用次数
-          if (toolCallCount >= MAX_TOOL_CALLS) {
-            yield {
-              content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`
-            }
-            needContinueConversation = false
-            break
-          }
-
           // 将Gemini函数调用转换为MCP工具调用
           const geminiFunctionCall = {
             name: functionName,
@@ -697,6 +727,21 @@ export class GeminiProvider extends BaseLLMProvider {
           )
 
           if (mcpToolCall) {
+            // 增加工具调用计数
+            toolCallCount++
+
+            // 检查是否达到最大工具调用次数
+            if (toolCallCount >= MAX_TOOL_CALLS) {
+              // 这里要用mcptool 格式化后的字段，因为continue的时候模型可能会变，其他地方要方便调试要用native 的tool描述
+              yield {
+                maximum_tool_calls_reached: true,
+                tool_call_id: mcpToolCall.id,
+                tool_call_name: mcpToolCall.function.name,
+                tool_call_params: mcpToolCall.function.arguments
+              }
+              needContinueConversation = false
+              break
+            }
             try {
               // 通知正在调用工具
               const toolCallId = `gemini-${Date.now()}`

@@ -20,7 +20,9 @@ const common = {
     userCanceledGeneration: 'ユーザーが生成をキャンセルしました',
     sessionInterrupted: 'セッションが中断され、生成が完了しませんでした',
     cleanMessagesFailed: 'チャットメッセージのクリーンアップに失敗しました',
-    noModelResponse: 'モデルは何も返しませんでした。タイムアウトの可能性があります'
+    noModelResponse: 'モデルは何も返しませんでした。タイムアウトの可能性があります',
+    invalidJson: '無効なJSON形式',
+    maximumToolCallsReached: '最大のツール呼び出し回数に達しました'
   },
   resetDataConfirmTitle: 'すべてのデータをリセットしますか？',
   resetDataConfirmDescription:

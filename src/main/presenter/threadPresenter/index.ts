@@ -11,6 +11,7 @@ import {
   IConfigPresenter,
   ILlmProviderPresenter
 } from '../../../shared/presenter'
+import { presenter } from '@/presenter'
 import { MessageManager } from './messageManager'
 import { eventBus } from '@/eventbus'
 import {
@@ -227,7 +228,8 @@ export class ThreadPresenter implements IThreadPresenter {
         tool_call_id,
         tool_call_name,
         tool_call_params,
-        tool_call_response
+        tool_call_response,
+        maximum_tool_calls_reached
       } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -237,6 +239,31 @@ export class ThreadPresenter implements IThreadPresenter {
           await this.messageManager.updateMessageMetadata(eventId, {
             firstTokenTime: Date.now() - state.startTime
           })
+        }
+
+        // 处理工具调用达到最大次数的情况
+        if (maximum_tool_calls_reached) {
+          const lastBlock = state.message.content[state.message.content.length - 1]
+          if (lastBlock) {
+            lastBlock.status = 'success'
+          }
+          state.message.content.push({
+            type: 'action',
+            content: 'common.error.maximumToolCallsReached',
+            status: 'success',
+            timestamp: Date.now(),
+            action_type: 'maximum_tool_calls_reached',
+            tool_call: {
+              id: tool_call_id,
+              name: tool_call_name,
+              params: tool_call_params
+            },
+            extra: {
+              needContinue: [{ value: true }]
+            }
+          })
+          await this.messageManager.editMessage(eventId, JSON.stringify(state.message.content))
+          return
         }
 
         // 处理reasoning_content的时间戳
@@ -371,14 +398,21 @@ export class ThreadPresenter implements IThreadPresenter {
         // 计算completion tokens
         let completionTokens = 0
         for (const block of state.message.content) {
-          if (block.type === 'content' || block.type === 'reasoning_content') {
+          if (
+            block.type === 'content' ||
+            block.type === 'reasoning_content' ||
+            block.type === 'tool_call'
+          ) {
             completionTokens += approximateTokenSize(block.content)
           }
         }
 
         // 检查是否有内容块
         const hasContentBlock = state.message.content.some(
-          (block) => block.type === 'content' || block.type === 'reasoning_content'
+          (block) =>
+            block.type === 'content' ||
+            block.type === 'reasoning_content' ||
+            block.type === 'tool_call'
         )
 
         // 如果没有内容块，添加错误信息
@@ -427,6 +461,7 @@ export class ThreadPresenter implements IThreadPresenter {
       }
     })
   }
+
   setSearchAssistantModel(model: MODEL_META, providerId: string) {
     this.searchAssistantModel = model
     this.searchAssistantProviderId = providerId
@@ -663,7 +698,14 @@ export class ThreadPresenter implements IThreadPresenter {
     if (messageCount < 2) {
       messageCount = 2
     }
-    return await this.messageManager.getContextMessages(conversationId, messageCount)
+    const messages = await this.messageManager.getContextMessages(conversationId, messageCount)
+
+    // 确保消息列表以用户消息开始
+    while (messages.length > 0 && messages[0].role !== 'user') {
+      messages.shift()
+    }
+
+    return messages
   }
 
   async clearContext(conversationId: string): Promise<void> {
@@ -936,7 +978,7 @@ export class ThreadPresenter implements IThreadPresenter {
         .map((msg) => {
           if (msg.role === 'user') {
             return `user: ${msg.content.text}${getFileContext(msg.content.files)}`
-          } else if (msg.role === 'ai') {
+          } else if (msg.role === 'assistant') {
             return `assistant: ${msg.content.blocks.map((block) => block.content).join('')}`
           } else {
             return JSON.stringify(msg.content)
@@ -1129,6 +1171,131 @@ export class ThreadPresenter implements IThreadPresenter {
       throw error
     }
   }
+  async continueStreamCompletion(conversationId: string, queryMsgId: string) {
+    const state = this.findGeneratingState(conversationId)
+    if (!state) {
+      console.warn('未找到状态，conversationId:', conversationId)
+      return
+    }
+
+    try {
+      // 设置消息未取消
+      state.isCancelled = false
+
+      // 1. 获取需要继续的消息
+      const queryMessage = await this.messageManager.getMessage(queryMsgId)
+      if (!queryMessage) {
+        throw new Error('找不到指定的消息')
+      }
+
+      // 2. 解析最后一个 action block
+      const content: AssistantMessageBlock[] = queryMessage.content
+      const lastActionBlock = content.filter((block) => block.type === 'action').pop()
+
+      if (!lastActionBlock || lastActionBlock.type !== 'action') {
+        throw new Error('找不到最后的 action block')
+      }
+
+      // 3. 检查是否是 maximum_tool_calls_reached
+      let toolCallResponse: { content: string } | null = null
+      const toolCall = lastActionBlock.tool_call
+
+      if (lastActionBlock.action_type === 'maximum_tool_calls_reached' && toolCall) {
+        // 设置 needContinue 为 0（false）
+        if (lastActionBlock.extra) {
+          lastActionBlock.extra = {
+            ...lastActionBlock.extra,
+            needContinue: false
+          }
+        }
+        await this.messageManager.editMessage(queryMsgId, JSON.stringify(content))
+
+        // 4. 检查工具调用参数
+        if (!toolCall.id || !toolCall.name || !toolCall.params) {
+          throw new Error('工具调用参数不完整')
+        }
+
+        // 5. 调用工具获取结果
+        toolCallResponse = await presenter.mcpPresenter.callTool({
+          id: toolCall.id,
+          type: 'function',
+          function: {
+            name: toolCall.name,
+            arguments: toolCall.params
+          }
+        })
+      }
+
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
+
+      // 6. 获取上下文信息
+      const { conversation, contextMessages, userMessage } = await this.prepareConversationContext(
+        conversationId,
+        state.message.id
+      )
+
+      // 检查是否已被取消
+      this.throwIfCancelled(state.message.id)
+
+      // 7. 准备提示内容
+      const { finalContent, promptTokens } = this.preparePromptContent(
+        conversation,
+        'continue',
+        contextMessages,
+        null, // 不进行搜索
+        [], // 没有 URL 结果
+        userMessage,
+        [] // 没有图片文件
+      )
+
+      // 8. 更新生成状态
+      await this.updateGenerationState(state, promptTokens)
+
+      // 9. 如果有工具调用结果，发送工具调用结果事件
+      if (toolCallResponse && toolCall) {
+        console.log('toolCallResponse', toolCallResponse)
+        eventBus.emit(STREAM_EVENTS.RESPONSE, {
+          eventId: state.message.id,
+          content: `\n<tool_call_start name="${toolCall.name}">\n`,
+          tool_call_id: toolCall.id,
+          tool_call_name: toolCall.name,
+          tool_call_params: toolCall.params,
+          tool_call_response: toolCallResponse.content
+        })
+
+        eventBus.emit(STREAM_EVENTS.RESPONSE, {
+          eventId: state.message.id,
+          content: `\n<tool_call_end name="${toolCall.name}">\n`,
+          tool_call_id: toolCall.id,
+          tool_call_response: toolCallResponse.content,
+          tool_call_name: toolCall.name,
+          tool_call_params: toolCall.params
+        })
+      }
+
+      // 10. 启动流式生成
+      const { providerId, modelId, temperature, maxTokens } = conversation.settings
+      await this.llmProviderPresenter.startStreamCompletion(
+        providerId,
+        finalContent,
+        modelId,
+        state.message.id,
+        temperature,
+        maxTokens
+      )
+    } catch (error) {
+      // 检查是否是取消错误
+      if (String(error).includes('userCanceledGeneration')) {
+        console.log('消息生成已被用户取消')
+        return
+      }
+
+      console.error('继续生成过程中出错:', error)
+      await this.handleMessageError(state.message.id, String(error))
+      throw error
+    }
+  }
 
   // 查找特定会话的生成状态
   private findGeneratingState(conversationId: string): GeneratingMessageState | null {
@@ -1151,7 +1318,6 @@ export class ThreadPresenter implements IThreadPresenter {
     const conversation = await this.getConversation(conversationId)
     let contextMessages: Message[] = []
     let userMessage: Message | null = null
-
     if (queryMsgId) {
       // 处理指定消息ID的情况
       const queryMessage = await this.getMessage(queryMsgId)
@@ -1389,7 +1555,7 @@ export class ThreadPresenter implements IThreadPresenter {
         msg.role === 'user'
           ? `${msg.content.text}${getFileContext(msg.content.files)}`
           : msg.content
-              .filter((block) => block.type === 'content')
+              .filter((block) => block.type === 'content' || block.type === 'tool_call')
               .map((block) => block.content)
               .join('\n')
 

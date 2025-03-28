@@ -23,7 +23,8 @@ export function getModelConfig(modelId: string): ModelConfig | undefined {
         contextLength: config.contextLength,
         temperature: config.temperature,
         vision: config.vision,
-        functionCall: config.functionCall || false
+        functionCall: config.functionCall || false,
+        reasoning: config.reasoning || false
       }
     }
   }

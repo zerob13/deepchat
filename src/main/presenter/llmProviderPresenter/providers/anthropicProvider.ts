@@ -53,7 +53,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.7',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: true
       },
       {
         id: 'claude-3-5-sonnet-20241022',
@@ -62,7 +65,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-5-haiku-20241022',
@@ -71,7 +77,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-5-sonnet-20240620',
@@ -80,7 +89,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-opus-20240229',
@@ -89,7 +101,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-haiku-20240307',
@@ -98,7 +113,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       }
     ]
   }
@@ -599,19 +617,6 @@ ${context}
                 for (const toolCall of toolCalls) {
                   if (!toolCall.name) continue
 
-                  // 增加工具调用计数
-                  toolCallCount++
-
-                  // 检查是否达到最大工具调用次数
-                  if (toolCallCount >= MAX_TOOL_CALLS) {
-                    yield {
-                      content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`,
-                      reasoning_content: undefined
-                    }
-                    needContinueConversation = false
-                    break
-                  }
-
                   // 将Anthropic工具使用转换为MCP工具调用
                   console.log('执行工具调用:', toolCall)
 
@@ -622,6 +627,20 @@ ${context}
                   )
 
                   if (mcpToolCall) {
+                    // 增加工具调用计数
+                    toolCallCount++
+
+                    // 检查是否达到最大工具调用次数
+                    if (toolCallCount >= MAX_TOOL_CALLS) {
+                      yield {
+                        maximum_tool_calls_reached: true,
+                        tool_call_id: mcpToolCall.id,
+                        tool_call_name: mcpToolCall.function.name,
+                        tool_call_params: mcpToolCall.function.arguments
+                      }
+                      needContinueConversation = false
+                      break
+                    }
                     yield {
                       content: `\n<tool_call_start name="${toolCall.name}">\n`,
                       reasoning_content: undefined,

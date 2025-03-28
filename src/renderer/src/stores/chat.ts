@@ -428,14 +428,37 @@ export const useChatStore = defineStore('chat', () => {
     tool_call_name?: string
     tool_call_params?: string
     tool_call_response?: string
+    maximum_tool_calls_reached?: boolean
   }) => {
     // 从缓存中查找消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
       const curMsg = cached.message as AssistantMessage
       if (curMsg.content) {
+        // 处理工具调用达到最大次数的情况
+        if (msg.maximum_tool_calls_reached) {
+          const lastBlock = curMsg.content[curMsg.content.length - 1]
+          if (lastBlock) {
+            lastBlock.status = 'success'
+          }
+          curMsg.content.push({
+            type: 'action',
+            content: 'common.error.maximumToolCallsReached',
+            status: 'success',
+            timestamp: Date.now(),
+            action_type: 'maximum_tool_calls_reached',
+            tool_call: {
+              id: msg.tool_call_id,
+              name: msg.tool_call_name,
+              params: msg.tool_call_params
+            },
+            extra: {
+              needContinue: true
+            }
+          })
+        }
         // 处理工具调用标签内容
-        if (msg.content && msg.content.includes('<tool_call')) {
+        else if (msg.content && msg.content.includes('<tool_call')) {
           // 检查是否为工具调用开始
           if (msg.content.includes('<tool_call_start') && msg.tool_call_name) {
             // 创建新的工具调用块
@@ -745,7 +768,43 @@ export const useChatStore = defineStore('chat', () => {
       console.error('取消生成失败:', error)
     }
   }
+  const continueStream = async (conversationId: string, messageId: string) => {
+    if (!conversationId || !messageId) return
+    try {
+      generatingThreadIds.value.add(conversationId)
 
+      // 创建一个新的助手消息
+      const aiResponseMessage = await threadP.sendMessage(
+        conversationId,
+        JSON.stringify({
+          text: 'continue',
+          files: [],
+          links: [],
+          search: false,
+          think: false,
+          continue: true
+        }),
+        'user'
+      )
+
+      if (!aiResponseMessage) {
+        console.error('创建助手消息失败')
+        return
+      }
+
+      // 将消息添加到缓存
+      generatingMessagesCache.value.set(aiResponseMessage.id, {
+        message: aiResponseMessage,
+        threadId: conversationId
+      })
+
+      await loadMessages()
+      await threadP.continueStreamCompletion(conversationId, messageId)
+    } catch (error) {
+      console.error('继续生成失败:', error)
+      throw error
+    }
+  }
   const clearAllMessages = async (threadId: string) => {
     if (!threadId) return
     try {
@@ -841,6 +900,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     clearActiveThread,
     cancelGenerating,
-    clearAllMessages
+    clearAllMessages,
+    continueStream
   }
 })

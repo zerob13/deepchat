@@ -32,6 +32,10 @@
             class="w-full min-h-[80px] p-1 border rounded bg-background dark:bg-muted-foreground/10 whitespace-pre-wrap break-all resize-y"
           ></textarea>
         </div>
+        <div v-else-if="message.content.continue" class="text-sm whitespace-pre-wrap break-all">
+          <Icon icon="lucide:info" class="w-4 h-4" />
+          <span>用户选择继续对话</span>
+        </div>
         <div v-else class="text-sm whitespace-pre-wrap break-all">{{ displayText }}</div>
         <!-- disable for now -->
         <!-- <div class="flex flex-row gap-1.5 text-xs text-muted-foreground">
@@ -82,9 +86,12 @@ const displayText = ref('')
 displayText.value = props.message.content.text
 
 // Update displayText whenever message content changes
-watch(() => props.message.content.text, (newText) => {
-  displayText.value = newText
-})
+watch(
+  () => props.message.content.text,
+  (newText) => {
+    displayText.value = newText
+  }
+)
 
 const emit = defineEmits<{
   fileClick: [fileName: string]
@@ -110,16 +117,16 @@ const saveEdit = async () => {
       ...props.message.content,
       text: editedText.value
     }
-    
+
     // Update the message in the database using editMessage method
     await threadPresenter.editMessage(props.message.id, JSON.stringify(newContent))
-    
+
     // Update local display text instead of mutating props
     displayText.value = editedText.value
-    
+
     // Emit retry event for MessageItemAssistant to handle
     emit('retry')
-    
+
     // Exit edit mode
     isEditMode.value = false
   } catch (error) {
