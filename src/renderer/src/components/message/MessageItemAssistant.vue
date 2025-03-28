@@ -43,6 +43,7 @@
             :message-id="message.id"
             :thread-id="currentThreadId"
           />
+          <MessageBlockAction v-else-if="block.type === 'action'" :block="block" />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>
@@ -78,7 +79,7 @@ import ModelIcon from '@/components/icons/ModelIcon.vue'
 import { Icon } from '@iconify/vue'
 import { toBlob } from 'html-to-image'
 import { useDark } from '@vueuse/core'
-
+import MessageBlockAction from './MessageBlockAction.vue'
 const props = defineProps<{
   message: AssistantMessage
 }>()

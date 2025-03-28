@@ -20,7 +20,9 @@ export default {
     userCanceledGeneration: 'Пользователь отменил генерацию',
     sessionInterrupted: 'Сессия прервана, генерация не завершена',
     noModelResponse: 'Модель не вернула никаких данных, возможно, истекло время ожидания',
-    cleanMessagesFailed: 'Не удалось очистить сообщения чата'
+    cleanMessagesFailed: 'Не удалось очистить сообщения чата',
+    invalidJson: 'Неверный JSON формат',
+    maximumToolCallsReached: 'Достигнуто максимальное количество вызовов инструментов'
   },
   resetDataConfirmTitle: 'Сбросить все данные?',
   resetDataConfirmDescription:

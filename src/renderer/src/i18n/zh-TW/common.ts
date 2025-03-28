@@ -22,7 +22,8 @@ export default {
     userCanceledGeneration: '使用者取消了生成',
     sessionInterrupted: '工作階段意外中斷，生成未完成',
     noModelResponse: '模型沒有回應，可能已逾時',
-    invalidJson: '無效的JSON格式'
+    invalidJson: '無效的JSON格式',
+    maximumToolCallsReached: '達到最大工具調用次數'
   },
   resetDataConfirmTitle: '確定要重設所有資料嗎？',
   resetDataConfirmDescription: '這將會把所有資料還原到預設設定。此操作無法復原。',

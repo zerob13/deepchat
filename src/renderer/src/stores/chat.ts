@@ -428,14 +428,29 @@ export const useChatStore = defineStore('chat', () => {
     tool_call_name?: string
     tool_call_params?: string
     tool_call_response?: string
+    maximum_tool_calls_reached?: boolean
   }) => {
     // 从缓存中查找消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
     if (cached) {
       const curMsg = cached.message as AssistantMessage
       if (curMsg.content) {
+        // 处理工具调用达到最大次数的情况
+        if (msg.maximum_tool_calls_reached) {
+          const lastBlock = curMsg.content[curMsg.content.length - 1]
+          if (lastBlock) {
+            lastBlock.status = 'success'
+          }
+          curMsg.content.push({
+            type: 'action',
+            content: 'common.error.maximumToolCallsReached',
+            status: 'success',
+            timestamp: Date.now(),
+            action_type: 'maximum_tool_calls_reached'
+          })
+        }
         // 处理工具调用标签内容
-        if (msg.content && msg.content.includes('<tool_call')) {
+        else if (msg.content && msg.content.includes('<tool_call')) {
           // 检查是否为工具调用开始
           if (msg.content.includes('<tool_call_start') && msg.tool_call_name) {
             // 创建新的工具调用块

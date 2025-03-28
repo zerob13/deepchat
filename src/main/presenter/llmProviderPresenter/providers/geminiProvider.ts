@@ -678,7 +678,7 @@ export class GeminiProvider extends BaseLLMProvider {
           // 检查是否达到最大工具调用次数
           if (toolCallCount >= MAX_TOOL_CALLS) {
             yield {
-              content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`
+              maximum_tool_calls_reached: true
             }
             needContinueConversation = false
             break

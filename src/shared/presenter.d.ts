@@ -472,6 +472,7 @@ export type LLMResponseStream = {
   tool_call_params?: string
   tool_call_response?: string
   tool_call_id?: string
+  maximum_tool_calls_reached?: boolean
 }
 export interface IUpgradePresenter {
   checkUpdate(): Promise<void>

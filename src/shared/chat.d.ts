@@ -58,7 +58,7 @@ export type MessageFile = {
 }
 
 export type AssistantMessageBlock = {
-  type: 'content' | 'search' | 'reasoning_content' | 'error' | 'tool_call'
+  type: 'content' | 'search' | 'reasoning_content' | 'error' | 'tool_call' | 'action'
   content?: string
   extra?: Record<string, string | number | object[]>
   status: 'success' | 'loading' | 'cancel' | 'error' | 'reading' | 'optimizing'
@@ -76,6 +76,7 @@ export type AssistantMessageBlock = {
     language?: string
   }
   tool_call?: { id?: string; name?: string; params?: string; response?: string }
+  action_type?: 'tool_call_permission' | 'maximum_tool_calls_reached'
 }
 // 搜索相关的消息块类型
 export type SearchBlock = {

@@ -20,7 +20,9 @@ export default {
     cleanMessagesFailed: 'Failed to clean messages',
     userCanceledGeneration: 'User canceled generation',
     sessionInterrupted: 'Session was unexpectedly interrupted, generation is incomplete',
-    noModelResponse: 'Model did not return any content, it may have timed out'
+    noModelResponse: 'Model did not return any content, it may have timed out',
+    invalidJson: 'Invalid JSON format',
+    maximumToolCallsReached: 'Maximum tool calls reached'
   },
   resetDataConfirmTitle: 'Reset All Data?',
   resetDataConfirmDescription:

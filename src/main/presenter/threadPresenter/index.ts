@@ -227,7 +227,8 @@ export class ThreadPresenter implements IThreadPresenter {
         tool_call_id,
         tool_call_name,
         tool_call_params,
-        tool_call_response
+        tool_call_response,
+        maximum_tool_calls_reached
       } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -237,6 +238,23 @@ export class ThreadPresenter implements IThreadPresenter {
           await this.messageManager.updateMessageMetadata(eventId, {
             firstTokenTime: Date.now() - state.startTime
           })
+        }
+
+        // 处理工具调用达到最大次数的情况
+        if (maximum_tool_calls_reached) {
+          const lastBlock = state.message.content[state.message.content.length - 1]
+          if (lastBlock) {
+            lastBlock.status = 'success'
+          }
+          state.message.content.push({
+            type: 'action',
+            content: 'common.error.maximumToolCallsReached',
+            status: 'success',
+            timestamp: Date.now(),
+            action_type: 'maximum_tool_calls_reached'
+          })
+          await this.messageManager.editMessage(eventId, JSON.stringify(state.message.content))
+          return
         }
 
         // 处理reasoning_content的时间戳
