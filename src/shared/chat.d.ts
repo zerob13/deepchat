@@ -76,7 +76,15 @@ export type AssistantMessageBlock = {
       | 'application/vnd.ant.react'
     language?: string
   }
-  tool_call?: { id?: string; name?: string; params?: string; response?: string }
+  tool_call?: {
+    id?: string
+    name?: string
+    params?: string
+    response?: string
+    server_name?: string
+    server_icons?: string
+    server_description?: string
+  }
   action_type?: 'tool_call_permission' | 'maximum_tool_calls_reached'
 }
 // 搜索相关的消息块类型

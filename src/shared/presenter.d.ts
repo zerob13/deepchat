@@ -197,9 +197,9 @@ export type RENDERER_MODEL_META = {
   isCustom: boolean
   contextLength: number
   maxTokens: number
-  vision: boolean
-  functionCall: boolean
-  reasoning: boolean
+  vision?: boolean
+  functionCall?: boolean
+  reasoning?: boolean
 }
 export type MODEL_META = {
   id: string
@@ -210,9 +210,9 @@ export type MODEL_META = {
   contextLength: number
   maxTokens: number
   description?: string
-  vision: boolean
-  functionCall: boolean
-  reasoning: boolean
+  vision?: boolean
+  functionCall?: boolean
+  reasoning?: boolean
 }
 
 export type LLM_PROVIDER = {
@@ -469,20 +469,30 @@ export type DiskInfo = {
 export type LLMResponse = {
   content: string
   reasoning_content?: string
-  tool_calling_content?: string
-}
-export type LLMResponseStream = {
-  content?: string
-  reasoning_content?: string
-  tool_calling_content?: string
-  image_data?: {
-    data: string
-    mimeType: string
-  }
   tool_call_name?: string
   tool_call_params?: string
   tool_call_response?: string
   tool_call_id?: string
+  tool_call_server_name?: string
+  tool_call_server_icons?: string
+  tool_call_server_description?: string
+  maximum_tool_calls_reached?: boolean
+}
+export type LLMResponseStream = {
+  content?: string
+  reasoning_content?: string
+  image_data?: {
+    data: string
+    mimeType: string
+  }
+  tool_call?: 'start' | 'end' | 'error'
+  tool_call_name?: string
+  tool_call_params?: string
+  tool_call_response?: string
+  tool_call_id?: string
+  tool_call_server_name?: string
+  tool_call_server_icons?: string
+  tool_call_server_description?: string
   maximum_tool_calls_reached?: boolean
 }
 export interface IUpgradePresenter {
@@ -606,6 +616,11 @@ export interface MCPToolDefinition {
       required?: string[]
     }
   }
+  server: {
+    name: string
+    icons: string
+    description: string
+  }
 }
 
 export interface MCPToolCall {
@@ -614,6 +629,11 @@ export interface MCPToolCall {
   function: {
     name: string
     arguments: string
+  }
+  server: {
+    name: string
+    icons: string
+    description: string
   }
 }
 

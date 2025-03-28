@@ -721,7 +721,6 @@ export class GeminiProvider extends BaseLLMProvider {
           }
 
           const mcpToolCall = await presenter.mcpPresenter.geminiFunctionCallToMcpTool(
-            mcpTools,
             geminiFunctionCall,
             this.provider.id
           )
@@ -737,7 +736,10 @@ export class GeminiProvider extends BaseLLMProvider {
                 maximum_tool_calls_reached: true,
                 tool_call_id: mcpToolCall.id,
                 tool_call_name: mcpToolCall.function.name,
-                tool_call_params: mcpToolCall.function.arguments
+                tool_call_params: mcpToolCall.function.arguments,
+                tool_call_server_name: mcpToolCall.server.name,
+                tool_call_server_icons: mcpToolCall.server.icons,
+                tool_call_server_description: mcpToolCall.server.description
               }
               needContinueConversation = false
               break
@@ -746,11 +748,14 @@ export class GeminiProvider extends BaseLLMProvider {
               // 通知正在调用工具
               const toolCallId = `gemini-${Date.now()}`
               yield {
-                content: `\n<tool_call_start name="${functionName}">\n`,
-                reasoning_content: undefined,
+                content: '',
+                tool_call: 'start',
                 tool_call_name: functionName,
                 tool_call_params: JSON.stringify(functionArgs),
-                tool_call_id: toolCallId
+                tool_call_id: toolCallId,
+                tool_call_server_name: mcpToolCall.server.name,
+                tool_call_server_icons: mcpToolCall.server.icons,
+                tool_call_server_description: mcpToolCall.server.description
               }
 
               // 调用工具并获取响应
@@ -774,12 +779,15 @@ export class GeminiProvider extends BaseLLMProvider {
 
               // 通知工具调用结束
               yield {
-                content: `\n<tool_call_end name="${functionName}">\n`,
-                reasoning_content: undefined,
+                content: '',
+                tool_call: 'end',
                 tool_call_name: functionName,
                 tool_call_params: JSON.stringify(functionArgs),
                 tool_call_response: responseContent,
-                tool_call_id: toolCallId
+                tool_call_id: toolCallId,
+                tool_call_server_name: mcpToolCall.server.name,
+                tool_call_server_icons: mcpToolCall.server.icons,
+                tool_call_server_description: mcpToolCall.server.description
               }
 
               // 设置需要继续对话的标志
@@ -789,12 +797,15 @@ export class GeminiProvider extends BaseLLMProvider {
               const errorMessage = error instanceof Error ? error.message : String(error)
 
               yield {
-                content: `\n<tool_call_error name="${functionName}" error="${errorMessage}">\n`,
-                reasoning_content: undefined,
+                content: '',
+                tool_call: 'error',
                 tool_call_name: functionName,
                 tool_call_params: JSON.stringify(functionArgs),
                 tool_call_response: errorMessage,
-                tool_call_id: `gemini-${Date.now()}`
+                tool_call_id: `gemini-${Date.now()}`,
+                tool_call_server_name: mcpToolCall.server.name,
+                tool_call_server_icons: mcpToolCall.server.icons,
+                tool_call_server_description: mcpToolCall.server.description
               }
 
               // 添加错误消息到上下文

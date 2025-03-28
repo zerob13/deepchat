@@ -229,7 +229,11 @@ export class ThreadPresenter implements IThreadPresenter {
         tool_call_name,
         tool_call_params,
         tool_call_response,
-        maximum_tool_calls_reached
+        maximum_tool_calls_reached,
+        tool_call_server_name,
+        tool_call_server_icons,
+        tool_call_server_description,
+        tool_call
       } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -256,10 +260,13 @@ export class ThreadPresenter implements IThreadPresenter {
             tool_call: {
               id: tool_call_id,
               name: tool_call_name,
-              params: tool_call_params
+              params: tool_call_params,
+              server_name: tool_call_server_name,
+              server_icons: tool_call_server_icons,
+              server_description: tool_call_server_description
             },
             extra: {
-              needContinue: [{ value: true }]
+              needContinue: true
             }
           })
           await this.messageManager.editMessage(eventId, JSON.stringify(state.message.content))
@@ -280,9 +287,8 @@ export class ThreadPresenter implements IThreadPresenter {
         const lastBlock = state.message.content[state.message.content.length - 1]
 
         // 处理工具调用
-        if (content && content.includes('<tool_call')) {
-          // 检查是否为工具调用开始
-          if (content.includes('<tool_call_start') && tool_call_name) {
+        if (tool_call) {
+          if (tool_call === 'start') {
             // 创建新的工具调用块
             if (lastBlock) {
               lastBlock.status = 'success'
@@ -296,31 +302,27 @@ export class ThreadPresenter implements IThreadPresenter {
               tool_call: {
                 id: tool_call_id,
                 name: tool_call_name,
-                params: tool_call_params || ''
+                params: tool_call_params || '',
+                server_name: tool_call_server_name,
+                server_icons: tool_call_server_icons,
+                server_description: tool_call_server_description
               }
             })
-          }
-          // 检查是否为工具调用结束或错误
-          else if (
-            (content.includes('<tool_call_end') || content.includes('<tool_call_error')) &&
-            tool_call_name
-          ) {
+          } else if (tool_call === 'end' || tool_call === 'error') {
             // 查找对应的工具调用块
             const toolCallBlock = state.message.content.find(
               (block) =>
                 block.type === 'tool_call' &&
-                (block.tool_call?.id === tool_call_id ||
+                ((tool_call_id && block.tool_call?.id === tool_call_id) ||
                   block.tool_call?.name === tool_call_name) &&
                 block.status === 'loading'
             )
 
             if (toolCallBlock && toolCallBlock.type === 'tool_call') {
-              // 检查是否为工具调用错误
-              if (content.includes('<tool_call_error')) {
+              if (tool_call === 'error') {
                 toolCallBlock.status = 'error'
                 toolCallBlock.tool_call.response = tool_call_response || '执行失败'
               } else {
-                // 正常结束，标记为成功
                 toolCallBlock.status = 'success'
                 if (tool_call_response) {
                   toolCallBlock.tool_call.response = tool_call_response
@@ -329,30 +331,8 @@ export class ThreadPresenter implements IThreadPresenter {
             }
           }
         }
-        // 处理没有明确标记但有工具调用数据的情况
-        else if (tool_call_id && tool_call_name && !content) {
-          // 使用 tool_call_id 查找对应的工具调用块
-          const toolCallBlock = state.message.content.find(
-            (block) =>
-              block.type === 'tool_call' &&
-              (block.tool_call?.id === tool_call_id || block.tool_call?.name === tool_call_name) &&
-              block.status === 'loading'
-          )
-
-          if (toolCallBlock && toolCallBlock.type === 'tool_call') {
-            // 更新现有工具调用块
-            toolCallBlock.tool_call.id = tool_call_id
-            toolCallBlock.tool_call.name = tool_call_name
-
-            if (tool_call_params && !toolCallBlock.tool_call.params) {
-              toolCallBlock.tool_call.params = tool_call_params
-            }
-            if (tool_call_response) {
-              toolCallBlock.tool_call.response = tool_call_response
-              toolCallBlock.status = 'success'
-            }
-          }
-        } else if (content) {
+        // 处理内容
+        else if (content) {
           // 处理普通内容
           if (lastBlock && lastBlock.type === 'content') {
             lastBlock.content += content
@@ -369,8 +349,8 @@ export class ThreadPresenter implements IThreadPresenter {
           }
         }
 
+        // 处理推理内容
         if (reasoning_content) {
-          // 处理推理内容
           if (lastBlock && lastBlock.type === 'reasoning_content') {
             lastBlock.content += reasoning_content
           } else {
@@ -385,6 +365,9 @@ export class ThreadPresenter implements IThreadPresenter {
             })
           }
         }
+
+        // 更新消息内容
+        await this.messageManager.editMessage(eventId, JSON.stringify(state.message.content))
       }
     })
     eventBus.on(STREAM_EVENTS.END, async (msg) => {
@@ -1222,6 +1205,11 @@ export class ThreadPresenter implements IThreadPresenter {
           function: {
             name: toolCall.name,
             arguments: toolCall.params
+          },
+          server: {
+            name: toolCall.server_name || '',
+            icons: toolCall.server_icons || '',
+            description: toolCall.server_description || ''
           }
         })
       }
@@ -1257,20 +1245,28 @@ export class ThreadPresenter implements IThreadPresenter {
         console.log('toolCallResponse', toolCallResponse)
         eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId: state.message.id,
-          content: `\n<tool_call_start name="${toolCall.name}">\n`,
+          content: '',
+          tool_call: 'start',
           tool_call_id: toolCall.id,
           tool_call_name: toolCall.name,
           tool_call_params: toolCall.params,
-          tool_call_response: toolCallResponse.content
+          tool_call_response: toolCallResponse.content,
+          tool_call_server_name: toolCall.server_name,
+          tool_call_server_icons: toolCall.server_icons,
+          tool_call_server_description: toolCall.server_description
         })
 
         eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId: state.message.id,
-          content: `\n<tool_call_end name="${toolCall.name}">\n`,
+          content: '',
+          tool_call: 'end',
           tool_call_id: toolCall.id,
           tool_call_response: toolCallResponse.content,
           tool_call_name: toolCall.name,
-          tool_call_params: toolCall.params
+          tool_call_params: toolCall.params,
+          tool_call_server_name: toolCall.server_name,
+          tool_call_server_icons: toolCall.server_icons,
+          tool_call_server_description: toolCall.server_description
         })
       }
 

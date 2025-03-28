@@ -261,7 +261,6 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
       if (toolUse) {
         // 将Anthropic工具调用转换为MCP工具调用
         const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
-          mcpTools,
           { name: toolUse.name, input: toolUse.input },
           this.provider.id
         )
@@ -621,7 +620,6 @@ ${context}
                   console.log('执行工具调用:', toolCall)
 
                   const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
-                    mcpTools,
                     { name: toolCall.name, input: toolCall.input },
                     this.provider.id
                   )
@@ -636,17 +634,23 @@ ${context}
                         maximum_tool_calls_reached: true,
                         tool_call_id: mcpToolCall.id,
                         tool_call_name: mcpToolCall.function.name,
-                        tool_call_params: mcpToolCall.function.arguments
+                        tool_call_params: mcpToolCall.function.arguments,
+                        tool_call_server_name: mcpToolCall.server.name,
+                        tool_call_server_icons: mcpToolCall.server.icons,
+                        tool_call_server_description: mcpToolCall.server.description
                       }
                       needContinueConversation = false
                       break
                     }
                     yield {
-                      content: `\n<tool_call_start name="${toolCall.name}">\n`,
-                      reasoning_content: undefined,
+                      content: '',
+                      tool_call: 'start',
                       tool_call_name: toolCall.name,
                       tool_call_params: JSON.stringify(toolCall.input),
-                      tool_call_id: `anthropic-${toolCall.id}`
+                      tool_call_id: `anthropic-${toolCall.id}`,
+                      tool_call_server_name: mcpToolCall.server.name,
+                      tool_call_server_icons: mcpToolCall.server.icons,
+                      tool_call_server_description: mcpToolCall.server.description
                     }
 
                     try {
@@ -669,24 +673,30 @@ ${context}
                       })
 
                       yield {
-                        content: `\n<tool_call_end name="${toolCall.name}">\n`,
-                        reasoning_content: undefined,
+                        content: '',
+                        tool_call: 'end',
                         tool_call_name: toolCall.name,
                         tool_call_params: JSON.stringify(toolCall.input),
                         tool_call_response: responseContent,
-                        tool_call_id: `anthropic-${toolCall.id}`
+                        tool_call_id: `anthropic-${toolCall.id}`,
+                        tool_call_server_name: mcpToolCall.server.name,
+                        tool_call_server_icons: mcpToolCall.server.icons,
+                        tool_call_server_description: mcpToolCall.server.description
                       }
                     } catch (error) {
                       console.error('工具调用失败:', error)
                       const errorMessage = error instanceof Error ? error.message : String(error)
 
                       yield {
-                        content: `\n<tool_call_error name="${toolCall.name}" error="${errorMessage}">\n`,
-                        reasoning_content: undefined,
+                        content: '',
+                        tool_call: 'error',
                         tool_call_name: toolCall.name,
                         tool_call_params: JSON.stringify(toolCall.input),
                         tool_call_response: errorMessage,
-                        tool_call_id: `anthropic-${toolCall.id}`
+                        tool_call_id: `anthropic-${toolCall.id}`,
+                        tool_call_server_name: mcpToolCall.server.name,
+                        tool_call_server_icons: mcpToolCall.server.icons,
+                        tool_call_server_description: mcpToolCall.server.description
                       }
 
                       // 添加错误响应到消息中

@@ -1,4 +1,3 @@
-import { nanoid } from 'nanoid'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
 import {
@@ -8,7 +7,7 @@ import {
   IConfigPresenter
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'
-import { McpClient, Tool } from './mcpClient'
+import { McpClient } from './mcpClient'
 import { jsonrepair } from 'jsonrepair'
 
 export class ToolManager {
@@ -35,40 +34,41 @@ export class ToolManager {
     }
 
     try {
+      // 转换为MCPToolDefinition格式
+      const results: MCPToolDefinition[] = []
       // 获取工具列表
-      const tools: Tool[] = []
       for (const client of clients) {
         const clientTools = await client.listTools()
         if (clientTools) {
-          tools.push(...clientTools)
-        }
-      }
-      if (!tools) {
-        return []
-      }
-
-      // 转换为MCPToolDefinition格式
-      const results: MCPToolDefinition[] = []
-      for (const tool of tools) {
-        const properties = tool.inputSchema.properties || {}
-        const toolProperties = { ...properties }
-        for (const key in toolProperties) {
-          if (!toolProperties[key].description) {
-            toolProperties[key].description = 'Params of ' + key
-          }
-        }
-        results.push({
-          type: 'function',
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: {
-              type: 'object',
-              properties: toolProperties,
-              required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
+          for (const tool of clientTools) {
+            const properties = tool.inputSchema.properties || {}
+            const toolProperties = { ...properties }
+            for (const key in toolProperties) {
+              if (!toolProperties[key].description) {
+                toolProperties[key].description = 'Params of ' + key
+              }
             }
+            results.push({
+              type: 'function',
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: {
+                  type: 'object',
+                  properties: toolProperties,
+                  required: Array.isArray(tool.inputSchema.required)
+                    ? tool.inputSchema.required
+                    : []
+                }
+              },
+              server: {
+                name: client.serverName,
+                icons: client.serverConfig.icons as string,
+                description: client.serverConfig.descriptions as string
+              }
+            })
           }
-        })
+        }
       }
       return results
     } catch (error) {
@@ -190,18 +190,6 @@ export class ToolManager {
       return {
         toolCallId: toolCall.id,
         content: `Error: ${errorMessage}`
-      }
-    }
-  }
-
-  // 创建工具调用对象
-  createToolCall(toolName: string, args: Record<string, string>): MCPToolCall {
-    return {
-      id: nanoid(),
-      type: 'function',
-      function: {
-        name: `${toolName}`,
-        arguments: JSON.stringify(args)
       }
     }
   }

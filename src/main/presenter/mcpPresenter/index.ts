@@ -181,6 +181,11 @@ export class McpPresenter implements IMCPPresenter {
               properties: toolProperties,
               required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
             }
+          },
+          server: {
+            name: client.serverName,
+            icons: client.serverConfig['icons'] as string,
+            description: client.serverConfig['description'] as string
           }
         })
       }
@@ -338,12 +343,10 @@ export class McpPresenter implements IMCPPresenter {
    * @returns 匹配的MCP工具调用
    */
   async openAIToolsToMcpTool(
-    mcpTools: MCPToolDefinition[] | undefined,
     llmTool: OpenAIToolCall,
-    serverName: string
+    providerId: string
   ): Promise<MCPToolCall | undefined> {
-    if (!mcpTools) return undefined
-
+    const mcpTools = await this.getAllToolDefinitions()
     const tool = mcpTools.find((tool) => tool.function.name === llmTool.function.name)
     if (!tool) {
       return undefined
@@ -351,13 +354,19 @@ export class McpPresenter implements IMCPPresenter {
 
     // 创建MCP工具调用
     const mcpToolCall: MCPToolCall = {
-      id: `${serverName}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
+      id: `${providerId}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
       type: tool.type,
       function: {
         name: tool.function.name,
         arguments: llmTool.function.arguments
+      },
+      server: {
+        name: tool.server.name,
+        icons: tool.server.icons,
+        description: tool.server.description
       }
     }
+    console.log('mcpToolCall', mcpToolCall, tool)
 
     return mcpToolCall
   }
@@ -394,11 +403,10 @@ export class McpPresenter implements IMCPPresenter {
    * @returns 匹配的MCP工具调用
    */
   async anthropicToolUseToMcpTool(
-    mcpTools: MCPToolDefinition[] | undefined,
     toolUse: AnthropicToolUse,
-    serverName: string
+    providerId: string
   ): Promise<MCPToolCall | undefined> {
-    if (!mcpTools) return undefined
+    const mcpTools = await this.getAllToolDefinitions()
 
     const tool = mcpTools.find((tool) => tool.function.name === toolUse.name)
     console.log('tool', tool, toolUse)
@@ -408,11 +416,16 @@ export class McpPresenter implements IMCPPresenter {
 
     // 创建MCP工具调用
     const mcpToolCall: MCPToolCall = {
-      id: `${serverName}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
+      id: `${providerId}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
       type: tool.type,
       function: {
         name: tool.function.name,
         arguments: JSON.stringify(toolUse.input)
+      },
+      server: {
+        name: tool.server.name,
+        icons: tool.server.icons,
+        description: tool.server.description
       }
     }
 
@@ -544,10 +557,10 @@ export class McpPresenter implements IMCPPresenter {
    * @returns 匹配的MCP工具调用
    */
   async geminiFunctionCallToMcpTool(
-    mcpTools: MCPToolDefinition[] | undefined,
     fcall: GeminiFunctionCall | undefined,
-    serverName: string
+    providerId: string
   ): Promise<MCPToolCall | undefined> {
+    const mcpTools = await this.getAllToolDefinitions()
     if (!fcall) return undefined
     if (!mcpTools) return undefined
 
@@ -558,11 +571,16 @@ export class McpPresenter implements IMCPPresenter {
 
     // 创建MCP工具调用
     const mcpToolCall: MCPToolCall = {
-      id: `${serverName}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
+      id: `${providerId}:${tool.function.name}-${Date.now()}`, // 生成唯一ID，包含服务器名称
       type: tool.type,
       function: {
         name: tool.function.name,
         arguments: JSON.stringify(fcall.args)
+      },
+      server: {
+        name: tool.server.name,
+        icons: tool.server.icons,
+        description: tool.server.description
       }
     }
 
