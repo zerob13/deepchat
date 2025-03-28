@@ -429,6 +429,10 @@ export const useChatStore = defineStore('chat', () => {
     tool_call_params?: string
     tool_call_response?: string
     maximum_tool_calls_reached?: boolean
+    tool_call_server_name?: string
+    tool_call_server_icons?: string
+    tool_call_server_description?: string
+    tool_call?: 'start' | 'end' | 'error'
   }) => {
     // 从缓存中查找消息
     const cached = generatingMessagesCache.value.get(msg.eventId)
@@ -450,17 +454,17 @@ export const useChatStore = defineStore('chat', () => {
             tool_call: {
               id: msg.tool_call_id,
               name: msg.tool_call_name,
-              params: msg.tool_call_params
+              params: msg.tool_call_params,
+              server_name: msg.tool_call_server_name,
+              server_icons: msg.tool_call_server_icons,
+              server_description: msg.tool_call_server_description
             },
             extra: {
               needContinue: true
             }
           })
-        }
-        // 处理工具调用标签内容
-        else if (msg.content && msg.content.includes('<tool_call')) {
-          // 检查是否为工具调用开始
-          if (msg.content.includes('<tool_call_start') && msg.tool_call_name) {
+        } else if (msg.tool_call) {
+          if (msg.tool_call === 'start') {
             // 创建新的工具调用块
             const lastBlock = curMsg.content[curMsg.content.length - 1]
             if (lastBlock) {
@@ -475,15 +479,13 @@ export const useChatStore = defineStore('chat', () => {
               tool_call: {
                 id: msg.tool_call_id,
                 name: msg.tool_call_name,
-                params: msg.tool_call_params || ''
+                params: msg.tool_call_params || '',
+                server_name: msg.tool_call_server_name,
+                server_icons: msg.tool_call_server_icons,
+                server_description: msg.tool_call_server_description
               }
             })
-          }
-          // 检查是否为工具调用结束或错误
-          else if (
-            (msg.content.includes('<tool_call_end') || msg.content.includes('<tool_call_error')) &&
-            msg.tool_call_name
-          ) {
+          } else if (msg.tool_call === 'end' || msg.tool_call === 'error') {
             // 查找对应的工具调用块
             const existingToolCallBlock = curMsg.content.find(
               (block) =>
@@ -492,48 +494,16 @@ export const useChatStore = defineStore('chat', () => {
                   block.tool_call?.name === msg.tool_call_name) &&
                 block.status === 'loading'
             )
-
             if (existingToolCallBlock && existingToolCallBlock.type === 'tool_call') {
-              // 检查是否为工具调用错误
-              if (msg.content.includes('<tool_call_error')) {
+              if (msg.tool_call === 'error') {
                 existingToolCallBlock.status = 'error'
                 existingToolCallBlock.tool_call.response = msg.tool_call_response || '执行失败'
               } else {
-                // 正常结束，标记为成功
                 existingToolCallBlock.status = 'success'
                 if (msg.tool_call_response) {
                   existingToolCallBlock.tool_call.response = msg.tool_call_response
                 }
               }
-            }
-          }
-        }
-        // 处理没有明确标记但有工具调用数据的情况
-        else if (msg.tool_call_id && msg.tool_call_name && !msg.content) {
-          // 使用 tool_call_id 或 tool_call_name 查找对应的工具调用块
-          const existingToolCallBlock = curMsg.content.find(
-            (block) =>
-              block.type === 'tool_call' &&
-              ((msg.tool_call_id && block.tool_call?.id === msg.tool_call_id) ||
-                block.tool_call?.name === msg.tool_call_name) &&
-              block.status === 'loading'
-          )
-
-          if (existingToolCallBlock && existingToolCallBlock.type === 'tool_call') {
-            // 更新现有工具调用块
-            if (msg.tool_call_id) {
-              existingToolCallBlock.tool_call.id = msg.tool_call_id
-            }
-            if (msg.tool_call_name) {
-              existingToolCallBlock.tool_call.name = msg.tool_call_name
-            }
-            if (msg.tool_call_params && !existingToolCallBlock.tool_call.params) {
-              existingToolCallBlock.tool_call.params = msg.tool_call_params
-            }
-
-            if (msg.tool_call_response) {
-              existingToolCallBlock.tool_call.response = msg.tool_call_response
-              existingToolCallBlock.status = 'success'
             }
           }
         }

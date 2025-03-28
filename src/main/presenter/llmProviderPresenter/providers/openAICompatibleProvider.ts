@@ -454,20 +454,16 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           }
 
           processedToolCallIds.add(toolCall.id)
-
+          const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
+            {
+              function: {
+                name: toolCall.function.name,
+                arguments: toolCall.function.arguments
+              }
+            },
+            this.provider.id
+          )
           try {
-            // 转换为MCP工具
-            const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
-              mcpTools,
-              {
-                function: {
-                  name: toolCall.function.name,
-                  arguments: toolCall.function.arguments
-                }
-              },
-              this.provider.id
-            )
-
             if (!mcpTool) {
               console.warn(`Tool not found: ${toolCall.function.name}`)
               continue
@@ -481,26 +477,37 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
                 maximum_tool_calls_reached: true,
                 tool_call_id: mcpTool.id,
                 tool_call_name: mcpTool.function.name,
-                tool_call_params: mcpTool.function.arguments
+                tool_call_params: mcpTool.function.arguments,
+                tool_call_server_name: mcpTool.server.name,
+                tool_call_server_icons: mcpTool.server.icons,
+                tool_call_server_description: mcpTool.server.description
               }
               needContinueConversation = false
               break
             }
             yield {
-              content: `\n<tool_call_start name="${toolCall.function.name}">\n`,
+              content: '',
+              tool_call: 'start',
               tool_call_id: toolCallRenderId,
               tool_call_name: toolCall.function.name,
-              tool_call_params: toolCall.function.arguments
+              tool_call_params: toolCall.function.arguments,
+              tool_call_server_name: mcpTool.server.name,
+              tool_call_server_icons: mcpTool.server.icons,
+              tool_call_server_description: mcpTool.server.description
             }
             // 调用工具
             const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
             console.log('toolCallResponse', toolCallResponse)
             yield {
-              content: `\n<tool_call_end name="${toolCall.function.name}">\n`,
+              content: '',
+              tool_call: 'end',
               tool_call_id: toolCallRenderId,
               tool_call_response: toolCallResponse.content,
               tool_call_name: toolCall.function.name,
-              tool_call_params: toolCall.function.arguments
+              tool_call_params: toolCall.function.arguments,
+              tool_call_server_name: mcpTool.server.name,
+              tool_call_server_icons: mcpTool.server.icons,
+              tool_call_server_description: mcpTool.server.description
             }
             // 将工具响应添加到消息中
             if (supportsFunctionCall) {
@@ -529,12 +536,15 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
             // 通知工具调用失败 - 扩展LLMResponseStream类型
             yield {
-              content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n`,
+              content: '',
+              tool_call: 'error',
               tool_call_id: toolCallRenderId,
               tool_call_name: toolCall.function.name,
               tool_call_params: toolCall.function.arguments,
-              tool_call_response: errorMessage
-              // 注意：tool_call_status属性可能需要添加到LLMResponseStream接口
+              tool_call_response: errorMessage,
+              tool_call_server_name: mcpTool?.server.name,
+              tool_call_server_icons: mcpTool?.server.icons,
+              tool_call_server_description: mcpTool?.server.description
             }
 
             // 添加错误响应到消息中
@@ -637,7 +647,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           (tc) => tc.index === indexKey || (tc.id && tc.id === toolCallDelta.id)
         )
 
-        console.log('update', existingToolCall, indexKey)
         if (existingToolCall) {
           // 更新现有工具调用
           if (toolCallDelta.id && !existingToolCall.id) {

@@ -376,8 +376,22 @@ export class OllamaProvider extends BaseLLMProvider {
               }
 
               processedToolCallIds.add(toolCall.id)
-
+              const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
+                {
+                  function: {
+                    name: toolCall.function.name,
+                    arguments: toolCall.function.arguments
+                  }
+                },
+                this.provider.id
+              )
               try {
+                // 转换为MCP工具
+
+                if (!mcpTool) {
+                  console.warn(`Tool not found: ${toolCall.function.name}`)
+                  continue
+                }
                 // 增加工具调用计数
                 toolCallCount++
 
@@ -387,47 +401,40 @@ export class OllamaProvider extends BaseLLMProvider {
                     maximum_tool_calls_reached: true,
                     tool_call_id: toolCall.id,
                     tool_call_name: toolCall.function.name,
-                    tool_call_params: toolCall.function.arguments
+                    tool_call_params: toolCall.function.arguments,
+                    tool_call_server_name: mcpTool.server.name,
+                    tool_call_server_icons: mcpTool.server.icons,
+                    tool_call_server_description: mcpTool.server.description
                   }
                   needContinueConversation = false
                   break
                 }
-
-                // 转换为MCP工具
-                const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
-                  mcpTools,
-                  {
-                    function: {
-                      name: toolCall.function.name,
-                      arguments: toolCall.function.arguments
-                    }
-                  },
-                  this.provider.id
-                )
-
-                if (!mcpTool) {
-                  console.warn(`Tool not found: ${toolCall.function.name}`)
-                  continue
-                }
-
                 yield {
-                  content: `\n<tool_call_start name="${toolCall.function.name}">\n`,
+                  content: '',
+                  tool_call: 'start',
                   tool_call_name: toolCall.function.name,
                   tool_call_params: toolCall.function.arguments,
+                  tool_call_server_name: mcpTool.server.name,
+                  tool_call_server_icons: mcpTool.server.icons,
+                  tool_call_server_description: mcpTool.server.description,
                   tool_call_id: `ollama-${toolCall.id}`
                 }
                 // 调用工具
                 const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
                 // 通知调用工具结束
                 yield {
-                  content: `\n<tool_call_end name="${toolCall.function.name}">\n`,
+                  content: '',
+                  tool_call: 'end',
                   tool_call_name: toolCall.function.name,
                   tool_call_params: toolCall.function.arguments,
                   tool_call_response:
                     typeof toolCallResponse.content === 'string'
                       ? toolCallResponse.content
                       : JSON.stringify(toolCallResponse.content),
-                  tool_call_id: `ollama-${toolCall.id}`
+                  tool_call_id: `ollama-${toolCall.id}`,
+                  tool_call_server_name: mcpTool.server.name,
+                  tool_call_server_icons: mcpTool.server.icons,
+                  tool_call_server_description: mcpTool.server.description
                 }
                 // 将工具响应添加到消息中
                 conversationMessages.push({
@@ -443,11 +450,15 @@ export class OllamaProvider extends BaseLLMProvider {
 
                 // 通知工具调用失败
                 yield {
-                  content: `\n<tool_call_error name="${toolCall.function.name}" error="${errorMessage}">\n`,
+                  content: '',
+                  tool_call: 'error',
                   tool_call_name: toolCall.function.name,
                   tool_call_params: toolCall.function.arguments,
                   tool_call_response: errorMessage,
-                  tool_call_id: `ollama-${toolCall.id}`
+                  tool_call_id: `ollama-${toolCall.id}`,
+                  tool_call_server_name: mcpTool?.server.name,
+                  tool_call_server_icons: mcpTool?.server.icons,
+                  tool_call_server_description: mcpTool?.server.description
                 }
 
                 // 添加错误响应到消息中
