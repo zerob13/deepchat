@@ -53,7 +53,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.7',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: true
       },
       {
         id: 'claude-3-5-sonnet-20241022',
@@ -62,7 +65,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-5-haiku-20241022',
@@ -71,7 +77,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-5-sonnet-20240620',
@@ -80,7 +89,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-opus-20240229',
@@ -89,7 +101,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-haiku-20240307',
@@ -98,7 +113,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       }
     ]
   }
@@ -605,7 +623,10 @@ ${context}
                   // 检查是否达到最大工具调用次数
                   if (toolCallCount >= MAX_TOOL_CALLS) {
                     yield {
-                      maximum_tool_calls_reached: true
+                      maximum_tool_calls_reached: true,
+                      tool_call_id: toolCall.id,
+                      tool_call_name: toolCall.name,
+                      tool_call_params: JSON.stringify(toolCall.input)
                     }
                     needContinueConversation = false
                     break

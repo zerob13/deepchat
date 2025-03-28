@@ -384,7 +384,10 @@ export class OllamaProvider extends BaseLLMProvider {
                 // 检查是否达到最大工具调用次数
                 if (toolCallCount >= MAX_TOOL_CALLS) {
                   yield {
-                    maximum_tool_calls_reached: true
+                    maximum_tool_calls_reached: true,
+                    tool_call_id: toolCall.id,
+                    tool_call_name: toolCall.function.name,
+                    tool_call_params: toolCall.function.arguments
                   }
                   needContinueConversation = false
                   break

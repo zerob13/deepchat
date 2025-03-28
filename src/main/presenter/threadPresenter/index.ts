@@ -251,7 +251,10 @@ export class ThreadPresenter implements IThreadPresenter {
             content: 'common.error.maximumToolCallsReached',
             status: 'success',
             timestamp: Date.now(),
-            action_type: 'maximum_tool_calls_reached'
+            action_type: 'maximum_tool_calls_reached',
+            tool_call_id: tool_call_id,
+            tool_call_name: tool_call_name,
+            tool_call_params: tool_call_params
           })
           await this.messageManager.editMessage(eventId, JSON.stringify(state.message.content))
           return
@@ -445,6 +448,7 @@ export class ThreadPresenter implements IThreadPresenter {
       }
     })
   }
+
   setSearchAssistantModel(model: MODEL_META, providerId: string) {
     this.searchAssistantModel = model
     this.searchAssistantProviderId = providerId
@@ -961,7 +965,7 @@ export class ThreadPresenter implements IThreadPresenter {
         .map((msg) => {
           if (msg.role === 'user') {
             return `user: ${msg.content.text}${getFileContext(msg.content.files)}`
-          } else if (msg.role === 'ai') {
+          } else if (msg.role === 'assistant') {
             return `assistant: ${msg.content.blocks.map((block) => block.content).join('')}`
           } else {
             return JSON.stringify(msg.content)
@@ -1153,6 +1157,10 @@ export class ThreadPresenter implements IThreadPresenter {
       await this.handleMessageError(state.message.id, String(error))
       throw error
     }
+  }
+  async continueStreamCompletion(conversationId: string, queryMsgId?: string): Promise<void> {
+    console.log('continueStreamCompletion', conversationId, queryMsgId)
+    return
   }
 
   // 查找特定会话的生成状态

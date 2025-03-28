@@ -379,6 +379,7 @@ export interface IThreadPresenter {
   setSearchAssistantModel(model: MODEL_META, providerId: string): void
   getMainMessageByParentId(conversationId: string, parentId: string): Promise<Message | null>
   destroy(): void
+  continueStreamCompletion(conversationId: string, queryMsgId?: string): Promise<void>
 }
 
 export type MESSAGE_STATUS = 'sent' | 'pending' | 'error'

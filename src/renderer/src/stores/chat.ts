@@ -446,7 +446,10 @@ export const useChatStore = defineStore('chat', () => {
             content: 'common.error.maximumToolCallsReached',
             status: 'success',
             timestamp: Date.now(),
-            action_type: 'maximum_tool_calls_reached'
+            action_type: 'maximum_tool_calls_reached',
+            tool_call_id: msg.tool_call_id,
+            tool_call_name: msg.tool_call_name,
+            tool_call_params: msg.tool_call_params
           })
         }
         // 处理工具调用标签内容
