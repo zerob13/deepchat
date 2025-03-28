@@ -447,9 +447,14 @@ export const useChatStore = defineStore('chat', () => {
             status: 'success',
             timestamp: Date.now(),
             action_type: 'maximum_tool_calls_reached',
-            tool_call_id: msg.tool_call_id,
-            tool_call_name: msg.tool_call_name,
-            tool_call_params: msg.tool_call_params
+            tool_call: {
+              id: msg.tool_call_id,
+              name: msg.tool_call_name,
+              params: msg.tool_call_params
+            },
+            extra: {
+              needContinue: true
+            }
           })
         }
         // 处理工具调用标签内容
@@ -766,9 +771,38 @@ export const useChatStore = defineStore('chat', () => {
   const continueStream = async (conversationId: string, messageId: string) => {
     if (!conversationId || !messageId) return
     try {
+      generatingThreadIds.value.add(conversationId)
+
+      // 创建一个新的助手消息
+      const aiResponseMessage = await threadP.sendMessage(
+        conversationId,
+        JSON.stringify({
+          text: 'continue',
+          files: [],
+          links: [],
+          search: false,
+          think: false,
+          continue: true
+        }),
+        'user'
+      )
+
+      if (!aiResponseMessage) {
+        console.error('创建助手消息失败')
+        return
+      }
+
+      // 将消息添加到缓存
+      generatingMessagesCache.value.set(aiResponseMessage.id, {
+        message: aiResponseMessage,
+        threadId: conversationId
+      })
+
+      await loadMessages()
       await threadP.continueStreamCompletion(conversationId, messageId)
     } catch (error) {
       console.error('继续生成失败:', error)
+      throw error
     }
   }
   const clearAllMessages = async (threadId: string) => {

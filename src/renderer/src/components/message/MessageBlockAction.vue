@@ -9,7 +9,7 @@
       {{ t(block.content) }}
       {{ block }}
     </div>
-    <Button @click="handleClick"> continue </Button>
+    <Button @click="handleClick" v-if="block.extra?.needContinue"> continue </Button>
   </div>
 </template>
 
@@ -28,6 +28,7 @@ const props = defineProps<{
   block: {
     content: string
     action_type?: string
+    extra?: Record<string, string | number | object[]>
   }
 }>()
 

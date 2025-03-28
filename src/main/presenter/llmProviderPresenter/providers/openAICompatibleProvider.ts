@@ -456,21 +456,6 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           processedToolCallIds.add(toolCall.id)
 
           try {
-            // 增加工具调用计数
-            toolCallCount++
-
-            // 检查是否达到最大工具调用次数
-            if (toolCallCount >= MAX_TOOL_CALLS) {
-              yield {
-                maximum_tool_calls_reached: true,
-                tool_call_id: toolCallRenderId,
-                tool_call_name: toolCall.function.name,
-                tool_call_params: toolCall.function.arguments
-              }
-              needContinueConversation = false
-              break
-            }
-
             // 转换为MCP工具
             const mcpTool = await presenter.mcpPresenter.openAIToolsToMcpTool(
               mcpTools,
@@ -486,6 +471,20 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             if (!mcpTool) {
               console.warn(`Tool not found: ${toolCall.function.name}`)
               continue
+            }
+            // 增加工具调用计数
+            toolCallCount++
+
+            // 检查是否达到最大工具调用次数
+            if (toolCallCount >= MAX_TOOL_CALLS) {
+              yield {
+                maximum_tool_calls_reached: true,
+                tool_call_id: mcpTool.id,
+                tool_call_name: mcpTool.function.name,
+                tool_call_params: mcpTool.function.arguments
+              }
+              needContinueConversation = false
+              break
             }
             yield {
               content: `\n<tool_call_start name="${toolCall.function.name}">\n`,

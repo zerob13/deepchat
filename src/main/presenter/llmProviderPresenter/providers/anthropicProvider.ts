@@ -617,21 +617,6 @@ ${context}
                 for (const toolCall of toolCalls) {
                   if (!toolCall.name) continue
 
-                  // 增加工具调用计数
-                  toolCallCount++
-
-                  // 检查是否达到最大工具调用次数
-                  if (toolCallCount >= MAX_TOOL_CALLS) {
-                    yield {
-                      maximum_tool_calls_reached: true,
-                      tool_call_id: toolCall.id,
-                      tool_call_name: toolCall.name,
-                      tool_call_params: JSON.stringify(toolCall.input)
-                    }
-                    needContinueConversation = false
-                    break
-                  }
-
                   // 将Anthropic工具使用转换为MCP工具调用
                   console.log('执行工具调用:', toolCall)
 
@@ -642,6 +627,20 @@ ${context}
                   )
 
                   if (mcpToolCall) {
+                    // 增加工具调用计数
+                    toolCallCount++
+
+                    // 检查是否达到最大工具调用次数
+                    if (toolCallCount >= MAX_TOOL_CALLS) {
+                      yield {
+                        maximum_tool_calls_reached: true,
+                        tool_call_id: mcpToolCall.id,
+                        tool_call_name: mcpToolCall.function.name,
+                        tool_call_params: mcpToolCall.function.arguments
+                      }
+                      needContinueConversation = false
+                      break
+                    }
                     yield {
                       content: `\n<tool_call_start name="${toolCall.name}">\n`,
                       reasoning_content: undefined,

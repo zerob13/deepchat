@@ -25,7 +25,7 @@ import MessageList from './message/MesasgeList.vue'
 import ChatInput from './ChatInput.vue'
 import { useRoute } from 'vue-router'
 import { UserMessageContent } from '@shared/chat'
-import { STREAM_EVENTS } from '@/events'
+import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import { useSettingsStore } from '@/stores/settings'
 
 const route = useRoute()
