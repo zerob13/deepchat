@@ -32,6 +32,7 @@ export interface ModelConfig {
   temperature: number
   vision: boolean
   functionCall: boolean
+  reasoning: boolean
 }
 
 export interface IWindowPresenter {
@@ -133,7 +134,10 @@ export interface IConfigPresenter {
   getEnabledProviders(): LLM_PROVIDER[]
   getModelDefaultConfig(modelId: string): ModelConfig
   getAllEnabledModels(): Promise<{ providerId: string; models: RENDERER_MODEL_META[] }[]>
-
+  // 日志设置
+  getLoggingEnabled(): boolean
+  setLoggingEnabled(enabled: boolean): void
+  openLoggingFolder(): void
   // 自定义模型管理
   getCustomModels(providerId: string): MODEL_META[]
   setCustomModels(providerId: string, models: MODEL_META[]): void
@@ -193,6 +197,9 @@ export type RENDERER_MODEL_META = {
   isCustom: boolean
   contextLength: number
   maxTokens: number
+  vision: boolean
+  functionCall: boolean
+  reasoning: boolean
 }
 export type MODEL_META = {
   id: string
@@ -203,6 +210,9 @@ export type MODEL_META = {
   contextLength: number
   maxTokens: number
   description?: string
+  vision: boolean
+  functionCall: boolean
+  reasoning: boolean
 }
 
 export type LLM_PROVIDER = {

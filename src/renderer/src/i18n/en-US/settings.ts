@@ -44,7 +44,13 @@ export default {
     contentProtectionDisableDesc:
       'Disabling screen protection will allow screen sharing software to capture the DeepChat window.',
     contentProtectionRestartNotice:
-      'Changing this setting will restart the application. Do you want to continue?'
+      'Changing this setting will restart the application. Do you want to continue?',
+    loggingEnabled: 'Enable Logging',
+    loggingDialogTitle: 'Confirm Logging Setting Change',
+    loggingEnableDesc: 'Enabling logging will help us diagnose issues and improve the application. Log files may contain sensitive information.',
+    loggingDisableDesc: 'Disabling logging will stop collecting application logs.',
+    loggingRestartNotice: 'Changing this setting will restart the application. Do you want to continue?',
+    openLogFolder: 'Open Log Folder'
   },
   data: {
     title: 'Data Settings',

@@ -12,10 +12,11 @@ import ElectronStore from 'electron-store'
 import { DEFAULT_PROVIDERS } from './providers'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
 import path from 'path'
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import fs from 'fs'
 import { CONFIG_EVENTS } from '@/events'
 import { McpConfHelper } from './mcpConfHelper'
+import { presenter } from '@/presenter'
 
 // 定义应用设置的接口
 interface IAppSettings {
@@ -33,6 +34,7 @@ interface IAppSettings {
   syncFolderPath?: string // 同步文件夹路径
   lastSyncTime?: number // 上次同步时间
   customSearchEngines?: string // 自定义搜索引擎JSON字符串
+  loggingEnabled?: boolean // 日志记录是否启用
   [key: string]: unknown // 允许任意键，使用unknown类型替代any
 }
 
@@ -84,6 +86,7 @@ export class ConfigPresenter implements IConfigPresenter {
         syncEnabled: false,
         syncFolderPath: path.join(this.userDataPath, 'sync'),
         lastSyncTime: 0,
+        loggingEnabled: false,
         appVersion: this.currentAppVersion
       }
     })
@@ -287,6 +290,17 @@ export class ConfigPresenter implements IConfigPresenter {
       if (config) {
         model.maxTokens = config.maxTokens
         model.contextLength = config.contextLength
+        // 如果模型中已经有这些属性则保留，否则使用配置中的值或默认为false
+        model.vision = model.vision !== undefined ? model.vision : config.vision || false
+        model.functionCall =
+          model.functionCall !== undefined ? model.functionCall : config.functionCall || false
+        model.reasoning =
+          model.reasoning !== undefined ? model.reasoning : config.reasoning || false
+      } else {
+        // 确保模型具有这些属性，如果没有配置，默认为false
+        model.vision = model.vision || false
+        model.functionCall = model.functionCall || false
+        model.reasoning = model.reasoning || false
       }
       return model
     })
@@ -303,7 +317,8 @@ export class ConfigPresenter implements IConfigPresenter {
       contextLength: 4096,
       temperature: 0.7,
       vision: false,
-      functionCall: false
+      functionCall: false,
+      reasoning: false
     }
   }
 
@@ -332,7 +347,11 @@ export class ConfigPresenter implements IConfigPresenter {
           .filter((model) => this.getModelStatus(providerId, model.id))
           .map((model) => ({
             ...model,
-            enabled: true
+            enabled: true,
+            // 确保能力属性被复制
+            vision: model.vision || false,
+            functionCall: model.functionCall || false,
+            reasoning: model.reasoning || false
           }))
 
         return {
@@ -345,7 +364,18 @@ export class ConfigPresenter implements IConfigPresenter {
 
   getCustomModels(providerId: string): MODEL_META[] {
     const store = this.getProviderModelStore(providerId)
-    return store.get('custom_models') || []
+    let customModels = store.get('custom_models') || []
+
+    // 确保自定义模型也有能力属性
+    customModels = customModels.map((model) => {
+      // 如果模型已经有这些属性，保留它们，否则默认为false
+      model.vision = model.vision !== undefined ? model.vision : false
+      model.functionCall = model.functionCall !== undefined ? model.functionCall : false
+      model.reasoning = model.reasoning !== undefined ? model.reasoning : false
+      return model
+    })
+
+    return customModels
   }
 
   setCustomModels(providerId: string, models: MODEL_META[]): void {
@@ -488,6 +518,24 @@ export class ConfigPresenter implements IConfigPresenter {
     return this.getSetting<boolean>('syncEnabled') || false
   }
 
+  // 获取日志文件夹路径
+  getLoggingFolderPath(): string {
+    return path.join(this.userDataPath, 'logs')
+  }
+
+  // 打开日志文件夹
+  async openLoggingFolder(): Promise<void> {
+    const loggingFolderPath = this.getLoggingFolderPath()
+
+    // 如果文件夹不存在，先创建它
+    if (!fs.existsSync(loggingFolderPath)) {
+      fs.mkdirSync(loggingFolderPath, { recursive: true })
+    }
+
+    // 打开文件夹
+    await shell.openPath(loggingFolderPath)
+  }
+
   // 设置同步功能状态
   setSyncEnabled(enabled: boolean): void {
     console.log('setSyncEnabled', enabled)
@@ -572,6 +620,17 @@ export class ConfigPresenter implements IConfigPresenter {
   setContentProtectionEnabled(enabled: boolean): void {
     this.setSetting('contentProtectionEnabled', enabled)
     eventBus.emit(CONFIG_EVENTS.CONTENT_PROTECTION_CHANGED, enabled)
+  }
+
+  getLoggingEnabled(): boolean {
+    return this.getSetting<boolean>('loggingEnabled') ?? false
+  }
+
+  setLoggingEnabled(enabled: boolean): void {
+    this.setSetting('loggingEnabled', enabled)
+    setTimeout(() => {
+      presenter.devicePresenter.restartApp()
+    }, 1000)
   }
 
   // ===================== MCP配置相关方法 =====================

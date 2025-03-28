@@ -8,7 +8,8 @@ export const defaultModelsSettings = [
     contextLength: 2048576,
     match: ['gemini-2.5-pro-exp-03-25'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gemini-2.0-flash-exp-image-generation',
@@ -18,7 +19,8 @@ export const defaultModelsSettings = [
     contextLength: 1048576,
     match: ['gemini-2.0-flash-exp-image-generation'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gemini-2.0-pro-exp-02-05',
@@ -28,7 +30,8 @@ export const defaultModelsSettings = [
     contextLength: 2048576,
     match: ['gemini-2.0-pro-exp-02-05'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gemini-2.0-flash',
@@ -38,7 +41,8 @@ export const defaultModelsSettings = [
     contextLength: 1048576,
     match: ['gemini-2.0-flash'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gemini-1.5-flash',
@@ -48,7 +52,8 @@ export const defaultModelsSettings = [
     contextLength: 1048576,
     match: ['gemini-1.5-flash'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gemini-1.5-pro',
@@ -58,7 +63,8 @@ export const defaultModelsSettings = [
     contextLength: 2097152,
     match: ['gemini-1.5-pro'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   // DeepSeek系列模型配置
   {
@@ -69,7 +75,8 @@ export const defaultModelsSettings = [
     contextLength: 4096,
     match: ['deepseek-vl2'],
     vision: true,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'deepseek-r1-distill-qwen-32b',
@@ -79,7 +86,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['deepseek-r1-distill-qwen-32b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-r1-distill-qwen-14b',
@@ -89,7 +97,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['deepseek-r1-distill-qwen-14b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-r1-distill-qwen-7b',
@@ -99,7 +108,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['deepseek-r1-distill-qwen-7b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-r1-distill-qwen-1.5b',
@@ -109,7 +119,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-r1-distill-qwen-1.5b', 'deepseek-r1-distill-qwen-1-5b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-r1-distill-llama-8b',
@@ -119,7 +130,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-r1-distill-llama-8b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-r1-distill-llama-70b',
@@ -129,7 +141,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-r1-distill-llama-70b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-r1',
@@ -139,7 +152,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-r1', 'deepseek-r1-zero'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-reasoner',
@@ -149,7 +163,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-reasoner'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: true
   },
   {
     id: 'deepseek-chat-v3-0324',
@@ -159,7 +174,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-chat-v3-0324'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: true
   },
   {
     id: 'deepseek-v3-0324',
@@ -169,7 +185,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-v3-0324'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'deepseek-chat',
@@ -179,7 +196,8 @@ export const defaultModelsSettings = [
     contextLength: 65536,
     match: ['deepseek-chat'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'deepseek-v3',
@@ -190,7 +208,8 @@ export const defaultModelsSettings = [
     match: ['deepseek-v3'],
     vision: false,
     // https://github.com/deepseek-ai/DeepSeek-V3/issues/15 use mock function call
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'deepseek-v2.5',
@@ -200,19 +219,21 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['deepseek-v2.5', 'deepseek-v2-5'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
 
   // Claude系列模型配置
   {
     id: 'claude-3-7-sonnet',
     name: 'Claude 3.7 Sonnet',
-    temperature: 0.7,
+    temperature: 1,
     maxTokens: 64000,
     contextLength: 204800,
     match: ['claude-3-7-sonnet', 'claude-3.7-sonnet'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: true
   },
   {
     id: 'claude-3-5-sonnet',
@@ -222,7 +243,8 @@ export const defaultModelsSettings = [
     contextLength: 204800,
     match: ['claude-3-5-sonnet', 'claude-3.5-sonnet'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'claude-3-opus',
@@ -232,7 +254,8 @@ export const defaultModelsSettings = [
     contextLength: 204800,
     match: ['claude-3-opus', 'claude-3.opus'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'claude-3-haiku',
@@ -242,7 +265,8 @@ export const defaultModelsSettings = [
     contextLength: 204800,
     match: ['claude-3-haiku', 'claude-3.haiku', 'claude-3-5-haiku', 'claude-3.5-haiku'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
 
   // OpenAI GPT系列模型配置
@@ -254,7 +278,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['gpt-4o'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gpt-4-turbo',
@@ -264,7 +289,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['gpt-4-turbo', 'gpt-4-1106'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gpt-4-32k',
@@ -274,7 +300,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['gpt-4-32k'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gpt-4',
@@ -284,7 +311,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['gpt-4-0'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'gpt-3.5-turbo-16k',
@@ -304,7 +332,8 @@ export const defaultModelsSettings = [
     contextLength: 4096,
     match: ['gpt-3.5-turbo', 'gpt-3-5-turbo'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'o1',
@@ -314,7 +343,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['o1'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: true
   },
   {
     id: 'o1-preview',
@@ -324,7 +354,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['o1-preview'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: true
   },
   {
     id: 'o1-mini',
@@ -334,7 +365,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['o1-mini'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: true
   },
   {
     id: 'gpt-4.5-preview',
@@ -344,7 +376,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['gpt-4.5-preview'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   // Llama系列
   {
@@ -355,7 +388,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['llama-3.1-405b', 'llama-3.1-405-b', 'llama-3.1-405'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'llama-3.1-70b',
@@ -365,7 +399,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['llama-3.1-70b', 'llama-3.1-70-b', 'llama-3.1-70'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'llama-3-70b',
@@ -375,7 +410,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['llama-3-70b', 'llama-3-70-b', 'llama-3-70'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'llama-3.1-8b',
@@ -385,7 +421,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['llama-3.1-8b', 'llama-3.1-8-b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'llama-3-8b',
@@ -395,7 +432,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['llama-3-8b', 'llama-3-8-b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'llama-2-70b',
@@ -405,7 +443,8 @@ export const defaultModelsSettings = [
     contextLength: 4096,
     match: ['llama-2-70b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'llama-2',
@@ -415,7 +454,8 @@ export const defaultModelsSettings = [
     contextLength: 4096,
     match: ['llama-2-'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // Mistral系列
@@ -427,7 +467,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['mistral-large-2'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'mistral-large',
@@ -437,7 +478,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['mistral-large'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'mistral-8x7b',
@@ -447,7 +489,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['mistral-8x7b', 'mixtral-8x7b'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'mistral-7b',
@@ -457,7 +500,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['mistral-7b'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
 
   // Qwen系列
@@ -469,7 +513,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['qwq-32b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'QVQ-72B-Preview',
@@ -479,7 +524,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['QVQ-72B-Preview'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'Qwen2-VL-72B-Instruct',
@@ -489,7 +535,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['Qwen2-VL-72B-Instruct'],
     vision: true,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   {
@@ -500,7 +547,8 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-72b', 'qwen-2.5-72b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'qwen2.5-32b',
@@ -510,7 +558,8 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-32b', 'qwen-2.5-32b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'qwen2.5-14b',
@@ -520,7 +569,8 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-14b', 'qwen-2.5-14b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'qwen2.5-7b',
@@ -530,7 +580,8 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['qwen2.5-7b', 'qwen-2.5-7b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'qwen2.5',
@@ -540,7 +591,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['qwen2.5-', 'qwen-2.5-'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'qwen',
@@ -550,7 +602,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['qwen-'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // Yi系列
@@ -562,7 +615,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['yi-34b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'yi',
@@ -572,7 +626,8 @@ export const defaultModelsSettings = [
     contextLength: 16384,
     match: ['yi-'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // Gemma系列
@@ -584,7 +639,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['gemma-2-27b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'gemma-2-9b',
@@ -593,7 +649,9 @@ export const defaultModelsSettings = [
     maxTokens: 8192,
     contextLength: 8192,
     match: ['gemma-2-9b'],
-    vision: false
+    vision: false,
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'gemma-2-2b',
@@ -603,7 +661,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['gemma-2-2b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'gemma-7b',
@@ -613,7 +672,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['gemma-7b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'gemma-2b',
@@ -623,7 +683,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['gemma-2b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // Phi系列
@@ -635,7 +696,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['phi-4-', 'phi4-', 'phi4'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'phi-3',
@@ -645,19 +707,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['phi-3-', 'phi3-', 'phi3'],
     vision: false,
-    functionCall: false
-  },
-
-  // Ollama平台模型配置
-  {
-    id: 'ollama',
-    name: 'Ollama',
-    temperature: 0.7,
-    maxTokens: 2048,
-    contextLength: 2048,
-    match: ['ollama'],
-    vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // Doubao (字节跳动)模型配置
@@ -669,7 +720,8 @@ export const defaultModelsSettings = [
     contextLength: 262144,
     match: ['doubao-1.5-pro-256k'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'doubao-1.5-vision-pro-32k',
@@ -679,7 +731,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['doubao-1.5-vision-pro-32k'],
     vision: true,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'doubao-1.5-pro-32k',
@@ -689,7 +742,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['doubao-1.5-pro-32k'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'doubao',
@@ -699,7 +753,8 @@ export const defaultModelsSettings = [
     contextLength: 16384,
     match: ['doubao'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // MiniMax模型配置
@@ -711,7 +766,8 @@ export const defaultModelsSettings = [
     contextLength: 1048576,
     match: ['minimax-01', 'minimax/minimax-01', 'minimax-text-01'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'glm-4-plus',
@@ -721,7 +777,8 @@ export const defaultModelsSettings = [
     contextLength: 1048576,
     match: ['glm-4-plus', 'glm-4-air'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'step-2-16k',
@@ -731,7 +788,8 @@ export const defaultModelsSettings = [
     contextLength: 16384,
     match: ['step-2-16k-exp', 'step-2-16k'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'step-2-mini',
@@ -741,7 +799,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['step-2-mini'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'minimax',
@@ -751,7 +810,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['minimax'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
 
   // Fireworks AI模型配置
@@ -763,7 +823,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['fireworks', 'llama-3.1-405b', 'llama-3.1-405-b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'fireworks-llama-3.1-70b',
@@ -773,7 +834,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['fireworks', 'llama-3.1-70b', 'llama-3.1-70-b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'fireworks-llama-3.1-8b',
@@ -783,7 +845,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['fireworks', 'llama-3.1-8b', 'llama-3.1-8-b'],
     vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
   {
     id: 'fireworks',
@@ -793,19 +856,8 @@ export const defaultModelsSettings = [
     contextLength: 16384,
     match: ['fireworks', 'accounts/fireworks/'],
     vision: false,
-    functionCall: false
-  },
-
-  // PPIO AI模型配置
-  {
-    id: 'ppio',
-    name: 'PPIO',
-    temperature: 0.7,
-    maxTokens: 4096,
-    contextLength: 16384,
-    match: ['ppio'],
-    vision: false,
-    functionCall: false
+    functionCall: false,
+    reasoning: false
   },
 
   // Moonshot (月之暗面)模型配置
@@ -817,7 +869,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['moonshot-v1-8k', 'moonshot/moonshot-v1-8k'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'moonshot-v1-32k',
@@ -827,7 +880,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['moonshot-v1-32k', 'moonshot/moonshot-v1-32k'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'moonshot-v1-128k',
@@ -837,7 +891,8 @@ export const defaultModelsSettings = [
     contextLength: 131072,
     match: ['moonshot-v1-128k', 'moonshot/moonshot-v1-128k'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'moonshot',
@@ -847,31 +902,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['moonshot'],
     vision: false,
-    functionCall: true
-  },
-
-  // OpenRouter配置
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    temperature: 0.7,
-    maxTokens: 8192,
-    contextLength: 32768,
-    match: ['openrouter', 'openrouter/'],
-    vision: false,
-    functionCall: false
-  },
-
-  // GitHub Copilot配置
-  {
-    id: 'github-copilot',
-    name: 'GitHub Copilot',
-    temperature: 0.7,
-    maxTokens: 4096,
-    contextLength: 8192,
-    match: ['github-copilot', 'copilot'],
-    vision: false,
-    functionCall: false
+    functionCall: true,
+    reasoning: false
   },
 
   // Azure OpenAI配置
@@ -883,7 +915,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['azure-openai', 'azure/openai', 'gpt-4o'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'azure-openai-gpt-4-turbo',
@@ -893,7 +926,8 @@ export const defaultModelsSettings = [
     contextLength: 128000,
     match: ['azure-openai', 'azure/openai', 'gpt-4-turbo', 'gpt-4-1106'],
     vision: true,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'azure-openai-gpt-4-32k',
@@ -903,7 +937,8 @@ export const defaultModelsSettings = [
     contextLength: 32768,
     match: ['azure-openai', 'azure/openai', 'gpt-4-32k'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'azure-openai-gpt-4',
@@ -913,7 +948,8 @@ export const defaultModelsSettings = [
     contextLength: 8192,
     match: ['azure-openai', 'azure/openai', 'gpt-4'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'azure-openai-gpt-3.5-turbo-16k',
@@ -923,7 +959,8 @@ export const defaultModelsSettings = [
     contextLength: 16384,
     match: ['azure-openai', 'azure/openai', 'gpt-3.5-turbo-16k'],
     vision: false,
-    functionCall: true
+    functionCall: true,
+    reasoning: false
   },
   {
     id: 'azure-openai-gpt-3.5-turbo',
@@ -933,18 +970,7 @@ export const defaultModelsSettings = [
     contextLength: 4096,
     match: ['azure-openai', 'azure/openai', 'gpt-3.5-turbo'],
     vision: false,
-    functionCall: true
-  },
-
-  // Silicon (硅基智能)模型配置
-  {
-    id: 'silicon',
-    name: 'Silicon',
-    temperature: 0.7,
-    maxTokens: 4096,
-    contextLength: 16384,
-    match: ['silicon'],
-    vision: false,
-    functionCall: false
+    functionCall: true,
+    reasoning: false
   }
 ]

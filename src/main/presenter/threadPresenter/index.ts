@@ -681,7 +681,14 @@ export class ThreadPresenter implements IThreadPresenter {
     if (messageCount < 2) {
       messageCount = 2
     }
-    return await this.messageManager.getContextMessages(conversationId, messageCount)
+    const messages = await this.messageManager.getContextMessages(conversationId, messageCount)
+
+    // 确保消息列表以用户消息开始
+    while (messages.length > 0 && messages[0].role !== 'user') {
+      messages.shift()
+    }
+
+    return messages
   }
 
   async clearContext(conversationId: string): Promise<void> {

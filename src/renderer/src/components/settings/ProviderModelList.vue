@@ -12,14 +12,15 @@
         :model-name="model.name"
         :model-id="model.id"
         :enabled="model.enabled ?? false"
+        :is-custom-model="true"
+        :vision="model.vision"
+        :function-call="model.functionCall"
+        :reasoning="model.reasoning"
         @enabled-change="(enabled) => handleModelEnabledChange(model, enabled)"
+        @delete-model="() => handleDeleteCustomModel(model)"
       />
     </div>
-    <div
-      v-for="(model, idx) in addModelList"
-      :key="model.modelId + idx"
-      class="flex flex-row gap-2 items-center"
-    >
+    <div v-for="(model, idx) in addModelList" :key="idx" class="flex flex-row gap-2 items-center">
       <Input v-model="model.modelName" :placeholder="t('model.add.namePlaceholder')" />
       <Input v-model="model.modelId" :placeholder="t('model.add.idPlaceholder')" />
       <Input
@@ -93,6 +94,9 @@
           :model-name="model.name"
           :model-id="model.id"
           :enabled="model.enabled ?? false"
+          :vision="model.vision"
+          :function-call="model.functionCall"
+          :reasoning="model.reasoning"
           @enabled-change="(enabled) => handleModelEnabledChange(model, enabled)"
         />
       </div>
@@ -190,13 +194,21 @@ const removeEdit = (idx: number) => {
 
 const confirmAdd = async (idx: number) => {
   const model = addModelList.value[idx]
+  if (!model.modelId || !model.modelName) {
+    console.error('模型ID和名称为必填项')
+    return
+  }
+
   try {
     await settingsStore.addCustomModel(props.providers[0].id, {
       id: model.modelId,
       name: model.modelName,
       enabled: true,
-      contextLength: model.contextLength,
-      maxTokens: model.maxTokens
+      contextLength: model.contextLength || 4096,
+      maxTokens: model.maxTokens || 2048,
+      vision: false,
+      functionCall: false,
+      reasoning: false
     })
     removeEdit(idx)
   } catch (error) {
@@ -206,6 +218,14 @@ const confirmAdd = async (idx: number) => {
 
 const handleModelEnabledChange = (model: RENDERER_MODEL_META, enabled: boolean) => {
   emit('enabledChange', model, enabled)
+}
+
+const handleDeleteCustomModel = async (model: RENDERER_MODEL_META) => {
+  try {
+    await settingsStore.removeCustomModel(model.providerId, model.id)
+  } catch (error) {
+    console.error('Failed to delete custom model:', error)
+  }
 }
 
 // 启用提供商下所有模型

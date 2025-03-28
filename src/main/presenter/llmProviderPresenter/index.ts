@@ -203,6 +203,17 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
       if (config) {
         model.maxTokens = config.maxTokens
         model.contextLength = config.contextLength
+        // 如果模型中已经有这些属性则保留，否则使用配置中的值或默认为false
+        model.vision = model.vision !== undefined ? model.vision : config.vision || false
+        model.functionCall =
+          model.functionCall !== undefined ? model.functionCall : config.functionCall || false
+        model.reasoning =
+          model.reasoning !== undefined ? model.reasoning : config.reasoning || false
+      } else {
+        // 确保模型具有这些属性，如果没有配置，默认为false
+        model.vision = model.vision || false
+        model.functionCall = model.functionCall || false
+        model.reasoning = model.reasoning || false
       }
       return model
     })
@@ -522,7 +533,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   listOllamaModels(): Promise<OllamaModel[]> {
     const provider = this.getOllamaProviderInstance()
     if (!provider) {
-      console.error('Ollama provider not found')
+      // console.error('Ollama provider not found')
       return Promise.resolve([])
     }
     return provider.listModels()
@@ -537,7 +548,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
   listOllamaRunningModels(): Promise<OllamaModel[]> {
     const provider = this.getOllamaProviderInstance()
     if (!provider) {
-      console.error('Ollama provider not found')
+      // console.error('Ollama provider not found')
       return Promise.resolve([])
     }
     return provider.listRunningModels()

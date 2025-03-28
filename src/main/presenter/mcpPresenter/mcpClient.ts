@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from './stdio'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { type Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { eventBus } from '@/eventbus'
@@ -286,9 +286,13 @@ export class McpClient {
 
       // 设置连接超时
       const timeoutPromise = new Promise<void>((_, reject) => {
-        this.connectionTimeout = setTimeout(() => {
-          reject(new Error(`连接到MCP服务器 ${this.serverName} 超时`))
-        }, 10000)
+        this.connectionTimeout = setTimeout(
+          () => {
+            console.error(`连接到MCP服务器 ${this.serverName} 超时`)
+            reject(new Error(`连接到MCP服务器 ${this.serverName} 超时`))
+          },
+          5 * 60 * 1000
+        ) // 5分钟
       })
 
       // 连接到服务器
