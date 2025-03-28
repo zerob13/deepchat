@@ -392,14 +392,21 @@ export class ThreadPresenter implements IThreadPresenter {
         // 计算completion tokens
         let completionTokens = 0
         for (const block of state.message.content) {
-          if (block.type === 'content' || block.type === 'reasoning_content') {
+          if (
+            block.type === 'content' ||
+            block.type === 'reasoning_content' ||
+            block.type === 'tool_call'
+          ) {
             completionTokens += approximateTokenSize(block.content)
           }
         }
 
         // 检查是否有内容块
         const hasContentBlock = state.message.content.some(
-          (block) => block.type === 'content' || block.type === 'reasoning_content'
+          (block) =>
+            block.type === 'content' ||
+            block.type === 'reasoning_content' ||
+            block.type === 'tool_call'
         )
 
         // 如果没有内容块，添加错误信息
@@ -1422,7 +1429,7 @@ export class ThreadPresenter implements IThreadPresenter {
         msg.role === 'user'
           ? `${msg.content.text}${getFileContext(msg.content.files)}`
           : msg.content
-              .filter((block) => block.type === 'content')
+              .filter((block) => block.type === 'content' || block.type === 'tool_call')
               .map((block) => block.content)
               .join('\n')
 

@@ -41,6 +41,7 @@ export type AssistantMessage = Message & {
 }
 
 export type UserMessageContent = {
+  continue?: boolean
   files: MessageFile[]
   links: string[]
   think: boolean
