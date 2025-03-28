@@ -1,8 +1,7 @@
 <template>
   <div class="my-1">
     <div
-      @click="toggleExpanded"
-      class="flex h-[40px] w-[360px] break-all shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground cursor-pointer hover:bg-accent/10 transition-colors duration-200"
+      class="flex h-[40px] w-[360px] break-all shadow-sm my-2 items-center gap-2 rounded-lg border bg-card text-card-foreground"
     >
       <div class="flex-grow w-0 pl-2">
         <h4
@@ -42,42 +41,70 @@
       </div>
     </div>
 
+    <transition
+      enter-active-class="transition-all duration-200"
+      enter-from-class="opacity-0 -translate-y-2"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition-all duration-200"
+      leave-from-class="opacity-100 translate-y-0"
+      leave-to-class="opacity-0 -translate-y-2"
+    >
+      <div
+        v-if="simpleIn"
+        class="flex-row gap-1 bg-secondary text-muted-foreground transition-colors duration-200 dark:bg-card hover:text-foreground rounded-md inline-flex max-w-[33rem] items-center cursor-pointer select-none"
+        @click="toggleExpanded"
+      >
+        <div class="text-xs inline-flex px-2 py-1 flex-row gap-2 items-center max-w-64">
+          <Icon
+            icon="lucide:arrow-up-from-dot"
+            class="w-3 h-3 text-secondary-foreground shrink-0"
+          />
+          <span class="truncate">{{ simpleIn }}</span>
+          <Icon icon="lucide:chevron-right" class="w-3 h-3 text-secondary-foreground shrink-0" />
+        </div>
+      </div>
+    </transition>
+
     <!-- 详细内容区域 -->
-    <div v-if="isExpanded" class="rounded-lg border bg-card text-card-foreground p-4 mt-2 mb-4">
-      <div class="space-y-4">
-        <!-- 函数名称 -->
-        <div class="space-y-1">
-          <h5 class="text-xs font-medium text-accent-foreground">
-            {{ t('toolCall.functionName') }}
-          </h5>
-          <div class="text-sm text-primary p-2 bg-muted rounded-md">
-            {{ block.tool_call?.name ?? '' }}
+    <transition
+      enter-active-class="transition-all duration-200"
+      enter-from-class="opacity-0 -translate-y-4 scale-95"
+      enter-to-class="opacity-100 translate-y-0 scale-100"
+      leave-active-class="transition-all duration-200"
+      leave-from-class="opacity-100 translate-y-0 scale-100"
+      leave-to-class="opacity-0 -translate-y-4 scale-95"
+    >
+      <div
+        v-if="isExpanded"
+        class="rounded-lg border bg-muted text-card-foreground px-2 py-3 mt-2 mb-4"
+      >
+        <div class="space-y-4">
+          <!-- 参数 -->
+          <div v-if="block.tool_call?.params" class="space-y-2">
+            <h5 class="text-xs font-medium text-accent-foreground flex flex-row gap-2 items-center">
+              <Icon icon="lucide:arrow-up-from-dot" class="w-4 h-4 text-muted-foreground" />
+              {{ t('toolCall.params') }}
+            </h5>
+            <div class="text-sm bg-muted rounded-md p-2">
+              <JsonObject :data="parseJson(block.tool_call.params)" />
+            </div>
           </div>
-        </div>
 
-        <!-- 参数 -->
-        <div v-if="block.tool_call?.params" class="space-y-1">
-          <h5 class="text-xs font-medium text-accent-foreground">{{ t('toolCall.params') }}</h5>
-          <div class="text-sm text-primary p-2 bg-muted rounded-md overflow-auto max-h-48">
-            <pre class="whitespace-pre-wrap break-all">{{
-              formatJson(block.tool_call.params)
-            }}</pre>
-          </div>
-        </div>
+          <hr />
 
-        <!-- 响应 -->
-        <div v-if="block.tool_call?.response" class="space-y-1">
-          <h5 class="text-xs font-medium text-accent-foreground">
-            {{ t('toolCall.responseData') }}
-          </h5>
-          <div class="text-sm text-primary p-2 bg-muted rounded-md overflow-auto max-h-48">
-            <pre class="whitespace-pre-wrap break-all">{{
-              formatJson(block.tool_call.response)
-            }}</pre>
+          <!-- 响应 -->
+          <div v-if="block.tool_call?.response" class="space-y-2">
+            <h5 class="text-xs font-medium text-accent-foreground flex flex-row gap-2 items-center">
+              <Icon icon="lucide:arrow-down-to-dot" class="w-4 h-4 text-muted-foreground" />
+              {{ t('toolCall.responseData') }}
+            </h5>
+            <div class="text-sm rounded-md p-3">
+              <JsonObject :data="parseJson(block.tool_call.response)" />
+            </div>
           </div>
         </div>
       </div>
-    </div>
+    </transition>
   </div>
 </template>
 
@@ -85,7 +112,8 @@
 import { Icon } from '@iconify/vue'
 import { useI18n } from 'vue-i18n'
 import { AssistantMessageBlock } from '@shared/chat'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { JsonObject } from '@/components/json-viewer'
 
 // 创建一个安全的翻译函数
 const t = (() => {
@@ -103,6 +131,7 @@ const t = (() => {
       if (key === 'toolCall.clickToView') return '点击查看详情'
       if (key === 'toolCall.functionName') return '函数名称'
       if (key === 'toolCall.params') return '参数'
+      if (key === 'toolCall.responseData') return '响应数据'
       return key
     }
   }
@@ -144,17 +173,27 @@ const showPermissionIcon = () => {
   return false
 }
 
-// 辅助函数，美化JSON显示
-const formatJson = (jsonStr: string) => {
+// 解析JSON为对象
+const parseJson = (jsonStr: string) => {
   try {
-    // 尝试解析JSON字符串
-    const obj = JSON.parse(jsonStr)
-    return JSON.stringify(obj, null, 2)
+    return JSON.parse(jsonStr)
   } catch (e) {
-    // 如果解析失败，直接返回原字符串
-    return jsonStr
+    return { raw: jsonStr }
   }
 }
+
+const simpleIn = computed(() => {
+  if (!props.block.tool_call) return false
+  if (props.block.tool_call.params) {
+    const params = parseJson(props.block.tool_call.params)
+    const strArr: string[] = []
+    for (const key in params) {
+      strArr.push(`${params[key]}`)
+    }
+    return strArr.join(', ')
+  }
+  return ''
+})
 </script>
 
 <style scoped>
