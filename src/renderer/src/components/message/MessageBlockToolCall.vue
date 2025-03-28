@@ -1,7 +1,7 @@
 <template>
   <div class="my-1">
     <div
-      class="flex flex-col h-min-[40px] hover:bg-muted cursor-pointer pt-3 overflow-hidden w-[360px] break-all shadow-sm my-2 items-start gap-3 rounded-lg border bg-card text-card-foreground"
+      class="flex flex-col h-min-[40px] hover:bg-muted select-none cursor-pointer pt-3 overflow-hidden w-[420px] break-all shadow-sm my-2 items-start gap-3 rounded-lg border bg-card text-card-foreground"
       @click="toggleExpanded"
     >
       <div class="flex flex-row items-center gap-2 w-full">
@@ -9,8 +9,12 @@
           <h4
             class="text-xs font-medium leading-none text-accent-foreground flex flex-row gap-2 items-center"
           >
-            <Icon icon="lucide:hammer" class="w-4 h-4 text-muted-foreground" />
-            {{ block.tool_call?.name ?? '' }}
+            <span v-if="block.tool_call?.server_icons" class="text-base leading-none">{{
+              `${block.tool_call?.server_icons}  `
+            }}</span>
+            <Icon v-else icon="lucide:hammer" class="w-4 h-4 text-muted-foreground" />
+            {{ block.tool_call?.server_name ? `${block.tool_call?.server_name} · ` : ''
+            }}{{ block.tool_call?.name ?? '' }}
           </h4>
         </div>
         <div class="text-xs text-muted-foreground">{{ getToolCallStatus() }}</div>
