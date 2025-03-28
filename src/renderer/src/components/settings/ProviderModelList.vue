@@ -13,6 +13,9 @@
         :model-id="model.id"
         :enabled="model.enabled ?? false"
         :is-custom-model="true"
+        :vision="model.vision"
+        :function-call="model.functionCall"
+        :reasoning="model.reasoning"
         @enabled-change="(enabled) => handleModelEnabledChange(model, enabled)"
         @delete-model="() => handleDeleteCustomModel(model)"
       />
@@ -91,6 +94,9 @@
           :model-name="model.name"
           :model-id="model.id"
           :enabled="model.enabled ?? false"
+          :vision="model.vision"
+          :function-call="model.functionCall"
+          :reasoning="model.reasoning"
           @enabled-change="(enabled) => handleModelEnabledChange(model, enabled)"
         />
       </div>
@@ -199,7 +205,10 @@ const confirmAdd = async (idx: number) => {
       name: model.modelName,
       enabled: true,
       contextLength: model.contextLength || 4096,
-      maxTokens: model.maxTokens || 2048
+      maxTokens: model.maxTokens || 2048,
+      vision: false,
+      functionCall: false,
+      reasoning: false
     })
     removeEdit(idx)
   } catch (error) {

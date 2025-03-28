@@ -146,7 +146,10 @@ export const useSettingsStore = defineStore('settings', () => {
           providerId: priorityModel.providerId,
           group: priorityModel.model.group,
           enabled: true,
-          isCustom: priorityModel.model.isCustom
+          isCustom: priorityModel.model.isCustom,
+          vision: priorityModel.model.vision || false,
+          functionCall: priorityModel.model.functionCall || false,
+          reasoning: priorityModel.model.reasoning || false
         },
         providerId: priorityModel.providerId
       })
@@ -160,7 +163,10 @@ export const useSettingsStore = defineStore('settings', () => {
           maxTokens: priorityModel.model.maxTokens,
           providerId: priorityModel.providerId,
           group: priorityModel.model.group,
-          isCustom: priorityModel.model.isCustom
+          isCustom: priorityModel.model.isCustom,
+          vision: priorityModel.model.vision || false,
+          functionCall: priorityModel.model.functionCall || false,
+          reasoning: priorityModel.model.reasoning || false
         },
         toRaw(priorityModel.providerId)
       )
@@ -324,7 +330,10 @@ export const useSettingsStore = defineStore('settings', () => {
             group: meta.group,
             enabled: false,
             isCustom: meta.isCustom || false,
-            providerId
+            providerId,
+            vision: meta.vision || false,
+            functionCall: meta.functionCall || false,
+            reasoning: meta.reasoning || false
           }))
         }
       }
@@ -432,7 +441,6 @@ export const useSettingsStore = defineStore('settings', () => {
       allProviderModels.value = []
       enabledModels.value = []
       customModels.value = []
-
       // 依次刷新每个提供商的模型
       for (const provider of activeProviders) {
         await refreshProviderModels(provider.id)
@@ -564,7 +572,13 @@ export const useSettingsStore = defineStore('settings', () => {
           const provider = allProviderModels.value.find((p) => p.providerId === providerId)
           const model = provider?.models.find((m) => m.id === modelId)
           if (model) {
-            models.push({ ...model, enabled: true })
+            models.push({
+              ...model,
+              enabled: true,
+              vision: model.vision || false,
+              functionCall: model.functionCall || false,
+              reasoning: model.reasoning || false
+            })
           }
         }
       } else {
@@ -994,6 +1008,9 @@ export const useSettingsStore = defineStore('settings', () => {
         enabled: true,
         isCustom: existingModel?.isCustom || false,
         providerId: 'ollama',
+        vision: existingModel?.vision || false,
+        functionCall: existingModel?.functionCall || false,
+        reasoning: existingModel?.reasoning || false,
         // 保留现有的其他配置，但确保更新 Ollama 特有数据
         ...(existingModel ? { ...existingModel } : {}),
         ollamaModel: model

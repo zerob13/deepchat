@@ -32,6 +32,7 @@ export interface ModelConfig {
   temperature: number
   vision: boolean
   functionCall: boolean
+  reasoning: boolean
 }
 
 export interface IWindowPresenter {
@@ -196,6 +197,9 @@ export type RENDERER_MODEL_META = {
   isCustom: boolean
   contextLength: number
   maxTokens: number
+  vision: boolean
+  functionCall: boolean
+  reasoning: boolean
 }
 export type MODEL_META = {
   id: string
@@ -206,6 +210,9 @@ export type MODEL_META = {
   contextLength: number
   maxTokens: number
   description?: string
+  vision: boolean
+  functionCall: boolean
+  reasoning: boolean
 }
 
 export type LLM_PROVIDER = {
