@@ -863,8 +863,6 @@ export const useChatStore = defineStore('chat', () => {
     handleMessageEdited,
     // 导出配置相关的状态和方法
     chatConfig,
-    loadChatConfig,
-    saveChatConfig,
     updateChatConfig,
     retryMessage,
     deleteMessage,

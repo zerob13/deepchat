@@ -621,7 +621,7 @@ export class GeminiProvider extends BaseLLMProvider {
         needContinueConversation = false
 
         for await (const chunk of result.stream) {
-          console.log('gchunk', chunk)
+          // console.log('gchunk', chunk)
           // 检查是否包含函数调用
           // @ts-ignore - SDK类型定义不完整
           if (chunk.candidates && chunk.candidates[0]?.content?.parts?.[0]?.functionCall) {
