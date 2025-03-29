@@ -9,6 +9,7 @@ import { MAIN_WIN } from '../windowPresenter'
 import { eventBus } from '@/eventbus'
 import { CONFIG_EVENTS } from '@/events'
 import { jsonrepair } from 'jsonrepair'
+import { SEARCH_PROMPT_ARTIFACTS_TEMPLATE, SEARCH_PROMPT_TEMPLATE } from './const'
 
 const helperPage = path.join(app.getAppPath(), 'resources', 'blankSearch.html')
 
@@ -197,6 +198,42 @@ const defaultEngines: SearchEngineTemplate[] = [
   }
 ]
 
+// 格式化搜索结果的函数
+export function formatSearchResults(results: SearchResult[]): string {
+  return results
+    .map(
+      (result, index) => `[webpage ${index + 1} begin]
+title: ${result.title}
+URL: ${result.url}
+content：${result.content || ''}
+[webpage ${index + 1} end]`
+    )
+    .join('\n\n')
+}
+// 生成带搜索结果的提示词
+export function generateSearchPrompt(query: string, results: SearchResult[]): string {
+  if (results.length > 0) {
+    return SEARCH_PROMPT_TEMPLATE.replace('{{SEARCH_RESULTS}}', formatSearchResults(results))
+      .replace('{{USER_QUERY}}', query)
+      .replace('{{CUR_DATE}}', new Date().toLocaleDateString())
+  } else {
+    return query
+  }
+}
+
+// Add a function to generate search prompt with artifacts support
+export function generateSearchPromptWithArtifacts(query: string, results: SearchResult[]): string {
+  if (results.length > 0) {
+    return SEARCH_PROMPT_ARTIFACTS_TEMPLATE.replace(
+      '{{SEARCH_RESULTS}}',
+      formatSearchResults(results)
+    )
+      .replace('{{USER_QUERY}}', query)
+      .replace('{{CUR_DATE}}', new Date().toLocaleDateString())
+  } else {
+    return query
+  }
+}
 export class SearchManager {
   private searchWindows: Map<string, BrowserWindow> = new Map()
   private maxConcurrentSearches = 3

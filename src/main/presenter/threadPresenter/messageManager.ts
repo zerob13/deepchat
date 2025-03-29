@@ -6,7 +6,7 @@ import {
   ISQLitePresenter,
   SQLITE_MESSAGE
 } from '@shared/presenter'
-import { Message } from '@shared/chat'
+import { Message, AssistantMessageBlock } from '@shared/chat'
 import { eventBus } from '@/eventbus'
 import { CONVERSATION_EVENTS } from '@/events'
 
@@ -234,5 +234,71 @@ export class MessageManager implements IMessageManager {
 
   async clearAllMessages(conversationId: string): Promise<void> {
     await this.sqlitePresenter.deleteAllMessagesInConversation(conversationId)
+  }
+  /**
+   * 初始化未完成的消息
+   */
+  public async initializeUnfinishedMessages(): Promise<void> {
+    try {
+      // 获取所有对话
+      const { list: conversations } = await this.sqlitePresenter.getConversationList(1, 1000)
+
+      for (const conversation of conversations) {
+        // 获取每个对话的消息
+        const { list: messages } = await this.getMessageThread(conversation.id, 1, 1000)
+
+        // 找出所有pending状态的assistant消息
+        const pendingMessages = messages.filter(
+          (msg) => msg.role === 'assistant' && msg.status === 'pending'
+        )
+
+        // 处理每个未完成的消息
+        for (const message of pendingMessages) {
+          await this.handleMessageError(message.id, 'common.error.sessionInterrupted')
+        }
+      }
+    } catch (error) {
+      console.error('初始化未完成消息失败:', error)
+    }
+  }
+  /**
+   * 处理消息错误状态的公共函数
+   * @param messageId 消息ID
+   * @param errorMessage 错误信息
+   */
+  public async handleMessageError(
+    messageId: string,
+    errorMessage: string = 'common.error.requestFailed'
+  ): Promise<void> {
+    const message = await this.getMessage(messageId)
+    if (!message) {
+      return
+    }
+
+    let content: AssistantMessageBlock[] = []
+    try {
+      content = JSON.parse(message.content)
+    } catch (e) {
+      content = []
+    }
+
+    // 将所有loading状态的block改为error
+    content.forEach((block: AssistantMessageBlock) => {
+      if (block.status === 'loading') {
+        block.status = 'error'
+      }
+    })
+
+    // 添加错误信息block
+    content.push({
+      type: 'error',
+      content: errorMessage,
+      status: 'error',
+      timestamp: Date.now()
+    })
+
+    // 更新消息状态和内容
+    await this.updateMessageStatus(messageId, 'error')
+    await this.editMessage(messageId, JSON.stringify(content))
   }
 }

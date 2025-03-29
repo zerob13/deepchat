@@ -7,12 +7,6 @@ import { presenter } from '@/presenter'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { proxyConfig } from '../../proxyConfig'
 import { getModelConfig } from '../modelConfigs'
-// 定义Anthropic工具使用的接口
-interface AnthropicToolUse {
-  id: string
-  name: string
-  input: Record<string, unknown>
-}
 
 export class AnthropicProvider extends BaseLLMProvider {
   private anthropic!: Anthropic

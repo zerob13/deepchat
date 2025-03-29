@@ -24,22 +24,17 @@ import {
 } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
-import { SearchManager } from './searchManager'
+import {
+  generateSearchPrompt,
+  generateSearchPromptWithArtifacts,
+  SearchManager
+} from './searchManager'
 import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import { ChatMessage, ChatMessageContent } from '../llmProviderPresenter/baseProvider'
 import { ARTIFACTS_PROMPT } from '@/lib/artifactsPrompt'
-
-const DEFAULT_SETTINGS: CONVERSATION_SETTINGS = {
-  systemPrompt: '',
-  temperature: 0.7,
-  contextLength: 1000,
-  maxTokens: 2000,
-  providerId: 'openai',
-  modelId: 'gpt-4',
-  artifacts: 0
-}
+import { DEFAULT_SETTINGS } from './const'
 
 interface GeneratingMessageState {
   message: AssistantMessage
@@ -56,146 +51,6 @@ interface GeneratingMessageState {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
-  }
-}
-const SEARCH_PROMPT_TEMPLATE = `
-# The following content is based on the search results from the user's message:
-{{SEARCH_RESULTS}}
-In the search results I provided, each result is in the format [webpage X begin]...[webpage X end], where X represents the numerical index of each article. Please reference the context at the end of sentences where appropriate. Use the citation number [X] format to reference the corresponding parts in your answer. If a sentence is derived from multiple contexts, list all relevant citation numbers, such as [3][5]. Be careful not to concentrate the citation numbers at the end of the response, but rather list them in the corresponding parts of the answer.
-When answering, please pay attention to the following points:
-
-- Today is {{CUR_DATE}}
-- The language of the answer should be consistent with the language of the user's message, unless the user explicitly indicates a different language for the response.
-- Not all content from the search results is closely related to the user's question; you need to discern and filter the search results based on the question.
-- For listing questions (e.g., listing all flight information), try to limit the answer to no more than 10 points and inform the user that they can check the search sources for complete information. Prioritize providing the most complete and relevant items; unless necessary, do not proactively inform the user that the search results did not provide certain content.
-- For creative questions (e.g., writing an essay), be sure to cite the corresponding reference numbers in the body of the paragraphs, such as [3][5], and not just at the end of the article. You need to interpret and summarize the user's topic requirements, choose an appropriate format, fully utilize the search results, and extract important information to generate answers that meet the user's requirements, are deeply thoughtful, creative, and professional. Your creative length should be as long as possible, and for each point, infer the user's intent, provide as many angles of response as possible, and ensure that the information is rich and the discussion is detailed.
-- If the answer is long, try to structure it and summarize it in paragraphs. If you need to answer in points, try to limit it to no more than 5 points and merge related content.
-- For objective questions, if the answer to the question is very brief, you can appropriately add one or two sentences of related information to enrich the content.
-- You need to choose an appropriate and aesthetically pleasing answer format based on the user's requirements and the content of the answer to ensure strong readability.
-- Your answer should synthesize multiple relevant web pages and not repeat citations from a single web page.
-- Use markdown to format paragraphs, lists, tables, and citations as much as possible.
-- Use markdown code blocks to write code, including syntax-highlighted languages.
-- Enclose all mathematical expressions in LaTeX. Always use double dollar signs $$, for example, $$x^4 = x - 3$$.
-- Do not include any URLs, only include citations with numbers, such as [1].
-- Do not include references (URLs, sources) at the end.
-- Use footnote citations at the end of applicable sentences (e.g., [1][2]).
-- Write more than 100 words (2 paragraphs).
-- Avoid directly quoting citations in the answer.
-
-# The user's message is:
-{{USER_QUERY}}
-  `
-
-const SEARCH_PROMPT_ARTIFACTS_TEMPLATE = `
-# The following content is based on the search results from the user's message:
-{{SEARCH_RESULTS}}
-In the search results I provided, each result is in the format [webpage X begin]...[webpage X end], where X represents the numerical index of each article. Please reference the context at the end of sentences where appropriate. Use the citation number [X] format to reference the corresponding parts in your answer. If a sentence is derived from multiple contexts, list all relevant citation numbers, such as [3][5]. Be careful not to concentrate the citation numbers at the end of the response, but rather list them in the corresponding parts of the answer.
-When answering, please pay attention to the following points:
-
-- Today is {{CUR_DATE}}
-- The language of the answer should be consistent with the language of the user's message, unless the user explicitly indicates a different language for the response.
-- Not all content from the search results is closely related to the user's question; you need to discern and filter the search results based on the question.
-- For listing questions (e.g., listing all flight information), try to limit the answer to no more than 10 points and inform the user that they can check the search sources for complete information. Prioritize providing the most complete and relevant items; unless necessary, do not proactively inform the user that the search results did not provide certain content.
-- For creative questions (e.g., writing an essay), be sure to cite the corresponding reference numbers in the body of the paragraphs, such as [3][5], and not just at the end of the article. You need to interpret and summarize the user's topic requirements, choose an appropriate format, fully utilize the search results, and extract important information to generate answers that meet the user's requirements, are deeply thoughtful, creative, and professional. Your creative length should be as long as possible, and for each point, infer the user's intent, provide as many angles of response as possible, and ensure that the information is rich and the discussion is detailed.
-- If the answer is long, try to structure it and summarize it in paragraphs. If you need to answer in points, try to limit it to no more than 5 points and merge related content.
-- For objective questions, if the answer to the question is very brief, you can appropriately add one or two sentences of related information to enrich the content.
-- You need to choose an appropriate and aesthetically pleasing answer format based on the user's requirements and the content of the answer to ensure strong readability.
-- Your answer should synthesize multiple relevant web pages and not repeat citations from a single web page.
-- Use markdown to format paragraphs, lists, tables, and citations as much as possible.
-- Use markdown code blocks to write code, including syntax-highlighted languages.
-- Enclose all mathematical expressions in LaTeX. Always use double dollar signs $$, for example, $$x^4 = x - 3$$.
-- Do not include any URLs, only include citations with numbers, such as [1].
-- Do not include references (URLs, sources) at the end.
-- Use footnote citations at the end of applicable sentences (e.g., [1][2]).
-- Write more than 100 words (2 paragraphs).
-- Avoid directly quoting citations in the answer.
-
-# Artifacts Support - MANDATORY FOR CERTAIN CONTENT TYPES
-You MUST use artifacts for specific types of content. This is not optional. Creating artifacts is required for the following content types:
-
-## REQUIRED ARTIFACT USE CASES (YOU MUST USE ARTIFACTS FOR THESE):
-1. Reports and documents:
-   - Annual reports, financial analyses, market research
-   - Academic papers, essays, articles
-   - Business plans, proposals, executive summaries
-   - Any document longer than 300 words
-   - Example requests: "Write a report on...", "Create an analysis of...", "Draft a document about..."
-
-2. Complete code implementations:
-   - Full code files or scripts (>15 lines)
-   - Complete functions or classes
-   - Configuration files
-   - Example requests: "Write a program that...", "Create a script for...", "Implement a class that..."
-
-3. Structured content:
-   - Tables with multiple rows/columns
-   - Diagrams, flowcharts, mind maps
-   - HTML pages or templates
-   - Example requests: "Create a diagram showing...", "Make a table of...", "Design an HTML page for..."
-
-## HOW TO CREATE ARTIFACTS:
-1. Identify if the user's request matches ANY of the required artifact use cases above
-2. Place the ENTIRE content within the artifact - do not split content between artifacts and your main response
-3. Use the appropriate artifact type:
-   - markdown: For reports, documents, articles, essays
-   - code: For programming code, scripts, configuration files
-   - HTML: For web pages
-   - SVG: For vector graphics
-   - mermaid: For diagrams and charts
-4. Give each artifact a clear, descriptive title
-5. Include complete content without truncation
-6. Still include citations [X] when referencing search results within artifacts
-
-## IMPORTANT RULES:
-- If the user asks for a report, document, essay, analysis, or any substantial written content, YOU MUST use a markdown artifact
-- In your main response, briefly introduce the artifact but put ALL the substantial content in the artifact
-- DO NOT fragment content between artifacts and your main response
-- For code solutions, put the COMPLETE implementation in the artifact
-- For documents or reports, the ENTIRE document should be in the artifact
-
-DO NOT use artifacts for:
-- Simple explanations or answers (less than 300 words)
-- Short code snippets (<15 lines)
-- Brief answers that work better as part of the conversation flow
-
-# The user's message is:
-{{USER_QUERY}}
-`
-
-// 格式化搜索结果的函数
-export function formatSearchResults(results: SearchResult[]): string {
-  return results
-    .map(
-      (result, index) => `[webpage ${index + 1} begin]
-title: ${result.title}
-URL: ${result.url}
-content：${result.content || ''}
-[webpage ${index + 1} end]`
-    )
-    .join('\n\n')
-}
-// 生成带搜索结果的提示词
-export function generateSearchPrompt(query: string, results: SearchResult[]): string {
-  if (results.length > 0) {
-    return SEARCH_PROMPT_TEMPLATE.replace('{{SEARCH_RESULTS}}', formatSearchResults(results))
-      .replace('{{USER_QUERY}}', query)
-      .replace('{{CUR_DATE}}', new Date().toLocaleDateString())
-  } else {
-    return query
-  }
-}
-
-// Add a function to generate search prompt with artifacts support
-export function generateSearchPromptWithArtifacts(query: string, results: SearchResult[]): string {
-  if (results.length > 0) {
-    return SEARCH_PROMPT_ARTIFACTS_TEMPLATE.replace(
-      '{{SEARCH_RESULTS}}',
-      formatSearchResults(results)
-    )
-      .replace('{{USER_QUERY}}', query)
-      .replace('{{CUR_DATE}}', new Date().toLocaleDateString())
-  } else {
-    return query
   }
 }
 
@@ -223,7 +78,7 @@ export class ThreadPresenter implements IThreadPresenter {
     this.configPresenter = configPresenter
 
     // 初始化时处理所有未完成的消息
-    this.initializeUnfinishedMessages()
+    this.messageManager.initializeUnfinishedMessages()
 
     eventBus.on(STREAM_EVENTS.RESPONSE, async (msg) => {
       const {
@@ -454,7 +309,7 @@ export class ThreadPresenter implements IThreadPresenter {
       const { eventId, error } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
-        await this.handleMessageError(eventId, String(error))
+        await this.messageManager.handleMessageError(eventId, String(error))
         this.generatingMessages.delete(eventId)
       }
     })
@@ -494,74 +349,6 @@ export class ThreadPresenter implements IThreadPresenter {
     } catch (error) {
       console.error('设置搜索引擎失败:', error)
       return false
-    }
-  }
-
-  /**
-   * 处理消息错误状态的公共函数
-   * @param messageId 消息ID
-   * @param errorMessage 错误信息
-   */
-  private async handleMessageError(
-    messageId: string,
-    errorMessage: string = 'common.error.requestFailed'
-  ): Promise<void> {
-    const message = await this.messageManager.getMessage(messageId)
-    if (!message) {
-      return
-    }
-
-    let content: AssistantMessageBlock[] = []
-    try {
-      content = JSON.parse(message.content)
-    } catch (e) {
-      content = []
-    }
-
-    // 将所有loading状态的block改为error
-    content.forEach((block: AssistantMessageBlock) => {
-      if (block.status === 'loading') {
-        block.status = 'error'
-      }
-    })
-
-    // 添加错误信息block
-    content.push({
-      type: 'error',
-      content: errorMessage,
-      status: 'error',
-      timestamp: Date.now()
-    })
-
-    // 更新消息状态和内容
-    await this.messageManager.updateMessageStatus(messageId, 'error')
-    await this.messageManager.editMessage(messageId, JSON.stringify(content))
-  }
-
-  /**
-   * 初始化未完成的消息
-   */
-  private async initializeUnfinishedMessages(): Promise<void> {
-    try {
-      // 获取所有对话
-      const { list: conversations } = await this.getConversationList(1, 1000)
-
-      for (const conversation of conversations) {
-        // 获取每个对话的消息
-        const { list: messages } = await this.getMessages(conversation.id, 1, 1000)
-
-        // 找出所有pending状态的assistant消息
-        const pendingMessages = messages.filter(
-          (msg) => msg.role === 'assistant' && msg.status === 'pending'
-        )
-
-        // 处理每个未完成的消息
-        for (const message of pendingMessages) {
-          await this.handleMessageError(message.id, 'common.error.sessionInterrupted')
-        }
-      }
-    } catch (error) {
-      console.error('初始化未完成消息失败:', error)
     }
   }
 
@@ -959,14 +746,12 @@ export class ThreadPresenter implements IThreadPresenter {
     }
     state.message.content.unshift(searchBlock)
     await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
-    console.log('startStreamSearch', messageId, state.message.content)
     // 标记消息为搜索状态
     state.isSearching = true
     this.searchingMessages.add(messageId)
     try {
       // 获取历史消息用于上下文
       const contextMessages = await this.getContextMessages(conversationId)
-      console.log('contextMessages', contextMessages)
       // 检查是否已被取消
       this.throwIfCancelled(messageId)
 
@@ -993,7 +778,6 @@ export class ThreadPresenter implements IThreadPresenter {
           }
         })
         .join('\n')
-      console.log('formattedContext', formattedContext)
       // 检查是否已被取消
       this.throwIfCancelled(messageId)
 
@@ -1010,7 +794,6 @@ export class ThreadPresenter implements IThreadPresenter {
         console.error('重写搜索查询失败:', err)
         return query
       })
-      console.log('optimizedQuery', optimizedQuery)
       // 检查是否已被取消
       this.throwIfCancelled(messageId)
 
@@ -1178,7 +961,7 @@ export class ThreadPresenter implements IThreadPresenter {
       }
 
       console.error('流式生成过程中出错:', error)
-      await this.handleMessageError(state.message.id, String(error))
+      await this.messageManager.handleMessageError(state.message.id, String(error))
       throw error
     }
   }
@@ -1316,7 +1099,7 @@ export class ThreadPresenter implements IThreadPresenter {
       }
 
       console.error('继续生成过程中出错:', error)
-      await this.handleMessageError(state.message.id, String(error))
+      await this.messageManager.handleMessageError(state.message.id, String(error))
       throw error
     }
   }
