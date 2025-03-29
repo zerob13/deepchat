@@ -6,6 +6,7 @@ import { ChatMessage } from '../baseProvider'
 import { presenter } from '@/presenter'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { proxyConfig } from '../../proxyConfig'
+import { getModelConfig } from '../modelConfigs'
 // 定义Anthropic工具使用的接口
 interface AnthropicToolUse {
   id: string
@@ -44,7 +45,52 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   protected async fetchProviderModels(): Promise<MODEL_META[]> {
-    // Anthropic 目前没有提供获取模型列表的 API，所以我们手动定义支持的模型
+    try {
+      const models = await this.anthropic.models.list({
+        headers: {
+          'anthropic-version': '2023-06-01'
+        }
+      })
+      // 引入getModelConfig函数
+      if (models && models.data && Array.isArray(models.data)) {
+        const processedModels: MODEL_META[] = []
+
+        for (const model of models.data) {
+          // 确保模型有必要的属性
+          if (model.id) {
+            // 从modelConfigs获取额外的配置信息
+            const modelConfig = getModelConfig(model.id)
+
+            // 提取模型组名称，通常是Claude后面的版本号
+
+            processedModels.push({
+              id: model.id,
+              name: model.display_name || model.id,
+              providerId: this.provider.id,
+              maxTokens: modelConfig?.maxTokens || 200000,
+              group: 'Claude',
+              isCustom: false,
+              contextLength: modelConfig?.contextLength || 200000,
+              vision: modelConfig?.vision || false,
+              functionCall: modelConfig?.functionCall || false,
+              reasoning: modelConfig?.reasoning || false
+            })
+          }
+        }
+
+        // 如果成功解析出模型，则返回
+        if (processedModels.length > 0) {
+          return processedModels
+        }
+      }
+
+      // 如果API请求失败或返回数据解析失败，返回默认模型列表
+      console.log('从API获取模型列表失败，使用默认模型配置')
+    } catch (error) {
+      console.error('获取Anthropic模型列表出错:', error)
+    }
+
+    // 默认的模型列表（如API调用失败或数据格式不正确）
     return [
       {
         id: 'claude-3-7-sonnet-20250219',
