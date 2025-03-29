@@ -481,7 +481,11 @@ ${context}
           messages: formattedMessagesObject.messages,
           stream: true
         } as Anthropic.Messages.MessageCreateParamsStreaming
-
+        // Claude 3.7 添加思考功能
+        if (modelId.includes('claude-3-7')) {
+          streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
+          streamParams.temperature = 1
+        }
         // 如果有系统消息，添加到请求参数中
         if (formattedMessagesObject.system) {
           // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
@@ -493,11 +497,6 @@ ${context}
           // @ts-ignore - 类型不匹配，但格式是正确的
           streamParams.tools = anthropicTools
         }
-
-        // Claude 3.7 添加思考功能
-        // if (modelId.includes('claude-3-7')) {
-        //   streamParams.thinking = { budget_tokens: 1024, type: 'enabled' }
-        // }
 
         // 收集工具调用
         const toolCalls: Array<{
