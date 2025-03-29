@@ -894,7 +894,7 @@ export class ThreadPresenter implements IThreadPresenter {
     if (!conversation) {
       return query
     }
-    // console.log('rewriteUserSearchQuery', query, contextMessages, conversation.id)
+    console.log('rewriteUserSearchQuery', query, contextMessages, conversation.id)
     const { providerId, modelId } = conversation.settings
     try {
       const rewrittenQuery = await this.llmProviderPresenter.generateCompletion(
@@ -907,7 +907,6 @@ export class ThreadPresenter implements IThreadPresenter {
         ],
         this.searchAssistantModel?.id || modelId
       )
-      console.log('rewriteUserSearchQuery', rewrittenQuery)
       return rewrittenQuery.trim() || query
     } catch (error) {
       console.error('重写搜索查询失败:', error)
@@ -960,15 +959,14 @@ export class ThreadPresenter implements IThreadPresenter {
     }
     state.message.content.unshift(searchBlock)
     await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
-
+    console.log('startStreamSearch', messageId, state.message.content)
     // 标记消息为搜索状态
     state.isSearching = true
     this.searchingMessages.add(messageId)
-
     try {
       // 获取历史消息用于上下文
       const contextMessages = await this.getContextMessages(conversationId)
-
+      console.log('contextMessages', contextMessages)
       // 检查是否已被取消
       this.throwIfCancelled(messageId)
 
@@ -977,27 +975,42 @@ export class ThreadPresenter implements IThreadPresenter {
           if (msg.role === 'user') {
             return `user: ${msg.content.text}${getFileContext(msg.content.files)}`
           } else if (msg.role === 'assistant') {
-            return `assistant: ${msg.content.blocks.map((block) => block.content).join('')}`
+            let finanContent = 'assistant: '
+            msg.content.forEach((block) => {
+              if (block.type === 'content') {
+                finanContent += block.content + '\n'
+              }
+              if (block.type === 'search') {
+                finanContent += `search-result: ${JSON.stringify(block.extra)}`
+              }
+              if (block.type === 'tool_call') {
+                finanContent += `tool_call: ${JSON.stringify(block.tool_call)}`
+              }
+            })
+            return finanContent
           } else {
             return JSON.stringify(msg.content)
           }
         })
         .join('\n')
-
+      console.log('formattedContext', formattedContext)
       // 检查是否已被取消
       this.throwIfCancelled(messageId)
 
       searchBlock.status = 'optimizing'
       await this.messageManager.editMessage(messageId, JSON.stringify(state.message.content))
-
+      console.log('optimizing')
       // 重写搜索查询
       const optimizedQuery = await this.rewriteUserSearchQuery(
         query,
         formattedContext,
         conversationId,
         this.searchManager.getActiveEngine().name
-      )
-
+      ).catch((err) => {
+        console.error('重写搜索查询失败:', err)
+        return query
+      })
+      console.log('optimizedQuery', optimizedQuery)
       // 检查是否已被取消
       this.throwIfCancelled(messageId)
 

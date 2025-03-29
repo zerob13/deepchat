@@ -5,7 +5,6 @@ import {
   GenerativeModel,
   Part,
   Content,
-  GenerateContentRequest,
   GenerationConfig
 } from '@google/generative-ai'
 import { ConfigPresenter } from '../../configPresenter'
@@ -400,28 +399,85 @@ export class GeminiProvider extends BaseLLMProvider {
     temperature?: number,
     maxTokens?: number
   ): Promise<LLMResponse> {
-    if (!this.isInitialized) {
-      throw new Error('Provider not initialized')
-    }
-
-    if (!modelId) {
-      throw new Error('Model ID is required')
-    }
-
     try {
-      // 每次创建新的模型实例，并传入生成配置
-      const model = this.getModel(modelId, temperature, maxTokens)
-      const formattedParts = this.formatGeminiMessages(messages)
-      const generateContentParams = {
-        contents: formattedParts.contents
-      } as GenerateContentRequest
-      if (formattedParts.systemInstruction) {
-        generateContentParams.systemInstruction = formattedParts.systemInstruction
+      if (!this.genAI) {
+        throw new Error('Google Generative AI client is not initialized')
       }
-      const result = await model.generateContent(generateContentParams)
-      const text = result.response.text()
 
-      return this.processResponse(text)
+      const model = this.getModel(modelId, temperature, maxTokens)
+      const { systemInstruction, contents } = this.formatGeminiMessages(messages)
+
+      // 创建基本请求参数
+      const generationConfig: GenerationConfig = {
+        temperature: temperature || 0.7,
+        maxOutputTokens: maxTokens
+      }
+
+      // 执行请求
+      const result = await model.generateContent({
+        contents,
+        generationConfig,
+        systemInstruction
+      })
+
+      const response = result.response
+
+      const resultResp: LLMResponse = {
+        content: ''
+      }
+
+      // 尝试获取tokens信息 - Gemini API可能不提供标准的token计数
+      // 我们使用一个估算方法
+      try {
+        // 估算token数量 - 简单方法，可以根据实际需要调整
+        const promptText = messages.map((m) => m.content).join(' ')
+        const responseText = response.text()
+
+        // 简单估算: 英文约1个token/4个字符，中文约1个token/1.5个字符
+        const estimateTokens = (text: string): number => {
+          const chineseCharCount = (text.match(/[\u4e00-\u9fa5]/g) || []).length
+          const otherCharCount = text.length - chineseCharCount
+          return Math.ceil(chineseCharCount / 1.5 + otherCharCount / 4)
+        }
+
+        const promptTokens = estimateTokens(promptText)
+        const completionTokens = estimateTokens(responseText)
+
+        resultResp.totalUsage = {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens
+        }
+      } catch (e) {
+        console.warn('Failed to estimate token count for Gemini response', e)
+      }
+
+      // 获取文本响应
+      const text = response.text()
+
+      // 处理<think>标签
+      if (text.includes('<think>')) {
+        const thinkStart = text.indexOf('<think>')
+        const thinkEnd = text.indexOf('</think>')
+
+        if (thinkEnd > thinkStart) {
+          // 提取reasoning_content
+          resultResp.reasoning_content = text.substring(thinkStart + 7, thinkEnd).trim()
+
+          // 合并<think>前后的普通内容
+          const beforeThink = text.substring(0, thinkStart).trim()
+          const afterThink = text.substring(thinkEnd + 8).trim()
+          resultResp.content = [beforeThink, afterThink].filter(Boolean).join('\n')
+        } else {
+          // 如果没有找到配对的结束标签，将所有内容作为普通内容
+          resultResp.content = text
+        }
+      } else {
+        // 没有think标签，所有内容作为普通内容
+        resultResp.content = text
+      }
+
+      return resultResp
     } catch (error) {
       console.error('Gemini completions error:', error)
       throw error

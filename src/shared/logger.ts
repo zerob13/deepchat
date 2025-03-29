@@ -56,18 +56,12 @@ function hookConsole() {
     if (loggingEnabled || is.dev) {
       logger.info(...args)
     }
-    if (is.dev) {
-      originalConsole.log(...args)
-    }
   }
 
   console.error = (...args: any[]) => {
     // 只有在启用日志或开发模式下才记录日志
     if (loggingEnabled || is.dev) {
       logger.error(...args)
-    }
-    if (is.dev) {
-      originalConsole.error(...args)
     }
   }
 
@@ -76,18 +70,12 @@ function hookConsole() {
     if (loggingEnabled || is.dev) {
       logger.warn(...args)
     }
-    if (is.dev) {
-      originalConsole.warn(...args)
-    }
   }
 
   console.info = (...args: any[]) => {
     // 只有在启用日志或开发模式下才记录日志
     if (loggingEnabled || is.dev) {
       logger.info(...args)
-    }
-    if (is.dev) {
-      originalConsole.info(...args)
     }
   }
 
@@ -96,18 +84,12 @@ function hookConsole() {
     if (loggingEnabled || is.dev) {
       logger.debug(...args)
     }
-    if (is.dev) {
-      originalConsole.debug(...args)
-    }
   }
 
   console.trace = (...args: any[]) => {
     // 只有在启用日志或开发模式下才记录日志
     if (loggingEnabled || is.dev) {
       logger.debug(...args)
-    }
-    if (is.dev) {
-      originalConsole.trace(...args)
     }
   }
 

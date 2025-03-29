@@ -267,16 +267,11 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
     maxTokens?: number
   ): Promise<LLMResponse> {
     try {
+      if (!this.anthropic) {
+        throw new Error('Anthropic client is not initialized')
+      }
+
       const formattedMessages = this.formatMessages(messages)
-
-      // 获取MCP工具定义
-      const mcpTools = await presenter.mcpPresenter.getAllToolDefinitions()
-
-      // 将MCP工具转换为Anthropic工具格式
-      const anthropicTools =
-        mcpTools.length > 0
-          ? await presenter.mcpPresenter.mcpToolsToAnthropicTools(mcpTools, this.provider.id)
-          : undefined
 
       // 创建基本请求参数
       const requestParams: Anthropic.Messages.MessageCreateParams = {
@@ -292,91 +287,51 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
         requestParams.system = formattedMessages.system
       }
 
-      // 如果有可用工具，添加到请求中 (使用类型断言处理类型不匹配问题)
-      if (anthropicTools && anthropicTools.length > 0) {
-        // @ts-ignore - 类型不匹配，但格式是正确的
-        requestParams.tools = anthropicTools
-      }
-
+      // 执行请求
       const response = await this.anthropic.messages.create(requestParams)
 
-      // 检查是否包含工具使用
-      // @ts-ignore - Anthropic SDK 类型定义中没有包含 tool_uses 字段，但接口响应中可能存在
-      const toolUse = response.tool_uses?.[0] as AnthropicToolUse | undefined
+      const resultResp: LLMResponse = {
+        content: ''
+      }
 
-      if (toolUse) {
-        // 将Anthropic工具调用转换为MCP工具调用
-        const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
-          { name: toolUse.name, input: toolUse.input },
-          this.provider.id
-        )
-
-        if (mcpToolCall) {
-          // 调用工具并获取响应
-          const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
-
-          // 获取助手的初始响应文本
-          const initialResponseText = response.content
-            .filter((block) => block.type === 'text')
-            .map((block) => (block.type === 'text' ? block.text : ''))
-            .join('')
-
-          // 添加工具响应到消息中
-          formattedMessages.messages.push({
-            role: 'assistant',
-            content: [{ type: 'text', text: initialResponseText }]
-          })
-
-          formattedMessages.messages.push({
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Tool response: ${typeof toolResponse.content === 'string' ? toolResponse.content : JSON.stringify(toolResponse.content)}`
-              }
-            ]
-          })
-
-          // 继续对话
-          const finalParams = {
-            model: modelId,
-            max_tokens: maxTokens || 1024,
-            temperature: temperature || 0.7,
-            messages: formattedMessages.messages
-          }
-
-          // 如果有系统消息，添加到请求参数中
-          if (formattedMessages.system) {
-            // @ts-ignore - system 属性在类型定义中可能不存在，但API已支持
-            finalParams.system = formattedMessages.system
-          }
-
-          // 如果有可用工具，添加到请求中 (使用类型断言处理类型不匹配问题)
-          if (anthropicTools && anthropicTools.length > 0) {
-            // @ts-ignore - 类型不匹配，但格式是正确的
-            finalParams.tools = anthropicTools
-          }
-
-          const finalResponse = await this.anthropic.messages.create(finalParams)
-
-          return {
-            content: finalResponse.content
-              .filter((block) => block.type === 'text')
-              .map((block) => (block.type === 'text' ? block.text : ''))
-              .join(''),
-            reasoning_content: undefined
-          }
+      // 添加usage信息
+      if (response.usage) {
+        resultResp.totalUsage = {
+          prompt_tokens: response.usage.input_tokens,
+          completion_tokens: response.usage.output_tokens,
+          total_tokens: response.usage.input_tokens + response.usage.output_tokens
         }
       }
 
-      // 常规响应处理
-      return {
-        content: response.content
-          .filter((block) => block.type === 'text')
-          .map((block) => (block.type === 'text' ? block.text : ''))
-          .join(''),
-        reasoning_content: undefined
+      // 获取文本内容
+      const content = response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+
+      // 处理<think>标签
+      if (content.includes('<think>')) {
+        const thinkStart = content.indexOf('<think>')
+        const thinkEnd = content.indexOf('</think>')
+
+        if (thinkEnd > thinkStart) {
+          // 提取reasoning_content
+          resultResp.reasoning_content = content.substring(thinkStart + 7, thinkEnd).trim()
+
+          // 合并<think>前后的普通内容
+          const beforeThink = content.substring(0, thinkStart).trim()
+          const afterThink = content.substring(thinkEnd + 8).trim()
+          resultResp.content = [beforeThink, afterThink].filter(Boolean).join('\n')
+        } else {
+          // 如果没有找到配对的结束标签，将所有内容作为普通内容
+          resultResp.content = content
+        }
+      } else {
+        // 没有think标签，所有内容作为普通内容
+        resultResp.content = content
       }
+
+      return resultResp
     } catch (error) {
       console.error('Anthropic completions error:', error)
       throw error

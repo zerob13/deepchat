@@ -118,16 +118,16 @@ export const useSettingsStore = defineStore('settings', () => {
     savedModel = toRaw(savedModel)
     if (savedModel) {
       // 检查保存的模型是否仍然可用
-      const provider = enabledModels.value.find((p) => p.providerId === savedModel.providerId)
-      const modelExists = provider?.models.some((m) => m.id === savedModel.model.id)
+      // const provider = enabledModels.value.find((p) => p.providerId === savedModel.providerId)
+      // const modelExists = provider?.models.some((m) => m.id === savedModel.model.id)
 
-      if (modelExists) {
-        searchAssistantModelRef.value = savedModel.model
-        searchAssistantProviderRef.value = savedModel.providerId
-        // 通知线程处理器更新搜索助手模型
-        threadP.setSearchAssistantModel(savedModel.model, savedModel.providerId)
-        return
-      }
+      // if (modelExists) {
+      searchAssistantModelRef.value = savedModel.model
+      searchAssistantProviderRef.value = savedModel.providerId
+      // 通知线程处理器更新搜索助手模型
+      threadP.setSearchAssistantModel(savedModel.model, savedModel.providerId)
+      return
+      // }
     }
 
     // 如果没有保存的模型或模型不再可用，查找符合优先级的模型
@@ -226,9 +226,6 @@ export const useSettingsStore = defineStore('settings', () => {
       // 获取全部模型
       await refreshAllModels()
 
-      // 初始化搜索助手模型
-      await initOrUpdateSearchAssistantModel()
-
       // 设置 Ollama 事件监听器
       setupOllamaEventListeners()
 
@@ -242,7 +239,8 @@ export const useSettingsStore = defineStore('settings', () => {
       if (providers.value.some((p) => p.id === 'ollama')) {
         await refreshOllamaModels()
       }
-
+      // 初始化搜索助手模型
+      await initOrUpdateSearchAssistantModel()
       // 设置事件监听
       setupProviderListener()
       setupUpdateListener()

@@ -47,7 +47,7 @@ const defaultEngines: SearchEngineTemplate[] = [
     searchUrl: 'https://www.google.com/search?q={query}',
     extractorScript: `
       const results = []
-      const items = document.querySelectorAll('#search .g')
+      const items = document.querySelectorAll('#search .MjjYud')
       items.forEach((item, index) => {
         const titleEl = item.querySelector('h3')
         const linkEl = item.querySelector('a')

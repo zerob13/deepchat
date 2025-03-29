@@ -144,10 +144,43 @@ export class OllamaProvider extends BaseLLMProvider {
         }
       })
 
-      return {
-        content: response.message.content,
-        reasoning_content: undefined
+      const resultResp: LLMResponse = {
+        content: ''
       }
+
+      // Ollama可能不提供完整的token计数
+      if (response.prompt_eval_count !== undefined || response.eval_count !== undefined) {
+        resultResp.totalUsage = {
+          prompt_tokens: response.prompt_eval_count || 0,
+          completion_tokens: response.eval_count || 0,
+          total_tokens: (response.prompt_eval_count || 0) + (response.eval_count || 0)
+        }
+      }
+
+      // 处理<think>标签
+      const content = response.message?.content || ''
+      if (content.includes('<think>')) {
+        const thinkStart = content.indexOf('<think>')
+        const thinkEnd = content.indexOf('</think>')
+
+        if (thinkEnd > thinkStart) {
+          // 提取reasoning_content
+          resultResp.reasoning_content = content.substring(thinkStart + 7, thinkEnd).trim()
+
+          // 合并<think>前后的普通内容
+          const beforeThink = content.substring(0, thinkStart).trim()
+          const afterThink = content.substring(thinkEnd + 8).trim()
+          resultResp.content = [beforeThink, afterThink].filter(Boolean).join('\n')
+        } else {
+          // 如果没有找到配对的结束标签，将所有内容作为普通内容
+          resultResp.content = content
+        }
+      } else {
+        // 没有think标签，所有内容作为普通内容
+        resultResp.content = content
+      }
+
+      return resultResp
     } catch (error) {
       console.error('Ollama completions failed:', error)
       throw error
@@ -264,6 +297,13 @@ export class OllamaProvider extends BaseLLMProvider {
       let toolCallCount = 0
       const MAX_TOOL_CALLS = BaseLLMProvider.MAX_TOOL_CALLS // 最大工具调用次数限制
 
+      // 初始化 usage 统计
+      const totalUsage = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
+
       // 启动初始流
       let stream = await this.ollama.chat({
         model: modelId,
@@ -306,8 +346,29 @@ export class OllamaProvider extends BaseLLMProvider {
       }> = []
 
       while (true) {
+        // 当前对话回合的usage计数
+        const currentUsage = {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0
+        }
+
         for await (const chunk of stream) {
           const choice = chunk.message
+
+          // 更新usage统计（估算，因为Ollama可能不提供完整的token计数）
+          if (chunk.eval_count) {
+            // 如果Ollama提供了eval_count（完成的token数量）
+            currentUsage.completion_tokens = chunk.eval_count
+            currentUsage.total_tokens = chunk.eval_count + currentUsage.prompt_tokens
+          }
+
+          if (chunk.prompt_eval_count) {
+            // 如果Ollama提供了prompt_eval_count（提示的token数量）
+            currentUsage.prompt_tokens = chunk.prompt_eval_count
+            currentUsage.total_tokens = chunk.prompt_eval_count + currentUsage.completion_tokens
+          }
+
           // 处理工具调用
           if (choice?.tool_calls && choice.tool_calls.length > 0) {
             // 初始化tool_calls数组（如果尚未初始化）
@@ -579,6 +640,11 @@ export class OllamaProvider extends BaseLLMProvider {
           }
         }
 
+        // 累加当前对话回合的usage到总usage
+        totalUsage.prompt_tokens += currentUsage.prompt_tokens
+        totalUsage.completion_tokens += currentUsage.completion_tokens
+        totalUsage.total_tokens += currentUsage.total_tokens
+
         // 如果达到最大工具调用次数，则跳出循环
         if (toolCallCount >= MAX_TOOL_CALLS) {
           break
@@ -619,6 +685,11 @@ export class OllamaProvider extends BaseLLMProvider {
             content: buffer
           }
         }
+      }
+
+      // 最后输出总usage统计
+      yield {
+        totalUsage: totalUsage
       }
     } catch (error) {
       console.error('Ollama stream completions failed:', error)
