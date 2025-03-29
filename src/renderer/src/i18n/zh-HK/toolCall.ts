@@ -6,5 +6,7 @@ export default {
   title: '工具調用',
   clickToView: '點擊查看詳情',
   functionName: '函數名稱',
-  permission: '請求權限中'
+  permission: '請求權限中',
+  params: '函數參數',
+  responseData: '函數響應'
 }

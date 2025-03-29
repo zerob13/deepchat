@@ -37,6 +37,18 @@
             :message-id="message.id"
             :block="block"
           />
+          <MessageBlockToolCall
+            v-else-if="block.type === 'tool_call'"
+            :block="block"
+            :message-id="message.id"
+            :thread-id="currentThreadId"
+          />
+          <MessageBlockAction
+            v-else-if="block.type === 'action'"
+            :message-id="message.id"
+            :conversation-id="currentThreadId"
+            :block="block"
+          />
           <MessageBlockError v-else-if="block.type === 'error'" :block="block" />
         </div>
       </div>
@@ -63,6 +75,7 @@ import { AssistantMessage } from '@shared/chat'
 import MessageBlockContent from './MessageBlockContent.vue'
 import MessageBlockThink from './MessageBlockThink.vue'
 import MessageBlockSearch from './MessageBlockSearch.vue'
+import MessageBlockToolCall from './MessageBlockToolCall.vue'
 import MessageBlockError from './MessageBlockError.vue'
 import MessageToolbar from './MessageToolbar.vue'
 import MessageInfo from './MessageInfo.vue'
@@ -71,7 +84,7 @@ import ModelIcon from '@/components/icons/ModelIcon.vue'
 import { Icon } from '@iconify/vue'
 import { toBlob } from 'html-to-image'
 import { useDark } from '@vueuse/core'
-
+import MessageBlockAction from './MessageBlockAction.vue'
 const props = defineProps<{
   message: AssistantMessage
 }>()

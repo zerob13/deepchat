@@ -6,7 +6,9 @@ const toolCall = {
   title: 'ツール呼び出し',
   clickToView: '詳細を表示するにはクリック',
   functionName: '関数名',
-  permission: '権限リクエスト中'
+  permission: '権限リクエスト中',
+  params: '関数パラメータ',
+  responseData: '応答データ'
 }
 
 export default toolCall

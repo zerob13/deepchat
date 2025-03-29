@@ -53,7 +53,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.7',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: true
       },
       {
         id: 'claude-3-5-sonnet-20241022',
@@ -62,7 +65,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-5-haiku-20241022',
@@ -71,7 +77,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-5-sonnet-20240620',
@@ -80,7 +89,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3.5',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-opus-20240229',
@@ -89,7 +101,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       },
       {
         id: 'claude-3-haiku-20240307',
@@ -98,7 +113,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         maxTokens: 200000,
         group: 'Claude 3',
         isCustom: false,
-        contextLength: 200000
+        contextLength: 200000,
+        vision: true,
+        functionCall: true,
+        reasoning: false
       }
     ]
   }
@@ -243,7 +261,6 @@ ${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}
       if (toolUse) {
         // 将Anthropic工具调用转换为MCP工具调用
         const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
-          mcpTools,
           { name: toolUse.name, input: toolUse.input },
           this.provider.id
         )
@@ -599,33 +616,41 @@ ${context}
                 for (const toolCall of toolCalls) {
                   if (!toolCall.name) continue
 
-                  // 增加工具调用计数
-                  toolCallCount++
-
-                  // 检查是否达到最大工具调用次数
-                  if (toolCallCount >= MAX_TOOL_CALLS) {
-                    yield {
-                      content: `\n<maximum_tool_calls_reached count="${MAX_TOOL_CALLS}">\n`,
-                      reasoning_content: undefined
-                    }
-                    needContinueConversation = false
-                    break
-                  }
-
                   // 将Anthropic工具使用转换为MCP工具调用
                   console.log('执行工具调用:', toolCall)
 
                   const mcpToolCall = await presenter.mcpPresenter.anthropicToolUseToMcpTool(
-                    mcpTools,
                     { name: toolCall.name, input: toolCall.input },
                     this.provider.id
                   )
 
                   if (mcpToolCall) {
+                    // 增加工具调用计数
+                    toolCallCount++
+
+                    // 检查是否达到最大工具调用次数
+                    if (toolCallCount >= MAX_TOOL_CALLS) {
+                      yield {
+                        maximum_tool_calls_reached: true,
+                        tool_call_id: mcpToolCall.id,
+                        tool_call_name: mcpToolCall.function.name,
+                        tool_call_params: mcpToolCall.function.arguments,
+                        tool_call_server_name: mcpToolCall.server.name,
+                        tool_call_server_icons: mcpToolCall.server.icons,
+                        tool_call_server_description: mcpToolCall.server.description
+                      }
+                      needContinueConversation = false
+                      break
+                    }
                     yield {
-                      content: `\n<tool_call name="${toolCall.name}">\n`,
-                      reasoning_content: undefined,
-                      tool_calling_content: toolCall.name
+                      content: '',
+                      tool_call: 'start',
+                      tool_call_name: toolCall.name,
+                      tool_call_params: JSON.stringify(toolCall.input),
+                      tool_call_id: `anthropic-${toolCall.id}`,
+                      tool_call_server_name: mcpToolCall.server.name,
+                      tool_call_server_icons: mcpToolCall.server.icons,
+                      tool_call_server_description: mcpToolCall.server.description
                     }
 
                     try {
@@ -635,12 +660,6 @@ ${context}
                         typeof toolResponse.content === 'string'
                           ? toolResponse.content
                           : JSON.stringify(toolResponse.content)
-
-                      yield {
-                        content: `\n<tool_response name="${toolCall.name}">\n`,
-                        reasoning_content: undefined,
-                        tool_calling_content: toolCall.name
-                      }
 
                       // 添加工具结果到消息列表
                       formattedMessagesObject.messages.push({
@@ -654,17 +673,30 @@ ${context}
                       })
 
                       yield {
-                        content: `\n<tool_call_end name="${toolCall.name}">\n`,
-                        reasoning_content: undefined
+                        content: '',
+                        tool_call: 'end',
+                        tool_call_name: toolCall.name,
+                        tool_call_params: JSON.stringify(toolCall.input),
+                        tool_call_response: responseContent,
+                        tool_call_id: `anthropic-${toolCall.id}`,
+                        tool_call_server_name: mcpToolCall.server.name,
+                        tool_call_server_icons: mcpToolCall.server.icons,
+                        tool_call_server_description: mcpToolCall.server.description
                       }
                     } catch (error) {
                       console.error('工具调用失败:', error)
                       const errorMessage = error instanceof Error ? error.message : String(error)
 
                       yield {
-                        content: `\n<tool_call_error name="${toolCall.name}" error="${errorMessage}">\n`,
-                        reasoning_content: undefined,
-                        tool_calling_content: toolCall.name
+                        content: '',
+                        tool_call: 'error',
+                        tool_call_name: toolCall.name,
+                        tool_call_params: JSON.stringify(toolCall.input),
+                        tool_call_response: errorMessage,
+                        tool_call_id: `anthropic-${toolCall.id}`,
+                        tool_call_server_name: mcpToolCall.server.name,
+                        tool_call_server_icons: mcpToolCall.server.icons,
+                        tool_call_server_description: mcpToolCall.server.description
                       }
 
                       // 添加错误响应到消息中

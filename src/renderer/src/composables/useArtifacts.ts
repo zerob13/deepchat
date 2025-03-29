@@ -196,6 +196,20 @@ export const useBlockContent = (props: {
       } | null = null
 
       for (const pattern of tagPatterns) {
+        // 如果消息正在生成中且是toolcall相关标签，则跳过检测
+        if (
+          props.block.status === 'loading' &&
+          [
+            'tool_call',
+            'tool_response',
+            'tool_call_end',
+            'tool_call_error',
+            'maximum_tool_calls_reached'
+          ].includes(pattern.name)
+        ) {
+          continue
+        }
+
         // 避免lastIndex问题，每次创建新的正则表达式
         const regex = new RegExp(pattern.regex)
         const match = regex.exec(content.substring(currentPosition))

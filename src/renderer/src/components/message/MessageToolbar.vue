@@ -2,7 +2,7 @@
   <div
     class="text-xs text-secondary-foreground items-start justify-between flex flex-row opacity-0 group-hover:opacity-100 transition-opacity"
   >
-    <span v-show="!loading" class="flex flex-row gap-2">
+    <span v-show="!loading" class="flex flex-row gap-3">
       <!-- Edit mode buttons (save/cancel) -->
       <template v-if="isEditMode">
         <Button
@@ -22,7 +22,7 @@
           <Icon icon="lucide:x" class="w-4 h-4" />
         </Button>
       </template>
-      
+
       <!-- Normal mode buttons -->
       <template v-else>
         <Button
@@ -35,7 +35,8 @@
           <Icon icon="lucide:chevron-left" class="w-4 h-4" />
         </Button>
         <span v-show="isAssistant && hasVariants">
-          {{ currentVariantIndex !== undefined ? currentVariantIndex + 1 : 1 }} / {{ totalVariants }}
+          {{ currentVariantIndex !== undefined ? currentVariantIndex + 1 : 1 }} /
+          {{ totalVariants }}
         </span>
         <Button
           v-show="isAssistant && hasVariants"
