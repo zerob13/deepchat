@@ -579,9 +579,22 @@ export class GeminiProvider extends BaseLLMProvider {
 
       // 每次创建新的模型实例，并传入生成配置
       const model = this.getModel(modelId, temperature, maxTokens)
-
+      const totalUsage: {
+        prompt_tokens: number
+        completion_tokens: number
+        total_tokens: number
+      } = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
       // 主循环，支持多轮工具调用
       while (true) {
+        const currentUsage = {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0
+        }
         const formattedParts = this.formatGeminiMessages(conversationMessages)
 
         // 创建流式生成请求
@@ -619,8 +632,12 @@ export class GeminiProvider extends BaseLLMProvider {
 
         // 重置继续对话标志
         needContinueConversation = false
-
         for await (const chunk of result.stream) {
+          if (chunk.usageMetadata) {
+            currentUsage.prompt_tokens = chunk.usageMetadata.promptTokenCount
+            currentUsage.completion_tokens = chunk.usageMetadata.candidatesTokenCount
+            currentUsage.total_tokens = chunk.usageMetadata.totalTokenCount
+          }
           // console.log('gchunk', chunk)
           // 检查是否包含函数调用
           // @ts-ignore - SDK类型定义不完整
@@ -711,6 +728,9 @@ export class GeminiProvider extends BaseLLMProvider {
             content
           }
         }
+        totalUsage.prompt_tokens += currentUsage.prompt_tokens
+        totalUsage.completion_tokens += currentUsage.completion_tokens
+        totalUsage.total_tokens += currentUsage.total_tokens
 
         // 处理函数调用
         if (functionCallDetected && functionName) {
@@ -838,6 +858,9 @@ export class GeminiProvider extends BaseLLMProvider {
         if (!needContinueConversation || toolCallCount >= MAX_TOOL_CALLS) {
           break
         }
+      }
+      yield {
+        totalUsage: totalUsage
       }
     } catch (error) {
       console.error('Gemini stream completions error:', error)

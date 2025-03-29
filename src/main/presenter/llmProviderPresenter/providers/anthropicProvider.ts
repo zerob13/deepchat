@@ -462,7 +462,15 @@ ${context}
 
       // 存储思考内容
       let totalReasoningContent = ''
-
+      const totalUsage: {
+        prompt_tokens: number
+        completion_tokens: number
+        total_tokens: number
+      } = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
       // 主循环，支持多轮工具调用
       while (true) {
         // 创建流参数
@@ -512,14 +520,26 @@ ${context}
 
         // 创建Anthropic流
         const stream = await this.anthropic.messages.create(streamParams)
-
+        const currentUsage: {
+          prompt_tokens: number
+          completion_tokens: number
+          total_tokens: number
+        } = {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0
+        }
         // 处理流中的各种事件
         for await (const chunk of stream) {
-          console.log('chunk', chunk)
-
           // 处理消息开始
           if (chunk.type === 'message_start') {
             // 可以记录消息ID等信息，如果需要的话
+            if (chunk.message.usage) {
+              currentUsage.completion_tokens = chunk.message.usage.output_tokens
+              currentUsage.prompt_tokens = chunk.message.usage.input_tokens
+              currentUsage.total_tokens =
+                chunk.message.usage.input_tokens + chunk.message.usage.output_tokens
+            }
             continue
           }
 
@@ -599,6 +619,9 @@ ${context}
 
           // 处理消息状态更新
           if (chunk.type === 'message_delta') {
+            if (chunk.usage) {
+              currentUsage.completion_tokens = chunk.usage.output_tokens
+            }
             // 检查是否因为工具调用而停止
             if (chunk.delta?.stop_reason === 'tool_use') {
               // 工具调用导致停止，需要处理工具调用
@@ -795,7 +818,9 @@ ${context}
             }
           }
         }
-
+        totalUsage.prompt_tokens += currentUsage.prompt_tokens
+        totalUsage.completion_tokens += currentUsage.completion_tokens
+        totalUsage.total_tokens += currentUsage.total_tokens
         // 累积总的思考内容
         if (currentReasoningContent) {
           totalReasoningContent += currentReasoningContent
@@ -805,6 +830,9 @@ ${context}
         if (!needContinueConversation || toolCallCount >= MAX_TOOL_CALLS) {
           break
         }
+      }
+      yield {
+        totalUsage: totalUsage
       }
 
       // 输出累积的思考内容（如果有）

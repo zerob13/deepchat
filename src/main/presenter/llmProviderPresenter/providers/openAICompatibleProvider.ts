@@ -237,9 +237,31 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       index: number
     }> = []
 
+    const totalUsage:
+      | {
+          prompt_tokens: number
+          completion_tokens: number
+          total_tokens: number
+        }
+      | undefined = {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0
+    }
+
     while (true) {
+      const currentUsage = {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
       for await (const chunk of stream) {
         const choice = chunk.choices[0]
+        if (chunk.usage) {
+          currentUsage.prompt_tokens = chunk.usage.prompt_tokens
+          currentUsage.completion_tokens = chunk.usage.completion_tokens
+          currentUsage.total_tokens = chunk.usage.total_tokens
+        }
         // 原生支持function call的模型处理
         if (
           supportsFunctionCall &&
@@ -420,6 +442,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           buffer = ''
         }
       }
+      totalUsage.prompt_tokens += currentUsage.prompt_tokens
+      totalUsage.completion_tokens += currentUsage.completion_tokens
+      totalUsage.total_tokens += currentUsage.total_tokens
 
       // 如果达到最大工具调用次数，则跳出循环
       if (toolCallCount >= MAX_TOOL_CALLS) {
@@ -497,7 +522,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             }
             // 调用工具
             const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
-            console.log('toolCallResponse', toolCallResponse)
+            // console.log('toolCallResponse', toolCallResponse)
             yield {
               content: '',
               tool_call: 'end',
@@ -608,6 +633,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         content: functionCallBuffer.startsWith('<') ? functionCallBuffer : `<${functionCallBuffer}`
       }
     }
+    yield {
+      totalUsage: totalUsage
+    }
   }
 
   // 处理原生function call的chunk
@@ -636,7 +664,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!pendingToolCalls) {
       pendingToolCalls = []
     }
-    console.log('toolCallDelta', pendingToolCalls, choice.delta?.tool_calls)
+    // console.log('toolCallDelta', pendingToolCalls, choice.delta?.tool_calls)
 
     // 更新工具调用
     if (choice.delta?.tool_calls) {

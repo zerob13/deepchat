@@ -52,6 +52,11 @@ interface GeneratingMessageState {
   lastReasoningTime: number | null
   isSearching?: boolean
   isCancelled?: boolean
+  totalUsage?: {
+    prompt_tokens: number
+    completion_tokens: number
+    total_tokens: number
+  }
 }
 const SEARCH_PROMPT_TEMPLATE = `
 # The following content is based on the search results from the user's message:
@@ -233,7 +238,8 @@ export class ThreadPresenter implements IThreadPresenter {
         tool_call_server_name,
         tool_call_server_icons,
         tool_call_server_description,
-        tool_call
+        tool_call,
+        totalUsage
       } = msg
       const state = this.generatingMessages.get(eventId)
       if (state) {
@@ -243,6 +249,10 @@ export class ThreadPresenter implements IThreadPresenter {
           await this.messageManager.updateMessageMetadata(eventId, {
             firstTokenTime: Date.now() - state.startTime
           })
+        }
+        if (totalUsage) {
+          state.totalUsage = totalUsage
+          state.promptTokens = totalUsage.prompt_tokens
         }
 
         // 处理工具调用达到最大次数的情况
@@ -380,13 +390,18 @@ export class ThreadPresenter implements IThreadPresenter {
 
         // 计算completion tokens
         let completionTokens = 0
-        for (const block of state.message.content) {
-          if (
-            block.type === 'content' ||
-            block.type === 'reasoning_content' ||
-            block.type === 'tool_call'
-          ) {
-            completionTokens += approximateTokenSize(block.content)
+        console.log('state.totalUsage', state.totalUsage)
+        if (state.totalUsage) {
+          completionTokens = state.totalUsage.completion_tokens
+        } else {
+          for (const block of state.message.content) {
+            if (
+              block.type === 'content' ||
+              block.type === 'reasoning_content' ||
+              block.type === 'tool_call'
+            ) {
+              completionTokens += approximateTokenSize(block.content)
+            }
           }
         }
 
@@ -1242,7 +1257,7 @@ export class ThreadPresenter implements IThreadPresenter {
 
       // 9. 如果有工具调用结果，发送工具调用结果事件
       if (toolCallResponse && toolCall) {
-        console.log('toolCallResponse', toolCallResponse)
+        // console.log('toolCallResponse', toolCallResponse)
         eventBus.emit(STREAM_EVENTS.RESPONSE, {
           eventId: state.message.id,
           content: '',
