@@ -246,6 +246,7 @@ export default {
     deleteServer: '서버 삭제',
     editServer: '서버 편집',
     setDefault: '기본 설정',
+    removeDefault: '기본 설정 제거',
     isDefault: '기본 서버',
     default: '기본',
     setAsDefault: '기본 설정',

@@ -251,6 +251,7 @@ export default {
     deleteServer: 'Удалить сервер',
     editServer: 'Редактировать сервер',
     setDefault: 'Установить по умолчанию',
+    removeDefault: 'Удалить по умолчанию',
     isDefault: 'Сервер по умолчанию',
     default: 'По умолчанию',
     setAsDefault: 'Установить по умолчанию',

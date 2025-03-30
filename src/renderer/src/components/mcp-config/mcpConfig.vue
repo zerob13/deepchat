@@ -387,13 +387,18 @@ const regularServers = computed(() => {
                           class="h-8 w-8 rounded-lg"
                           :class="
                             server.isDefault
-                              ? 'bg-primary text-primary-foreground'
+                              ? 'bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100'
                               : 'text-muted-foreground'
                           "
                           :disabled="mcpStore.configLoading"
                           @click="handleToggleDefaultServer(server.name)"
                         >
-                          <Icon icon="lucide:check-circle" class="h-4 w-4" />
+                          <Icon
+                            v-if="server.isDefault"
+                            icon="lucide:check-circle"
+                            class="h-4 w-4"
+                          />
+                          <Icon v-else icon="lucide:circle" class="h-4 w-4" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -529,13 +534,14 @@ const regularServers = computed(() => {
                         class="h-8 w-8 rounded-lg"
                         :class="
                           server.isDefault
-                            ? 'bg-primary text-primary-foreground'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100'
                             : 'text-muted-foreground'
                         "
                         :disabled="mcpStore.configLoading"
                         @click="handleToggleDefaultServer(server.name)"
                       >
-                        <Icon icon="lucide:check-circle" class="h-4 w-4" />
+                        <Icon v-if="server.isDefault" icon="lucide:check-circle" class="h-4 w-4" />
+                        <Icon v-else icon="lucide:circle" class="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>

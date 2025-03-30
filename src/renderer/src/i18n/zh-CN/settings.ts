@@ -254,6 +254,7 @@ export default {
     deleteServer: '删除服务器',
     editServer: '编辑服务器',
     setDefault: '设为默认',
+    removeDefault: '移除默认',
     isDefault: '默认服务器',
     default: '默认',
     setAsDefault: '设为默认服务器',

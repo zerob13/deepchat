@@ -249,6 +249,7 @@ export default {
     deleteServer: '刪除伺服器',
     editServer: '編輯伺服器',
     setDefault: '設為預設',
+    removeDefault: '移除預設',
     isDefault: '預設伺服器',
     default: '預設',
     setAsDefault: '設為預設伺服器',

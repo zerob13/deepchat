@@ -241,6 +241,7 @@ export default {
     deleteServer: '刪除伺服器',
     editServer: '編輯伺服器',
     setDefault: '設為默認',
+    removeDefault: '移除默認',
     isDefault: '默認伺服器',
     default: '默認',
     setAsDefault: '設為默認',

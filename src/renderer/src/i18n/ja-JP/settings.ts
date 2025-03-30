@@ -248,6 +248,7 @@ const settings = {
     deleteServer: 'サーバーを削除',
     editServer: 'サーバーを編集',
     setDefault: 'デフォルトに設定',
+    removeDefault: 'デフォルトを削除',
     isDefault: 'デフォルトのサーバー',
     default: 'デフォルト',
     setAsDefault: 'デフォルトに設定',

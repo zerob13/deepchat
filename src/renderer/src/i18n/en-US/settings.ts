@@ -252,6 +252,7 @@ export default {
     deleteServer: 'Delete Server',
     editServer: 'Edit Server',
     setDefault: 'Set as Default',
+    removeDefault: 'Remove Default',
     isDefault: 'Default Server',
     default: 'Default',
     setAsDefault: 'Set as Default',
