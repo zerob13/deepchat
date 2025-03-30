@@ -47,9 +47,11 @@ export default {
       'Changing this setting will restart the application. Do you want to continue?',
     loggingEnabled: 'Enable Logging',
     loggingDialogTitle: 'Confirm Logging Setting Change',
-    loggingEnableDesc: 'Enabling logging will help us diagnose issues and improve the application. Log files may contain sensitive information.',
+    loggingEnableDesc:
+      'Enabling logging will help us diagnose issues and improve the application. Log files may contain sensitive information.',
     loggingDisableDesc: 'Disabling logging will stop collecting application logs.',
-    loggingRestartNotice: 'Changing this setting will restart the application. Do you want to continue?',
+    loggingRestartNotice:
+      'Changing this setting will restart the application. Do you want to continue?',
     openLogFolder: 'Open Log Folder'
   },
   data: {
@@ -207,6 +209,7 @@ export default {
       typePlaceholder: 'Select server type',
       typeStdio: 'Standard I/O',
       typeSse: 'Server-Sent Events',
+      typeInMemory: 'In-Memory',
       baseUrl: 'Base URL',
       baseUrlPlaceholder: 'Enter server base URL (e.g. http://localhost:3000)',
       command: 'Command',

@@ -11,10 +11,20 @@ interface IMcpSettings {
   mcpEnabled: boolean // 添加MCP启用状态字段
   [key: string]: unknown // 允许任意键
 }
-
+export type MCPServerType = 'stdio' | 'sse' | 'inmemory'
 // const filesystemPath = path.join(app.getAppPath(), 'resources', 'mcp', 'filesystem.mjs')
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
+    inMemoryFileSystem: {
+      args: [app.getPath('home')],
+      descriptions: '内置文件系统mcp服务',
+      icons: '💾',
+      autoApprove: ['read'],
+      type: 'inmemory' as MCPServerType,
+      command: 'filesystem',
+      env: {},
+      disable: false
+    },
     filesystem: {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-filesystem', app.getPath('home')],
@@ -22,8 +32,8 @@ const DEFAULT_MCP_SERVERS = {
       descriptions: '',
       icons: '📁',
       autoApprove: ['read'],
-      type: 'stdio' as 'stdio' | 'sse',
-      disable: false
+      type: 'stdio' as MCPServerType,
+      disable: true
     },
     memory: {
       command: 'npx',
@@ -33,7 +43,7 @@ const DEFAULT_MCP_SERVERS = {
       icons: '🧠',
       autoApprove: ['all'],
       disable: true,
-      type: 'stdio' as 'stdio' | 'sse'
+      type: 'stdio' as MCPServerType
     },
     bitcoin: {
       command: 'npx',
@@ -42,19 +52,19 @@ const DEFAULT_MCP_SERVERS = {
       descriptions: '查询比特币',
       icons: '💰',
       autoApprove: ['all'],
-      type: 'stdio' as 'stdio' | 'sse'
+      type: 'stdio' as MCPServerType
     },
     airbnb: {
       descriptions: 'Airbnb',
       icons: '🏠',
       autoApprove: ['all'],
-      type: 'stdio' as 'stdio' | 'sse',
+      type: 'stdio' as MCPServerType,
       command: 'npx',
       args: ['-y', '@openbnb/mcp-server-airbnb', '--ignore-robots-txt'],
       env: {}
     }
   },
-  defaultServer: 'filesystem',
+  defaultServer: 'inMemoryFileSystem',
   mcpEnabled: false // 默认关闭MCP功能
 }
 

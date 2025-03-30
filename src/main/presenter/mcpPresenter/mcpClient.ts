@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inmemory.js'
 import { type Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
@@ -9,6 +10,7 @@ import { presenter } from '@/presenter'
 import { app } from 'electron'
 import fs from 'fs'
 import { proxyConfig } from '@/presenter/proxyConfig'
+import { getInMemoryServer } from './inMemoryServers/builder'
 
 // 确保 TypeScript 能够识别 SERVER_STATUS_CHANGED 属性
 type MCPEventsType = typeof MCP_EVENTS & {
@@ -44,7 +46,6 @@ export class McpClient {
   public serverName: string
   public serverConfig: Record<string, unknown>
   private isConnected: boolean = false
-  private workingDirectory: string | null = null
   private connectionTimeout: NodeJS.Timeout | null = null
   private nodeRuntimePath: string | null = null
   private npmRegistry: string | null = null
@@ -92,11 +93,6 @@ export class McpClient {
     this.serverConfig = serverConfig
     this.npmRegistry = npmRegistry
 
-    // 从配置中获取工作目录
-    if (Array.isArray(serverConfig.args) && serverConfig.args.length > 1) {
-      this.workingDirectory = serverConfig.args[1] as string
-    }
-
     const runtimePath = path
       .join(app.getAppPath(), 'runtime', 'node')
       .replace('app.asar', 'app.asar.unpacked')
@@ -130,9 +126,14 @@ export class McpClient {
 
     try {
       console.info(`正在启动MCP服务器 ${this.serverName}...`, this.serverConfig)
-
-      // 创建合适的transport
-      if (this.serverConfig.type === 'stdio') {
+      if (this.serverConfig.type === 'inmemory') {
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+        const _args = Array.isArray(this.serverConfig.args) ? this.serverConfig.args : []
+        const _server = getInMemoryServer(this.serverName, _args)
+        _server.startServer(serverTransport)
+        this.transport = clientTransport
+      } else if (this.serverConfig.type === 'stdio') {
+        // 创建合适的transport
         const command = this.serverConfig.command as string
         console.log('final command', command)
         const HOME_DIR = app.getPath('home')
@@ -405,16 +406,6 @@ export class McpClient {
     }
 
     try {
-      // // 处理路径参数
-      const processedArgs = { ...args }
-      if (this.workingDirectory && 'path' in processedArgs) {
-        const userPath = processedArgs.path as string
-        // 如果用户提供的不是绝对路径，则将其视为相对于工作目录的路径
-        if (!path.isAbsolute(userPath)) {
-          processedArgs.path = path.join(this.workingDirectory, userPath)
-        }
-      }
-
       // 调用工具
       const result = (await this.client.callTool({
         name: toolName,

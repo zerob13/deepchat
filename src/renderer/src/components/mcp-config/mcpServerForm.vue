@@ -307,6 +307,9 @@ const placeholder = `mcp配置示例
             <SelectContent>
               <SelectItem value="stdio">{{ t('settings.mcp.serverForm.typeStdio') }}</SelectItem>
               <SelectItem value="sse">{{ t('settings.mcp.serverForm.typeSse') }}</SelectItem>
+              <SelectItem value="inMemory">{{
+                t('settings.mcp.serverForm.typeInMemory')
+              }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
