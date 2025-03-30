@@ -17,6 +17,7 @@ import fs from 'fs'
 import { CONFIG_EVENTS } from '@/events'
 import { McpConfHelper } from './mcpConfHelper'
 import { presenter } from '@/presenter'
+import { compare } from 'compare-versions'
 
 // 定义应用设置的接口
 interface IAppSettings {
@@ -94,14 +95,16 @@ export class ConfigPresenter implements IConfigPresenter {
     // 初始化MCP配置助手
     this.mcpConfHelper = new McpConfHelper()
 
-    // 迁移数据
-    this.migrateModelData()
     // 初始化provider models目录
     this.initProviderModelsDir()
 
     // 如果应用版本更新了，更新appVersion
     if (this.store.get('appVersion') !== this.currentAppVersion) {
+      const oldVersion = this.store.get('appVersion')
       this.store.set('appVersion', this.currentAppVersion)
+      // 迁移数据
+      this.migrateModelData(oldVersion)
+      this.mcpConfHelper.onUpgrade(oldVersion)
     }
 
     const existingProviders = this.getSetting<LLM_PROVIDER[]>(PROVIDERS_STORE_KEY) || []
@@ -137,59 +140,63 @@ export class ConfigPresenter implements IConfigPresenter {
     return this.providersModelStores.get(providerId)!
   }
 
-  private migrateModelData(): void {
-    // 迁移旧的模型数据
-    const providers = this.getProviders()
+  private migrateModelData(oldVersion: string | undefined): void {
+    // 0.0.10 版本之前，模型数据存储在app-settings.json中
+    if (oldVersion && compare(oldVersion, '0.0.10', '<')) {
+      // 迁移旧的模型数据
+      const providers = this.getProviders()
 
-    for (const provider of providers) {
-      // 检查并修正 ollama 的 baseUrl
-      if (provider.id === 'ollama' && provider.baseUrl) {
-        if (provider.baseUrl.endsWith('/v1')) {
-          provider.baseUrl = provider.baseUrl.replace(/\/v1$/, '')
-          // 保存修改后的提供者
-          this.setProviderById('ollama', provider)
+      for (const provider of providers) {
+        // 检查并修正 ollama 的 baseUrl
+        if (provider.id === 'ollama' && provider.baseUrl) {
+          if (provider.baseUrl.endsWith('/v1')) {
+            provider.baseUrl = provider.baseUrl.replace(/\/v1$/, '')
+            // 保存修改后的提供者
+            this.setProviderById('ollama', provider)
+          }
         }
-      }
 
-      // 迁移provider模型
-      const oldProviderModelsKey = `${provider.id}_models`
-      const oldModels = this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldProviderModelsKey)
+        // 迁移provider模型
+        const oldProviderModelsKey = `${provider.id}_models`
+        const oldModels =
+          this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldProviderModelsKey)
 
-      if (oldModels && oldModels.length > 0) {
-        const store = this.getProviderModelStore(provider.id)
-        // 遍历旧模型，保存启用状态
-        oldModels.forEach((model) => {
-          if (model.enabled) {
-            this.setModelStatus(provider.id, model.id, true)
-          }
-          // @ts-ignore - 需要删除enabled属性以便独立存储状态
-          delete model.enabled
-        })
-        // 保存模型列表到新存储
-        store.set('models', oldModels)
-        // 清除旧存储
-        this.store.delete(oldProviderModelsKey)
-      }
+        if (oldModels && oldModels.length > 0) {
+          const store = this.getProviderModelStore(provider.id)
+          // 遍历旧模型，保存启用状态
+          oldModels.forEach((model) => {
+            if (model.enabled) {
+              this.setModelStatus(provider.id, model.id, true)
+            }
+            // @ts-ignore - 需要删除enabled属性以便独立存储状态
+            delete model.enabled
+          })
+          // 保存模型列表到新存储
+          store.set('models', oldModels)
+          // 清除旧存储
+          this.store.delete(oldProviderModelsKey)
+        }
 
-      // 迁移custom模型
-      const oldCustomModelsKey = `custom_models_${provider.id}`
-      const oldCustomModels =
-        this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldCustomModelsKey)
+        // 迁移custom模型
+        const oldCustomModelsKey = `custom_models_${provider.id}`
+        const oldCustomModels =
+          this.getSetting<(MODEL_META & { enabled: boolean })[]>(oldCustomModelsKey)
 
-      if (oldCustomModels && oldCustomModels.length > 0) {
-        const store = this.getProviderModelStore(provider.id)
-        // 遍历旧的自定义模型，保存启用状态
-        oldCustomModels.forEach((model) => {
-          if (model.enabled) {
-            this.setModelStatus(provider.id, model.id, true)
-          }
-          // @ts-ignore - 需要删除enabled属性以便独立存储状态
-          delete model.enabled
-        })
-        // 保存自定义模型列表到新存储
-        store.set('custom_models', oldCustomModels)
-        // 清除旧存储
-        this.store.delete(oldCustomModelsKey)
+        if (oldCustomModels && oldCustomModels.length > 0) {
+          const store = this.getProviderModelStore(provider.id)
+          // 遍历旧的自定义模型，保存启用状态
+          oldCustomModels.forEach((model) => {
+            if (model.enabled) {
+              this.setModelStatus(provider.id, model.id, true)
+            }
+            // @ts-ignore - 需要删除enabled属性以便独立存储状态
+            delete model.enabled
+          })
+          // 保存自定义模型列表到新存储
+          store.set('custom_models', oldCustomModels)
+          // 清除旧存储
+          this.store.delete(oldCustomModelsKey)
+        }
       }
     }
   }
@@ -646,13 +653,21 @@ export class ConfigPresenter implements IConfigPresenter {
   }
 
   // 获取默认MCP服务器
-  getMcpDefaultServer(): Promise<string> {
-    return this.mcpConfHelper.getMcpDefaultServer()
+  getMcpDefaultServers(): Promise<string[]> {
+    return this.mcpConfHelper.getMcpDefaultServers()
   }
 
   // 设置默认MCP服务器
-  async setMcpDefaultServer(serverName: string): Promise<void> {
-    return this.mcpConfHelper.setMcpDefaultServer(serverName)
+  async addMcpDefaultServer(serverName: string): Promise<void> {
+    return this.mcpConfHelper.addMcpDefaultServer(serverName)
+  }
+
+  async removeMcpDefaultServer(serverName: string): Promise<void> {
+    return this.mcpConfHelper.removeMcpDefaultServer(serverName)
+  }
+
+  async toggleMcpDefaultServer(serverName: string): Promise<void> {
+    return this.mcpConfHelper.toggleMcpDefaultServer(serverName)
   }
 
   // 获取MCP启用状态

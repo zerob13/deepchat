@@ -18,11 +18,14 @@ import { useMcpStore } from '@/stores/mcp'
 import type { MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
 import { useI18n } from 'vue-i18n'
 import McpServerForm from './mcpServerForm.vue'
+import { useToast } from '@/components/ui/toast'
 
 // 使用MCP Store
 const mcpStore = useMcpStore()
 // 国际化
 const { t } = useI18n()
+// Toast通知
+const { toast } = useToast()
 
 // 本地UI状态
 const activeTab = ref<'servers' | 'tools'>('servers')
@@ -96,9 +99,29 @@ const confirmRemoveServer = async () => {
   isRemoveConfirmDialogOpen.value = false
 }
 
-// 设置默认服务器
-const handleSetDefaultServer = async (serverName: string) => {
-  await mcpStore.setDefaultServer(serverName)
+// 切换服务器的默认状态
+const handleToggleDefaultServer = async (serverName: string) => {
+  // 检查是否已经是默认服务器
+  const isDefault = mcpStore.config.defaultServers.includes(serverName)
+
+  // 如果不是默认服务器，且已达到最大数量，显示提示
+  if (!isDefault && mcpStore.config.defaultServers.length >= 3) {
+    toast({
+      title: t('settings.mcp.maxDefaultServersReached'),
+      description: t('settings.mcp.removeDefaultFirst'),
+      variant: 'destructive'
+    })
+    return
+  }
+
+  const result = await mcpStore.toggleDefaultServer(serverName)
+  if (!result.success) {
+    toast({
+      title: t('common.error.operationFailed'),
+      description: result.message,
+      variant: 'destructive'
+    })
+  }
 }
 
 // 启动/停止服务器
@@ -328,15 +351,26 @@ onMounted(async () => {
                       <Button
                         variant="outline"
                         size="icon"
-                        class="h-8 w-8 rounded-lg text-muted-foreground"
-                        :disabled="server.isDefault || mcpStore.configLoading"
-                        @click="handleSetDefaultServer(server.name)"
+                        class="h-8 w-8 rounded-lg"
+                        :class="
+                          server.isDefault
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground'
+                        "
+                        :disabled="mcpStore.configLoading"
+                        @click="handleToggleDefaultServer(server.name)"
                       >
                         <Icon icon="lucide:check-circle" class="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{{ t('settings.mcp.setAsDefault') }}</p>
+                      <p>
+                        {{
+                          server.isDefault
+                            ? t('settings.mcp.removeDefault')
+                            : t('settings.mcp.setAsDefault')
+                        }}
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

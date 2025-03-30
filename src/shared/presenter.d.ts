@@ -179,8 +179,10 @@ export interface IConfigPresenter {
   // MCP配置相关方法
   getMcpServers(): Promise<Record<string, MCPServerConfig>>
   setMcpServers(servers: Record<string, MCPServerConfig>): Promise<void>
-  getMcpDefaultServer(): Promise<string>
-  setMcpDefaultServer(serverName: string): Promise<void>
+  getMcpDefaultServers(): Promise<string[]>
+  addMcpDefaultServer(serverName: string): Promise<void>
+  removeMcpDefaultServer(serverName: string): Promise<void>
+  toggleMcpDefaultServer(serverName: string): Promise<void>
   getMcpEnabled(): Promise<boolean>
   setMcpEnabled(enabled: boolean): Promise<void>
   addMcpServer(name: string, config: MCPServerConfig): Promise<void>
@@ -606,12 +608,12 @@ export interface MCPServerConfig {
   autoApprove: string[]
   disable?: boolean
   baseUrl?: string
-  type: 'sse' | 'stdio'
+  type: 'sse' | 'stdio' | 'inmemory'
 }
 
 export interface MCPConfig {
   mcpServers: Record<string, MCPServerConfig>
-  defaultServer: string
+  defaultServers: string[]
   mcpEnabled: boolean
 }
 
@@ -655,8 +657,10 @@ export interface MCPToolResponse {
 export interface IMCPPresenter {
   getMcpServers(): Promise<Record<string, MCPServerConfig>>
   getMcpClients(): Promise<McpClient[]>
-  getMcpDefaultServer(): Promise<string>
-  setMcpDefaultServer(serverName: string): Promise<void>
+  getMcpDefaultServers(): Promise<string[]>
+  addMcpDefaultServer(serverName: string): Promise<void>
+  removeMcpDefaultServer(serverName: string): Promise<void>
+  toggleMcpDefaultServer(serverName: string): Promise<void>
   addMcpServer(serverName: string, config: MCPServerConfig): Promise<void>
   updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void>
   removeMcpServer(serverName: string): Promise<void>

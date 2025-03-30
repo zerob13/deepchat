@@ -73,7 +73,7 @@ export class LLMProviderPresenter implements ILlmProviderPresenter {
             instance = new OpenAIProvider(provider, this.configPresenter)
           } else if (provider.apiType === 'deepseek') {
             instance = new DeepseekProvider(provider, this.configPresenter)
-          } else if (provider.apiType === 'siliconcloud') {
+          } else if (provider.apiType === 'silicon' || provider.apiType === 'siliconcloud') {
             instance = new SiliconcloudProvider(provider, this.configPresenter)
           } else if (provider.apiType === 'openai-compatible') {
             instance = new OpenAICompatibleProvider(provider, this.configPresenter)

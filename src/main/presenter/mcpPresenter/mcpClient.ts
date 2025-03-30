@@ -295,7 +295,6 @@ export class McpClient {
           5 * 60 * 1000
         ) // 5分钟
       })
-
       // 连接到服务器
       const connectPromise = this.client
         .connect(this.transport)

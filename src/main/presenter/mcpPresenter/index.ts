@@ -115,9 +115,9 @@ export class McpPresenter implements IMCPPresenter {
       }
 
       // 加载配置
-      const [servers, defaultServer] = await Promise.all([
+      const [servers, defaultServers] = await Promise.all([
         this.configPresenter.getMcpServers(),
-        this.configPresenter.getMcpDefaultServer()
+        this.configPresenter.getMcpDefaultServers()
       ])
 
       // 先测试npm registry速度
@@ -132,18 +132,21 @@ export class McpPresenter implements IMCPPresenter {
       }
 
       // 如果有默认服务器，尝试启动
-      if (defaultServer && servers[defaultServer]) {
-        const serverName = defaultServer
-        console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
+      if (defaultServers.length > 0) {
+        for (const serverName of defaultServers) {
+          if (servers[serverName]) {
+            console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
 
-        try {
-          await this.serverManager.startServer(serverName)
-          console.log(`[MCP] 默认服务器 ${serverName} 启动成功`)
+            try {
+              await this.serverManager.startServer(serverName)
+              console.log(`[MCP] 默认服务器 ${serverName} 启动成功`)
 
-          // 通知渲染进程服务器已启动
-          eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
-        } catch (error) {
-          console.error(`[MCP] 默认服务器 ${serverName} 启动失败:`, error)
+              // 通知渲染进程服务器已启动
+              eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
+            } catch (error) {
+              console.error(`[MCP] 默认服务器 ${serverName} 启动失败:`, error)
+            }
+          }
         }
       }
     } catch (error) {
@@ -199,14 +202,24 @@ export class McpPresenter implements IMCPPresenter {
     return clientsList
   }
 
-  // 获取默认MCP服务器
-  getMcpDefaultServer(): Promise<string> {
-    return this.configPresenter.getMcpDefaultServer()
+  // 获取所有默认MCP服务器
+  getMcpDefaultServers(): Promise<string[]> {
+    return this.configPresenter.getMcpDefaultServers()
   }
 
-  // 设置默认MCP服务器
-  async setMcpDefaultServer(serverName: string): Promise<void> {
-    await this.configPresenter.setMcpDefaultServer(serverName)
+  // 添加默认MCP服务器
+  async addMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.addMcpDefaultServer(serverName)
+  }
+
+  // 移除默认MCP服务器
+  async removeMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.removeMcpDefaultServer(serverName)
+  }
+
+  // 切换服务器的默认状态
+  async toggleMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.toggleMcpDefaultServer(serverName)
   }
 
   // 添加MCP服务器
