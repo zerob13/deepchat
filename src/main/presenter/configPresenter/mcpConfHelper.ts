@@ -17,16 +17,18 @@ export type MCPServerType = 'stdio' | 'sse' | 'inmemory'
 // const filesystemPath = path.join(app.getAppPath(), 'resources', 'mcp', 'filesystem.mjs')
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
-    inMemoryFileSystem: {
+    // 先定义内置MCP服务器
+    buildInFileSystem: {
       args: [app.getPath('home')],
-      descriptions: '内置文件系统mcp服务',
-      icons: '💾',
+      descriptions: 'DeepChat内置文件系统mcp服务',
+      icons: '📁',
       autoApprove: ['read'],
       type: 'inmemory' as MCPServerType,
       command: 'filesystem',
       env: {},
       disable: false
     },
+    // 之后是默认的三方MCP服务器
     memory: {
       command: 'npx',
       args: ['-y', '@modelcontextprotocol/server-memory'],
@@ -56,7 +58,7 @@ const DEFAULT_MCP_SERVERS = {
       env: {}
     }
   },
-  defaultServers: ['inMemoryFileSystem'], // 默认服务器列表
+  defaultServers: ['buildInFileSystem'], // 默认服务器列表
   mcpEnabled: false // 默认关闭MCP功能
 }
 
@@ -184,6 +186,13 @@ export class McpConfHelper {
     const currentServers = await this.getMcpServers()
     const updatedServers = { ...currentServers }
 
+    // 删除所有类型为inmemory的服务
+    for (const [serverName, serverConfig] of Object.entries(updatedServers)) {
+      if (serverConfig.type === 'inmemory') {
+        delete updatedServers[serverName]
+      }
+    }
+
     // 遍历所有默认服务，有则覆盖，无则新增
     for (const [serverName, serverConfig] of Object.entries(DEFAULT_MCP_SERVERS.mcpServers)) {
       updatedServers[serverName] = serverConfig
@@ -217,17 +226,17 @@ export class McpConfHelper {
         this.mcpStore.delete('defaultServer')
       }
 
-      // 迁移 filesystem 服务器到 inMemoryFileSystem
+      // 迁移 filesystem 服务器到 buildInFileSystem
       try {
         const mcpServers = this.mcpStore.get('mcpServers') || {}
         console.log('mcpServers', mcpServers)
         if (mcpServers.filesystem) {
-          console.log('检测到旧版本的 filesystem MCP 服务器，开始迁移到 inMemoryFileSystem')
+          console.log('检测到旧版本的 filesystem MCP 服务器，开始迁移到 buildInFileSystem')
 
-          // 检查 inMemoryFileSystem 是否已存在
-          if (!mcpServers.inMemoryFileSystem) {
-            // 创建 inMemoryFileSystem 配置
-            mcpServers.inMemoryFileSystem = {
+          // 检查 buildInFileSystem 是否已存在
+          if (!mcpServers.buildInFileSystem) {
+            // 创建 buildInFileSystem 配置
+            mcpServers.buildInFileSystem = {
               args: [app.getPath('home')], // 默认值
               descriptions: '内置文件系统mcp服务',
               icons: '💾',
@@ -241,29 +250,29 @@ export class McpConfHelper {
 
           // 如果 filesystem 的 args 长度大于 2，将第三个参数及以后的参数迁移
           if (mcpServers.filesystem.args && mcpServers.filesystem.args.length > 2) {
-            mcpServers.inMemoryFileSystem.args = mcpServers.filesystem.args.slice(2)
+            mcpServers.buildInFileSystem.args = mcpServers.filesystem.args.slice(2)
           }
 
           // 迁移 autoApprove 设置
           if (mcpServers.filesystem.autoApprove) {
-            mcpServers.inMemoryFileSystem.autoApprove = [...mcpServers.filesystem.autoApprove]
+            mcpServers.buildInFileSystem.autoApprove = [...mcpServers.filesystem.autoApprove]
           }
 
           delete mcpServers.filesystem
           // 更新 mcpServers
           this.mcpStore.set('mcpServers', mcpServers)
 
-          // 如果 filesystem 是默认服务器，将 inMemoryFileSystem 添加到默认服务器列表
+          // 如果 filesystem 是默认服务器，将 buildInFileSystem 添加到默认服务器列表
           const defaultServers = this.mcpStore.get('defaultServers') || []
           if (
             defaultServers.includes('filesystem') &&
-            !defaultServers.includes('inMemoryFileSystem')
+            !defaultServers.includes('buildInFileSystem')
           ) {
-            defaultServers.push('inMemoryFileSystem')
+            defaultServers.push('buildInFileSystem')
             this.mcpStore.set('defaultServers', defaultServers)
           }
 
-          console.log('迁移 filesystem 到 inMemoryFileSystem 完成')
+          console.log('迁移 filesystem 到 buildInFileSystem 完成')
         }
       } catch (error) {
         console.error('迁移 filesystem 服务器时出错:', error)

@@ -264,7 +264,13 @@ export default {
     resetConfirmTitle: '기본 서버로 재설정',
     resetConfirmDescription:
       '이 작업은 사용자 정의 서버를 유지하면서 모든 기본 서버를 복원합니다. 기본 서버에 대한 모든 수정 사항이 손실됩니다.',
-    resetConfirm: '재설정'
+    resetConfirm: '재설정',
+    builtInServers: '내장 서버',
+    customServers: '사용자 정의 서버',
+    builtIn: '내장',
+    cannotRemoveBuiltIn: '내장 서버를 제거할 수 없음',
+    builtInServerCannotBeRemoved:
+      '내장 서버는 제거할 수 없으며, 매개변수와 환경 변수만 수정할 수 있습니다'
   },
   about: {
     title: '우리에 대해',

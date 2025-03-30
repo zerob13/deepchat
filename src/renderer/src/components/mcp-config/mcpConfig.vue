@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { Icon } from '@iconify/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -88,6 +88,17 @@ const handleEditServer = async (serverName: string, serverConfig: Partial<MCPSer
 
 // 删除服务器
 const handleRemoveServer = async (serverName: string) => {
+  // 检查是否为inmemory服务，如果是则不允许删除
+  const config = mcpStore.config.mcpServers[serverName]
+  if (config?.type === 'inmemory') {
+    toast({
+      title: t('settings.mcp.cannotRemoveBuiltIn'),
+      description: t('settings.mcp.builtInServerCannotBeRemoved'),
+      variant: 'destructive'
+    })
+    return
+  }
+
   selectedServer.value = serverName
   isRemoveConfirmDialogOpen.value = true
 }
@@ -195,6 +206,21 @@ onMounted(async () => {
     await mcpStore.loadClients()
   }
 })
+
+// 计算属性：区分内置服务和普通服务
+const inMemoryServers = computed(() => {
+  return mcpStore.serverList.filter((server) => {
+    const config = mcpStore.config.mcpServers[server.name]
+    return config?.type === 'inmemory'
+  })
+})
+
+const regularServers = computed(() => {
+  return mcpStore.serverList.filter((server) => {
+    const config = mcpStore.config.mcpServers[server.name]
+    return config?.type !== 'inmemory'
+  })
+})
 </script>
 
 <template>
@@ -285,8 +311,157 @@ onMounted(async () => {
         </div>
 
         <div v-else class="space-y-4 pb-4">
+          <!-- 内置服务 -->
+          <div v-if="inMemoryServers.length > 0">
+            <h4 class="text-sm font-medium mb-2 text-muted-foreground">
+              {{ t('settings.mcp.builtInServers') }}
+            </h4>
+            <div
+              v-for="server in inMemoryServers"
+              :key="server.name"
+              class="border rounded-lg overflow-hidden bg-card mb-4"
+            >
+              <div class="flex items-center p-4">
+                <div class="flex-1">
+                  <div>
+                    <div class="flex items-center">
+                      <span class="text-xl mr-2">{{ server.icons }}</span>
+                      <h4 class="text-sm font-medium">{{ server.name }}</h4>
+                      <span
+                        :class="[
+                          'ml-2 px-2 py-0.5 text-xs rounded-full',
+                          server.isRunning
+                            ? 'bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100'
+                            : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100'
+                        ]"
+                      >
+                        {{
+                          server.isRunning ? t('settings.mcp.running') : t('settings.mcp.stopped')
+                        }}
+                      </span>
+                    </div>
+                    <p class="text-xs text-muted-foreground mt-1">{{ server.descriptions }}</p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-8 w-8 rounded-lg text-muted-foreground"
+                          :disabled="mcpStore.configLoading"
+                          @click="handleToggleServer(server.name)"
+                        >
+                          <Icon
+                            v-if="mcpStore.serverLoadingStates[server.name]"
+                            icon="lucide:loader"
+                            class="h-4 w-4 animate-spin"
+                          />
+                          <Icon
+                            v-else
+                            :icon="server.isRunning ? 'lucide:square' : 'lucide:play'"
+                            class="h-4 w-4"
+                          />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>
+                          {{
+                            server.isRunning
+                              ? t('settings.mcp.stopServer')
+                              : t('settings.mcp.startServer')
+                          }}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-8 w-8 rounded-lg"
+                          :class="
+                            server.isDefault
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground'
+                          "
+                          :disabled="mcpStore.configLoading"
+                          @click="handleToggleDefaultServer(server.name)"
+                        >
+                          <Icon icon="lucide:check-circle" class="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>
+                          {{
+                            server.isDefault
+                              ? t('settings.mcp.removeDefault')
+                              : t('settings.mcp.setAsDefault')
+                          }}
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-8 w-8 rounded-lg text-muted-foreground"
+                          :disabled="mcpStore.configLoading"
+                          @click="openEditServerDialog(server.name)"
+                        >
+                          <Icon icon="lucide:edit" class="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{{ t('settings.mcp.editServer') }}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              </div>
+              <div class="bg-muted dark:bg-zinc-800 px-4 py-2">
+                <div class="flex justify-between items-center">
+                  <div class="text-xs font-mono overflow-x-auto whitespace-nowrap">
+                    {{ server.command }} {{ server.args.join(' ') }}
+                  </div>
+                  <div class="flex space-x-2">
+                    <span
+                      class="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100 rounded-full shrink-0"
+                    >
+                      {{ t('settings.mcp.builtIn') }}
+                    </span>
+                    <span
+                      v-if="server.isDefault"
+                      class="ml-2 px-2 py-0.5 text-xs bg-primary text-primary-foreground rounded-full shrink-0"
+                    >
+                      {{ t('settings.mcp.default') }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 普通服务标题 -->
+            <h4
+              v-if="regularServers.length > 0"
+              class="text-sm font-medium mb-2 mt-6 text-muted-foreground"
+            >
+              {{ t('settings.mcp.customServers') }}
+            </h4>
+          </div>
+
+          <!-- 普通服务 -->
           <div
-            v-for="server in mcpStore.serverList"
+            v-for="server in regularServers"
             :key="server.name"
             class="border rounded-lg overflow-hidden bg-card"
           >

@@ -266,7 +266,13 @@ const settings = {
     resetConfirmTitle: 'デフォルトサーバーに戻す',
     resetConfirmDescription:
       'この操作は、カスタムサーバーを保持したまま、すべてのデフォルトサーバーを復元します。デフォルトサーバーへの変更はすべて失われます。',
-    resetConfirm: 'リセット'
+    resetConfirm: 'リセット',
+    builtInServers: '内蔵サーバー',
+    customServers: 'カスタムサーバー',
+    builtIn: '内蔵',
+    cannotRemoveBuiltIn: '内蔵サーバーを削除できません',
+    builtInServerCannotBeRemoved:
+      '内蔵サーバーは削除できません。パラメータと環境変数のみ変更可能です'
   },
   about: {
     title: '私たちについて',

@@ -272,7 +272,12 @@ export default {
     resetConfirmTitle: '恢复默认服务',
     resetConfirmDescription:
       '此操作将恢复所有默认服务器，同时保留您自定义的服务器。对默认服务器的任何修改将会丢失。',
-    resetConfirm: '恢复'
+    resetConfirm: '恢复',
+    builtInServers: '内置服务',
+    customServers: '自定义服务',
+    builtIn: '内置',
+    cannotRemoveBuiltIn: '无法删除内置服务',
+    builtInServerCannotBeRemoved: '内置服务不能被删除，仅支持修改参数和环境变量'
   },
   about: {
     title: '关于我们',

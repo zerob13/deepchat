@@ -259,7 +259,12 @@ export default {
     resetConfirmTitle: '恢復預設服務',
     resetConfirmDescription:
       '此操作將恢復所有預設伺服器，同時保留您自定義的伺服器。對預設伺服器的任何修改將會丟失。',
-    resetConfirm: '恢復'
+    resetConfirm: '恢復',
+    builtInServers: '內置服務',
+    customServers: '自定義服務',
+    builtIn: '內置',
+    cannotRemoveBuiltIn: '無法刪除內置服務',
+    builtInServerCannotBeRemoved: '內置服務不能被刪除，僅支持修改參數和環境變量'
   },
   about: {
     title: '關於我們',

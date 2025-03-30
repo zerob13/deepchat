@@ -271,7 +271,13 @@ export default {
     resetConfirmTitle: 'Reset to Default Servers',
     resetConfirmDescription:
       'This will restore all default servers while keeping your custom servers. Any modifications to default servers will be lost.',
-    resetConfirm: 'Reset'
+    resetConfirm: 'Reset',
+    builtInServers: 'Built-in Servers',
+    customServers: 'Custom Servers',
+    builtIn: 'Built-in',
+    cannotRemoveBuiltIn: 'Cannot Remove Built-in Server',
+    builtInServerCannotBeRemoved:
+      'Built-in servers cannot be removed, only parameters and environment variables can be modified'
   },
   about: {
     title: 'About Us',
