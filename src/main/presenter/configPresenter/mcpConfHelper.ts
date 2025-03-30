@@ -28,6 +28,17 @@ const DEFAULT_MCP_SERVERS = {
       env: {},
       disable: false
     },
+    // 还有问题，暂时不开放
+    // buildInArtifacts: {
+    //   args: [],
+    //   descriptions: 'DeepChat内置artifacts mcp服务',
+    //   icons: '🎨',
+    //   autoApprove: ['all'],
+    //   type: 'inmemory' as MCPServerType,
+    //   command: 'artifacts',
+    //   env: {},
+    //   disable: false
+    // },
     // 之后是默认的三方MCP服务器
     memory: {
       command: 'npx',

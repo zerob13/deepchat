@@ -1,3 +1,7 @@
+// 此文件内容已被移到更模块化的实现中 (src/main/presenter/mcpPresenter/inMemoryServers/artifactsServer.ts)
+// 通过MCP服务器按需获取artifacts内容，大大减少了token消耗
+// TODO: 当新服务完全投入使用后，可以删除此文件
+
 export const ARTIFACTS_PROMPT = `
 <artifacts_info>
 The assistant can create and reference artifacts during conversations. Artifacts are for substantial, self-contained content that users might modify or reuse, displayed in a separate UI window for clarity.

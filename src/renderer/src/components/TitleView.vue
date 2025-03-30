@@ -73,7 +73,6 @@ import ModelSelect from './ModelSelect.vue'
 import ModelIcon from './icons/ModelIcon.vue'
 import { MODEL_META } from '@shared/presenter'
 import { onMounted, ref, watch } from 'vue'
-import { useDebounceFn } from '@vueuse/core'
 import { useChatStore } from '@/stores/chat'
 import { usePresenter } from '@/composables/usePresenter'
 const configPresenter = usePresenter('configPresenter')
