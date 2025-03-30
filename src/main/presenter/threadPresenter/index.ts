@@ -427,7 +427,12 @@ export class ThreadPresenter implements IThreadPresenter {
     settings: Partial<CONVERSATION_SETTINGS>
   ): Promise<void> {
     const conversation = await this.getConversation(conversationId)
-    const mergedSettings = { ...conversation.settings, ...settings }
+    const mergedSettings = { ...conversation.settings }
+    for (const key in settings) {
+      if (settings[key] !== undefined) {
+        mergedSettings[key] = settings[key]
+      }
+    }
     console.log('updateConversationSettings', mergedSettings)
     // 检查是否有 modelId 的变化
     if (settings.modelId && settings.modelId !== conversation.settings.modelId) {
