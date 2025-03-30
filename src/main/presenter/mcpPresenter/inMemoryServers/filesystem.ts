@@ -55,6 +55,11 @@ const MoveFileArgsSchema = z.object({
   destination: z.string()
 })
 
+const MoveFilesArgsSchema = z.object({
+  sources: z.array(z.string()),
+  destination: z.string()
+})
+
 const SearchFilesArgsSchema = z.object({
   path: z.string(),
   pattern: z.string(),
@@ -437,6 +442,15 @@ export class FileSystemServer {
             inputSchema: zodToJsonSchema(MoveFileArgsSchema) as ToolInput
           },
           {
+            name: 'move_multiple_files',
+            description:
+              'Move multiple files and directories. Can move multiple files between directories ' +
+              'in a single operation. If the destination exists, the ' +
+              'operation will fail. Works across different directories.' +
+              'Both sources and destination must be within allowed directories.',
+            inputSchema: zodToJsonSchema(MoveFilesArgsSchema) as ToolInput
+          },
+          {
             name: 'search_files',
             description:
               'Recursively search for files and directories matching a pattern. ' +
@@ -619,6 +633,36 @@ export class FileSystemServer {
                 {
                   type: 'text',
                   text: `Successfully moved ${parsed.data.source} to ${parsed.data.destination}`
+                }
+              ]
+            }
+          }
+
+          case 'move_multiple_files': {
+            const parsed = MoveFilesArgsSchema.safeParse(args)
+            if (!parsed.success) {
+              throw new Error(`Invalid arguments for move_multiple_files: ${parsed.error}`)
+            }
+            const results = await Promise.all(
+              parsed.data.sources.map(async (source) => {
+                const validSourcePath = await this.validatePath(source)
+                const validDestPath = await this.validatePath(
+                  path.join(parsed.data.destination, path.basename(source))
+                )
+                try {
+                  await fs.rename(validSourcePath, validDestPath)
+
+                  return `Successfully moved ${source} to ${parsed.data.destination}`
+                } catch (e) {
+                  return `Move ${source} to ${parsed.data.destination} failed: ${JSON.stringify(e)}`
+                }
+              })
+            )
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: results.join('\n')
                 }
               ]
             }
