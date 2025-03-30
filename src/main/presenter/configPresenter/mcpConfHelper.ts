@@ -15,30 +15,36 @@ interface IMcpSettings {
 }
 export type MCPServerType = 'stdio' | 'sse' | 'inmemory'
 // const filesystemPath = path.join(app.getAppPath(), 'resources', 'mcp', 'filesystem.mjs')
+
+// 抽取inmemory类型的服务为常量
+const DEFAULT_INMEMORY_SERVERS: Record<string, MCPServerConfig> = {
+  buildInFileSystem: {
+    args: [app.getPath('home')],
+    descriptions: 'DeepChat内置文件系统mcp服务',
+    icons: '📁',
+    autoApprove: ['read'],
+    type: 'inmemory' as MCPServerType,
+    command: 'filesystem',
+    env: {},
+    disable: false
+  }
+  // 还有问题，暂时不开放
+  // buildInArtifacts: {
+  //   args: [],
+  //   descriptions: 'DeepChat内置artifacts mcp服务',
+  //   icons: '🎨',
+  //   autoApprove: ['all'],
+  //   type: 'inmemory' as MCPServerType,
+  //   command: 'artifacts',
+  //   env: {},
+  //   disable: false
+  // }
+}
+
 const DEFAULT_MCP_SERVERS = {
   mcpServers: {
     // 先定义内置MCP服务器
-    buildInFileSystem: {
-      args: [app.getPath('home')],
-      descriptions: 'DeepChat内置文件系统mcp服务',
-      icons: '📁',
-      autoApprove: ['read'],
-      type: 'inmemory' as MCPServerType,
-      command: 'filesystem',
-      env: {},
-      disable: false
-    },
-    // 还有问题，暂时不开放
-    // buildInArtifacts: {
-    //   args: [],
-    //   descriptions: 'DeepChat内置artifacts mcp服务',
-    //   icons: '🎨',
-    //   autoApprove: ['all'],
-    //   type: 'inmemory' as MCPServerType,
-    //   command: 'artifacts',
-    //   env: {},
-    //   disable: false
-    // },
+    ...DEFAULT_INMEMORY_SERVERS,
     // 之后是默认的三方MCP服务器
     memory: {
       command: 'npx',
@@ -90,7 +96,25 @@ export class McpConfHelper {
 
   // 获取MCP服务器配置
   getMcpServers(): Promise<Record<string, MCPServerConfig>> {
-    return Promise.resolve(this.mcpStore.get('mcpServers') || DEFAULT_MCP_SERVERS.mcpServers)
+    const storedServers = this.mcpStore.get('mcpServers') || DEFAULT_MCP_SERVERS.mcpServers
+
+    // 检查并补充缺少的inmemory服务
+    const updatedServers = { ...storedServers }
+
+    // 遍历所有默认的inmemory服务，确保它们都存在
+    for (const [serverName, serverConfig] of Object.entries(DEFAULT_INMEMORY_SERVERS)) {
+      if (!updatedServers[serverName]) {
+        console.log(`添加缺少的inmemory服务: ${serverName}`)
+        updatedServers[serverName] = serverConfig
+      }
+    }
+
+    // 如果有新增的服务，更新存储
+    if (Object.keys(updatedServers).length > Object.keys(storedServers).length) {
+      this.mcpStore.set('mcpServers', updatedServers)
+    }
+
+    return Promise.resolve(updatedServers)
   }
 
   // 设置MCP服务器配置
