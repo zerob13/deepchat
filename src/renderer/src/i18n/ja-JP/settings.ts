@@ -28,7 +28,8 @@ const settings = {
       'この設定を変更するとアプリケーションが再起動します。続行しますか？',
     loggingEnabled: 'ログを有効にする',
     loggingDialogTitle: 'ログ設定の変更確認',
-    loggingEnableDesc: 'ログを有効にすると、問題の診断とアプリケーションの改善に役立ちます。ログファイルには機密情報が含まれる可能性があります。',
+    loggingEnableDesc:
+      'ログを有効にすると、問題の診断とアプリケーションの改善に役立ちます。ログファイルには機密情報が含まれる可能性があります。',
     loggingDisableDesc: 'ログを無効にすると、アプリケーションログの収集が停止します。',
     loggingRestartNotice: 'この設定を変更するとアプリケーションが再起動します。続行しますか？',
     addCustomSearchEngine: 'カスタム検索エンジンを追加',
@@ -204,6 +205,7 @@ const settings = {
       typePlaceholder: 'サーバータイプを選択',
       typeStdio: '標準入出力',
       typeSse: 'サーバー送信イベント',
+      typeInMemory: 'インメモリ',
       baseUrl: 'ベースURL',
       baseUrlPlaceholder: 'サーバーのベースURLを入力（例：http://localhost:3000）',
       command: 'コマンド',

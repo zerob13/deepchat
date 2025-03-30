@@ -212,6 +212,7 @@ export default {
       typePlaceholder: '选择服务器类型',
       typeStdio: '标准输入输出',
       typeSse: '服务器发送事件',
+      typeInMemory: '内存',
       baseUrl: '基础URL',
       baseUrlPlaceholder: '输入服务器基础URL（如：http://localhost:3000）',
       command: '命令',

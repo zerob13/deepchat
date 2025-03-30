@@ -31,6 +31,7 @@ export default {
     typePlaceholder: '서버 유형 선택',
     typeStdio: '표준 입출력',
     typeSse: '서버 전송 이벤트',
+    typeInMemory: '인메모리',
     baseUrl: '기본 URL',
     baseUrlPlaceholder: '서버 기본 URL 입력(예: http://localhost:3000)',
     command: '명령어',

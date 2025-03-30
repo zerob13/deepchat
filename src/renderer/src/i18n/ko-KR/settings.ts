@@ -45,7 +45,8 @@ export default {
     contentProtectionRestartNotice: '이 설정을 변경하면 프로그램이 재시작됩니다. 계속하시겠습니까?',
     loggingEnabled: '로그 활성화',
     loggingDialogTitle: '로그 설정 변경 확인',
-    loggingEnableDesc: '로그를 활성화하면 문제 진단 및 애플리케이션 개선에 도움이 됩니다. 로그 파일에는 민감한 정보가 포함될 수 있습니다.',
+    loggingEnableDesc:
+      '로그를 활성화하면 문제 진단 및 애플리케이션 개선에 도움이 됩니다. 로그 파일에는 민감한 정보가 포함될 수 있습니다.',
     loggingDisableDesc: '로그를 비활성화하면 애플리케이션 로그 수집이 중지됩니다.',
     loggingRestartNotice: '이 설정을 변경하면 프로그램이 재시작됩니다. 계속하시겠습니까?',
     openLogFolder: '로그 폴더 열기'
@@ -202,6 +203,7 @@ export default {
       typePlaceholder: '서버 유형 선택',
       typeStdio: '표준 입출력',
       typeSse: '서버 전송 이벤트',
+      typeInMemory: '인메모리',
       baseUrl: '기본 URL',
       baseUrlPlaceholder: '서버 기본 URL 입력(예: http://localhost:3000)',
       command: '명령어',

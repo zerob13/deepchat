@@ -207,6 +207,7 @@ export default {
       typePlaceholder: '選擇伺服器類型',
       typeStdio: '標準輸入輸出',
       typeSse: '伺服器發送事件',
+      typeInMemory: '記憶體',
       baseUrl: '基礎網址',
       baseUrlPlaceholder: '輸入伺服器基礎網址（如：http://localhost:3000）',
       command: '命令',
