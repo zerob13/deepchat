@@ -1,0 +1,33 @@
+{
+  "title": "新規スレッド",
+  "create": "作成",
+  "cancel": "キャンセル",
+  "name": {
+    "label": "スレッド名",
+    "placeholder": "スレッド名を入力してください"
+  },
+  "model": {
+    "label": "モデル",
+    "placeholder": "モデルを選択してください"
+  },
+  "prompt": {
+    "label": "プロンプト",
+    "placeholder": "プロンプトを入力してください"
+  },
+  "settings": {
+    "label": "設定",
+    "temperature": "温度",
+    "maxTokens": "最大トークン数",
+    "topP": "Top P",
+    "frequencyPenalty": "頻度ペナルティ",
+    "presencePenalty": "存在ペナルティ"
+  },
+  "errors": {
+    "nameRequired": "スレッド名は必須です",
+    "modelRequired": "モデルは必須です",
+    "createFailed": "スレッドの作成に失敗しました"
+  },
+  "success": {
+    "created": "スレッドを作成しました"
+  }
+}

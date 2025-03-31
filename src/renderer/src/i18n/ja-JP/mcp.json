@@ -1,0 +1,49 @@
+{
+  "title": "マルチモデル制御パネル",
+  "status": {
+    "title": "ステータス",
+    "running": "実行中",
+    "stopped": "停止中",
+    "error": "エラー",
+    "unknown": "不明"
+  },
+  "actions": {
+    "start": "開始",
+    "stop": "停止",
+    "restart": "再起動",
+    "delete": "削除"
+  },
+  "settings": {
+    "title": "設定",
+    "general": "一般",
+    "advanced": "詳細",
+    "save": "保存",
+    "reset": "リセット"
+  },
+  "logs": {
+    "title": "ログ",
+    "clear": "クリア",
+    "download": "ダウンロード",
+    "empty": "ログはありません"
+  },
+  "errors": {
+    "startFailed": "起動に失敗しました",
+    "stopFailed": "停止に失敗しました",
+    "restartFailed": "再起動に失敗しました",
+    "deleteFailed": "削除に失敗しました",
+    "saveFailed": "保存に失敗しました",
+    "loadFailed": "読み込みに失敗しました"
+  },
+  "success": {
+    "started": "起動しました",
+    "stopped": "停止しました",
+    "restarted": "再起動しました",
+    "deleted": "削除しました",
+    "saved": "保存しました"
+  },
+  "confirm": {
+    "stop": "本当に停止しますか？",
+    "restart": "本当に再起動しますか？",
+    "delete": "本当に削除しますか？"
+  }
+}

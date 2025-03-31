@@ -1,0 +1,10 @@
+{
+  "newVersion": "New Version Found",
+  "version": "Version",
+  "releaseDate": "Release Date",
+  "releaseNotes": "Release Notes",
+  "later": "Later",
+  "githubDownload": "Github Download",
+  "netdiskDownload": "Cloud Download",
+  "checkUpdate": "Check for Updates"
+}

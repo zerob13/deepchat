@@ -1,0 +1,48 @@
+{
+  "title": "對話列表",
+  "new": "新建對話",
+  "edit": "編輯對話",
+  "delete": "刪除對話",
+  "search": "搜索對話",
+  "filter": "篩選對話",
+  "sort": "排序",
+  "empty": "暫無對話",
+  "loading": "加載中...",
+  "loadMore": "加載更多",
+  "noMore": "沒有更多了",
+  "refresh": "刷新",
+  "status": {
+    "active": "進行中",
+    "completed": "已完成",
+    "archived": "已歸檔",
+    "deleted": "已刪除"
+  },
+  "action": {
+    "archive": "歸檔",
+    "unarchive": "取消歸檔",
+    "pin": "置頂",
+    "unpin": "取消置頂",
+    "share": "分享",
+    "export": "導出",
+    "import": "導入"
+  },
+  "confirm": {
+    "delete": "確定要刪除該對話嗎？",
+    "archive": "確定要歸檔該對話嗎？",
+    "unarchive": "確定要取消歸檔該對話嗎？"
+  },
+  "success": {
+    "create": "創建成功",
+    "edit": "編輯成功",
+    "delete": "刪除成功",
+    "archive": "歸檔成功",
+    "unarchive": "取消歸檔成功"
+  },
+  "error": {
+    "create": "創建失敗",
+    "edit": "編輯失敗",
+    "delete": "刪除失敗",
+    "archive": "歸檔失敗",
+    "unarchive": "取消歸檔失敗"
+  }
+}

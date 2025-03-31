@@ -1,0 +1,34 @@
+{
+  "title": "歡迎使用",
+  "subtitle": "開始您的 AI 對話之旅",
+  "description": "DeepChat 是一個強大的 AI 對話工具，幫助您更好地與 AI 進行交流",
+  "features": {
+    "title": "主要功能",
+    "chat": "智能對話",
+    "tools": "工具調用",
+    "files": "文件處理",
+    "sync": "數據同步",
+    "customize": "個性化設置"
+  },
+  "getting_started": {
+    "title": "快速開始",
+    "step1": "選擇模型",
+    "step2": "開始對話",
+    "step3": "探索更多"
+  },
+  "tips": {
+    "title": "使用技巧",
+    "tip1": "使用清晰的語言描述您的需求",
+    "tip2": "善用工具功能提高效率",
+    "tip3": "定期同步保存重要對話"
+  },
+  "action": {
+    "start": "立即開始",
+    "learn_more": "了解更多",
+    "skip": "跳過引導"
+  },
+  "footer": {
+    "version": "版本 {version}",
+    "copyright": "版權所有"
+  }
+}

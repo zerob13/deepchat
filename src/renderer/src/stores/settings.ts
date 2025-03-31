@@ -12,7 +12,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const llmP = usePresenter('llmproviderPresenter')
   const upgradeP = usePresenter('upgradePresenter')
   const threadP = usePresenter('threadPresenter')
-  const { locale } = useI18n()
+  const { locale } = useI18n({ useScope: 'global' })
   const providers = ref<LLM_PROVIDER[]>([])
   const theme = ref<string>('system')
   const language = ref<string>('system')

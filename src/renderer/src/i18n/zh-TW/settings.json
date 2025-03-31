@@ -1,0 +1,46 @@
+{
+  "title": "設置",
+  "general": {
+    "title": "常規",
+    "language": "語言",
+    "theme": "主題",
+    "fontSize": "字體大小",
+    "autoUpdate": "自動更新",
+    "startup": "開機啟動"
+  },
+  "appearance": {
+    "title": "外觀",
+    "darkMode": "深色模式",
+    "customTheme": "自定義主題",
+    "background": "背景",
+    "transparency": "透明度"
+  },
+  "account": {
+    "title": "賬戶",
+    "profile": "個人資料",
+    "security": "安全設置",
+    "notification": "通知設置",
+    "privacy": "隱私設置"
+  },
+  "network": {
+    "title": "網絡",
+    "proxy": "代理設置",
+    "timeout": "超時設置",
+    "retry": "重試次數"
+  },
+  "about": {
+    "title": "關於",
+    "version": "版本",
+    "update": "檢查更新",
+    "license": "許可協議",
+    "feedback": "反饋建議"
+  },
+  "save": "保存",
+  "cancel": "取消",
+  "reset": "重置",
+  "resetConfirm": "確定要重置所有設置嗎？",
+  "saveSuccess": "保存成功",
+  "saveFailed": "保存失敗",
+  "resetSuccess": "重置成功",
+  "resetFailed": "重置失敗"
+}

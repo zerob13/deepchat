@@ -1,0 +1,39 @@
+{
+  "title": "同步",
+  "status": {
+    "syncing": "同步中...",
+    "success": "同步成功",
+    "failed": "同步失敗",
+    "lastSync": "上次同步時間：{time}"
+  },
+  "settings": {
+    "title": "同步設置",
+    "auto": "自動同步",
+    "interval": "同步間隔",
+    "wifi": "僅在 WiFi 環境下同步"
+  },
+  "data": {
+    "title": "數據同步",
+    "chat": "對話記錄",
+    "settings": "設置項",
+    "files": "文件"
+  },
+  "action": {
+    "sync": "立即同步",
+    "pause": "暫停同步",
+    "resume": "恢復同步",
+    "cancel": "取消同步"
+  },
+  "error": {
+    "network": "網絡錯誤",
+    "timeout": "同步超時",
+    "conflict": "數據衝突",
+    "storage": "存儲空間不足"
+  },
+  "confirm": {
+    "sync": "確定要立即同步嗎？",
+    "pause": "確定要暫停同步嗎？",
+    "resume": "確定要恢復同步嗎？",
+    "cancel": "確定要取消同步嗎？"
+  }
+}

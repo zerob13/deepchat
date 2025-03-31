@@ -1,0 +1,44 @@
+{
+  "title": "更新",
+  "status": {
+    "checking": "更新を確認中...",
+    "available": "新しいバージョンが利用可能です",
+    "notAvailable": "最新バージョンです",
+    "downloading": "ダウンロード中...",
+    "downloaded": "ダウンロード完了",
+    "installing": "インストール中...",
+    "installed": "インストール完了",
+    "error": "更新エラー"
+  },
+  "actions": {
+    "check": "更新を確認",
+    "download": "ダウンロード",
+    "install": "インストール",
+    "restart": "再起動",
+    "later": "後で"
+  },
+  "settings": {
+    "title": "更新設定",
+    "autoCheck": "自動更新確認",
+    "autoDownload": "自動ダウンロード",
+    "autoInstall": "自動インストール",
+    "channel": "更新チャンネル"
+  },
+  "notifications": {
+    "updateAvailable": "新しいバージョンが利用可能です",
+    "downloadComplete": "ダウンロードが完了しました",
+    "installComplete": "インストールが完了しました",
+    "restartRequired": "更新を適用するには再起動が必要です"
+  },
+  "errors": {
+    "checkFailed": "更新の確認に失敗しました",
+    "downloadFailed": "ダウンロードに失敗しました",
+    "installFailed": "インストールに失敗しました",
+    "networkError": "ネットワークエラー"
+  },
+  "confirm": {
+    "download": "更新をダウンロードしますか？",
+    "install": "更新をインストールしますか？",
+    "restart": "今すぐ再起動しますか？"
+  }
+}

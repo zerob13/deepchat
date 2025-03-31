@@ -1,0 +1,57 @@
+{
+  "confirm": {
+    "title": "確認",
+    "ok": "OK",
+    "cancel": "キャンセル"
+  },
+  "alert": {
+    "title": "警告",
+    "ok": "OK"
+  },
+  "error": {
+    "title": "エラー",
+    "ok": "OK"
+  },
+  "prompt": {
+    "title": "入力",
+    "ok": "OK",
+    "cancel": "キャンセル",
+    "placeholder": "入力してください"
+  },
+  "delete": {
+    "title": "削除の確認",
+    "message": "本当に削除してもよろしいですか？",
+    "ok": "削除",
+    "cancel": "キャンセル"
+  },
+  "save": {
+    "title": "保存の確認",
+    "message": "変更を保存しますか？",
+    "ok": "保存",
+    "cancel": "キャンセル"
+  },
+  "close": {
+    "title": "閉じる",
+    "message": "変更が保存されていません。閉じてもよろしいですか？",
+    "ok": "閉じる",
+    "cancel": "キャンセル"
+  },
+  "exit": {
+    "title": "終了の確認",
+    "message": "アプリケーションを終了してもよろしいですか？",
+    "ok": "終了",
+    "cancel": "キャンセル"
+  },
+  "update": {
+    "title": "更新の確認",
+    "message": "新しいバージョンが利用可能です。更新しますか？",
+    "ok": "更新",
+    "cancel": "後で"
+  },
+  "network": {
+    "title": "ネットワークエラー",
+    "message": "ネットワーク接続に問題が発生しました。",
+    "retry": "再試行",
+    "cancel": "キャンセル"
+  }
+}

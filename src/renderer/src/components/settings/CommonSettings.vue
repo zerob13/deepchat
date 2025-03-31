@@ -203,7 +203,13 @@
             <DialogTitle>{{ t('settings.common.loggingDialogTitle') }}</DialogTitle>
             <DialogDescription>
               <div class="space-y-2">
-                <p>{{ newLoggingValue ? t('settings.common.loggingEnableDesc') : t('settings.common.loggingDisableDesc') }}</p>
+                <p>
+                  {{
+                    newLoggingValue
+                      ? t('settings.common.loggingEnableDesc')
+                      : t('settings.common.loggingDisableDesc')
+                  }}
+                </p>
                 <p>{{ t('settings.common.loggingRestartNotice') }}</p>
               </div>
             </DialogDescription>
@@ -566,6 +572,7 @@ onMounted(async () => {
 })
 
 watch(selectedLanguage, async (newValue) => {
+  console.log('selectedLanguage', newValue)
   await settingsStore.updateLanguage(newValue)
 })
 

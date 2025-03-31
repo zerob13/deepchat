@@ -1,0 +1,29 @@
+{
+  "title": "新建對話",
+  "name": "對話名稱",
+  "type": "對話類型",
+  "model": "模型選擇",
+  "settings": "設置",
+  "create": "創建",
+  "cancel": "取消",
+  "placeholder": {
+    "name": "請輸入對話名稱",
+    "type": "請選擇對話類型",
+    "model": "請選擇模型"
+  },
+  "validation": {
+    "name": {
+      "required": "請輸入對話名稱",
+      "length": "名稱長度應在 2-50 個字符之間"
+    },
+    "type": {
+      "required": "請選擇對話類型"
+    },
+    "model": {
+      "required": "請選擇模型"
+    }
+  },
+  "success": "創建成功",
+  "error": "創建失敗",
+  "loading": "創建中..."
+}

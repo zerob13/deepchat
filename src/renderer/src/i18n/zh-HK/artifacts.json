@@ -1,0 +1,21 @@
+{
+  "title": "知識庫",
+  "create": "創建知識庫",
+  "import": "導入知識庫",
+  "delete": "刪除知識庫",
+  "deleteConfirm": "確定要刪除該知識庫嗎？",
+  "name": "知識庫名稱",
+  "description": "知識庫描述",
+  "nameRequired": "請輸入知識庫名稱",
+  "descriptionRequired": "請輸入知識庫描述",
+  "importSuccess": "導入成功",
+  "importFailed": "導入失敗",
+  "createSuccess": "創建成功",
+  "createFailed": "創建失敗",
+  "deleteSuccess": "刪除成功",
+  "deleteFailed": "刪除失敗",
+  "empty": "暫無知識庫",
+  "search": "搜索知識庫",
+  "searchPlaceholder": "請輸入關鍵字",
+  "noResult": "暫無搜索結果"
+}

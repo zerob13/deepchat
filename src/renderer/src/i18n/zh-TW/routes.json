@@ -1,0 +1,22 @@
+{
+  "home": "首頁",
+  "chat": "對話",
+  "settings": "設置",
+  "profile": "個人資料",
+  "about": "關於",
+  "help": "幫助",
+  "login": "登入",
+  "register": "註冊",
+  "logout": "登出",
+  "notFound": "頁面不存在",
+  "error": "錯誤頁面",
+  "loading": "加載中...",
+  "unauthorized": "未授權訪問",
+  "forbidden": "禁止訪問",
+  "serverError": "服務器錯誤",
+  "networkError": "網絡錯誤",
+  "timeoutError": "請求超時",
+  "retry": "重試",
+  "back": "返回",
+  "backToHome": "返回首頁"
+}

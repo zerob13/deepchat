@@ -1,0 +1,41 @@
+{
+  "title": "更新",
+  "checking": "檢查更新中...",
+  "available": "發現新版本",
+  "notAvailable": "當前已是最新版本",
+  "error": "檢查更新失敗",
+  "version": {
+    "current": "當前版本",
+    "latest": "最新版本",
+    "new": "新版本"
+  },
+  "status": {
+    "downloading": "下載中...",
+    "downloaded": "下載完成",
+    "installing": "安裝中...",
+    "installed": "安裝完成",
+    "failed": "安裝失敗"
+  },
+  "progress": {
+    "downloading": "下載進度：{progress}%",
+    "installing": "安裝進度：{progress}%"
+  },
+  "action": {
+    "check": "檢查更新",
+    "download": "下載更新",
+    "install": "安裝更新",
+    "restart": "重啟應用",
+    "later": "稍後提醒",
+    "ignore": "忽略此版本"
+  },
+  "notes": {
+    "title": "更新說明",
+    "empty": "暫無更新說明"
+  },
+  "settings": {
+    "title": "更新設置",
+    "auto": "自動檢查更新",
+    "frequency": "檢查頻率",
+    "beta": "接收測試版更新"
+  }
+}

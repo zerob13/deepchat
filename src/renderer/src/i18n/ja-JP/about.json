@@ -1,0 +1,18 @@
+{
+  "title": "アプリについて",
+  "version": "バージョン",
+  "checkUpdate": "アップデートを確認",
+  "checking": "アップデートを確認中...",
+  "isLatest": "最新バージョンです",
+  "hasUpdate": "新しいバージョンが利用可能です",
+  "updateNow": "今すぐ更新",
+  "later": "後で通知",
+  "changelog": "更新履歴",
+  "privacyPolicy": "プライバシーポリシー",
+  "userAgreement": "利用規約",
+  "sourceCode": "ソースコード",
+  "feedback": "フィードバック",
+  "sponsor": "スポンサー",
+  "chat": "コミュニティ",
+  "copyright": "著作権"
+}

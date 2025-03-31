@@ -1,0 +1,46 @@
+{
+  "title": "同期",
+  "status": {
+    "syncing": "同期中...",
+    "synced": "同期完了",
+    "error": "同期エラー",
+    "offline": "オフライン"
+  },
+  "actions": {
+    "sync": "今すぐ同期",
+    "cancel": "キャンセル",
+    "retry": "再試行"
+  },
+  "settings": {
+    "title": "同期設定",
+    "autoSync": "自動同期",
+    "syncInterval": "同期間隔",
+    "syncOnStart": "起動時に同期",
+    "syncOnClose": "終了時に同期"
+  },
+  "data": {
+    "title": "同期データ",
+    "chats": "チャット履歴",
+    "settings": "設定",
+    "models": "モデル設定",
+    "artifacts": "アーティファクト"
+  },
+  "errors": {
+    "networkError": "ネットワークエラー",
+    "authError": "認証エラー",
+    "serverError": "サーバーエラー",
+    "syncFailed": "同期に失敗しました",
+    "quotaExceeded": "容量制限を超えました"
+  },
+  "notifications": {
+    "syncStarted": "同期を開始しました",
+    "syncCompleted": "同期が完了しました",
+    "syncFailed": "同期に失敗しました",
+    "syncCancelled": "同期をキャンセルしました"
+  },
+  "confirm": {
+    "cancelSync": "同期をキャンセルしてもよろしいですか？",
+    "forcedSync": "強制的に同期を実行しますか？",
+    "clearData": "同期データをクリアしてもよろしいですか？"
+  }
+}
