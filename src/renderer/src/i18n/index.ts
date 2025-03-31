@@ -17,5 +17,5 @@ const locales = {
   zh: zhCN,
   en: enUS
 }
-
+console.log('locales', locales)
 export default locales

@@ -10,6 +10,5 @@
   },
   "i18n-ally.localesPaths": ["src/renderer/src/i18n"],
   "i18n-ally.keystyle": "nested",
-  "i18n-ally.sourceLanguage": "zh-CN",
-  "vue-i18n.i18nPaths": "src/renderer/src/i18n"
+  "i18n-ally.sourceLanguage": "ja-JP"
 }

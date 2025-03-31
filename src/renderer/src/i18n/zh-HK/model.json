@@ -1,44 +1,30 @@
 {
-  "title": "模型",
-  "name": "名稱",
-  "type": "類型",
-  "version": "版本",
-  "description": "描述",
-  "status": "狀態",
-  "settings": "設置",
-  "parameters": "參數",
-  "performance": "性能",
-  "accuracy": "準確度",
-  "speed": "速度",
-  "memory": "內存",
-  "loading": "加載中...",
-  "loaded": "已加載",
-  "unloaded": "未加載",
-  "error": "錯誤",
-  "warning": "警告",
-  "info": "信息",
-  "success": "成功",
-  "failed": "失敗",
-  "unknown": "未知",
-  "start": "啟動",
-  "stop": "停止",
-  "restart": "重啟",
-  "update": "更新",
-  "delete": "刪除",
-  "edit": "編輯",
-  "save": "保存",
-  "cancel": "取消",
-  "confirm": "確認",
-  "apply": "應用",
-  "reset": "重置",
-  "import": "導入",
-  "export": "導出",
-  "download": "下載",
-  "upload": "上傳",
-  "search": "搜索",
-  "filter": "篩選",
-  "sort": "排序",
-  "refresh": "刷新",
-  "help": "幫助",
-  "about": "關於"
+  "search": {
+    "placeholder": "搜索模型..."
+  },
+  "error": {
+    "loadFailed": "加載模型失敗"
+  },
+  "type": {
+    "custom": "自定義模型",
+    "official": "官方模型"
+  },
+  "add": {
+    "namePlaceholder": "模型名稱",
+    "idPlaceholder": "模型ID",
+    "contextLengthPlaceholder": "上下文長度",
+    "maxTokensPlaceholder": "最大token"
+  },
+  "actions": {
+    "add": "添加模型",
+    "enableAll": "啟用全部",
+    "disableAll": "禁用全部"
+  },
+  "tags": {
+    "reasoning": "推理",
+    "chat": "對話",
+    "code": "代碼",
+    "writing": "寫作",
+    "analysis": "分析"
+  }
 }
