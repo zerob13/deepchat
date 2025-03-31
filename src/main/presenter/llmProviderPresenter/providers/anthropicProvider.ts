@@ -29,7 +29,10 @@ export class AnthropicProvider extends BaseLLMProvider {
         this.anthropic = new Anthropic({
           apiKey: apiKey,
           baseURL: this.provider.baseUrl || 'https://api.anthropic.com',
-          httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
+          httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined,
+          defaultHeaders: {
+            ...this.defaultHeaders
+          }
         })
         await super.init()
       } catch (error) {

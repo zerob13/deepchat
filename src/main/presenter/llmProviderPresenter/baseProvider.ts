@@ -44,6 +44,11 @@ export abstract class BaseLLMProvider {
   protected isInitialized: boolean = false
   protected configPresenter: ConfigPresenter
 
+  protected defaultHeaders: Record<string, string> = {
+    'HTTP-Referer': 'https://deepchatai.cn',
+    'X-Title': 'DeepChat'
+  }
+
   constructor(provider: LLM_PROVIDER, configPresenter: ConfigPresenter) {
     this.provider = provider
     this.configPresenter = configPresenter
