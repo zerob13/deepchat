@@ -606,6 +606,7 @@ const handleResetData = () => {
 }
 
 const handleSearchModelSelect = (model: RENDERER_MODEL_META, providerId: string) => {
+  console.log('update search model', model, providerId)
   settingsStore.setSearchAssistantModel(model, providerId)
   modelSelectOpen.value = false
 }

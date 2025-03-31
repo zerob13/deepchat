@@ -166,7 +166,10 @@ const props = withDefaults(
 
 const modelSelectOpen = ref(false)
 const handleModelUpdate = (model: MODEL_META) => {
-  console.log('model', model)
+  chatStore.updateChatConfig({
+    modelId: model.id,
+    providerId: model.providerId
+  })
   modelSelectOpen.value = false
 }
 
