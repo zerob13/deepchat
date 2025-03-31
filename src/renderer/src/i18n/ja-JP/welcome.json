@@ -1,48 +1,37 @@
 {
-  "title": "ようこそ",
-  "subtitle": "AIチャットの旅を始めましょう",
-  "features": {
-    "title": "主な機能",
-    "chat": {
-      "title": "AIチャット",
-      "description": "高度なAIモデルとの自然な対話を楽しめます"
+  "steps": {
+    "welcome": {
+      "title": "ようこそ",
+      "description": "DeepChatの設定を始めましょう"
     },
-    "multiModel": {
-      "title": "マルチモデル対応",
-      "description": "複数のAIモデルを切り替えて使用できます"
+    "provider": {
+      "title": "モデルプロバイダー",
+      "description": "お好みのモデルプロバイダーを選択してください"
     },
-    "customization": {
-      "title": "カスタマイズ",
-      "description": "チャット設定を自由にカスタマイズできます"
+    "configuration": {
+      "title": "モデル設定",
+      "description": "使用したいモデルを設定してください"
     },
-    "sync": {
-      "title": "同期機能",
-      "description": "チャット履歴を複数のデバイスで同期できます"
+    "complete": {
+      "title": "完了",
+      "description": "すべての準備が整いました！"
     }
   },
-  "getting_started": {
-    "title": "はじめ方",
-    "steps": {
-      "1": "モデルを選択",
-      "2": "新規スレッドを作成",
-      "3": "チャットを開始"
-    }
+  "title": "DeepChatへようこそ",
+  "description": "セットアップを完了しましょう",
+  "provider": {
+    "select": "プロバイダーを選択",
+    "apiUrl": "API URL",
+    "apiKey": "API キー",
+    "verifyLink": "リンクを検証"
   },
-  "tips": {
-    "title": "使用のヒント",
-    "1": "ショートカットキーを活用して効率的に操作",
-    "2": "プロンプトを工夫して精度の高い回答を得る",
-    "3": "チャット履歴を定期的にエクスポート"
+  "complete": {
+    "title": "すべて完了！",
+    "description": "セットアップが完了しました。始めましょう！"
   },
-  "actions": {
-    "start": "始める",
-    "learn_more": "詳しく見る",
-    "skip": "スキップ"
-  },
-  "footer": {
-    "version": "バージョン",
-    "support": "サポート",
-    "privacy": "プライバシー",
-    "terms": "利用規約"
+  "buttons": {
+    "getStarted": "始める",
+    "next": "次へ",
+    "back": "戻る"
   }
 }

@@ -1,37 +1,12 @@
 {
+  "calling": "呼び出し中",
+  "response": "実行中",
+  "end": "完了",
+  "error": "エラー",
   "title": "ツール呼び出し",
-  "status": {
-    "running": "実行中",
-    "completed": "完了",
-    "failed": "失敗",
-    "cancelled": "キャンセル"
-  },
-  "actions": {
-    "run": "実行",
-    "cancel": "キャンセル",
-    "retry": "再試行",
-    "view": "詳細を表示"
-  },
-  "errors": {
-    "executionFailed": "実行に失敗しました",
-    "invalidInput": "無効な入力です",
-    "timeout": "タイムアウトしました",
-    "cancelled": "キャンセルされました"
-  },
-  "confirmations": {
-    "cancel": "実行をキャンセルしてもよろしいですか？",
-    "retry": "再試行しますか？"
-  },
-  "logs": {
-    "title": "実行ログ",
-    "empty": "ログはありません",
-    "clear": "クリア",
-    "download": "ダウンロード"
-  },
-  "settings": {
-    "title": "ツール設定",
-    "timeout": "タイムアウト",
-    "retries": "再試行回数",
-    "logLevel": "ログレベル"
-  }
+  "clickToView": "詳細を表示するにはクリック",
+  "functionName": "関数名",
+  "permission": "権限リクエスト中",
+  "params": "関数パラメータ",
+  "responseData": "応答データ"
 }

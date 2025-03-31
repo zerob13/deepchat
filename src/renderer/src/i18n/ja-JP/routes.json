@@ -1,30 +1,11 @@
 {
-  "home": {
-    "title": "ホーム",
-    "description": "ホーム画面"
-  },
-  "chat": {
-    "title": "チャット",
-    "description": "AIとチャット"
-  },
-  "settings": {
-    "title": "設定",
-    "description": "アプリケーション設定"
-  },
-  "profile": {
-    "title": "プロフィール",
-    "description": "ユーザープロフィール"
-  },
-  "about": {
-    "title": "アプリについて",
-    "description": "アプリケーション情報"
-  },
-  "notFound": {
-    "title": "ページが見つかりません",
-    "description": "お探しのページは存在しません"
-  },
-  "error": {
-    "title": "エラー",
-    "description": "エラーが発生しました"
-  }
+  "chat": "チャット",
+  "welcome": "ようこそ",
+  "settings": "設定",
+  "settings-common": "一般設定",
+  "settings-provider": "プロバイダー設定",
+  "settings-about": "について",
+  "settings-database": "データ設定",
+  "settings-mcp": "MCP設定",
+  "settings-shortcut": "ショートカット"
 }

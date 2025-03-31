@@ -6,5 +6,6 @@
   "settings-provider": "Настройки провайдера",
   "settings-about": "О программе",
   "settings-database": "Настройки данных",
-  "settings-shortcut": "Горячие клавиши"
+  "settings-shortcut": "Горячие клавиши",
+  "settings-mcp": "Настройки MCP"
 }

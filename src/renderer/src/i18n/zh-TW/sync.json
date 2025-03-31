@@ -1,39 +1,17 @@
 {
-  "title": "同步",
-  "status": {
-    "syncing": "同步中...",
-    "success": "同步成功",
-    "failed": "同步失敗",
-    "lastSync": "上次同步時間：{time}"
-  },
-  "settings": {
-    "title": "同步設置",
-    "auto": "自動同步",
-    "interval": "同步間隔",
-    "wifi": "僅在 WiFi 環境下同步"
-  },
-  "data": {
-    "title": "數據同步",
-    "chat": "對話記錄",
-    "settings": "設置項",
-    "files": "文件"
-  },
-  "action": {
-    "sync": "立即同步",
-    "pause": "暫停同步",
-    "resume": "恢復同步",
-    "cancel": "取消同步"
+  "success": {
+    "importComplete": "資料匯入成功，點選「確定」後將重新啟動應用程式"
   },
   "error": {
-    "network": "網絡錯誤",
-    "timeout": "同步超時",
-    "conflict": "數據衝突",
-    "storage": "存儲空間不足"
-  },
-  "confirm": {
-    "sync": "確定要立即同步嗎？",
-    "pause": "確定要暫停同步嗎？",
-    "resume": "確定要恢復同步嗎？",
-    "cancel": "確定要取消同步嗎？"
+    "notEnabled": "同步功能未啟用",
+    "folderNotExists": "同步資料夾不存在",
+    "noValidBackup": "同步資料夾中沒有有效的備份檔案",
+    "dbNotExists": "資料庫檔案不存在",
+    "configNotExists": "設定檔不存在",
+    "tempDbFailed": "暫存資料庫備份檔案建立失敗",
+    "tempConfigFailed": "暫存設定備份檔案建立失敗",
+    "importFailed": "匯入失敗，已還原原始資料",
+    "importProcess": "匯入過程發生錯誤",
+    "unknown": "未知錯誤"
   }
 }

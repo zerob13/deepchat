@@ -1,18 +1,16 @@
 {
-  "title": "アプリについて",
-  "version": "バージョン",
-  "checkUpdate": "アップデートを確認",
-  "checking": "アップデートを確認中...",
-  "isLatest": "最新バージョンです",
-  "hasUpdate": "新しいバージョンが利用可能です",
-  "updateNow": "今すぐ更新",
-  "later": "後で通知",
-  "changelog": "更新履歴",
-  "privacyPolicy": "プライバシーポリシー",
-  "userAgreement": "利用規約",
-  "sourceCode": "ソースコード",
-  "feedback": "フィードバック",
-  "sponsor": "スポンサー",
-  "chat": "コミュニティ",
-  "copyright": "著作権"
+  "title": "DeepChat",
+  "description": "DeepChatはクロスプラットフォームのAIクライアントで、より多くの人々にAIを便利に使用できるよう努めています。",
+  "website": "ウェブサイトを訪問",
+  "disclaimerButton": "免責条項",
+  "disclaimerTitle": "利用規約声明",
+  "checkUpdateButton": "アップデートを確認する",
+  "deviceInfo": {
+    "title": "デバイス情報",
+    "platform": "プラットフォーム",
+    "arch": "アーキテクチャ",
+    "cpuModel": "CPUモデル",
+    "totalMemory": "総メモリ",
+    "osVersion": "システムバージョン"
+  }
 }

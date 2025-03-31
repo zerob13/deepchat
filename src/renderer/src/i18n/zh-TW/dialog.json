@@ -1,30 +1,23 @@
 {
-  "title": "對話框",
-  "confirm": "確認",
   "cancel": "取消",
-  "ok": "確定",
+  "confirm": "確認",
   "close": "關閉",
-  "save": "保存",
-  "delete": "刪除",
-  "edit": "編輯",
-  "warning": "警告",
-  "error": "錯誤",
-  "info": "提示",
-  "success": "成功",
-  "loading": "加載中...",
-  "processing": "處理中...",
-  "pleaseWait": "請稍候...",
-  "confirmDelete": "確定要刪除嗎？",
-  "confirmClose": "確定要關閉嗎？",
-  "confirmCancel": "確定要取消嗎？",
-  "confirmSave": "確定要保存嗎？",
-  "confirmExit": "確定要退出嗎？",
-  "unsavedChanges": "有未保存的更改",
-  "saveChanges": "是否保存更改？",
-  "discardChanges": "放棄更改",
-  "required": "此項為必填項",
-  "invalidInput": "輸入無效",
-  "errorOccurred": "發生錯誤",
-  "retry": "重試",
-  "back": "返回"
+  "ok": "確定",
+  "delete": {
+    "title": "確定要刪除這個對話嗎？",
+    "description": "此操作無法復原，請謹慎操作。",
+    "confirm": "刪除"
+  },
+  "rename": {
+    "title": "重新命名對話",
+    "description": "請輸入新的對話名稱。"
+  },
+  "cleanMessages": {
+    "title": "清除對話訊息",
+    "description": "清除訊息會刪除對話中所有訊息和檔案，確定要繼續嗎？",
+    "confirm": "清除"
+  },
+  "error": {
+    "title": "錯誤"
+  }
 }
