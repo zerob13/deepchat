@@ -1,5 +1,22 @@
 import { BaseTable } from './baseTable'
 import type Database from 'better-sqlite3-multiple-ciphers'
+import { CONVERSATION, CONVERSATION_SETTINGS } from '@shared/presenter'
+import { nanoid } from 'nanoid'
+
+type ConversationRow = {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  systemPrompt: string
+  temperature: number
+  contextLength: number
+  maxTokens: number
+  providerId: string
+  modelId: string
+  artifacts: number
+  is_new: number
+}
 
 export class ConversationsTable extends BaseTable {
   constructor(db: Database.Database) {
@@ -54,5 +71,211 @@ export class ConversationsTable extends BaseTable {
 
   getLatestVersion(): number {
     return 2
+  }
+
+  async create(title: string, settings: Partial<CONVERSATION_SETTINGS> = {}): Promise<string> {
+    const insert = this.db.prepare(`
+      INSERT INTO conversations (
+        conv_id,
+        title,
+        created_at,
+        updated_at,
+        system_prompt,
+        temperature,
+        context_length,
+        max_tokens,
+        provider_id,
+        model_id,
+        is_new,
+        artifacts
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const conv_id = nanoid()
+    const now = Date.now()
+    insert.run(
+      conv_id,
+      title,
+      now,
+      now,
+      settings.systemPrompt || '',
+      settings.temperature || 0.7,
+      settings.contextLength || 4000,
+      settings.maxTokens || 2000,
+      settings.providerId || 'openai',
+      settings.modelId || 'gpt-4',
+      1,
+      settings.artifacts || 0
+    )
+    return conv_id
+  }
+
+  async get(conversationId: string): Promise<CONVERSATION> {
+    const result = this.db
+      .prepare(
+        `
+      SELECT
+        conv_id as id,
+        title,
+        created_at as createdAt,
+        updated_at as updatedAt,
+        system_prompt as systemPrompt,
+        temperature,
+        context_length as contextLength,
+        max_tokens as maxTokens,
+        provider_id as providerId,
+        model_id as modelId,
+        is_new,
+        artifacts
+      FROM conversations
+      WHERE conv_id = ?
+    `
+      )
+      .get(conversationId) as ConversationRow
+
+    if (!result) {
+      throw new Error(`Conversation ${conversationId} not found`)
+    }
+
+    return {
+      id: result.id,
+      title: result.title,
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+      is_new: result.is_new,
+      settings: {
+        systemPrompt: result.systemPrompt,
+        temperature: result.temperature,
+        contextLength: result.contextLength,
+        maxTokens: result.maxTokens,
+        providerId: result.providerId,
+        modelId: result.modelId,
+        artifacts: result.artifacts as 0 | 1
+      }
+    }
+  }
+
+  async update(conversationId: string, data: Partial<CONVERSATION>): Promise<void> {
+    const updates: string[] = []
+    const params: (string | number)[] = []
+
+    if (data.title !== undefined) {
+      updates.push('title = ?')
+      params.push(data.title)
+    }
+
+    if (data.is_new !== undefined) {
+      updates.push('is_new = ?')
+      params.push(data.is_new)
+    }
+
+    if (data.settings) {
+      if (data.settings.systemPrompt !== undefined) {
+        updates.push('system_prompt = ?')
+        params.push(data.settings.systemPrompt)
+      }
+      if (data.settings.temperature !== undefined) {
+        updates.push('temperature = ?')
+        params.push(data.settings.temperature)
+      }
+      if (data.settings.contextLength !== undefined) {
+        updates.push('context_length = ?')
+        params.push(data.settings.contextLength)
+      }
+      if (data.settings.maxTokens !== undefined) {
+        updates.push('max_tokens = ?')
+        params.push(data.settings.maxTokens)
+      }
+      if (data.settings.providerId !== undefined) {
+        updates.push('provider_id = ?')
+        params.push(data.settings.providerId)
+      }
+      if (data.settings.modelId !== undefined) {
+        updates.push('model_id = ?')
+        params.push(data.settings.modelId)
+      }
+      if (data.settings.artifacts !== undefined) {
+        updates.push('artifacts = ?')
+        params.push(data.settings.artifacts)
+      }
+    }
+
+    if (updates.length > 0) {
+      updates.push('updated_at = ?')
+      params.push(Date.now())
+
+      const updateStmt = this.db.prepare(`
+        UPDATE conversations
+        SET ${updates.join(', ')}
+        WHERE conv_id = ?
+      `)
+      params.push(conversationId)
+      updateStmt.run(...params)
+    }
+  }
+
+  async delete(conversationId: string): Promise<void> {
+    const deleteStmt = this.db.prepare('DELETE FROM conversations WHERE conv_id = ?')
+    deleteStmt.run(conversationId)
+  }
+
+  async list(page: number, pageSize: number): Promise<{ total: number; list: CONVERSATION[] }> {
+    const offset = (page - 1) * pageSize
+
+    const totalResult = this.db.prepare('SELECT COUNT(*) as count FROM conversations').get() as {
+      count: number
+    }
+
+    const results = this.db
+      .prepare(
+        `
+      SELECT
+        conv_id as id,
+        title,
+        created_at as createdAt,
+        updated_at as updatedAt,
+        system_prompt as systemPrompt,
+        temperature,
+        context_length as contextLength,
+        max_tokens as maxTokens,
+        provider_id as providerId,
+        model_id as modelId,
+        is_new,
+        artifacts
+      FROM conversations
+      ORDER BY updated_at DESC
+      LIMIT ? OFFSET ?
+    `
+      )
+      .all(pageSize, offset) as ConversationRow[]
+
+    return {
+      total: totalResult.count,
+      list: results.map((row) => ({
+        id: row.id,
+        title: row.title,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        is_new: row.is_new,
+        settings: {
+          systemPrompt: row.systemPrompt,
+          temperature: row.temperature,
+          contextLength: row.contextLength,
+          maxTokens: row.maxTokens,
+          providerId: row.providerId,
+          modelId: row.modelId,
+          artifacts: row.artifacts as 0 | 1
+        }
+      }))
+    }
+  }
+
+  async rename(conversationId: string, title: string): Promise<void> {
+    const updateStmt = this.db.prepare(`
+      UPDATE conversations
+      SET title = ?, is_new = 0
+      WHERE conv_id = ?
+    `)
+    updateStmt.run(title, conversationId)
   }
 }

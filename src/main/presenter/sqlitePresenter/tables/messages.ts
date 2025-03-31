@@ -1,8 +1,10 @@
+import { Database } from 'better-sqlite3-multiple-ciphers'
 import { BaseTable } from './baseTable'
-import type Database from 'better-sqlite3-multiple-ciphers'
+import { SQLITE_MESSAGE } from '@shared/presenter'
+import { nanoid } from 'nanoid'
 
 export class MessagesTable extends BaseTable {
-  constructor(db: Database.Database) {
+  constructor(db: Database) {
     super(db, 'messages')
   }
 
@@ -30,11 +32,330 @@ export class MessagesTable extends BaseTable {
     `
   }
 
-  getMigrationSQL(): string | null {
+  getMigrationSQL(version: number): string | null {
     return null
   }
 
   getLatestVersion(): number {
     return 0
+  }
+
+  createTable(): void {
+    if (!this.tableExists()) {
+      this.db.exec(this.getCreateTableSQL())
+    }
+  }
+
+  async insert(
+    conversationId: string,
+    content: string,
+    role: string,
+    parentId: string,
+    metadata: string = '{}',
+    orderSeq: number = 0,
+    tokenCount: number = 0,
+    status: string = 'pending',
+    isContextEdge: number = 0,
+    isVariant: number = 0
+  ): Promise<string> {
+    const insert = this.db.prepare(`
+      INSERT INTO messages (
+        msg_id,
+        conversation_id,
+        parent_id,
+        content,
+        role,
+        created_at,
+        order_seq,
+        token_count,
+        status,
+        metadata,
+        is_context_edge,
+        is_variant
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const msgId = nanoid()
+    insert.run(
+      msgId,
+      conversationId,
+      parentId,
+      content,
+      role,
+      Date.now(),
+      orderSeq,
+      tokenCount,
+      status,
+      metadata,
+      isContextEdge,
+      isVariant
+    )
+    return msgId
+  }
+
+  async update(
+    messageId: string,
+    data: {
+      content?: string
+      status?: string
+      metadata?: string
+      isContextEdge?: number
+      tokenCount?: number
+    }
+  ): Promise<void> {
+    const updates: string[] = []
+    const params: (string | number)[] = []
+
+    if (data.content !== undefined) {
+      updates.push('content = ?')
+      params.push(data.content)
+    }
+    if (data.status !== undefined) {
+      updates.push('status = ?')
+      params.push(data.status)
+    }
+    if (data.metadata !== undefined) {
+      updates.push('metadata = ?')
+      params.push(data.metadata)
+    }
+    if (data.isContextEdge !== undefined) {
+      updates.push('is_context_edge = ?')
+      params.push(data.isContextEdge)
+    }
+    if (data.tokenCount !== undefined) {
+      updates.push('token_count = ?')
+      params.push(data.tokenCount)
+    }
+
+    if (updates.length > 0) {
+      const updateStmt = this.db.prepare(`
+        UPDATE messages
+        SET ${updates.join(', ')}
+        WHERE msg_id = ?
+      `)
+      params.push(messageId)
+      updateStmt.run(...params)
+    }
+  }
+
+  async delete(messageId: string): Promise<void> {
+    const deleteStmt = this.db.prepare('DELETE FROM messages WHERE msg_id = ?')
+    deleteStmt.run(messageId)
+  }
+
+  async deleteAll(): Promise<void> {
+    const deleteStmt = this.db.prepare('DELETE FROM messages')
+    deleteStmt.run()
+  }
+
+  async deleteAllInConversation(conversationId: string): Promise<void> {
+    const deleteStmt = this.db.prepare('DELETE FROM messages WHERE conversation_id = ?')
+    deleteStmt.run(conversationId)
+  }
+
+  async get(messageId: string): Promise<SQLITE_MESSAGE | null> {
+    return this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE msg_id = ?
+      `
+      )
+      .get(messageId) as SQLITE_MESSAGE | null
+  }
+
+  async getVariants(messageId: string): Promise<SQLITE_MESSAGE[]> {
+    return this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE parent_id = ?
+        ORDER BY created_at ASC
+      `
+      )
+      .all(messageId) as SQLITE_MESSAGE[]
+  }
+
+  async getMaxOrderSeq(conversationId: string): Promise<number> {
+    const result = this.db
+      .prepare('SELECT MAX(order_seq) as maxSeq FROM messages WHERE conversation_id = ?')
+      .get(conversationId) as { maxSeq: number }
+    return result.maxSeq || 0
+  }
+
+  async getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null> {
+    return this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ? AND role = 'user'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+      )
+      .get(conversationId) as SQLITE_MESSAGE | null
+  }
+
+  async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<SQLITE_MESSAGE | null> {
+    const mainMessage = this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ?
+        AND parent_id = ?
+        AND is_variant = 0
+        ORDER BY created_at ASC
+        LIMIT 1
+      `
+      )
+      .get(conversationId, parentId) as SQLITE_MESSAGE | null
+
+    if (mainMessage) {
+      const variants = this.db
+        .prepare(
+          `
+          SELECT
+            msg_id as id,
+            conversation_id,
+            parent_id,
+            content,
+            role,
+            created_at,
+            order_seq,
+            token_count,
+            status,
+            metadata,
+            is_context_edge,
+            is_variant
+          FROM messages
+          WHERE conversation_id = ?
+          AND parent_id = ?
+          AND is_variant = 1
+          ORDER BY created_at ASC
+        `
+        )
+        .all(conversationId, parentId) as SQLITE_MESSAGE[]
+
+      mainMessage.variants = variants
+    }
+
+    return mainMessage
+  }
+
+  async query(conversationId: string): Promise<SQLITE_MESSAGE[]> {
+    // 首先获取所有非变体消息
+    const mainMessages = this.db
+      .prepare(
+        `
+        SELECT
+          msg_id as id,
+          conversation_id,
+          parent_id,
+          content,
+          role,
+          created_at,
+          order_seq,
+          token_count,
+          status,
+          metadata,
+          is_context_edge,
+          is_variant
+        FROM messages
+        WHERE conversation_id = ? AND is_variant != 1
+        ORDER BY created_at ASC, order_seq ASC
+      `
+      )
+      .all(conversationId) as SQLITE_MESSAGE[]
+
+    // 对于每个助手消息，获取其变体
+    const getVariants = this.db.prepare(
+      `
+      SELECT
+        msg_id as id,
+        conversation_id,
+        parent_id,
+        content,
+        role,
+        created_at,
+        order_seq,
+        token_count,
+        status,
+        metadata,
+        is_context_edge,
+        is_variant
+      FROM messages
+      WHERE parent_id = ? AND is_variant = 1
+      ORDER BY created_at ASC
+    `
+    )
+
+    // 为每个助手消息添加变体
+    return mainMessages.map((msg) => {
+      if (msg.role === 'assistant') {
+        const variants = getVariants.all(msg.parent_id) as SQLITE_MESSAGE[]
+        if (variants.length > 0) {
+          return {
+            ...msg,
+            variants
+          }
+        }
+      }
+      return msg
+    })
   }
 }

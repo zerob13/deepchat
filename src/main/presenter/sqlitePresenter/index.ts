@@ -1,11 +1,9 @@
 import Database from 'better-sqlite3-multiple-ciphers'
 import path from 'path'
 import fs from 'fs'
-import { BaseTable } from './tables/baseTable'
 import { ConversationsTable } from './tables/conversations'
 import { MessagesTable } from './tables/messages'
 import { AttachmentsTable } from './tables/attachments'
-import { nanoid } from 'nanoid'
 import {
   ISQLitePresenter,
   SQLITE_MESSAGE,
@@ -22,23 +20,12 @@ export enum ImportMode {
   OVERWRITE = 'overwrite' // 覆盖导入
 }
 
-type ConversationRow = {
-  id: string
-  title: string
-  createdAt: number
-  updatedAt: number
-  systemPrompt: string
-  temperature: number
-  contextLength: number
-  maxTokens: number
-  providerId: string
-  modelId: string
-  artifacts: number
-}
-
 export class SQLitePresenter implements ISQLitePresenter {
   private db!: Database.Database
-  private tables: BaseTable[] = []
+  private conversationsTable!: ConversationsTable
+  private messagesTable!: MessagesTable
+  private attachmentsTable!: AttachmentsTable
+  private messageAttachmentsTable!: MessageAttachmentsTable
   private currentVersion: number = 0
   private dbPath: string
 
@@ -105,14 +92,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     }
   }
   async deleteAllMessagesInConversation(conversationId: string): Promise<void> {
-    const deleteStmt = this.db.prepare(
-      `
-    DELETE FROM messages
-    WHERE conversation_id = ?
-    `
-    )
-    deleteStmt.run(conversationId)
-    return
+    return this.messagesTable.deleteAllInConversation(conversationId)
   }
 
   private backupDatabase(): void {
@@ -145,28 +125,21 @@ export class SQLitePresenter implements ISQLitePresenter {
   }
 
   renameConversation(conversationId: string, title: string): Promise<CONVERSATION> {
-    const updateStmt = this.db.prepare(
-      `
-    UPDATE conversations
-    SET title = ?, is_new = 0
-    WHERE conv_id = ?
-    `
-    )
-    updateStmt.run(title, conversationId)
-
+    this.conversationsTable.rename(conversationId, title)
     return this.getConversation(conversationId)
   }
 
   private initTables() {
-    this.tables = [
-      new ConversationsTable(this.db),
-      new MessagesTable(this.db),
-      new AttachmentsTable(this.db),
-      new MessageAttachmentsTable(this.db)
-    ]
+    this.conversationsTable = new ConversationsTable(this.db)
+    this.messagesTable = new MessagesTable(this.db)
+    this.attachmentsTable = new AttachmentsTable(this.db)
+    this.messageAttachmentsTable = new MessageAttachmentsTable(this.db)
 
     // 创建所有表
-    this.tables.forEach((table) => table.createTable())
+    this.conversationsTable.createTable()
+    this.messagesTable.createTable()
+    this.attachmentsTable.createTable()
+    this.messageAttachmentsTable.createTable()
   }
 
   private initVersionTable() {
@@ -187,15 +160,21 @@ export class SQLitePresenter implements ISQLitePresenter {
   private migrate() {
     // 获取所有表的迁移脚本
     const migrations = new Map<number, string[]>()
+    const tables = [
+      this.conversationsTable,
+      this.messagesTable,
+      this.attachmentsTable,
+      this.messageAttachmentsTable
+    ]
 
     // 获取最新的迁移版本
-    const latestVersion = this.tables.reduce((maxVersion, table) => {
+    const latestVersion = tables.reduce((maxVersion, table) => {
       const tableMaxVersion = table.getLatestVersion?.() || 0
       return Math.max(maxVersion, tableMaxVersion)
     }, 0)
 
     // 只迁移未执行的版本
-    this.tables.forEach((table) => {
+    tables.forEach((table) => {
       for (let version = this.currentVersion + 1; version <= latestVersion; version++) {
         const sql = table.getMigrationSQL?.(version)
         if (sql) {
@@ -237,88 +216,12 @@ export class SQLitePresenter implements ISQLitePresenter {
     title: string,
     settings: Partial<CONVERSATION_SETTINGS> = {}
   ): Promise<string> {
-    const insert = this.db.prepare(
-      `
-      INSERT INTO conversations (
-        conv_id,
-        title,
-        created_at,
-        updated_at,
-        system_prompt,
-        temperature,
-        context_length,
-        max_tokens,
-        provider_id,
-        model_id,
-        is_new,
-        artifacts
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-    )
-    const conv_id = nanoid()
-    const now = Date.now()
-    insert.run(
-      conv_id,
-      title,
-      now,
-      now,
-      settings.systemPrompt || '',
-      settings.temperature || 0.7,
-      settings.contextLength || 4000,
-      settings.maxTokens || 2000,
-      settings.providerId || 'openai',
-      settings.modelId || 'gpt-4',
-      1,
-      settings.artifacts || 0
-    )
-    return conv_id
+    return this.conversationsTable.create(title, settings)
   }
 
   // 获取对话信息
   public async getConversation(conversationId: string): Promise<CONVERSATION> {
-    const result = this.db
-      .prepare(
-        `
-      SELECT
-        conv_id as id,
-        title,
-        created_at as createdAt,
-        updated_at as updatedAt,
-        system_prompt as systemPrompt,
-        temperature,
-        context_length as contextLength,
-        max_tokens as maxTokens,
-        provider_id as providerId,
-        model_id as modelId,
-        is_new,
-        artifacts
-      FROM conversations
-      WHERE conv_id = ?
-    `
-      )
-      .get(conversationId) as ConversationRow & { is_new: number }
-
-    if (!result) {
-      throw new Error(`Conversation ${conversationId} not found`)
-    }
-
-    return {
-      id: result.id,
-      title: result.title,
-      createdAt: result.createdAt,
-      updatedAt: result.updatedAt,
-      is_new: result.is_new,
-      settings: {
-        systemPrompt: result.systemPrompt,
-        temperature: result.temperature,
-        contextLength: result.contextLength,
-        maxTokens: result.maxTokens,
-        providerId: result.providerId,
-        modelId: result.modelId,
-        artifacts: result.artifacts as 0 | 1
-      }
-    }
+    return this.conversationsTable.get(conversationId)
   }
 
   // 更新对话信息
@@ -326,64 +229,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     conversationId: string,
     data: Partial<CONVERSATION>
   ): Promise<void> {
-    const updates: string[] = []
-    const params: (string | number)[] = []
-
-    if (data.title !== undefined) {
-      updates.push('title = ?')
-      params.push(data.title)
-    }
-
-    if (data.is_new !== undefined) {
-      updates.push('is_new = ?')
-      params.push(data.is_new)
-    }
-
-    if (data.settings) {
-      if (data.settings.systemPrompt !== undefined) {
-        updates.push('system_prompt = ?')
-        params.push(data.settings.systemPrompt)
-      }
-      if (data.settings.temperature !== undefined) {
-        updates.push('temperature = ?')
-        params.push(data.settings.temperature)
-      }
-      if (data.settings.contextLength !== undefined) {
-        updates.push('context_length = ?')
-        params.push(data.settings.contextLength)
-      }
-      if (data.settings.maxTokens !== undefined) {
-        updates.push('max_tokens = ?')
-        params.push(data.settings.maxTokens)
-      }
-      if (data.settings.providerId !== undefined) {
-        updates.push('provider_id = ?')
-        params.push(data.settings.providerId)
-      }
-      if (data.settings.modelId !== undefined) {
-        updates.push('model_id = ?')
-        params.push(data.settings.modelId)
-      }
-      if (data.settings.artifacts !== undefined) {
-        updates.push('artifacts = ?')
-        params.push(data.settings.artifacts)
-      }
-    }
-
-    if (updates.length > 0) {
-      updates.push('updated_at = ?')
-      params.push(Date.now())
-
-      const updateStmt = this.db.prepare(
-        `
-        UPDATE conversations
-        SET ${updates.join(', ')}
-        WHERE conv_id = ?
-      `
-      )
-      params.push(conversationId)
-      updateStmt.run(...params)
-    }
+    return this.conversationsTable.update(conversationId, data)
   }
 
   // 获取对话列表
@@ -391,65 +237,12 @@ export class SQLitePresenter implements ISQLitePresenter {
     page: number,
     pageSize: number
   ): Promise<{ total: number; list: CONVERSATION[] }> {
-    const offset = (page - 1) * pageSize
-
-    // 获取总数
-    const totalResult = this.db.prepare('SELECT COUNT(*) as count FROM conversations').get() as {
-      count: number
-    }
-    // 获取分页数据
-    const results = this.db
-      .prepare(
-        `
-      SELECT
-        conv_id as id,
-        title,
-        created_at as createdAt,
-        updated_at as updatedAt,
-        system_prompt as systemPrompt,
-        temperature,
-        context_length as contextLength,
-        max_tokens as maxTokens,
-        provider_id as providerId,
-        model_id as modelId,
-        is_new,
-        artifacts
-      FROM conversations
-      ORDER BY updated_at DESC
-      LIMIT ? OFFSET ?
-    `
-      )
-      .all(pageSize, offset) as (ConversationRow & { is_new: number, artifacts: number })[]
-
-    return {
-      total: totalResult.count,
-      list: results.map((row) => ({
-        id: row.id,
-        title: row.title,
-        createdAt: row.createdAt,
-        updatedAt: row.updatedAt,
-        is_new: row.is_new,
-        settings: {
-          systemPrompt: row.systemPrompt,
-          temperature: row.temperature,
-          contextLength: row.contextLength,
-          maxTokens: row.maxTokens,
-          providerId: row.providerId,
-          modelId: row.modelId,
-          artifacts: row.artifacts as 0 | 1
-        }
-      }))
-    }
+    return this.conversationsTable.list(page, pageSize)
   }
 
   // 删除对话
   public async deleteConversation(conversationId: string): Promise<void> {
-    const deleteStmt = this.db.prepare(
-      `
-      DELETE FROM conversations WHERE conv_id = ?
-    `
-    )
-    deleteStmt.run(conversationId)
+    return this.conversationsTable.delete(conversationId)
   }
 
   // 插入消息
@@ -465,104 +258,23 @@ export class SQLitePresenter implements ISQLitePresenter {
     isContextEdge: number = 0,
     isVariant: number = 0
   ): Promise<string> {
-    const insert = this.db.prepare(
-      `
-      INSERT INTO messages (
-        msg_id,
-        conversation_id,
-        parent_id,
-        content,
-        role,
-        created_at,
-        order_seq,
-        token_count,
-        status,
-        metadata,
-        is_context_edge,
-        is_variant
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `
-    )
-    const msgId = nanoid()
-    insert.run(
-      msgId,
+    return this.messagesTable.insert(
       conversationId,
-      parentId,
       content,
       role,
-      Date.now(),
+      parentId,
+      metadata,
       orderSeq,
       tokenCount,
       status,
-      metadata,
       isContextEdge,
       isVariant
     )
-    return msgId
   }
 
   // 查询消息
   public async queryMessages(conversationId: string): Promise<SQLITE_MESSAGE[]> {
-    // 首先获取所有非变体消息
-    const mainMessages = this.db
-      .prepare(
-        `
-        SELECT
-          msg_id as id,
-          conversation_id,
-          parent_id,
-          content,
-          role,
-          created_at,
-          order_seq,
-          token_count,
-          status,
-          metadata,
-          is_context_edge,
-          is_variant
-        FROM messages
-        WHERE conversation_id = ? AND is_variant != 1
-        ORDER BY created_at ASC, order_seq ASC
-      `
-      )
-      .all(conversationId) as SQLITE_MESSAGE[]
-
-    // 对于每个助手消息，获取其变体
-    const getVariants = this.db.prepare(
-      `
-      SELECT
-        msg_id as id,
-        conversation_id,
-        parent_id,
-        content,
-        role,
-        created_at,
-        order_seq,
-        token_count,
-        status,
-        metadata,
-        is_context_edge,
-        is_variant
-      FROM messages
-      WHERE parent_id = ? AND is_variant = 1
-      ORDER BY created_at ASC
-    `
-    )
-
-    // 为每个助手消息添加变体
-    return mainMessages.map((msg) => {
-      if (msg.role === 'assistant') {
-        const variants = getVariants.all(msg.parent_id) as SQLITE_MESSAGE[]
-        if (variants.length > 0) {
-          return {
-            ...msg,
-            variants
-          }
-        }
-      }
-      return msg
-    })
+    return this.messagesTable.query(conversationId)
   }
 
   // 更新消息
@@ -576,117 +288,48 @@ export class SQLitePresenter implements ISQLitePresenter {
       tokenCount?: number
     }
   ): Promise<void> {
-    const updates: string[] = []
-    const params: (string | number)[] = []
-
-    if (data.content !== undefined) {
-      updates.push('content = ?')
-      params.push(data.content)
-    }
-    if (data.status !== undefined) {
-      updates.push('status = ?')
-      params.push(data.status)
-    }
-    if (data.metadata !== undefined) {
-      updates.push('metadata = ?')
-      params.push(data.metadata)
-    }
-    if (data.isContextEdge !== undefined) {
-      updates.push('is_context_edge = ?')
-      params.push(data.isContextEdge)
-    }
-    if (data.tokenCount !== undefined) {
-      updates.push('token_count = ?')
-      params.push(data.tokenCount)
-    }
-
-    if (updates.length > 0) {
-      const updateStmt = this.db.prepare(
-        `
-        UPDATE messages
-        SET ${updates.join(', ')}
-        WHERE msg_id = ?
-      `
-      )
-      params.push(messageId)
-      updateStmt.run(...params)
-    }
+    return this.messagesTable.update(messageId, data)
   }
 
   // 删除消息
   public async deleteMessage(messageId: string): Promise<void> {
-    const deleteStmt = this.db.prepare('DELETE FROM messages WHERE msg_id = ?')
-    deleteStmt.run(messageId)
+    return this.messagesTable.delete(messageId)
   }
 
   // 获取单条消息
   public async getMessage(messageId: string): Promise<SQLITE_MESSAGE | null> {
-    return (await this.db
-      .prepare(
-        `
-        SELECT
-          msg_id as id,
-          conversation_id,
-          parent_id,
-          content,
-          role,
-          created_at,
-          order_seq,
-          token_count,
-          status,
-          metadata,
-          is_context_edge,
-          is_variant
-        FROM messages
-        WHERE msg_id = ?
-      `
-      )
-      .get(messageId)) as SQLITE_MESSAGE | null
+    return this.messagesTable.get(messageId)
   }
 
   // 获取消息变体
   public async getMessageVariants(messageId: string): Promise<SQLITE_MESSAGE[]> {
-    return (await this.db
-      .prepare(
-        `
-        SELECT
-          msg_id as id,
-          conversation_id,
-          parent_id,
-          content,
-          role,
-          created_at,
-          order_seq,
-          token_count,
-          status,
-          metadata,
-          is_context_edge,
-          is_variant
-        FROM messages
-        WHERE parent_id = ?
-        ORDER BY created_at ASC
-      `
-      )
-      .all(messageId)) as SQLITE_MESSAGE[]
+    return this.messagesTable.getVariants(messageId)
   }
 
   // 获取会话的最大消息序号
   public async getMaxOrderSeq(conversationId: string): Promise<number> {
-    const result = this.db
-      .prepare('SELECT MAX(order_seq) as maxSeq FROM messages WHERE conversation_id = ?')
-      .get(conversationId) as { maxSeq: number }
-    return result.maxSeq || 0
+    return this.messagesTable.getMaxOrderSeq(conversationId)
   }
 
   // 删除所有消息
   public async deleteAllMessages(): Promise<void> {
-    const deleteStmt = this.db.prepare(`DELETE FROM messages`)
-    deleteStmt.run()
+    return this.messagesTable.deleteAll()
   }
 
   // 执行事务
   public async runTransaction(operations: () => void): Promise<void> {
-    await this.db.transaction(operations)
+    await this.db.transaction(operations)()
+  }
+
+  public async getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null> {
+    return this.messagesTable.getLastUserMessage(conversationId)
+  }
+
+  public async getMainMessageByParentId(
+    conversationId: string,
+    parentId: string
+  ): Promise<SQLITE_MESSAGE | null> {
+    return this.messagesTable.getMainMessageByParentId(conversationId, parentId)
   }
 
   // 添加消息附件
@@ -695,20 +338,7 @@ export class SQLitePresenter implements ISQLitePresenter {
     attachmentType: string,
     attachmentData: string
   ): Promise<void> {
-    const attachmentId = nanoid()
-    const insert = this.db.prepare(
-      `
-      INSERT INTO message_attachments (
-        attachment_id,
-        message_id,
-        type,
-        content,
-        created_at
-      )
-      VALUES (?, ?, ?, ?, ?)
-    `
-    )
-    insert.run(attachmentId, messageId, attachmentType, attachmentData, Date.now())
+    return this.messageAttachmentsTable.add(messageId, attachmentType, attachmentData)
   }
 
   // 获取消息附件
@@ -716,103 +346,6 @@ export class SQLitePresenter implements ISQLitePresenter {
     messageId: string,
     type: string
   ): Promise<{ content: string }[]> {
-    return this.db
-      .prepare(
-        `
-        SELECT content
-        FROM message_attachments
-        WHERE message_id = ? AND type = ?
-        ORDER BY created_at ASC
-      `
-      )
-      .all(messageId, type) as { content: string }[]
-  }
-
-  public async getLastUserMessage(conversationId: string): Promise<SQLITE_MESSAGE | null> {
-    return this.db
-      .prepare(
-        `
-        SELECT
-          msg_id as id,
-          conversation_id,
-          parent_id,
-          content,
-          role,
-          created_at,
-          order_seq,
-          token_count,
-          status,
-          metadata,
-          is_context_edge,
-          is_variant
-        FROM messages
-        WHERE conversation_id = ? AND role = 'user'
-        ORDER BY created_at DESC
-        LIMIT 1
-      `
-      )
-      .get(conversationId) as SQLITE_MESSAGE | null
-  }
-
-  public async getMainMessageByParentId(
-    conversationId: string,
-    parentId: string
-  ): Promise<SQLITE_MESSAGE | null> {
-    const mainMessage = this.db
-      .prepare(
-        `
-        SELECT
-          msg_id as id,
-          conversation_id,
-          parent_id,
-          content,
-          role,
-          created_at,
-          order_seq,
-          token_count,
-          status,
-          metadata,
-          is_context_edge,
-          is_variant
-        FROM messages
-        WHERE conversation_id = ?
-        AND parent_id = ?
-        AND is_variant = 0
-        ORDER BY created_at ASC
-        LIMIT 1
-      `
-      )
-      .get(conversationId, parentId) as SQLITE_MESSAGE | null
-
-    if (mainMessage) {
-      const variants = this.db
-        .prepare(
-          `
-          SELECT
-            msg_id as id,
-            conversation_id,
-            parent_id,
-            content,
-            role,
-            created_at,
-            order_seq,
-            token_count,
-            status,
-            metadata,
-            is_context_edge,
-            is_variant
-          FROM messages
-          WHERE conversation_id = ?
-          AND parent_id = ?
-          AND is_variant = 1
-          ORDER BY created_at ASC
-        `
-        )
-        .all(conversationId, parentId) as SQLITE_MESSAGE[]
-
-      mainMessage.variants = variants // 拼凑variants对象
-    }
-
-    return mainMessage
+    return this.messageAttachmentsTable.get(messageId, type)
   }
 }
