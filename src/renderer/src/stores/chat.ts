@@ -414,6 +414,7 @@ export const useChatStore = defineStore('chat', () => {
         threadId: activeThreadId.value
       })
       await loadMessages()
+      generatingThreadIds.value.add(activeThreadId.value)
       await threadP.startStreamCompletion(activeThreadId.value, messageId)
     } catch (error) {
       console.error('重试消息失败:', error)

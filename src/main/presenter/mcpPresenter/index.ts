@@ -3,7 +3,8 @@ import {
   MCPServerConfig,
   MCPToolDefinition,
   MCPToolCall,
-  McpClient
+  McpClient,
+  MCPToolResponse
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
@@ -115,9 +116,9 @@ export class McpPresenter implements IMCPPresenter {
       }
 
       // 加载配置
-      const [servers, defaultServer] = await Promise.all([
+      const [servers, defaultServers] = await Promise.all([
         this.configPresenter.getMcpServers(),
-        this.configPresenter.getMcpDefaultServer()
+        this.configPresenter.getMcpDefaultServers()
       ])
 
       // 先测试npm registry速度
@@ -132,18 +133,21 @@ export class McpPresenter implements IMCPPresenter {
       }
 
       // 如果有默认服务器，尝试启动
-      if (defaultServer && servers[defaultServer]) {
-        const serverName = defaultServer
-        console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
+      if (defaultServers.length > 0) {
+        for (const serverName of defaultServers) {
+          if (servers[serverName]) {
+            console.log(`[MCP] 尝试启动默认服务器: ${serverName}`)
 
-        try {
-          await this.serverManager.startServer(serverName)
-          console.log(`[MCP] 默认服务器 ${serverName} 启动成功`)
+            try {
+              await this.serverManager.startServer(serverName)
+              console.log(`[MCP] 默认服务器 ${serverName} 启动成功`)
 
-          // 通知渲染进程服务器已启动
-          eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
-        } catch (error) {
-          console.error(`[MCP] 默认服务器 ${serverName} 启动失败:`, error)
+              // 通知渲染进程服务器已启动
+              eventBus.emit(MCP_EVENTS.SERVER_STARTED, serverName)
+            } catch (error) {
+              console.error(`[MCP] 默认服务器 ${serverName} 启动失败:`, error)
+            }
+          }
         }
       }
     } catch (error) {
@@ -199,14 +203,24 @@ export class McpPresenter implements IMCPPresenter {
     return clientsList
   }
 
-  // 获取默认MCP服务器
-  getMcpDefaultServer(): Promise<string> {
-    return this.configPresenter.getMcpDefaultServer()
+  // 获取所有默认MCP服务器
+  getMcpDefaultServers(): Promise<string[]> {
+    return this.configPresenter.getMcpDefaultServers()
   }
 
-  // 设置默认MCP服务器
-  async setMcpDefaultServer(serverName: string): Promise<void> {
-    await this.configPresenter.setMcpDefaultServer(serverName)
+  // 添加默认MCP服务器
+  async addMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.addMcpDefaultServer(serverName)
+  }
+
+  // 移除默认MCP服务器
+  async removeMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.removeMcpDefaultServer(serverName)
+  }
+
+  // 切换服务器的默认状态
+  async toggleMcpDefaultServer(serverName: string): Promise<void> {
+    await this.configPresenter.toggleMcpDefaultServer(serverName)
   }
 
   // 添加MCP服务器
@@ -252,8 +266,50 @@ export class McpPresenter implements IMCPPresenter {
     return []
   }
 
-  async callTool(request: MCPToolCall): Promise<{ content: string }> {
-    return this.toolManager.callTool(request)
+  async callTool(request: MCPToolCall): Promise<{ content: string; rawData: MCPToolResponse }> {
+    const toolCallResult = await this.toolManager.callTool(request)
+
+    // 格式化工具调用结果为大模型易于解析的字符串
+    let formattedContent = ''
+
+    // 判断内容类型
+    if (typeof toolCallResult.content === 'string') {
+      // 内容已经是字符串
+      formattedContent = toolCallResult.content
+    } else if (Array.isArray(toolCallResult.content)) {
+      // 内容是结构化数组，需要格式化
+      const contentParts: string[] = []
+
+      // 处理每个内容项
+      for (const item of toolCallResult.content) {
+        if (item.type === 'text') {
+          contentParts.push(item.text)
+        } else if (item.type === 'image') {
+          contentParts.push(`[图片: ${item.mimeType}]`)
+        } else if (item.type === 'resource') {
+          if ('text' in item.resource && item.resource.text) {
+            contentParts.push(`[资源: ${item.resource.uri}]\n${item.resource.text}`)
+          } else if ('blob' in item.resource) {
+            contentParts.push(`[二进制资源: ${item.resource.uri}]`)
+          } else {
+            contentParts.push(`[资源: ${item.resource.uri}]`)
+          }
+        } else {
+          // 处理其他未知类型
+          contentParts.push(JSON.stringify(item))
+        }
+      }
+
+      // 合并所有内容
+      formattedContent = contentParts.join('\n\n')
+    }
+
+    // 添加错误标记（如果有）
+    if (toolCallResult.isError) {
+      formattedContent = `错误: ${formattedContent}`
+    }
+
+    return { content: formattedContent, rawData: toolCallResult }
   }
 
   // 将MCPToolDefinition转换为MCPTool

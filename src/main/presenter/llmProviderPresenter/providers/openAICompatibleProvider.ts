@@ -30,7 +30,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     this.openai = new OpenAI({
       apiKey: this.provider.apiKey,
       baseURL: this.provider.baseUrl,
-      httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
+      httpAgent: proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined,
+      defaultHeaders: {
+        ...this.defaultHeaders
+      }
     })
     if (OpenAICompatibleProvider.NO_MODELS_API_LIST.includes(this.provider.id.toLowerCase())) {
       this.isNoModelsApi = true
@@ -522,7 +525,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             }
             // 调用工具
             const toolCallResponse = await presenter.mcpPresenter.callTool(mcpTool)
-            // console.log('toolCallResponse', toolCallResponse)
+            console.log('toolCallResponse', toolCallResponse)
             yield {
               content: '',
               tool_call: 'end',

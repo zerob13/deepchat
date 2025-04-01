@@ -1,5 +1,5 @@
 import { LLM_PROVIDER, MODEL_META, LLMResponse, LLMResponseStream } from '@shared/presenter'
-import { BaseLLMProvider, ChatMessage } from '../baseProvider'
+import { BaseLLMProvider, ChatMessage, ChatMessageContent } from '../baseProvider'
 import {
   GoogleGenerativeAI,
   GenerativeModel,
@@ -836,10 +836,72 @@ export class GeminiProvider extends BaseLLMProvider {
 
               // 调用工具并获取响应
               const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
-              const responseContent =
-                typeof toolResponse.content === 'string'
-                  ? toolResponse.content
-                  : JSON.stringify(toolResponse.content)
+
+              // 处理响应内容，为多模态内容做特殊处理
+              let responseContent = ''
+              const messageParts: ChatMessageContent[] = []
+
+              // 根据内容类型进行不同处理
+              if (typeof toolResponse.rawData.content === 'string') {
+                // 字符串类型直接使用
+                responseContent = toolResponse.rawData.content
+                messageParts.push({ type: 'text', text: responseContent })
+              } else if (Array.isArray(toolResponse.rawData.content)) {
+                // 处理结构化内容数组
+                const contentParts: string[] = []
+
+                for (const item of toolResponse.rawData.content) {
+                  if (item.type === 'text') {
+                    contentParts.push(item.text)
+                    messageParts.push({ type: 'text', text: item.text })
+                  } else if (item.type === 'image') {
+                    // 为Gemini处理图片
+                    contentParts.push(`[图片内容]`)
+                    // 添加图片到消息部分，Gemini可以理解这种格式
+                    messageParts.push({
+                      type: 'image_url',
+                      image_url: {
+                        url: `data:${item.mimeType};base64,${item.data}`
+                      }
+                    })
+                  } else if (item.type === 'resource') {
+                    if ('text' in item.resource && item.resource.text) {
+                      contentParts.push(`[资源: ${item.resource.uri}]\n${item.resource.text}`)
+                      messageParts.push({
+                        type: 'text',
+                        text: `[资源: ${item.resource.uri}]\n${item.resource.text}`
+                      })
+                    } else if (
+                      'blob' in item.resource &&
+                      item.resource.mimeType?.startsWith('image/')
+                    ) {
+                      // 处理图片类型的二进制资源
+                      contentParts.push(`[图片资源: ${item.resource.uri}]`)
+                      messageParts.push({
+                        type: 'image_url',
+                        image_url: {
+                          url: `data:${item.resource.mimeType};base64,${item.resource.blob}`
+                        }
+                      })
+                    } else {
+                      contentParts.push(`[资源: ${item.resource.uri}]`)
+                      messageParts.push({ type: 'text', text: `[资源: ${item.resource.uri}]` })
+                    }
+                  } else {
+                    // 处理其他未知类型
+                    const itemStr = JSON.stringify(item)
+                    contentParts.push(itemStr)
+                    messageParts.push({ type: 'text', text: itemStr })
+                  }
+                }
+
+                // 合并所有文本内容用于显示
+                responseContent = contentParts.join('\n\n')
+              } else {
+                // 其他情况转为字符串
+                responseContent = JSON.stringify(toolResponse.content)
+                messageParts.push({ type: 'text', text: responseContent })
+              }
 
               // 添加助手消息到上下文
               conversationMessages.push({
@@ -847,10 +909,13 @@ export class GeminiProvider extends BaseLLMProvider {
                 content: currentContent || `我将使用${functionName}工具来回答你的问题。`
               } as ChatMessage)
 
-              // 添加工具结果到上下文
+              // 添加工具结果到上下文，使用多模态格式
               conversationMessages.push({
                 role: 'user',
-                content: `工具 ${functionName} 的调用结果：${responseContent}`
+                content:
+                  messageParts.length > 1
+                    ? messageParts
+                    : `工具 ${functionName} 的调用结果：${responseContent}`
               } as ChatMessage)
 
               // 通知工具调用结束

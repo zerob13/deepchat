@@ -78,8 +78,6 @@ export class WindowPresenter implements IWindowPresenter {
         }, 1000)
       }
     })
-
-    console.log('WindowPresenter constructor', this.configPresenter)
   }
 
   createMainWindow(): BrowserWindow {

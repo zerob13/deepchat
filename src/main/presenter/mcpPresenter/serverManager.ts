@@ -84,19 +84,25 @@ export class ServerManager {
     return this.npmRegistry
   }
 
-  // 获取默认服务器名称
+  // 获取默认服务器名称列表
+  async getDefaultServerNames(): Promise<string[]> {
+    return this.configPresenter.getMcpDefaultServers()
+  }
+
+  // 获取默认服务器名称（兼容旧版本，返回第一个默认服务器）
   async getDefaultServerName(): Promise<string | null> {
-    const defaultServer = await this.configPresenter.getMcpDefaultServer()
+    const defaultServers = await this.configPresenter.getMcpDefaultServers()
     const servers = await this.configPresenter.getMcpServers()
 
-    if (!defaultServer || !servers[defaultServer]) {
+    // 如果没有默认服务器或者默认服务器不存在，返回 null
+    if (defaultServers.length === 0 || !servers[defaultServers[0]]) {
       return null
     }
 
-    return defaultServer
+    return defaultServers[0]
   }
 
-  // 获取默认客户端（不自动启动服务）
+  // 获取默认客户端（不自动启动服务，仅返回第一个默认服务器客户端）
   async getDefaultClient(): Promise<McpClient | null> {
     const defaultServerName = await this.getDefaultServerName()
 
@@ -106,6 +112,21 @@ export class ServerManager {
 
     // 返回已存在的客户端实例，无论是否运行
     return this.getClient(defaultServerName) || null
+  }
+
+  // 获取所有默认客户端
+  async getDefaultClients(): Promise<McpClient[]> {
+    const defaultServerNames = await this.getDefaultServerNames()
+    const clients: McpClient[] = []
+
+    for (const serverName of defaultServerNames) {
+      const client = this.getClient(serverName)
+      if (client) {
+        clients.push(client)
+      }
+    }
+
+    return clients
   }
 
   // 获取正在运行的客户端

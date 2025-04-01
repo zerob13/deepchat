@@ -66,12 +66,12 @@ const isSelected = (providerId: string, modelId: string) => {
 }
 
 const handleModelSelect = async (providerId: string, model: RENDERER_MODEL_META) => {
-  await chatStore.updateChatConfig({
-    providerId,
-    modelId: model.id,
-    contextLength: model.contextLength,
-    maxTokens: model.maxTokens
-  })
+  // await chatStore.updateChatConfig({
+  //   providerId,
+  //   modelId: model.id,
+  //   contextLength: model.contextLength,
+  //   maxTokens: model.maxTokens
+  // })
   emit('update:model', model, providerId)
 }
 

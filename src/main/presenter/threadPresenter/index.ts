@@ -24,16 +24,11 @@ import {
 } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
-import {
-  generateSearchPrompt,
-  generateSearchPromptWithArtifacts,
-  SearchManager
-} from './searchManager'
+import { generateSearchPrompt, SearchManager } from './searchManager'
 import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import { ChatMessage, ChatMessageContent } from '../llmProviderPresenter/baseProvider'
-import { ARTIFACTS_PROMPT } from '@/lib/artifactsPrompt'
 import { DEFAULT_SETTINGS } from './const'
 
 interface GeneratingMessageState {
@@ -669,8 +664,10 @@ export class ThreadPresenter implements IThreadPresenter {
     3. 编程相关查询：
         - 加上编程语言或框架名称
         - 指定错误代码或具体版本号
-    4. 保持查询简洁，通常不超过5-6个关键词
+    4. 保持查询简洁，通常不超过3个关键词, 最多不要超过5个关键词，参考当前搜索引擎的查询习惯书写关键字
     5. 默认保留用户的问题的语言，如果用户的问题是中文，则返回中文，如果用户的问题是英文，则返回英文，其他语言也一样
+    6. 如果用户的问题是关于某个具体的问题，则直接返回用户的问题，不要进行任何重写
+    7. 如果是你不了解的搜索引擎, 则直接返回用户的问题
 
     直接返回优化后的搜索词，不要有任何额外说明。
     如下是之前对话的上下文：
@@ -1204,11 +1201,12 @@ export class ThreadPresenter implements IThreadPresenter {
     const { systemPrompt, contextLength, artifacts } = conversation.settings
 
     // 计算搜索提示词和丰富用户消息
-    const searchPrompt = searchResults
-      ? artifacts === 1
-        ? generateSearchPromptWithArtifacts(userContent, searchResults)
-        : generateSearchPrompt(userContent, searchResults)
-      : ''
+    // const searchPrompt = searchResults
+    //   ? artifacts === 1
+    //     ? generateSearchPromptWithArtifacts(userContent, searchResults)
+    //     : generateSearchPrompt(userContent, searchResults)
+    //   : ''
+    const searchPrompt = searchResults ? generateSearchPrompt(userContent, searchResults) : ''
     const enrichedUserMessage =
       urlResults.length > 0
         ? '\n\n' + ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
@@ -1325,10 +1323,11 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     if (artifacts === 1) {
-      formattedMessages.push({
-        role: 'user',
-        content: ARTIFACTS_PROMPT
-      })
+      // formattedMessages.push({
+      //   role: 'user',
+      //   content: ARTIFACTS_PROMPT
+      // })
+      console.log('artifacts目前由mcp提供，此处为兼容性保留')
     }
 
     if (imageFiles.length > 0) {

@@ -73,7 +73,6 @@ import ModelSelect from './ModelSelect.vue'
 import ModelIcon from './icons/ModelIcon.vue'
 import { MODEL_META } from '@shared/presenter'
 import { onMounted, ref, watch } from 'vue'
-import { useDebounceFn } from '@vueuse/core'
 import { useChatStore } from '@/stores/chat'
 import { usePresenter } from '@/composables/usePresenter'
 const configPresenter = usePresenter('configPresenter')
@@ -167,7 +166,10 @@ const props = withDefaults(
 
 const modelSelectOpen = ref(false)
 const handleModelUpdate = (model: MODEL_META) => {
-  console.log('model', model)
+  chatStore.updateChatConfig({
+    modelId: model.id,
+    providerId: model.providerId
+  })
   modelSelectOpen.value = false
 }
 

@@ -179,8 +179,10 @@ export interface IConfigPresenter {
   // MCP配置相关方法
   getMcpServers(): Promise<Record<string, MCPServerConfig>>
   setMcpServers(servers: Record<string, MCPServerConfig>): Promise<void>
-  getMcpDefaultServer(): Promise<string>
-  setMcpDefaultServer(serverName: string): Promise<void>
+  getMcpDefaultServers(): Promise<string[]>
+  addMcpDefaultServer(serverName: string): Promise<void>
+  removeMcpDefaultServer(serverName: string): Promise<void>
+  toggleMcpDefaultServer(serverName: string): Promise<void>
   getMcpEnabled(): Promise<boolean>
   setMcpEnabled(enabled: boolean): Promise<void>
   addMcpServer(name: string, config: MCPServerConfig): Promise<void>
@@ -606,12 +608,12 @@ export interface MCPServerConfig {
   autoApprove: string[]
   disable?: boolean
   baseUrl?: string
-  type: 'sse' | 'stdio'
+  type: 'sse' | 'stdio' | 'inmemory'
 }
 
 export interface MCPConfig {
   mcpServers: Record<string, MCPServerConfig>
-  defaultServer: string
+  defaultServers: string[]
   mcpEnabled: boolean
 }
 
@@ -648,15 +650,61 @@ export interface MCPToolCall {
 }
 
 export interface MCPToolResponse {
+  /** 工具调用的唯一标识符 */
   toolCallId: string
-  content: string
+
+  /**
+   * 工具调用的响应内容
+   * 可以是简单字符串或结构化内容数组
+   */
+  content: string | MCPContentItem[]
+
+  /** 可选的元数据 */
+  _meta?: Record<string, any>
+
+  /** 是否发生错误 */
+  isError?: boolean
+
+  /** 当使用兼容模式时，可能直接返回工具结果 */
+  toolResult?: unknown
+}
+
+/** 内容项类型 */
+export type MCPContentItem = MCPTextContent | MCPImageContent | MCPResourceContent
+
+/** 文本内容 */
+export interface MCPTextContent {
+  type: 'text'
+  text: string
+}
+
+/** 图像内容 */
+export interface MCPImageContent {
+  type: 'image'
+  data: string // Base64编码的图像数据
+  mimeType: string // 例如 "image/png", "image/jpeg" 等
+}
+
+/** 资源内容 */
+export interface MCPResourceContent {
+  type: 'resource'
+  resource: {
+    uri: string
+    mimeType?: string
+    /** 资源文本内容，与blob互斥 */
+    text?: string
+    /** 资源二进制内容，与text互斥 */
+    blob?: string
+  }
 }
 
 export interface IMCPPresenter {
   getMcpServers(): Promise<Record<string, MCPServerConfig>>
   getMcpClients(): Promise<McpClient[]>
-  getMcpDefaultServer(): Promise<string>
-  setMcpDefaultServer(serverName: string): Promise<void>
+  getMcpDefaultServers(): Promise<string[]>
+  addMcpDefaultServer(serverName: string): Promise<void>
+  removeMcpDefaultServer(serverName: string): Promise<void>
+  toggleMcpDefaultServer(serverName: string): Promise<void>
   addMcpServer(serverName: string, config: MCPServerConfig): Promise<void>
   updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void>
   removeMcpServer(serverName: string): Promise<void>

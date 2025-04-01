@@ -4,6 +4,10 @@ import {
   MCPToolCall,
   MCPToolDefinition,
   MCPToolResponse,
+  MCPContentItem,
+  MCPTextContent,
+  MCPImageContent,
+  MCPResourceContent,
   IConfigPresenter
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'
@@ -174,10 +178,42 @@ export class ToolManager {
       // 调用 MCP 工具
       const result = await targetClient.callTool(name, args || {})
 
+      // 格式化返回的内容
+      let formattedContent: string | MCPContentItem[] = ''
+
+      // 检查返回内容类型并进行适当处理
+      if (typeof result.content === 'string') {
+        formattedContent = result.content
+      } else if (Array.isArray(result.content)) {
+        // 转换内容项到MCPContentItem类型
+        formattedContent = result.content.map((item) => {
+          if (typeof item === 'string') {
+            return { type: 'text', text: item } as MCPTextContent
+          }
+
+          // 已经是正确格式的内容项
+          if (item.type === 'text' || item.type === 'image' || item.type === 'resource') {
+            return item as MCPContentItem
+          }
+
+          // 处理其他格式，转为文本类型
+          if (item.type && item.text) {
+            return { type: 'text', text: item.text } as MCPTextContent
+          }
+
+          // 无法识别的格式，转为JSON字符串
+          return { type: 'text', text: JSON.stringify(item) } as MCPTextContent
+        })
+      } else if (result.content) {
+        // 处理非数组非字符串的内容，转为字符串
+        formattedContent = JSON.stringify(result.content)
+      }
+
       // 返回工具调用结果
       const response: MCPToolResponse = {
         toolCallId: toolCall.id,
-        content: result
+        content: formattedContent,
+        isError: result.isError
       }
 
       // 触发工具调用结果事件

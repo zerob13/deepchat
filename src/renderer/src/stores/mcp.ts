@@ -16,7 +16,7 @@ interface MCPToolCallRequest {
 
 interface MCPToolCallResult {
   function_name?: string
-  content: string
+  content: string | { type: string; text: string }[]
 }
 
 export const useMcpStore = defineStore('mcp', () => {
@@ -27,7 +27,7 @@ export const useMcpStore = defineStore('mcp', () => {
   // MCP配置
   const config = ref<MCPConfig>({
     mcpServers: {},
-    defaultServer: '',
+    defaultServers: [],
     mcpEnabled: false // 添加MCP启用状态
   })
 
@@ -47,19 +47,52 @@ export const useMcpStore = defineStore('mcp', () => {
   const toolsErrorMessage = ref('')
   const toolLoadingStates = ref<Record<string, boolean>>({})
   const toolInputs = ref<Record<string, Record<string, string>>>({})
-  const toolResults = ref<Record<string, string>>({})
+  const toolResults = ref<Record<string, string | { type: string; text: string }[]>>({})
 
   // ==================== 计算属性 ====================
   // 服务器列表
   const serverList = computed(() => {
-    return Object.entries(config.value.mcpServers).map(([name, serverConfig]) => ({
+    const servers = Object.entries(config.value.mcpServers).map(([name, serverConfig]) => ({
       name,
       ...serverConfig,
       isRunning: serverStatuses.value[name] || false,
-      isDefault: name === config.value.defaultServer,
+      isDefault: config.value.defaultServers.includes(name),
       isLoading: serverLoadingStates.value[name] || false
     }))
+
+    // 按照特定顺序排序：
+    // 1. 启用的inmemory服务
+    // 2. 其他启用的服务
+    // 3. 未启用的inmemory服务
+    // 4. 其他服务
+    return servers.sort((a, b) => {
+      const aIsInmemory = a.type === 'inmemory'
+      const bIsInmemory = b.type === 'inmemory'
+
+      if (a.isRunning && !b.isRunning) return -1 // 启用的服务排在前面
+      if (!a.isRunning && b.isRunning) return 1 // 未启用的服务排在后面
+
+      if (a.isRunning && b.isRunning) {
+        // 两个都启用，inmemory优先
+        if (aIsInmemory && !bIsInmemory) return -1
+        if (!aIsInmemory && bIsInmemory) return 1
+      }
+
+      if (!a.isRunning && !b.isRunning) {
+        // 两个都未启用，inmemory优先
+        if (aIsInmemory && !bIsInmemory) return -1
+        if (!aIsInmemory && bIsInmemory) return 1
+      }
+
+      return 0 // 保持原有顺序
+    })
   })
+
+  // 计算默认服务器数量
+  const defaultServersCount = computed(() => config.value.defaultServers.length)
+
+  // 检查是否达到默认服务器最大数量
+  const hasMaxDefaultServers = computed(() => defaultServersCount.value >= 3)
 
   // 工具数量
   const toolCount = computed(() => tools.value.length)
@@ -70,15 +103,15 @@ export const useMcpStore = defineStore('mcp', () => {
   const loadConfig = async () => {
     try {
       configLoading.value = true
-      const [servers, defaultServer, enabled] = await Promise.all([
+      const [servers, defaultServers, enabled] = await Promise.all([
         mcpPresenter.getMcpServers(),
-        mcpPresenter.getMcpDefaultServer(),
+        mcpPresenter.getMcpDefaultServers(),
         mcpPresenter.getMcpEnabled()
       ])
 
       config.value = {
         mcpServers: servers,
-        defaultServer: defaultServer,
+        defaultServers: defaultServers,
         mcpEnabled: enabled
       }
 
@@ -170,15 +203,25 @@ export const useMcpStore = defineStore('mcp', () => {
     }
   }
 
-  // 设置默认服务器
-  const setDefaultServer = async (serverName: string) => {
+  // 切换服务器的默认状态
+  const toggleDefaultServer = async (serverName: string) => {
     try {
-      await mcpPresenter.setMcpDefaultServer(serverName)
+      // 如果服务器已经是默认服务器，移除
+      if (config.value.defaultServers.includes(serverName)) {
+        await mcpPresenter.removeMcpDefaultServer(serverName)
+      } else {
+        // 检查是否已达到最大默认服务器数量
+        if (hasMaxDefaultServers.value) {
+          // 如果已达到最大数量，返回错误
+          return { success: false, message: '最多只能设置3个默认服务器' }
+        }
+        await mcpPresenter.addMcpDefaultServer(serverName)
+      }
       await loadConfig()
-      return true
+      return { success: true, message: '' }
     } catch (error) {
-      console.error('Failed to set default MCP server:', error)
-      return false
+      console.error('Failed to toggle default server status:', error)
+      return { success: false, message: String(error) }
     }
   }
 
@@ -398,7 +441,7 @@ export const useMcpStore = defineStore('mcp', () => {
     addServer,
     updateServer,
     removeServer,
-    setDefaultServer,
+    toggleDefaultServer,
     resetToDefaultServers,
     toggleServer,
     loadTools,

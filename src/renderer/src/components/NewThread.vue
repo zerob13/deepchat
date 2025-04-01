@@ -253,6 +253,10 @@ const handleModelUpdate = (model: MODEL_META, providerId: string) => {
     providerId: providerId,
     tags: []
   }
+  chatStore.updateChatConfig({
+    modelId: model.id,
+    providerId: providerId
+  })
   modelSelectOpen.value = false
 }
 

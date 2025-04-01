@@ -5,7 +5,6 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Icon } from '@iconify/vue'
 import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Define props to receive config from parent
@@ -25,7 +24,7 @@ const emit = defineEmits<{
   'update:temperature': [value: number]
   'update:contextLength': [value: number]
   'update:maxTokens': [value: number]
-  'update:artifacts': [value: 0 | 1]
+  // 'update:artifacts': [value: 0 | 1]
 }>()
 
 const { t } = useI18n()
@@ -47,10 +46,10 @@ const maxTokensValue = computed({
 })
 
 // Computed property for artifacts toggle
-const artifactsEnabled = computed({
-  get: () => props.artifacts === 1,
-  set: (value) => emit('update:artifacts', value ? 1 : 0)
-})
+// const artifactsEnabled = computed({
+//   get: () => props.artifacts === 1,
+//   set: (value) => emit('update:artifacts', value ? 1 : 0)
+// })
 
 const formatSize = (size: number): string => {
   if (size >= 1024 * 1024) {
@@ -167,7 +166,7 @@ const formatSize = (size: number): string => {
         />
       </div>
       <!-- Artifacts Toggle -->
-      <div class="space-y-2 px-2">
+      <!-- <div class="space-y-2 px-2">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <Label for="artifacts-mode">Artifacts</Label>
@@ -184,7 +183,7 @@ const formatSize = (size: number): string => {
             </TooltipProvider>
           </div>
         </div>
-      </div>
+      </div> -->
     </div>
   </div>
 </template>

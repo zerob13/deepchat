@@ -109,6 +109,9 @@ onMounted(async () => {
           <div v-else-if="isError" class="p-2 text-sm text-destructive">
             {{ t('mcp.tools.loadError') }}: {{ errorMessage }}
           </div> -->
+          <div v-else-if="isError" class="p-2 text-sm text-destructive">
+            {{ t('mcp.tools.loadError') }}: {{ errorMessage }}
+          </div>
           <div
             v-if="mcpEnabled && mcpStore.serverList.length === 0"
             class="p-2 text-sm text-muted-foreground text-center"

@@ -137,7 +137,7 @@
         </div>
       </div>
       <!-- artifacts效果开关 -->
-      <div class="flex flex-row p-2 items-center gap-2 px-2">
+      <!-- <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
           <Icon icon="lucide:sparkles" class="w-4 h-4 text-muted-foreground" />
           <span class="text-sm font-medium">Artifacts</span>
@@ -149,7 +149,7 @@
             @update:checked="(val) => settingsStore.setArtifactsEffectEnabled(Boolean(val))"
           />
         </div>
-      </div>
+      </div> -->
       <!-- 搜索预览开关 -->
       <div class="flex flex-row p-2 items-center gap-2 px-2">
         <span class="flex flex-row items-center gap-2 flex-grow w-full">
@@ -203,7 +203,13 @@
             <DialogTitle>{{ t('settings.common.loggingDialogTitle') }}</DialogTitle>
             <DialogDescription>
               <div class="space-y-2">
-                <p>{{ newLoggingValue ? t('settings.common.loggingEnableDesc') : t('settings.common.loggingDisableDesc') }}</p>
+                <p>
+                  {{
+                    newLoggingValue
+                      ? t('settings.common.loggingEnableDesc')
+                      : t('settings.common.loggingDisableDesc')
+                  }}
+                </p>
                 <p>{{ t('settings.common.loggingRestartNotice') }}</p>
               </div>
             </DialogDescription>
@@ -543,16 +549,16 @@ const validateProxyUrl = () => {
   }
 }
 
-const artifactsEffectEnabled = computed({
-  get: () => {
-    console.log('获取artifactsEffectEnabled值:', settingsStore.artifactsEffectEnabled)
-    return settingsStore.artifactsEffectEnabled
-  },
-  set: (value) => {
-    console.log('设置artifactsEffectEnabled值:', value)
-    settingsStore.setArtifactsEffectEnabled(value)
-  }
-})
+// const artifactsEffectEnabled = computed({
+//   get: () => {
+//     console.log('获取artifactsEffectEnabled值:', settingsStore.artifactsEffectEnabled)
+//     return settingsStore.artifactsEffectEnabled
+//   },
+//   set: (value) => {
+//     console.log('设置artifactsEffectEnabled值:', value)
+//     settingsStore.setArtifactsEffectEnabled(value)
+//   }
+// })
 
 onMounted(async () => {
   selectedLanguage.value = settingsStore.language
@@ -566,6 +572,7 @@ onMounted(async () => {
 })
 
 watch(selectedLanguage, async (newValue) => {
+  console.log('selectedLanguage', newValue)
   await settingsStore.updateLanguage(newValue)
 })
 
@@ -599,6 +606,7 @@ const handleResetData = () => {
 }
 
 const handleSearchModelSelect = (model: RENDERER_MODEL_META, providerId: string) => {
+  console.log('update search model', model, providerId)
   settingsStore.setSearchAssistantModel(model, providerId)
   modelSelectOpen.value = false
 }

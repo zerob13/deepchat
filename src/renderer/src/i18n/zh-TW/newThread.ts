@@ -1,4 +1,0 @@
-export default {
-  greeting: '您好',
-  prompt: '今天您想問些什麼呢？'
-}
