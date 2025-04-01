@@ -136,6 +136,8 @@ Mac相关签名打包查看 [Mac 打包指南](https://github.com/ThinkInAIXYZ/d
 ```bash
 $ npm install
 $ npm run installRuntime
+# if got err: No module named 'distutils'
+$ pip install setuptools
 # for windows x64
 $ npm install --cpu=x64 --os=win32 sharp
 # for mac apple silicon
