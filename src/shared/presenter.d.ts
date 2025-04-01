@@ -650,8 +650,52 @@ export interface MCPToolCall {
 }
 
 export interface MCPToolResponse {
+  /** 工具调用的唯一标识符 */
   toolCallId: string
-  content: string
+
+  /**
+   * 工具调用的响应内容
+   * 可以是简单字符串或结构化内容数组
+   */
+  content: string | MCPContentItem[]
+
+  /** 可选的元数据 */
+  _meta?: Record<string, any>
+
+  /** 是否发生错误 */
+  isError?: boolean
+
+  /** 当使用兼容模式时，可能直接返回工具结果 */
+  toolResult?: unknown
+}
+
+/** 内容项类型 */
+export type MCPContentItem = MCPTextContent | MCPImageContent | MCPResourceContent
+
+/** 文本内容 */
+export interface MCPTextContent {
+  type: 'text'
+  text: string
+}
+
+/** 图像内容 */
+export interface MCPImageContent {
+  type: 'image'
+  data: string // Base64编码的图像数据
+  mimeType: string // 例如 "image/png", "image/jpeg" 等
+}
+
+/** 资源内容 */
+export interface MCPResourceContent {
+  type: 'resource'
+  resource: {
+    uri: string
+    mimeType?: string
+    /** 资源文本内容，与blob互斥 */
+    text?: string
+    /** 资源二进制内容，与text互斥 */
+    blob?: string
+  }
 }
 
 export interface IMCPPresenter {

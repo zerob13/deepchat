@@ -16,7 +16,7 @@ interface MCPToolCallRequest {
 
 interface MCPToolCallResult {
   function_name?: string
-  content: string
+  content: string | { type: string; text: string }[]
 }
 
 export const useMcpStore = defineStore('mcp', () => {
@@ -47,7 +47,7 @@ export const useMcpStore = defineStore('mcp', () => {
   const toolsErrorMessage = ref('')
   const toolLoadingStates = ref<Record<string, boolean>>({})
   const toolInputs = ref<Record<string, Record<string, string>>>({})
-  const toolResults = ref<Record<string, string>>({})
+  const toolResults = ref<Record<string, string | { type: string; text: string }[]>>({})
 
   // ==================== 计算属性 ====================
   // 服务器列表

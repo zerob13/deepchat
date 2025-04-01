@@ -3,7 +3,8 @@ import {
   MCPServerConfig,
   MCPToolDefinition,
   MCPToolCall,
-  McpClient
+  McpClient,
+  MCPToolResponse
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'
 import { ToolManager } from './toolManager'
@@ -265,8 +266,50 @@ export class McpPresenter implements IMCPPresenter {
     return []
   }
 
-  async callTool(request: MCPToolCall): Promise<{ content: string }> {
-    return this.toolManager.callTool(request)
+  async callTool(request: MCPToolCall): Promise<{ content: string; rawData: MCPToolResponse }> {
+    const toolCallResult = await this.toolManager.callTool(request)
+
+    // 格式化工具调用结果为大模型易于解析的字符串
+    let formattedContent = ''
+
+    // 判断内容类型
+    if (typeof toolCallResult.content === 'string') {
+      // 内容已经是字符串
+      formattedContent = toolCallResult.content
+    } else if (Array.isArray(toolCallResult.content)) {
+      // 内容是结构化数组，需要格式化
+      const contentParts: string[] = []
+
+      // 处理每个内容项
+      for (const item of toolCallResult.content) {
+        if (item.type === 'text') {
+          contentParts.push(item.text)
+        } else if (item.type === 'image') {
+          contentParts.push(`[图片: ${item.mimeType}]`)
+        } else if (item.type === 'resource') {
+          if ('text' in item.resource && item.resource.text) {
+            contentParts.push(`[资源: ${item.resource.uri}]\n${item.resource.text}`)
+          } else if ('blob' in item.resource) {
+            contentParts.push(`[二进制资源: ${item.resource.uri}]`)
+          } else {
+            contentParts.push(`[资源: ${item.resource.uri}]`)
+          }
+        } else {
+          // 处理其他未知类型
+          contentParts.push(JSON.stringify(item))
+        }
+      }
+
+      // 合并所有内容
+      formattedContent = contentParts.join('\n\n')
+    }
+
+    // 添加错误标记（如果有）
+    if (toolCallResult.isError) {
+      formattedContent = `错误: ${formattedContent}`
+    }
+
+    return { content: formattedContent, rawData: toolCallResult }
   }
 
   // 将MCPToolDefinition转换为MCPTool

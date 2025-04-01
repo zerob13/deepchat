@@ -395,7 +395,7 @@ export class McpClient {
   }
 
   // 调用 MCP 工具
-  async callTool(toolName: string, args: Record<string, unknown>): Promise<string> {
+  async callTool(toolName: string, args: Record<string, unknown>): Promise<ToolCallResult> {
     if (!this.isConnected) {
       await this.connect()
     }
@@ -414,15 +414,12 @@ export class McpClient {
       // 检查结果
       if (result.isError) {
         const errorText = result.content && result.content[0] ? result.content[0].text : '未知错误'
-        throw new Error(`工具 ${toolName} 返回错误: ${errorText}`)
+        return {
+          isError: true,
+          content: [{ type: 'error', text: errorText }]
+        }
       }
-
-      // 返回结果文本
-      if (result.content) {
-        return JSON.stringify(result.content)
-      } else {
-        return ''
-      }
+      return result
     } catch (error) {
       console.error(`调用MCP工具 ${toolName} 失败:`, error)
       throw error
