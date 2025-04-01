@@ -6,8 +6,6 @@ import {
   MCPToolResponse,
   MCPContentItem,
   MCPTextContent,
-  MCPImageContent,
-  MCPResourceContent,
   IConfigPresenter
 } from '@shared/presenter'
 import { ServerManager } from './serverManager'

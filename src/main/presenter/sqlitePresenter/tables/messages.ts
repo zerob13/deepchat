@@ -32,7 +32,7 @@ export class MessagesTable extends BaseTable {
     `
   }
 
-  getMigrationSQL(version: number): string | null {
+  getMigrationSQL(_version: number): string | null {
     return null
   }
 

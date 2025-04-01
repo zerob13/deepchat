@@ -23,7 +23,7 @@ export class MessageAttachmentsTable extends BaseTable {
     `
   }
 
-  getMigrationSQL(version: number): string | null {
+  getMigrationSQL(_version: number): string | null {
     return null
   }
 
