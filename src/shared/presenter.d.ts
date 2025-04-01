@@ -116,10 +116,13 @@ export interface IPresenter {
   threadPresenter: IThreadPresenter
   devicePresenter: IDevicePresenter
   upgradePresenter: IUpgradePresenter
+  shortcutPresenter: IShortcutPresenter
   filePresenter: IFilePresenter
   mcpPresenter: IMCPPresenter
   syncPresenter: ISyncPresenter
-  // llamaCppPresenter: ILlamaCppPresenter
+  deeplinkPresenter: IDeeplinkPresenter
+  init(): void
+  destroy(): void
 }
 
 export interface IConfigPresenter {
@@ -723,6 +726,31 @@ export interface IMCPPresenter {
   setMcpEnabled(enabled: boolean): Promise<void>
   getMcpEnabled(): Promise<boolean>
   resetToDefaultServers(): Promise<void>
+}
+
+export interface IDeeplinkPresenter {
+  /**
+   * 初始化 DeepLink 协议
+   */
+  init(): void
+
+  /**
+   * 处理 DeepLink 协议
+   * @param url DeepLink URL
+   */
+  handleDeepLink(url: string): Promise<void>
+
+  /**
+   * 处理 start 命令
+   * @param params URL 参数
+   */
+  handleStart(params: URLSearchParams): Promise<void>
+
+  /**
+   * 处理 mcp/install 命令
+   * @param params URL 参数
+   */
+  handleMcpInstall(params: URLSearchParams): Promise<void>
 }
 
 export interface ISyncPresenter {

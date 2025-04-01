@@ -14,6 +14,7 @@ import { UpgradePresenter } from './upgradePresenter'
 import { FilePresenter } from './filePresenter/FilePresenter'
 import { McpPresenter } from './mcpPresenter'
 import { SyncPresenter } from './syncPresenter'
+import { DeeplinkPresenter } from './deeplinkPresenter'
 import {
   CONFIG_EVENTS,
   CONVERSATION_EVENTS,
@@ -37,6 +38,7 @@ export class Presenter implements IPresenter {
   filePresenter: FilePresenter
   mcpPresenter: McpPresenter
   syncPresenter: SyncPresenter
+  deeplinkPresenter: DeeplinkPresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -58,6 +60,7 @@ export class Presenter implements IPresenter {
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
     this.syncPresenter = new SyncPresenter(this.configPresenter, this.sqlitePresenter)
+    this.deeplinkPresenter = new DeeplinkPresenter()
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }

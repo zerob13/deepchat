@@ -24,25 +24,6 @@ export class WindowPresenter implements IWindowPresenter {
     this.windows = new Map()
     this.configPresenter = configPresenter
 
-    // 检查是否为第二个实例
-    const gotTheLock = app.requestSingleInstanceLock()
-    if (!gotTheLock) {
-      app.quit()
-      return
-    }
-
-    // 处理第二个实例的启动
-    app.on('second-instance', () => {
-      const mainWindow = this.mainWindow
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore()
-        }
-        mainWindow.show()
-        mainWindow.focus()
-      }
-    })
-
     // 监听应用退出事件
     app.on('before-quit', () => {
       console.log('before-quit')

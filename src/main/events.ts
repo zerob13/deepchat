@@ -75,3 +75,8 @@ export const SYNC_EVENTS = {
   IMPORT_ERROR: 'sync:import-error',
   DATA_CHANGED: 'sync:data-changed'
 }
+
+// DeepLink 相关事件
+export const DEEPLINK_EVENTS = {
+  PROTOCOL_RECEIVED: 'deeplink:protocol-received'
+}

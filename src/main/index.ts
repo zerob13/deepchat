@@ -1,13 +1,12 @@
 import { app, BrowserWindow, protocol } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { presenter } from './presenter'
-import { proxyConfig } from './presenter/proxyConfig'
-import { ProxyMode } from './presenter/proxyConfig'
+import { ProxyMode, proxyConfig } from './presenter/proxyConfig'
 import path from 'path'
 import fs from 'fs'
 import { eventBus } from './eventbus'
 import { WINDOW_EVENTS } from './events'
-import { setLoggingEnabled} from '@shared/logger'
+import { setLoggingEnabled } from '@shared/logger'
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 app.commandLine.appendSwitch('webrtc-max-cpu-consumption-percentage', '100')
@@ -37,6 +36,9 @@ app.whenReady().then(() => {
   const loggingEnabled = presenter.configPresenter.getLoggingEnabled()
 
   setLoggingEnabled(loggingEnabled)
+
+  // 初始化 DeepLink 处理
+  presenter.deeplinkPresenter.init()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
