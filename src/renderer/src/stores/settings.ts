@@ -192,7 +192,7 @@ export const useSettingsStore = defineStore('settings', () => {
       searchPreviewEnabled.value = await configP.getSearchPreviewEnabled()
 
       // 获取artifacts效果开关状态
-      artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
+      // artifactsEffectEnabled.value = await configP.getArtifactsEffectEnabled()
 
       // 获取投屏保护设置
       contentProtectionEnabled.value = await configP.getContentProtectionEnabled()
@@ -230,7 +230,7 @@ export const useSettingsStore = defineStore('settings', () => {
       setupOllamaEventListeners()
 
       // 设置 artifacts 效果事件监听器
-      setupArtifactsEffectListener()
+      // setupArtifactsEffectListener()
 
       // 设置投屏保护事件监听器
       setupContentProtectionListener()
@@ -540,7 +540,7 @@ export const useSettingsStore = defineStore('settings', () => {
     )
 
     // 在setupProviderListener方法或其他初始化方法附近添加对artifacts效果变更的监听
-    setupArtifactsEffectListener()
+    // setupArtifactsEffectListener()
 
     // 添加对投屏保护变更的监听
     setupContentProtectionListener()
@@ -1168,24 +1168,24 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   // 添加设置artifactsEffectEnabled的方法
-  const setArtifactsEffectEnabled = async (enabled: boolean) => {
-    // 更新本地状态
-    artifactsEffectEnabled.value = Boolean(enabled)
+  // const setArtifactsEffectEnabled = async (enabled: boolean) => {
+  //   // 更新本地状态
+  //   artifactsEffectEnabled.value = Boolean(enabled)
 
-    // 调用ConfigPresenter设置值，确保等待Promise完成
-    await configP.setArtifactsEffectEnabled(enabled)
-  }
+  //   // 调用ConfigPresenter设置值，确保等待Promise完成
+  //   await configP.setArtifactsEffectEnabled(enabled)
+  // }
 
-  // 在setupProviderListener方法或其他初始化方法附近添加对artifacts效果变更的监听
-  const setupArtifactsEffectListener = () => {
-    // 监听artifacts效果变更事件
-    window.electron.ipcRenderer.on(
-      CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED,
-      (_event, enabled: boolean) => {
-        artifactsEffectEnabled.value = enabled
-      }
-    )
-  }
+  // // 在setupProviderListener方法或其他初始化方法附近添加对artifacts效果变更的监听
+  // const setupArtifactsEffectListener = () => {
+  //   // 监听artifacts效果变更事件
+  //   window.electron.ipcRenderer.on(
+  //     CONFIG_EVENTS.ARTIFACTS_EFFECT_CHANGED,
+  //     (_event, enabled: boolean) => {
+  //       artifactsEffectEnabled.value = enabled
+  //     }
+  //   )
+  // }
 
   // 添加设置searchPreviewEnabled的方法
   const setSearchPreviewEnabled = async (enabled: boolean) => {
@@ -1309,8 +1309,8 @@ export const useSettingsStore = defineStore('settings', () => {
     getOllamaPullingModels,
     removeOllamaEventListeners,
     cleanup,
-    setArtifactsEffectEnabled,
-    setupArtifactsEffectListener,
+    // setArtifactsEffectEnabled,
+    // setupArtifactsEffectListener,
     getSearchPreviewEnabled,
     setSearchPreviewEnabled,
     setupSearchEnginesListener,

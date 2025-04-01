@@ -26,19 +26,19 @@ const DEFAULT_INMEMORY_SERVERS: Record<string, MCPServerConfig> = {
     type: 'inmemory' as MCPServerType,
     command: 'filesystem',
     env: {},
+    disable: true
+  },
+  // 还有问题，暂时不开放
+  Artifacts: {
+    args: [],
+    descriptions: 'DeepChat内置 artifacts mcp服务',
+    icons: '🎨',
+    autoApprove: ['all'],
+    type: 'inmemory' as MCPServerType,
+    command: 'artifacts',
+    env: {},
     disable: false
   }
-  // 还有问题，暂时不开放
-  // buildInArtifacts: {
-  //   args: [],
-  //   descriptions: 'DeepChat内置artifacts mcp服务',
-  //   icons: '🎨',
-  //   autoApprove: ['all'],
-  //   type: 'inmemory' as MCPServerType,
-  //   command: 'artifacts',
-  //   env: {},
-  //   disable: false
-  // }
 }
 
 const DEFAULT_MCP_SERVERS = {
@@ -75,7 +75,7 @@ const DEFAULT_MCP_SERVERS = {
       env: {}
     }
   },
-  defaultServers: ['buildInFileSystem'], // 默认服务器列表
+  defaultServers: ['Artifacts'], // 默认服务器列表
   mcpEnabled: false // 默认关闭MCP功能
 }
 

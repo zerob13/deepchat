@@ -222,6 +222,7 @@ export function generateSearchPrompt(query: string, results: SearchResult[]): st
 }
 
 // Add a function to generate search prompt with artifacts support
+// @deprecated 由mcp提供
 export function generateSearchPromptWithArtifacts(query: string, results: SearchResult[]): string {
   if (results.length > 0) {
     return SEARCH_PROMPT_ARTIFACTS_TEMPLATE.replace(

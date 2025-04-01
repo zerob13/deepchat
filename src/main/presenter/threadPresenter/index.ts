@@ -24,16 +24,11 @@ import {
 } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { getModelConfig } from '../llmProviderPresenter/modelConfigs'
-import {
-  generateSearchPrompt,
-  generateSearchPromptWithArtifacts,
-  SearchManager
-} from './searchManager'
+import { generateSearchPrompt, SearchManager } from './searchManager'
 import { getFileContext } from './fileContext'
 import { ContentEnricher } from './contentEnricher'
 import { CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import { ChatMessage, ChatMessageContent } from '../llmProviderPresenter/baseProvider'
-import { ARTIFACTS_PROMPT } from '@/lib/artifactsPrompt'
 import { DEFAULT_SETTINGS } from './const'
 
 interface GeneratingMessageState {
@@ -1206,11 +1201,12 @@ export class ThreadPresenter implements IThreadPresenter {
     const { systemPrompt, contextLength, artifacts } = conversation.settings
 
     // 计算搜索提示词和丰富用户消息
-    const searchPrompt = searchResults
-      ? artifacts === 1
-        ? generateSearchPromptWithArtifacts(userContent, searchResults)
-        : generateSearchPrompt(userContent, searchResults)
-      : ''
+    // const searchPrompt = searchResults
+    //   ? artifacts === 1
+    //     ? generateSearchPromptWithArtifacts(userContent, searchResults)
+    //     : generateSearchPrompt(userContent, searchResults)
+    //   : ''
+    const searchPrompt = searchResults ? generateSearchPrompt(userContent, searchResults) : ''
     const enrichedUserMessage =
       urlResults.length > 0
         ? '\n\n' + ContentEnricher.enrichUserMessageWithUrlContent(userContent, urlResults)
@@ -1327,10 +1323,11 @@ export class ThreadPresenter implements IThreadPresenter {
     }
 
     if (artifacts === 1) {
-      formattedMessages.push({
-        role: 'user',
-        content: ARTIFACTS_PROMPT
-      })
+      // formattedMessages.push({
+      //   role: 'user',
+      //   content: ARTIFACTS_PROMPT
+      // })
+      console.log('artifacts目前由mcp提供，此处为兼容性保留')
     }
 
     if (imageFiles.length > 0) {

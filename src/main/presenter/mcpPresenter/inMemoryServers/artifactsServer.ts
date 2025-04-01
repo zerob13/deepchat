@@ -524,7 +524,7 @@ const EXAMPLE_TEMPLATES = {
 }
 
 // Schema 定义
-const GetArtifactPromptArgsSchema = z.object({
+const GetArtifactInstructionsArgsSchema = z.object({
   type: z.enum(['code', 'documents', 'html', 'svg', 'mermaid', 'react'])
 })
 
@@ -564,14 +564,14 @@ export class ArtifactsServer {
       return {
         tools: [
           {
-            name: 'get_artifact_prompt',
+            name: 'get_artifact_instructions',
             description:
               'The assistant can create and reference artifacts during conversations. Artifacts are for substantial, self-contained content that users might modify or reuse, displayed in a separate UI window for clarity. \n' +
-              'When needs to generate code, documents, html, svg, mermaid diagrams, or react components, please call this function to get the prompt of definition of artifacts.\n ' +
+              'When needs to generate code, documents, html, svg, mermaid diagrams, or react components, please call this function to get the instructions and definition of artifacts.\n ' +
               'Get complete information about artifacts, including what makes a good artifact, artifact instructions, and format examples for specific artifact types. \n' +
-              'Then, you can use the prompt to generate artifacts.' +
+              'Then, you can use the instructions to generate artifacts.' +
               'Pass a type parameter to specify the desired artifact type: code, documents, html, svg, mermaid, or react.',
-            inputSchema: zodToJsonSchema(GetArtifactPromptArgsSchema) as ToolInput
+            inputSchema: zodToJsonSchema(GetArtifactInstructionsArgsSchema) as ToolInput
           }
         ]
       }
@@ -582,8 +582,8 @@ export class ArtifactsServer {
       try {
         const { name, arguments: args } = request.params
 
-        if (name === 'get_artifact_prompt') {
-          const parsed = GetArtifactPromptArgsSchema.safeParse(args)
+        if (name === 'get_artifact_instructions') {
+          const parsed = GetArtifactInstructionsArgsSchema.safeParse(args)
           if (!parsed.success) {
             throw new Error(`无效的参数: ${parsed.error}`)
           }

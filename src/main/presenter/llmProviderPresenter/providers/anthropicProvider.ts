@@ -676,20 +676,149 @@ ${context}
                     try {
                       // 调用工具并获取响应
                       const toolResponse = await presenter.mcpPresenter.callTool(mcpToolCall)
-                      const responseContent =
-                        typeof toolResponse.content === 'string'
-                          ? toolResponse.content
-                          : JSON.stringify(toolResponse.content)
+
+                      // 处理响应内容，为多模态内容做特殊处理
+                      let responseContent = ''
+                      const contentBlocks: Anthropic.ContentBlockParam[] = []
+
+                      // 根据内容类型进行不同处理
+                      if (typeof toolResponse.rawData.content === 'string') {
+                        // 字符串类型直接使用
+                        responseContent = toolResponse.rawData.content
+                        contentBlocks.push({
+                          type: 'text',
+                          text: `Tool response: ${responseContent}`
+                        })
+                      } else if (Array.isArray(toolResponse.rawData.content)) {
+                        // 处理结构化内容数组
+                        const contentParts: string[] = []
+
+                        for (const item of toolResponse.rawData.content) {
+                          if (item.type === 'text') {
+                            // 处理文本内容
+                            contentParts.push(item.text)
+                            contentBlocks.push({ type: 'text', text: item.text })
+                          } else if (item.type === 'image') {
+                            // 处理图片内容
+                            contentParts.push(`[图片内容]`)
+
+                            // Anthropic需要特殊格式的图片数据
+                            if (item.data && item.mimeType) {
+                              // 处理可能的data:image格式
+                              let imageData = item.data
+                              let mediaType = item.mimeType
+
+                              // 检查是否是data:image开头的URL格式
+                              if (
+                                typeof imageData === 'string' &&
+                                imageData.startsWith('data:image')
+                              ) {
+                                // 从URL中提取base64数据
+                                imageData = imageData.split(',')[1]
+                                // 从URL中提取media_type
+                                mediaType = item.data.split(';')[0].split(':')[1]
+                              }
+
+                              contentBlocks.push({
+                                type: 'image',
+                                source: {
+                                  type: 'base64',
+                                  data: imageData,
+                                  media_type: mediaType as
+                                    | 'image/jpeg'
+                                    | 'image/png'
+                                    | 'image/gif'
+                                    | 'image/webp'
+                                }
+                              })
+                            }
+                          } else if (item.type === 'resource') {
+                            // 处理资源内容
+                            if ('text' in item.resource && item.resource.text) {
+                              // 文本资源
+                              contentParts.push(
+                                `[资源: ${item.resource.uri}]\n${item.resource.text}`
+                              )
+                              contentBlocks.push({
+                                type: 'text',
+                                text: `[资源: ${item.resource.uri}]\n${item.resource.text}`
+                              })
+                            } else if (
+                              'blob' in item.resource &&
+                              item.resource.mimeType?.startsWith('image/')
+                            ) {
+                              // 图片类型的二进制资源
+                              contentParts.push(`[图片资源: ${item.resource.uri}]`)
+
+                              // 处理资源blob，确保它不是undefined
+                              if (item.resource.blob) {
+                                // 处理可能的data:image格式
+                                let imageData = item.resource.blob
+                                let mediaType = item.resource.mimeType || 'image/jpeg'
+
+                                // 检查是否是data:image开头的URL格式
+                                if (
+                                  typeof imageData === 'string' &&
+                                  imageData.startsWith('data:image')
+                                ) {
+                                  // 从URL中提取base64数据
+                                  imageData = imageData.split(',')[1]
+                                  // 从URL中提取media_type
+                                  mediaType = item.resource.blob.split(';')[0].split(':')[1]
+                                }
+
+                                contentBlocks.push({
+                                  type: 'image',
+                                  source: {
+                                    type: 'base64',
+                                    data: imageData,
+                                    media_type: mediaType as
+                                      | 'image/jpeg'
+                                      | 'image/png'
+                                      | 'image/gif'
+                                      | 'image/webp'
+                                  }
+                                })
+                              }
+                            } else {
+                              // 其他资源类型
+                              contentParts.push(`[资源: ${item.resource.uri}]`)
+                              contentBlocks.push({
+                                type: 'text',
+                                text: `[资源: ${item.resource.uri}]`
+                              })
+                            }
+                          } else {
+                            // 处理其他未知类型
+                            const itemStr = JSON.stringify(item)
+                            contentParts.push(itemStr)
+                            contentBlocks.push({ type: 'text', text: itemStr })
+                          }
+                        }
+
+                        // 合并所有文本内容用于显示
+                        responseContent = contentParts.join('\n\n')
+                      } else {
+                        // 其他情况转为字符串
+                        responseContent = JSON.stringify(toolResponse.content)
+                        contentBlocks.push({
+                          type: 'text',
+                          text: `Tool response: ${responseContent}`
+                        })
+                      }
+
+                      // 如果没有成功提取任何内容块，添加默认文本块
+                      if (contentBlocks.length === 0) {
+                        contentBlocks.push({
+                          type: 'text',
+                          text: `Tool response: ${responseContent || '未获取到响应内容'}`
+                        })
+                      }
 
                       // 添加工具结果到消息列表
                       formattedMessagesObject.messages.push({
                         role: 'user',
-                        content: [
-                          {
-                            type: 'text',
-                            text: `Tool response: ${responseContent}`
-                          }
-                        ]
+                        content: contentBlocks
                       })
 
                       yield {

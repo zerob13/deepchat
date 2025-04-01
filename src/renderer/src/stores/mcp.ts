@@ -52,13 +52,40 @@ export const useMcpStore = defineStore('mcp', () => {
   // ==================== 计算属性 ====================
   // 服务器列表
   const serverList = computed(() => {
-    return Object.entries(config.value.mcpServers).map(([name, serverConfig]) => ({
+    const servers = Object.entries(config.value.mcpServers).map(([name, serverConfig]) => ({
       name,
       ...serverConfig,
       isRunning: serverStatuses.value[name] || false,
       isDefault: config.value.defaultServers.includes(name),
       isLoading: serverLoadingStates.value[name] || false
     }))
+
+    // 按照特定顺序排序：
+    // 1. 启用的inmemory服务
+    // 2. 其他启用的服务
+    // 3. 未启用的inmemory服务
+    // 4. 其他服务
+    return servers.sort((a, b) => {
+      const aIsInmemory = a.type === 'inmemory'
+      const bIsInmemory = b.type === 'inmemory'
+
+      if (a.isRunning && !b.isRunning) return -1 // 启用的服务排在前面
+      if (!a.isRunning && b.isRunning) return 1 // 未启用的服务排在后面
+
+      if (a.isRunning && b.isRunning) {
+        // 两个都启用，inmemory优先
+        if (aIsInmemory && !bIsInmemory) return -1
+        if (!aIsInmemory && bIsInmemory) return 1
+      }
+
+      if (!a.isRunning && !b.isRunning) {
+        // 两个都未启用，inmemory优先
+        if (aIsInmemory && !bIsInmemory) return -1
+        if (!aIsInmemory && bIsInmemory) return 1
+      }
+
+      return 0 // 保持原有顺序
+    })
   })
 
   // 计算默认服务器数量
