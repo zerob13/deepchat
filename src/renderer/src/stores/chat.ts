@@ -206,7 +206,7 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   // Deeplink 消息缓存
-  const deeplinkCache = ref<{ msg?: string; modelId?: string } | null>(null)
+  const deeplinkCache = ref<{ msg?: string; modelId?: string; systemPrompt?: string } | null>(null)
 
   // Getters
   const activeThread = computed(() => {
@@ -858,7 +858,8 @@ export const useChatStore = defineStore('chat', () => {
     if (data) {
       deeplinkCache.value = {
         msg: data.msg,
-        modelId: data.modelId
+        modelId: data.modelId,
+        systemPrompt: data.systemPrompt
       }
     }
   })
@@ -867,9 +868,6 @@ export const useChatStore = defineStore('chat', () => {
   const clearDeeplinkCache = () => {
     deeplinkCache.value = null
   }
-
-  // 获取 Deeplink 缓存
-  const getDeeplinkCache = () => deeplinkCache.value
 
   return {
     renameThread,
@@ -904,7 +902,6 @@ export const useChatStore = defineStore('chat', () => {
     clearAllMessages,
     continueStream,
     deeplinkCache,
-    clearDeeplinkCache,
-    getDeeplinkCache
+    clearDeeplinkCache
   }
 })

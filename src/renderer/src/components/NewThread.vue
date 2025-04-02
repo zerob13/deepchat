@@ -224,6 +224,9 @@ watch(
       if (newCache.msg && chatInputRef.value) {
         chatInputRef.value.setText(newCache.msg)
       }
+      if (newCache.systemPrompt) {
+        systemPrompt.value = newCache.systemPrompt
+      }
       // 清理缓存
       chatStore.clearDeeplinkCache()
     }

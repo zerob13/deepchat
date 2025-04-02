@@ -119,10 +119,16 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
     if (modelId && modelId.trim() !== '') {
       modelId = decodeURIComponent(modelId)
     }
+    let systemPrompt = params.get('system')
+    if (systemPrompt && systemPrompt.trim() !== '') {
+      systemPrompt = decodeURIComponent(systemPrompt)
+    } else {
+      systemPrompt = ''
+    }
     console.log('msg:', msg)
     console.log('modelId:', modelId)
-    eventBus.emit(DEEPLINK_EVENTS.START, { msg, modelId })
-    //TODO： 抛事件给render创建新会话
+    console.log('systemPrompt:', systemPrompt)
+    eventBus.emit(DEEPLINK_EVENTS.START, { msg, modelId, systemPrompt })
   }
 
   async handleMcpInstall(params: URLSearchParams): Promise<void> {
