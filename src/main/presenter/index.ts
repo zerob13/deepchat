@@ -23,7 +23,8 @@ import {
   UPDATE_EVENTS,
   OLLAMA_EVENTS,
   MCP_EVENTS,
-  SYNC_EVENTS
+  SYNC_EVENTS,
+  DEEPLINK_EVENTS
 } from '@/events'
 
 export class Presenter implements IPresenter {
@@ -177,6 +178,14 @@ export class Presenter implements IPresenter {
 
     eventBus.on(SYNC_EVENTS.IMPORT_ERROR, (error) => {
       this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_ERROR, error)
+    })
+
+    // DeepLink 相关事件
+    eventBus.on(DEEPLINK_EVENTS.START, (msg, modelId) => {
+      this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.START, msg, modelId)
+    })
+    eventBus.on(DEEPLINK_EVENTS.MCP_INSTALL, (mcpConfig) => {
+      this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.MCP_INSTALL, mcpConfig)
     })
   }
 

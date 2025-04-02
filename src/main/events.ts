@@ -4,6 +4,8 @@
  * 按功能领域分类事件名，采用统一的命名规范：
  * - 使用冒号分隔域和具体事件
  * - 使用小写并用连字符连接多个单词
+ *
+ * 看似这里和 renderer/events.ts 重复了，其实不然，这里只包含了main->renderer 和 main->main 的事件
  */
 
 // 配置相关事件
@@ -78,5 +80,7 @@ export const SYNC_EVENTS = {
 
 // DeepLink 相关事件
 export const DEEPLINK_EVENTS = {
-  PROTOCOL_RECEIVED: 'deeplink:protocol-received'
+  PROTOCOL_RECEIVED: 'deeplink:protocol-received',
+  START: 'deeplink:start',
+  MCP_INSTALL: 'deeplink:mcp-install'
 }

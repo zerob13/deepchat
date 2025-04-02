@@ -485,6 +485,11 @@ watch(
     selectedSearchEngine.value = settingsStore.activeSearchEngine?.id ?? 'google'
   }
 )
+defineExpose({
+  setText: (text: string) => {
+    inputText.value = text
+  }
+})
 </script>
 
 <style scoped>

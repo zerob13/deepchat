@@ -21,6 +21,7 @@
       <h3 class="text-lg text-muted-foreground px-8 pb-2">{{ t('newThread.prompt') }}</h3>
       <div class="h-12"></div>
       <ChatInput
+        ref="chatInputRef"
         key="newThread"
         class="!max-w-2xl flex-shrink-0 px-4"
         :rows="3"
@@ -108,6 +109,8 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { UserMessageContent } from '@shared/chat'
 import ChatConfig from './ChatConfig.vue'
 import { usePresenter } from '@/composables/usePresenter'
+import { DEEPLINK_EVENTS } from '@/events'
+import { useEventListener } from '@vueuse/core'
 const configPresenter = usePresenter('configPresenter')
 const { t } = useI18n()
 const chatStore = useChatStore()
@@ -193,7 +196,7 @@ const modelSelectOpen = ref(false)
 const settingsPopoverOpen = ref(false)
 const showSettingsButton = ref(false)
 const isHovering = ref(false)
-
+const chatInputRef = ref<InstanceType<typeof ChatInput> | null>(null)
 // 监听鼠标悬停
 const handleMouseEnter = () => {
   isHovering.value = true
@@ -207,20 +210,38 @@ const onSidebarButtonClick = () => {
   chatStore.isSidebarOpen = !chatStore.isSidebarOpen
 }
 
+// 监听 deeplinkCache 变化
+watch(
+  () => chatStore.deeplinkCache,
+  (newCache) => {
+    if (newCache) {
+      if (newCache.modelId) {
+        const matchedModel = settingsStore.findModelByIdOrName(newCache.modelId)
+        console.log('matchedModel', matchedModel)
+        if (matchedModel) {
+          handleModelUpdate(matchedModel.model, matchedModel.providerId)
+        }
+      }
+      if (newCache.msg && chatInputRef.value) {
+        chatInputRef.value.setText(newCache.msg)
+      }
+      // 清理缓存
+      chatStore.clearDeeplinkCache()
+    }
+  },
+  { immediate: true }
+)
+
 onMounted(() => {
   const groupElement = document.querySelector('.new-thread-model-select')
   if (groupElement) {
-    groupElement.addEventListener('mouseenter', handleMouseEnter)
-    groupElement.addEventListener('mouseleave', handleMouseLeave)
+    useEventListener(groupElement, 'mouseenter', handleMouseEnter)
+    useEventListener(groupElement, 'mouseleave', handleMouseLeave)
   }
 })
 
 onUnmounted(() => {
-  const groupElement = document.querySelector('.new-thread-model-select')
-  if (groupElement) {
-    groupElement.removeEventListener('mouseenter', handleMouseEnter)
-    groupElement.removeEventListener('mouseleave', handleMouseLeave)
-  }
+  window.electron.ipcRenderer.removeAllListeners(DEEPLINK_EVENTS.START)
 })
 
 const handleSettingsPopoverUpdate = (isOpen: boolean) => {

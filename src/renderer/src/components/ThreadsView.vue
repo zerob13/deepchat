@@ -96,7 +96,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Icon } from '@iconify/vue'
 import ThreadItem from './ThreadItem.vue'
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
@@ -110,7 +110,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import {CONVERSATION_EVENTS} from "@/events";
+import { CONVERSATION_EVENTS } from '@/events'
 
 const { t } = useI18n()
 const chatStore = useChatStore()
@@ -288,6 +288,12 @@ onMounted(async () => {
       })
     }
   })
+})
+onBeforeUnmount(() => {
+  const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
+  if (viewportElement) {
+    viewportElement.removeEventListener('scroll', handleScroll)
+  }
 })
 </script>
 

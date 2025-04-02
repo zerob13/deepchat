@@ -9,7 +9,8 @@ import type {
 } from '@shared/chat'
 import type { CONVERSATION, CONVERSATION_SETTINGS } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
-import { CONVERSATION_EVENTS } from '@/events'
+import { CONVERSATION_EVENTS, DEEPLINK_EVENTS } from '@/events'
+import router from '@/router'
 // import DeepSeekLogo from '@/assets/llm-icons/deepseek-color.svg'
 // import BaiduLogo from '@/assets/llm-icons/baidu-color.svg'
 // import GoogleLogo from '@/assets/llm-icons/google-color.svg'
@@ -203,6 +204,9 @@ export const useChatStore = defineStore('chat', () => {
     modelId: '',
     artifacts: 0
   })
+
+  // Deeplink 消息缓存
+  const deeplinkCache = ref<{ msg?: string; modelId?: string } | null>(null)
 
   // Getters
   const activeThread = computed(() => {
@@ -839,6 +843,33 @@ export const useChatStore = defineStore('chat', () => {
     handleMessageEdited(msgId)
   })
 
+  window.electron.ipcRenderer.on(DEEPLINK_EVENTS.START, async (_, data) => {
+    // 检查当前路由，如果不在新会话页面，则跳转
+    const currentRoute = router.currentRoute.value
+    if (currentRoute.name !== 'chat') {
+      await router.push({ name: 'chat' })
+    }
+    // 检查是否存在 activeThreadId，如果存在则创建新会话
+    if (activeThreadId.value) {
+      clearActiveThread()
+    }
+    // 存储 deeplink 数据到缓存
+    if (data) {
+      deeplinkCache.value = {
+        msg: data.msg,
+        modelId: data.modelId
+      }
+    }
+  })
+
+  // 清理 Deeplink 缓存
+  const clearDeeplinkCache = () => {
+    deeplinkCache.value = null
+  }
+
+  // 获取 Deeplink 缓存
+  const getDeeplinkCache = () => deeplinkCache.value
+
   return {
     renameThread,
     // 状态
@@ -870,6 +901,9 @@ export const useChatStore = defineStore('chat', () => {
     clearActiveThread,
     cancelGenerating,
     clearAllMessages,
-    continueStream
+    continueStream,
+    deeplinkCache,
+    clearDeeplinkCache,
+    getDeeplinkCache
   }
 })
