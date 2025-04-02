@@ -14,6 +14,7 @@ import { UpgradePresenter } from './upgradePresenter'
 import { FilePresenter } from './filePresenter/FilePresenter'
 import { McpPresenter } from './mcpPresenter'
 import { SyncPresenter } from './syncPresenter'
+import { DeeplinkPresenter } from './deeplinkPresenter'
 import {
   CONFIG_EVENTS,
   CONVERSATION_EVENTS,
@@ -22,7 +23,8 @@ import {
   UPDATE_EVENTS,
   OLLAMA_EVENTS,
   MCP_EVENTS,
-  SYNC_EVENTS
+  SYNC_EVENTS,
+  DEEPLINK_EVENTS
 } from '@/events'
 
 export class Presenter implements IPresenter {
@@ -37,6 +39,7 @@ export class Presenter implements IPresenter {
   filePresenter: FilePresenter
   mcpPresenter: McpPresenter
   syncPresenter: SyncPresenter
+  deeplinkPresenter: DeeplinkPresenter
   // llamaCppPresenter: LlamaCppPresenter
 
   constructor() {
@@ -58,6 +61,7 @@ export class Presenter implements IPresenter {
     this.shortcutPresenter = new ShortcutPresenter(this.windowPresenter, this.configPresenter)
     this.filePresenter = new FilePresenter()
     this.syncPresenter = new SyncPresenter(this.configPresenter, this.sqlitePresenter)
+    this.deeplinkPresenter = new DeeplinkPresenter()
     // this.llamaCppPresenter = new LlamaCppPresenter()
     this.setupEventBus()
   }
@@ -174,6 +178,15 @@ export class Presenter implements IPresenter {
 
     eventBus.on(SYNC_EVENTS.IMPORT_ERROR, (error) => {
       this.windowPresenter.mainWindow?.webContents.send(SYNC_EVENTS.IMPORT_ERROR, error)
+    })
+
+    // DeepLink 相关事件
+    eventBus.on(DEEPLINK_EVENTS.START, (msg) => {
+      console.log('DEEPLINK_EVENTS.START', msg)
+      this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.START, msg)
+    })
+    eventBus.on(DEEPLINK_EVENTS.MCP_INSTALL, (mcpConfig) => {
+      this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.MCP_INSTALL, mcpConfig)
     })
   }
 

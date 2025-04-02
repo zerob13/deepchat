@@ -4,14 +4,17 @@ import type { LLM_PROVIDER, RENDERER_MODEL_META } from '@shared/presenter'
 import { usePresenter } from '@/composables/usePresenter'
 import { useI18n } from 'vue-i18n'
 import { SearchEngineTemplate } from '@shared/chat'
-import { CONFIG_EVENTS, UPDATE_EVENTS, OLLAMA_EVENTS } from '@/events'
+import { CONFIG_EVENTS, UPDATE_EVENTS, OLLAMA_EVENTS, DEEPLINK_EVENTS } from '@/events'
 import type { OllamaModel } from '@shared/presenter'
+import { useRouter } from 'vue-router'
+import { useMcpStore } from '@/stores/mcp'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
   const llmP = usePresenter('llmproviderPresenter')
   const upgradeP = usePresenter('upgradePresenter')
   const threadP = usePresenter('threadPresenter')
+  const router = useRouter()
   const { locale } = useI18n({ useScope: 'global' })
   const providers = ref<LLM_PROVIDER[]>([])
   const theme = ref<string>('system')
@@ -36,7 +39,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const searchPreviewEnabled = ref<boolean>(true) // 搜索预览是否启用，默认启用
   const contentProtectionEnabled = ref<boolean>(true) // 投屏保护是否启用，默认启用
   const isRefreshingModels = ref<boolean>(false) // 是否正在刷新模型列表
-
   // Ollama 相关状态
   const ollamaRunningModels = ref<OllamaModel[]>([])
   const ollamaLocalModels = ref<OllamaModel[]>([])
@@ -172,6 +174,54 @@ export const useSettingsStore = defineStore('settings', () => {
       )
     }
   }
+
+  // MCP 安装缓存
+  const mcpInstallCache = ref<string | null>(null)
+
+  // 清理 MCP 安装缓存
+  const clearMcpInstallCache = () => {
+    mcpInstallCache.value = null
+  }
+
+  // 监听 deeplink 事件
+  window.electron.ipcRenderer.on(DEEPLINK_EVENTS.MCP_INSTALL, async (_, data) => {
+    const { mcpConfig } = data
+    if (!mcpConfig) {
+      return
+    }
+    // 获取MCP存储
+    const mcpStore = useMcpStore()
+
+    // 检查MCP是否已启用，如果未启用则自动启用
+    if (!mcpStore.mcpEnabled) {
+      await mcpStore.setMcpEnabled(true)
+    }
+    // 检查当前路由，如果不在MCP设置页面，则跳转
+    const currentRoute = router.currentRoute.value
+    if (currentRoute.name !== 'settings') {
+      await router.push({
+        name: 'settings'
+      })
+      await router.push({
+        name: 'settings-mcp',
+        query: { subtab: 'servers' } // 确保激活服务器子标签
+      })
+    } else {
+      await router.replace({
+        name: 'settings-mcp',
+        query: {
+          ...currentRoute.query,
+          subtab: 'servers'
+        } // 确保激活服务器子标签
+      })
+      // 如果已经在MCP设置页面，只更新子标签页
+    }
+
+    // 存储 MCP 配置数据到缓存
+    if (data) {
+      mcpInstallCache.value = mcpConfig
+    }
+  })
 
   // 初始化设置
   const initSettings = async () => {
@@ -1251,6 +1301,42 @@ export const useSettingsStore = defineStore('settings', () => {
     await configP.setLoggingEnabled(enabled)
   }
 
+  const findModelByIdOrName = (
+    modelId: string
+  ): { model: RENDERER_MODEL_META; providerId: string } | null => {
+    if (!enabledModels.value || enabledModels.value.length === 0) {
+      return null
+    }
+    // 完全匹配
+    for (const providerModels of enabledModels.value) {
+      for (const model of providerModels.models) {
+        if (model.id === modelId || model.name === modelId) {
+          return {
+            model,
+            providerId: providerModels.providerId
+          }
+        }
+      }
+    }
+
+    // 模糊匹配
+    for (const providerModels of enabledModels.value) {
+      for (const model of providerModels.models) {
+        if (
+          model.id.toLowerCase().includes(modelId.toLowerCase()) ||
+          model.name.toLowerCase().includes(modelId.toLowerCase())
+        ) {
+          return {
+            model,
+            providerId: providerModels.providerId
+          }
+        }
+      }
+    }
+
+    return null
+  }
+
   return {
     providers,
     theme,
@@ -1318,6 +1404,9 @@ export const useSettingsStore = defineStore('settings', () => {
     setupContentProtectionListener,
     setLoggingEnabled,
     testSearchEngine,
-    refreshSearchEngines
+    refreshSearchEngines,
+    findModelByIdOrName,
+    mcpInstallCache,
+    clearMcpInstallCache
   }
 })

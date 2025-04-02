@@ -1,5 +1,6 @@
 /**
  * 事件系统常量定义
+ * 看似这里和 main/events.ts 重复了，其实不然，这里只包含了main上来给renderer的事件
  *
  * 按功能领域分类事件名，采用统一的命名规范：
  * - 使用冒号分隔域和具体事件
@@ -71,4 +72,11 @@ export const SYNC_EVENTS = {
   IMPORT_COMPLETED: 'sync:import-completed',
   IMPORT_ERROR: 'sync:import-error',
   DATA_CHANGED: 'sync:data-changed'
+}
+
+// DeepLink 相关事件
+export const DEEPLINK_EVENTS = {
+  PROTOCOL_RECEIVED: 'deeplink:protocol-received',
+  START: 'deeplink:start',
+  MCP_INSTALL: 'deeplink:mcp-install'
 }

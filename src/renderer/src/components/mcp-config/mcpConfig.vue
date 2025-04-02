@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { Icon } from '@iconify/vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,17 +15,23 @@ import {
 } from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMcpStore } from '@/stores/mcp'
+import { useSettingsStore } from '@/stores/settings'
 import type { MCPServerConfig, MCPToolDefinition } from '@shared/presenter'
 import { useI18n } from 'vue-i18n'
 import McpServerForm from './mcpServerForm.vue'
 import { useToast } from '@/components/ui/toast'
+import { useRoute } from 'vue-router'
 
 // 使用MCP Store
 const mcpStore = useMcpStore()
+// 使用 Settings Store
+const settingsStore = useSettingsStore()
 // 国际化
 const { t } = useI18n()
 // Toast通知
 const { toast } = useToast()
+// 使用路由
+const route = useRoute()
 
 // 本地UI状态
 const activeTab = ref<'servers' | 'tools'>('servers')
@@ -192,20 +198,16 @@ const callTool = async (toolName: string) => {
 }
 
 // 监听标签切换
-watch(activeTab, async (newTab) => {
-  if (newTab === 'tools') {
-    await mcpStore.loadTools()
-    await mcpStore.loadClients()
-  }
-})
-
-// 生命周期钩子
-onMounted(async () => {
-  if (activeTab.value === 'tools') {
-    await mcpStore.loadTools()
-    await mcpStore.loadClients()
-  }
-})
+watch(
+  activeTab,
+  async (newTab) => {
+    if (newTab === 'tools') {
+      await mcpStore.loadTools()
+      await mcpStore.loadClients()
+    }
+  },
+  { immediate: true }
+)
 
 // 计算属性：区分内置服务和普通服务
 const inMemoryServers = computed(() => {
@@ -221,6 +223,38 @@ const regularServers = computed(() => {
     return config?.type !== 'inmemory'
   })
 })
+
+// 监听 MCP 安装缓存
+watch(
+  () => settingsStore.mcpInstallCache,
+  (newCache) => {
+    if (newCache) {
+      // 打开添加服务器对话框
+      isAddServerDialogOpen.value = true
+    }
+  },
+  { immediate: true }
+)
+
+watch(isAddServerDialogOpen, (newIsAddServerDialogOpen) => {
+  // 当添加服务器对话框关闭时，清理缓存
+  if (!newIsAddServerDialogOpen) {
+    // 清理缓存
+    settingsStore.clearMcpInstallCache()
+  }
+})
+
+// 监听URL查询参数，设置活动标签页
+watch(
+  () => route.query.subtab,
+  (newSubtab) => {
+    console.log('newSubtab', newSubtab)
+    if (newSubtab === 'servers' || newSubtab === 'tools') {
+      activeTab.value = newSubtab
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -293,7 +327,10 @@ const regularServers = computed(() => {
                 <DialogHeader class="px-4 flex-shrink-0">
                   <DialogTitle>{{ t('settings.mcp.addServerDialog.title') }}</DialogTitle>
                 </DialogHeader>
-                <McpServerForm @submit="handleAddServer" />
+                <McpServerForm
+                  @submit="handleAddServer"
+                  :default-json-config="settingsStore.mcpInstallCache || undefined"
+                />
               </DialogContent>
             </Dialog>
           </div>

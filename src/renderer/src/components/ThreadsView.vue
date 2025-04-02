@@ -110,7 +110,8 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import {CONVERSATION_EVENTS} from "@/events";
+import { CONVERSATION_EVENTS } from '@/events'
+import { useEventListener } from '@vueuse/core'
 
 const { t } = useI18n()
 const chatStore = useChatStore()
@@ -283,9 +284,7 @@ onMounted(async () => {
     const viewportElement = scrollAreaRef.value?.$el?.querySelector('.h-full.w-full') as HTMLElement
     if (viewportElement) {
       console.log('设置直接DOM滚动监听')
-      viewportElement.addEventListener('scroll', (event) => {
-        handleScroll(event)
-      })
+      useEventListener(viewportElement, 'scroll', handleScroll)
     }
   })
 })

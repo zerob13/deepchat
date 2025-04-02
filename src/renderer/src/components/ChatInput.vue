@@ -192,7 +192,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -211,6 +211,7 @@ import { usePresenter } from '@/composables/usePresenter'
 import { approximateTokenSize } from 'tokenx'
 import { useSettingsStore } from '@/stores/settings'
 import McpToolsList from './mcpToolsList.vue'
+import { useEventListener } from '@vueuse/core'
 
 const { t } = useI18n()
 const configPresenter = usePresenter('configPresenter')
@@ -463,28 +464,25 @@ const handleSearchMouseLeave = () => {
 onMounted(() => {
   initSettings()
 
-  // Add event listeners for search engine selector hover
+  // Add event listeners for search engine selector hover with auto remove
   const searchElement = document.querySelector('.search-engine-select')
   if (searchElement) {
-    searchElement.addEventListener('mouseenter', handleSearchMouseEnter)
-    searchElement.addEventListener('mouseleave', handleSearchMouseLeave)
+    useEventListener(searchElement, 'mouseenter', handleSearchMouseEnter)
+    useEventListener(searchElement, 'mouseleave', handleSearchMouseLeave)
   }
 })
 
-onUnmounted(() => {
-  // Remove event listeners for search engine selector hover
-  const searchElement = document.querySelector('.search-engine-select')
-  if (searchElement) {
-    searchElement.removeEventListener('mouseenter', handleSearchMouseEnter)
-    searchElement.removeEventListener('mouseleave', handleSearchMouseLeave)
-  }
-})
 watch(
   () => settingsStore.activeSearchEngine?.id,
   async () => {
     selectedSearchEngine.value = settingsStore.activeSearchEngine?.id ?? 'google'
   }
 )
+defineExpose({
+  setText: (text: string) => {
+    inputText.value = text
+  }
+})
 </script>
 
 <style scoped>
