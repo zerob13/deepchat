@@ -181,8 +181,9 @@ export class Presenter implements IPresenter {
     })
 
     // DeepLink 相关事件
-    eventBus.on(DEEPLINK_EVENTS.START, (msg, modelId) => {
-      this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.START, msg, modelId)
+    eventBus.on(DEEPLINK_EVENTS.START, (msg) => {
+      console.log('DEEPLINK_EVENTS.START', msg)
+      this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.START, msg)
     })
     eventBus.on(DEEPLINK_EVENTS.MCP_INSTALL, (mcpConfig) => {
       this.windowPresenter.mainWindow?.webContents.send(DEEPLINK_EVENTS.MCP_INSTALL, mcpConfig)

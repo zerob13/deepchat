@@ -13,14 +13,14 @@ Use this deeplink to quickly start a new chat session with optional model select
 ### URL格式 / URL Format
 
 ```
-deepchat://start?input={query}&system={systemPrompt}&model={modelId|modelName}
+deepchat://start?msg={query}&system={systemPrompt}&model={modelId|modelName}
 ```
 
 ### 参数说明 / Parameters
 
 | 参数名 / Parameter | 类型 / Type | 必填 / Required | 说明 / Description                                                                                          |
 | ------------------ | ----------- | --------------- | ----------------------------------------------------------------------------------------------------------- |
-| input              | string      | 否 / No         | 初始聊天内容 / Initial chat message                                                                         |
+| msg                | string      | 否 / No         | 初始聊天内容 / Initial chat message                                                                         |
 | system             | string      | 否 / No         | 系统提示词 / System prompt                                                                                  |
 | model              | string      | 否 / No         | 模型ID或名称，如"gpt-3.5-turbo"、"deepseek-chat" / Model ID or name, e.g., "gpt-3.5-turbo", "deepseek-chat" |
 
@@ -66,14 +66,14 @@ Use this deeplink to install Model Control Protocol (MCP) service configuration.
 ### URL格式 / URL Format
 
 ```
-deepchat://mcp/install?mcpConfig={base64(jsonConfig)}
+deepchat://mcp/install?code={base64Encode(JSON.stringify(jsonConfig))}
 ```
 
 ### 参数说明 / Parameters
 
 | 参数名 / Parameter | 类型 / Type   | 必填 / Required | 说明 / Description                                                                                 |
 | ------------------ | ------------- | --------------- | -------------------------------------------------------------------------------------------------- |
-| mcpConfig          | string (JSON) | 是 / Yes        | MCP服务配置的JSON字符串（需Base64编码）/ JSON string of MCP service configuration (Base64 encoded) |
+| code               | string (JSON) | 是 / Yes        | MCP服务配置的JSON字符串（需Base64编码）/ JSON string of MCP service configuration (Base64 encoded) |
 
 ### 行为 / Behavior
 
@@ -150,3 +150,35 @@ The MCP configuration JSON should contain the following structure:
 }
 ```
 
+## 如何生成安装 code 参数(How to Generate MCPConfig code params)
+
+```javascript
+import { encode } from 'js-base64';
+
+const config = {
+  "mcpServers": {
+    "browser-use-mcp-server": {
+      "url": "http://localhost:8000/sse"
+    }
+  }
+}
+const code =encode(JSON.stringify(config))
+
+```
+
+## 聊天唤起样例 (Chat Example)
+```
+deepchat://start?msg=%E5%A4%A9%E6%B0%94%E4%B8%8D%E9%94%99&system=%E4%BD%A0%E6%98%AF%E4%B8%80%E4%B8%AA%E9%A2%84%E6%8A%A5%E5%91%98%2C%E8%AF%B7%E4%BD%A0%E7%A4%BC%E8%B2%8C%E8%80%8C%E4%B8%93%E4%B8%9A%E5%9B%9E%E7%AD%94%E7%94%A8%E6%88%B7%E9%97%AE%E9%A2%98&model=deepseek-chat
+```
+
+## STDIO 安装样例 (Stdio Example)
+
+```
+deepchat://mcp/install?code=eyJtY3BTZXJ2ZXJzIjp7ImZpbGVzeXN0ZW0iOnsiY29tbWFuZCI6Im1jcC1maWxlc3lzdGVtLXNlcnZlciIsImFyZ3MiOlsiL1VzZXJzL3VzZXJuYW1lL0Rlc2t0b3AiXX19fQ==
+```
+
+## SSE 安装样例 (SSE Example)
+
+```
+deepchat://mcp/install?code=eyJtY3BTZXJ2ZXJzIjp7ImJyb3dzZXItdXNlLW1jcC1zZXJ2ZXIiOnsidXJsIjoiaHR0cDovL2xvY2FsaG9zdDo4MDAwL3NzZSJ9fX0=
+```

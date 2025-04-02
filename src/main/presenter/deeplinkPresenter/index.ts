@@ -144,7 +144,8 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
 
     try {
       // 解码 Base64 并解析 JSON
-      const jsonString = Buffer.from(decodeURIComponent(jsonBase64), 'base64').toString('utf-8')
+      const jsonString = Buffer.from(jsonBase64, 'base64').toString('utf-8')
+
       const mcpConfig = JSON.parse(jsonString) as MCPInstallConfig
 
       // 检查 MCP 配置是否有效
