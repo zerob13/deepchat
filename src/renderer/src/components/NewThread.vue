@@ -105,11 +105,10 @@ import ModelSelect from './ModelSelect.vue'
 import { useChatStore } from '@/stores/chat'
 import { MODEL_META } from '@shared/presenter'
 import { useSettingsStore } from '@/stores/settings'
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { UserMessageContent } from '@shared/chat'
 import ChatConfig from './ChatConfig.vue'
 import { usePresenter } from '@/composables/usePresenter'
-import { DEEPLINK_EVENTS } from '@/events'
 import { useEventListener } from '@vueuse/core'
 const configPresenter = usePresenter('configPresenter')
 const { t } = useI18n()
