@@ -9,14 +9,15 @@ interface MCPInstallConfig {
   mcpServers: Record<
     string,
     {
-      command: string
+      command?: string
       args?: string[]
       env?: Record<string, string>
       descriptions?: string
       icons?: string
       autoApprove?: string[]
-      type?: 'stdio' | 'sse' | 'inmemory'
       disable?: boolean
+      url?: string
+      type?: 'sse' | 'stdio'
     }
   >
 }
@@ -137,7 +138,7 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
     // 获取 JSON 数据
     const jsonBase64 = params.get('code')
     if (!jsonBase64) {
-      console.error('缺少 json 参数')
+      console.error("缺少 'code' 参数")
       return
     }
 
@@ -153,39 +154,87 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
       }
 
       // 遍历并安装所有 MCP 服务器
-      for (const [serverName, serverConfig] of Object.entries<
-        MCPInstallConfig['mcpServers'][string]
-      >(mcpConfig.mcpServers)) {
-        if (!serverConfig.command) {
-          console.error(`服务器 ${serverName} 缺少必需的 command 字段`)
+      for (const [serverName, serverConfig] of Object.entries(mcpConfig.mcpServers)) {
+        let determinedType: 'sse' | 'stdio' | null = null
+        const determinedCommand: string | undefined = serverConfig.command
+        const determinedUrl: string | undefined = serverConfig.url
+
+        // 1. Check explicit type
+        if (serverConfig.type) {
+          if (serverConfig.type === 'stdio' || serverConfig.type === 'sse') {
+            determinedType = serverConfig.type
+            // Validate required fields based on explicit type
+            if (determinedType === 'stdio' && !determinedCommand) {
+              console.error(`服务器 ${serverName} 类型为 'stdio' 但缺少必需的 'command' 字段`)
+              continue
+            }
+            if (determinedType === 'sse' && !determinedUrl) {
+              console.error(`服务器 ${serverName} 类型为 'sse' 但缺少必需的 'url' 字段`)
+              continue
+            }
+          } else {
+            console.error(
+              `服务器 ${serverName} 提供了无效的 'type' 值: ${serverConfig.type}，应为 'stdio' 或 'sse'`
+            )
+            continue
+          }
+        } else {
+          // 2. Infer type if not provided
+          const hasCommand = !!determinedCommand && determinedCommand.trim() !== ''
+          const hasUrl = !!determinedUrl && determinedUrl.trim() !== ''
+
+          if (hasCommand && hasUrl) {
+            console.error(
+              `服务器 ${serverName} 同时提供了 'command' 和 'url' 字段，但未指定 'type'。请明确指定 'type' 为 'stdio' 或 'sse'。`
+            )
+            continue
+          } else if (hasCommand) {
+            determinedType = 'stdio'
+          } else if (hasUrl) {
+            determinedType = 'sse'
+          } else {
+            console.error(
+              `服务器 ${serverName} 必须提供 'command' (用于 stdio) 或 'url' (用于 sse) 字段之一`
+            )
+            continue
+          }
+        }
+
+        // Safeguard check (should not be reached if logic is correct)
+        if (!determinedType) {
+          console.error(`无法确定服务器 ${serverName} 的类型 ('stdio' 或 'sse')`)
           continue
         }
 
-        // 设置默认值
-        const defaultConfig: MCPServerConfig = {
+        // Set default values based on determined type
+        const defaultConfig: Partial<MCPServerConfig> = {
           env: {},
           descriptions: `${serverName} MCP 服务`,
-          icons: '🔌',
+          icons: determinedType === 'stdio' ? '🔌' : '🌐', // Different default icons
           autoApprove: ['all'],
           disable: false,
-          command: serverConfig.command,
           args: [],
-          type: serverConfig.type || 'stdio'
+          baseUrl: '',
+          command: '',
+          type: determinedType
         }
 
-        // 合并配置
+        // Merge configuration
         const finalConfig: MCPServerConfig = {
-          ...defaultConfig,
-          args: serverConfig.args || defaultConfig.args,
           env: { ...defaultConfig.env, ...serverConfig.env },
-          descriptions: serverConfig.descriptions || defaultConfig.descriptions,
-          icons: serverConfig.icons || defaultConfig.icons,
-          autoApprove: serverConfig.autoApprove || defaultConfig.autoApprove,
-          type: serverConfig.type || 'stdio',
-          disable: serverConfig.disable ?? defaultConfig.disable
+          descriptions: serverConfig.descriptions || defaultConfig.descriptions!,
+          icons: serverConfig.icons || defaultConfig.icons!,
+          autoApprove: serverConfig.autoApprove || defaultConfig.autoApprove!,
+          disable: serverConfig.disable ?? defaultConfig.disable!,
+          args: serverConfig.args || defaultConfig.args!,
+          type: determinedType, // Use the determined type
+          // Set command or baseUrl based on type, prioritizing provided values
+          command: determinedType === 'stdio' ? determinedCommand! : defaultConfig.command!,
+          baseUrl: determinedType === 'sse' ? determinedUrl! : defaultConfig.baseUrl!
         }
+
         // 安装 MCP 服务器
-        console.log(`已安装 MCP 服务器: ${serverName}`, finalConfig)
+        console.log(`准备安装 MCP 服务器: ${serverName} (类型: ${determinedType})`, finalConfig)
         const resultServerConfig = {
           mcpServers: {
             [serverName]: finalConfig
@@ -196,9 +245,9 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
           mcpConfig: JSON.stringify(resultServerConfig)
         })
       }
-      console.log('所有 MCP 服务器安装完成')
+      console.log('所有 MCP 服务器处理完成')
     } catch (error) {
-      console.error('解析或安装 MCP 配置时出错:', error)
+      console.error('解析或处理 MCP 配置时出错:', error)
     }
   }
 }

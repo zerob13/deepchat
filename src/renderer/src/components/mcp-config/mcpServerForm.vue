@@ -102,9 +102,13 @@ const parseJsonConfig = () => {
     descriptions.value = serverConfig.descriptions || ''
     icons.value = serverConfig.icons || '📁'
     type.value = serverConfig.type || 'stdio'
-    baseUrl.value = serverConfig.baseUrl || ''
+    baseUrl.value = serverConfig.url || ''
     if (type.value !== 'stdio' && type.value !== 'sse') {
-      type.value = 'stdio'
+      if (baseUrl.value) {
+        type.value = 'sse'
+      } else {
+        type.value = 'stdio'
+      }
     }
 
     // 权限设置
@@ -244,8 +248,12 @@ const placeholder = `mcp配置示例
         "-y",
         ...
       ]
+    },
+    "sseServer":{
+      "url": "https://your-sse-server-url"
     }
-  }
+  },
+
 }`
 
 // 监听 defaultJsonConfig 变化
