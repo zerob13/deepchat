@@ -48,7 +48,7 @@ export class DoubaoProvider extends OpenAICompatibleProvider {
         maxTokens: 4096
       },
       {
-        id: 'deepseek-v3-241226',
+        id: 'deepseek-v3-250324',
         name: 'deepseek-v3',
         group: 'doubao',
         providerId: this.provider.id,
