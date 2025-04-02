@@ -240,10 +240,6 @@ onMounted(() => {
   }
 })
 
-onUnmounted(() => {
-  window.electron.ipcRenderer.removeAllListeners(DEEPLINK_EVENTS.START)
-})
-
 const handleSettingsPopoverUpdate = (isOpen: boolean) => {
   if (isOpen) {
     // 如果打开，立即显示按钮

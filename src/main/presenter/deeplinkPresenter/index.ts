@@ -19,7 +19,6 @@ interface MCPInstallConfig {
       disable?: boolean
     }
   >
-  defaultServers?: string[]
 }
 
 /**
@@ -140,7 +139,6 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
       // 解码 Base64 并解析 JSON
       const jsonString = Buffer.from(decodeURIComponent(jsonBase64), 'base64').toString('utf-8')
       const mcpConfig = JSON.parse(jsonString) as MCPInstallConfig
-      console.log('mcpConfig:', mcpConfig)
 
       // 检查 MCP 配置是否有效
       if (!mcpConfig || !mcpConfig.mcpServers) {
@@ -152,7 +150,7 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
       for (const [serverName, serverConfig] of Object.entries<
         MCPInstallConfig['mcpServers'][string]
       >(mcpConfig.mcpServers)) {
-        if (!serverConfig.command || !serverConfig.type) {
+        if (!serverConfig.command) {
           console.error(`服务器 ${serverName} 缺少必需的 command 字段`)
           continue
         }
@@ -166,7 +164,7 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
           disable: false,
           command: serverConfig.command,
           args: [],
-          type: serverConfig.type
+          type: serverConfig.type || 'stdio'
         }
 
         // 合并配置
@@ -177,20 +175,21 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
           descriptions: serverConfig.descriptions || defaultConfig.descriptions,
           icons: serverConfig.icons || defaultConfig.icons,
           autoApprove: serverConfig.autoApprove || defaultConfig.autoApprove,
-          type: serverConfig.type,
+          type: serverConfig.type || 'stdio',
           disable: serverConfig.disable ?? defaultConfig.disable
         }
-
         // 安装 MCP 服务器
         console.log(`已安装 MCP 服务器: ${serverName}`, finalConfig)
-
-        // 如果配置中指定了该服务器为默认服务器，则添加到默认服务器列表
-        if (mcpConfig.defaultServers?.includes(serverName)) {
-          await presenter.configPresenter.addMcpDefaultServer(serverName)
-          console.log(`已将 ${serverName} 添加到默认服务器列表`)
+        const resultServerConfig = {
+          mcpServers: {
+            [serverName]: finalConfig
+          }
         }
+        // 如果配置中指定了该服务器为默认服务器，则添加到默认服务器列表
+        eventBus.emit(DEEPLINK_EVENTS.MCP_INSTALL, {
+          mcpConfig: JSON.stringify(resultServerConfig)
+        })
       }
-      eventBus.emit(DEEPLINK_EVENTS.MCP_INSTALL, { mcpConfig })
       console.log('所有 MCP 服务器安装完成')
     } catch (error) {
       console.error('解析或安装 MCP 配置时出错:', error)

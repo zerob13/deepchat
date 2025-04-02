@@ -844,6 +844,7 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   window.electron.ipcRenderer.on(DEEPLINK_EVENTS.START, async (_, data) => {
+    console.log('DEEPLINK_EVENTS.START', data)
     // 检查当前路由，如果不在新会话页面，则跳转
     const currentRoute = router.currentRoute.value
     if (currentRoute.name !== 'chat') {

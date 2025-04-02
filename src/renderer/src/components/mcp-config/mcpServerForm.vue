@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,6 +25,7 @@ const props = defineProps<{
   serverName?: string
   initialConfig?: MCPServerConfig
   editMode?: boolean
+  defaultJsonConfig?: string
 }>()
 
 const emit = defineEmits<{
@@ -125,6 +126,7 @@ const parseJsonConfig = () => {
       description: t('settings.mcp.serverForm.configImported')
     })
   } catch (error) {
+    console.error('解析JSON配置失败:', error)
     toast({
       title: t('settings.mcp.serverForm.parseError'),
       description: error instanceof Error ? error.message : String(error),
@@ -245,6 +247,18 @@ const placeholder = `mcp配置示例
     }
   }
 }`
+
+// 监听 defaultJsonConfig 变化
+watch(
+  () => props.defaultJsonConfig,
+  (newConfig) => {
+    if (newConfig) {
+      jsonConfig.value = newConfig
+      parseJsonConfig()
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>

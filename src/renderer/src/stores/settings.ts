@@ -7,6 +7,7 @@ import { SearchEngineTemplate } from '@shared/chat'
 import { CONFIG_EVENTS, UPDATE_EVENTS, OLLAMA_EVENTS, DEEPLINK_EVENTS } from '@/events'
 import type { OllamaModel } from '@shared/presenter'
 import { useRouter } from 'vue-router'
+import { useMcpStore } from '@/stores/mcp'
 
 export const useSettingsStore = defineStore('settings', () => {
   const configP = usePresenter('configPresenter')
@@ -173,6 +174,54 @@ export const useSettingsStore = defineStore('settings', () => {
       )
     }
   }
+
+  // MCP 安装缓存
+  const mcpInstallCache = ref<string | null>(null)
+
+  // 清理 MCP 安装缓存
+  const clearMcpInstallCache = () => {
+    mcpInstallCache.value = null
+  }
+
+  // 监听 deeplink 事件
+  window.electron.ipcRenderer.on(DEEPLINK_EVENTS.MCP_INSTALL, async (_, data) => {
+    const { mcpConfig } = data
+    if (!mcpConfig) {
+      return
+    }
+    // 获取MCP存储
+    const mcpStore = useMcpStore()
+
+    // 检查MCP是否已启用，如果未启用则自动启用
+    if (!mcpStore.mcpEnabled) {
+      await mcpStore.setMcpEnabled(true)
+    }
+    // 检查当前路由，如果不在MCP设置页面，则跳转
+    const currentRoute = router.currentRoute.value
+    if (currentRoute.name !== 'settings') {
+      await router.push({
+        name: 'settings'
+      })
+      await router.push({
+        name: 'settings-mcp',
+        query: { subtab: 'servers' } // 确保激活服务器子标签
+      })
+    } else {
+      await router.replace({
+        name: 'settings-mcp',
+        query: {
+          ...currentRoute.query,
+          subtab: 'servers'
+        } // 确保激活服务器子标签
+      })
+      // 如果已经在MCP设置页面，只更新子标签页
+    }
+
+    // 存储 MCP 配置数据到缓存
+    if (data) {
+      mcpInstallCache.value = mcpConfig
+    }
+  })
 
   // 初始化设置
   const initSettings = async () => {
@@ -1356,6 +1405,8 @@ export const useSettingsStore = defineStore('settings', () => {
     setLoggingEnabled,
     testSearchEngine,
     refreshSearchEngines,
-    findModelByIdOrName
+    findModelByIdOrName,
+    mcpInstallCache,
+    clearMcpInstallCache
   }
 })

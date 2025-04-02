@@ -1,3 +1,4 @@
+import { useEventListener } from '@vueuse/core'
 import mermaid from 'mermaid'
 
 // 渲染 Mermaid 图表
@@ -10,8 +11,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         <!-- 视图切换按钮 -->
         <div class="absolute top-2 left-2 z-10 rounded-lg">
           <div class="flex items-center gap-1 backdrop-blur rounded-lg">
-            <button 
-              id="preview-btn-${id}" 
+            <button
+              id="preview-btn-${id}"
               class="px-2 py-1 text-xs rounded text-muted-foreground data-[active=true]:bg-slate-200 dark:data-[active=true]:bg-background data-[active=true]:text-foreground transition-colors flex items-center gap-1"
               data-id="${id}"
             >
@@ -21,8 +22,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
               </svg>
               Preview
             </button>
-            <button 
-              id="code-btn-${id}" 
+            <button
+              id="code-btn-${id}"
               class="px-2 py-1 text-xs rounded text-muted-foreground data-[active=true]:bg-slate-200 dark:data-[active=true]:bg-background data-[active=true]:text-foreground transition-colors flex items-center gap-1"
               data-id="${id}"
             >
@@ -37,8 +38,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         <!-- 缩放控制按钮 -->
         <div class="absolute top-2 right-2 z-10 rounded-lg">
           <div class="flex items-center gap-1 backdrop-blur rounded-lg">
-            <button 
-              id="zoom-in-btn-${id}" 
+            <button
+              id="zoom-in-btn-${id}"
               class="px-2 py-1 text-xs rounded text-muted-foreground hover:bg-slate-200 dark:hover:bg-background transition-colors flex items-center gap-1"
               data-id="${id}"
             >
@@ -48,8 +49,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
                 <line x1="8" y1="12" x2="16" y2="12"></line>
               </svg>
             </button>
-            <button 
-              id="zoom-out-btn-${id}" 
+            <button
+              id="zoom-out-btn-${id}"
               class="px-2 py-1 text-xs rounded text-muted-foreground hover:bg-slate-200 dark:hover:bg-background transition-colors flex items-center gap-1"
               data-id="${id}"
             >
@@ -58,8 +59,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
                 <line x1="8" y1="12" x2="16" y2="12"></line>
               </svg>
             </button>
-            <button 
-              id="zoom-reset-btn-${id}" 
+            <button
+              id="zoom-reset-btn-${id}"
               class="px-2 py-1 text-xs rounded text-muted-foreground hover:bg-slate-200 dark:hover:bg-background transition-colors flex items-center gap-1"
               data-id="${id}"
             >
@@ -82,7 +83,7 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
           <!-- 预览视图 -->
           <div id="preview-view-${id}" class="rounded p-4 flex justify-center items-center min-h-[360px] max-h-[360px] overflow-auto relative">
             <div id="mermaid-container-${id}" class="w-full h-full absolute inset-0 overflow-hidden" style="cursor: grab; touch-action: none;">
-              <div id="mermaid-${id}" class="mermaid w-full text-center absolute" 
+              <div id="mermaid-${id}" class="mermaid w-full text-center absolute"
                    style="transform-origin: center; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(1);">${code}</div>
             </div>
           </div>
@@ -138,14 +139,13 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
     if (previewBtn && codeBtn && previewView && codeView) {
       previewBtn.setAttribute('data-active', 'true')
       codeBtn.setAttribute('data-active', 'false')
-      previewBtn.addEventListener('click', () => {
+      useEventListener(previewBtn, 'click', () => {
         previewView.classList.remove('hidden')
         codeView.classList.add('hidden')
         previewBtn.setAttribute('data-active', 'true')
         codeBtn.setAttribute('data-active', 'false')
       })
-
-      codeBtn.addEventListener('click', () => {
+      useEventListener(codeBtn, 'click', () => {
         previewView.classList.add('hidden')
         codeView.classList.remove('hidden')
         previewBtn.setAttribute('data-active', 'false')
@@ -158,11 +158,11 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
     const saveCodeBtn = containerParent.querySelector('.save-code-btn')
 
     if (saveSvgBtn) {
-      saveSvgBtn.addEventListener('click', () => saveMermaidAsSVG(id))
+      useEventListener(saveSvgBtn, 'click', () => saveMermaidAsSVG(id))
     }
 
     if (saveCodeBtn) {
-      saveCodeBtn.addEventListener('click', () => {
+      useEventListener(saveCodeBtn, 'click', () => {
         try {
           const blob = new Blob([code], { type: 'text/plain;charset=utf-8' })
           const url = URL.createObjectURL(blob)
@@ -214,21 +214,21 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         }
       }
 
-      zoomInBtn.addEventListener('click', () => {
+      useEventListener(zoomInBtn, 'click', () => {
         if (currentZoom < maxZoom) {
           currentZoom += zoomStep
           updateZoom()
         }
       })
 
-      zoomOutBtn.addEventListener('click', () => {
+      useEventListener(zoomOutBtn, 'click', () => {
         if (currentZoom > minZoom) {
           currentZoom -= zoomStep
           updateZoom()
         }
       })
 
-      zoomResetBtn.addEventListener('click', () => {
+      useEventListener(zoomResetBtn, 'click', () => {
         currentZoom = 1.0
         translateX = 0
         translateY = 0
@@ -236,7 +236,7 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
       })
 
       // 添加拖动功能
-      mermaidWrapper.addEventListener('mousedown', (e: Event) => {
+      useEventListener(mermaidWrapper, 'mousedown', (e: Event) => {
         const mouseEvent = e as MouseEvent
         isDragging = true
         startX = mouseEvent.clientX
@@ -251,7 +251,7 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
 
       // 使用requestAnimationFrame优化mousemove事件处理
       let ticking = false
-      document.addEventListener('mousemove', (e: Event) => {
+      useEventListener(document, 'mousemove', (e: Event) => {
         if (!isDragging) return
 
         const mouseEvent = e as MouseEvent
@@ -274,7 +274,7 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         }
       })
 
-      document.addEventListener('touchend', () => {
+      useEventListener(document, 'touchend', () => {
         isDragging = false
         // 恢复transition
         if (mermaidContainer) {
@@ -282,7 +282,7 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
         }
       })
 
-      document.addEventListener('mouseup', () => {
+      useEventListener(document, 'mouseup', () => {
         isDragging = false
         // 恢复transition
         if (mermaidContainer) {
@@ -294,7 +294,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
       })
 
       // 添加触摸板支持
-      mermaidWrapper.addEventListener(
+      useEventListener(
+        mermaidWrapper,
         'touchstart',
         (e: Event) => {
           const touchEvent = e as TouchEvent
@@ -309,7 +310,8 @@ export const renderMermaidDiagram = async (container: HTMLElement, code: string,
       )
 
       // 同样优化touchmove事件
-      document.addEventListener(
+      useEventListener(
+        document,
         'touchmove',
         (e: Event) => {
           const touchEvent = e as TouchEvent
