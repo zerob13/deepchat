@@ -137,6 +137,8 @@ For Mac-related signing and packaging, please refer to the [Mac Release Guide](h
 ```bash
 $ npm install
 $ npm run installRuntime
+# if got err: No module named 'distutils'
+$ pip install setuptools
 # for windows x64
 $ npm install --cpu=x64 --os=win32 sharp
 # for mac apple silicon
