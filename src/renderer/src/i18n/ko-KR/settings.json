@@ -43,7 +43,11 @@
     "loggingEnableDesc": "로그를 활성화하면 문제 진단 및 애플리케이션 개선에 도움이 됩니다. 로그 파일에는 민감한 정보가 포함될 수 있습니다.",
     "loggingDisableDesc": "로그를 비활성화하면 애플리케이션 로그 수집이 중지됩니다.",
     "loggingRestartNotice": "이 설정을 변경하면 프로그램이 재시작됩니다. 계속하시겠습니까?",
-    "openLogFolder": "로그 폴더 열기"
+    "openLogFolder": "로그 폴더 열기",
+    "shortcut": {
+      "newChat": "새 채팅을 만듭니다",
+      "title": "바로 가기 키 설정"
+    }
   },
   "data": {
     "title": "데이터 설정",
@@ -84,8 +88,15 @@
       "description": "AI 응답의 최대 길이 설정"
     },
     "artifacts": {
-      "description": "인공물 기능을 활성화하면 AI가 더 풍부한 콘텐츠를 생성할 수 있습니다"
-    }
+      "description": "인공물 기능을 활성화하면 AI가 더 풍부한 콘텐츠를 생성할 수 있습니다",
+      "title": "유물 효과"
+    },
+    "addModel": "모델을 추가하십시오",
+    "configureModel": "구성 모델",
+    "modelList": "모델 목록",
+    "provider": "서비스 제공 업체",
+    "providerSetting": "서비스 제공 업체 설정",
+    "selectModel": "모델을 선택하십시오"
   },
   "provider": {
     "enable": "서비스 활성화",
@@ -161,7 +172,8 @@
     "deleteModel": "모델 삭제",
     "deleteModelConfirm": "모델 \"{name}\"을(를) 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
     "noLocalModels": "로컬 모델 없음",
-    "localModels": "로컬 모델"
+    "localModels": "로컬 모델",
+    "urlFormat": "API 샘플 : {defaultUrl}"
   },
   "mcp": {
     "title": "MCP 설정",
@@ -194,8 +206,8 @@
       "nameRequired": "서버 이름이 필요합니다",
       "type": "서버 유형",
       "typePlaceholder": "서버 유형 선택",
-      "typeStdio": "표준 입출력",
-      "typeSse": "서버 전송 이벤트",
+      "typeStdio": "표준 입력 및 출력 (STDIO)",
+      "typeSse": "서버 보내기 이벤트 (SSE)",
       "typeInMemory": "인메모리",
       "baseUrl": "기본 URL",
       "baseUrlPlaceholder": "서버 기본 URL 입력(예: http://localhost:3000)",
@@ -233,7 +245,10 @@
       "configImported": "구성을 성공적으로 가져왔습니다",
       "parseError": "파싱 오류",
       "skipToManual": "수동 구성으로 건너뛰기",
-      "parseAndContinue": "파싱 및 계속"
+      "parseAndContinue": "파싱 및 계속",
+      "jsonParseError": "JSON 파싱이 실패했습니다",
+      "typeHttp": "스트리밍 HTTP 요청 (HTTP)",
+      "useSSE": "SSE 전송을 활성화합니다"
     },
     "deleteServer": "서버 삭제",
     "editServer": "서버 편집",

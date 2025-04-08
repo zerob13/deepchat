@@ -12,6 +12,15 @@ on:
         required: true
         type: boolean
         default: false
+      use_existing_release:
+        description: '是否使用已存在的 release?'
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: '如果使用已存在的 release，请提供 tag 名称 (如: v1.0.0)'
+        required: false
+        type: string
 
 # 确保同一时间只运行一个相同的 workflow，取消正在进行的旧的运行
 concurrency:
@@ -28,8 +37,8 @@ jobs:
       has_windows_arm64: ${{ steps.check_artifacts.outputs.has_windows_arm64 }}
       has_linux_x64: ${{ steps.check_artifacts.outputs.has_linux_x64 }}
     steps:
-      - name: 下载构建工作流产物
-        uses: dawidd6/action-download-artifact@v2
+      - name: Download artifacts from workflow
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow_conclusion: success
           run_id: ${{ github.event.inputs.workflow_id }}
@@ -96,24 +105,37 @@ jobs:
         run: |
           mkdir -p release_assets
 
+<<<<<<< HEAD
           # 处理 Windows x64 构建产物
+=======
+          # Process Windows x64 artifacts
+>>>>>>> fbc286f870d3afff0d1b0ac70628dc7f6aad1615
           if [ -d "artifacts/deepchat-win-x64" ]; then
             find artifacts/deepchat-win-x64 -name "*.exe" -o -name "*.msi" -o -name "*.zip" -exec cp {} release_assets/ \;
             echo "已添加 Windows x64 构建产物"
           fi
 
+<<<<<<< HEAD
           # 处理 Windows ARM64 构建产物
+=======
+          # Process Windows arm64 artifacts
+>>>>>>> fbc286f870d3afff0d1b0ac70628dc7f6aad1615
           if [ -d "artifacts/deepchat-win-arm64" ]; then
             find artifacts/deepchat-win-arm64 -name "*.exe" -o -name "*.msi" -o -name "*.zip" -exec cp {} release_assets/ \;
             echo "已添加 Windows ARM64 构建产物"
           fi
 
+<<<<<<< HEAD
           # 处理 Linux x64 构建产物
+=======
+          # Process Linux x64 artifacts
+>>>>>>> fbc286f870d3afff0d1b0ac70628dc7f6aad1615
           if [ -d "artifacts/deepchat-linux-x64" ]; then
             find artifacts/deepchat-linux-x64 -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" -exec cp {} release_assets/ \;
             echo "已添加 Linux x64 构建产物"
           fi
 
+<<<<<<< HEAD
           echo "构建产物清单:"
           ls -la release_assets/
 
@@ -166,6 +188,13 @@ jobs:
 
       - name: 创建发布
         id: create_release
+=======
+          ls -la release_assets/
+
+      - name: Create New Release
+        if: ${{ github.event.inputs.use_existing_release != 'true' }}
+        id: create_new_release
+>>>>>>> fbc286f870d3afff0d1b0ac70628dc7f6aad1615
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ needs.prepare-artifacts.outputs.version }}
@@ -177,8 +206,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+<<<<<<< HEAD
       - name: 发布结果
         run: |
           echo "🎉 发布创建成功!"
           echo "版本: ${{ needs.prepare-artifacts.outputs.version }}"
           echo "发布链接: ${{ steps.create_release.outputs.url }}"
+=======
+      - name: Upload To Existing Release
+        if: ${{ github.event.inputs.use_existing_release == 'true' }}
+        id: upload_existing_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: |
+            release_assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+>>>>>>> fbc286f870d3afff0d1b0ac70628dc7f6aad1615

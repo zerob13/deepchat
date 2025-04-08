@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { presenter } from '@/presenter'
 import { IDeeplinkPresenter, MCPServerConfig } from '@shared/presenter'
 import path from 'path'
-import { DEEPLINK_EVENTS } from '@/events'
+import { DEEPLINK_EVENTS, WINDOW_EVENTS } from '@/events'
 import { eventBus } from '@/eventbus'
 
 interface MCPInstallConfig {
@@ -17,7 +17,7 @@ interface MCPInstallConfig {
       autoApprove?: string[]
       disable?: boolean
       url?: string
-      type?: 'sse' | 'stdio'
+      type?: 'sse' | 'stdio' | 'http'
     }
   >
 }
@@ -31,6 +31,8 @@ interface MCPInstallConfig {
  * deepchat://mcp/install?json=base64JSONData 通过json数据直接安装mcp
  */
 export class DeeplinkPresenter implements IDeeplinkPresenter {
+  private startupUrl: string | null = null
+
   init(): void {
     // 注册协议处理器
     if (process.defaultApp) {
@@ -46,7 +48,23 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
     // 处理 macOS 上协议被调用的情况
     app.on('open-url', (event, url) => {
       event.preventDefault()
-      this.handleDeepLink(url)
+      if (!app.isReady()) {
+        console.log('应用程序尚未就绪，保存 URL:', url)
+        this.startupUrl = url
+      } else {
+        console.log('应用程序已就绪，直接处理 URL:', url)
+        this.handleDeepLink(url)
+      }
+    })
+
+    // 监听窗口准备好的事件
+    eventBus.on(WINDOW_EVENTS.READY_TO_SHOW, () => {
+      console.log('窗口准备就绪，检查是否有待处理的 URL')
+      if (this.startupUrl) {
+        console.log('处理启动时保存的 URL:', this.startupUrl)
+        this.handleDeepLink(this.startupUrl)
+        this.startupUrl = null
+      }
     })
 
     // 处理 Windows 上协议被调用的情况
@@ -67,7 +85,13 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
           // 在 Windows 上，命令行参数包含协议 URL
           const deepLinkUrl = commandLine.find((arg) => arg.startsWith('deepchat://'))
           if (deepLinkUrl) {
-            this.handleDeepLink(deepLinkUrl)
+            if (!app.isReady()) {
+              console.log('Windows: 应用程序尚未就绪，保存 URL:', deepLinkUrl)
+              this.startupUrl = deepLinkUrl
+            } else {
+              console.log('Windows: 应用程序已就绪，直接处理 URL:', deepLinkUrl)
+              this.handleDeepLink(deepLinkUrl)
+            }
           }
         }
       })
@@ -126,10 +150,14 @@ export class DeeplinkPresenter implements IDeeplinkPresenter {
     } else {
       systemPrompt = ''
     }
+    // 如果用户增加了yolo=1或者yolo=true，则自动发送消息
+    const yolo = params.get('yolo')
+    const autoSend = yolo && yolo.trim() !== ''
     console.log('msg:', msg)
     console.log('modelId:', modelId)
     console.log('systemPrompt:', systemPrompt)
-    eventBus.emit(DEEPLINK_EVENTS.START, { msg, modelId, systemPrompt })
+    console.log('autoSend:', autoSend)
+    eventBus.emit(DEEPLINK_EVENTS.START, { msg, modelId, systemPrompt, autoSend })
   }
 
   async handleMcpInstall(params: URLSearchParams): Promise<void> {

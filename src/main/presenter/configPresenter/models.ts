@@ -4,7 +4,7 @@ export const defaultModelsSettings = [
     id: 'gemini-2.5-pro-exp-03-25',
     name: 'Gemini 2.5 Pro Exp 03-05',
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: 65536,
     contextLength: 2048576,
     match: ['gemini-2.5-pro-exp-03-25'],
     vision: true,
@@ -381,6 +381,28 @@ export const defaultModelsSettings = [
   },
   // Llama系列
   {
+    id: 'llama-4-maverick',
+    name: 'Llama 4 Maverick',
+    temperature: 1,
+    maxTokens: 200_000,
+    contextLength: 200_000,
+    match: ['llama-4-maverick'],
+    vision: true,
+    functionCall: false,
+    reasoning: false
+  },
+  {
+    id: 'llama-4-scout',
+    name: 'Llama 4 Scout',
+    temperature: 1,
+    maxTokens: 480_000,
+    contextLength: 480_000,
+    match: ['llama-4-scout'],
+    vision: true,
+    functionCall: false,
+    reasoning: false
+  },
+  {
     id: 'llama-3.1-405b',
     name: 'Llama 3.1 405B',
     temperature: 0.7,
@@ -632,12 +654,23 @@ export const defaultModelsSettings = [
 
   // Gemma系列
   {
+    id: 'gemma-3',
+    name: 'Gemma 3',
+    temperature: 0.7,
+    maxTokens: 40000,
+    contextLength: 120_000,
+    match: ['gemma-3', 'gemma3'],
+    vision: true,
+    functionCall: false,
+    reasoning: false
+  },
+  {
     id: 'gemma-2-27b',
     name: 'Gemma 2 27B',
     temperature: 0.7,
     maxTokens: 8192,
     contextLength: 8192,
-    match: ['gemma-2-27b'],
+    match: ['gemma-2-27b', 'gemma2'],
     vision: false,
     functionCall: false,
     reasoning: false
