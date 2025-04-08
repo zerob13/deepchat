@@ -4,79 +4,181 @@ on:
   workflow_dispatch:
     inputs:
       workflow_id:
-        description: 'Build workflow run ID to use for artifacts'
+        description: '构建工作流运行ID'
         required: true
         type: string
       prerelease:
-        description: 'Is this a prerelease?'
+        description: '是否为预发布版本'
         required: true
         type: boolean
         default: false
 
+# 确保同一时间只运行一个相同的 workflow，取消正在进行的旧的运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.workflow_id }}
+  cancel-in-progress: true
+
 jobs:
-  create-release:
+  prepare-artifacts:
     runs-on: ubuntu-latest
+    name: 准备发布资源
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      has_windows_x64: ${{ steps.check_artifacts.outputs.has_windows_x64 }}
+      has_windows_arm64: ${{ steps.check_artifacts.outputs.has_windows_arm64 }}
+      has_linux_x64: ${{ steps.check_artifacts.outputs.has_linux_x64 }}
     steps:
-      - name: Download artifacts from workflow
+      - name: 下载构建工作流产物
         uses: dawidd6/action-download-artifact@v2
         with:
           workflow_conclusion: success
           run_id: ${{ github.event.inputs.workflow_id }}
           path: artifacts
 
-      - name: List downloaded artifacts
+      - name: 列出下载的构建产物
         run: find artifacts -type f | sort
 
-      - name: Get version number
+      - name: 检查构建产物
+        id: check_artifacts
+        run: |
+          if [ -d "artifacts/deepchat-win-x64" ]; then
+            echo "has_windows_x64=true" >> $GITHUB_OUTPUT
+            echo "✅ 发现 Windows x64 构建产物"
+          else
+            echo "has_windows_x64=false" >> $GITHUB_OUTPUT
+            echo "❌ 未发现 Windows x64 构建产物"
+          fi
+
+          if [ -d "artifacts/deepchat-win-arm64" ]; then
+            echo "has_windows_arm64=true" >> $GITHUB_OUTPUT
+            echo "✅ 发现 Windows ARM64 构建产物"
+          else
+            echo "has_windows_arm64=false" >> $GITHUB_OUTPUT
+            echo "❌ 未发现 Windows ARM64 构建产物"
+          fi
+
+          if [ -d "artifacts/deepchat-linux-x64" ]; then
+            echo "has_linux_x64=true" >> $GITHUB_OUTPUT
+            echo "✅ 发现 Linux x64 构建产物"
+          else
+            echo "has_linux_x64=false" >> $GITHUB_OUTPUT
+            echo "❌ 未发现 Linux x64 构建产物"
+          fi
+
+      - name: 获取版本号
         id: get_version
         run: |
-          VERSION_FILE=$(find artifacts/deepchat-linux-x64 -name "DeepChat-*.tar.gz" | head -n 1)
+          # 尝试从构建产物中提取版本号
+          VERSION_FILE=""
+
+          # 尝试从Linux包中获取版本号
+          if [ -d "artifacts/deepchat-linux-x64" ]; then
+            VERSION_FILE=$(find artifacts/deepchat-linux-x64 -name "DeepChat-*.tar.gz" | head -n 1)
+          fi
+
+          # 如果没有Linux包，尝试从Windows包中获取版本号
+          if [ -z "$VERSION_FILE" ] && [ -d "artifacts/deepchat-win-x64" ]; then
+            VERSION_FILE=$(find artifacts/deepchat-win-x64 -name "DeepChat-*.exe" | head -n 1)
+          fi
+
           if [ -n "$VERSION_FILE" ]; then
             VERSION=$(echo $VERSION_FILE | grep -o 'DeepChat-[0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/DeepChat-//')
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "Found version: $VERSION"
+            echo "从构建产物中提取的版本号: $VERSION"
           else
-            echo "Error: DeepChat tar.gz file not found"
+            echo "错误: 无法从构建产物中提取版本号"
             exit 1
           fi
 
-      - name: Prepare release assets
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 发布版本: $VERSION"
+
+      - name: 准备发布资源
         run: |
           mkdir -p release_assets
-          
-          # Process Windows x64 artifacts
+
+          # 处理 Windows x64 构建产物
           if [ -d "artifacts/deepchat-win-x64" ]; then
-            cp artifacts/deepchat-win-x64/*.exe release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-win-x64/*.msi release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-win-x64/*.zip release_assets/ 2>/dev/null || true
+            find artifacts/deepchat-win-x64 -name "*.exe" -o -name "*.msi" -o -name "*.zip" -exec cp {} release_assets/ \;
+            echo "已添加 Windows x64 构建产物"
           fi
-          
-          # Process Windows arm64 artifacts
+
+          # 处理 Windows ARM64 构建产物
           if [ -d "artifacts/deepchat-win-arm64" ]; then
-            cp artifacts/deepchat-win-arm64/*.exe release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-win-arm64/*.msi release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-win-arm64/*.zip release_assets/ 2>/dev/null || true
+            find artifacts/deepchat-win-arm64 -name "*.exe" -o -name "*.msi" -o -name "*.zip" -exec cp {} release_assets/ \;
+            echo "已添加 Windows ARM64 构建产物"
           fi
-          
-          # Process Linux x64 artifacts
+
+          # 处理 Linux x64 构建产物
           if [ -d "artifacts/deepchat-linux-x64" ]; then
-            cp artifacts/deepchat-linux-x64/*.AppImage release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-linux-x64/*.deb release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-linux-x64/*.rpm release_assets/ 2>/dev/null || true
-            cp artifacts/deepchat-linux-x64/*.tar.gz release_assets/ 2>/dev/null || true
+            find artifacts/deepchat-linux-x64 -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" -exec cp {} release_assets/ \;
+            echo "已添加 Linux x64 构建产物"
           fi
-          
+
+          echo "构建产物清单:"
           ls -la release_assets/
 
-      - name: Create Release
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release_assets/
+          retention-days: 1
+
+  create-release:
+    needs: prepare-artifacts
+    runs-on: ubuntu-latest
+    name: 创建发布
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release_assets
+
+      - name: 列出发布资源
+        run: |
+          echo "准备发布以下文件:"
+          ls -la release_assets/
+
+      - name: 生成发布说明
+        id: release_notes
+        run: |
+          echo "## DeepChat ${{ needs.prepare-artifacts.outputs.version }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "本版本包含以下平台的构建:" >> release_notes.md
+
+          if [ "${{ needs.prepare-artifacts.outputs.has_windows_x64 }}" == "true" ]; then
+            echo "- Windows (x64)" >> release_notes.md
+          fi
+
+          if [ "${{ needs.prepare-artifacts.outputs.has_windows_arm64 }}" == "true" ]; then
+            echo "- Windows (ARM64)" >> release_notes.md
+          fi
+
+          if [ "${{ needs.prepare-artifacts.outputs.has_linux_x64 }}" == "true" ]; then
+            echo "- Linux (x64)" >> release_notes.md
+          fi
+
+          echo "" >> release_notes.md
+          echo "从工作流 #${{ github.event.inputs.workflow_id }} 创建" >> release_notes.md
+
+          cat release_notes.md
+
+      - name: 创建发布
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          name: DeepChat ${{ steps.get_version.outputs.version }}
+          tag_name: v${{ needs.prepare-artifacts.outputs.version }}
+          name: DeepChat ${{ needs.prepare-artifacts.outputs.version }}
           draft: false
           prerelease: ${{ github.event.inputs.prerelease }}
-          files: |
-            release_assets/*
+          body_path: release_notes.md
+          files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 发布结果
+        run: |
+          echo "🎉 发布创建成功!"
+          echo "版本: ${{ needs.prepare-artifacts.outputs.version }}"
+          echo "发布链接: ${{ steps.create_release.outputs.url }}"

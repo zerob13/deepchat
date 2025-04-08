@@ -49,12 +49,14 @@ dmg:
   artifactName: ${name}-${version}-mac-${arch}.${ext}
 linux:
   target:
-    - AppImage
-    - tar.gz
+    - target: AppImage
+      arch: [x64, arm64]
+      artifactName: ${name}-${version}-linux-${arch}.${ext}
+    - target: tar.gz
+      arch: [x64, arm64]
+      artifactName: ${name}-${version}-linux-${arch}.${ext}
   maintainer: ThinkInAIXYZ
   category: Utility
-appImage:
-  artifactName: ${name}-${version}-linux-${arch}.${ext}
 npmRebuild: true
 publish:
   provider: generic
