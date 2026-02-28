@@ -130,4 +130,19 @@ export class DeepChatMessagesTable extends BaseTable {
       .run(Date.now())
     return result.changes
   }
+
+  // Delete all messages from a given order_seq onwards (for edit/truncate)
+  deleteFromOrderSeq(sessionId: string, fromOrderSeq: number): number {
+    const result = this.db
+      .prepare('DELETE FROM deepchat_messages WHERE session_id = ? AND order_seq >= ?')
+      .run(sessionId, fromOrderSeq)
+    return result.changes
+  }
+
+  // Get message by order_seq
+  getByOrderSeq(sessionId: string, orderSeq: number): DeepChatMessageRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM deepchat_messages WHERE session_id = ? AND order_seq = ?')
+      .get(sessionId, orderSeq) as DeepChatMessageRow | undefined
+  }
 }

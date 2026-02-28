@@ -37,6 +37,12 @@ export interface IAgentImplementation {
 
   /** Get a single message by ID */
   getMessage(messageId: string): Promise<ChatMessageRecord | null>
+
+  /** Edit a user message and truncate subsequent messages */
+  editUserMessage(sessionId: string, messageId: string, newContent: string): Promise<void>
+
+  /** Fork a session from a specific message */
+  forkSessionFromMessage(sessionId: string, messageId: string): Promise<string>
 }
 
 // ---- Message Types ----
@@ -110,12 +116,15 @@ export interface Agent {
   enabled: boolean
 }
 
+export type PermissionMode = 'default' | 'full'
+
 export interface SessionRecord {
   id: string
   agentId: string
   title: string
   projectDir: string | null
   isPinned: boolean
+  permissionMode: PermissionMode
   createdAt: number
   updatedAt: number
 }

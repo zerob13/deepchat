@@ -18,6 +18,7 @@ export interface UISession {
   projectDir: string
   providerId: string
   modelId: string
+  permissionMode: 'default' | 'full'
   createdAt: number
   updatedAt: number
 }
@@ -53,6 +54,9 @@ function mapToUISession(session: SessionWithState): UISession {
     projectDir: session.projectDir ?? '',
     providerId: session.providerId,
     modelId: session.modelId,
+    permissionMode:
+      (session as SessionWithState & { permissionMode?: 'default' | 'full' }).permissionMode ??
+      'default',
     createdAt: session.createdAt,
     updatedAt: session.updatedAt
   }
@@ -217,6 +221,16 @@ export const useSessionStore = defineStore('session', () => {
       .filter((group) => group.sessions.length > 0)
   }
 
+  function updateSession(
+    sessionId: string,
+    fields: Partial<Pick<UISession, 'title' | 'projectDir' | 'permissionMode'>>
+  ): void {
+    const session = sessions.value.find((s) => s.id === sessionId)
+    if (session) {
+      Object.assign(session, fields)
+    }
+  }
+
   // --- Event Listeners ---
 
   window.electron.ipcRenderer.on(SESSION_EVENTS.LIST_UPDATED, () => {
@@ -275,6 +289,7 @@ export const useSessionStore = defineStore('session', () => {
     closeSession,
     deleteSession,
     toggleGroupMode,
-    getFilteredGroups
+    getFilteredGroups,
+    updateSession
   }
 })

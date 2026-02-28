@@ -33,7 +33,21 @@ describe('NewSessionManager', () => {
         'mock-id-123',
         'deepchat',
         'Hello world',
-        null
+        null,
+        'default'
+      )
+    })
+
+    it('creates a session with custom permission mode', () => {
+      const id = manager.create('deepchat', 'Hello world', '/project', 'full')
+
+      expect(id).toBe('mock-id-123')
+      expect(sqlitePresenter.newSessionsTable.create).toHaveBeenCalledWith(
+        'mock-id-123',
+        'deepchat',
+        'Hello world',
+        '/project',
+        'full'
       )
     })
   })
@@ -46,6 +60,7 @@ describe('NewSessionManager', () => {
         title: 'Test',
         project_dir: '/tmp/proj',
         is_pinned: 1,
+        permission_mode: 'default',
         created_at: 1000,
         updated_at: 2000
       })
@@ -57,6 +72,7 @@ describe('NewSessionManager', () => {
         title: 'Test',
         projectDir: '/tmp/proj',
         isPinned: true,
+        permissionMode: 'default',
         createdAt: 1000,
         updatedAt: 2000
       })
@@ -77,6 +93,7 @@ describe('NewSessionManager', () => {
           title: 'Chat 1',
           project_dir: null,
           is_pinned: 0,
+          permission_mode: 'default',
           created_at: 1000,
           updated_at: 2000
         }
@@ -86,6 +103,7 @@ describe('NewSessionManager', () => {
       expect(records).toHaveLength(1)
       expect(records[0].isPinned).toBe(false)
       expect(records[0].projectDir).toBeNull()
+      expect(records[0].permissionMode).toBe('default')
     })
 
     it('passes filters through', () => {

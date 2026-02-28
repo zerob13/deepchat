@@ -209,7 +209,8 @@ describe('Integration: createSession end-to-end', () => {
       expect.any(String),
       'deepchat',
       'Tell me a joke',
-      '/tmp/proj'
+      '/tmp/proj',
+      'default'
     )
 
     // 2. deepchat_sessions row created

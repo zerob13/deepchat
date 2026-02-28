@@ -79,12 +79,14 @@ export class NewAgentPresenter {
 
     // Return enriched session
     const state = await agent.getSessionState(sessionId)
+    const sessionRecord = this.sessionManager.get(sessionId)
     return {
       id: sessionId,
       agentId,
       title,
       projectDir: input.projectDir ?? null,
       isPinned: false,
+      permissionMode: sessionRecord?.permissionMode ?? 'default',
       createdAt: Date.now(),
       updatedAt: Date.now(),
       status: state?.status ?? 'idle',
@@ -185,5 +187,33 @@ export class NewAgentPresenter {
     if (!session) return
     const agent = this.agentRegistry.resolve(session.agentId)
     await agent.cancelGeneration(sessionId)
+  }
+
+  async setSessionPermissionMode(sessionId: string, mode: 'default' | 'full'): Promise<void> {
+    this.sessionManager.setPermissionMode(sessionId, mode)
+  }
+
+  async editUserMessage(sessionId: string, messageId: string, newContent: string): Promise<void> {
+    const session = this.sessionManager.get(sessionId)
+    if (!session) throw new Error(`Session not found: ${sessionId}`)
+
+    const agent = this.agentRegistry.resolve(session.agentId)
+    await agent.editUserMessage(sessionId, messageId, newContent)
+  }
+
+  async forkSessionFromMessage(sessionId: string, messageId: string): Promise<string> {
+    const session = this.sessionManager.get(sessionId)
+    if (!session) throw new Error(`Session not found: ${sessionId}`)
+
+    const agent = this.agentRegistry.resolve(session.agentId)
+    const newSessionId = await agent.forkSessionFromMessage(sessionId, messageId)
+
+    // Verify the forked session exists
+    const newSessionRecord = this.sessionManager.get(newSessionId)
+    if (!newSessionRecord) {
+      throw new Error(`Forked session not found: ${newSessionId}`)
+    }
+
+    return newSessionId
   }
 }

@@ -112,4 +112,53 @@ export class DeepChatMessageStore {
   recoverPendingMessages(): number {
     return this.sqlitePresenter.deepchatMessagesTable.recoverPendingMessages()
   }
+
+  // Edit user message and truncate subsequent messages
+  editUserMessage(
+    messageId: string,
+    newContent: string
+  ): { sessionId: string; orderSeq: number; deletedCount: number } | null {
+    const message = this.getMessage(messageId)
+    if (!message || message.role !== 'user') return null
+
+    // Update the user message content
+    const userContent: UserMessageContent = {
+      text: newContent,
+      files: [],
+      links: [],
+      search: false,
+      think: false
+    }
+    this.sqlitePresenter.deepchatMessagesTable.updateContent(messageId, JSON.stringify(userContent))
+
+    // Delete all messages from this order_seq onwards (including assistant responses after it)
+    const deletedCount = this.sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq(
+      message.sessionId,
+      message.orderSeq + 1
+    )
+
+    return {
+      sessionId: message.sessionId,
+      orderSeq: message.orderSeq,
+      deletedCount
+    }
+  }
+
+  // Get message by order_seq
+  getMessageByOrderSeq(sessionId: string, orderSeq: number): ChatMessageRecord | null {
+    const row = this.sqlitePresenter.deepchatMessagesTable.getByOrderSeq(sessionId, orderSeq)
+    if (!row) return null
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      orderSeq: row.order_seq,
+      role: row.role,
+      content: row.content,
+      status: row.status,
+      isContextEdge: row.is_context_edge,
+      metadata: row.metadata,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }
+  }
 }

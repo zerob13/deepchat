@@ -8,6 +8,7 @@ import type { IConfigPresenter, ILlmProviderPresenter, ModelConfig } from '@shar
 import type { IToolPresenter } from '@shared/types/presenters/tool.presenter'
 import type { SQLitePresenter } from '../sqlitePresenter'
 import type { ChatMessage } from '@shared/types/core/chat-message'
+import { nanoid } from 'nanoid'
 import { DeepChatSessionStore } from './sessionStore'
 import { DeepChatMessageStore } from './messageStore'
 import { processStream } from './process'
@@ -21,6 +22,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
   private toolPresenter: IToolPresenter | null
   private sessionStore: DeepChatSessionStore
   private messageStore: DeepChatMessageStore
+  private sqlitePresenter: SQLitePresenter
   private runtimeState: Map<string, DeepChatSessionState> = new Map()
   private abortControllers: Map<string, AbortController> = new Map()
 
@@ -33,6 +35,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
     this.llmProviderPresenter = llmProviderPresenter
     this.configPresenter = configPresenter
     this.toolPresenter = toolPresenter ?? null
+    this.sqlitePresenter = sqlitePresenter
     this.sessionStore = new DeepChatSessionStore(sqlitePresenter)
     this.messageStore = new DeepChatMessageStore(sqlitePresenter)
 
@@ -242,5 +245,75 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
 
   async getMessage(messageId: string): Promise<ChatMessageRecord | null> {
     return this.messageStore.getMessage(messageId)
+  }
+
+  async editUserMessage(sessionId: string, messageId: string, newContent: string): Promise<void> {
+    console.log(
+      `[DeepChatAgent] editUserMessage session=${sessionId} message=${messageId} content="${newContent.slice(0, 60)}"`
+    )
+
+    const result = this.messageStore.editUserMessage(messageId, newContent)
+    if (!result) {
+      throw new Error(`Message not found or not a user message: ${messageId}`)
+    }
+
+    console.log(
+      `[DeepChatAgent] editUserMessage deleted ${result.deletedCount} subsequent messages`
+    )
+
+    // Trigger regenerate by processing the edited message
+    // This will create a new assistant response
+    await this.processMessage(sessionId, newContent)
+  }
+
+  async forkSessionFromMessage(sessionId: string, messageId: string): Promise<string> {
+    console.log(`[DeepChatAgent] forkSessionFromMessage session=${sessionId} message=${messageId}`)
+
+    // Get the source session
+    const sourceSession = this.sessionStore.get(sessionId)
+    if (!sourceSession) {
+      throw new Error(`Session not found: ${sessionId}`)
+    }
+
+    // Get the message to fork from
+    const message = this.messageStore.getMessage(messageId)
+    if (!message) {
+      throw new Error(`Message not found: ${messageId}`)
+    }
+
+    // Create new session with same configuration
+    const newSessionId = nanoid()
+    this.sessionStore.create(newSessionId, sourceSession.provider_id, sourceSession.model_id)
+    console.log(`[DeepChatAgent] forked session created id=${newSessionId}`)
+
+    // Copy messages up to and including the fork point
+    const sourceMessages = await this.getMessages(sessionId)
+    const forkPointIndex = sourceMessages.findIndex((m) => m.id === messageId)
+
+    if (forkPointIndex === -1) {
+      throw new Error(`Message ${messageId} not found in session ${sessionId}`)
+    }
+
+    // Copy messages up to fork point (inclusive)
+    for (let i = 0; i <= forkPointIndex; i++) {
+      const msg = sourceMessages[i]
+      const newMessageId = nanoid()
+
+      // Insert message into new session with new ID but same order_seq
+      this.sqlitePresenter.deepchatMessagesTable.insert({
+        id: newMessageId,
+        sessionId: newSessionId,
+        orderSeq: msg.orderSeq,
+        role: msg.role,
+        content: msg.content,
+        status: msg.status
+      })
+    }
+
+    console.log(
+      `[DeepChatAgent] forked ${forkPointIndex + 1} messages to new session ${newSessionId}`
+    )
+
+    return newSessionId
   }
 }
