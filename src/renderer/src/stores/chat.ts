@@ -7,6 +7,7 @@ import type {
   UserMessage,
   Message
 } from '@shared/chat'
+import { useSessionStore } from './ui/session'
 import type { QuestionInfo } from '@shared/types/core/question'
 import { finalizeAssistantMessageBlocks } from '@shared/chat/messageBlocks'
 import type { CONVERSATION, CONVERSATION_SETTINGS, ParentSelection } from '@shared/presenter'
@@ -2088,6 +2089,18 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  // Watch session changes in sessionStore and load chat config accordingly
+  const sessionStore = useSessionStore()
+  watch(
+    () => sessionStore.activeSessionId,
+    async (newSessionId) => {
+      if (newSessionId) {
+        console.log('[Chat Store] Session changed, loading chat config for session:', newSessionId)
+        await loadChatConfig()
+      }
+    },
+    { immediate: true }
+  )
   onMounted(() => {
     console.log(`[Chat Store] Tab ${getTabId()} is mounted. Setting up event listeners.`)
 

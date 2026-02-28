@@ -161,26 +161,37 @@ const isAcpAgent = computed(() => {
 
 // Resolve display provider ID
 const displayProviderId = computed(() => {
+  const providerId = chatStore.chatConfig.providerId
+  if (providerId && providerId.trim()) {
+    return providerId
+  }
+  // Return default provider from available models
+  const defaultProvider = modelStore.enabledModels[0]?.providerId
+  if (defaultProvider) return defaultProvider
+
   if (hasActiveSession.value) {
-    return chatStore.chatConfig.providerId || 'anthropic'
+    return 'anthropic'
   }
   // On NewThreadPage: use agent context
   if (isAcpAgent.value) {
     return agentStore.selectedAgentId ?? 'acp'
   }
   // Default DeepChat: show last-used or default provider
-  return chatStore.chatConfig.providerId || 'anthropic'
+  return 'anthropic'
 })
 
 // Resolve display model name
 const displayModelName = computed(() => {
   if (hasActiveSession.value) {
     const modelId = chatStore.chatConfig.modelId
-    if (modelId) {
+    if (modelId && modelId.trim()) {
       const found = modelStore.findModelByIdOrName(modelId)
       if (found) return found.model.name
       return modelId
     }
+    // Show default model when no model is selected
+    const defaultModel = modelStore.enabledModels[0]?.models[0]
+    if (defaultModel) return defaultModel.name
     return 'Select model'
   }
   // On NewThreadPage with ACP agent
@@ -190,11 +201,14 @@ const displayModelName = computed(() => {
   }
   // On NewThreadPage with DeepChat: show default model
   const modelId = chatStore.chatConfig.modelId
-  if (modelId) {
+  if (modelId && modelId.trim()) {
     const found = modelStore.findModelByIdOrName(modelId)
     if (found) return found.model.name
     return modelId
   }
+  // Show default model when no model is selected
+  const defaultModel = modelStore.enabledModels[0]?.models[0]
+  if (defaultModel) return defaultModel.name
   return 'Select model'
 })
 

@@ -7,8 +7,13 @@ export class DeepChatSessionStore {
     this.sqlitePresenter = sqlitePresenter
   }
 
-  create(id: string, providerId: string, modelId: string): void {
-    this.sqlitePresenter.deepchatSessionsTable.create(id, providerId, modelId)
+  create(
+    id: string,
+    providerId: string,
+    modelId: string,
+    permissionMode: string = 'default'
+  ): void {
+    this.sqlitePresenter.deepchatSessionsTable.create(id, providerId, modelId, permissionMode)
   }
 
   get(id: string) {

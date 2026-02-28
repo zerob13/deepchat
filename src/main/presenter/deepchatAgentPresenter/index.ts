@@ -48,16 +48,22 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
 
   async initSession(
     sessionId: string,
-    config: { providerId: string; modelId: string }
+    config: { providerId: string; modelId: string; permissionMode?: string }
   ): Promise<void> {
     console.log(
       `[DeepChatAgent] initSession id=${sessionId} provider=${config.providerId} model=${config.modelId}`
     )
-    this.sessionStore.create(sessionId, config.providerId, config.modelId)
+    this.sessionStore.create(
+      sessionId,
+      config.providerId,
+      config.modelId,
+      config.permissionMode || 'default'
+    )
     this.runtimeState.set(sessionId, {
       status: 'idle',
       providerId: config.providerId,
-      modelId: config.modelId
+      modelId: config.modelId,
+      permissionMode: config.permissionMode || 'default'
     })
   }
 
@@ -85,7 +91,8 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
     const rebuilt: DeepChatSessionState = {
       status: 'idle',
       providerId: dbSession.provider_id,
-      modelId: dbSession.model_id
+      modelId: dbSession.model_id,
+      permissionMode: dbSession.permission_mode || 'default'
     }
     this.runtimeState.set(sessionId, rebuilt)
     return rebuilt
@@ -281,9 +288,14 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
       throw new Error(`Message not found: ${messageId}`)
     }
 
-    // Create new session with same configuration
+    // Create new session with same configuration, inheriting permission mode
     const newSessionId = nanoid()
-    this.sessionStore.create(newSessionId, sourceSession.provider_id, sourceSession.model_id)
+    this.sessionStore.create(
+      newSessionId,
+      sourceSession.provider_id,
+      sourceSession.model_id,
+      sourceSession.permission_mode || 'default'
+    )
     console.log(`[DeepChatAgent] forked session created id=${newSessionId}`)
 
     // Copy messages up to and including the fork point

@@ -169,13 +169,24 @@ export async function executeTools(
     } catch (err) {
       const errorText = err instanceof Error ? err.message : String(err)
 
-      conversation.push({
-        role: 'tool',
-        tool_call_id: tc.id,
-        content: `Error: ${errorText}`
-      })
-
-      updateToolCallBlock(state.blocks, tc.id, `Error: ${errorText}`, true)
+      // Distinguish permission errors from other tool errors for clearer user feedback
+      if (err instanceof Error && err.message.includes('Access denied')) {
+        // Explicit permission denied error - provide clear security message
+        conversation.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: `Permission denied: ${errorText}`
+        })
+        updateToolCallBlock(state.blocks, tc.id, `Permission denied: ${errorText}`, true)
+      } else {
+        // Generic tool execution error
+        conversation.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          content: `Error: ${errorText}`
+        })
+        updateToolCallBlock(state.blocks, tc.id, `Error: ${errorText}`, true)
+      }
     }
 
     executed++

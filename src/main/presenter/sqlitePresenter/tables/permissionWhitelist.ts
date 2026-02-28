@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3-multiple-ciphers'
 import { BaseTable } from './baseTable'
+import { normalizePath } from '@/main/utils/pathUtils'
 
 export interface PermissionWhitelistRow {
   id: string
@@ -106,17 +107,21 @@ export class PermissionWhitelistTable extends BaseTable {
   }
 
   private pathMatchesPattern(targetPath: string, pattern: string): boolean {
-    if (targetPath === pattern) {
+    // Normalize both paths before matching to prevent ../ bypass attacks
+    const normalizedTarget = normalizePath(targetPath)
+    const normalizedPattern = normalizePath(pattern)
+
+    if (normalizedTarget === normalizedPattern) {
       return true
     }
 
-    let regexPattern = pattern
+    let regexPattern = normalizedPattern
       .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
       .replace(/\*\*/g, '___DOUBLE_STAR___')
       .replace(/\*/g, '[^/]*')
       .replace(/___DOUBLE_STAR___/g, '.*')
 
     const regex = new RegExp(`^${regexPattern}$`)
-    return regex.test(targetPath)
+    return regex.test(normalizedTarget)
   }
 }

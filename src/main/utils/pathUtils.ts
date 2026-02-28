@@ -14,12 +14,19 @@ export function normalizePath(targetPath: string): string {
     // Resolve to absolute path (handles . and ..)
     let resolved = path.resolve(targetPath)
 
-    // Try to resolve symlinks if the path exists
+    // Try to resolve symlinks - security critical for preventing symlink escape attacks
     try {
       resolved = fs.realpathSync(resolved)
     } catch {
-      // Path doesn't exist yet (e.g., new file), use resolved path
-      // This is fine for write operations on new files
+      // Path doesn't exist yet, attempt to resolve parent directory to prevent symlink escape
+      const parentDir = path.dirname(resolved)
+      try {
+        const realParent = fs.realpathSync(parentDir)
+        resolved = path.join(realParent, path.basename(resolved))
+      } catch {
+        // Parent directory also doesn't exist, use original resolved path
+        // This is acceptable risk for deeply nested new paths
+      }
     }
 
     // Normalize for platform (lowercase on Windows)

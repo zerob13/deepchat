@@ -11,11 +11,15 @@ export interface DeepChatSessionState {
   status: SessionStatus
   providerId: string
   modelId: string
+  permissionMode?: string
 }
 
 export interface IAgentImplementation {
   /** Initialize a new session for this agent */
-  initSession(sessionId: string, config: { providerId: string; modelId: string }): Promise<void>
+  initSession(
+    sessionId: string,
+    config: { providerId: string; modelId: string; permissionMode?: string }
+  ): Promise<void>
 
   /** Destroy a session and all its data */
   destroySession(sessionId: string): Promise<void>
