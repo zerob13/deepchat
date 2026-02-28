@@ -76,10 +76,18 @@ watch(
 
 // Map ChatMessageRecord → old Message format for MessageList
 function toDisplayMessage(record: ChatMessageRecord): Message {
-  const parsed = JSON.parse(record.content)
+  let content: any
+  try {
+    // Try to parse as JSON (legacy format)
+    content = JSON.parse(record.content)
+  } catch {
+    // If parsing fails, treat as plain text
+    content = { text: record.content }
+  }
+  
   return {
     id: record.id,
-    content: parsed,
+    content: content,
     role: record.role,
     timestamp: record.createdAt,
     avatar: '',
