@@ -90,7 +90,7 @@ function toDisplayMessage(record: ChatMessageRecord): Message {
     // If parsing fails, treat as plain text
     content = { text: record.content }
   }
-  
+
   return {
     id: record.id,
     content: content,
@@ -122,7 +122,7 @@ function toDisplayMessage(record: ChatMessageRecord): Message {
 // Convert blocks to Message format for rendering
 function blocksToMessage(blocks: AssistantMessageBlock[]): Message {
   // Pass blocks directly as content (Message type expects AssistantMessageBlock[])
-  
+
   return {
     id: '__streaming__',
     content: blocks,
@@ -153,12 +153,12 @@ function blocksToMessage(blocks: AssistantMessageBlock[]): Message {
 
 const displayMessages = computed(() => {
   const msgs = messageStore.messages.map(toDisplayMessage)
-  
+
   // Append streaming message if generating
   if (isGenerating.value && streamingBlocks.value.length > 0) {
     msgs.push(blocksToMessage(streamingBlocks.value))
   }
-  
+
   return msgs
 })
 

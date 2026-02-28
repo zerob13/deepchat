@@ -118,7 +118,7 @@ export const useSessionStore = defineStore('session', () => {
   const groupMode = ref<GroupMode>('time')
   const loading = ref(false)
   const error = ref<string | null>(null)
-  
+
   // Add generating state tracking
   const generatingSessionIds = ref<Set<string>>(new Set())
 

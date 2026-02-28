@@ -16,7 +16,7 @@ export const useMessageStore = defineStore('message', () => {
   const isStreaming = ref(false)
   const streamingBlocks = ref<AssistantMessageBlock[]>([])
   const currentStreamSessionId = ref<string | null>(null)
-  
+
   // Track generating state per conversation
   const generatingMessageIds = ref<Set<string>>(new Set())
   const messageBlocks = ref<Map<string, AssistantMessageBlock[]>>(new Map())
@@ -105,15 +105,15 @@ export const useMessageStore = defineStore('message', () => {
       if (msg.conversationId === sessionStore.activeSessionId) {
         // Store blocks for this conversation
         messageBlocks.value.set(msg.conversationId, msg.blocks)
-        
+
         // Mark as generating
         generatingMessageIds.value.add(msg.conversationId)
-        
+
         // Update legacy state for backward compatibility
         isStreaming.value = true
         currentStreamSessionId.value = msg.conversationId
         streamingBlocks.value = msg.blocks
-        
+
         // Trigger UI update
         // messageVersion.value++ // Uncomment if messageVersion exists
       }
@@ -128,12 +128,12 @@ export const useMessageStore = defineStore('message', () => {
         // Clear generating state
         generatingMessageIds.value.delete(msg.conversationId)
         messageBlocks.value.delete(msg.conversationId)
-        
+
         // Clear legacy state
         isStreaming.value = false
         streamingBlocks.value = []
         currentStreamSessionId.value = null
-        
+
         // Reload messages from DB to get finalized content
         loadMessages(msg.conversationId)
       }
@@ -148,12 +148,12 @@ export const useMessageStore = defineStore('message', () => {
         // Clear generating state
         generatingMessageIds.value.delete(msg.conversationId)
         messageBlocks.value.delete(msg.conversationId)
-        
+
         // Clear legacy state
         isStreaming.value = false
         streamingBlocks.value = []
         currentStreamSessionId.value = null
-        
+
         // Reload messages from DB to get error state
         loadMessages(msg.conversationId)
       }

@@ -44,17 +44,6 @@
             :message-id="currentMessage.id"
             :thread-id="currentThreadId"
           />
-          <!-- Permission request for tool calls (new architecture) -->
-          <template
-            v-else-if="block.type === 'tool_call' && block.extra?.needsUserAction && block.status === 'pending'"
-          >
-            <MessageBlockPermissionRequest
-              :block="block"
-              :message-id="currentMessage.id"
-              :conversation-id="currentThreadId"
-            />
-          </template>
-          
           <!-- Legacy permission request (old architecture) -->
           <template
             v-else-if="block.type === 'action' && block.action_type === 'tool_call_permission'"
