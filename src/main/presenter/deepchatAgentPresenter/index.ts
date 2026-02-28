@@ -13,6 +13,7 @@ import { DeepChatSessionStore } from './sessionStore'
 import { DeepChatMessageStore } from './messageStore'
 import { processStream } from './process'
 import { buildContext } from './contextBuilder'
+import { handlePermissionResponse as handlePermission } from './permissionHandler'
 import { eventBus, SendTarget } from '@/eventbus'
 import { SESSION_EVENTS } from '@/events'
 
@@ -327,5 +328,15 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
     )
 
     return newSessionId
+  }
+
+  async handlePermissionResponse(
+    sessionId: string,
+    toolCallId: string,
+    granted: boolean,
+    permissionType: 'read' | 'write' | 'all',
+    remember: boolean
+  ): Promise<void> {
+    return handlePermission(sessionId, toolCallId, granted, permissionType, remember)
   }
 }

@@ -38,4 +38,12 @@ export interface INewAgentPresenter {
     sessionId: string,
     fields: Partial<Pick<SessionWithState, 'title' | 'projectDir' | 'isPinned' | 'permissionMode'>>
   ): Promise<void>
+  // Permission handling
+  handlePermissionResponse(
+    sessionId: string,
+    toolCallId: string,
+    granted: boolean,
+    permissionType: 'read' | 'write' | 'all',
+    remember: boolean
+  ): Promise<void>
 }

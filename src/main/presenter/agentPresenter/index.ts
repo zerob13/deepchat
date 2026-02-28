@@ -308,6 +308,13 @@ export class AgentPresenter implements IAgentPresenter {
     permissionType: 'read' | 'write' | 'all' | 'command',
     remember?: boolean
   ): Promise<void> {
+    console.log('[AgentPresenter] handlePermissionResponse called:', {
+      messageId,
+      toolCallId,
+      granted,
+      permissionType,
+      remember
+    })
     await this.permissionHandler.handlePermissionResponse(
       messageId,
       toolCallId,

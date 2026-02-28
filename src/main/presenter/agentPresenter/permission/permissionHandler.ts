@@ -115,7 +115,7 @@ export class PermissionHandler extends BaseHandler {
     permissionType: 'read' | 'write' | 'all' | 'command',
     remember: boolean = true
   ): Promise<void> {
-    console.log('[PermissionHandler] Handling permission response', {
+    console.log('[PermissionHandler] === Handling permission response ===', {
       messageId,
       toolCallId,
       granted,

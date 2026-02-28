@@ -310,4 +310,24 @@ export class NewAgentPresenter {
   async checkWhitelist(sessionId: string, toolName: string, path: string): Promise<boolean> {
     return this.sessionManager.checkWhitelist(sessionId, toolName, path)
   }
+
+  async handlePermissionResponse(
+    sessionId: string,
+    toolCallId: string,
+    granted: boolean,
+    permissionType: 'read' | 'write' | 'all',
+    remember: boolean
+  ): Promise<void> {
+    const agent = this.agentRegistry.resolve('deepchat')
+    if (!agent) {
+      throw new Error('DeepChat agent not found')
+    }
+    return (agent as any).handlePermissionResponse(
+      sessionId,
+      toolCallId,
+      granted,
+      permissionType,
+      remember
+    )
+  }
 }

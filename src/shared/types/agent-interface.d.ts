@@ -85,6 +85,7 @@ export interface AssistantMessageBlock {
   timestamp: number
   reasoning_time?: number // only for reasoning_content blocks
   tool_call?: ToolCallBlockData // only for tool_call blocks
+  extra?: Record<string, any> // additional metadata (e.g., needsUserAction, permissionRequest)
 }
 
 export interface MessageMetadata {
