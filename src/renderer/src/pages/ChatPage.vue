@@ -61,8 +61,8 @@ function onScroll() {
   isNearBottom.value = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD
 }
 
-// Check if currently generating
-const isGenerating = computed(() => sessionStore.isGenerating(props.sessionId))
+// Check if currently generating (use messageStore which tracks streaming state)
+const isGenerating = computed(() => messageStore.isGenerating(props.sessionId))
 
 // Get live blocks for streaming message
 const streamingBlocks = computed(() => messageStore.getBlocks(props.sessionId))

@@ -172,6 +172,9 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
         `[DeepChatAgent] assistant message created id=${assistantMessageId} seq=${assistantOrderSeq}`
       )
 
+      // Track current message ID in session state (for permission handling)
+      state.currentMessageId = assistantMessageId
+
       // 5. Fetch tool definitions if toolPresenter is available
       const abortController = new AbortController()
       this.abortControllers.set(sessionId, abortController)
@@ -210,6 +213,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
       // 7. Update status to idle
       console.log(`[DeepChatAgent] stream completed, status → idle`)
       state.status = 'idle'
+      state.currentMessageId = undefined // Clear current message ID
       this.abortControllers.delete(sessionId)
       eventBus.sendToRenderer(SESSION_EVENTS.STATUS_CHANGED, SendTarget.ALL_WINDOWS, {
         sessionId,
@@ -218,6 +222,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
     } catch (err) {
       console.error('[DeepChatAgent] processMessage error:', err)
       state.status = 'error'
+      state.currentMessageId = undefined // Clear current message ID
       this.abortControllers.delete(sessionId)
       eventBus.sendToRenderer(SESSION_EVENTS.STATUS_CHANGED, SendTarget.ALL_WINDOWS, {
         sessionId,
@@ -236,6 +241,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
     const state = this.runtimeState.get(sessionId)
     if (state) {
       state.status = 'idle'
+      state.currentMessageId = undefined // Clear current message ID
       eventBus.sendToRenderer(SESSION_EVENTS.STATUS_CHANGED, SendTarget.ALL_WINDOWS, {
         sessionId,
         status: 'idle'
@@ -253,6 +259,12 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
 
   async getMessage(messageId: string): Promise<ChatMessageRecord | null> {
     return this.messageStore.getMessage(messageId)
+  }
+
+  /** Get the current message ID being processed for a session (for permission handling) */
+  getCurrentMessageId(sessionId: string): string | undefined {
+    const state = this.runtimeState.get(sessionId)
+    return state?.currentMessageId
   }
 
   async editUserMessage(sessionId: string, messageId: string, newContent: string): Promise<void> {
@@ -332,12 +344,11 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
 
   async handlePermissionResponse(
     sessionId: string,
-    messageId: string,
     toolCallId: string,
     granted: boolean,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean
   ): Promise<void> {
-    return handlePermission(sessionId, messageId, toolCallId, granted, permissionType, remember)
+    return handlePermission(sessionId, toolCallId, granted, permissionType, remember)
   }
 }

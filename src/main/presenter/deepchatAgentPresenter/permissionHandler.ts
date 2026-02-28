@@ -9,7 +9,6 @@ import type { AssistantMessageBlock } from '@shared/types/agent-interface'
  */
 export async function handlePermissionResponse(
   sessionId: string,
-  messageId: string,
   toolCallId: string,
   granted: boolean,
   permissionType: 'read' | 'write' | 'all',
@@ -17,7 +16,6 @@ export async function handlePermissionResponse(
 ): Promise<void> {
   console.log('[handlePermissionResponse] User response received', {
     sessionId,
-    messageId,
     toolCallId,
     granted,
     permissionType,
@@ -34,6 +32,13 @@ export async function handlePermissionResponse(
   const agent = (presenter as any).deepchatAgentPresenter
   if (!agent) {
     throw new Error(`DeepChat agent presenter not found`)
+  }
+
+  // Get the current message ID from session state
+  const messageId = agent.getCurrentMessageId(sessionId)
+
+  if (!messageId) {
+    throw new Error(`No current message found for session: ${sessionId}`)
   }
 
   // Get the message from the message store

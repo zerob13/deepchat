@@ -137,17 +137,37 @@ export const useMessageStore = defineStore('message', () => {
     (_: unknown, msg: { conversationId: string }) => {
       const sessionStore = useSessionStore()
       if (msg.conversationId === sessionStore.activeSessionId) {
-        // Clear generating state
-        generatingMessageIds.value.delete(msg.conversationId)
-        messageBlocks.value.delete(msg.conversationId)
+        // Check if there are pending permission blocks (don't clear state if waiting for user action)
+        const blocks = messageBlocks.value.get(msg.conversationId) || []
+        const hasPendingUserAction = blocks.some(
+          (block) =>
+            block.type === 'tool_call' &&
+            block.extra?.needsUserAction === true &&
+            block.status === 'pending'
+        )
 
-        // Clear legacy state
-        isStreaming.value = false
-        streamingBlocks.value = []
-        currentStreamSessionId.value = null
+        console.log('[MessageStore] STREAM_EVENTS.END:', {
+          conversationId: msg.conversationId,
+          hasPendingUserAction,
+          blocksCount: blocks.length
+        })
 
-        // Reload messages from DB to get finalized content
-        loadMessages(msg.conversationId)
+        // Only clear generating state if no pending user action
+        if (!hasPendingUserAction) {
+          generatingMessageIds.value.delete(msg.conversationId)
+          messageBlocks.value.delete(msg.conversationId)
+
+          // Clear legacy state
+          isStreaming.value = false
+          streamingBlocks.value = []
+          currentStreamSessionId.value = null
+
+          // Reload messages from DB to get finalized content
+          loadMessages(msg.conversationId)
+        } else {
+          // Keep generating state alive while waiting for permission
+          console.log('[MessageStore] Keeping generating state (waiting for permission)')
+        }
       }
     }
   )
@@ -157,17 +177,37 @@ export const useMessageStore = defineStore('message', () => {
     (_: unknown, msg: { conversationId: string; error: string }) => {
       const sessionStore = useSessionStore()
       if (msg.conversationId === sessionStore.activeSessionId) {
-        // Clear generating state
-        generatingMessageIds.value.delete(msg.conversationId)
-        messageBlocks.value.delete(msg.conversationId)
+        // Check if there are pending permission blocks (don't clear state if waiting for user action)
+        const blocks = messageBlocks.value.get(msg.conversationId) || []
+        const hasPendingUserAction = blocks.some(
+          (block) =>
+            block.type === 'tool_call' &&
+            block.extra?.needsUserAction === true &&
+            block.status === 'pending'
+        )
 
-        // Clear legacy state
-        isStreaming.value = false
-        streamingBlocks.value = []
-        currentStreamSessionId.value = null
+        console.log('[MessageStore] STREAM_EVENTS.ERROR:', {
+          conversationId: msg.conversationId,
+          error: msg.error,
+          hasPendingUserAction
+        })
 
-        // Reload messages from DB to get error state
-        loadMessages(msg.conversationId)
+        // Only clear generating state if no pending user action
+        if (!hasPendingUserAction) {
+          generatingMessageIds.value.delete(msg.conversationId)
+          messageBlocks.value.delete(msg.conversationId)
+
+          // Clear legacy state
+          isStreaming.value = false
+          streamingBlocks.value = []
+          currentStreamSessionId.value = null
+
+          // Reload messages from DB to get error state
+          loadMessages(msg.conversationId)
+        } else {
+          // Keep generating state alive while waiting for permission
+          console.log('[MessageStore] Keeping generating state (waiting for permission)')
+        }
       }
     }
   )

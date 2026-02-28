@@ -446,12 +446,20 @@ const resolvedPermissionType = computed(() => {
 const submitPermission = async (granted: boolean, remember: boolean) => {
   if (!props.block.tool_call?.id) return
 
+  console.log('[MessageBlockPermissionRequest] Submitting permission response:', {
+    messageId: props.messageId,
+    toolCallId: props.block.tool_call.id,
+    granted: granted,
+    remember: remember,
+    conversationId: props.conversationId
+  })
+
   isProcessing.value = true
   try {
-    // Use newAgentPresenter instead of old agentPresenter
+    // Use newAgentPresenter - pass conversationId as sessionId, not messageId
     await newAgentPresenter.handlePermissionResponse(
-      props.messageId,
-      props.block.tool_call.id,
+      props.conversationId, // ✅ sessionId (conversationId)
+      props.block.tool_call.id, // ✅ toolCallId
       granted,
       resolvedPermissionType.value,
       remember

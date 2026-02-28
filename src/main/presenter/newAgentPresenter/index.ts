@@ -312,26 +312,28 @@ export class NewAgentPresenter {
   }
 
   async handlePermissionResponse(
-    messageId: string,
+    sessionId: string, // ✅ First parameter is sessionId (conversationId)
     toolCallId: string,
     granted: boolean,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean
   ): Promise<void> {
+    console.log('[NewAgentPresenter.handlePermissionResponse] Processing response:', {
+      sessionId,
+      toolCallId,
+      granted,
+      permissionType,
+      remember
+    })
+
     const agent = this.agentRegistry.resolve('deepchat')
     if (!agent) {
       throw new Error('DeepChat agent not found')
     }
-    // Extract sessionId from message
-    const message = await (agent as any).messageStore.getMessage(messageId)
-    if (!message) {
-      throw new Error(`Message not found: ${messageId}`)
-    }
-    const sessionId = message.conversationId
+    // Pass sessionId directly (no need to extract from message)
     return (agent as any).handlePermissionResponse(
       sessionId,
-      messageId,
-      toolCallId,
+      toolCallId, // ✅ toolCallId is second parameter
       granted,
       permissionType,
       remember

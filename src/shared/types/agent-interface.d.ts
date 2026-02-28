@@ -12,6 +12,7 @@ export interface DeepChatSessionState {
   providerId: string
   modelId: string
   permissionMode?: string
+  currentMessageId?: string // Track current message being processed (for permission handling)
 }
 
 export interface IAgentImplementation {
