@@ -152,6 +152,15 @@ export async function executeTools(
           block.extra.permissionRequest = permissionCheck.request
         }
 
+        // DEBUG: Log permission flags being sent
+        console.log('[executeTools] Setting permission flags:', {
+          toolCallId: tc.id,
+          blockType: block?.type,
+          status: block?.status,
+          needsUserAction: block?.extra?.needsUserAction,
+          permissionRequest: block?.extra?.permissionRequest
+        })
+
         // Emit permission required event
         eventBus.sendToRenderer(STREAM_EVENTS.RESPONSE, SendTarget.ALL_WINDOWS, {
           conversationId: io.sessionId,

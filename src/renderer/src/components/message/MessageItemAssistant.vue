@@ -38,6 +38,20 @@
             @toggle-collapse="handleCollapseToggle"
           />
           <MessageBlockPlan v-else-if="block.type === 'plan'" :block="block" />
+          <!-- Permission request for tool calls (new architecture) -->
+          <template
+            v-else-if="
+              block.type === 'tool_call' &&
+              block.extra?.needsUserAction &&
+              block.status === 'pending'
+            "
+          >
+            <MessageBlockPermissionRequest
+              :block="block"
+              :message-id="currentMessage.id"
+              :conversation-id="currentThreadId"
+            />
+          </template>
           <MessageBlockToolCall
             v-else-if="block.type === 'tool_call'"
             :block="block"

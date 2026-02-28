@@ -179,6 +179,17 @@ const props = defineProps<{
   conversationId: string
 }>()
 
+// DEBUG: Log received props
+console.log('[MessageBlockPermissionRequest] Received props:', {
+  blockType: props.block.type,
+  blockStatus: props.block.status,
+  needsUserAction: props.block.extra?.needsUserAction,
+  toolCall: props.block.tool_call
+    ? { id: props.block.tool_call.id, name: props.block.tool_call.name }
+    : null,
+  permissionRequest: props.block.extra?.permissionRequest
+})
+
 const isProcessing = ref(false)
 const rememberable = computed(() => props.block.extra?.rememberable !== false)
 const isCommandPermission = computed(() => props.block.extra?.permissionType === 'command')

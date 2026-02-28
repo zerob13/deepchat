@@ -103,6 +103,18 @@ export const useMessageStore = defineStore('message', () => {
     (_: unknown, msg: { conversationId: string; blocks: AssistantMessageBlock[] }) => {
       const sessionStore = useSessionStore()
       if (msg.conversationId === sessionStore.activeSessionId) {
+        // DEBUG: Log received blocks
+        console.log('[MessageStore] Received RESPONSE:', {
+          conversationId: msg.conversationId,
+          blocksCount: msg.blocks.length,
+          blocks: msg.blocks.map((b) => ({
+            type: b.type,
+            status: b.status,
+            needsUserAction: b.extra?.needsUserAction,
+            toolCall: b.tool_call ? { id: b.tool_call.id, name: b.tool_call.name } : null
+          }))
+        })
+
         // Store blocks for this conversation
         messageBlocks.value.set(msg.conversationId, msg.blocks)
 

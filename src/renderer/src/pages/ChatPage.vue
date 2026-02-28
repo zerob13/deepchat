@@ -156,6 +156,15 @@ const displayMessages = computed(() => {
 
   // Append streaming message if generating
   if (isGenerating.value && streamingBlocks.value.length > 0) {
+    console.log('[ChatPage] Adding streaming message:', {
+      blocksCount: streamingBlocks.value.length,
+      blocks: streamingBlocks.value.map((b) => ({
+        type: b.type,
+        status: b.status,
+        needsUserAction: b.extra?.needsUserAction,
+        toolCall: b.tool_call ? { id: b.tool_call.id, name: b.tool_call.name } : null
+      }))
+    })
     msgs.push(blocksToMessage(streamingBlocks.value))
   }
 
