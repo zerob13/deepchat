@@ -94,13 +94,13 @@ export class DeepChatMessagesTable extends BaseTable {
 
   getBySession(sessionId: string): DeepChatMessageRow[] {
     return this.db
-      .prepare('SELECT * FROM deepchat_messages WHERE session_id = ? ORDER BY order_seq')
+      .prepare('SELECT * FROM deepchat_messages WHERE session_id = ? ORDER BY order_seq ASC')
       .all(sessionId) as DeepChatMessageRow[]
   }
 
   getIdsBySession(sessionId: string): string[] {
     const rows = this.db
-      .prepare('SELECT id FROM deepchat_messages WHERE session_id = ? ORDER BY order_seq')
+      .prepare('SELECT id FROM deepchat_messages WHERE session_id = ? ORDER BY order_seq ASC')
       .all(sessionId) as { id: string }[]
     return rows.map((r) => r.id)
   }

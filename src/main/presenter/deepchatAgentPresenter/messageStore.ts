@@ -66,7 +66,7 @@ export class DeepChatMessageStore {
 
   getMessages(sessionId: string): ChatMessageRecord[] {
     const rows = this.sqlitePresenter.deepchatMessagesTable.getBySession(sessionId)
-    return rows.map((row) => ({
+    const messages = rows.map((row) => ({
       id: row.id,
       sessionId: row.session_id,
       orderSeq: row.order_seq,
@@ -78,6 +78,11 @@ export class DeepChatMessageStore {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }))
+    console.log(
+      '[MessageStore] getMessages:',
+      messages.map((m) => ({ seq: m.orderSeq, role: m.role }))
+    )
+    return messages
   }
 
   getMessageIds(sessionId: string): string[] {

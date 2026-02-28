@@ -35,6 +35,10 @@ export const useMessageStore = defineStore('message', () => {
         messageCache.value.set(msg.id, msg)
         messageIds.value.push(msg.id)
       }
+      console.log(
+        '[MessageStore] loadMessages:',
+        result.map((m) => ({ seq: m.orderSeq, role: m.role }))
+      )
     } catch (e) {
       console.error('Failed to load messages:', e)
     }
