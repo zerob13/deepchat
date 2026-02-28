@@ -161,54 +161,59 @@ const isAcpAgent = computed(() => {
 
 // Resolve display provider ID
 const displayProviderId = computed(() => {
-  const providerId = chatStore.chatConfig.providerId
-  if (providerId && providerId.trim()) {
-    return providerId
-  }
-  // Return default provider from available models
-  const defaultProvider = modelStore.enabledModels[0]?.providerId
-  if (defaultProvider) return defaultProvider
-
+  // Priority 1: Use session's provider when in active session
   if (hasActiveSession.value) {
-    return 'anthropic'
+    const session = sessionStore.activeSession
+    if (session?.providerId) {
+      console.log('[ChatStatusBar] displayProviderId: using session provider', session.providerId)
+      return session.providerId
+    }
   }
-  // On NewThreadPage: use agent context
-  if (isAcpAgent.value) {
-    return agentStore.selectedAgentId ?? 'acp'
+
+  // Priority 2: Use chatConfig provider (from settings or user selection)
+  if (chatStore.chatConfig.providerId && chatStore.chatConfig.providerId.trim()) {
+    console.log('[ChatStatusBar] displayProviderId: using chatConfig provider', chatStore.chatConfig.providerId)
+    return chatStore.chatConfig.providerId
   }
-  // Default DeepChat: show last-used or default provider
-  return 'anthropic'
+
+  // Priority 3: Fallback to first available
+  const firstProvider = modelStore.enabledModels[0]?.providerId
+  console.log('[ChatStatusBar] displayProviderId: fallback to first provider', firstProvider)
+  return firstProvider || 'anthropic'
 })
 
 // Resolve display model name
 const displayModelName = computed(() => {
+  // Priority 1: Use session's model when in active session
   if (hasActiveSession.value) {
-    const modelId = chatStore.chatConfig.modelId
-    if (modelId && modelId.trim()) {
-      const found = modelStore.findModelByIdOrName(modelId)
+    const session = sessionStore.activeSession
+    if (session?.modelId) {
+      const found = modelStore.findModelByIdOrName(session.modelId)
+      console.log('[ChatStatusBar] displayModelName: using session model', {
+        sessionModelId: session.modelId,
+        found: found?.model.name
+      })
       if (found) return found.model.name
-      return modelId
+      return session.modelId // Return ID if model not found (might be disabled)
     }
-    // Show default model when no model is selected
-    const defaultModel = modelStore.enabledModels[0]?.models[0]
-    if (defaultModel) return defaultModel.name
-    return 'Select model'
   }
-  // On NewThreadPage with ACP agent
-  if (isAcpAgent.value) {
-    const agent = agentStore.selectedAgent
-    return agent?.name ?? agentStore.selectedAgentId ?? 'ACP Agent'
-  }
-  // On NewThreadPage with DeepChat: show default model
+
+  // Priority 2: Use chatConfig model (from settings)
   const modelId = chatStore.chatConfig.modelId
   if (modelId && modelId.trim()) {
     const found = modelStore.findModelByIdOrName(modelId)
+    console.log('[ChatStatusBar] displayModelName: using chatConfig model', {
+      chatConfigModelId: modelId,
+      found: found?.model.name
+    })
     if (found) return found.model.name
     return modelId
   }
-  // Show default model when no model is selected
-  const defaultModel = modelStore.enabledModels[0]?.models[0]
-  if (defaultModel) return defaultModel.name
+
+  // Priority 3: Fallback to first available
+  const firstModel = modelStore.enabledModels[0]?.models[0]
+  console.log('[ChatStatusBar] displayModelName: fallback to first model', firstModel?.name)
+  if (firstModel) return firstModel.name
   return 'Select model'
 })
 
