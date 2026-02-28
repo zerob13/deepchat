@@ -364,6 +364,24 @@ export class AgentToolManager {
 
   private async getWorkdirForConversation(conversationId: string): Promise<string | null> {
     try {
+      // Priority 1: Try new session presenter (new thread architecture)
+      if (presenter?.newAgentPresenter) {
+        const newSession = await presenter.newAgentPresenter.getSession(conversationId)
+        logger.info('[getWorkdirForConversation] newSession:', {
+          id: newSession?.id,
+          projectDir: newSession?.projectDir,
+          agentId: newSession?.agentId
+        })
+        if (newSession?.projectDir) {
+          logger.info(
+            '[getWorkdirForConversation] Using projectDir from new session:',
+            newSession.projectDir
+          )
+          return newSession.projectDir
+        }
+      }
+
+      // Priority 2: Fallback to old session manager (legacy threads)
       const session = await presenter?.sessionManager?.getSession(conversationId)
       if (!session?.resolved) {
         return null

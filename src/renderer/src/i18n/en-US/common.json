@@ -96,5 +96,13 @@
     "enterUrlToStart": "Enter a URL to start browsing",
     "enterUrlDescription": "Type a URL in the address bar above to visit a website",
     "name": "Yo Browser"
+  },
+  "time": {
+    "justNow": "Just now",
+    "minutesAgo": "{minutes} minutes ago",
+    "hoursAgo": "{hours} hours ago",
+    "daysAgo": "{days} days ago",
+    "yesterday": "Yesterday",
+    "today": "Today"
   }
 }

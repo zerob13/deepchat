@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3-multiple-ciphers'
 import { BaseTable } from './baseTable'
-import { normalizePath } from '@/main/utils/pathUtils'
+import { normalizePath } from '../../../utils/pathUtils'
 
 export interface PermissionWhitelistRow {
   id: string

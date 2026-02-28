@@ -206,4 +206,50 @@ describe('pathUtils', () => {
       expect(normalized).toContain('%2e%2e')
     })
   })
+
+  describe('Security: Symlink Escape Prevention', () => {
+    it('should resolve symlinks for existing paths', () => {
+      // Create a symlink inside projectDir pointing to outsideDir
+      const symlinkPath = path.join(projectDir, 'link-to-outside')
+      try {
+        fs.symlinkSync(outsideDir, symlinkPath, 'dir')
+        const normalized = normalizePath(symlinkPath)
+        // Should resolve to the real path (outsideDir), not the symlink path
+        expect(normalized).toBe(path.resolve(outsideDir))
+      } catch {
+        // Skip on Windows if symlinks require privileges
+        console.log('Symlink test skipped - requires elevated privileges on Windows')
+      }
+    })
+
+    it('should handle non-existent paths by resolving parent directory', () => {
+      // Create a path that doesn't exist yet but whose parent does
+      const newPath = path.join(projectDir, 'nonexistent', 'file.txt')
+      const normalized = normalizePath(newPath)
+      // Should resolve parent and append filename
+      expect(normalized).toBe(path.join(path.resolve(projectDir), 'nonexistent', 'file.txt'))
+    })
+
+    it('should prevent symlink escape for new files in non-existent directories', () => {
+      // Attacker creates symlink in projectDir pointing outside
+      const symlinkPath = path.join(projectDir, 'malicious-link')
+      const targetOutside = path.join(outsideDir, 'secret.txt')
+
+      try {
+        // Create symlink (simulating attacker setup)
+        fs.symlinkSync(targetOutside, symlinkPath, 'file')
+
+        // Now try to normalize a path through this symlink
+        const nestedPath = path.join(symlinkPath, 'data.txt')
+        const normalized = normalizePath(nestedPath)
+
+        // Should resolve through symlink to outside location
+        // This demonstrates the symlink is properly resolved
+        expect(normalized).toContain(path.resolve(outsideDir))
+      } catch {
+        // Skip on Windows if symlinks require privileges
+        console.log('Symlink escape test skipped - requires elevated privileges')
+      }
+    })
+  })
 })

@@ -209,13 +209,20 @@ export class NewAgentPresenter {
     })
 
     if (result.canceled || result.filePaths.length === 0) {
+      console.log('[bindWorkspace] User cancelled directory selection')
       return null
     }
 
     const selectedPath = result.filePaths[0]
+    console.log('[bindWorkspace] Selected path:', selectedPath)
 
     // Update session with projectDir
     await this.sessionManager.update(sessionId, { projectDir: selectedPath })
+    console.log('[bindWorkspace] Updated session projectDir in DB')
+
+    // Verify the update
+    const updatedSession = this.sessionManager.get(sessionId)
+    console.log('[bindWorkspace] Verified session projectDir:', updatedSession?.projectDir)
 
     return selectedPath
   }
