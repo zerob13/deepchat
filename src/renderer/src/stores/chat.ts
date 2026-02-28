@@ -955,12 +955,16 @@ export const useChatStore = defineStore('chat', () => {
 
     // 处理 init 事件：创建骨架消息行
     if (stream_kind === 'init') {
+      // Double-check: if already in generating cache, skip
       if (getGeneratingMessagesCache().has(eventId)) {
+        console.log('[handleStreamResponse] init: message already in generating cache, skipping')
         return
       }
 
+      // Check if already cached (from loadMessages or sendMessage)
       const existingCachedMessage = getCachedMessage(eventId)
       if (existingCachedMessage && existingCachedMessage.role === 'assistant') {
+        console.log('[handleStreamResponse] init: message already cached, reusing')
         const threadId =
           conversationId ?? existingCachedMessage.conversationId ?? getActiveThreadId() ?? ''
         if (threadId) {
@@ -975,6 +979,16 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
 
+      // Additional check: verify message ID is not already in the message list
+      const existingMessageIds = getMessageIds()
+      if (existingMessageIds.includes(eventId)) {
+        console.log(
+          '[handleStreamResponse] init: messageId already in list, skipping skeleton creation'
+        )
+        return
+      }
+
+      console.log('[handleStreamResponse] init: creating skeleton message')
       const skeleton: AssistantMessage = {
         id: eventId,
         conversationId: conversationId ?? getActiveThreadId() ?? '',
