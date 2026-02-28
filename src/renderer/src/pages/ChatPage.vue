@@ -61,6 +61,12 @@ function onScroll() {
   isNearBottom.value = distanceFromBottom <= NEAR_BOTTOM_THRESHOLD
 }
 
+// Check if currently generating
+const isGenerating = computed(() => sessionStore.isGenerating(props.sessionId))
+
+// Get live blocks for streaming message
+const streamingBlocks = computed(() => messageStore.getBlocks(props.sessionId))
+
 // Load messages when sessionId changes, then scroll to bottom
 watch(
   () => props.sessionId,
@@ -113,8 +119,10 @@ function toDisplayMessage(record: ChatMessageRecord): Message {
   }
 }
 
-// Build a streaming assistant message from live blocks
-function toStreamingMessage(blocks: AssistantMessageBlock[]): Message {
+// Convert blocks to Message format for rendering
+function blocksToMessage(blocks: AssistantMessageBlock[]): Message {
+  // Pass blocks directly as content (Message type expects AssistantMessageBlock[])
+  
   return {
     id: '__streaming__',
     content: blocks,
@@ -145,12 +153,12 @@ function toStreamingMessage(blocks: AssistantMessageBlock[]): Message {
 
 const displayMessages = computed(() => {
   const msgs = messageStore.messages.map(toDisplayMessage)
-
-  // Append live streaming blocks as a virtual message
-  if (messageStore.isStreaming && messageStore.streamingBlocks.length > 0) {
-    msgs.push(toStreamingMessage(messageStore.streamingBlocks))
+  
+  // Append streaming message if generating
+  if (isGenerating.value && streamingBlocks.value.length > 0) {
+    msgs.push(blocksToMessage(streamingBlocks.value))
   }
-
+  
   return msgs
 })
 

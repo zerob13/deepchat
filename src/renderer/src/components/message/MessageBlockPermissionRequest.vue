@@ -170,7 +170,8 @@ import { usePresenter } from '@/composables/usePresenter'
 import { AssistantMessageBlock } from '@shared/chat'
 
 const { t } = useI18n()
-const agentPresenter = usePresenter('agentPresenter')
+// Use newAgentPresenter for new architecture
+const newAgentPresenter = usePresenter('newAgentPresenter')
 
 const props = defineProps<{
   block: AssistantMessageBlock
@@ -436,7 +437,8 @@ const submitPermission = async (granted: boolean, remember: boolean) => {
 
   isProcessing.value = true
   try {
-    await agentPresenter.handlePermissionResponse(
+    // Use newAgentPresenter instead of old agentPresenter
+    await newAgentPresenter.handlePermissionResponse(
       props.messageId,
       props.block.tool_call.id,
       granted,

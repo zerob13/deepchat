@@ -16,6 +16,10 @@ export const useMessageStore = defineStore('message', () => {
   const isStreaming = ref(false)
   const streamingBlocks = ref<AssistantMessageBlock[]>([])
   const currentStreamSessionId = ref<string | null>(null)
+  
+  // Track generating state per conversation
+  const generatingMessageIds = ref<Set<string>>(new Set())
+  const messageBlocks = ref<Map<string, AssistantMessageBlock[]>>(new Map())
 
   // --- Getters ---
   const messages = computed(() => {
@@ -99,9 +103,19 @@ export const useMessageStore = defineStore('message', () => {
     (_: unknown, msg: { conversationId: string; blocks: AssistantMessageBlock[] }) => {
       const sessionStore = useSessionStore()
       if (msg.conversationId === sessionStore.activeSessionId) {
+        // Store blocks for this conversation
+        messageBlocks.value.set(msg.conversationId, msg.blocks)
+        
+        // Mark as generating
+        generatingMessageIds.value.add(msg.conversationId)
+        
+        // Update legacy state for backward compatibility
         isStreaming.value = true
         currentStreamSessionId.value = msg.conversationId
         streamingBlocks.value = msg.blocks
+        
+        // Trigger UI update
+        // messageVersion.value++ // Uncomment if messageVersion exists
       }
     }
   )
@@ -111,9 +125,15 @@ export const useMessageStore = defineStore('message', () => {
     (_: unknown, msg: { conversationId: string }) => {
       const sessionStore = useSessionStore()
       if (msg.conversationId === sessionStore.activeSessionId) {
+        // Clear generating state
+        generatingMessageIds.value.delete(msg.conversationId)
+        messageBlocks.value.delete(msg.conversationId)
+        
+        // Clear legacy state
         isStreaming.value = false
         streamingBlocks.value = []
         currentStreamSessionId.value = null
+        
         // Reload messages from DB to get finalized content
         loadMessages(msg.conversationId)
       }
@@ -125,14 +145,30 @@ export const useMessageStore = defineStore('message', () => {
     (_: unknown, msg: { conversationId: string; error: string }) => {
       const sessionStore = useSessionStore()
       if (msg.conversationId === sessionStore.activeSessionId) {
+        // Clear generating state
+        generatingMessageIds.value.delete(msg.conversationId)
+        messageBlocks.value.delete(msg.conversationId)
+        
+        // Clear legacy state
         isStreaming.value = false
         streamingBlocks.value = []
         currentStreamSessionId.value = null
+        
         // Reload messages from DB to get error state
         loadMessages(msg.conversationId)
       }
     }
   )
+
+  // Add method to get blocks for a conversation
+  function getBlocks(conversationId: string): AssistantMessageBlock[] {
+    return messageBlocks.value.get(conversationId) || []
+  }
+
+  // Add method to check if generating
+  function isGenerating(conversationId: string): boolean {
+    return generatingMessageIds.value.has(conversationId)
+  }
 
   return {
     messageIds,
@@ -143,6 +179,8 @@ export const useMessageStore = defineStore('message', () => {
     loadMessages,
     getMessage,
     addOptimisticUserMessage,
-    clear
+    clear,
+    getBlocks,
+    isGenerating
   }
 })

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
-import { SESSION_EVENTS, CONVERSATION_EVENTS } from '@/events'
+import { SESSION_EVENTS, CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import type { SessionWithState, CreateSessionInput } from '@shared/types/agent-interface'
 import { usePageRouterStore } from './pageRouter'
 
@@ -118,6 +118,9 @@ export const useSessionStore = defineStore('session', () => {
   const groupMode = ref<GroupMode>('time')
   const loading = ref(false)
   const error = ref<string | null>(null)
+  
+  // Add generating state tracking
+  const generatingSessionIds = ref<Set<string>>(new Set())
 
   // --- Getters ---
   const activeSession: ComputedRef<UISession | undefined> = computed(() =>
@@ -183,9 +186,13 @@ export const useSessionStore = defineStore('session', () => {
   async function sendMessage(sessionId: string, content: string): Promise<void> {
     error.value = null
     try {
+      // Track generating state
+      generatingSessionIds.value.add(sessionId)
       await newAgentPresenter.sendMessage(sessionId, content)
     } catch (e) {
+      generatingSessionIds.value.delete(sessionId)
       error.value = `Failed to send message: ${e}`
+      throw e
     }
   }
 
@@ -231,6 +238,16 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  // Add method to mark session as completed
+  function markSessionCompleted(sessionId: string) {
+    generatingSessionIds.value.delete(sessionId)
+  }
+
+  // Add method to check if generating
+  function isGenerating(sessionId: string): boolean {
+    return generatingSessionIds.value.has(sessionId)
+  }
+
   // --- Event Listeners ---
 
   window.electron.ipcRenderer.on(SESSION_EVENTS.LIST_UPDATED, () => {
@@ -273,6 +290,21 @@ export const useSessionStore = defineStore('session', () => {
     fetchSessions()
   })
 
+  // Listen to stream events to clear generating state
+  window.electron.ipcRenderer.on(
+    STREAM_EVENTS.END,
+    (_: unknown, msg: { conversationId: string }) => {
+      markSessionCompleted(msg.conversationId)
+    }
+  )
+
+  window.electron.ipcRenderer.on(
+    STREAM_EVENTS.ERROR,
+    (_: unknown, msg: { conversationId: string }) => {
+      markSessionCompleted(msg.conversationId)
+    }
+  )
+
   return {
     sessions,
     activeSessionId,
@@ -282,6 +314,7 @@ export const useSessionStore = defineStore('session', () => {
     activeSession,
     sessionGroups,
     hasActiveSession,
+    generatingSessionIds,
     fetchSessions,
     createSession,
     sendMessage,
@@ -290,6 +323,8 @@ export const useSessionStore = defineStore('session', () => {
     deleteSession,
     toggleGroupMode,
     getFilteredGroups,
-    updateSession
+    updateSession,
+    markSessionCompleted,
+    isGenerating
   }
 })

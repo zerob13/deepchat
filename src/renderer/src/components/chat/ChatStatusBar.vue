@@ -281,13 +281,19 @@ async function bindWorkspace() {
   if (!session) return
 
   try {
+    console.log('[ChatStatusBar] Binding workspace for session:', session.id)
     const selectedPath = await newAgentPresenter.bindWorkspace(session.id)
+    console.log('[ChatStatusBar] Selected path:', selectedPath)
+    
     if (selectedPath) {
       // Update local session store
       sessionStore.updateSession(session.id, { projectDir: selectedPath })
+      console.log('[ChatStatusBar] Updated session projectDir:', selectedPath)
+      
       // Auto-enable Full access after binding
       await newAgentPresenter.setSessionPermissionMode(session.id, 'full')
       sessionStore.updateSession(session.id, { permissionMode: 'full' })
+      console.log('[ChatStatusBar] Set permission mode to full')
     }
   } catch (error) {
     console.error('[ChatStatusBar] Failed to bind workspace:', error)
