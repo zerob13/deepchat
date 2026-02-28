@@ -102,6 +102,14 @@ export async function processStream(params: ProcessParams): Promise<void> {
 
       // Check abort after tool execution
       if (io.abortSignal.aborted) break
+
+      // Check if we're waiting for permission - if so, don't finalize yet
+      if (state.waitingForPermission) {
+        console.log('[ProcessStream] Stream paused - waiting for permission response')
+        // Don't finalize, don't break - just exit the loop and wait for permission handler to resume
+        // The message will be finalized by the permission handler after user responds
+        return
+      }
     }
 
     // Finalize

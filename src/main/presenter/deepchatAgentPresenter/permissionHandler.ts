@@ -1,6 +1,7 @@
 import { presenter } from '@/presenter'
 import { eventBus, SendTarget } from '@/eventbus'
 import { STREAM_EVENTS } from '@/events'
+import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 
 /**
  * Handle user response to permission request
@@ -8,17 +9,20 @@ import { STREAM_EVENTS } from '@/events'
  */
 export async function handlePermissionResponse(
   sessionId: string,
+  messageId: string,
   toolCallId: string,
   granted: boolean,
   permissionType: 'read' | 'write' | 'all',
   remember: boolean
 ): Promise<void> {
-  console.log('[handlePermissionResponse] User response:', {
+  console.log('[handlePermissionResponse] User response received', {
     sessionId,
+    messageId,
     toolCallId,
     granted,
     permissionType,
-    remember
+    remember,
+    resumingExecution: granted
   })
 
   const session = await presenter.newAgentPresenter.getSession(sessionId)
@@ -32,16 +36,27 @@ export async function handlePermissionResponse(
     throw new Error(`DeepChat agent presenter not found`)
   }
 
-  // Get current session state
-  const state = await agent.getSessionState(sessionId)
-  if (!state) {
-    throw new Error(`Session state not found: ${sessionId}`)
+  // Get the message from the message store
+  const messageStore = agent.messageStore
+  const message = await messageStore.getMessage(messageId)
+
+  if (!message) {
+    throw new Error(`Message not found: ${messageId}`)
   }
 
-  // Find the pending tool call
-  const pendingToolCall = state.pendingToolCalls.get(toolCallId)
-  if (!pendingToolCall) {
-    console.warn('[handlePermissionResponse] Tool call not found:', toolCallId)
+  // Parse the message content as blocks
+  let blocks: AssistantMessageBlock[] = []
+  try {
+    blocks = typeof message.content === 'string' ? JSON.parse(message.content) : message.content
+  } catch (e) {
+    console.error('[handlePermissionResponse] Failed to parse message content:', e)
+    throw new Error('Invalid message content format')
+  }
+
+  // Find the pending tool call block
+  const block = blocks.find((b) => b.type === 'tool_call' && b.tool_call?.id === toolCallId)
+  if (!block) {
+    console.warn('[handlePermissionResponse] Tool call block not found:', toolCallId)
     return
   }
 
@@ -51,64 +66,138 @@ export async function handlePermissionResponse(
 
     // Add to whitelist if remember is true
     if (remember) {
-      const pathPattern = pendingToolCall.arguments.path as string
-      if (pathPattern) {
-        await presenter.newAgentPresenter.addToWhitelist(
-          sessionId,
-          pendingToolCall.name,
-          pathPattern
-        )
-        console.log('[handlePermissionResponse] Added to whitelist:', {
-          toolName: pendingToolCall.name,
-          pathPattern
-        })
+      try {
+        const params =
+          typeof block.tool_call?.params === 'string'
+            ? JSON.parse(block.tool_call.params)
+            : block.tool_call?.params
+        const pathPattern = params?.path as string
+        if (pathPattern) {
+          await presenter.newAgentPresenter.addToWhitelist(
+            sessionId,
+            block.tool_call?.name || 'unknown',
+            pathPattern
+          )
+          console.log('[handlePermissionResponse] Added to whitelist:', {
+            toolName: block.tool_call?.name,
+            pathPattern
+          })
+        }
+      } catch (e) {
+        console.warn('[handlePermissionResponse] Failed to parse tool params for whitelist:', e)
       }
     }
 
     // Update tool call block status
-    const block = state.blocks.find((b) => b.type === 'tool_call' && b.tool_call?.id === toolCallId)
-    if (block) {
-      block.status = 'success'
-      if (block.extra) {
-        block.extra.needsUserAction = false
-      }
+    block.status = 'success'
+    if (!block.extra) {
+      block.extra = {}
     }
+    block.extra.needsUserAction = false
+    delete block.extra.permissionRequest
+
+    // Update the message in the store
+    await messageStore.updateAssistantContent(messageId, blocks)
 
     // Notify renderer
     eventBus.sendToRenderer(STREAM_EVENTS.RESPONSE, SendTarget.ALL_WINDOWS, {
       conversationId: sessionId,
-      blocks: JSON.parse(JSON.stringify(state.blocks))
+      blocks: JSON.parse(JSON.stringify(blocks))
     })
 
-    // Resume tool execution - the tool call is still in pendingToolCalls
-    // It will be processed in the next iteration
-    // Remove from pending to allow re-processing
-    state.pendingToolCalls.delete(toolCallId)
+    // Now execute the tool call
+    console.log('[handlePermissionResponse] Executing tool call:', block.tool_call?.name)
 
-    // Trigger re-processing by emitting a custom event
-    // This is a bit hacky but works for MVP
-    console.log('[handlePermissionResponse] Resuming tool execution')
+    try {
+      const toolPresenter = agent.toolPresenter
+      if (!toolPresenter) {
+        throw new Error('Tool presenter not available')
+      }
+
+      if (!block.tool_call) {
+        throw new Error('Tool call not found in block')
+      }
+
+      const toolCall = {
+        id: toolCallId,
+        type: 'function' as const,
+        function: {
+          name: block.tool_call.name || '',
+          arguments: block.tool_call.params || '{}'
+        },
+        server: undefined
+      }
+
+      const { rawData } = await toolPresenter.callTool(toolCall)
+      const responseText =
+        typeof rawData.content === 'string' ? rawData.content : JSON.stringify(rawData.content)
+
+      // Update the block with the response
+      if (block.tool_call) {
+        block.tool_call.response = responseText
+      }
+
+      // Update the message in the store
+      await messageStore.updateAssistantContent(messageId, blocks)
+
+      // Notify renderer
+      eventBus.sendToRenderer(STREAM_EVENTS.RESPONSE, SendTarget.ALL_WINDOWS, {
+        conversationId: sessionId,
+        blocks: JSON.parse(JSON.stringify(blocks))
+      })
+
+      // Finalize the message
+      await messageStore.finalizeAssistantMessage(messageId, blocks, JSON.stringify({}))
+
+      // Notify stream end
+      eventBus.sendToRenderer(STREAM_EVENTS.END, SendTarget.ALL_WINDOWS, {
+        conversationId: sessionId
+      })
+
+      console.log('[handlePermissionResponse] Tool execution completed successfully')
+    } catch (error) {
+      console.error('[handlePermissionResponse] Tool execution failed:', error)
+
+      // Update block with error
+      block.status = 'error'
+      if (block.tool_call) {
+        block.tool_call.response = `Error: ${error instanceof Error ? error.message : String(error)}`
+      }
+
+      await messageStore.updateAssistantContent(messageId, blocks)
+
+      eventBus.sendToRenderer(STREAM_EVENTS.RESPONSE, SendTarget.ALL_WINDOWS, {
+        conversationId: sessionId,
+        blocks: JSON.parse(JSON.stringify(blocks))
+      })
+
+      // Finalize with error
+      await messageStore.setMessageError(messageId, blocks)
+    }
   } else {
     // User denied permission
     console.log('[handlePermissionResponse] Permission denied')
 
     // Update tool call block status
-    const block = state.blocks.find((b) => b.type === 'tool_call' && b.tool_call?.id === toolCallId)
-    if (block) {
-      block.status = 'error'
-      if (block.extra) {
-        block.extra.needsUserAction = false
-        block.tool_call.response = 'Permission denied by user'
-      }
+    block.status = 'error'
+    if (!block.extra) {
+      block.extra = {}
+    }
+    block.extra.needsUserAction = false
+    if (block.tool_call) {
+      block.tool_call.response = 'Permission denied by user'
     }
 
-    // Remove from pending
-    state.pendingToolCalls.delete(toolCallId)
+    // Update the message in the store
+    await messageStore.updateAssistantContent(messageId, blocks)
+
+    // Finalize the message
+    await messageStore.setMessageError(messageId, blocks)
 
     // Notify renderer
     eventBus.sendToRenderer(STREAM_EVENTS.RESPONSE, SendTarget.ALL_WINDOWS, {
       conversationId: sessionId,
-      blocks: JSON.parse(JSON.stringify(state.blocks))
+      blocks: JSON.parse(JSON.stringify(blocks))
     })
   }
 }

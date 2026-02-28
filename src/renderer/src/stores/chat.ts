@@ -115,6 +115,9 @@ export const useChatStore = defineStore('chat', () => {
     agentWorkspacePath: null
   })
 
+  // Config loading state
+  const configLoading = ref(false)
+
   // Deeplink 消息缓存
   const deeplinkCache = ref<{
     msg?: string
@@ -1602,6 +1605,7 @@ export const useChatStore = defineStore('chat', () => {
   const loadChatConfig = async () => {
     const activeThread = getActiveThreadId()
     if (!activeThread) return
+    configLoading.value = true
     try {
       const conversation = await threadP.getConversation(activeThread)
       const threadToUpdate = threads.value
@@ -1625,6 +1629,8 @@ export const useChatStore = defineStore('chat', () => {
     } catch (error) {
       console.error('Failed to load conversation config:', error)
       throw error
+    } finally {
+      configLoading.value = false
     }
   }
 
@@ -2311,6 +2317,7 @@ export const useChatStore = defineStore('chat', () => {
     hasMessageDomInfo,
     // 导出配置相关的状态和方法
     chatConfig,
+    configLoading,
     updateChatConfig,
     setAcpWorkdirPreference,
     setAgentWorkspacePreference,

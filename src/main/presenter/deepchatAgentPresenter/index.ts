@@ -332,11 +332,12 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
 
   async handlePermissionResponse(
     sessionId: string,
+    messageId: string,
     toolCallId: string,
     granted: boolean,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean
   ): Promise<void> {
-    return handlePermission(sessionId, toolCallId, granted, permissionType, remember)
+    return handlePermission(sessionId, messageId, toolCallId, granted, permissionType, remember)
   }
 }

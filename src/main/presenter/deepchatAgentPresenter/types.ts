@@ -23,6 +23,8 @@ export interface StreamState {
   completedToolCalls: ToolCallResult[]
   stopReason: 'complete' | 'tool_use' | 'error' | 'abort' | 'max_tokens'
   dirty: boolean
+  waitingForPermission: boolean
+  pendingPermissionToolCallId?: string
 }
 
 export interface IoParams {
@@ -60,6 +62,8 @@ export function createState(): StreamState {
     pendingToolCalls: new Map(),
     completedToolCalls: [],
     stopReason: 'complete',
-    dirty: false
+    dirty: false,
+    waitingForPermission: false,
+    pendingPermissionToolCallId: undefined
   }
 }

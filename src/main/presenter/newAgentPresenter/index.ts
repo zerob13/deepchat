@@ -312,7 +312,7 @@ export class NewAgentPresenter {
   }
 
   async handlePermissionResponse(
-    sessionId: string,
+    messageId: string,
     toolCallId: string,
     granted: boolean,
     permissionType: 'read' | 'write' | 'all',
@@ -322,8 +322,15 @@ export class NewAgentPresenter {
     if (!agent) {
       throw new Error('DeepChat agent not found')
     }
+    // Extract sessionId from message
+    const message = await (agent as any).messageStore.getMessage(messageId)
+    if (!message) {
+      throw new Error(`Message not found: ${messageId}`)
+    }
+    const sessionId = message.conversationId
     return (agent as any).handlePermissionResponse(
       sessionId,
+      messageId,
       toolCallId,
       granted,
       permissionType,

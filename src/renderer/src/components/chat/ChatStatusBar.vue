@@ -161,6 +161,14 @@ const isAcpAgent = computed(() => {
 
 // Resolve display provider ID
 const displayProviderId = computed(() => {
+  console.log('[ChatStatusBar] Config state:', {
+    hasActiveSession: hasActiveSession.value,
+    chatConfigLoaded: !!chatStore.chatConfig.modelId,
+    configLoading: chatStore.configLoading,
+    modelId: chatStore.chatConfig.modelId,
+    providerId: chatStore.chatConfig.providerId
+  })
+
   // Priority 1: Use session's provider when in active session
   if (hasActiveSession.value) {
     const session = sessionStore.activeSession
@@ -172,7 +180,10 @@ const displayProviderId = computed(() => {
 
   // Priority 2: Use chatConfig provider (from settings or user selection)
   if (chatStore.chatConfig.providerId && chatStore.chatConfig.providerId.trim()) {
-    console.log('[ChatStatusBar] displayProviderId: using chatConfig provider', chatStore.chatConfig.providerId)
+    console.log(
+      '[ChatStatusBar] displayProviderId: using chatConfig provider',
+      chatStore.chatConfig.providerId
+    )
     return chatStore.chatConfig.providerId
   }
 
@@ -200,6 +211,8 @@ const displayModelName = computed(() => {
 
   // Priority 2: Use chatConfig model (from settings)
   const modelId = chatStore.chatConfig.modelId
+  console.log('[ChatStatusBar] displayModelName: chatConfig.modelId:', modelId)
+
   if (modelId && modelId.trim()) {
     const found = modelStore.findModelByIdOrName(modelId)
     console.log('[ChatStatusBar] displayModelName: using chatConfig model', {
@@ -210,7 +223,13 @@ const displayModelName = computed(() => {
     return modelId
   }
 
-  // Priority 3: Fallback to first available
+  // Priority 3: Check if config is still loading
+  if (chatStore.configLoading) {
+    console.log('[ChatStatusBar] displayModelName: config still loading, showing Loading...')
+    return 'Loading...'
+  }
+
+  // Priority 4: Fallback to first available (only after config is loaded)
   const firstModel = modelStore.enabledModels[0]?.models[0]
   console.log('[ChatStatusBar] displayModelName: fallback to first model', firstModel?.name)
   if (firstModel) return firstModel.name

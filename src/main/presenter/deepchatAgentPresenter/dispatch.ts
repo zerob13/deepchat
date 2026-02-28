@@ -136,7 +136,7 @@ export async function executeTools(
 
       if (permissionCheck.requiresPermission) {
         // Permission required - send permission request to frontend
-        console.log(`[executeTools] Permission required for ${tc.name}, sending permission request`)
+        console.log(`[executeTools] Permission required for ${tc.name}, PAUSING execution`)
 
         // Update the tool_call block to show permission pending state
         const block = state.blocks.find((b) => b.type === 'tool_call' && b.tool_call?.id === tc.id)
@@ -155,10 +155,12 @@ export async function executeTools(
         // DEBUG: Log permission flags being sent
         console.log('[executeTools] Setting permission flags:', {
           toolCallId: tc.id,
+          toolName: tc.name,
           blockType: block?.type,
           status: block?.status,
           needsUserAction: block?.extra?.needsUserAction,
-          permissionRequest: block?.extra?.permissionRequest
+          permissionRequest: block?.extra?.permissionRequest,
+          blocksCount: state.blocks.length
         })
 
         // Emit permission required event
@@ -167,10 +169,16 @@ export async function executeTools(
           blocks: JSON.parse(JSON.stringify(state.blocks))
         })
 
-        // Mark this tool call as needing permission and skip execution
-        // The permission handler will resume execution after user grants permission
-        executed++
-        continue
+        // CRITICAL: Mark message as waiting for permission and STOP processing
+        // Don't call finalize() - leave message in pending state
+        // The permission handler will resume when user responds
+        state.waitingForPermission = true
+        state.pendingPermissionToolCallId = tc.id
+        console.log('[executeTools] PAUSED - waiting for user permission response', {
+          waitingForPermission: state.waitingForPermission,
+          pendingPermissionToolCallId: state.pendingPermissionToolCallId
+        })
+        return executed // Exit early, don't finalize
       }
 
       const { rawData } = await toolPresenter.callTool(toolCall)
