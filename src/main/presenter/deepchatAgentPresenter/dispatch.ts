@@ -6,6 +6,7 @@ import type { MCPToolCall, MCPContentItem } from '@shared/types/core/mcp'
 import type { StreamState, IoParams } from './types'
 import { eventBus, SendTarget } from '@/eventbus'
 import { STREAM_EVENTS } from '@/events'
+import { checkToolPermission } from './permissionChecker'
 
 // ---- Private helpers ----
 
@@ -123,6 +124,38 @@ export async function executeTools(
     }
 
     try {
+      // T3/T4: Check tool permission before execution
+      let toolArgs: Record<string, unknown> = {}
+      try {
+        toolArgs = JSON.parse(tc.arguments)
+      } catch {
+        console.warn('[executeTools] Failed to parse tool arguments:', tc.arguments)
+      }
+
+      const permissionCheck = await checkToolPermission(io.sessionId, tc.name, toolArgs)
+
+      if (permissionCheck.requiresPermission) {
+        // Permission required - send permission request to frontend
+        console.log(`[executeTools] Permission required for ${tc.name}, sending permission request`)
+
+        // Update the tool_call block to show permission pending state
+        const block = state.blocks.find((b) => b.type === 'tool_call' && b.tool_call?.id === tc.id)
+        if (block) {
+          block.status = 'pending'
+        }
+
+        // Emit permission required event
+        eventBus.sendToRenderer(STREAM_EVENTS.RESPONSE, SendTarget.ALL_WINDOWS, {
+          conversationId: io.sessionId,
+          blocks: JSON.parse(JSON.stringify(state.blocks))
+        })
+
+        // Mark this tool call as needing permission and skip execution
+        // The permission handler will resume execution after user grants permission
+        executed++
+        continue
+      }
+
       const { rawData } = await toolPresenter.callTool(toolCall)
       const responseText = toolResponseToText(rawData.content)
 

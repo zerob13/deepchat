@@ -197,6 +197,36 @@ export class NewAgentPresenter {
     return this.sessionManager.getPermissionMode(sessionId)
   }
 
+  async bindWorkspace(sessionId: string): Promise<string | null> {
+    // This method is called from renderer, which will trigger a file dialog
+    // The actual dialog is handled by Electron's dialog.showOpenDialog
+    // We return the selected path or null if cancelled
+    const { dialog } = await import('electron')
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory', 'createDirectory'],
+      title: 'Select Workspace Directory',
+      defaultPath: require('os').homedir()
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    const selectedPath = result.filePaths[0]
+
+    // Update session with projectDir
+    await this.sessionManager.update(sessionId, { projectDir: selectedPath })
+
+    return selectedPath
+  }
+
+  async updateSession(
+    sessionId: string,
+    fields: Partial<Pick<SessionWithState, 'title' | 'projectDir' | 'isPinned' | 'permissionMode'>>
+  ): Promise<void> {
+    await this.sessionManager.update(sessionId, fields)
+  }
+
   async checkPathAccess(
     sessionId: string,
     path: string

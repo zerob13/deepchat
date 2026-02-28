@@ -66,5 +66,26 @@
     "rejected": "Rejected",
     "customPlaceholder": "Type your answer...",
     "answerLabel": "Answer"
+  },
+  "pages": {
+    "sessionPermissions": {
+      "title": "Session Permissions",
+      "currentSession": "Current Session",
+      "fullAccess": "Full Access",
+      "defaultPermissions": "Default Permissions",
+      "addRule": "Add Rule",
+      "toolName": "Tool Name",
+      "toolNamePlaceholder": "e.g. write_file",
+      "pathPattern": "Path Pattern",
+      "pathPatternPlaceholder": "e.g. /path/to/file.txt or /path/*.txt",
+      "patternHelp": "Supports * and ** wildcards, e.g. *.txt or **/*.log",
+      "whitelistRules": "Whitelist Rules",
+      "noRules": "No whitelist rules yet"
+    }
+  },
+  "chatStatusBar": {
+    "managePermissions": "Manage Permissions",
+    "bindWorkspace": "Bind workspace",
+    "bindWorkspacePrompt": "Full access requires a workspace. Would you like to bind one now?"
   }
 }

@@ -66,5 +66,26 @@
     "rejected": "已拒绝",
     "customPlaceholder": "输入你的回答...",
     "answerLabel": "回答"
+  },
+  "pages": {
+    "sessionPermissions": {
+      "title": "会话权限管理",
+      "currentSession": "当前会话",
+      "fullAccess": "完全访问",
+      "defaultPermissions": "默认权限",
+      "addRule": "添加规则",
+      "toolName": "工具名称",
+      "toolNamePlaceholder": "例如：write_file",
+      "pathPattern": "路径模式",
+      "pathPatternPlaceholder": "例如：/path/to/file.txt 或 /path/*.txt",
+      "patternHelp": "支持 * 和 ** 通配符，例如：*.txt 或 **/*.log",
+      "whitelistRules": "白名单规则",
+      "noRules": "暂无白名单规则"
+    }
+  },
+  "chatStatusBar": {
+    "managePermissions": "管理权限",
+    "bindWorkspace": "绑定 workspace",
+    "bindWorkspacePrompt": "完全访问需要绑定 workspace。是否现在绑定？"
   }
 }

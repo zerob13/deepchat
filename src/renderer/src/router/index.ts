@@ -37,7 +37,16 @@ const router = createRouter({
             }
           }
         ]
-      : [])
+      : []),
+    {
+      path: '/session-permissions',
+      name: 'session-permissions',
+      component: () => import('@/pages/SessionPermissions.vue'),
+      meta: {
+        titleKey: 'routes.session-permissions',
+        icon: 'lucide:shield'
+      }
+    }
   ]
 })
 

@@ -32,4 +32,10 @@ export interface INewAgentPresenter {
   checkWhitelist(sessionId: string, toolName: string, path: string): Promise<boolean>
   // Path access control (T4)
   checkPathAccess(sessionId: string, path: string): Promise<{ allowed: boolean; reason?: string }>
+  // Workspace binding
+  bindWorkspace(sessionId: string): Promise<string | null>
+  updateSession(
+    sessionId: string,
+    fields: Partial<Pick<SessionWithState, 'title' | 'projectDir' | 'isPinned' | 'permissionMode'>>
+  ): Promise<void>
 }

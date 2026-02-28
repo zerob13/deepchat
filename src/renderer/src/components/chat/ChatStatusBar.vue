@@ -89,6 +89,24 @@
             >(Bind workspace first)</span
           >
         </DropdownMenuItem>
+        <DropdownMenuSeparator v-if="!canEnableFullAccess" />
+        <DropdownMenuItem
+          v-if="!canEnableFullAccess"
+          class="text-xs py-1.5 px-2"
+          @click="bindWorkspace"
+        >
+          <Icon icon="lucide:folder" class="w-3 h-3 mr-2" />
+          {{ t('components.chatStatusBar.bindWorkspace') }}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          class="text-xs py-1.5 px-2"
+          @click="openPermissionManagement"
+          :disabled="!hasActiveSession"
+        >
+          <Icon icon="lucide:settings" class="w-3 h-3 mr-2" />
+          {{ t('components.chatStatusBar.managePermissions') }}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   </div>
@@ -96,11 +114,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Button } from '@shadcn/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@shadcn/components/ui/dropdown-menu'
 import { Icon } from '@iconify/vue'
@@ -113,6 +134,9 @@ import { useSessionStore } from '@/stores/ui/session'
 import type { RENDERER_MODEL_META } from '@shared/presenter'
 import type { PermissionMode } from '@shared/types/agent-interface'
 import { usePresenter } from '@/composables/usePresenter'
+
+const { t } = useI18n()
+const router = useRouter()
 
 const themeStore = useThemeStore()
 const chatStore = useChatStore()
@@ -230,5 +254,29 @@ async function selectPermissionMode(mode: PermissionMode) {
 
   // Update local session store
   sessionStore.updateSession(session.id, { permissionMode: mode })
+}
+
+async function openPermissionManagement() {
+  if (!hasActiveSession.value) return
+  await router.push('/session-permissions')
+}
+
+async function bindWorkspace() {
+  if (!hasActiveSession.value) return
+  const session = sessionStore.activeSession
+  if (!session) return
+
+  try {
+    const selectedPath = await newAgentPresenter.bindWorkspace(session.id)
+    if (selectedPath) {
+      // Update local session store
+      sessionStore.updateSession(session.id, { projectDir: selectedPath })
+      // Auto-enable Full access after binding
+      await newAgentPresenter.setSessionPermissionMode(session.id, 'full')
+      sessionStore.updateSession(session.id, { permissionMode: 'full' })
+    }
+  } catch (error) {
+    console.error('[ChatStatusBar] Failed to bind workspace:', error)
+  }
 }
 </script>
