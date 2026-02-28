@@ -5,6 +5,7 @@ import type {
   ChatMessageRecord,
   PermissionMode
 } from '../agent-interface'
+import type { PermissionWhitelistRule } from '../permission'
 
 export interface INewAgentPresenter {
   createSession(input: CreateSessionInput, webContentsId: number): Promise<SessionWithState>
@@ -21,6 +22,14 @@ export interface INewAgentPresenter {
   deleteSession(sessionId: string): Promise<void>
   cancelGeneration(sessionId: string): Promise<void>
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): Promise<void>
+  getSessionPermissionMode(sessionId: string): Promise<PermissionMode | null>
   editUserMessage(sessionId: string, messageId: string, newContent: string): Promise<void>
   forkSessionFromMessage(sessionId: string, messageId: string): Promise<string>
+  // Whitelist management
+  addToWhitelist(sessionId: string, toolName: string, pathPattern: string): Promise<string>
+  removeFromWhitelist(sessionId: string, ruleId: string): Promise<boolean>
+  getWhitelist(sessionId: string): Promise<PermissionWhitelistRule[]>
+  checkWhitelist(sessionId: string, toolName: string, path: string): Promise<boolean>
+  // Path access control (T4)
+  checkPathAccess(sessionId: string, path: string): Promise<{ allowed: boolean; reason?: string }>
 }

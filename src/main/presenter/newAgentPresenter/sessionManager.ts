@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import type { SQLitePresenter } from '../sqlitePresenter'
 import type { SessionRecord, PermissionMode } from '@shared/types/agent-interface'
+import type { PermissionWhitelistRule } from '@shared/types/permission'
 
 export class NewSessionManager {
   private sqlitePresenter: SQLitePresenter
@@ -97,5 +98,29 @@ export class NewSessionManager {
   getPermissionMode(sessionId: string): PermissionMode | null {
     const session = this.get(sessionId)
     return session?.permissionMode ?? null
+  }
+
+  // Whitelist management
+  addToWhitelist(sessionId: string, toolName: string, pathPattern: string): string {
+    return this.sqlitePresenter.permissionWhitelistTable.addRule(sessionId, toolName, pathPattern)
+  }
+
+  removeFromWhitelist(ruleId: string): boolean {
+    return this.sqlitePresenter.permissionWhitelistTable.removeRule(ruleId)
+  }
+
+  getWhitelist(sessionId: string): PermissionWhitelistRule[] {
+    const rows = this.sqlitePresenter.permissionWhitelistTable.getSessionRules(sessionId)
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      toolName: row.tool_name,
+      pathPattern: row.path_pattern,
+      createdAt: row.created_at
+    }))
+  }
+
+  checkWhitelist(sessionId: string, toolName: string, path: string): boolean {
+    return this.sqlitePresenter.permissionWhitelistTable.matchesWhitelist(sessionId, toolName, path)
   }
 }

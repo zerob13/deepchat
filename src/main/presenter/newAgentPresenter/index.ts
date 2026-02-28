@@ -193,6 +193,32 @@ export class NewAgentPresenter {
     this.sessionManager.setPermissionMode(sessionId, mode)
   }
 
+  async getSessionPermissionMode(sessionId: string): Promise<'default' | 'full' | null> {
+    return this.sessionManager.getPermissionMode(sessionId)
+  }
+
+  async checkPathAccess(
+    sessionId: string,
+    path: string
+  ): Promise<{
+    allowed: boolean
+    reason?: string
+  }> {
+    const session = this.sessionManager.get(sessionId)
+    if (!session) {
+      return { allowed: false, reason: 'Session not found' }
+    }
+
+    const { validatePathAccess } = await import('@/utils/pathUtils')
+    const validation = validatePathAccess(path, session.projectDir || '/')
+
+    if (!validation.valid) {
+      return { allowed: false, reason: validation.error }
+    }
+
+    return { allowed: true }
+  }
+
   async editUserMessage(sessionId: string, messageId: string, newContent: string): Promise<void> {
     const session = this.sessionManager.get(sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
@@ -215,5 +241,36 @@ export class NewAgentPresenter {
     }
 
     return newSessionId
+  }
+
+  // Whitelist management
+  async addToWhitelist(sessionId: string, toolName: string, pathPattern: string): Promise<string> {
+    return this.sessionManager.addToWhitelist(sessionId, toolName, pathPattern)
+  }
+
+  async removeFromWhitelist(sessionId: string, ruleId: string): Promise<boolean> {
+    // Verify the rule belongs to this session
+    const rules = await this.getWhitelist(sessionId)
+    const rule = rules.find((r) => r.id === ruleId)
+    if (!rule) {
+      throw new Error(`Whitelist rule not found: ${ruleId}`)
+    }
+    return this.sessionManager.removeFromWhitelist(ruleId)
+  }
+
+  async getWhitelist(sessionId: string): Promise<
+    Array<{
+      id: string
+      sessionId: string
+      toolName: string
+      pathPattern: string
+      createdAt: number
+    }>
+  > {
+    return this.sessionManager.getWhitelist(sessionId)
+  }
+
+  async checkWhitelist(sessionId: string, toolName: string, path: string): Promise<boolean> {
+    return this.sessionManager.checkWhitelist(sessionId, toolName, path)
   }
 }
