@@ -136,14 +136,7 @@ export async function executeTools(
 
       if (permissionCheck.requiresPermission) {
         // Permission required - send permission request to frontend
-        console.log(
-          `[executeTools] Permission required for ${tc.name}, sending permission request`,
-          {
-            sessionId: io.sessionId,
-            toolCallId: tc.id,
-            request: permissionCheck.request
-          }
-        )
+        console.log(`[executeTools] Permission required for ${tc.name}, sending permission request`)
 
         // Update the tool_call block to show permission pending state
         const block = state.blocks.find((b) => b.type === 'tool_call' && b.tool_call?.id === tc.id)
@@ -165,10 +158,6 @@ export async function executeTools(
           blocks: JSON.parse(JSON.stringify(state.blocks))
         })
 
-        console.log(
-          `[executeTools] Permission request sent to frontend, waiting for response. Blocks count: ${state.blocks.length}`
-        )
-
         // Mark this tool call as needing permission and skip execution
         // The permission handler will resume execution after user grants permission
         executed++
@@ -188,24 +177,13 @@ export async function executeTools(
     } catch (err) {
       const errorText = err instanceof Error ? err.message : String(err)
 
-      // Distinguish permission errors from other tool errors for clearer user feedback
-      if (err instanceof Error && err.message.includes('Access denied')) {
-        // Explicit permission denied error - provide clear security message
-        conversation.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: `Permission denied: ${errorText}`
-        })
-        updateToolCallBlock(state.blocks, tc.id, `Permission denied: ${errorText}`, true)
-      } else {
-        // Generic tool execution error
-        conversation.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: `Error: ${errorText}`
-        })
-        updateToolCallBlock(state.blocks, tc.id, `Error: ${errorText}`, true)
-      }
+      conversation.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        content: `Error: ${errorText}`
+      })
+
+      updateToolCallBlock(state.blocks, tc.id, `Error: ${errorText}`, true)
     }
 
     executed++
