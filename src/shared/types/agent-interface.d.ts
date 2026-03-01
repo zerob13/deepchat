@@ -5,7 +5,7 @@
  * v2: multi-turn chat with MCP tool calling, no permission checks.
  */
 
-export type SessionStatus = 'idle' | 'generating' | 'error'
+export type SessionStatus = 'idle' | 'generating' | 'paused' | 'error'
 
 export interface DeepChatSessionState {
   status: SessionStatus
@@ -116,6 +116,7 @@ export interface SessionRecord {
   title: string
   projectDir: string | null
   isPinned: boolean
+  permissionMode: 'default' | 'full'
   createdAt: number
   updatedAt: number
 }

@@ -1,12 +1,15 @@
 import Database from 'better-sqlite3-multiple-ciphers'
 import { BaseTable } from './baseTable'
 
+export type PermissionMode = 'default' | 'full'
+
 export interface NewSessionRow {
   id: string
   agent_id: string
   title: string
   project_dir: string | null
   is_pinned: number
+  permission_mode: string // 'default' | 'full'
   created_at: number
   updated_at: number
 }
@@ -24,6 +27,7 @@ export class NewSessionsTable extends BaseTable {
         title TEXT NOT NULL,
         project_dir TEXT,
         is_pinned INTEGER DEFAULT 0,
+        permission_mode TEXT DEFAULT 'default',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -32,22 +36,33 @@ export class NewSessionsTable extends BaseTable {
     `
   }
 
-  getMigrationSQL(_version: number): string | null {
+  getMigrationSQL(version: number): string | null {
+    if (version === 1) {
+      return `
+        ALTER TABLE new_sessions ADD COLUMN permission_mode TEXT DEFAULT 'default';
+      `
+    }
     return null
   }
 
   getLatestVersion(): number {
-    return 0
+    return 1
   }
 
-  create(id: string, agentId: string, title: string, projectDir: string | null): void {
+  create(
+    id: string,
+    agentId: string,
+    title: string,
+    projectDir: string | null,
+    permissionMode: PermissionMode = 'default'
+  ): void {
     const now = Date.now()
     this.db
       .prepare(
-        `INSERT INTO new_sessions (id, agent_id, title, project_dir, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO new_sessions (id, agent_id, title, project_dir, permission_mode, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, agentId, title, projectDir, now, now)
+      .run(id, agentId, title, projectDir, permissionMode, now, now)
   }
 
   get(id: string): NewSessionRow | undefined {
@@ -80,7 +95,7 @@ export class NewSessionsTable extends BaseTable {
 
   update(
     id: string,
-    fields: Partial<Pick<NewSessionRow, 'title' | 'project_dir' | 'is_pinned'>>
+    fields: Partial<Pick<NewSessionRow, 'title' | 'project_dir' | 'is_pinned' | 'permission_mode'>>
   ): void {
     const setClauses: string[] = []
     const params: unknown[] = []
@@ -96,6 +111,10 @@ export class NewSessionsTable extends BaseTable {
     if (fields.is_pinned !== undefined) {
       setClauses.push('is_pinned = ?')
       params.push(fields.is_pinned)
+    }
+    if (fields.permission_mode !== undefined) {
+      setClauses.push('permission_mode = ?')
+      params.push(fields.permission_mode)
     }
 
     if (setClauses.length === 0) return
