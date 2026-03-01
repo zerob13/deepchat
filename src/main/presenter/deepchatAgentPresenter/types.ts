@@ -4,6 +4,7 @@ import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition, ModelConfig } from '@shared/presenter'
 import type { IToolPresenter } from '@shared/types/presenters/tool.presenter'
 import type { DeepChatMessageStore } from './messageStore'
+import type { PermissionChecker } from './permissionChecker'
 
 export interface ToolCallResult {
   id: string
@@ -36,6 +37,7 @@ export interface ProcessParams {
   messages: ChatMessage[]
   tools: MCPToolDefinition[]
   toolPresenter: IToolPresenter | null
+  permissionChecker: PermissionChecker | null
   coreStream: (
     messages: ChatMessage[],
     modelId: string,

@@ -109,6 +109,17 @@ export class DeepChatMessageStore {
     this.sqlitePresenter.deepchatMessagesTable.deleteBySession(sessionId)
   }
 
+  /**
+   * Synchronous persist - ensures content is written to DB before continuing
+   * This is critical for permission flow to ensure tool results are visible
+   * before the next generation iteration
+   */
+  syncPersist(messageId: string, blocks: AssistantMessageBlock[]): void {
+    // The underlying SQLite operations are already synchronous
+    // This method exists as an explicit checkpoint for the permission flow
+    this.sqlitePresenter.deepchatMessagesTable.updateContent(messageId, JSON.stringify(blocks))
+  }
+
   recoverPendingMessages(): number {
     return this.sqlitePresenter.deepchatMessagesTable.recoverPendingMessages()
   }

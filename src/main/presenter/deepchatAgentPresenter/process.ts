@@ -2,7 +2,7 @@ import type { ProcessParams } from './types'
 import { createState } from './types'
 import { accumulate } from './accumulator'
 import { startEcho } from './echo'
-import { executeTools, finalize, finalizeError } from './dispatch'
+import { executeToolsWithPermission, finalize, finalizeError } from './dispatch'
 import { eventBus, SendTarget } from '@/eventbus'
 import { STREAM_EVENTS } from '@/events'
 
@@ -17,6 +17,7 @@ export async function processStream(params: ProcessParams): Promise<void> {
     messages,
     tools,
     toolPresenter,
+    permissionChecker,
     coreStream,
     modelId,
     modelConfig,
@@ -85,20 +86,26 @@ export async function processStream(params: ProcessParams): Promise<void> {
         break
       }
 
-      // Execute tools and continue loop (toolPresenter is guaranteed non-null here
-      // because completedToolCalls > 0 means tools were requested, which requires
-      // tools.length > 0, which requires toolPresenter to be non-null)
-      const executed = await executeTools(
+      // Execute tools with permission checking
+      // toolPresenter is guaranteed non-null here because completedToolCalls > 0
+      const { executed, shouldContinue } = await executeToolsWithPermission(
         state,
         conversationMessages,
         prevBlockCount,
         tools,
         toolPresenter!,
         modelId,
-        io
+        io,
+        permissionChecker
       )
       toolCallCount += executed
       echo.flush()
+
+      // If all tools were denied, don't continue the loop
+      if (!shouldContinue) {
+        console.log('[ProcessStream] all tools denied, stopping')
+        break
+      }
 
       // Check abort after tool execution
       if (io.abortSignal.aborted) break
