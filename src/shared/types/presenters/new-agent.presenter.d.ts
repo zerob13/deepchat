@@ -19,4 +19,10 @@ export interface INewAgentPresenter {
   getAgents(): Promise<Agent[]>
   deleteSession(sessionId: string): Promise<void>
   cancelGeneration(sessionId: string): Promise<void>
+  handlePermissionResponse(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    remember: boolean
+  ): void
 }

@@ -85,6 +85,7 @@ export class NewAgentPresenter {
       title,
       projectDir: input.projectDir ?? null,
       isPinned: false,
+      permissionMode: 'default' as const,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       status: state?.status ?? 'idle',
@@ -185,5 +186,36 @@ export class NewAgentPresenter {
     if (!session) return
     const agent = this.agentRegistry.resolve(session.agentId)
     await agent.cancelGeneration(sessionId)
+  }
+
+  /**
+   * Handle permission response from user
+   * @param sessionId - The session ID
+   * @param requestId - The permission request ID (format: messageId_toolCallId)
+   * @param approved - Whether the permission was approved
+   * @param remember - Whether to remember this decision for future requests
+   */
+  handlePermissionResponse(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    remember: boolean
+  ): void {
+    console.log(
+      `[NewAgentPresenter] handlePermissionResponse session=${sessionId} request=${requestId} approved=${approved} remember=${remember}`
+    )
+
+    const session = this.sessionManager.get(sessionId)
+    if (!session) {
+      console.warn(`[NewAgentPresenter] Session not found: ${sessionId}`)
+      return
+    }
+
+    const agent = this.agentRegistry.resolve(session.agentId)
+
+    // Call the agent's handlePermissionResponse method
+    // Note: DeepChatAgentPresenter has this method, but we need to cast since IAgentImplementation doesn't have it
+    const deepchatAgent = agent as DeepChatAgentPresenter
+    deepchatAgent.handlePermissionResponse(sessionId, requestId, approved, remember)
   }
 }

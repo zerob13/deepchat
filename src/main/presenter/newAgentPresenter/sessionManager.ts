@@ -11,9 +11,14 @@ export class NewSessionManager {
     this.sqlitePresenter = sqlitePresenter
   }
 
-  create(agentId: string, title: string, projectDir: string | null): string {
+  create(
+    agentId: string,
+    title: string,
+    projectDir: string | null,
+    permissionMode: 'default' | 'full' = 'default'
+  ): string {
     const id = nanoid()
-    this.sqlitePresenter.newSessionsTable.create(id, agentId, title, projectDir)
+    this.sqlitePresenter.newSessionsTable.create(id, agentId, title, projectDir, permissionMode)
     return id
   }
 
@@ -26,6 +31,7 @@ export class NewSessionManager {
       title: row.title,
       projectDir: row.project_dir,
       isPinned: row.is_pinned === 1,
+      permissionMode: (row.permission_mode as 'default' | 'full') || 'default',
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
@@ -39,6 +45,7 @@ export class NewSessionManager {
       title: row.title,
       projectDir: row.project_dir,
       isPinned: row.is_pinned === 1,
+      permissionMode: (row.permission_mode as 'default' | 'full') || 'default',
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }))
@@ -46,12 +53,18 @@ export class NewSessionManager {
 
   update(
     id: string,
-    fields: Partial<Pick<SessionRecord, 'title' | 'projectDir' | 'isPinned'>>
+    fields: Partial<Pick<SessionRecord, 'title' | 'projectDir' | 'isPinned' | 'permissionMode'>>
   ): void {
-    const dbFields: { title?: string; project_dir?: string | null; is_pinned?: number } = {}
+    const dbFields: {
+      title?: string
+      project_dir?: string | null
+      is_pinned?: number
+      permission_mode?: string
+    } = {}
     if (fields.title !== undefined) dbFields.title = fields.title
     if (fields.projectDir !== undefined) dbFields.project_dir = fields.projectDir
     if (fields.isPinned !== undefined) dbFields.is_pinned = fields.isPinned ? 1 : 0
+    if (fields.permissionMode !== undefined) dbFields.permission_mode = fields.permissionMode
     this.sqlitePresenter.newSessionsTable.update(id, dbFields)
   }
 
