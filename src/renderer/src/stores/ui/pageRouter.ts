@@ -10,7 +10,7 @@ export type PageRoute =
 
 export const usePageRouterStore = defineStore('pageRouter', () => {
   const configPresenter = usePresenter('configPresenter')
-  const sessionPresenter = usePresenter('sessionPresenter')
+  const newAgentPresenter = usePresenter('newAgentPresenter')
 
   // --- State ---
   const route = ref<PageRoute>({ name: 'newThread' })
@@ -27,11 +27,11 @@ export const usePageRouterStore = defineStore('pageRouter', () => {
         return
       }
 
-      // 2. Check for active session on this tab
-      const tabId = window.api.getWebContentsId()
-      const activeSession = await sessionPresenter.getActiveSession(tabId)
+      // 2. Check for active session on this tab using newAgentPresenter
+      const webContentsId = window.api.getWebContentsId()
+      const activeSession = await newAgentPresenter.getActiveSession(webContentsId)
       if (activeSession) {
-        route.value = { name: 'chat', sessionId: activeSession.sessionId }
+        route.value = { name: 'chat', sessionId: activeSession.id }
         return
       }
 
