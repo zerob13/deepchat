@@ -7,9 +7,17 @@
       <!-- Input area (sticky bottom, messages scroll under) -->
       <div class="sticky bottom-0 z-10 px-6 pt-3 pb-3">
         <div class="flex flex-col items-center">
-          <ChatInputBox v-model="message" @submit="onSubmit">
+          <ChatInputBox
+            v-model="message"
+            :disabled="isGenerating"
+            @submit="onSubmit"
+          >
             <template #toolbar>
-              <ChatInputToolbar @send="onSubmit" />
+              <ChatInputToolbar
+                :is-generating="isGenerating"
+                @send="onSubmit"
+                @stop="onStop"
+              />
             </template>
           </ChatInputBox>
           <ChatStatusBar />
@@ -41,6 +49,9 @@ const messageStore = useMessageStore()
 
 const sessionTitle = computed(() => sessionStore.activeSession?.title ?? 'New Chat')
 const sessionProject = computed(() => sessionStore.activeSession?.projectDir ?? '')
+
+// --- Generation State ---
+const isGenerating = computed(() => sessionStore.isSessionGenerating(props.sessionId))
 
 // --- Auto-scroll ---
 const scrollContainer = ref<HTMLDivElement>()
@@ -161,9 +172,14 @@ const message = ref('')
 
 async function onSubmit() {
   const text = message.value.trim()
-  if (!text) return
+  if (!text || isGenerating.value) return
   message.value = ''
   messageStore.addOptimisticUserMessage(props.sessionId, text)
   await sessionStore.sendMessage(props.sessionId, text)
+}
+
+async function onStop() {
+  if (!isGenerating.value) return
+  await sessionStore.cancelGenerating(props.sessionId)
 }
 </script>
