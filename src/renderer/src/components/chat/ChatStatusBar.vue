@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { Button } from '@shadcn/components/ui/button'
 import {
   DropdownMenu,
@@ -89,6 +89,7 @@ import { useChatStore } from '@/stores/chat'
 import { useModelStore } from '@/stores/modelStore'
 import { useAgentStore } from '@/stores/ui/agent'
 import { useSessionStore } from '@/stores/ui/session'
+import { usePresenter } from '@/composables/usePresenter'
 import type { RENDERER_MODEL_META } from '@shared/presenter'
 
 const themeStore = useThemeStore()
@@ -96,6 +97,33 @@ const chatStore = useChatStore()
 const modelStore = useModelStore()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const configPresenter = usePresenter('configPresenter')
+
+// Load default model on mount (for NewThreadPage)
+onMounted(async () => {
+  if (!sessionStore.hasActiveSession) {
+    const defaultModel = await configPresenter.getSetting('defaultModel')
+    if (defaultModel && !chatStore.chatConfig.modelId) {
+      await chatStore.updateChatConfig(defaultModel)
+    }
+  }
+})
+
+// Watch for session changes and update chat config accordingly
+watch(
+  () => sessionStore.hasActiveSession,
+  async (hasSession) => {
+    if (hasSession && sessionStore.activeSessionId) {
+      // Session activated - load its config (chatStore.loadChatConfig will be called by router)
+    } else if (!hasSession) {
+      // Back to NewThreadPage - load default model
+      const defaultModel = await configPresenter.getSetting('defaultModel')
+      if (defaultModel) {
+        await chatStore.updateChatConfig(defaultModel)
+      }
+    }
+  }
+)
 
 // Determine if we're in an active session or on NewThreadPage
 const hasActiveSession = computed(() => sessionStore.hasActiveSession)

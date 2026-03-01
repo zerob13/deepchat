@@ -5,6 +5,7 @@ import { usePresenter } from '@/composables/usePresenter'
 import { SESSION_EVENTS, CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import type { SessionWithState, CreateSessionInput } from '@shared/types/agent-interface'
 import { usePageRouterStore } from './pageRouter'
+import { useChatStore } from '@/stores/chat'
 
 // --- Type Definitions ---
 
@@ -180,6 +181,9 @@ export const useSessionStore = defineStore('session', () => {
       await newAgentPresenter.activateSession(webContentsId, sessionId)
       activeSessionId.value = sessionId
       pageRouter.goToChat(sessionId)
+      // Load the session's model config after activation
+      const chatStore = useChatStore()
+      await chatStore.loadChatConfig()
     } catch (e) {
       error.value = `Failed to select session: ${e}`
     }
@@ -192,6 +196,24 @@ export const useSessionStore = defineStore('session', () => {
       await newAgentPresenter.deactivateSession(webContentsId)
       activeSessionId.value = null
       pageRouter.goToNewThread()
+      // Clear chat config when leaving session (will be reloaded from defaultModel on NewThreadPage)
+      const chatStore = useChatStore()
+      chatStore.chatConfig = {
+        systemPrompt: '',
+        temperature: 0.7,
+        contextLength: 32000,
+        maxTokens: 8000,
+        providerId: '',
+        modelId: '',
+        artifacts: 0,
+        enabledMcpTools: [],
+        thinkingBudget: undefined,
+        reasoningEffort: undefined,
+        verbosity: undefined,
+        selectedVariantsMap: {},
+        acpWorkdirMap: {},
+        agentWorkspacePath: null
+      }
     } catch (e) {
       error.value = `Failed to close session: ${e}`
     }

@@ -2284,6 +2284,7 @@ export const useChatStore = defineStore('chat', () => {
     hasMessageDomInfo,
     // 导出配置相关的状态和方法
     chatConfig,
+    loadChatConfig,
     updateChatConfig,
     setAcpWorkdirPreference,
     setAgentWorkspacePreference,
