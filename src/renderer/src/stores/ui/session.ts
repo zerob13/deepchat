@@ -179,11 +179,9 @@ export const useSessionStore = defineStore('session', () => {
     try {
       const webContentsId = window.api.getWebContentsId()
       await newAgentPresenter.activateSession(webContentsId, sessionId)
-      activeSessionId.value = sessionId
       pageRouter.goToChat(sessionId)
-      // Load the session's model config after activation
-      const chatStore = useChatStore()
-      await chatStore.loadChatConfig()
+      // Note: loadChatConfig is called by CONVERSATION_EVENTS.ACTIVATED handler in chat.ts
+      // We don't call it here to avoid double loading
     } catch (e) {
       error.value = `Failed to select session: ${e}`
     }

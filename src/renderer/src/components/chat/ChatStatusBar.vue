@@ -35,7 +35,7 @@
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <!-- Effort selector (hide for ACP agents — they don't have effort settings) -->
+      <!-- Effort selector (hide for ACP agents - they don't have effort settings) -->
       <DropdownMenu v-if="!isAcpAgent">
         <DropdownMenuTrigger as-child>
           <Button
@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, watch, ref } from 'vue'
 import { Button } from '@shadcn/components/ui/button'
 import {
   DropdownMenu,
@@ -99,12 +99,22 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const configPresenter = usePresenter('configPresenter')
 
+// Track if we've already initialized the default model to avoid overwriting
+const defaultModelInitialized = ref(false)
+
 // Load default model on mount (for NewThreadPage)
 onMounted(async () => {
-  if (!sessionStore.hasActiveSession) {
-    const defaultModel = await configPresenter.getSetting('defaultModel')
-    if (defaultModel && !chatStore.chatConfig.modelId) {
+  // Wait for session store to be ready before checking
+  await sessionStore.fetchSessions()
+
+  // Only load default model if there's definitely no active session
+  if (!sessionStore.hasActiveSession && !chatStore.chatConfig.modelId) {
+    const defaultModel = (await configPresenter.getSetting('defaultModel')) as
+      | { providerId: string; modelId: string }
+      | undefined
+    if (defaultModel?.providerId && defaultModel?.modelId) {
       await chatStore.updateChatConfig(defaultModel)
+      defaultModelInitialized.value = true
     }
   }
 })
@@ -112,14 +122,18 @@ onMounted(async () => {
 // Watch for session changes and update chat config accordingly
 watch(
   () => sessionStore.hasActiveSession,
-  async (hasSession) => {
+  async (hasSession, prevHasSession) => {
     if (hasSession && sessionStore.activeSessionId) {
-      // Session activated - load its config (chatStore.loadChatConfig will be called by router)
-    } else if (!hasSession) {
-      // Back to NewThreadPage - load default model
-      const defaultModel = await configPresenter.getSetting('defaultModel')
-      if (defaultModel) {
+      // Session activated - reset initialization flag
+      defaultModelInitialized.value = false
+    } else if (!hasSession && prevHasSession) {
+      // Back to NewThreadPage from an active session - load default model
+      const defaultModel = (await configPresenter.getSetting('defaultModel')) as
+        | { providerId: string; modelId: string }
+        | undefined
+      if (defaultModel?.providerId && defaultModel?.modelId) {
         await chatStore.updateChatConfig(defaultModel)
+        defaultModelInitialized.value = true
       }
     }
   }
