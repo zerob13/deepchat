@@ -14,6 +14,7 @@ import { processStream } from './process'
 import { buildContext } from './contextBuilder'
 import { eventBus, SendTarget } from '@/eventbus'
 import { SESSION_EVENTS } from '@/events'
+import { PermissionChecker } from './permissionChecker'
 
 export class DeepChatAgentPresenter implements IAgentImplementation {
   private llmProviderPresenter: ILlmProviderPresenter
@@ -21,8 +22,10 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
   private toolPresenter: IToolPresenter | null
   private sessionStore: DeepChatSessionStore
   private messageStore: DeepChatMessageStore
+  private sqlitePresenter: SQLitePresenter
   private runtimeState: Map<string, DeepChatSessionState> = new Map()
   private abortControllers: Map<string, AbortController> = new Map()
+  private permissionCheckers: Map<string, PermissionChecker> = new Map()
 
   constructor(
     llmProviderPresenter: ILlmProviderPresenter,
@@ -33,6 +36,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
     this.llmProviderPresenter = llmProviderPresenter
     this.configPresenter = configPresenter
     this.toolPresenter = toolPresenter ?? null
+    this.sqlitePresenter = sqlitePresenter
     this.sessionStore = new DeepChatSessionStore(sqlitePresenter)
     this.messageStore = new DeepChatMessageStore(sqlitePresenter)
 
@@ -56,6 +60,9 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
       providerId: config.providerId,
       modelId: config.modelId
     })
+
+    // Create permission checker for this session
+    this.createPermissionChecker(sessionId)
   }
 
   async destroySession(sessionId: string): Promise<void> {
@@ -65,6 +72,9 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
       controller.abort()
       this.abortControllers.delete(sessionId)
     }
+
+    // Clean up permission checker
+    this.permissionCheckers.delete(sessionId)
 
     this.messageStore.deleteBySession(sessionId)
     this.sessionStore.delete(sessionId)
@@ -177,12 +187,19 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
         }
       }
 
-      // 6. Run unified stream processor (handles both simple and tool-calling flows)
+      // 6. Get or create permission checker for this session
+      let permissionChecker = this.permissionCheckers.get(sessionId)
+      if (!permissionChecker) {
+        permissionChecker = this.createPermissionChecker(sessionId)
+      }
+
+      // 7. Run unified stream processor (handles both simple and tool-calling flows)
       console.log(`[DeepChatAgent] starting processStream with ${tools.length} tools`)
       await processStream({
         messages,
         tools,
         toolPresenter: this.toolPresenter,
+        permissionChecker,
         coreStream: provider.coreStream.bind(provider),
         modelId: state.modelId,
         modelConfig,
@@ -196,7 +213,7 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
         }
       })
 
-      // 7. Update status to idle
+      // 8. Update status to idle
       console.log(`[DeepChatAgent] stream completed, status → idle`)
       state.status = 'idle'
       this.abortControllers.delete(sessionId)
@@ -242,5 +259,58 @@ export class DeepChatAgentPresenter implements IAgentImplementation {
 
   async getMessage(messageId: string): Promise<ChatMessageRecord | null> {
     return this.messageStore.getMessage(messageId)
+  }
+
+  /**
+   * Handle permission response from user
+   * This is called by NewAgentPresenter when user approves/denies a permission request
+   */
+  handlePermissionResponse(
+    sessionId: string,
+    requestId: string,
+    approved: boolean,
+    remember: boolean
+  ): void {
+    const permissionChecker = this.permissionCheckers.get(sessionId)
+    if (!permissionChecker) {
+      console.warn(`[DeepChatAgent] No permission checker for session ${sessionId}`)
+      return
+    }
+
+    permissionChecker.handlePermissionResponse(requestId, approved, remember)
+
+    // Update session status based on whether there are still pending permissions
+    const state = this.runtimeState.get(sessionId)
+    if (state) {
+      // Status will be updated by the permission flow in processStream
+      // This is just for immediate UI feedback
+      eventBus.sendToRenderer(SESSION_EVENTS.STATUS_CHANGED, SendTarget.ALL_WINDOWS, {
+        sessionId,
+        status: state.status
+      })
+    }
+  }
+
+  /**
+   * Create or update permission checker for a session
+   */
+  private createPermissionChecker(sessionId: string): PermissionChecker {
+    // Get session info from DB
+    const sessionRow = this.sqlitePresenter.newSessionsTable.get(sessionId)
+
+    const sessionRecord = {
+      id: sessionId,
+      agentId: sessionRow?.agent_id ?? 'deepchat',
+      title: sessionRow?.title ?? 'New Chat',
+      projectDir: sessionRow?.project_dir ?? null,
+      isPinned: sessionRow?.is_pinned === 1,
+      permissionMode: (sessionRow?.permission_mode as 'default' | 'full') ?? 'default',
+      createdAt: sessionRow?.created_at ?? Date.now(),
+      updatedAt: sessionRow?.updated_at ?? Date.now()
+    }
+
+    const permissionChecker = new PermissionChecker(sessionRecord)
+    this.permissionCheckers.set(sessionId, permissionChecker)
+    return permissionChecker
   }
 }
