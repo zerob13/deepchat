@@ -18,6 +18,8 @@ export interface INewAgentPresenter {
   getActiveSession(webContentsId: number): Promise<SessionWithState | null>
   getAgents(): Promise<Agent[]>
   deleteSession(sessionId: string): Promise<void>
+  renameSession(sessionId: string, title: string): Promise<void>
+  toggleSessionPinned(sessionId: string, pinned: boolean): Promise<void>
   cancelGeneration(sessionId: string): Promise<void>
   handlePermissionResponse(
     sessionId: string,

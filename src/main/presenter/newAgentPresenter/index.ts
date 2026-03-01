@@ -181,6 +181,20 @@ export class NewAgentPresenter {
     eventBus.sendToRenderer(SESSION_EVENTS.LIST_UPDATED, SendTarget.ALL_WINDOWS)
   }
 
+  async renameSession(sessionId: string, title: string): Promise<void> {
+    const session = this.sessionManager.get(sessionId)
+    if (!session) throw new Error(`Session not found: ${sessionId}`)
+    this.sessionManager.update(sessionId, { title })
+    eventBus.sendToRenderer(SESSION_EVENTS.LIST_UPDATED, SendTarget.ALL_WINDOWS)
+  }
+
+  async toggleSessionPinned(sessionId: string, pinned: boolean): Promise<void> {
+    const session = this.sessionManager.get(sessionId)
+    if (!session) throw new Error(`Session not found: ${sessionId}`)
+    this.sessionManager.update(sessionId, { isPinned: pinned })
+    eventBus.sendToRenderer(SESSION_EVENTS.LIST_UPDATED, SendTarget.ALL_WINDOWS)
+  }
+
   async cancelGeneration(sessionId: string): Promise<void> {
     const session = this.sessionManager.get(sessionId)
     if (!session) return
