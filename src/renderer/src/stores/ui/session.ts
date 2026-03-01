@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ComputedRef } from 'vue'
 import { usePresenter } from '@/composables/usePresenter'
-import { SESSION_EVENTS, CONVERSATION_EVENTS } from '@/events'
+import { SESSION_EVENTS, CONVERSATION_EVENTS, STREAM_EVENTS } from '@/events'
 import type { SessionWithState, CreateSessionInput } from '@shared/types/agent-interface'
 import { usePageRouterStore } from './pageRouter'
 
@@ -34,10 +34,13 @@ export type GroupMode = 'time' | 'project'
 function mapSessionStatus(status: string): UISessionStatus {
   switch (status) {
     case 'generating':
+    case 'waiting_permission':
+    case 'waiting_question':
       return 'working'
     case 'error':
       return 'error'
     case 'idle':
+    case 'paused':
       return 'none'
     default:
       return 'none'
@@ -115,6 +118,9 @@ export const useSessionStore = defineStore('session', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  // Track generating session IDs for UI state (disable input, show stop button)
+  const generatingSessionIds = ref<Set<string>>(new Set())
+
   // --- Getters ---
   const activeSession: ComputedRef<UISession | undefined> = computed(() =>
     sessions.value.find((s) => s.id === activeSessionId.value)
@@ -123,6 +129,21 @@ export const useSessionStore = defineStore('session', () => {
   const hasActiveSession: ComputedRef<boolean> = computed(() => activeSessionId.value !== null)
 
   const sessionGroups: ComputedRef<SessionGroup[]> = computed(() => getFilteredGroups(null))
+
+  /**
+   * Check if a specific session is currently generating
+   */
+  const isSessionGenerating = computed(() => {
+    return (sessionId: string): boolean => generatingSessionIds.value.has(sessionId)
+  })
+
+  /**
+   * Check if the active session is currently generating
+   */
+  const isActiveSessionGenerating: ComputedRef<boolean> = computed(() => {
+    if (!activeSessionId.value) return false
+    return generatingSessionIds.value.has(activeSessionId.value)
+  })
 
   // --- Actions ---
 
@@ -179,9 +200,16 @@ export const useSessionStore = defineStore('session', () => {
   async function sendMessage(sessionId: string, content: string): Promise<void> {
     error.value = null
     try {
+      // Add to generating set immediately for optimistic UI feedback
+      generatingSessionIds.value.add(sessionId)
+      generatingSessionIds.value = new Set(generatingSessionIds.value)
       await newAgentPresenter.sendMessage(sessionId, content)
     } catch (e) {
+      // On error, remove from generating set
+      generatingSessionIds.value.delete(sessionId)
+      generatingSessionIds.value = new Set(generatingSessionIds.value)
       error.value = `Failed to send message: ${e}`
+      throw e
     }
   }
 
@@ -196,6 +224,60 @@ export const useSessionStore = defineStore('session', () => {
       await fetchSessions()
     } catch (e) {
       error.value = `Failed to delete session: ${e}`
+    }
+  }
+
+  /**
+   * Cancel ongoing generation for a session
+   */
+  async function cancelGenerating(sessionId: string): Promise<void> {
+    if (!sessionId) return
+    error.value = null
+    try {
+      await newAgentPresenter.cancelGeneration(sessionId)
+      // The generating state will be cleared when we receive the END/ERROR event
+      // But we can optimistically remove it for immediate UI feedback
+      generatingSessionIds.value.delete(sessionId)
+      generatingSessionIds.value = new Set(generatingSessionIds.value)
+    } catch (e) {
+      console.error('[SessionStore] Failed to cancel generation:', e)
+      error.value = `Failed to cancel generation: ${e}`
+    }
+  }
+
+  /**
+   * Add a session to the generating set
+   */
+  function addGeneratingSession(sessionId: string): void {
+    generatingSessionIds.value.add(sessionId)
+    generatingSessionIds.value = new Set(generatingSessionIds.value)
+  }
+
+  /**
+   * Remove a session from the generating set
+   */
+  function removeGeneratingSession(sessionId: string): void {
+    generatingSessionIds.value.delete(sessionId)
+    generatingSessionIds.value = new Set(generatingSessionIds.value)
+  }
+
+  async function renameSession(sessionId: string, title: string): Promise<void> {
+    error.value = null
+    try {
+      await newAgentPresenter.renameSession(sessionId, title)
+      await fetchSessions()
+    } catch (e) {
+      error.value = `Failed to rename session: ${e}`
+    }
+  }
+
+  async function toggleSessionPinned(sessionId: string, pinned: boolean): Promise<void> {
+    error.value = null
+    try {
+      await newAgentPresenter.toggleSessionPinned(sessionId, pinned)
+      await fetchSessions()
+    } catch (e) {
+      error.value = `Failed to update session pin status: ${e}`
     }
   }
 
@@ -219,6 +301,7 @@ export const useSessionStore = defineStore('session', () => {
 
   // --- Event Listeners ---
 
+  // Primary: SESSION_EVENTS - new event system (session-centric)
   window.electron.ipcRenderer.on(SESSION_EVENTS.LIST_UPDATED, () => {
     fetchSessions()
   })
@@ -251,10 +334,42 @@ export const useSessionStore = defineStore('session', () => {
       if (session) {
         session.status = mapSessionStatus(msg.status)
       }
+      // Update generating set based on status
+      if (msg.status === 'generating') {
+        generatingSessionIds.value.add(msg.sessionId)
+        generatingSessionIds.value = new Set(generatingSessionIds.value)
+      } else if (msg.status === 'idle' || msg.status === 'error') {
+        generatingSessionIds.value.delete(msg.sessionId)
+        generatingSessionIds.value = new Set(generatingSessionIds.value)
+      }
     }
   )
 
-  // Keep backward compatibility: also listen to old CONVERSATION_EVENTS
+  // Listen to stream events to track generation state
+  window.electron.ipcRenderer.on(
+    STREAM_EVENTS.END,
+    (_: unknown, msg: { conversationId: string }) => {
+      if (msg.conversationId) {
+        generatingSessionIds.value.delete(msg.conversationId)
+        generatingSessionIds.value = new Set(generatingSessionIds.value)
+      }
+    }
+  )
+
+  window.electron.ipcRenderer.on(
+    STREAM_EVENTS.ERROR,
+    (_: unknown, msg: { conversationId: string }) => {
+      if (msg.conversationId) {
+        generatingSessionIds.value.delete(msg.conversationId)
+        generatingSessionIds.value = new Set(generatingSessionIds.value)
+      }
+    }
+  )
+
+  // DEPRECATED: CONVERSATION_EVENTS - old event system (conversation-centric)
+  // Kept for backward compatibility during migration period.
+  // TODO: Remove after full migration to newAgentPresenter/SESSION_EVENTS
+  // Target removal: v1.x (when old sessionPresenter is fully deprecated)
   window.electron.ipcRenderer.on(CONVERSATION_EVENTS.LIST_UPDATED, () => {
     fetchSessions()
   })
@@ -265,15 +380,23 @@ export const useSessionStore = defineStore('session', () => {
     groupMode,
     loading,
     error,
+    generatingSessionIds,
     activeSession,
     sessionGroups,
     hasActiveSession,
+    isSessionGenerating,
+    isActiveSessionGenerating,
     fetchSessions,
     createSession,
     sendMessage,
     selectSession,
     closeSession,
     deleteSession,
+    renameSession,
+    toggleSessionPinned,
+    cancelGenerating,
+    addGeneratingSession,
+    removeGeneratingSession,
     toggleGroupMode,
     getFilteredGroups
   }
