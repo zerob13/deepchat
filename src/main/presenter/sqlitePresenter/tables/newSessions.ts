@@ -38,15 +38,10 @@ export class NewSessionsTable extends BaseTable {
 
   getMigrationSQL(version: number): string | null {
     if (version === 1) {
-      // Use CASE to avoid error if column already exists (idempotent migration)
+      // Add permission_mode column with default value
+      // Note: "duplicate column name" error is handled gracefully in the migration runner
       return `
-        SELECT CASE 
-          WHEN NOT EXISTS (
-            SELECT 1 FROM pragma_table_info('new_sessions') WHERE name = 'permission_mode'
-          )
-          THEN (SELECT 'ALTER TABLE new_sessions ADD COLUMN permission_mode TEXT DEFAULT \'default\';')
-          ELSE (SELECT 'SELECT 1;')
-        END;
+        ALTER TABLE new_sessions ADD COLUMN permission_mode TEXT DEFAULT 'default';
       `
     }
     return null

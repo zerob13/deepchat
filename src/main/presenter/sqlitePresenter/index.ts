@@ -225,7 +225,17 @@ export class SQLitePresenter implements ISQLitePresenter {
         this.db.transaction(() => {
           migrationSQLs.forEach((sql) => {
             console.log(`Executing SQL: ${sql}`)
-            this.db.exec(sql)
+            try {
+              this.db.exec(sql)
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error)
+              // Handle "duplicate column name" error gracefully - column already exists is OK
+              if (errorMessage.includes('duplicate column name')) {
+                console.log(`Column already exists, skipping: ${errorMessage}`)
+              } else {
+                throw error
+              }
+            }
           })
           this.db
             .prepare('INSERT INTO schema_versions (version, applied_at) VALUES (?, ?)')
