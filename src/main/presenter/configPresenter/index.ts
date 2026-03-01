@@ -1834,6 +1834,21 @@ export class ConfigPresenter implements IConfigPresenter {
   }
 
   setDefaultVisionModel(model: { providerId: string; modelId: string } | undefined): void {
+    // Validate that the model supports vision capability
+    if (model?.providerId && model?.modelId) {
+      const allModels = this.getProviderModels(model.providerId)
+      const customModels = this.getCustomModels(model.providerId)
+      const targetModel = [...allModels, ...customModels].find((m) => m.id === model.modelId)
+
+      if (!targetModel || !targetModel.vision) {
+        console.error(
+          `[Config] Cannot set defaultVisionModel: ${model.providerId}/${model.modelId} does not support vision`
+        )
+        throw new Error(
+          `Model ${model.modelId} from ${model.providerId} does not support vision capabilities`
+        )
+      }
+    }
     this.setSetting('defaultVisionModel', model)
   }
 }

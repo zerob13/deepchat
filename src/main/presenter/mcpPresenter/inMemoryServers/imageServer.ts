@@ -46,13 +46,8 @@ const OcrImageArgsSchema = z.object({
 
 export class ImageServer {
   private server: Server
-  private provider: string
-  private model: string
 
-  constructor(provider?: string, model?: string) {
-    const defaultVisionModel = presenter.configPresenter.getDefaultVisionModel()
-    this.provider = provider || defaultVisionModel?.providerId || 'openai'
-    this.model = model || defaultVisionModel?.modelId || 'gpt-4o'
+  constructor() {
     this.server = new Server(
       {
         name: 'image-processing-server',
@@ -73,10 +68,6 @@ export class ImageServer {
   // }
 
   private getEffectiveModel(): { provider: string; model: string } {
-    if (this.provider && this.model) {
-      return { provider: this.provider, model: this.model }
-    }
-
     const defaultVisionModel = presenter.configPresenter.getDefaultVisionModel()
     if (defaultVisionModel?.providerId && defaultVisionModel?.modelId) {
       return { provider: defaultVisionModel.providerId, model: defaultVisionModel.modelId }

@@ -17,7 +17,7 @@ import { AppleServer } from './appleServer'
 
 export function getInMemoryServer(
   serverName: string,
-  args: string[],
+  _args: string[],
   env?: Record<string, unknown>
 ) {
   switch (serverName) {
@@ -31,7 +31,7 @@ export function getInMemoryServer(
     case 'deepResearch':
       return new DeepResearchServer(env)
     case 'imageServer':
-      return new ImageServer(args[0] || undefined, args[1] || undefined)
+      return new ImageServer()
     case 'powerpack':
       return new PowerpackServer(env)
     case 'difyKnowledge':
