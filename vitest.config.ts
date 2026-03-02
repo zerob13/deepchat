@@ -70,6 +70,7 @@ export default defineConfig({
         'dist/**',
         'out/**',
         'test/**',
+        'tests/e2e/**',
         '**/*.d.ts',
         'scripts/**',
         'build/**',
