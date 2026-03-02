@@ -68,6 +68,7 @@
           <editor-content
             :editor="editor"
             :class="['text-sm h-full', variant === 'chat' ? 'dark:text-white/80' : 'p-2']"
+            data-testid="chat-input-editor"
             @keydown="onKeydown"
           />
         </div>
@@ -365,6 +366,7 @@
               variant="default"
               size="icon"
               class="w-7 h-7 text-xs rounded-lg"
+              data-testid="chat-send-button"
               :disabled="disabledSend || isCallActive"
               @click="emitSend"
             >

@@ -1,6 +1,7 @@
 <template>
   <div
     :data-message-id="message.id"
+    data-testid="message-bubble-assistant"
     class="flex flex-row pl-4 pt-5 pr-11 group gap-2 w-full justify-start assistant-message-item"
   >
     <div class="shrink-0 w-5 h-5 flex items-center justify-center">

@@ -12,16 +12,6 @@ sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2
   libgbm1 libasound2 libpango-1.0-0 libcairo2
 ```
 
-### 无头模式（CI/无 GUI 环境）
-
-```bash
-# 安装 Xvfb（虚拟 framebuffer）
-sudo apt-get install -y xvfb
-
-# 使用 Xvfb 运行测试
-xvfb-run pnpm run test:e2e
-```
-
 ### 安装依赖
 
 ```bash
@@ -74,19 +64,58 @@ import { test, expect } from '../fixtures/electron.fixture'
 test.describe('Feature Name', () => {
   test('should do something', async ({ page }) => {
     // 等待元素
-    await page.waitForSelector('.ProseMirror')
+    await page.waitForSelector('[data-testid="chat-input-editor"]')
     
     // 输入文本
-    await page.locator('.ProseMirror').fill('Hello')
+    await page.locator('[data-testid="chat-input-editor"]').fill('Hello')
     
     // 点击按钮
-    await page.locator('button:has-text("发送")').click()
+    await page.locator('[data-testid="chat-send-button"]').click()
     
     // 验证结果
-    await expect(page.locator('.message')).toBeVisible()
+    await expect(page.locator('[data-testid="message-bubble-assistant"]')).toBeVisible()
   })
 })
 ```
+
+### 如何为组件添加测试选择器
+
+在 Vue 组件中，为需要测试的 UI 元素添加 `data-testid` 属性：
+
+```vue
+<template>
+  <!-- 输入框 -->
+  <textarea data-testid="chat-input-editor" />
+  
+  <!-- 按钮 -->
+  <button data-testid="chat-send-button">发送</button>
+  
+  <!-- 容器 -->
+  <div data-testid="message-list-container">
+    <!-- 消息气泡 -->
+    <div data-testid="message-bubble-assistant">
+      <div data-testid="message-content">内容</div>
+    </div>
+  </div>
+</template>
+```
+
+#### 命名规范
+
+- 使用 **kebab-case**（短横线分隔）
+- 格式：`[组件]-[元素]-[用途]`
+- 示例：
+  - `chat-input-editor` - 聊天输入编辑器
+  - `chat-send-button` - 发送按钮
+  - `message-bubble-assistant` - 助手消息气泡
+  - `message-list-container` - 消息列表容器
+
+#### 最佳实践
+
+1. **为关键交互元素添加** - 输入框、按钮、链接等
+2. **为容器添加** - 便于定位和断言
+3. **保持一致性** - 同一组件使用统一的命名风格
+4. **避免过度使用** - 只为测试需要的元素添加
 
 ### 可用的 Fixtures
 
@@ -95,11 +124,20 @@ test.describe('Feature Name', () => {
 
 ### 选择器建议
 
-由于 DeepChat 未使用 `data-testid`，建议使用以下选择器：
+DeepChat 使用 `data-testid` 属性作为 E2E 测试的稳定选择器。推荐使用以下选择器：
 
-- **输入框**: `.ProseMirror`, `[contenteditable="true"]`
-- **按钮**: `button:has-text("文本")`, `button[aria-label*="send"]`
-- **消息**: `[class*="message"]`, `.message`
+- **输入框**: `[data-testid="chat-input-editor"]`
+- **发送按钮**: `[data-testid="chat-send-button"]`
+- **消息列表容器**: `[data-testid="message-list-container"]`
+- **助手消息气泡**: `[data-testid="message-bubble-assistant"]`
+- **用户消息气泡**: `[data-testid="message-bubble-user"]`
+
+#### 为什么使用 data-testid？
+
+1. **稳定性** - 不随 CSS 类名或布局变化而改变
+2. **可读性** - 明确表达元素用途
+3. **性能** - 比复杂的选择器查询更快
+4. **维护性** - 测试代码更清晰，易于理解
 
 ## 配置说明
 
@@ -108,7 +146,7 @@ test.describe('Feature Name', () => {
 - `testDir`: `./tests/e2e` - 测试文件目录
 - `timeout`: 30 秒 - 单个测试超时
 - `expect.timeout`: 5 秒 - 断言超时
-- `retries`: CI 环境 2 次，本地 0 次
+- `retries`: 0 次（本地测试）
 
 ### 与 Vitest 分离
 
@@ -142,8 +180,8 @@ E2E 测试与单元测试完全独立：
 ### Q: 测试运行失败，提示找不到 Electron
 A: 确保已构建应用：`pnpm run build`
 
-### Q: 测试在 CI 环境失败
-A: 检查 GUI 环境依赖是否安装，或考虑使用 headless 模式
+### Q: 测试运行失败，提示浏览器未安装
+A: 运行 `pnpm exec playwright install` 安装浏览器
 
 ### Q: 如何选择特定的 UI 元素
 A: 使用 Playwright Inspector: `pnpm run test:e2e:debug`

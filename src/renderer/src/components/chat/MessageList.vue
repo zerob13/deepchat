@@ -1,5 +1,5 @@
 <template>
-  <div class="flex-1 overflow-y-auto">
+  <div class="flex-1 overflow-y-auto" data-testid="message-list-container">
     <div class="max-w-3xl mx-auto px-4 py-6 space-y-1">
       <template v-for="msg in messages" :key="msg.id">
         <MessageItemUser v-if="msg.role === 'user'" :message="msg as UserMessage" />
