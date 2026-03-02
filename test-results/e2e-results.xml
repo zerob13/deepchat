@@ -1,0 +1,135 @@
+<testsuites id="" name="" tests="3" failures="3" skipped="0" errors="0" time="10.7718">
+<testsuite name="specs/app-launch.spec.ts" timestamp="2026-03-02T08:20:10.569Z" hostname="electron" tests="2" failures="2" skipped="0" time="5.31" errors="0">
+<testcase name="Application Launch › should launch successfully and show main window" classname="specs/app-launch.spec.ts" time="2.231">
+<failure message="app-launch.spec.ts:4:3 should launch successfully and show main window" type="FAILURE">
+<![CDATA[  [electron] › specs/app-launch.spec.ts:4:3 › Application Launch › should launch successfully and show main window 
+
+    Error: expect(received).toContain(expected) // indexOf
+
+    Expected substring: "DeepChat"
+    Received string:    "Splash"
+
+      11 |     // 验证应用标题包含 DeepChat
+      12 |     const title = await page.title()
+    > 13 |     expect(title).toContain('DeepChat')
+         |                   ^
+      14 |
+      15 |     // 验证主进程没有错误
+      16 |     const consoleLogs: string[] = []
+        at /home/zerob13/.openclaw/workspace/deepchat/tests/e2e/specs/app-launch.spec.ts:13:19
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../../test-results/specs-app-launch-Applicati-45f5d-sfully-and-show-main-window-electron/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ../../test-results/specs-app-launch-Applicati-45f5d-sfully-and-show-main-window-electron/error-context.md
+]]>
+</failure>
+<system-out>
+<![CDATA[Waiting for application window...
+Window event detected, URL: file:///home/zerob13/.openclaw/workspace/deepchat/out/renderer/splash/index.html
+Is app window: [33mtrue[39m
+Got page, URL: file:///home/zerob13/.openclaw/workspace/deepchat/out/renderer/splash/index.html
+
+[[ATTACHMENT|specs-app-launch-Applicati-45f5d-sfully-and-show-main-window-electron/test-failed-1.png]]
+
+[[ATTACHMENT|specs-app-launch-Applicati-45f5d-sfully-and-show-main-window-electron/error-context.md]]
+]]>
+</system-out>
+</testcase>
+<testcase name="Application Launch › should have chat input available" classname="specs/app-launch.spec.ts" time="3.079">
+<failure message="app-launch.spec.ts:32:3 should have chat input available" type="FAILURE">
+<![CDATA[  [electron] › specs/app-launch.spec.ts:32:3 › Application Launch › should have chat input available 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: locator('.ProseMirror, [contenteditable="true"]').first()
+    Expected: visible
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" with timeout 30000ms
+      - waiting for locator('.ProseMirror, [contenteditable="true"]').first()
+
+
+      33 |     // 等待聊天输入框出现（TipTap 编辑器）
+      34 |     const editorLocator = page.locator('.ProseMirror, [contenteditable="true"]').first()
+    > 35 |     await expect(editorLocator).toBeVisible({ timeout: 30000 })
+         |                                 ^
+      36 |
+      37 |     // 验证输入框可聚焦
+      38 |     await editorLocator.focus()
+        at /home/zerob13/.openclaw/workspace/deepchat/tests/e2e/specs/app-launch.spec.ts:35:33
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../../test-results/specs-app-launch-Applicati-fce26-d-have-chat-input-available-electron/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../../test-results/specs-app-launch-Applicati-fce26-d-have-chat-input-available-electron/test-failed-2.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ../../test-results/specs-app-launch-Applicati-fce26-d-have-chat-input-available-electron/error-context.md
+]]>
+</failure>
+<system-out>
+<![CDATA[Waiting for application window...
+Window event detected, URL: file:///home/zerob13/.openclaw/workspace/deepchat/out/renderer/splash/index.html
+Is app window: [33mtrue[39m
+Got page, URL: file:///home/zerob13/.openclaw/workspace/deepchat/out/renderer/splash/index.html
+
+[[ATTACHMENT|specs-app-launch-Applicati-fce26-d-have-chat-input-available-electron/test-failed-1.png]]
+
+[[ATTACHMENT|specs-app-launch-Applicati-fce26-d-have-chat-input-available-electron/test-failed-2.png]]
+
+[[ATTACHMENT|specs-app-launch-Applicati-fce26-d-have-chat-input-available-electron/error-context.md]]
+]]>
+</system-out>
+</testcase>
+</testsuite>
+<testsuite name="specs/basic-chat.spec.ts" timestamp="2026-03-02T08:20:10.569Z" hostname="electron" tests="1" failures="1" skipped="0" time="3.105" errors="0">
+<testcase name="DeepChat Basic Test › should respond to directory listing prompt" classname="specs/basic-chat.spec.ts" time="3.105">
+<failure message="basic-chat.spec.ts:4:3 should respond to directory listing prompt" type="FAILURE">
+<![CDATA[  [electron] › specs/basic-chat.spec.ts:4:3 › DeepChat Basic Test › should respond to directory listing prompt 
+
+    Error: page.waitForSelector: Target page, context or browser has been closed
+    Call log:
+      - waiting for locator('[data-testid="chat-input-editor"]') to be visible
+
+
+      4 |   test('should respond to directory listing prompt', async ({ page }) => {
+      5 |     // 等待应用加载完成 - 使用 data-testid 选择器
+    > 6 |     await page.waitForSelector('[data-testid="chat-input-editor"]', {
+        |                ^
+      7 |       timeout: 30000
+      8 |     })
+      9 |
+        at /home/zerob13/.openclaw/workspace/deepchat/tests/e2e/specs/basic-chat.spec.ts:6:16
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../../test-results/specs-basic-chat-DeepChat--4a8c4-to-directory-listing-prompt-electron/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────
+    ../../test-results/specs-basic-chat-DeepChat--4a8c4-to-directory-listing-prompt-electron/test-failed-2.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: ../../test-results/specs-basic-chat-DeepChat--4a8c4-to-directory-listing-prompt-electron/error-context.md
+]]>
+</failure>
+<system-out>
+<![CDATA[Waiting for application window...
+Window event detected, URL: file:///home/zerob13/.openclaw/workspace/deepchat/out/renderer/splash/index.html
+Is app window: [33mtrue[39m
+Got page, URL: file:///home/zerob13/.openclaw/workspace/deepchat/out/renderer/splash/index.html
+
+[[ATTACHMENT|specs-basic-chat-DeepChat--4a8c4-to-directory-listing-prompt-electron/test-failed-1.png]]
+
+[[ATTACHMENT|specs-basic-chat-DeepChat--4a8c4-to-directory-listing-prompt-electron/test-failed-2.png]]
+
+[[ATTACHMENT|specs-basic-chat-DeepChat--4a8c4-to-directory-listing-prompt-electron/error-context.md]]
+]]>
+</system-out>
+</testcase>
+</testsuite>
+</testsuites>

@@ -1,0 +1,1585 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e10]:
+    - group "DevTools is now available in Chinese" [ref=e13]:
+      - generic [ref=e17]:
+        - alert [ref=e19]: DevTools is now available in Chinese
+        - generic [ref=e20]:
+          - button "Don't show again" [ref=e21]:
+            - generic: Don't show again
+          - button "Always match Chrome's language" [ref=e22]:
+            - generic: Always match Chrome's language
+          - button "Switch DevTools to Chinese" [ref=e23]:
+            - generic: Switch DevTools to Chinese
+      - generic "Close" [ref=e25]:
+        - button "Close" [ref=e26]
+    - generic [ref=e32]:
+      - navigation "Main toolbar" [ref=e33]:
+        - toolbar [ref=e34]:
+          - generic:
+            - generic "Select an element in the page to inspect it" [ref=e35]:
+              - button "Select an element in the page to inspect it - Ctrl + Shift + C" [ref=e36]
+            - generic "Toggle device toolbar" [ref=e38]:
+              - button "Toggle device toolbar - Ctrl + Shift + M" [ref=e39]
+        - generic:
+          - tablist "Panels":
+            - tab "Elements" [selected] [ref=e42]:
+              - generic [ref=e43]: Elements
+            - tab "Console" [ref=e44]:
+              - generic [ref=e45]: Console
+            - tab "Sources" [ref=e46]:
+              - generic [ref=e47]: Sources
+            - tab "Network" [ref=e48]:
+              - generic [ref=e49]: Network
+          - button "More tabs" [ref=e50]
+        - toolbar [ref=e53]:
+          - generic:
+            - generic "Open Console to view 1 warning" [ref=e55]:
+              - button "Open Console to view 1 warning" [ref=e56]:
+                - generic [ref=e58]: "1"
+            - generic "Settings" [ref=e60]:
+              - button "Settings - F1 - Shift + ?" [ref=e61]
+            - button "Customize and control DevTools" [ref=e63]:
+              - button "Customize and control DevTools" [ref=e64]
+            - generic "Close" [ref=e66]:
+              - button "Close" [ref=e67]
+      - tabpanel "Elements panel" [ref=e70]:
+        - generic "elements" [ref=e71]:
+          - generic [ref=e73]:
+            - generic [ref=e76]:
+              - generic:
+                - generic [ref=e77]:
+                  - button "Switch to Accessibility Tree view" [ref=e79]
+                  - main "DOM tree explorer" [ref=e81]:
+                    - tree "Page DOM" [ref=e84]:
+                      - treeitem "<!DOCTYPE html>" [ref=e85]:
+                        - generic [ref=e89]: <!DOCTYPE html>
+                      - 'treeitem "<html style=\"--dc-font-family: ''Geist'', Noto Sans, ui-sans-serif, system-ui, sans-serif, ''Apple Color Emoji'', ''Segoe UI Emoji'', ''Segoe UI Symbol'', ''Noto Color Emoji''; --dc-code-font-family: ''JetBrains Mono'', ''Fira Code'', ''Menlo'', ''Monaco'', ''Consolas'', ''Courier New'', monospace;\">" [expanded] [ref=e90]':
+                        - 'generic "<html style=\"--dc-font-family: ''Geist'', Noto Sans, ui-sans-serif, system-ui, sans-serif, ''Apple Color Emoji'', ''Segoe UI Emoji'', ''Segoe UI Symbol'', ''Noto Color Emoji''; --dc-code-font-family: ''JetBrains Mono'', ''Fira Code'', ''Menlo'', ''Monaco'', ''Consolas'', ''Courier New'', monospace;\">" [ref=e94]':
+                          - text: <html
+                          - generic [ref=e95]: "style=\"--dc-font-family: 'Geist', Noto Sans, ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; --dc-code-font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace;\""
+                          - text: ">"
+                      - group [ref=e96]:
+                        - treeitem "<head> Expand …</head>" [ref=e97]:
+                          - generic [ref=e100]:
+                            - generic "<head>" [ref=e101]
+                            - button "Expand" [ref=e103]
+                            - text: …
+                            - generic "</head>" [ref=e105]
+                        - treeitem "<body class=\"system text-base\">" [expanded] [selected] [ref=e106]:
+                          - generic [ref=e107]:
+                            - generic "<body class=\"system text-base\">" [ref=e112]:
+                              - text: <body
+                              - generic [ref=e113]: class="system text-base"
+                              - text: ">"
+                            - generic [ref=e114]: == $0
+                        - group [ref=e115]:
+                          - treeitem "<div id=\"app\" data-v-app> Expand …</div>" [ref=e116]:
+                            - generic [ref=e119]:
+                              - generic "<div id=\"app\" data-v-app>" [ref=e120]:
+                                - text: <div
+                                - generic [ref=e121]: id="app"
+                                - generic [ref=e122]: data-v-app
+                                - text: ">"
+                              - button "Expand" [ref=e124]
+                              - text: …
+                              - generic "</div>" [ref=e126]
+                          - treeitem "<!---->" [ref=e127]:
+                            - generic [ref=e130]: <!---->
+                          - treeitem "<!---->" [ref=e131]:
+                            - generic [ref=e134]: <!---->
+                          - treeitem "<!---->" [ref=e135]:
+                            - generic [ref=e138]: <!---->
+                          - treeitem "<!---->" [ref=e139]:
+                            - generic [ref=e142]: <!---->
+                          - treeitem "<!---->" [ref=e143]:
+                            - generic [ref=e146]: <!---->
+                          - treeitem "<!---->" [ref=e147]:
+                            - generic [ref=e150]: <!---->
+                          - treeitem "<!---->" [ref=e151]:
+                            - generic [ref=e154]: <!---->
+                          - treeitem "<!---->" [ref=e155]:
+                            - generic [ref=e158]: <!---->
+                          - treeitem "<!---->" [ref=e159]:
+                            - generic [ref=e162]: <!---->
+                          - treeitem "<!---->" [ref=e163]:
+                            - generic [ref=e166]: <!---->
+                          - treeitem "<!---->" [ref=e167]:
+                            - generic [ref=e170]: <!---->
+                          - treeitem "<!---->" [ref=e171]:
+                            - generic [ref=e174]: <!---->
+                          - treeitem "<!---->" [ref=e175]:
+                            - generic [ref=e178]: <!---->
+                          - treeitem "<!---->" [ref=e179]:
+                            - generic [ref=e182]: <!---->
+                          - treeitem "<!---->" [ref=e183]:
+                            - generic [ref=e186]: <!---->
+                          - treeitem "<!---->" [ref=e187]:
+                            - generic [ref=e190]: <!---->
+                          - treeitem "<!---->" [ref=e191]:
+                            - generic [ref=e194]: <!---->
+                          - treeitem "<!---->" [ref=e195]:
+                            - generic [ref=e198]: <!---->
+                          - treeitem "<!---->" [ref=e199]:
+                            - generic [ref=e202]: <!---->
+                          - treeitem "<!---->" [ref=e203]:
+                            - generic [ref=e206]: <!---->
+                          - treeitem "</body>" [ref=e207]:
+                            - generic "</body>" [ref=e211]
+                        - treeitem "</html>" [ref=e212]:
+                          - generic "</html>" [ref=e216]
+                - navigation "DOM tree breadcrumbs" [ref=e219]:
+                  - list [ref=e221]:
+                    - listitem [ref=e222]:
+                      - link "html" [ref=e223] [cursor=pointer]:
+                        - /url: "#"
+                        - generic [ref=e225]: html
+                    - listitem [ref=e226]:
+                      - link "body.system.text-base" [ref=e227] [cursor=pointer]:
+                        - /url: "#"
+                        - generic [ref=e228]:
+                          - generic [ref=e229]: body
+                          - generic [ref=e230]: .system.text-base
+            - generic [ref=e233]:
+              - navigation "Side panel toolbar" [ref=e234]:
+                - generic:
+                  - tablist:
+                    - tab "Styles" [selected] [ref=e235]:
+                      - generic [ref=e236]: Styles
+                    - tab "Computed" [ref=e237]:
+                      - generic [ref=e238]: Computed
+                    - tab "Layout" [ref=e239]:
+                      - generic [ref=e240]: Layout
+                    - tab "Event Listeners" [ref=e241]:
+                      - generic [ref=e242]: Event Listeners
+                    - tab "DOM Breakpoints" [ref=e243]:
+                      - generic [ref=e244]: DOM Breakpoints
+                    - tab "Properties" [ref=e245]:
+                      - generic [ref=e246]: Properties
+                  - button "More tabs" [ref=e247]
+              - complementary "Side panel content" [ref=e250]:
+                - tabpanel "Styles panel" [ref=e251]:
+                  - generic [ref=e256]:
+                    - generic [ref=e258]:
+                      - toolbar [ref=e259]:
+                        - generic [ref=e260]:
+                          - generic:
+                            - textbox "Filter" [ref=e265]
+                            - generic "Toggle CSS Layers view" [ref=e266]:
+                              - button "Toggle CSS Layers view" [ref=e267]
+                            - generic "Toggle Element State" [ref=e269]:
+                              - button "Toggle Element State" [ref=e270]
+                            - generic "Element Classes" [ref=e272]:
+                              - button "Element Classes" [ref=e273]
+                            - generic "New Style Rule" [ref=e275]:
+                              - button "New Style Rule" [ref=e276]
+                            - generic "Toggle common rendering emulations" [ref=e279]:
+                              - button "Toggle common rendering emulations" [ref=e280]
+                            - generic "Show Computed Styles sidebar" [ref=e282]:
+                              - button "Show Computed Styles sidebar" [ref=e283]
+                      - list [ref=e285]:
+                        - listitem "element.style, css selector" [ref=e286]:
+                          - generic [ref=e288]:
+                            - generic [ref=e290]:
+                              - text: element.style
+                              - text: "{"
+                            - generic [ref=e291]:
+                              - generic:
+                                - tree
+                            - generic [ref=e292]: "}"
+                        - listitem "body, css selector" [ref=e293]:
+                          - link "style-CtgABeDv.css:1" [ref=e295] [cursor=pointer]
+                          - generic [ref=e296]:
+                            - generic [ref=e298]:
+                              - generic "CSS selector" [ref=e299]: body
+                              - text: "{"
+                            - tree [ref=e302]:
+                              - 'treeitem "CSS property name: counter-reset : CSS property value: katexEqnNo mmlEqnNo;" [ref=e303]':
+                                - text: counter-reset
+                                - generic [ref=e304]: ":"
+                                - 'generic "CSS property value: katexEqnNo mmlEqnNo" [ref=e305]': katexEqnNo mmlEqnNo
+                                - text: ;
+                            - generic [ref=e306]: "}"
+                        - listitem "html, body, css selector" [ref=e307]:
+                          - link "style-CtgABeDv.css:1" [ref=e309] [cursor=pointer]
+                          - generic [ref=e310]:
+                            - generic [ref=e312]:
+                              - generic "CSS selector" [ref=e313]: html, body
+                              - text: "{"
+                            - tree [ref=e316]:
+                              - 'treeitem "CSS property name: background-color : CSS property value: transparent;" [ref=e317]':
+                                - text: background-color
+                                - generic [ref=e318]: ":"
+                                - 'generic "CSS property value: transparent" [ref=e319]':
+                                  - generic [ref=e320]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e321]
+                                    - generic: transparent
+                                - text: ;
+                            - generic [ref=e323]: "}"
+                        - generic [ref=e324]:
+                          - generic [ref=e325]: Layer
+                          - button "utilities" [ref=e326] [cursor=pointer]
+                        - listitem ".text-base, css selector" [ref=e327]:
+                          - link "style-CtgABeDv.css:1" [ref=e329] [cursor=pointer]
+                          - generic [ref=e330]:
+                            - generic [ref=e332]:
+                              - generic "CSS selector" [ref=e333]: .text-base
+                              - text: "{"
+                            - tree [ref=e336]:
+                              - 'treeitem "CSS property name: font-size : CSS property value: var(--text-base);" [ref=e337]':
+                                - text: font-size
+                                - generic [ref=e338]: ":"
+                                - 'generic "CSS property value: var(--text-base)" [ref=e339]':
+                                  - generic [ref=e341]:
+                                    - text: var(
+                                    - link "--text-base" [ref=e343] [cursor=pointer]
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: line-height : CSS property value: var(--tw-leading,var(--text-base--line-height));" [ref=e344]':
+                                - text: line-height
+                                - generic [ref=e345]: ":"
+                                - 'generic "CSS property value: var(--tw-leading,var(--text-base--line-height))" [ref=e346]':
+                                  - generic [ref=e348]:
+                                    - text: var(
+                                    - link "--tw-leading" [disabled] [ref=e350] [cursor=pointer]
+                                    - text: ","
+                                    - generic [ref=e352]:
+                                      - text: var(
+                                      - link "--text-base--line-height" [ref=e354] [cursor=pointer]
+                                      - text: )
+                                    - text: )
+                                - text: ;
+                            - generic [ref=e355]: "}"
+                        - generic [ref=e356]:
+                          - generic [ref=e357]: Layer
+                          - button "base" [ref=e358] [cursor=pointer]
+                        - listitem "body, css selector" [ref=e359]:
+                          - link "style-CtgABeDv.css:1" [ref=e361] [cursor=pointer]
+                          - generic [ref=e362]:
+                            - generic [ref=e364]:
+                              - generic "CSS selector" [ref=e365]: body
+                              - text: "{"
+                            - tree [ref=e368]:
+                              - 'treeitem "CSS property name: color : CSS property value: var(--foreground);" [ref=e369]':
+                                - text: color
+                                - generic [ref=e370]: ":"
+                                - 'generic "CSS property value: var(--foreground)" [ref=e371]':
+                                  - generic [ref=e372]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e373]
+                                    - generic [ref=e376]:
+                                      - text: var(
+                                      - link "--foreground" [ref=e378] [cursor=pointer]
+                                      - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: font-weight : CSS property value: var(--text-weight);" [ref=e379]':
+                                - text: font-weight
+                                - generic [ref=e380]: ":"
+                                - 'generic "CSS property value: var(--text-weight)" [ref=e381]':
+                                  - generic [ref=e383]:
+                                    - text: var(
+                                    - link "--text-weight" [ref=e385] [cursor=pointer]
+                                    - text: )
+                                - text: ;
+                            - generic [ref=e386]: "}"
+                        - generic [ref=e387]:
+                          - generic [ref=e388]: Layer
+                          - button "base" [ref=e389] [cursor=pointer]
+                        - listitem "*, css selector" [ref=e390]:
+                          - link "style-CtgABeDv.css:1" [ref=e392] [cursor=pointer]
+                          - generic [ref=e395]:
+                            - generic [ref=e396]: "@supports"
+                            - generic [ref=e397]: (color:color-mix(in lab,red,red))
+                            - text: "{"
+                          - generic [ref=e398]:
+                            - generic [ref=e400]:
+                              - generic "CSS selector" [ref=e401]: "*"
+                              - text: "{"
+                            - tree [ref=e404]:
+                              - 'treeitem "CSS property name: outline-color : CSS property value: color-mix(in oklab,var(--ring) 50%,transparent);" [ref=e405]':
+                                - text: outline-color
+                                - generic [ref=e406]: ":"
+                                - 'generic "CSS property value: color-mix(in oklab,var(--ring) 50%,transparent)" [ref=e407]':
+                                  - 'generic "color-mix(in oklab, #006edb 50%, transparent)" [ref=e408]'
+                                  - generic [ref=e413]:
+                                    - text: color-mix(in oklab,
+                                    - generic [ref=e414]:
+                                      - generic "Open color picker. Shift + Click to change color format." [ref=e415]
+                                      - generic [ref=e418]:
+                                        - text: var(
+                                        - link "--ring" [ref=e420] [cursor=pointer]
+                                        - text: )
+                                    - text: 50% ,
+                                    - generic [ref=e421]:
+                                      - generic "Open color picker. Shift + Click to change color format." [ref=e422]
+                                      - generic: transparent
+                                    - text: )
+                                - text: ;
+                            - generic [ref=e424]: "}"
+                          - generic [ref=e426]: "}"
+                        - generic [ref=e427]:
+                          - generic [ref=e428]: Layer
+                          - button "base" [ref=e429] [cursor=pointer]
+                        - listitem "*, css selector" [ref=e430]:
+                          - link "style-CtgABeDv.css:1" [ref=e432] [cursor=pointer]
+                          - generic [ref=e433]:
+                            - generic [ref=e435]:
+                              - generic "CSS selector" [ref=e436]: "*"
+                              - text: "{"
+                            - tree [ref=e439]:
+                              - 'treeitem "CSS property name: border-color : CSS property value: var(--border);" [ref=e440]':
+                                - text: border-color
+                                - generic [ref=e441]: ":"
+                                - 'generic "CSS property value: var(--border)" [ref=e443]':
+                                  - generic [ref=e444]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e445]
+                                    - generic [ref=e448]:
+                                      - text: var(
+                                      - link "--border" [ref=e450] [cursor=pointer]
+                                      - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: outline-color : CSS property value: var(--ring);" [ref=e451]':
+                                - text: outline-color
+                                - generic [ref=e452]: ":"
+                                - 'generic "CSS property value: var(--ring)" [ref=e453]':
+                                  - generic [ref=e454]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e455]
+                                    - generic [ref=e458]:
+                                      - text: var(
+                                      - link "--ring" [ref=e460] [cursor=pointer]
+                                      - text: )
+                                - text: ;
+                            - generic [ref=e461]: "}"
+                        - generic [ref=e462]:
+                          - generic [ref=e463]: Layer
+                          - button "base" [ref=e464] [cursor=pointer]
+                        - listitem "*, :after, :before, ::backdrop, css selector" [ref=e465]:
+                          - link "style-CtgABeDv.css:1" [ref=e467] [cursor=pointer]
+                          - generic [ref=e468]:
+                            - generic [ref=e470]:
+                              - generic "CSS selector" [ref=e471]: "*, :after, :before, ::backdrop"
+                              - text: "{"
+                            - tree [ref=e474]:
+                              - 'treeitem "CSS property name: box-sizing : CSS property value: border-box;" [ref=e475]':
+                                - text: box-sizing
+                                - generic [ref=e476]: ":"
+                                - 'generic "CSS property value: border-box" [ref=e477]': border-box
+                                - text: ;
+                              - 'treeitem "CSS property name: border : CSS property value: 0 solid;" [ref=e478]':
+                                - text: border
+                                - generic [ref=e479]: ":"
+                                - 'generic "CSS property value: 0 solid" [ref=e481]': 0 solid
+                                - text: ;
+                              - 'treeitem "CSS property name: margin : CSS property value: 0;" [ref=e482]':
+                                - text: margin
+                                - generic [ref=e483]: ":"
+                                - 'generic "CSS property value: 0" [ref=e485]': "0"
+                                - text: ;
+                              - 'treeitem "CSS property name: padding : CSS property value: 0;" [ref=e486]':
+                                - text: padding
+                                - generic [ref=e487]: ":"
+                                - 'generic "CSS property value: 0" [ref=e489]': "0"
+                                - text: ;
+                            - generic [ref=e490]: "}"
+                        - generic [ref=e491]:
+                          - generic [ref=e492]: Layer
+                          - generic [ref=e493]: user agent stylesheet
+                        - listitem "body, css selector" [ref=e494]:
+                          - generic [ref=e495]: user agent stylesheet
+                          - generic [ref=e496]:
+                            - generic [ref=e498]:
+                              - generic "CSS selector" [ref=e499]: body
+                              - text: "{"
+                            - tree [ref=e502]:
+                              - 'treeitem "CSS property name: display : CSS property value: block;" [ref=e503]':
+                                - text: display
+                                - generic [ref=e504]: ":"
+                                - 'generic "CSS property value: block" [ref=e505]': block
+                                - text: ;
+                              - 'treeitem "CSS property name: margin : CSS property value: 8px;" [ref=e506]':
+                                - text: margin
+                                - generic [ref=e507]: ":"
+                                - 'generic "CSS property value: 8px" [ref=e509]': 8px
+                                - text: ;
+                            - generic [ref=e510]: "}"
+                        - generic [ref=e511]:
+                          - text: Inherited from
+                          - button "html" [ref=e515] [cursor=pointer]:
+                            - generic [ref=e516]: html
+                        - listitem "style attribute, css selector" [ref=e517]:
+                          - generic [ref=e519]:
+                            - generic [ref=e521]:
+                              - text: style attribute
+                              - text: "{"
+                            - tree [ref=e524]:
+                              - 'treeitem "CSS property name: --dc-font-family : CSS property value: ''Geist'', Noto Sans, ui-sans-serif, system-ui, sans-serif, ''Apple Color Emoji'', ''Segoe UI Emoji'', ''Segoe UI Symbol'', ''Noto Color Emoji'';" [ref=e525]':
+                                - text: "--dc-font-family"
+                                - generic [ref=e526]: ":"
+                                - 'generic "CSS property value: ''Geist'', Noto Sans, ui-sans-serif, system-ui, sans-serif, ''Apple Color Emoji'', ''Segoe UI Emoji'', ''Segoe UI Symbol'', ''Noto Color Emoji''" [ref=e527]': "'Geist', Noto Sans, ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'"
+                                - text: ;
+                              - 'treeitem "CSS property name: --dc-code-font-family : CSS property value: ''JetBrains Mono'', ''Fira Code'', ''Menlo'', ''Monaco'', ''Consolas'', ''Courier New'', monospace;" [ref=e528]':
+                                - text: "--dc-code-font-family"
+                                - generic [ref=e529]: ":"
+                                - 'generic "CSS property value: ''JetBrains Mono'', ''Fira Code'', ''Menlo'', ''Monaco'', ''Consolas'', ''Courier New'', monospace" [ref=e530]': "'JetBrains Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', 'Courier New', monospace"
+                                - text: ;
+                            - generic [ref=e531]: "}"
+                        - generic [ref=e532]:
+                          - generic [ref=e533]: Layer
+                          - button "Click to reveal layer in layer tree" [ref=e534] [cursor=pointer]
+                        - listitem ":root, css selector" [ref=e535]:
+                          - link "style-CtgABeDv.css:1" [ref=e537] [cursor=pointer]
+                          - generic [ref=e538]:
+                            - generic [ref=e540]:
+                              - generic "CSS selector" [ref=e541]: :root
+                              - text: "{"
+                            - tree [ref=e544]:
+                              - 'treeitem "CSS property name: --vscode-sash-size : CSS property value: 4px;" [ref=e545]':
+                                - text: "--vscode-sash-size"
+                                - generic [ref=e546]: ":"
+                                - 'generic "CSS property value: 4px" [ref=e547]': 4px
+                                - text: ;
+                              - 'treeitem "CSS property name: --vscode-sash-hover-size : CSS property value: 4px;" [ref=e548]':
+                                - text: "--vscode-sash-hover-size"
+                                - generic [ref=e549]: ":"
+                                - 'generic "CSS property value: 4px" [ref=e550]': 4px
+                                - text: ;
+                            - generic [ref=e551]: "}"
+                        - generic [ref=e552]:
+                          - generic [ref=e553]: Layer
+                          - button "base" [ref=e554] [cursor=pointer]
+                        - listitem ":root, css selector" [ref=e555]:
+                          - link "style-CtgABeDv.css:1" [ref=e557] [cursor=pointer]
+                          - generic [ref=e558]:
+                            - generic [ref=e560]:
+                              - generic "CSS selector" [ref=e561]: :root
+                              - text: "{"
+                            - tree [ref=e564]:
+                              - 'treeitem "CSS property name: scrollbar-color : CSS property value: #6b7280a6 transparent;" [ref=e565]':
+                                - text: scrollbar-color
+                                - generic [ref=e566]: ":"
+                                - 'generic "CSS property value: #6b7280a6 transparent" [ref=e567]':
+                                  - generic [ref=e568]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e569]
+                                    - generic: "#6b7280a6"
+                                  - generic [ref=e571]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e572]
+                                    - generic: transparent
+                                - text: ;
+                              - 'treeitem "CSS property name: scrollbar-width : CSS property value: thin;" [ref=e574]':
+                                - text: scrollbar-width
+                                - generic [ref=e575]: ":"
+                                - 'generic "CSS property value: thin" [ref=e576]': thin
+                                - text: ;
+                            - generic [ref=e577]: "}"
+                        - generic [ref=e578]:
+                          - generic [ref=e579]: Layer
+                          - button "base" [ref=e580] [cursor=pointer]
+                        - listitem ":root, css selector" [ref=e581]:
+                          - link "style-CtgABeDv.css:1" [ref=e583] [cursor=pointer]
+                          - generic [ref=e584]:
+                            - generic [ref=e586]:
+                              - generic "CSS selector" [ref=e587]: :root
+                              - text: "{"
+                            - tree [ref=e590]:
+                              - 'treeitem "CSS property name: --dc-font-scale : CSS property value: 1;" [ref=e591]':
+                                - text: "--dc-font-scale"
+                                - generic [ref=e592]: ":"
+                                - 'generic "CSS property value: 1" [ref=e593]': "1"
+                                - text: ;
+                              - 'treeitem "CSS property name: --dc-font-family : CSS property value: \"Geist\", Noto Sans, ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\";" [ref=e594]':
+                                - text: "--dc-font-family"
+                                - generic [ref=e595]: ":"
+                                - 'generic "CSS property value: \"Geist\", Noto Sans, ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"" [ref=e596]': "\"Geist\", Noto Sans, ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\""
+                                - text: ;
+                              - 'treeitem "CSS property name: --dc-code-font-family : CSS property value: \"JetBrains Mono\", \"Fira Code\", \"Menlo\", \"Monaco\", \"Consolas\", \"Courier New\", monospace;" [ref=e597]':
+                                - text: "--dc-code-font-family"
+                                - generic [ref=e598]: ":"
+                                - 'generic "CSS property value: \"JetBrains Mono\", \"Fira Code\", \"Menlo\", \"Monaco\", \"Consolas\", \"Courier New\", monospace" [ref=e599]': "\"JetBrains Mono\", \"Fira Code\", \"Menlo\", \"Monaco\", \"Consolas\", \"Courier New\", monospace"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-50 : CSS property value: #fff;" [ref=e600]':
+                                - text: "--base-50"
+                                - generic [ref=e601]: ":"
+                                - 'generic "CSS property value: #fff" [ref=e602]':
+                                  - generic [ref=e603]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e604]
+                                    - generic: "#fff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-100 : CSS property value: #fafafa;" [ref=e606]':
+                                - text: "--base-100"
+                                - generic [ref=e607]: ":"
+                                - 'generic "CSS property value: #fafafa" [ref=e608]':
+                                  - generic [ref=e609]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e610]
+                                    - generic: "#fafafa"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-200 : CSS property value: #eee;" [ref=e612]':
+                                - text: "--base-200"
+                                - generic [ref=e613]: ":"
+                                - 'generic "CSS property value: #eee" [ref=e614]':
+                                  - generic [ref=e615]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e616]
+                                    - generic: "#eee"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-300 : CSS property value: #dbdbdb;" [ref=e618]':
+                                - text: "--base-300"
+                                - generic [ref=e619]: ":"
+                                - 'generic "CSS property value: #dbdbdb" [ref=e620]':
+                                  - generic [ref=e621]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e622]
+                                    - generic: "#dbdbdb"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-400 : CSS property value: #ababab;" [ref=e624]':
+                                - text: "--base-400"
+                                - generic [ref=e625]: ":"
+                                - 'generic "CSS property value: #ababab" [ref=e626]':
+                                  - generic [ref=e627]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e628]
+                                    - generic: "#ababab"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-500 : CSS property value: #7d7d7d;" [ref=e630]':
+                                - text: "--base-500"
+                                - generic [ref=e631]: ":"
+                                - 'generic "CSS property value: #7d7d7d" [ref=e632]':
+                                  - generic [ref=e633]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e634]
+                                    - generic: "#7d7d7d"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-600 : CSS property value: #5d5d5d;" [ref=e636]':
+                                - text: "--base-600"
+                                - generic [ref=e637]: ":"
+                                - 'generic "CSS property value: #5d5d5d" [ref=e638]':
+                                  - generic [ref=e639]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e640]
+                                    - generic: "#5d5d5d"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-700 : CSS property value: #494949;" [ref=e642]':
+                                - text: "--base-700"
+                                - generic [ref=e643]: ":"
+                                - 'generic "CSS property value: #494949" [ref=e644]':
+                                  - generic [ref=e645]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e646]
+                                    - generic: "#494949"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-800 : CSS property value: #323232;" [ref=e648]':
+                                - text: "--base-800"
+                                - generic [ref=e649]: ":"
+                                - 'generic "CSS property value: #323232" [ref=e650]':
+                                  - generic [ref=e651]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e652]
+                                    - generic: "#323232"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-900 : CSS property value: #222;" [ref=e654]':
+                                - text: "--base-900"
+                                - generic [ref=e655]: ":"
+                                - 'generic "CSS property value: #222" [ref=e656]':
+                                  - generic [ref=e657]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e658]
+                                    - generic: "#222"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-950 : CSS property value: #1f1f1f;" [ref=e660]':
+                                - text: "--base-950"
+                                - generic [ref=e661]: ":"
+                                - 'generic "CSS property value: #1f1f1f" [ref=e662]':
+                                  - generic [ref=e663]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e664]
+                                    - generic: "#1f1f1f"
+                                - text: ;
+                              - 'treeitem "CSS property name: --base-1000 : CSS property value: #030303;" [ref=e666]':
+                                - text: "--base-1000"
+                                - generic [ref=e667]: ":"
+                                - 'generic "CSS property value: #030303" [ref=e668]':
+                                  - generic [ref=e669]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e670]
+                                    - generic: "#030303"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-50 : CSS property value: #e6f1fb;" [ref=e672]':
+                                - text: "--primary-50"
+                                - generic [ref=e673]: ":"
+                                - 'generic "CSS property value: #e6f1fb" [ref=e674]':
+                                  - generic [ref=e675]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e676]
+                                    - generic: "#e6f1fb"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-100 : CSS property value: #cce2f8;" [ref=e678]':
+                                - text: "--primary-100"
+                                - generic [ref=e679]: ":"
+                                - 'generic "CSS property value: #cce2f8" [ref=e680]':
+                                  - generic [ref=e681]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e682]
+                                    - generic: "#cce2f8"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-200 : CSS property value: #a6ccf2;" [ref=e684]':
+                                - text: "--primary-200"
+                                - generic [ref=e685]: ":"
+                                - 'generic "CSS property value: #a6ccf2" [ref=e686]':
+                                  - generic [ref=e687]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e688]
+                                    - generic: "#a6ccf2"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-300 : CSS property value: #80b7ed;" [ref=e690]':
+                                - text: "--primary-300"
+                                - generic [ref=e691]: ":"
+                                - 'generic "CSS property value: #80b7ed" [ref=e692]':
+                                  - generic [ref=e693]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e694]
+                                    - generic: "#80b7ed"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-400 : CSS property value: #59a1e8;" [ref=e696]':
+                                - text: "--primary-400"
+                                - generic [ref=e697]: ":"
+                                - 'generic "CSS property value: #59a1e8" [ref=e698]':
+                                  - generic [ref=e699]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e700]
+                                    - generic: "#59a1e8"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-500 : CSS property value: #338be2;" [ref=e702]':
+                                - text: "--primary-500"
+                                - generic [ref=e703]: ":"
+                                - 'generic "CSS property value: #338be2" [ref=e704]':
+                                  - generic [ref=e705]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e706]
+                                    - generic: "#338be2"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-600 : CSS property value: #006edb;" [ref=e708]':
+                                - text: "--primary-600"
+                                - generic [ref=e709]: ":"
+                                - 'generic "CSS property value: #006edb" [ref=e710]':
+                                  - generic [ref=e711]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e712]
+                                    - generic: "#006edb"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-700 : CSS property value: #0058af;" [ref=e714]':
+                                - text: "--primary-700"
+                                - generic [ref=e715]: ":"
+                                - 'generic "CSS property value: #0058af" [ref=e716]':
+                                  - generic [ref=e717]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e718]
+                                    - generic: "#0058af"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-800 : CSS property value: #00488e;" [ref=e720]':
+                                - text: "--primary-800"
+                                - generic [ref=e721]: ":"
+                                - 'generic "CSS property value: #00488e" [ref=e722]':
+                                  - generic [ref=e723]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e724]
+                                    - generic: "#00488e"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-900 : CSS property value: #00376e;" [ref=e726]':
+                                - text: "--primary-900"
+                                - generic [ref=e727]: ":"
+                                - 'generic "CSS property value: #00376e" [ref=e728]':
+                                  - generic [ref=e729]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e730]
+                                    - generic: "#00376e"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-950 : CSS property value: #00274d;" [ref=e732]':
+                                - text: "--primary-950"
+                                - generic [ref=e733]: ":"
+                                - 'generic "CSS property value: #00274d" [ref=e734]':
+                                  - generic [ref=e735]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e736]
+                                    - generic: "#00274d"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-1000 : CSS property value: #00162c;" [ref=e738]':
+                                - text: "--primary-1000"
+                                - generic [ref=e739]: ":"
+                                - 'generic "CSS property value: #00162c" [ref=e740]':
+                                  - generic [ref=e741]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e742]
+                                    - generic: "#00162c"
+                                - text: ;
+                              - 'treeitem "CSS property name: --white : CSS property value: #fff;" [ref=e744]':
+                                - text: "--white"
+                                - generic [ref=e745]: ":"
+                                - 'generic "CSS property value: #fff" [ref=e746]':
+                                  - generic [ref=e747]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e748]
+                                    - generic: "#fff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --black : CSS property value: #000;" [ref=e750]':
+                                - text: "--black"
+                                - generic [ref=e751]: ":"
+                                - 'generic "CSS property value: #000" [ref=e752]':
+                                  - generic [ref=e753]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e754]
+                                    - generic: "#000"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-50 : CSS property value: #fafafa;" [ref=e756]':
+                                - text: "--zinc-50"
+                                - generic [ref=e757]: ":"
+                                - 'generic "CSS property value: #fafafa" [ref=e758]':
+                                  - generic [ref=e759]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e760]
+                                    - generic: "#fafafa"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-100 : CSS property value: #f4f4f5;" [ref=e762]':
+                                - text: "--zinc-100"
+                                - generic [ref=e763]: ":"
+                                - 'generic "CSS property value: #f4f4f5" [ref=e764]':
+                                  - generic [ref=e765]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e766]
+                                    - generic: "#f4f4f5"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-200 : CSS property value: #e4e4e7;" [ref=e768]':
+                                - text: "--zinc-200"
+                                - generic [ref=e769]: ":"
+                                - 'generic "CSS property value: #e4e4e7" [ref=e770]':
+                                  - generic [ref=e771]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e772]
+                                    - generic: "#e4e4e7"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-300 : CSS property value: #d4d4d8;" [ref=e774]':
+                                - text: "--zinc-300"
+                                - generic [ref=e775]: ":"
+                                - 'generic "CSS property value: #d4d4d8" [ref=e776]':
+                                  - generic [ref=e777]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e778]
+                                    - generic: "#d4d4d8"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-400 : CSS property value: #9f9fa9;" [ref=e780]':
+                                - text: "--zinc-400"
+                                - generic [ref=e781]: ":"
+                                - 'generic "CSS property value: #9f9fa9" [ref=e782]':
+                                  - generic [ref=e783]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e784]
+                                    - generic: "#9f9fa9"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-500 : CSS property value: #71717b;" [ref=e786]':
+                                - text: "--zinc-500"
+                                - generic [ref=e787]: ":"
+                                - 'generic "CSS property value: #71717b" [ref=e788]':
+                                  - generic [ref=e789]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e790]
+                                    - generic: "#71717b"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-600 : CSS property value: #52525c;" [ref=e792]':
+                                - text: "--zinc-600"
+                                - generic [ref=e793]: ":"
+                                - 'generic "CSS property value: #52525c" [ref=e794]':
+                                  - generic [ref=e795]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e796]
+                                    - generic: "#52525c"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-700 : CSS property value: #3f3f46;" [ref=e798]':
+                                - text: "--zinc-700"
+                                - generic [ref=e799]: ":"
+                                - 'generic "CSS property value: #3f3f46" [ref=e800]':
+                                  - generic [ref=e801]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e802]
+                                    - generic: "#3f3f46"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-800 : CSS property value: #27272a;" [ref=e804]':
+                                - text: "--zinc-800"
+                                - generic [ref=e805]: ":"
+                                - 'generic "CSS property value: #27272a" [ref=e806]':
+                                  - generic [ref=e807]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e808]
+                                    - generic: "#27272a"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-900 : CSS property value: #18181b;" [ref=e810]':
+                                - text: "--zinc-900"
+                                - generic [ref=e811]: ":"
+                                - 'generic "CSS property value: #18181b" [ref=e812]':
+                                  - generic [ref=e813]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e814]
+                                    - generic: "#18181b"
+                                - text: ;
+                              - 'treeitem "CSS property name: --zinc-950 : CSS property value: #09090b;" [ref=e816]':
+                                - text: "--zinc-950"
+                                - generic [ref=e817]: ":"
+                                - 'generic "CSS property value: #09090b" [ref=e818]':
+                                  - generic [ref=e819]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e820]
+                                    - generic: "#09090b"
+                                - text: ;
+                              - 'treeitem "CSS property name: --container : CSS property value: var(--white);" [ref=e822]':
+                                - text: "--container"
+                                - generic [ref=e823]: ":"
+                                - 'generic "CSS property value: var(--white)" [ref=e824]':
+                                  - generic [ref=e825]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e826]
+                                    - generic [ref=e829]:
+                                      - text: var(
+                                      - link "--white" [ref=e831] [cursor=pointer]
+                                      - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --background : CSS property value: var(--white);" [ref=e832]':
+                                - text: "--background"
+                                - generic [ref=e833]: ":"
+                                - 'generic "CSS property value: var(--white)" [ref=e834]':
+                                  - generic [ref=e835]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e836]
+                                    - generic [ref=e839]:
+                                      - text: var(
+                                      - link "--white" [ref=e841] [cursor=pointer]
+                                      - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --foreground : CSS property value: #262626;" [ref=e842]':
+                                - text: "--foreground"
+                                - generic [ref=e843]: ":"
+                                - 'generic "CSS property value: #262626" [ref=e844]':
+                                  - generic [ref=e845]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e846]
+                                    - generic: "#262626"
+                                - text: ;
+                              - 'treeitem "CSS property name: --card : CSS property value: #fff;" [ref=e848]':
+                                - text: "--card"
+                                - generic [ref=e849]: ":"
+                                - 'generic "CSS property value: #fff" [ref=e850]':
+                                  - generic [ref=e851]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e852]
+                                    - generic: "#fff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --card-foreground : CSS property value: #262626;" [ref=e854]':
+                                - text: "--card-foreground"
+                                - generic [ref=e855]: ":"
+                                - 'generic "CSS property value: #262626" [ref=e856]':
+                                  - generic [ref=e857]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e858]
+                                    - generic: "#262626"
+                                - text: ;
+                              - 'treeitem "CSS property name: --popover : CSS property value: #fff;" [ref=e860]':
+                                - text: "--popover"
+                                - generic [ref=e861]: ":"
+                                - 'generic "CSS property value: #fff" [ref=e862]':
+                                  - generic [ref=e863]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e864]
+                                    - generic: "#fff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --popover-foreground : CSS property value: #262626;" [ref=e866]':
+                                - text: "--popover-foreground"
+                                - generic [ref=e867]: ":"
+                                - 'generic "CSS property value: #262626" [ref=e868]':
+                                  - generic [ref=e869]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e870]
+                                    - generic: "#262626"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary : CSS property value: #006edb;" [ref=e872]':
+                                - text: "--primary"
+                                - generic [ref=e873]: ":"
+                                - 'generic "CSS property value: #006edb" [ref=e874]':
+                                  - generic [ref=e875]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e876]
+                                    - generic: "#006edb"
+                                - text: ;
+                              - 'treeitem "CSS property name: --primary-foreground : CSS property value: #fff;" [ref=e878]':
+                                - text: "--primary-foreground"
+                                - generic [ref=e879]: ":"
+                                - 'generic "CSS property value: #fff" [ref=e880]':
+                                  - generic [ref=e881]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e882]
+                                    - generic: "#fff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --secondary : CSS property value: #0000000d;" [ref=e884]':
+                                - text: "--secondary"
+                                - generic [ref=e885]: ":"
+                                - 'generic "CSS property value: #0000000d" [ref=e886]':
+                                  - generic [ref=e887]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e888]
+                                    - generic: "#0000000d"
+                                - text: ;
+                            - button "Show all properties (63 more)" [ref=e890]:
+                              - generic: Show all properties (63 more)
+                            - generic [ref=e891]: "}"
+                        - generic [ref=e892]:
+                          - generic [ref=e893]: Layer
+                          - button "base" [ref=e894] [cursor=pointer]
+                        - listitem "html, css selector" [ref=e895]:
+                          - link "style-CtgABeDv.css:1" [ref=e897] [cursor=pointer]
+                          - generic [ref=e898]:
+                            - generic [ref=e900]:
+                              - generic "CSS selector" [ref=e901]: html
+                              - text: "{"
+                            - tree [ref=e904]:
+                              - 'treeitem "CSS property name: font-family : CSS property value: var(--dc-font-family);" [ref=e905]':
+                                - text: font-family
+                                - generic [ref=e906]: ":"
+                                - 'generic "CSS property value: var(--dc-font-family)" [ref=e907]':
+                                  - generic [ref=e909]:
+                                    - text: var(
+                                    - link "--dc-font-family" [ref=e911] [cursor=pointer]
+                                    - text: )
+                                - text: ;
+                            - generic [ref=e912]: "}"
+                        - generic [ref=e913]:
+                          - generic [ref=e914]: Layer
+                          - button "base" [ref=e915] [cursor=pointer]
+                        - listitem "html, css selector" [ref=e916]:
+                          - link "style-CtgABeDv.css:1" [ref=e918] [cursor=pointer]
+                          - generic [ref=e919]:
+                            - generic [ref=e921]:
+                              - generic "CSS selector" [ref=e922]: html
+                              - text: "{"
+                            - tree [ref=e925]:
+                              - 'treeitem "CSS property name: --dc-font-scale : CSS property value: 1;" [ref=e926]':
+                                - text: "--dc-font-scale"
+                                - generic [ref=e927]: ":"
+                                - 'generic "CSS property value: 1" [ref=e928]': "1"
+                                - text: ;
+                            - generic [ref=e929]: "}"
+                        - generic [ref=e930]:
+                          - generic [ref=e931]: Layer
+                          - button "base" [ref=e932] [cursor=pointer]
+                        - listitem "html, :host, css selector" [ref=e933]:
+                          - link "style-CtgABeDv.css:1" [ref=e935] [cursor=pointer]
+                          - generic [ref=e936]:
+                            - generic [ref=e938]:
+                              - generic "CSS selector" [ref=e939]: html, :host
+                              - text: "{"
+                            - tree [ref=e942]:
+                              - 'treeitem "CSS property name: -webkit-text-size-adjust : CSS property value: 100%;" [ref=e943]':
+                                - text: "-webkit-text-size-adjust"
+                                - generic [ref=e944]: ":"
+                                - 'generic "CSS property value: 100%" [ref=e945]': 100%
+                                - text: ;
+                              - 'treeitem "CSS property name: tab-size : CSS property value: 4;" [ref=e946]':
+                                - text: tab-size
+                                - generic [ref=e947]: ":"
+                                - 'generic "CSS property value: 4" [ref=e948]': "4"
+                                - text: ;
+                              - 'treeitem "CSS property name: line-height : CSS property value: 1.5;" [ref=e949]':
+                                - text: line-height
+                                - generic [ref=e950]: ":"
+                                - 'generic "CSS property value: 1.5" [ref=e951]': "1.5"
+                                - text: ;
+                              - 'treeitem "CSS property name: font-family : CSS property value: var(--default-font-family,ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\");" [ref=e952]':
+                                - text: font-family
+                                - generic [ref=e953]: ":"
+                                - 'generic "CSS property value: var(--default-font-family,ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\")" [ref=e954]': var(--default-font-family, ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji")
+                                - text: ;
+                              - 'treeitem "CSS property name: font-feature-settings : CSS property value: var(--default-font-feature-settings,normal);" [ref=e955]':
+                                - text: font-feature-settings
+                                - generic [ref=e956]: ":"
+                                - 'generic "CSS property value: var(--default-font-feature-settings,normal)" [ref=e957]':
+                                  - generic [ref=e959]:
+                                    - text: var(
+                                    - link "--default-font-feature-settings" [disabled] [ref=e961] [cursor=pointer]
+                                    - text: ", normal)"
+                                - text: ;
+                              - 'treeitem "CSS property name: font-variation-settings : CSS property value: var(--default-font-variation-settings,normal);" [ref=e962]':
+                                - text: font-variation-settings
+                                - generic [ref=e963]: ":"
+                                - 'generic "CSS property value: var(--default-font-variation-settings,normal)" [ref=e964]':
+                                  - generic [ref=e966]:
+                                    - text: var(
+                                    - link "--default-font-variation-settings" [disabled] [ref=e968] [cursor=pointer]
+                                    - text: ", normal)"
+                                - text: ;
+                              - 'treeitem "CSS property name: -webkit-tap-highlight-color : CSS property value: transparent;" [ref=e969]':
+                                - text: "-webkit-tap-highlight-color"
+                                - generic [ref=e970]: ":"
+                                - 'generic "CSS property value: transparent" [ref=e971]':
+                                  - generic [ref=e972]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e973]
+                                    - generic: transparent
+                                - text: ;
+                            - generic [ref=e975]: "}"
+                        - generic [ref=e976]:
+                          - generic [ref=e977]: Layer
+                          - button "theme" [ref=e978] [cursor=pointer]
+                        - listitem ":root, :host, css selector" [ref=e979]:
+                          - link "style-CtgABeDv.css:1" [ref=e981] [cursor=pointer]
+                          - generic [ref=e982]:
+                            - generic [ref=e984]:
+                              - generic "CSS selector" [ref=e985]: :root, :host
+                              - text: "{"
+                            - tree [ref=e988]:
+                              - 'treeitem "CSS property name: --font-sans : CSS property value: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\";" [ref=e989]':
+                                - text: "--font-sans"
+                                - generic [ref=e990]: ":"
+                                - 'generic "CSS property value: ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"" [ref=e991]': ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"
+                                - text: ;
+                              - 'treeitem "CSS property name: --font-mono : CSS property value: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace;" [ref=e992]':
+                                - text: "--font-mono"
+                                - generic [ref=e993]: ":"
+                                - 'generic "CSS property value: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace" [ref=e994]': ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-red-600 : CSS property value: #e6000b;" [ref=e995]':
+                                - text: "--color-red-600"
+                                - generic [ref=e996]: ":"
+                                - 'generic "CSS property value: #e6000b" [ref=e997]':
+                                  - generic [ref=e998]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e999]
+                                    - generic: "#e6000b"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-emerald-300 : CSS property value: #5de9b6;" [ref=e1001]':
+                                - text: "--color-emerald-300"
+                                - generic [ref=e1002]: ":"
+                                - 'generic "CSS property value: #5de9b6" [ref=e1003]':
+                                  - generic [ref=e1004]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1005]
+                                    - generic: "#5de9b6"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-blue-100 : CSS property value: #dcebfe;" [ref=e1007]':
+                                - text: "--color-blue-100"
+                                - generic [ref=e1008]: ":"
+                                - 'generic "CSS property value: #dcebfe" [ref=e1009]':
+                                  - generic [ref=e1010]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1011]
+                                    - generic: "#dcebfe"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-blue-300 : CSS property value: #8fc5ff;" [ref=e1013]':
+                                - text: "--color-blue-300"
+                                - generic [ref=e1014]: ":"
+                                - 'generic "CSS property value: #8fc5ff" [ref=e1015]':
+                                  - generic [ref=e1016]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1017]
+                                    - generic: "#8fc5ff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-blue-500 : CSS property value: #297eff;" [ref=e1019]':
+                                - text: "--color-blue-500"
+                                - generic [ref=e1020]: ":"
+                                - 'generic "CSS property value: #297eff" [ref=e1021]':
+                                  - generic [ref=e1022]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1023]
+                                    - generic: "#297eff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-blue-600 : CSS property value: #1860fb;" [ref=e1025]':
+                                - text: "--color-blue-600"
+                                - generic [ref=e1026]: ":"
+                                - 'generic "CSS property value: #1860fb" [ref=e1027]':
+                                  - generic [ref=e1028]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1029]
+                                    - generic: "#1860fb"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-blue-800 : CSS property value: #193cb8;" [ref=e1031]':
+                                - text: "--color-blue-800"
+                                - generic [ref=e1032]: ":"
+                                - 'generic "CSS property value: #193cb8" [ref=e1033]':
+                                  - generic [ref=e1034]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1035]
+                                    - generic: "#193cb8"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-50 : CSS property value: #f8fafc;" [ref=e1037]':
+                                - text: "--color-slate-50"
+                                - generic [ref=e1038]: ":"
+                                - 'generic "CSS property value: #f8fafc" [ref=e1039]':
+                                  - generic [ref=e1040]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1041]
+                                    - generic: "#f8fafc"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-100 : CSS property value: #f1f5f9;" [ref=e1043]':
+                                - text: "--color-slate-100"
+                                - generic [ref=e1044]: ":"
+                                - 'generic "CSS property value: #f1f5f9" [ref=e1045]':
+                                  - generic [ref=e1046]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1047]
+                                    - generic: "#f1f5f9"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-200 : CSS property value: #e1e7ef;" [ref=e1049]':
+                                - text: "--color-slate-200"
+                                - generic [ref=e1050]: ":"
+                                - 'generic "CSS property value: #e1e7ef" [ref=e1051]':
+                                  - generic [ref=e1052]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1053]
+                                    - generic: "#e1e7ef"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-500 : CSS property value: #62748d;" [ref=e1055]':
+                                - text: "--color-slate-500"
+                                - generic [ref=e1056]: ":"
+                                - 'generic "CSS property value: #62748d" [ref=e1057]':
+                                  - generic [ref=e1058]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1059]
+                                    - generic: "#62748d"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-700 : CSS property value: #324258;" [ref=e1061]':
+                                - text: "--color-slate-700"
+                                - generic [ref=e1062]: ":"
+                                - 'generic "CSS property value: #324258" [ref=e1063]':
+                                  - generic [ref=e1064]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1065]
+                                    - generic: "#324258"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-900 : CSS property value: #0f162a;" [ref=e1067]':
+                                - text: "--color-slate-900"
+                                - generic [ref=e1068]: ":"
+                                - 'generic "CSS property value: #0f162a" [ref=e1069]':
+                                  - generic [ref=e1070]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1071]
+                                    - generic: "#0f162a"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-slate-950 : CSS property value: #020618;" [ref=e1073]':
+                                - text: "--color-slate-950"
+                                - generic [ref=e1074]: ":"
+                                - 'generic "CSS property value: #020618" [ref=e1075]':
+                                  - generic [ref=e1076]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1077]
+                                    - generic: "#020618"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-gray-400 : CSS property value: #98a0ae;" [ref=e1079]':
+                                - text: "--color-gray-400"
+                                - generic [ref=e1080]: ":"
+                                - 'generic "CSS property value: #98a0ae" [ref=e1081]':
+                                  - generic [ref=e1082]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1083]
+                                    - generic: "#98a0ae"
+                                - text: ;
+                              - 'treeitem "CSS property name: --color-white : CSS property value: #fff;" [ref=e1085]':
+                                - text: "--color-white"
+                                - generic [ref=e1086]: ":"
+                                - 'generic "CSS property value: #fff" [ref=e1087]':
+                                  - generic [ref=e1088]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1089]
+                                    - generic: "#fff"
+                                - text: ;
+                              - 'treeitem "CSS property name: --spacing : CSS property value: .25rem;" [ref=e1091]':
+                                - text: "--spacing"
+                                - generic [ref=e1092]: ":"
+                                - 'generic "CSS property value: .25rem" [ref=e1093]': .25rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-xs : CSS property value: .75rem;" [ref=e1094]':
+                                - text: "--text-xs"
+                                - generic [ref=e1095]: ":"
+                                - 'generic "CSS property value: .75rem" [ref=e1096]': .75rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-xs--line-height : CSS property value: calc(1 / .75);" [ref=e1097]':
+                                - text: "--text-xs--line-height"
+                                - generic [ref=e1098]: ":"
+                                - 'generic "CSS property value: calc(1 / .75)" [ref=e1099]':
+                                  - generic [ref=e1100]:
+                                    - text: calc(
+                                    - generic [ref=e1101]:
+                                      - generic [ref=e1102]: "1"
+                                      - generic [ref=e1103]: /
+                                      - generic [ref=e1104]: ".75"
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-sm : CSS property value: .875rem;" [ref=e1105]':
+                                - text: "--text-sm"
+                                - generic [ref=e1106]: ":"
+                                - 'generic "CSS property value: .875rem" [ref=e1107]': .875rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-sm--line-height : CSS property value: calc(1.25 / .875);" [ref=e1108]':
+                                - text: "--text-sm--line-height"
+                                - generic [ref=e1109]: ":"
+                                - 'generic "CSS property value: calc(1.25 / .875)" [ref=e1110]':
+                                  - generic [ref=e1111]:
+                                    - text: calc(
+                                    - generic [ref=e1112]:
+                                      - generic [ref=e1113]: "1.25"
+                                      - generic [ref=e1114]: /
+                                      - generic [ref=e1115]: ".875"
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-base : CSS property value: 1rem;" [ref=e1116]':
+                                - text: "--text-base"
+                                - generic [ref=e1117]: ":"
+                                - 'generic "CSS property value: 1rem" [ref=e1118]': 1rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-base--line-height : CSS property value: 1.5;" [ref=e1119]':
+                                - text: "--text-base--line-height"
+                                - generic [ref=e1120]: ":"
+                                - 'generic "CSS property value: 1.5" [ref=e1121]': "1.5"
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-lg : CSS property value: 1.125rem;" [ref=e1122]':
+                                - text: "--text-lg"
+                                - generic [ref=e1123]: ":"
+                                - 'generic "CSS property value: 1.125rem" [ref=e1124]': 1.125rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-lg--line-height : CSS property value: calc(1.75 / 1.125);" [ref=e1125]':
+                                - text: "--text-lg--line-height"
+                                - generic [ref=e1126]: ":"
+                                - 'generic "CSS property value: calc(1.75 / 1.125)" [ref=e1127]':
+                                  - generic [ref=e1128]:
+                                    - text: calc(
+                                    - generic [ref=e1129]:
+                                      - generic [ref=e1130]: "1.75"
+                                      - generic [ref=e1131]: /
+                                      - generic [ref=e1132]: "1.125"
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-xl : CSS property value: 1.25rem;" [ref=e1133]':
+                                - text: "--text-xl"
+                                - generic [ref=e1134]: ":"
+                                - 'generic "CSS property value: 1.25rem" [ref=e1135]': 1.25rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-xl--line-height : CSS property value: calc(1.75 / 1.25);" [ref=e1136]':
+                                - text: "--text-xl--line-height"
+                                - generic [ref=e1137]: ":"
+                                - 'generic "CSS property value: calc(1.75 / 1.25)" [ref=e1138]':
+                                  - generic [ref=e1139]:
+                                    - text: calc(
+                                    - generic [ref=e1140]:
+                                      - generic [ref=e1141]: "1.75"
+                                      - generic [ref=e1142]: /
+                                      - generic [ref=e1143]: "1.25"
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-2xl : CSS property value: 1.5rem;" [ref=e1144]':
+                                - text: "--text-2xl"
+                                - generic [ref=e1145]: ":"
+                                - 'generic "CSS property value: 1.5rem" [ref=e1146]': 1.5rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-2xl--line-height : CSS property value: calc(2 / 1.5);" [ref=e1147]':
+                                - text: "--text-2xl--line-height"
+                                - generic [ref=e1148]: ":"
+                                - 'generic "CSS property value: calc(2 / 1.5)" [ref=e1149]':
+                                  - generic [ref=e1150]:
+                                    - text: calc(
+                                    - generic [ref=e1151]:
+                                      - generic [ref=e1152]: "2"
+                                      - generic [ref=e1153]: /
+                                      - generic [ref=e1154]: "1.5"
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-3xl : CSS property value: 1.875rem;" [ref=e1155]':
+                                - text: "--text-3xl"
+                                - generic [ref=e1156]: ":"
+                                - 'generic "CSS property value: 1.875rem" [ref=e1157]': 1.875rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-3xl--line-height : CSS property value: 1.2;" [ref=e1158]':
+                                - text: "--text-3xl--line-height"
+                                - generic [ref=e1159]: ":"
+                                - 'generic "CSS property value: 1.2" [ref=e1160]': "1.2"
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-4xl : CSS property value: 2.25rem;" [ref=e1161]':
+                                - text: "--text-4xl"
+                                - generic [ref=e1162]: ":"
+                                - 'generic "CSS property value: 2.25rem" [ref=e1163]': 2.25rem
+                                - text: ;
+                              - 'treeitem "CSS property name: --text-4xl--line-height : CSS property value: calc(2.5 / 2.25);" [ref=e1164]':
+                                - text: "--text-4xl--line-height"
+                                - generic [ref=e1165]: ":"
+                                - 'generic "CSS property value: calc(2.5 / 2.25)" [ref=e1166]':
+                                  - generic [ref=e1167]:
+                                    - text: calc(
+                                    - generic [ref=e1168]:
+                                      - generic [ref=e1169]: "2.5"
+                                      - generic [ref=e1170]: /
+                                      - generic [ref=e1171]: "2.25"
+                                    - text: )
+                                - text: ;
+                              - 'treeitem "CSS property name: --tracking-tight : CSS property value: -.025em;" [ref=e1172]':
+                                - text: "--tracking-tight"
+                                - generic [ref=e1173]: ":"
+                                - 'generic "CSS property value: -.025em" [ref=e1174]': "-.025em"
+                                - text: ;
+                              - 'treeitem "CSS property name: --tracking-wide : CSS property value: .025em;" [ref=e1175]':
+                                - text: "--tracking-wide"
+                                - generic [ref=e1176]: ":"
+                                - 'generic "CSS property value: .025em" [ref=e1177]': .025em
+                                - text: ;
+                              - 'treeitem "CSS property name: --tracking-widest : CSS property value: .1em;" [ref=e1178]':
+                                - text: "--tracking-widest"
+                                - generic [ref=e1179]: ":"
+                                - 'generic "CSS property value: .1em" [ref=e1180]': .1em
+                                - text: ;
+                              - 'treeitem "CSS property name: --leading-tight : CSS property value: 1.25;" [ref=e1181]':
+                                - text: "--leading-tight"
+                                - generic [ref=e1182]: ":"
+                                - 'generic "CSS property value: 1.25" [ref=e1183]': "1.25"
+                                - text: ;
+                              - 'treeitem "CSS property name: --leading-snug : CSS property value: 1.375;" [ref=e1184]':
+                                - text: "--leading-snug"
+                                - generic [ref=e1185]: ":"
+                                - 'generic "CSS property value: 1.375" [ref=e1186]': "1.375"
+                                - text: ;
+                              - 'treeitem "CSS property name: --leading-normal : CSS property value: 1.5;" [ref=e1187]':
+                                - text: "--leading-normal"
+                                - generic [ref=e1188]: ":"
+                                - 'generic "CSS property value: 1.5" [ref=e1189]': "1.5"
+                                - text: ;
+                              - 'treeitem "CSS property name: --leading-relaxed : CSS property value: 1.625;" [ref=e1190]':
+                                - text: "--leading-relaxed"
+                                - generic [ref=e1191]: ":"
+                                - 'generic "CSS property value: 1.625" [ref=e1192]': "1.625"
+                                - text: ;
+                              - 'treeitem "CSS property name: --radius-lg : CSS property value: 8px;" [ref=e1193]':
+                                - text: "--radius-lg"
+                                - generic [ref=e1194]: ":"
+                                - 'generic "CSS property value: 8px" [ref=e1195]': 8px
+                                - text: ;
+                              - 'treeitem "CSS property name: --ease-in : CSS property value: cubic-bezier(.4, 0, 1, 1);" [ref=e1196]':
+                                - text: "--ease-in"
+                                - generic [ref=e1197]: ":"
+                                - 'generic "CSS property value: cubic-bezier(.4, 0, 1, 1)" [ref=e1198]':
+                                  - generic [ref=e1199]:
+                                    - generic: cubic-bezier(.4, 0, 1, 1)
+                                - text: ;
+                              - 'treeitem "CSS property name: --ease-out : CSS property value: cubic-bezier(0, 0, .2, 1);" [ref=e1201]':
+                                - text: "--ease-out"
+                                - generic [ref=e1202]: ":"
+                                - 'generic "CSS property value: cubic-bezier(0, 0, .2, 1)" [ref=e1203]':
+                                  - generic [ref=e1204]:
+                                    - generic: cubic-bezier(0, 0, .2, 1)
+                                - text: ;
+                              - 'treeitem "CSS property name: --ease-in-out : CSS property value: cubic-bezier(.4, 0, .2, 1);" [ref=e1206]':
+                                - text: "--ease-in-out"
+                                - generic [ref=e1207]: ":"
+                                - 'generic "CSS property value: cubic-bezier(.4, 0, .2, 1)" [ref=e1208]':
+                                  - generic [ref=e1209]:
+                                    - generic: cubic-bezier(.4, 0, .2, 1)
+                                - text: ;
+                              - 'treeitem "CSS property name: --animate-spin : CSS property value: spin 1s linear infinite;" [ref=e1211]':
+                                - text: "--animate-spin"
+                                - generic [ref=e1212]: ":"
+                                - 'generic "CSS property value: spin 1s linear infinite" [ref=e1213]':
+                                  - text: spin 1s
+                                  - generic [ref=e1214]:
+                                    - generic: linear
+                                  - text: infinite
+                                - text: ;
+                              - 'treeitem "CSS property name: --default-transition-duration : CSS property value: .15s;" [ref=e1216]':
+                                - text: "--default-transition-duration"
+                                - generic [ref=e1217]: ":"
+                                - 'generic "CSS property value: .15s" [ref=e1218]': .15s
+                                - text: ;
+                              - 'treeitem "CSS property name: --default-transition-timing-function : CSS property value: cubic-bezier(.4, 0, .2, 1);" [ref=e1219]':
+                                - text: "--default-transition-timing-function"
+                                - generic [ref=e1220]: ":"
+                                - 'generic "CSS property value: cubic-bezier(.4, 0, .2, 1)" [ref=e1221]':
+                                  - generic [ref=e1222]:
+                                    - generic: cubic-bezier(.4, 0, .2, 1)
+                                - text: ;
+                              - 'treeitem "CSS property name: --default-font-family : CSS property value: var(--font-sans);" [ref=e1224]':
+                                - text: "--default-font-family"
+                                - generic [ref=e1225]: ":"
+                                - 'generic "CSS property value: var(--font-sans)" [ref=e1226]':
+                                  - generic [ref=e1228]:
+                                    - text: var(
+                                    - link "--font-sans" [ref=e1230] [cursor=pointer]
+                                    - text: )
+                                - text: ;
+                            - button "Show all properties (3 more)" [ref=e1231]:
+                              - generic: Show all properties (3 more)
+                            - generic [ref=e1232]: "}"
+                        - generic [ref=e1233]: Pseudo ::before element
+                        - generic [ref=e1234]:
+                          - generic [ref=e1235]: Layer
+                          - button "base" [ref=e1236] [cursor=pointer]
+                        - listitem "*, :after, :before, ::backdrop, css selector" [ref=e1237]:
+                          - link "style-CtgABeDv.css:1" [ref=e1239] [cursor=pointer]
+                          - generic [ref=e1240]:
+                            - generic [ref=e1242]:
+                              - generic "CSS selector" [ref=e1243]: "*, :after, :before, ::backdrop"
+                              - text: "{"
+                            - tree [ref=e1246]:
+                              - 'treeitem "CSS property name: box-sizing : CSS property value: border-box;" [ref=e1247]':
+                                - text: box-sizing
+                                - generic [ref=e1248]: ":"
+                                - 'generic "CSS property value: border-box" [ref=e1249]': border-box
+                                - text: ;
+                              - 'treeitem "CSS property name: border : CSS property value: 0 solid;" [ref=e1250]':
+                                - text: border
+                                - generic [ref=e1251]: ":"
+                                - 'generic "CSS property value: 0 solid" [ref=e1253]': 0 solid
+                                - text: ;
+                              - 'treeitem "CSS property name: margin : CSS property value: 0;" [ref=e1254]':
+                                - text: margin
+                                - generic [ref=e1255]: ":"
+                                - 'generic "CSS property value: 0" [ref=e1257]': "0"
+                                - text: ;
+                              - 'treeitem "CSS property name: padding : CSS property value: 0;" [ref=e1258]':
+                                - text: padding
+                                - generic [ref=e1259]: ":"
+                                - 'generic "CSS property value: 0" [ref=e1261]': "0"
+                                - text: ;
+                            - generic [ref=e1262]: "}"
+                        - generic [ref=e1263]: Pseudo ::after element
+                        - generic [ref=e1264]:
+                          - generic [ref=e1265]: Layer
+                          - button "base" [ref=e1266] [cursor=pointer]
+                        - listitem "*, :after, :before, ::backdrop, css selector" [ref=e1267]:
+                          - link "style-CtgABeDv.css:1" [ref=e1269] [cursor=pointer]
+                          - generic [ref=e1270]:
+                            - generic [ref=e1272]:
+                              - generic "CSS selector" [ref=e1273]: "*, :after, :before, ::backdrop"
+                              - text: "{"
+                            - tree [ref=e1276]:
+                              - 'treeitem "CSS property name: box-sizing : CSS property value: border-box;" [ref=e1277]':
+                                - text: box-sizing
+                                - generic [ref=e1278]: ":"
+                                - 'generic "CSS property value: border-box" [ref=e1279]': border-box
+                                - text: ;
+                              - 'treeitem "CSS property name: border : CSS property value: 0 solid;" [ref=e1280]':
+                                - text: border
+                                - generic [ref=e1281]: ":"
+                                - 'generic "CSS property value: 0 solid" [ref=e1283]': 0 solid
+                                - text: ;
+                              - 'treeitem "CSS property name: margin : CSS property value: 0;" [ref=e1284]':
+                                - text: margin
+                                - generic [ref=e1285]: ":"
+                                - 'generic "CSS property value: 0" [ref=e1287]': "0"
+                                - text: ;
+                              - 'treeitem "CSS property name: padding : CSS property value: 0;" [ref=e1288]':
+                                - text: padding
+                                - generic [ref=e1289]: ":"
+                                - 'generic "CSS property value: 0" [ref=e1291]': "0"
+                                - text: ;
+                            - generic [ref=e1292]: "}"
+                        - generic [ref=e1293]: Pseudo ::backdrop element
+                        - generic [ref=e1294]:
+                          - generic [ref=e1295]: Layer
+                          - button "base" [ref=e1296] [cursor=pointer]
+                        - listitem "*, :after, :before, ::backdrop, css selector" [ref=e1297]:
+                          - link "style-CtgABeDv.css:1" [ref=e1299] [cursor=pointer]
+                          - generic [ref=e1300]:
+                            - generic [ref=e1302]:
+                              - generic "CSS selector" [ref=e1303]: "*, :after, :before, ::backdrop"
+                              - text: "{"
+                            - tree [ref=e1306]:
+                              - 'treeitem "CSS property name: box-sizing : CSS property value: border-box;" [ref=e1307]':
+                                - text: box-sizing
+                                - generic [ref=e1308]: ":"
+                                - 'generic "CSS property value: border-box" [ref=e1309]': border-box
+                                - text: ;
+                              - 'treeitem "CSS property name: border : CSS property value: 0 solid;" [ref=e1310]':
+                                - text: border
+                                - generic [ref=e1311]: ":"
+                                - 'generic "CSS property value: 0 solid" [ref=e1313]': 0 solid
+                                - text: ;
+                              - 'treeitem "CSS property name: margin : CSS property value: 0;" [ref=e1314]':
+                                - text: margin
+                                - generic [ref=e1315]: ":"
+                                - 'generic "CSS property value: 0" [ref=e1317]': "0"
+                                - text: ;
+                              - 'treeitem "CSS property name: padding : CSS property value: 0;" [ref=e1318]':
+                                - text: padding
+                                - generic [ref=e1319]: ":"
+                                - 'generic "CSS property value: 0" [ref=e1321]': "0"
+                                - text: ;
+                            - generic [ref=e1322]: "}"
+                        - generic [ref=e1323]: Pseudo ::scrollbar element
+                        - listitem "::-webkit-scrollbar, css selector" [ref=e1324]:
+                          - link "style-CtgABeDv.css:1" [ref=e1326] [cursor=pointer]
+                          - generic [ref=e1327]:
+                            - generic [ref=e1329]:
+                              - generic "CSS selector" [ref=e1330]: ::-webkit-scrollbar
+                              - text: "{"
+                            - tree [ref=e1333]:
+                              - 'treeitem "CSS property name: width : CSS property value: 8px;" [ref=e1334]':
+                                - text: width
+                                - generic [ref=e1335]: ":"
+                                - 'generic "CSS property value: 8px" [ref=e1336]': 8px
+                                - text: ;
+                              - 'treeitem "CSS property name: height : CSS property value: 8px;" [ref=e1337]':
+                                - text: height
+                                - generic [ref=e1338]: ":"
+                                - 'generic "CSS property value: 8px" [ref=e1339]': 8px
+                                - text: ;
+                            - generic [ref=e1340]: "}"
+                        - generic [ref=e1341]:
+                          - generic [ref=e1342]: Layer
+                          - button "base" [ref=e1343] [cursor=pointer]
+                        - listitem "::-webkit-scrollbar, css selector" [ref=e1344]:
+                          - link "style-CtgABeDv.css:1" [ref=e1346] [cursor=pointer]
+                          - generic [ref=e1347]:
+                            - generic [ref=e1349]:
+                              - generic "CSS selector" [ref=e1350]: ::-webkit-scrollbar
+                              - text: "{"
+                            - tree [ref=e1353]:
+                              - 'treeitem "CSS property name: width : CSS property value: 8px;" [ref=e1354]':
+                                - text: width
+                                - generic [ref=e1355]: ":"
+                                - 'generic "CSS property value: 8px" [ref=e1356]': 8px
+                                - text: ;
+                              - 'treeitem "CSS property name: height : CSS property value: 8px;" [ref=e1357]':
+                                - text: height
+                                - generic [ref=e1358]: ":"
+                                - 'generic "CSS property value: 8px" [ref=e1359]': 8px
+                                - text: ;
+                            - generic [ref=e1360]: "}"
+                        - generic [ref=e1361]: Pseudo ::scrollbar-thumb element
+                        - listitem "::-webkit-scrollbar-thumb, css selector" [ref=e1362]:
+                          - link "style-CtgABeDv.css:1" [ref=e1364] [cursor=pointer]
+                          - generic [ref=e1365]:
+                            - generic [ref=e1367]:
+                              - generic "CSS selector" [ref=e1368]: ::-webkit-scrollbar-thumb
+                              - text: "{"
+                            - tree [ref=e1371]:
+                              - 'treeitem "CSS property name: background : CSS property value: #d1d5db80;" [ref=e1372]':
+                                - text: background
+                                - generic [ref=e1373]: ":"
+                                - 'generic "CSS property value: #d1d5db80" [ref=e1375]':
+                                  - generic [ref=e1376]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1377]
+                                    - generic: "#d1d5db80"
+                                - text: ;
+                              - 'treeitem "CSS property name: border-radius : CSS property value: 4px;" [ref=e1379]':
+                                - text: border-radius
+                                - generic [ref=e1380]: ":"
+                                - 'generic "CSS property value: 4px" [ref=e1382]': 4px
+                                - text: ;
+                            - generic [ref=e1383]: "}"
+                        - generic [ref=e1384]:
+                          - generic [ref=e1385]: Layer
+                          - button "base" [ref=e1386] [cursor=pointer]
+                        - listitem "::-webkit-scrollbar-thumb, css selector" [ref=e1387]:
+                          - link "style-CtgABeDv.css:1" [ref=e1389] [cursor=pointer]
+                          - generic [ref=e1390]:
+                            - generic [ref=e1392]:
+                              - generic "CSS selector" [ref=e1393]: ::-webkit-scrollbar-thumb
+                              - text: "{"
+                            - tree [ref=e1396]:
+                              - 'treeitem "CSS property name: background : CSS property value: #6b7280a6;" [ref=e1397]':
+                                - text: background
+                                - generic [ref=e1398]: ":"
+                                - 'generic "CSS property value: #6b7280a6" [ref=e1400]':
+                                  - generic [ref=e1401]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1402]
+                                    - generic: "#6b7280a6"
+                                - text: ;
+                              - 'treeitem "CSS property name: border-radius : CSS property value: 9999px;" [ref=e1404]':
+                                - text: border-radius
+                                - generic [ref=e1405]: ":"
+                                - 'generic "CSS property value: 9999px" [ref=e1407]': 9999px
+                                - text: ;
+                            - generic [ref=e1408]: "}"
+                        - generic [ref=e1409]: Pseudo ::scrollbar-track element
+                        - listitem "::-webkit-scrollbar-track, css selector" [ref=e1410]:
+                          - link "style-CtgABeDv.css:1" [ref=e1412] [cursor=pointer]
+                          - generic [ref=e1413]:
+                            - generic [ref=e1415]:
+                              - generic "CSS selector" [ref=e1416]: ::-webkit-scrollbar-track
+                              - text: "{"
+                            - tree [ref=e1419]:
+                              - 'treeitem "CSS property name: background : CSS property value: transparent;" [ref=e1420]':
+                                - text: background
+                                - generic [ref=e1421]: ":"
+                                - 'generic "CSS property value: transparent" [ref=e1423]':
+                                  - generic [ref=e1424]:
+                                    - generic "Open color picker. Shift + Click to change color format." [ref=e1425]
+                                    - generic: transparent
+                                - text: ;
+                            - generic [ref=e1427]: "}"
+                        - generic [ref=e1428]:
+                          - generic [ref=e1429]: Layer
+                          - button "base" [ref=e1430] [cursor=pointer]
+                        - listitem "::-webkit-scrollbar-track, css selector" [ref=e1431]:
+                          - link "style-CtgABeDv.css:1" [ref=e1433] [cursor=pointer]
+                          - generic [ref=e1434]:
+                            - generic [ref=e1436]:
+                              - generic "CSS selector" [ref=e1437]: ::-webkit-scrollbar-track
+                              - text: "{"
+                            - tree [ref=e1440]:
+                              - 'treeitem "CSS property name: background : CSS property value: 0 0;" [ref=e1441]':
+                                - text: background
+                                - generic [ref=e1442]: ":"
+                                - 'generic "CSS property value: 0 0" [ref=e1444]': 0 0
+                                - text: ;
+                            - generic [ref=e1445]: "}"
+                    - generic [ref=e1449]:
+                      - generic [ref=e1450]: margin
+                      - generic [ref=e1451]: ‒
+                      - generic [ref=e1452]: ‒
+                      - generic [ref=e1453]:
+                        - generic [ref=e1454]: border
+                        - generic [ref=e1455]: ‒
+                        - generic [ref=e1456]: ‒
+                        - generic [ref=e1457]:
+                          - generic [ref=e1458]: padding
+                          - generic [ref=e1459]: ‒
+                          - generic [ref=e1460]: ‒
+                          - generic [ref=e1461]:
+                            - generic [ref=e1462]: "800"
+                            - generic [ref=e1463]: ×
+                            - generic [ref=e1464]: "620"
+                          - generic [ref=e1465]: ‒
+                          - generic [ref=e1466]: ‒
+                        - generic [ref=e1467]: ‒
+                        - generic [ref=e1468]: ‒
+                      - generic [ref=e1469]: ‒
+                      - generic [ref=e1470]: ‒
+  - alert [ref=e1473]: DevTools is docked to right
+```

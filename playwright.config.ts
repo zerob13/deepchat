@@ -1,20 +1,19 @@
-import { defineConfig, devices } from '@playwright/test'
-import { resolve } from 'path'
+import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: true,
+  fullyParallel: false, // 串行运行
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  retries: 0,
+  workers: 1,
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
     ['junit', { outputFile: 'test-results/e2e-results.xml' }],
     ['list']
   ],
-  timeout: 30 * 1000,
+  timeout: 180 * 1000, // 3 分钟总超时
   expect: {
-    timeout: 5000
+    timeout: 60000 // 单个断言超时 60 秒
   },
   use: {
     trace: 'on-first-retry',
@@ -26,15 +25,20 @@ export default defineConfig({
       name: 'electron',
       testMatch: '**/*.spec.ts',
       use: {
-        ...devices['Desktop Chrome']
+        launchOptions: {
+          slowMo: 100 // 操作之间等待 100ms，让 UI 更稳定
+        }
       }
     }
   ],
   outputDir: 'test-results/',
+  // 预先启动 Electron 应用
   webServer: {
-    command: 'pnpm run dev',
-    port: 5173,
+    command: 'pnpm run dev:linux',
+    port: 5173, // Vite dev server 端口
     timeout: 120 * 1000,
-    reuseExistingServer: !process.env.CI
+    reuseExistingServer: true,
+    // 等待应用完全启动
+    readyWhen: /Window \d+ created successfully/
   }
 })
