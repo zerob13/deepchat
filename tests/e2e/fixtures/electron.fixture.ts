@@ -1,5 +1,9 @@
 import { test as base, _electron, ElectronApplication, Page } from '@playwright/test'
-import { resolve } from 'path'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 type ElectronFixture = {
   electronApp: ElectronApplication
@@ -13,7 +17,9 @@ export const test = base.extend<ElectronFixture>({
       args: [resolve(__dirname, '../../../')],
       env: {
         ...process.env,
-        VITE_ENABLE_PLAYGROUND: 'true'
+        VITE_ENABLE_PLAYGROUND: 'true',
+        // 支持无头模式（CI 环境）
+        DISPLAY: process.env.DISPLAY || ':99'
       }
     })
 

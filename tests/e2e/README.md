@@ -1,6 +1,26 @@
 # DeepChat E2E 测试指南
 
-## 快速开始
+## 环境要求
+
+### Linux 桌面环境
+
+```bash
+# 安装系统依赖（Ubuntu/Debian）
+sudo apt-get update
+sudo apt-get install -y libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+  libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  libgbm1 libasound2 libpango-1.0-0 libcairo2
+```
+
+### 无头模式（CI/无 GUI 环境）
+
+```bash
+# 安装 Xvfb（虚拟 framebuffer）
+sudo apt-get install -y xvfb
+
+# 使用 Xvfb 运行测试
+xvfb-run pnpm run test:e2e
+```
 
 ### 安装依赖
 

@@ -23,6 +23,8 @@
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:xvfb": "xvfb-run pnpm run test:e2e",
     "test:all": "pnpm run test:unit && pnpm run test:e2e",
     "format:check": "prettier --check .",
     "format": "prettier --cache --write .",
