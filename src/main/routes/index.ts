@@ -68,9 +68,11 @@ import {
   databaseSecurityRepairSchemaRoute,
   debugCreateMockChatSessionRoute,
   memoryAddRoute,
+  memoryArchiveRoute,
   memoryApprovePersonaDraftRoute,
   memoryClearRoute,
   memoryDeleteRoute,
+  memoryGetByIdsRoute,
   memoryGetSourceSpanRoute,
   memoryGetHealthRoute,
   memoryGetArchiveCandidateLifecyclePreviewRoute,
@@ -601,6 +603,28 @@ function readNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+function deriveSelectedMemoryIds(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const ids: string[] = []
+  const seen = new Set<string>()
+  const pushId = (id: string): void => {
+    if (id.length === 0 || seen.has(id)) return
+    seen.add(id)
+    ids.push(id)
+  }
+  for (const item of value) {
+    if (typeof item === 'string' && item.length > 0) {
+      pushId(item)
+      continue
+    }
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const id = (item as Record<string, unknown>).id
+      if (typeof id === 'string') pushId(id)
+    }
+  }
+  return ids
+}
+
 function toMemoryViewManifestDto(row: DeepChatTapeEntryRow) {
   const payload = parseJsonRecord(row.payload_json)
   const meta = parseJsonRecord(row.meta_json)
@@ -625,6 +649,7 @@ function toMemoryViewManifestDto(row: DeepChatTapeEntryRow) {
     tokenBudget: readNumber(record.tokenBudget),
     estimatedTokens: readNumber(record.estimatedTokens),
     selectedCount: Array.isArray(record.selected) ? record.selected.length : 0,
+    selectedIds: deriveSelectedMemoryIds(record.selected),
     droppedCount: Array.isArray(record.dropped) ? record.dropped.length : 0,
     queryHash: typeof record.queryHash === 'string' ? record.queryHash : null,
     createdAt: row.created_at
@@ -2233,13 +2258,29 @@ export async function dispatchDeepchatRoute(
 
     case memoryAddRoute.name: {
       const input = memoryAddRoute.input.parse(rawInput)
-      const outcome = await runtime.memoryPresenter.addUserMemory(input.agentId, {
-        content: input.content,
-        kind: input.kind,
-        category: input.category,
-        importance: input.importance
-      })
+      const outcome = await runtime.memoryPresenter.addUserMemory(
+        input.agentId,
+        {
+          content: input.content,
+          kind: input.kind,
+          category: input.category,
+          importance: input.importance
+        },
+        input.sessionId
+      )
       return memoryAddRoute.output.parse({ result: toMemoryAddResultDto(outcome) })
+    }
+
+    case memoryGetByIdsRoute.name: {
+      const input = memoryGetByIdsRoute.input.parse(rawInput)
+      const agentType = await runtime.configPresenter.getAgentType(input.agentId)
+      if (agentType !== 'deepchat') {
+        return memoryGetByIdsRoute.output.parse({ memories: [] })
+      }
+      const memories = runtime.memoryPresenter
+        .getByIds(input.agentId, input.memoryIds)
+        .map(toMemoryItemDto)
+      return memoryGetByIdsRoute.output.parse({ memories })
     }
 
     case memoryGetStatusRoute.name: {
@@ -2336,6 +2377,16 @@ export async function dispatchDeepchatRoute(
       const input = memoryDeleteRoute.input.parse(rawInput)
       const ok = await runtime.memoryPresenter.deleteMemory(input.agentId, input.memoryId)
       return memoryDeleteRoute.output.parse({ ok })
+    }
+
+    case memoryArchiveRoute.name: {
+      const input = memoryArchiveRoute.input.parse(rawInput)
+      const agentType = await runtime.configPresenter.getAgentType(input.agentId)
+      if (agentType !== 'deepchat') {
+        return memoryArchiveRoute.output.parse({ ok: false })
+      }
+      const ok = await runtime.memoryPresenter.archiveUserMemory(input.agentId, input.memoryId)
+      return memoryArchiveRoute.output.parse({ ok })
     }
 
     case memoryClearRoute.name: {
