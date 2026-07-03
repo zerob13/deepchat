@@ -1387,7 +1387,12 @@
         "models": "Modeller",
         "advanced": "Gelişmiş"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Geri çağırma URL'sini yapıştır",
+    "openaiCodexCallbackTitle": "Kimlik doğrulamayı tamamla",
+    "openaiCodexCallbackDescription": "Tarayıcı işlemi tamamladıktan sonra DeepChat'e dönün. DeepChat güncellenmezse tam geri çağırma URL'sini buraya yapıştırın.",
+    "openaiCodexCallbackPlaceholder": "Tam geri çağırma URL'sini yapıştır",
+    "openaiCodexCompleteAuthentication": "Kimlik doğrulamayı tamamla"
   },
   "knowledgeBase": {
     "title": "Bilgi Bankası Ayarları",
@@ -1705,7 +1710,16 @@
         "builtIn": "Yerleşik",
         "custom": "Gelenek"
       }
-    }
+    },
+    "authRequired": "Kimlik doğrulama gerekli",
+    "authenticate": "Kimlik doğrula",
+    "authFailed": "Kimlik doğrulama başarısız",
+    "authCallbackTitle": "Kimlik doğrulamayı tamamla",
+    "authCallbackDescription": "Tarayıcı işlemi tamamladıktan sonra DeepChat'e dönün. DeepChat güncellenmezse tam geri çağırma URL'sini buraya yapıştırın.",
+    "authCallbackPlaceholder": "Tam geri çağırma URL'sini yapıştır",
+    "completeAuthentication": "Kimlik doğrulamayı tamamla",
+    "saveSuccess": "Yapılandırma kaydedildi",
+    "saveFailed": "Yapılandırma kaydedilemedi"
   },
   "about": {
     "title": "Hakkımızda",

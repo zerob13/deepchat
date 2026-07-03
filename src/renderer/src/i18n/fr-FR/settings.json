@@ -1130,7 +1130,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Coller l'URL de rappel",
+    "openaiCodexCallbackTitle": "Terminer l'authentification",
+    "openaiCodexCallbackDescription": "Lorsque le navigateur a terminé, revenez à DeepChat. Si DeepChat ne se met pas à jour, collez ici l'URL de rappel complète.",
+    "openaiCodexCallbackPlaceholder": "Coller l'URL de rappel complète",
+    "openaiCodexCompleteAuthentication": "Terminer l'authentification"
   },
   "knowledgeBase": {
     "title": "Paramètres de la base de connaissances",
@@ -1448,7 +1453,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "Authentification requise",
+    "authenticate": "Authentifier",
+    "authFailed": "Échec de l'authentification",
+    "authCallbackTitle": "Terminer l'authentification",
+    "authCallbackDescription": "Lorsque le navigateur a terminé, revenez à DeepChat. Si DeepChat ne se met pas à jour, collez ici l'URL de rappel complète.",
+    "authCallbackPlaceholder": "Coller l'URL de rappel complète",
+    "completeAuthentication": "Terminer l'authentification",
+    "saveSuccess": "Configuration enregistrée",
+    "saveFailed": "Impossible d'enregistrer la configuration"
   },
   "scheduledTasks": {
     "title": "Tâches planifiées",

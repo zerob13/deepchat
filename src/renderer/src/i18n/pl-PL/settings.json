@@ -1387,7 +1387,12 @@
         "models": "Modele",
         "advanced": "Zaawansowane"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Wklej adres URL wywołania zwrotnego",
+    "openaiCodexCallbackTitle": "Zakończ uwierzytelnianie",
+    "openaiCodexCallbackDescription": "Po zakończeniu w przeglądarce wróć do DeepChat. Jeśli DeepChat się nie zaktualizuje, wklej tutaj pełny adres URL wywołania zwrotnego.",
+    "openaiCodexCallbackPlaceholder": "Wklej pełny adres URL wywołania zwrotnego",
+    "openaiCodexCompleteAuthentication": "Zakończ uwierzytelnianie"
   },
   "knowledgeBase": {
     "title": "Ustawienia bazy wiedzy",
@@ -1705,7 +1710,16 @@
         "builtIn": "Wbudowany",
         "custom": "Niestandardowe"
       }
-    }
+    },
+    "authRequired": "Wymagane uwierzytelnienie",
+    "authenticate": "Uwierzytelnij",
+    "authFailed": "Uwierzytelnianie nie powiodło się",
+    "authCallbackTitle": "Zakończ uwierzytelnianie",
+    "authCallbackDescription": "Po zakończeniu w przeglądarce wróć do DeepChat. Jeśli DeepChat się nie zaktualizuje, wklej tutaj pełny adres URL wywołania zwrotnego.",
+    "authCallbackPlaceholder": "Wklej pełny adres URL wywołania zwrotnego",
+    "completeAuthentication": "Zakończ uwierzytelnianie",
+    "saveSuccess": "Konfiguracja zapisana",
+    "saveFailed": "Nie udało się zapisać konfiguracji"
   },
   "about": {
     "title": "O nas",

@@ -5,6 +5,7 @@ import type {
   McpSamplingRequestPayload
 } from '@shared/presenter'
 import { defineEventContract } from '../common'
+import { McpServerAuthStatusSchema } from '../routes/mcp.routes'
 
 const McpSamplingRequestSchema = z.custom<McpSamplingRequestPayload>()
 const McpSamplingDecisionSchema = z.custom<McpSamplingDecision>()
@@ -40,6 +41,15 @@ export const mcpServerStatusChangedEvent = defineEventContract({
   payload: z.object({
     serverName: z.string(),
     isRunning: z.boolean(),
+    version: z.number().int()
+  })
+})
+
+export const mcpServerAuthChangedEvent = defineEventContract({
+  name: 'mcp.server.auth.changed',
+  payload: z.object({
+    serverName: z.string(),
+    status: McpServerAuthStatusSchema,
     version: z.number().int()
   })
 })

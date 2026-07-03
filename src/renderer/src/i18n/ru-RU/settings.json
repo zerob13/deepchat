@@ -1130,7 +1130,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Вставить URL обратного вызова",
+    "openaiCodexCallbackTitle": "Завершить аутентификацию",
+    "openaiCodexCallbackDescription": "Когда браузер завершит процесс, вернитесь в DeepChat. Если DeepChat не обновится, вставьте здесь полный URL обратного вызова.",
+    "openaiCodexCallbackPlaceholder": "Вставьте полный URL обратного вызова",
+    "openaiCodexCompleteAuthentication": "Завершить аутентификацию"
   },
   "knowledgeBase": {
     "title": "Настройки базы знаний",
@@ -1448,7 +1453,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "Требуется аутентификация",
+    "authenticate": "Аутентифицировать",
+    "authFailed": "Ошибка аутентификации",
+    "authCallbackTitle": "Завершить аутентификацию",
+    "authCallbackDescription": "Когда браузер завершит процесс, вернитесь в DeepChat. Если DeepChat не обновится, вставьте здесь полный URL обратного вызова.",
+    "authCallbackPlaceholder": "Вставьте полный URL обратного вызова",
+    "completeAuthentication": "Завершить аутентификацию",
+    "saveSuccess": "Конфигурация сохранена",
+    "saveFailed": "Не удалось сохранить конфигурацию"
   },
   "scheduledTasks": {
     "title": "Запланированные задачи",

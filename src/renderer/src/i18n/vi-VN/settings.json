@@ -1387,7 +1387,12 @@
         "models": "Người mẫu",
         "advanced": "Nâng cao"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Dán URL callback",
+    "openaiCodexCallbackTitle": "Hoàn tất xác thực",
+    "openaiCodexCallbackDescription": "Sau khi trình duyệt hoàn tất, hãy quay lại DeepChat. Nếu DeepChat không cập nhật, hãy dán URL callback đầy đủ vào đây.",
+    "openaiCodexCallbackPlaceholder": "Dán URL callback đầy đủ",
+    "openaiCodexCompleteAuthentication": "Hoàn tất xác thực"
   },
   "knowledgeBase": {
     "title": "Cài đặt cơ sở kiến thức",
@@ -1705,7 +1710,16 @@
         "builtIn": "Tích hợp sẵn",
         "custom": "tùy chỉnh"
       }
-    }
+    },
+    "authRequired": "Cần xác thực",
+    "authenticate": "Xác thực",
+    "authFailed": "Xác thực thất bại",
+    "authCallbackTitle": "Hoàn tất xác thực",
+    "authCallbackDescription": "Sau khi trình duyệt hoàn tất, hãy quay lại DeepChat. Nếu DeepChat không cập nhật, hãy dán URL callback đầy đủ vào đây.",
+    "authCallbackPlaceholder": "Dán URL callback đầy đủ",
+    "completeAuthentication": "Hoàn tất xác thực",
+    "saveSuccess": "Đã lưu cấu hình",
+    "saveFailed": "Lưu cấu hình thất bại"
   },
   "about": {
     "title": "Về chúng tôi",

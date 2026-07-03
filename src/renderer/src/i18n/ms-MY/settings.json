@@ -1387,7 +1387,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Tampal URL panggil balik",
+    "openaiCodexCallbackTitle": "Lengkapkan pengesahan",
+    "openaiCodexCallbackDescription": "Selepas pelayar selesai, kembali ke DeepChat. Jika DeepChat tidak dikemas kini, tampal URL panggil balik penuh di sini.",
+    "openaiCodexCallbackPlaceholder": "Tampal URL panggil balik penuh",
+    "openaiCodexCompleteAuthentication": "Lengkapkan pengesahan"
   },
   "knowledgeBase": {
     "title": "Tetapan asas pengetahuan",
@@ -1705,7 +1710,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "Pengesahan diperlukan",
+    "authenticate": "Sahkan",
+    "authFailed": "Pengesahan gagal",
+    "authCallbackTitle": "Lengkapkan pengesahan",
+    "authCallbackDescription": "Selepas pelayar selesai, kembali ke DeepChat. Jika DeepChat tidak dikemas kini, tampal URL panggil balik penuh di sini.",
+    "authCallbackPlaceholder": "Tampal URL panggil balik penuh",
+    "completeAuthentication": "Lengkapkan pengesahan",
+    "saveSuccess": "Konfigurasi disimpan",
+    "saveFailed": "Gagal menyimpan konfigurasi"
   },
   "about": {
     "title": "tentang Kami",

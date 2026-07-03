@@ -1063,7 +1063,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Indsæt callback-URL",
+    "openaiCodexCallbackTitle": "Fuldfør godkendelse",
+    "openaiCodexCallbackDescription": "Når browseren er færdig, skal du vende tilbage til DeepChat. Hvis DeepChat ikke opdateres, skal du indsætte den fulde callback-URL her.",
+    "openaiCodexCallbackPlaceholder": "Indsæt den fulde callback-URL",
+    "openaiCodexCompleteAuthentication": "Fuldfør godkendelse"
   },
   "knowledgeBase": {
     "title": "Indstillinger for vidensbase",
@@ -1381,7 +1386,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "Godkendelse påkrævet",
+    "authenticate": "Godkend",
+    "authFailed": "Godkendelse mislykkedes",
+    "authCallbackTitle": "Fuldfør godkendelse",
+    "authCallbackDescription": "Når browseren er færdig, skal du vende tilbage til DeepChat. Hvis DeepChat ikke opdateres, skal du indsætte den fulde callback-URL her.",
+    "authCallbackPlaceholder": "Indsæt den fulde callback-URL",
+    "completeAuthentication": "Fuldfør godkendelse",
+    "saveSuccess": "Konfiguration gemt",
+    "saveFailed": "Kunne ikke gemme konfiguration"
   },
   "scheduledTasks": {
     "title": "Planlagte opgaver",

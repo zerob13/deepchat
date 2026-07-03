@@ -1387,7 +1387,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "Incolla URL di callback",
+    "openaiCodexCallbackTitle": "Completa autenticazione",
+    "openaiCodexCallbackDescription": "Dopo il completamento nel browser, torna a DeepChat. Se DeepChat non si aggiorna, incolla qui l'URL di callback completo.",
+    "openaiCodexCallbackPlaceholder": "Incolla l'URL di callback completo",
+    "openaiCodexCompleteAuthentication": "Completa autenticazione"
   },
   "knowledgeBase": {
     "title": "Impostazioni base di conoscenza",
@@ -1705,7 +1710,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "Autenticazione richiesta",
+    "authenticate": "Autentica",
+    "authFailed": "Autenticazione non riuscita",
+    "authCallbackTitle": "Completa autenticazione",
+    "authCallbackDescription": "Dopo il completamento nel browser, torna a DeepChat. Se DeepChat non si aggiorna, incolla qui l'URL di callback completo.",
+    "authCallbackPlaceholder": "Incolla l'URL di callback completo",
+    "completeAuthentication": "Completa autenticazione",
+    "saveSuccess": "Configurazione salvata",
+    "saveFailed": "Impossibile salvare la configurazione"
   },
   "about": {
     "title": "Chi siamo",

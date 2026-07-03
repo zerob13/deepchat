@@ -1130,7 +1130,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "הדבק כתובת URL לחזרה",
+    "openaiCodexCallbackTitle": "השלמת האימות",
+    "openaiCodexCallbackDescription": "לאחר שהדפדפן מסיים, חזור אל DeepChat. אם DeepChat לא מתעדכן, הדבק כאן את כתובת ה-URL המלאה לחזרה.",
+    "openaiCodexCallbackPlaceholder": "הדבק את כתובת ה-URL המלאה לחזרה",
+    "openaiCodexCompleteAuthentication": "השלמת האימות"
   },
   "knowledgeBase": {
     "title": "הגדרות בסיס ידע",
@@ -1448,7 +1453,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "נדרש אימות",
+    "authenticate": "אמת",
+    "authFailed": "האימות נכשל",
+    "authCallbackTitle": "השלמת האימות",
+    "authCallbackDescription": "לאחר שהדפדפן מסיים, חזור אל DeepChat. אם DeepChat לא מתעדכן, הדבק כאן את כתובת ה-URL המלאה לחזרה.",
+    "authCallbackPlaceholder": "הדבק את כתובת ה-URL המלאה לחזרה",
+    "completeAuthentication": "השלמת האימות",
+    "saveSuccess": "התצורה נשמרה",
+    "saveFailed": "שמירת התצורה נכשלה"
   },
   "scheduledTasks": {
     "title": "משימות מתוזמנות",

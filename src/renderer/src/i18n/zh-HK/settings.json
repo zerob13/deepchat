@@ -1130,7 +1130,12 @@
         "models": "Models",
         "advanced": "Advanced"
       }
-    }
+    },
+    "openaiCodexPasteCallback": "貼上回調 URL",
+    "openaiCodexCallbackTitle": "完成認證",
+    "openaiCodexCallbackDescription": "瀏覽器完成後返回 DeepChat。如果 DeepChat 沒有更新，請在此貼上完整回調 URL。",
+    "openaiCodexCallbackPlaceholder": "貼上完整回調 URL",
+    "openaiCodexCompleteAuthentication": "完成認證"
   },
   "knowledgeBase": {
     "fastgptTitle": "FastGPT知識庫",
@@ -1448,7 +1453,16 @@
         "builtIn": "Built-in",
         "custom": "Custom"
       }
-    }
+    },
+    "authRequired": "需要認證",
+    "authenticate": "認證",
+    "authFailed": "認證失敗",
+    "authCallbackTitle": "完成認證",
+    "authCallbackDescription": "瀏覽器完成後返回 DeepChat。如果 DeepChat 沒有更新，請在此貼上完整回調 URL。",
+    "authCallbackPlaceholder": "貼上完整回調 URL",
+    "completeAuthentication": "完成認證",
+    "saveSuccess": "已儲存配置",
+    "saveFailed": "儲存失敗"
   },
   "scheduledTasks": {
     "title": "定時任務",
