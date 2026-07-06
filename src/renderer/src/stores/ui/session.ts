@@ -279,6 +279,8 @@ export const useSessionStore = defineStore('session', () => {
   let groupModeUpdateVersion = 0
   let initialPageRequestId = 0
   let nextPageRequestId = 0
+  let activationNavigationRequestId = 0
+  let sessionFetchPromise: Promise<void> | null = null
 
   const sessions = ref<UISession[]>([])
   const bootstrapActiveSession = ref<UISession | null>(null)
@@ -304,6 +306,14 @@ export const useSessionStore = defineStore('session', () => {
     activeSessionId.value = sessionId
     messageStore.setCurrentSessionId(sessionId)
   }
+
+  const createActivationNavigationRequest = (): number => {
+    activationNavigationRequestId += 1
+    return activationNavigationRequestId
+  }
+
+  const isCurrentActivationNavigation = (requestId: number, sessionId: string): boolean =>
+    activationNavigationRequestId === requestId && activeSessionId.value === sessionId
 
   const notifyRendererReady = (): void => {
     if (rendererReadyNotified) return
@@ -376,6 +386,7 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     if (activeSessionId.value && targetIds.has(activeSessionId.value)) {
+      createActivationNavigationRequest()
       messageStore.clearStreamingState()
       setActiveSessionId(null)
       pageRouter.goToNewThread()
@@ -490,6 +501,17 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  const hydrateActiveSessionSummary = async (sessionId: string): Promise<void> => {
+    try {
+      const active = await sessionClient.getActive()
+      if (active.session?.id === sessionId) {
+        applyRestoredSession(active.session)
+      }
+    } catch (restoreError) {
+      console.warn('[sessionStore] Failed to hydrate selected session:', restoreError)
+    }
+  }
+
   const applyBootstrapShell = async (input: {
     activeSessionId: string | null
     activeSession?: SessionListItem | null
@@ -588,11 +610,23 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  async function fetchSessions(): Promise<void> {
-    await loadSessionPage({
+  function fetchSessions(): Promise<void> {
+    if (sessionFetchPromise) {
+      return sessionFetchPromise
+    }
+
+    const loadPromise = loadSessionPage({
       reset: true,
       prioritizeSessionId: activeSessionId.value ?? bootstrapActiveSession.value?.id ?? null
     })
+    const currentFetchPromise = loadPromise.finally(() => {
+      if (sessionFetchPromise === currentFetchPromise) {
+        sessionFetchPromise = null
+      }
+    })
+
+    sessionFetchPromise = currentFetchPromise
+    return currentFetchPromise
   }
 
   async function loadNextPage(): Promise<void> {
@@ -632,6 +666,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function createSession(input: CreateSessionInput): Promise<void> {
     error.value = null
+    createActivationNavigationRequest()
     try {
       const result = await sessionClient.create(input)
       const session = result.session
@@ -651,14 +686,22 @@ export const useSessionStore = defineStore('session', () => {
 
   async function selectSession(sessionId: string): Promise<void> {
     error.value = null
+    const requestId = createActivationNavigationRequest()
     try {
       if (activeSessionId.value && activeSessionId.value !== sessionId) {
         messageStore.clearStreamingState()
       }
       await sessionClient.activate(sessionId)
+      if (activationNavigationRequestId !== requestId) {
+        return
+      }
       clearActiveSessionSummary()
       syncSelectedAgentToSession(sessionId)
       setActiveSessionId(sessionId)
+      await hydrateActiveSessionSummary(sessionId)
+      if (!isCurrentActivationNavigation(requestId, sessionId)) {
+        return
+      }
       pageRouter.goToChat(sessionId)
     } catch (selectError) {
       error.value = `Failed to select session: ${selectError}`
@@ -667,6 +710,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function closeSession(options: CloseSessionOptions = {}): Promise<void> {
     error.value = null
+    createActivationNavigationRequest()
     try {
       messageStore.clearStreamingState()
       await sessionClient.deactivate()
@@ -696,6 +740,7 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     pageRouter.goToNewThread({ refresh: options.refresh ?? true })
+    createActivationNavigationRequest()
   }
 
   async function completeOnboardingStep(stepId: GuidedOnboardingStepId): Promise<void> {
@@ -968,17 +1013,25 @@ export const useSessionStore = defineStore('session', () => {
     fetchSessions,
     refreshSessionsByIds,
     removeSessions,
-    onActivated: (sessionId) => {
+    onActivated: async (sessionId) => {
+      const requestId = createActivationNavigationRequest()
       if (activeSessionId.value && activeSessionId.value !== sessionId) {
         messageStore.clearStreamingState()
       }
-      clearActiveSessionSummary()
+      if (activeSessionSummary.value?.id !== sessionId) {
+        clearActiveSessionSummary()
+      }
       syncSelectedAgentToSession(sessionId)
       setActiveSessionId(sessionId)
+      await hydrateActiveSessionSummary(sessionId)
+      if (!isCurrentActivationNavigation(requestId, sessionId)) {
+        return
+      }
       pageRouter.goToChat(sessionId)
       void tabClient.notifyRendererActivated(sessionId)
     },
     onDeactivated: () => {
+      createActivationNavigationRequest()
       messageStore.clearStreamingState()
       clearActiveSessionSummary()
       setActiveSessionId(null)

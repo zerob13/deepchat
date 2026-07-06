@@ -1,6 +1,6 @@
 import logger from '@shared/logger'
 import { IConfigPresenter, MCPServerConfig } from '@shared/presenter'
-import { McpClient } from './mcpClient'
+import { McpClient, McpConnectionCancelledError, type McpConnectResult } from './mcpClient'
 import axios from 'axios'
 import { proxyConfig } from '@/presenter/proxyConfig'
 import { eventBus } from '@/eventbus'
@@ -219,15 +219,32 @@ export class ServerManager {
     return clients
   }
 
-  async startServer(name: string): Promise<void> {
+  async getActiveClients(): Promise<McpClient[]> {
+    return Array.from(this.clients.values()).filter((client) => client.isActive())
+  }
+
+  async startServer(
+    name: string,
+    options: { onBackgroundConnected?: () => void } = {}
+  ): Promise<McpConnectResult> {
     // If server is already running, no need to start again
-    if (this.clients.has(name)) {
-      if (this.isServerRunning(name)) {
+    const existingClient = this.clients.get(name)
+    if (existingClient) {
+      if (existingClient.isServerRunning()) {
         console.info(`MCP server ${name} is already running`)
+        return 'connected'
       } else {
         console.info(`MCP server ${name} is starting...`)
+        const serverConfig = (existingClient.serverConfig ?? {}) as unknown as MCPServerConfig
+        this.handleStartupConnectResult(
+          name,
+          existingClient,
+          serverConfig,
+          'soft-timeout-released',
+          options
+        )
+        return 'soft-timeout-released'
       }
-      return
     }
 
     const servers = await this.configPresenter.getMcpServers()
@@ -237,11 +254,12 @@ export class ServerManager {
       throw new Error(`MCP server ${name} not found`)
     }
 
+    let client: McpClient | null = null
     try {
       console.info(`Starting MCP server ${name}...`)
       const npmRegistry = serverConfig.customNpmRegistry || this.npmRegistry
       // Create and save client instance, passing npm registry
-      const client = new McpClient(
+      client = new McpClient(
         name,
         serverConfig as unknown as Record<string, unknown>,
         npmRegistry,
@@ -251,9 +269,19 @@ export class ServerManager {
       this.clients.set(name, client)
 
       // Connect to server, this will start the service
-      await client.connect()
-      this.clearServerLastError(name)
+      const connectResult = await client.connect({ phase: 'startup' })
+      this.handleStartupConnectResult(name, client, serverConfig, connectResult, options)
+      if (connectResult === 'connected') {
+        this.clearServerLastError(name)
+      }
+      return connectResult
     } catch (error) {
+      if (client?.getLifecycleStatus?.() === 'stopped' && !client.isActive()) {
+        console.info(`MCP server ${name} startup was cancelled; ignoring stopped client`)
+        this.clients.delete(name)
+        return 'stopped'
+      }
+
       console.error(`Failed to start MCP server ${name}:`, error)
 
       // Remove client reference
@@ -271,6 +299,50 @@ export class ServerManager {
     } finally {
       eventBus.sendToMain(MCP_EVENTS.CLIENT_LIST_UPDATED)
     }
+  }
+
+  private handleStartupConnectResult(
+    name: string,
+    client: McpClient,
+    serverConfig: MCPServerConfig,
+    connectResult: McpConnectResult,
+    options: { onBackgroundConnected?: () => void } = {}
+  ): void {
+    if (connectResult !== 'soft-timeout-released') {
+      return
+    }
+
+    const completion = client.getConnectionCompletion()
+    if (!completion) {
+      return
+    }
+
+    completion
+      .then(() => {
+        this.clearServerLastError(name)
+        options.onBackgroundConnected?.()
+        eventBus.sendToMain(MCP_EVENTS.CLIENT_LIST_UPDATED)
+      })
+      .catch((error) => {
+        if (error instanceof McpConnectionCancelledError) {
+          return
+        }
+
+        if (this.clients.get(name) !== client) {
+          return
+        }
+
+        this.clients.delete(name)
+        this.setServerLastError(name, error)
+        const authHandled =
+          this.mcpOAuthManager?.handleConnectionError(name, serverConfig, error) ?? false
+
+        if (!authHandled && !this.isPluginOwnedServerConfig(serverConfig)) {
+          this.sendMcpConnectionError(name, error)
+        }
+
+        eventBus.sendToMain(MCP_EVENTS.CLIENT_LIST_UPDATED)
+      })
   }
 
   // Handle and send MCP connection error notification
@@ -327,6 +399,10 @@ export class ServerManager {
       return false
     }
     return client.isServerRunning()
+  }
+
+  isServerActive(name: string): boolean {
+    return this.clients.get(name)?.isActive() ?? false
   }
 
   /**

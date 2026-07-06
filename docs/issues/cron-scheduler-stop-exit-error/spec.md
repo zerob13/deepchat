@@ -12,4 +12,3 @@ stop path.
 - Disabling the last enabled job must not surface a scheduler exit-code error.
 - Explicit stop/restart paths must still clear scheduler errors.
 - Unexpected exits while enabled jobs remain must still be marked as errors and scheduled for restart.
-

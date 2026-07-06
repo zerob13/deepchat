@@ -48,6 +48,10 @@ type PluginPresenterDeps = {
   resourcesPath?: string
 }
 
+type ShutdownAwareMcpPresenter = IMCPPresenter & {
+  stopServerDuringShutdownByName?: (serverName: string) => Promise<void>
+}
+
 type ResolvedOfficialPlugin = {
   manifest: DeepChatPluginManifest
   root: string
@@ -132,6 +136,7 @@ export class PluginPresenter {
   async shutdown(): Promise<void> {
     const pluginIds = new Set(this.getInstallations().map((installation) => installation.pluginId))
     const servers = await this.configPresenter.getMcpServers()
+    const pluginOwnedServers: Array<{ serverName: string; pluginId?: string }> = []
 
     for (const [serverName, serverConfig] of Object.entries(servers)) {
       if (!this.isPluginOwnedServerConfig(serverConfig)) {
@@ -142,25 +147,55 @@ export class PluginPresenter {
       if (ownerPluginId) {
         pluginIds.add(ownerPluginId)
       }
-
-      try {
-        if (await this.mcpPresenter.isServerRunning(serverName)) {
-          await this.mcpPresenter.stopServer(serverName)
-        }
-      } catch (error) {
-        console.warn('[PluginHost] Failed to stop plugin-owned MCP server during shutdown:', {
-          pluginId: ownerPluginId,
-          serverName,
-          error
-        })
-      }
+      pluginOwnedServers.push({ serverName, pluginId: ownerPluginId })
     }
+
+    await this.stopPluginOwnedServers(pluginOwnedServers)
 
     for (const pluginId of pluginIds) {
       unregisterPluginToolPolicies(pluginId)
     }
 
     this.closeAllPluginSettingsWindows()
+  }
+
+  private async stopPluginOwnedServers(
+    servers: Array<{ serverName: string; pluginId?: string }>
+  ): Promise<void> {
+    const concurrency = 4
+    let nextIndex = 0
+
+    const stopNext = async (): Promise<void> => {
+      while (nextIndex < servers.length) {
+        const { serverName, pluginId } = servers[nextIndex++]
+        try {
+          if (await this.isMcpServerActive(serverName)) {
+            const mcpPresenter = this.mcpPresenter as ShutdownAwareMcpPresenter
+            if (mcpPresenter.stopServerDuringShutdownByName) {
+              await mcpPresenter.stopServerDuringShutdownByName(serverName)
+            } else {
+              await this.mcpPresenter.stopServer(serverName)
+            }
+          }
+        } catch (error) {
+          console.warn('[PluginHost] Failed to stop plugin-owned MCP server during shutdown:', {
+            pluginId,
+            serverName,
+            error
+          })
+        }
+      }
+    }
+
+    const workers = Array.from({ length: Math.min(concurrency, servers.length) }, () => stopNext())
+    await Promise.all(workers)
+  }
+
+  private async isMcpServerActive(serverName: string): Promise<boolean> {
+    return (
+      (await this.mcpPresenter.isServerActive?.(serverName)) ??
+      (await this.mcpPresenter.isServerRunning(serverName))
+    )
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
@@ -325,7 +360,7 @@ export class PluginPresenter {
     for (const [serverName, serverConfig] of Object.entries(servers)) {
       if (this.isServerOwnedByPlugin(serverConfig, pluginId)) {
         try {
-          if (await this.mcpPresenter.isServerRunning(serverName)) {
+          if (await this.isMcpServerActive(serverName)) {
             await this.mcpPresenter.stopServer(serverName)
           }
         } catch (error) {
@@ -1594,7 +1629,7 @@ export class PluginPresenter {
 
     for (const serverName of serverNames) {
       try {
-        if (!(await this.mcpPresenter.isServerRunning(serverName))) {
+        if (!(await this.isMcpServerActive(serverName))) {
           void this.mcpPresenter.startServer(serverName).catch((error) => {
             console.warn('[PluginHost] Failed to auto-start plugin MCP server:', {
               pluginId,

@@ -11,6 +11,11 @@ import { getStartupSchemaCatalog } from '@/presenter/sqlitePresenter/schemaCatal
 import { classifySchemaError } from '@/presenter/sqlitePresenter/schemaErrorClassifier'
 import type { SchemaTableSpec } from '@/presenter/sqlitePresenter/schemaTypes'
 
+type DatabaseInitializerOptions = {
+  password?: string
+  dbPath?: string
+}
+
 /**
  * Database initialization interface
  */
@@ -29,7 +34,7 @@ export class DatabaseInitializer implements IDatabaseInitializer {
   private password?: string
   private database?: SQLitePresenter
 
-  constructor(options?: { password?: string; dbPath?: string }) {
+  constructor(options?: DatabaseInitializerOptions) {
     // Initialize database path
     const dbDir = path.join(app.getPath('userData'), 'app_db')
     this.dbPath = options?.dbPath ?? path.join(dbDir, 'agent.db')
@@ -85,7 +90,7 @@ export class DatabaseInitializer implements IDatabaseInitializer {
             )
             this.database.close()
             this.database = undefined
-            repairSQLiteDatabaseFile(this.dbPath, this.password, { catalog })
+            this.repairStartupSchema(catalog)
             continue
           }
 
@@ -111,9 +116,7 @@ export class DatabaseInitializer implements IDatabaseInitializer {
           )
           // Construction-time schema failures use the same startup catalog for the same reason:
           // keep boot-time repair scoped to tables that fresh initialization owns.
-          repairSQLiteDatabaseFile(this.dbPath, this.password, {
-            catalog: getStartupSchemaCatalog()
-          })
+          this.repairStartupSchema(getStartupSchemaCatalog())
         }
       }
     } catch (error) {
@@ -174,6 +177,7 @@ export class DatabaseInitializer implements IDatabaseInitializer {
       return null
     }
 
+    const start = performance.now()
     try {
       const catalog = getStartupSchemaCatalog()
       return {
@@ -186,6 +190,21 @@ export class DatabaseInitializer implements IDatabaseInitializer {
         error
       )
       return null
+    } finally {
+      logger.info(
+        `DatabaseInitializer: phase=diagnose duration=${(performance.now() - start).toFixed(2)}ms`
+      )
+    }
+  }
+
+  private repairStartupSchema(catalog: SchemaTableSpec[]): void {
+    const start = performance.now()
+    try {
+      repairSQLiteDatabaseFile(this.dbPath, this.password, { catalog })
+    } finally {
+      logger.info(
+        `DatabaseInitializer: phase=repair duration=${(performance.now() - start).toFixed(2)}ms`
+      )
     }
   }
 

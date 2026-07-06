@@ -13,4 +13,3 @@ actions, so it can keep displaying the initial pre-heartbeat status snapshot.
 - Refresh the scheduler status indicator while the Scheduled settings page is open.
 - Do not reload or overwrite the editable job list during heartbeat refreshes.
 - Stop the refresh timer when the settings page unmounts.
-

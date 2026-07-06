@@ -14,4 +14,3 @@ scheduler utility bundle. The utility process only needs a lightweight SQLite co
 - Existing SQLite presenter callers must keep importing `openSQLiteDatabase` from the index module.
 - The scheduler utility build output must not import Electron-only dependencies through the SQLite
   presenter path.
-

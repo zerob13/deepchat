@@ -14,4 +14,3 @@ Cron Jobs timezone editing should use a selector instead of free text input.
 
 - No new timezone dependency.
 - No timezone search UI in this slice.
-

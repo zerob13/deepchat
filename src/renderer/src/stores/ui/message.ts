@@ -18,6 +18,7 @@ import { useStreamStateStore } from './stream'
 import { bindMessageStoreIpc } from './messageIpc'
 
 const EPHEMERAL_STREAM_MESSAGE_PREFIXES = ['__rate_limit__:']
+const PARSED_MESSAGE_CACHE_MAX_SIZE = 1024
 
 function toStoreStateRef<T extends object, K extends keyof T>(store: T, key: K): Ref<any> {
   const value = store[key]
@@ -68,6 +69,11 @@ export const useMessageStore = defineStore('message', () => {
 
   // --- Actions ---
 
+  function compareMessageIds(left: string, right: string): number {
+    if (left === right) return 0
+    return left < right ? -1 : 1
+  }
+
   function sortMessageIdsByOrderSeq(): void {
     messageIds.value.sort((a, b) => {
       const aSeq = messageCache.value.get(a)?.orderSeq ?? Number.MAX_SAFE_INTEGER
@@ -75,27 +81,93 @@ export const useMessageStore = defineStore('message', () => {
       if (aSeq !== bSeq) {
         return aSeq - bSeq
       }
-      return a.localeCompare(b)
+      return compareMessageIds(a, b)
     })
+  }
+
+  function isMessageIdsSortedByOrderSeq(): boolean {
+    let previousSeq = Number.NEGATIVE_INFINITY
+    let previousId = ''
+
+    for (const id of messageIds.value) {
+      const seq = messageCache.value.get(id)?.orderSeq
+      if (!Number.isFinite(seq)) return false
+
+      if (seq! < previousSeq) return false
+      if (seq === previousSeq && compareMessageIds(previousId, id) > 0) return false
+
+      previousSeq = seq!
+      previousId = id
+    }
+
+    return true
+  }
+
+  function findInsertIndexByOrderSeq(orderSeq: number, id: string): number {
+    let left = 0
+    let right = messageIds.value.length
+
+    while (left < right) {
+      const mid = (left + right) >> 1
+      const midId = messageIds.value[mid]
+      const midSeq = messageCache.value.get(midId)?.orderSeq ?? Number.MAX_SAFE_INTEGER
+
+      if (midSeq < orderSeq) {
+        left = mid + 1
+        continue
+      }
+      if (midSeq > orderSeq) {
+        right = mid
+        continue
+      }
+
+      if (compareMessageIds(midId, id) <= 0) {
+        left = mid + 1
+      } else {
+        right = mid
+      }
+    }
+
+    return left
   }
 
   function upsertMessageRecord(record: ChatMessageRecord): void {
     const cachedRecord = messageCache.value.get(record.id)
-    const hasMessageId = messageIds.value.includes(record.id)
-    const shouldSort = !hasMessageId || cachedRecord?.orderSeq !== record.orderSeq
+    const hasMessageId = cachedRecord !== undefined
 
     messageCache.value.set(record.id, record)
-    if (!hasMessageId) {
-      messageIds.value.push(record.id)
+    if (hasMessageId) {
+      if (cachedRecord?.orderSeq !== record.orderSeq) {
+        sortMessageIdsByOrderSeq()
+      }
+      return
     }
-    if (shouldSort) {
-      sortMessageIdsByOrderSeq()
+
+    if (Number.isFinite(record.orderSeq) && isMessageIdsSortedByOrderSeq()) {
+      messageIds.value.splice(findInsertIndexByOrderSeq(record.orderSeq, record.id), 0, record.id)
+      return
+    }
+
+    messageIds.value.push(record.id)
+    sortMessageIdsByOrderSeq()
+  }
+
+  function setParsedEntry(recordId: string, entry: ParsedMessageCacheEntry): void {
+    parsedMessageCache.set(recordId, entry)
+    if (parsedMessageCache.size > PARSED_MESSAGE_CACHE_MAX_SIZE) {
+      const oldestKey = parsedMessageCache.keys().next().value
+      if (oldestKey) {
+        parsedMessageCache.delete(oldestKey)
+      }
     }
   }
 
   function getParsedEntry(record: ChatMessageRecord) {
     const cached = parsedMessageCache.get(record.id)
     if (cached) {
+      parsedMessageCache.delete(record.id)
+      setParsedEntry(record.id, cached)
+
       if (cached.content !== record.content) {
         cached.content = record.content
         cached.prevAssistantBlocks = cached.assistantBlocks
@@ -117,8 +189,93 @@ export const useMessageStore = defineStore('message', () => {
       content: record.content,
       metadata: record.metadata
     }
-    parsedMessageCache.set(record.id, nextEntry)
+    setParsedEntry(record.id, nextEntry)
     return nextEntry
+  }
+
+  function structuralArrayEqual(previous: unknown[], next: unknown[]): boolean {
+    if (previous.length !== next.length) return false
+    return previous.every((previousValue, index) =>
+      structuralPayloadValueEqual(previousValue, next[index])
+    )
+  }
+
+  function structuralRecordEqual(
+    previous: Record<string, unknown>,
+    next: Record<string, unknown>
+  ): boolean {
+    const previousKeys = Object.keys(previous)
+    const nextKeys = Object.keys(next)
+    if (previousKeys.length !== nextKeys.length) return false
+
+    return previousKeys.every(
+      (key) => Object.hasOwn(next, key) && structuralPayloadValueEqual(previous[key], next[key])
+    )
+  }
+
+  function structuralPayloadValueEqual(previous: unknown, next: unknown): boolean {
+    if (Object.is(previous, next)) return true
+    if (!previous || !next || typeof previous !== 'object' || typeof next !== 'object') return false
+    if (Array.isArray(previous) || Array.isArray(next)) {
+      return Array.isArray(previous) && Array.isArray(next) && structuralArrayEqual(previous, next)
+    }
+    return structuralRecordEqual(
+      previous as Record<string, unknown>,
+      next as Record<string, unknown>
+    )
+  }
+
+  function toolCallPayloadEqual(
+    previous: DisplayAssistantMessageBlock['tool_call'],
+    next: DisplayAssistantMessageBlock['tool_call']
+  ): boolean {
+    if (previous === next) return true
+    if (!previous || !next) return false
+    return (
+      previous.id === next.id &&
+      previous.name === next.name &&
+      previous.params === next.params &&
+      previous.response === next.response &&
+      previous.rtkApplied === next.rtkApplied &&
+      previous.rtkMode === next.rtkMode &&
+      previous.rtkFallbackReason === next.rtkFallbackReason &&
+      previous.server_name === next.server_name &&
+      previous.server_icons === next.server_icons &&
+      previous.server_description === next.server_description &&
+      structuralPayloadValueEqual(previous.imagePreviews, next.imagePreviews)
+    )
+  }
+
+  function artifactPayloadEqual(
+    previous: DisplayAssistantMessageBlock['artifact'],
+    next: DisplayAssistantMessageBlock['artifact']
+  ): boolean {
+    if (previous === next) return true
+    if (!previous || !next) return false
+    return (
+      previous.identifier === next.identifier &&
+      previous.title === next.title &&
+      previous.type === next.type &&
+      previous.language === next.language
+    )
+  }
+
+  function imageDataPayloadEqual(
+    previous: DisplayAssistantMessageBlock['image_data'],
+    next: DisplayAssistantMessageBlock['image_data']
+  ): boolean {
+    if (previous === next) return true
+    if (!previous || !next) return false
+    return previous.data === next.data && previous.mimeType === next.mimeType
+  }
+
+  function reasoningTimePayloadEqual(
+    previous: DisplayAssistantMessageBlock['reasoning_time'],
+    next: DisplayAssistantMessageBlock['reasoning_time']
+  ): boolean {
+    if (previous === next) return true
+    if (!previous || !next || typeof previous !== 'object' || typeof next !== 'object') return false
+    return previous.start === next.start && previous.end === next.end
   }
 
   // Mutable payload fields a stable-status block can still change between
@@ -132,11 +289,11 @@ export const useMessageStore = defineStore('message', () => {
     return (
       previous.content === next.content &&
       previous.action_type === next.action_type &&
-      JSON.stringify(previous.extra) === JSON.stringify(next.extra) &&
-      JSON.stringify(previous.tool_call) === JSON.stringify(next.tool_call) &&
-      JSON.stringify(previous.artifact) === JSON.stringify(next.artifact) &&
-      JSON.stringify(previous.image_data) === JSON.stringify(next.image_data) &&
-      JSON.stringify(previous.reasoning_time) === JSON.stringify(next.reasoning_time)
+      structuralPayloadValueEqual(previous.extra, next.extra) &&
+      toolCallPayloadEqual(previous.tool_call, next.tool_call) &&
+      artifactPayloadEqual(previous.artifact, next.artifact) &&
+      imageDataPayloadEqual(previous.image_data, next.image_data) &&
+      reasoningTimePayloadEqual(previous.reasoning_time, next.reasoning_time)
     )
   }
 
@@ -500,18 +657,29 @@ export const useMessageStore = defineStore('message', () => {
   function applyStreamingBlocksToMessage(
     messageId: string,
     conversationId: string,
-    blocks: AssistantMessageBlock[]
+    blocks: AssistantMessageBlock[],
+    metadata?: { providerId?: string; modelId?: string }
   ): void {
     const serializedBlocks = JSON.stringify(blocks)
+    const serializedMetadata = JSON.stringify({
+      ...(metadata?.providerId ? { provider: metadata.providerId } : {}),
+      ...(metadata?.modelId ? { model: metadata.modelId } : {})
+    })
     const existing = messageCache.value.get(messageId)
     if (existing) {
       if (existing.sessionId !== conversationId) return
-      if (existing.content === serializedBlocks && existing.status === 'pending') {
+      const nextMetadata = serializedMetadata === '{}' ? existing.metadata : serializedMetadata
+      if (
+        existing.content === serializedBlocks &&
+        existing.status === 'pending' &&
+        existing.metadata === nextMetadata
+      ) {
         return
       }
       upsertMessageRecord({
         ...existing,
         content: serializedBlocks,
+        metadata: nextMetadata,
         status: 'pending',
         updatedAt: Date.now()
       })
@@ -528,7 +696,7 @@ export const useMessageStore = defineStore('message', () => {
       content: serializedBlocks,
       status: 'pending',
       isContextEdge: 0,
-      metadata: '{}',
+      metadata: serializedMetadata,
       traceCount: 0,
       createdAt: Date.now(),
       updatedAt: Date.now()

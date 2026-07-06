@@ -58,7 +58,11 @@ import type {
   CONVERSATION
 } from '@shared/presenter'
 import type { SQLitePresenter } from '../sqlitePresenter'
-import type { DeepChatMessageRow } from '../sqlitePresenter/tables/deepchatMessages'
+import type { StartupWorkloadTaskContext } from '../startupWorkloadCoordinator'
+import type {
+  DeepChatMessageRow,
+  DeepChatMessageUsageCandidateRow
+} from '../sqlitePresenter/tables/deepchatMessages'
 import { AgentRegistry } from './agentRegistry'
 import { NewSessionManager } from './sessionManager'
 import { NewMessageManager } from './messageManager'
@@ -1614,7 +1618,15 @@ export class AgentSessionPresenter {
     this.legacyImportService.startInBackground(false)
   }
 
+  async startLegacyImportTask(): Promise<void> {
+    await this.legacyImportService.start(false)
+  }
+
   async startUsageStatsBackfill(): Promise<void> {
+    return await this.startUsageStatsBackfillTask()
+  }
+
+  async startUsageStatsBackfillTask(taskContext?: StartupWorkloadTaskContext): Promise<void> {
     const currentStatus = this.getUsageStatsBackfillStatus()
     if (currentStatus.status === 'completed') {
       return
@@ -1628,7 +1640,7 @@ export class AgentSessionPresenter {
       return await this.usageStatsBackfillPromise
     }
 
-    this.usageStatsBackfillPromise = this.runUsageStatsBackfill().finally(() => {
+    this.usageStatsBackfillPromise = this.runUsageStatsBackfill(taskContext).finally(() => {
       this.usageStatsBackfillPromise = null
     })
 
@@ -1636,6 +1648,12 @@ export class AgentSessionPresenter {
   }
 
   async startMainlineNormalizationBackfill(): Promise<void> {
+    return await this.startMainlineNormalizationBackfillTask()
+  }
+
+  async startMainlineNormalizationBackfillTask(
+    taskContext?: StartupWorkloadTaskContext
+  ): Promise<void> {
     const current =
       this.sqlitePresenter.configTables.getAgentSetting<{
         status?: 'running' | 'completed' | 'failed'
@@ -1650,14 +1668,22 @@ export class AgentSessionPresenter {
       return await this.mainlineNormalizationPromise
     }
 
-    this.mainlineNormalizationPromise = this.runMainlineNormalizationBackfill().finally(() => {
-      this.mainlineNormalizationPromise = null
-    })
+    this.mainlineNormalizationPromise = this.runMainlineNormalizationBackfill(taskContext).finally(
+      () => {
+        this.mainlineNormalizationPromise = null
+      }
+    )
 
     return await this.mainlineNormalizationPromise
   }
 
   async startDisabledSearchToolCleanupBackfill(): Promise<void> {
+    return await this.startDisabledSearchToolCleanupBackfillTask()
+  }
+
+  async startDisabledSearchToolCleanupBackfillTask(
+    taskContext?: StartupWorkloadTaskContext
+  ): Promise<void> {
     const current =
       this.sqlitePresenter.configTables.getAgentSetting<{
         status?: 'running' | 'completed' | 'failed'
@@ -1672,17 +1698,24 @@ export class AgentSessionPresenter {
       return await this.disabledSearchToolCleanupPromise
     }
 
-    this.disabledSearchToolCleanupPromise = this.runDisabledSearchToolCleanupBackfill().finally(
-      () => {
-        this.disabledSearchToolCleanupPromise = null
-      }
-    )
+    this.disabledSearchToolCleanupPromise = this.runDisabledSearchToolCleanupBackfill(
+      taskContext
+    ).finally(() => {
+      this.disabledSearchToolCleanupPromise = null
+    })
 
     return await this.disabledSearchToolCleanupPromise
   }
 
-  async startRtkHealthCheck(): Promise<void> {
+  async startRtkHealthCheck(taskContext?: StartupWorkloadTaskContext): Promise<void> {
+    await this.startRtkHealthCheckTask(taskContext)
+  }
+
+  async startRtkHealthCheckTask(taskContext?: StartupWorkloadTaskContext): Promise<void> {
+    taskContext?.reportProgress(0)
+    await taskContext?.yield()
     await rtkRuntimeService.startHealthCheck()
+    taskContext?.reportProgress(1)
   }
 
   async retryRtkHealthCheck(): Promise<void> {
@@ -3415,91 +3448,162 @@ export class AgentSessionPresenter {
     }
   }
 
-  private async runMainlineNormalizationBackfill(): Promise<void> {
+  private async runMainlineNormalizationBackfill(
+    taskContext?: StartupWorkloadTaskContext
+  ): Promise<void> {
     const startedAt = Date.now()
+    const batchSize = 50
     this.sqlitePresenter.configTables.setAgentSetting(SQLITE_MAINLINE_NORMALIZATION_KEY, {
       status: 'running',
       startedAt,
       finishedAt: null,
-      updatedAt: startedAt
+      updatedAt: startedAt,
+      processedCount: 0
     })
 
     try {
       const db = this.sqlitePresenter.getDatabase()
-      const sessionRows = db
-        .prepare('SELECT * FROM new_sessions ORDER BY updated_at ASC')
-        .all() as Array<{
-        id: string
-        title: string
-        updated_at: number
-      }>
-
       let processedCount = 0
-      for (const sessionRow of sessionRows) {
-        const activeSkills = this.sqlitePresenter.newSessionsTable.getActiveSkills(sessionRow.id)
-        const disabledAgentTools = this.sqlitePresenter.newSessionsTable.getDisabledAgentTools(
-          sessionRow.id
-        )
-        this.sqlitePresenter.newSessionActiveSkillsTable.replaceForSession(
-          sessionRow.id,
-          activeSkills
-        )
-        this.sqlitePresenter.newSessionDisabledAgentToolsTable.replaceForSession(
-          sessionRow.id,
-          disabledAgentTools
-        )
-        this.sqlitePresenter.deepchatSearchDocumentsTable.upsert({
-          documentKey: `session:${sessionRow.id}`,
-          sessionId: sessionRow.id,
-          documentKind: 'session',
-          title: sessionRow.title,
-          content: '',
-          updatedAt: sessionRow.updated_at
+      let batchCount = 0
+      const yieldForBatch = async (): Promise<void> => {
+        this.sqlitePresenter.configTables.setAgentSetting(SQLITE_MAINLINE_NORMALIZATION_KEY, {
+          status: 'running',
+          startedAt,
+          finishedAt: null,
+          updatedAt: Date.now(),
+          processedCount
         })
-
-        processedCount += 1
-        if (processedCount % 200 === 0) {
-          await this.yieldToEventLoop()
-        }
+        await (taskContext?.yield() ?? this.yieldToEventLoop())
       }
 
-      const messageRows = db
-        .prepare('SELECT * FROM deepchat_messages ORDER BY created_at ASC')
-        .all() as DeepChatMessageRow[]
+      let sessionCursor: { updatedAt: number; id: string } | null = null
+      while (true) {
+        const sessionRows = sessionCursor
+          ? db
+              .prepare<
+                [number, number, string, number],
+                { id: string; title: string; updated_at: number }
+              >(
+                `SELECT id, title, updated_at
+                 FROM new_sessions
+                 WHERE updated_at > ? OR (updated_at = ? AND id > ?)
+                 ORDER BY updated_at ASC, id ASC
+                 LIMIT ?`
+              )
+              .all(sessionCursor.updatedAt, sessionCursor.updatedAt, sessionCursor.id, batchSize)
+          : db
+              .prepare<[number], { id: string; title: string; updated_at: number }>(
+                `SELECT id, title, updated_at
+                 FROM new_sessions
+                 ORDER BY updated_at ASC, id ASC
+                 LIMIT ?`
+              )
+              .all(batchSize)
 
-      for (const row of messageRows) {
-        this.backfillNormalizedMessageRow(row)
-        processedCount += 1
-        if (processedCount % 200 === 0) {
-          this.sqlitePresenter.configTables.setAgentSetting(SQLITE_MAINLINE_NORMALIZATION_KEY, {
-            status: 'running',
-            startedAt,
-            finishedAt: null,
-            updatedAt: Date.now()
+        if (sessionRows.length === 0) {
+          break
+        }
+
+        for (const sessionRow of sessionRows) {
+          const activeSkills = this.sqlitePresenter.newSessionsTable.getActiveSkills(sessionRow.id)
+          const disabledAgentTools = this.sqlitePresenter.newSessionsTable.getDisabledAgentTools(
+            sessionRow.id
+          )
+          this.sqlitePresenter.newSessionActiveSkillsTable.replaceForSession(
+            sessionRow.id,
+            activeSkills
+          )
+          this.sqlitePresenter.newSessionDisabledAgentToolsTable.replaceForSession(
+            sessionRow.id,
+            disabledAgentTools
+          )
+          this.sqlitePresenter.deepchatSearchDocumentsTable.upsert({
+            documentKey: `session:${sessionRow.id}`,
+            sessionId: sessionRow.id,
+            documentKind: 'session',
+            title: sessionRow.title,
+            content: '',
+            updatedAt: sessionRow.updated_at
           })
-          await this.yieldToEventLoop()
+
+          sessionCursor = { updatedAt: sessionRow.updated_at, id: sessionRow.id }
+          processedCount += 1
+          batchCount += 1
+          if (batchCount >= batchSize) {
+            batchCount = 0
+            await yieldForBatch()
+          }
         }
       }
 
+      let messageCursor: { createdAt: number; id: string } | null = null
+      while (true) {
+        const messageRows = messageCursor
+          ? db
+              .prepare<[number, number, string, number], DeepChatMessageRow>(
+                `SELECT id, session_id, role, status, content, updated_at, created_at
+                 FROM deepchat_messages
+                 WHERE created_at > ? OR (created_at = ? AND id > ?)
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT ?`
+              )
+              .all(messageCursor.createdAt, messageCursor.createdAt, messageCursor.id, batchSize)
+          : db
+              .prepare<[number], DeepChatMessageRow>(
+                `SELECT id, session_id, role, status, content, updated_at, created_at
+                 FROM deepchat_messages
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT ?`
+              )
+              .all(batchSize)
+
+        if (messageRows.length === 0) {
+          break
+        }
+
+        for (const row of messageRows) {
+          this.backfillNormalizedMessageRow(row)
+          messageCursor = { createdAt: row.created_at, id: row.id }
+          processedCount += 1
+          batchCount += 1
+          if (batchCount >= batchSize) {
+            batchCount = 0
+            await yieldForBatch()
+          }
+        }
+      }
+
+      const finishedAt = Date.now()
+      const durationMs = finishedAt - startedAt
       this.sqlitePresenter.configTables.setAgentSetting(SQLITE_MAINLINE_NORMALIZATION_KEY, {
         status: 'completed',
         startedAt,
-        finishedAt: Date.now(),
-        updatedAt: Date.now()
+        finishedAt,
+        updatedAt: finishedAt,
+        processedCount,
+        durationMs
+      })
+      logger.info('[SQLiteMainlineNormalization] Backfill completed', {
+        processedCount,
+        durationMs
       })
     } catch (error) {
+      const finishedAt = Date.now()
       this.sqlitePresenter.configTables.setAgentSetting(SQLITE_MAINLINE_NORMALIZATION_KEY, {
         status: 'failed',
         startedAt,
-        finishedAt: Date.now(),
-        updatedAt: Date.now(),
-        error: error instanceof Error ? error.message : String(error)
+        finishedAt,
+        updatedAt: finishedAt,
+        error: error instanceof Error ? error.message : String(error),
+        durationMs: finishedAt - startedAt
       })
       throw error
     }
   }
 
-  private async runDisabledSearchToolCleanupBackfill(): Promise<void> {
+  private async runDisabledSearchToolCleanupBackfill(
+    taskContext?: StartupWorkloadTaskContext
+  ): Promise<void> {
     const startedAt = Date.now()
     this.sqlitePresenter.configTables.setAgentSetting(DISABLED_SEARCH_TOOL_CLEANUP_KEY, {
       status: 'running',
@@ -3510,17 +3614,15 @@ export class AgentSessionPresenter {
 
     try {
       const db = this.sqlitePresenter.getDatabase()
-      const sessionRows = db
-        .prepare('SELECT id FROM new_sessions ORDER BY updated_at ASC')
-        .all() as
-        | Array<{
-            id: string
-          }>
-        | undefined
+      const sessionRowsStatement = db.prepare<[], { id: string }>(
+        'SELECT id FROM new_sessions ORDER BY updated_at ASC'
+      )
+      const sessionRows = sessionRowsStatement.all()
 
       let processedCount = 0
       let updatedCount = 0
-      for (const sessionRow of sessionRows ?? []) {
+      const batchSize = 50
+      for (const sessionRow of sessionRows) {
         const disabledAgentTools = this.sqlitePresenter.newSessionsTable.getDisabledAgentTools(
           sessionRow.id
         )
@@ -3534,8 +3636,8 @@ export class AgentSessionPresenter {
         }
 
         processedCount += 1
-        if (processedCount % 200 === 0) {
-          await this.yieldToEventLoop()
+        if (processedCount % batchSize === 0) {
+          await (taskContext?.yield() ?? this.yieldToEventLoop())
         }
       }
 
@@ -3675,84 +3777,141 @@ export class AgentSessionPresenter {
     }
   }
 
-  private async runUsageStatsBackfill(): Promise<void> {
+  private async runUsageStatsBackfill(taskContext?: StartupWorkloadTaskContext): Promise<void> {
     const startedAt = Date.now()
+    const batchSize = 50
     this.setUsageStatsBackfillStatus({
       status: 'running',
       startedAt,
       finishedAt: null,
       error: null,
-      updatedAt: startedAt
+      updatedAt: startedAt,
+      processedCount: 0
     })
 
     try {
       const usageStatsTable = this.sqlitePresenter.deepchatUsageStatsTable
-      const candidates = this.sqlitePresenter.deepchatMessagesTable.listAssistantUsageCandidates()
 
       let processedCount = 0
-      for (const row of candidates) {
-        const metadata = parseUsageMetadata(row.metadata)
-        if (metadata.messageType === 'compaction') {
-          continue
-        }
-
-        const providerId = resolveUsageProviderId(metadata, row.provider_id)
-        const modelId = resolveUsageModelId(metadata, row.model_id)
-        if (!providerId || !modelId) {
-          continue
-        }
-
-        const usageRecord = buildUsageStatsRecord({
-          messageId: row.id,
-          sessionId: row.session_id,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          providerId,
-          modelId,
-          metadata: {
-            ...metadata,
-            cachedInputTokens: metadata.cachedInputTokens ?? 0,
-            cacheWriteInputTokens: metadata.cacheWriteInputTokens ?? 0
-          },
-          source: 'backfill'
+      let scannedSinceYield = 0
+      const yieldUsageStatsBackfillProgress = async (): Promise<void> => {
+        this.setUsageStatsBackfillStatus({
+          status: 'running',
+          startedAt,
+          finishedAt: null,
+          error: null,
+          updatedAt: Date.now(),
+          processedCount
         })
+        await (taskContext?.yield() ?? this.yieldToEventLoop())
+      }
 
-        if (!usageRecord) {
-          continue
+      let candidateCursor: { createdAt: number; id: string } | null = null
+      while (true) {
+        const candidates = this.listAssistantUsageCandidatePage(candidateCursor, batchSize)
+        if (candidates.length === 0) {
+          break
         }
 
-        usageStatsTable.upsert(usageRecord)
-        processedCount += 1
+        for (const row of candidates) {
+          candidateCursor = { createdAt: row.created_at, id: row.id }
+          scannedSinceYield += 1
 
-        if (processedCount % 200 === 0) {
-          this.setUsageStatsBackfillStatus({
-            status: 'running',
-            startedAt,
-            finishedAt: null,
-            error: null,
-            updatedAt: Date.now()
+          const metadata = parseUsageMetadata(row.metadata)
+          if (metadata.messageType === 'compaction') {
+            continue
+          }
+
+          const providerId = resolveUsageProviderId(metadata, row.provider_id)
+          const modelId = resolveUsageModelId(metadata, row.model_id)
+          if (!providerId || !modelId) {
+            continue
+          }
+
+          const usageRecord = buildUsageStatsRecord({
+            messageId: row.id,
+            sessionId: row.session_id,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            providerId,
+            modelId,
+            metadata: {
+              ...metadata,
+              cachedInputTokens: metadata.cachedInputTokens ?? 0,
+              cacheWriteInputTokens: metadata.cacheWriteInputTokens ?? 0
+            },
+            source: 'backfill'
           })
-          await this.yieldToEventLoop()
+
+          if (!usageRecord) {
+            continue
+          }
+
+          usageStatsTable.upsert(usageRecord)
+          processedCount += 1
+        }
+
+        if (scannedSinceYield >= batchSize) {
+          scannedSinceYield = 0
+          await yieldUsageStatsBackfillProgress()
         }
       }
 
+      const finishedAt = Date.now()
+      const durationMs = finishedAt - startedAt
       this.setUsageStatsBackfillStatus({
         status: 'completed',
         startedAt,
-        finishedAt: Date.now(),
+        finishedAt,
         error: null,
-        updatedAt: Date.now()
+        updatedAt: finishedAt,
+        processedCount,
+        durationMs
       })
+      logger.info('[UsageStatsBackfill] Backfill completed', { processedCount, durationMs })
     } catch (error) {
+      const finishedAt = Date.now()
       this.setUsageStatsBackfillStatus({
         status: 'failed',
         startedAt,
-        finishedAt: Date.now(),
+        finishedAt,
         error: error instanceof Error ? error.message : String(error),
-        updatedAt: Date.now()
+        updatedAt: finishedAt,
+        durationMs: finishedAt - startedAt
       })
       throw error
     }
+  }
+
+  private listAssistantUsageCandidatePage(
+    cursor: { createdAt: number; id: string } | null,
+    limit: number
+  ): DeepChatMessageUsageCandidateRow[] {
+    const table = this.sqlitePresenter.deepchatMessagesTable as {
+      listAssistantUsageCandidatesPage?: (
+        cursor: { createdAt: number; id: string } | null,
+        limit: number
+      ) => DeepChatMessageUsageCandidateRow[]
+      listAssistantUsageCandidates: () => DeepChatMessageUsageCandidateRow[]
+    }
+
+    if (table.listAssistantUsageCandidatesPage) {
+      return table.listAssistantUsageCandidatesPage(cursor, limit)
+    }
+
+    const candidates = [...table.listAssistantUsageCandidates()].sort(
+      (left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id)
+    )
+    if (!cursor) {
+      return candidates.slice(0, limit)
+    }
+    return candidates
+      .filter(
+        (row) =>
+          row.created_at > cursor.createdAt ||
+          (row.created_at === cursor.createdAt && row.id > cursor.id)
+      )
+      .slice(0, limit)
   }
 
   private getUsageStatsBackfillStatus(): UsageStatsBackfillStatus {

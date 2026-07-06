@@ -360,7 +360,13 @@ const planFloatLayer = ref<HTMLDivElement | null>(null)
 const chatInputHeroHostRef = ref<HTMLDivElement | null>(null)
 const pendingDeleteMessageId = ref<string | null>(null)
 const showDeleteMessageDialog = computed(() => Boolean(pendingDeleteMessageId.value))
-const pendingAssistantPlaceholder = ref<{ id: string; sessionId: string } | null>(null)
+const pendingAssistantPlaceholder = ref<{
+  id: string
+  sessionId: string
+  baselineAssistantMessageIds: Set<string>
+  baselineMessageOrderSeq: number
+  baselineCreatedAt: number
+} | null>(null)
 let pendingAssistantPlaceholderSeq = 0
 // Track whether user is near the bottom; if they scroll up, stop auto-following
 const isNearBottom = ref(true)
@@ -976,15 +982,6 @@ watch(
   { immediate: true }
 )
 
-watch(
-  () => messageStore.isStreaming,
-  (isStreaming) => {
-    if (isStreaming) {
-      pendingAssistantPlaceholder.value = null
-    }
-  }
-)
-
 function resolveAssistantModelName(modelId: string): string {
   if (!modelId) {
     return 'Assistant'
@@ -1138,6 +1135,18 @@ const ephemeralRateLimitBlock = computed<DisplayAssistantMessageBlock | null>(()
   return firstBlock
 })
 
+const hasNewAssistantMessageAfterPendingPlaceholder = computed(() => {
+  const pending = pendingAssistantPlaceholder.value
+  if (!pending || pending.sessionId !== props.sessionId) return false
+
+  return messageStore.messages.some(
+    (message) =>
+      message.role === 'assistant' &&
+      !pending.baselineAssistantMessageIds.has(message.id) &&
+      isMessageAfterPendingAssistantBaseline(message, pending)
+  )
+})
+
 const shouldShowPendingAssistantPlaceholder = computed(() => {
   const pending = pendingAssistantPlaceholder.value
   return Boolean(
@@ -1145,9 +1154,19 @@ const shouldShowPendingAssistantPlaceholder = computed(() => {
     pending.sessionId === props.sessionId &&
     !messageStore.isStreaming &&
     !hasInlineStreamingTarget.value &&
+    !hasNewAssistantMessageAfterPendingPlaceholder.value &&
     !ephemeralRateLimitBlock.value
   )
 })
+
+watch(
+  () => messageStore.isStreaming || hasNewAssistantMessageAfterPendingPlaceholder.value,
+  (shouldClearPendingAssistant) => {
+    if (shouldClearPendingAssistant) {
+      pendingAssistantPlaceholder.value = null
+    }
+  }
+)
 
 const latestPlanSnapshot = computed(() => {
   if (!agentPlanStore.isVisible(props.sessionId)) {
@@ -1180,8 +1199,35 @@ function onDismissPlanFloat() {
 
 function createPendingAssistantPlaceholder(sessionId: string): string {
   const id = `__pending_assistant_${Date.now()}_${++pendingAssistantPlaceholderSeq}`
-  pendingAssistantPlaceholder.value = { id, sessionId }
+  const loadedMessages = messageStore.messages
+  const baselineAssistantMessageIds = new Set(
+    loadedMessages.filter((message) => message.role === 'assistant').map((message) => message.id)
+  )
+  const baselineMessageOrderSeq = Math.max(
+    Number.NEGATIVE_INFINITY,
+    ...loadedMessages.map((message) =>
+      Number.isFinite(message.orderSeq) ? message.orderSeq : Number.NEGATIVE_INFINITY
+    )
+  )
+  pendingAssistantPlaceholder.value = {
+    id,
+    sessionId,
+    baselineAssistantMessageIds,
+    baselineMessageOrderSeq,
+    baselineCreatedAt: Date.now()
+  }
   return id
+}
+
+function isMessageAfterPendingAssistantBaseline(
+  message: ChatMessageRecord,
+  pending: NonNullable<typeof pendingAssistantPlaceholder.value>
+): boolean {
+  if (Number.isFinite(pending.baselineMessageOrderSeq) && Number.isFinite(message.orderSeq)) {
+    return message.orderSeq > pending.baselineMessageOrderSeq
+  }
+
+  return message.createdAt > pending.baselineCreatedAt
 }
 
 function clearPendingAssistantPlaceholder(id?: string): void {

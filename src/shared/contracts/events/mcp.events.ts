@@ -4,12 +4,35 @@ import type {
   McpSamplingDecision,
   McpSamplingRequestPayload
 } from '@shared/presenter'
+import type {
+  McpServerLifecycleStatus,
+  McpServerStatusPhase,
+  McpServerStatusReason
+} from '@shared/types/core/mcp'
 import { defineEventContract } from '../common'
 import { McpServerAuthStatusSchema } from '../routes/mcp.routes'
 
 const McpSamplingRequestSchema = z.custom<McpSamplingRequestPayload>()
 const McpSamplingDecisionSchema = z.custom<McpSamplingDecision>()
 const MCPServerConfigSchema = z.custom<MCPServerConfig>()
+const McpServerLifecycleStatusSchema = z.enum([
+  'connecting',
+  'connected',
+  'timeout',
+  'retrying',
+  'failed',
+  'stopped'
+] satisfies [McpServerLifecycleStatus, ...McpServerLifecycleStatus[]])
+const McpServerStatusPhaseSchema = z.enum(['startup', 'manual', 'retry', 'shutdown'] satisfies [
+  McpServerStatusPhase,
+  ...McpServerStatusPhase[]
+])
+const McpServerStatusReasonSchema = z.enum([
+  'soft-timeout',
+  'hard-timeout',
+  'connect-error',
+  'shutdown'
+] satisfies [McpServerStatusReason, ...McpServerStatusReason[]])
 
 export const mcpServerStartedEvent = defineEventContract({
   name: 'mcp.server.started',
@@ -40,7 +63,14 @@ export const mcpServerStatusChangedEvent = defineEventContract({
   name: 'mcp.server.status.changed',
   payload: z.object({
     serverName: z.string(),
+    name: z.string().optional(),
+    lifecycleStatus: McpServerLifecycleStatusSchema,
+    status: z.union([McpServerLifecycleStatusSchema, z.literal('running')]).optional(),
     isRunning: z.boolean(),
+    phase: McpServerStatusPhaseSchema.optional(),
+    attempt: z.number().int().positive().optional(),
+    reason: McpServerStatusReasonSchema.optional(),
+    message: z.string().optional(),
     version: z.number().int()
   })
 })

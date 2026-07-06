@@ -5,6 +5,7 @@ const serverManagerMocks = vi.hoisted(() => ({
   stopServer: vi.fn(),
   isServerRunning: vi.fn(),
   getRunningClients: vi.fn().mockResolvedValue([]),
+  getActiveClients: vi.fn().mockResolvedValue([]),
   testNpmRegistrySpeed: vi.fn().mockResolvedValue('https://registry.npmjs.org/'),
   getNpmRegistry: vi.fn().mockReturnValue('https://registry.npmjs.org/'),
   updateNpmRegistryInBackground: vi.fn().mockResolvedValue(undefined),
@@ -26,6 +27,7 @@ vi.mock('../../../src/main/presenter/mcpPresenter/serverManager', () => ({
     stopServer: serverManagerMocks.stopServer,
     isServerRunning: serverManagerMocks.isServerRunning,
     getRunningClients: serverManagerMocks.getRunningClients,
+    getActiveClients: serverManagerMocks.getActiveClients,
     testNpmRegistrySpeed: serverManagerMocks.testNpmRegistrySpeed,
     getNpmRegistry: serverManagerMocks.getNpmRegistry,
     updateNpmRegistryInBackground: serverManagerMocks.updateNpmRegistryInBackground,
@@ -88,6 +90,7 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     serverManagerMocks.stopServer.mockResolvedValue(undefined)
     serverManagerMocks.isServerRunning.mockReturnValue(false)
     serverManagerMocks.getRunningClients.mockResolvedValue([])
+    serverManagerMocks.getActiveClients.mockResolvedValue([])
     serverManagerMocks.testNpmRegistrySpeed.mockResolvedValue('https://registry.npmjs.org/')
     serverManagerMocks.updateNpmRegistryInBackground.mockResolvedValue(undefined)
     serverManagerMocks.refreshNpmRegistry.mockResolvedValue('https://registry.npmjs.org/')
@@ -178,7 +181,10 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     await presenter.initialize()
 
     expect(serverManagerMocks.startServer).toHaveBeenCalledTimes(1)
-    expect(serverManagerMocks.startServer).toHaveBeenCalledWith('plugin')
+    expect(serverManagerMocks.startServer).toHaveBeenCalledWith(
+      'plugin',
+      expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
+    )
   })
 
   it('does not wait for hanging enabled servers during initialization', async () => {
@@ -207,8 +213,14 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     await vi.advanceTimersByTimeAsync(1)
 
     await expect(result).resolves.toBe('initialized')
-    expect(serverManagerMocks.startServer).toHaveBeenCalledWith('regular')
-    expect(serverManagerMocks.startServer).toHaveBeenCalledWith('plugin')
+    expect(serverManagerMocks.startServer).toHaveBeenCalledWith(
+      'regular',
+      expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
+    )
+    expect(serverManagerMocks.startServer).toHaveBeenCalledWith(
+      'plugin',
+      expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
+    )
   })
 
   it('does not start plugin-owned servers when enabling the global MCP switch', async () => {
@@ -236,13 +248,13 @@ describe('McpPresenter#setMcpServerEnabled', () => {
       regular: { enabled: true },
       plugin: { enabled: true, source: 'plugin', ownerPluginId: 'com.deepchat.fixture' }
     })
-    serverManagerMocks.getRunningClients.mockResolvedValue([
+    serverManagerMocks.getActiveClients.mockResolvedValue([
       { serverName: 'regular' },
       { serverName: 'plugin' }
     ])
     const presenter = new McpPresenter(configPresenter)
     ;(presenter as any).serverManager = {
-      getRunningClients: serverManagerMocks.getRunningClients
+      getActiveClients: serverManagerMocks.getActiveClients
     }
     const stopSpy = vi.spyOn(presenter, 'stopServer').mockResolvedValue(undefined)
 
@@ -253,15 +265,31 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     expect(stopSpy).toHaveBeenCalledWith('regular')
   })
 
+  it('stops connecting non-plugin servers when disabling the global MCP switch', async () => {
+    const configPresenter = createConfigPresenter(false, false, {
+      connecting: { enabled: true }
+    })
+    serverManagerMocks.getActiveClients.mockResolvedValue([{ serverName: 'connecting' }])
+    const presenter = new McpPresenter(configPresenter)
+    ;(presenter as any).serverManager = {
+      getActiveClients: serverManagerMocks.getActiveClients
+    }
+    const stopSpy = vi.spyOn(presenter, 'stopServer').mockResolvedValue(undefined)
+
+    await presenter.setMcpEnabled(false)
+
+    expect(stopSpy).toHaveBeenCalledWith('connecting')
+  })
+
   it('stops all running clients during shutdown and continues after stop failures', async () => {
     const configPresenter = createConfigPresenter(true)
     const presenter = new McpPresenter(configPresenter)
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     ;(presenter as any).serverManager = {
-      getRunningClients: serverManagerMocks.getRunningClients,
+      getActiveClients: serverManagerMocks.getActiveClients,
       stopServer: serverManagerMocks.stopServer
     }
-    serverManagerMocks.getRunningClients.mockResolvedValue([
+    serverManagerMocks.getActiveClients.mockResolvedValue([
       { serverName: 'first' },
       { serverName: 'second' }
     ])
@@ -281,10 +309,10 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     const configPresenter = createConfigPresenter(true)
     const presenter = new McpPresenter(configPresenter)
     ;(presenter as any).serverManager = {
-      getRunningClients: serverManagerMocks.getRunningClients,
+      getActiveClients: serverManagerMocks.getActiveClients,
       stopServer: serverManagerMocks.stopServer
     }
-    serverManagerMocks.getRunningClients
+    serverManagerMocks.getActiveClients
       .mockResolvedValueOnce([{ serverName: 'first' }])
       .mockResolvedValueOnce([])
     serverManagerMocks.stopServer.mockResolvedValue(undefined)
@@ -292,7 +320,7 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     await presenter.shutdown()
     await presenter.shutdown()
 
-    expect(serverManagerMocks.getRunningClients).toHaveBeenCalledTimes(2)
+    expect(serverManagerMocks.getActiveClients).toHaveBeenCalledTimes(2)
     expect(serverManagerMocks.stopServer).toHaveBeenCalledTimes(1)
     expect(serverManagerMocks.stopServer).toHaveBeenCalledWith('first')
   })
@@ -301,11 +329,11 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     const configPresenter = createConfigPresenter(true)
     const presenter = new McpPresenter(configPresenter)
     ;(presenter as any).serverManager = {
-      getRunningClients: serverManagerMocks.getRunningClients,
+      getActiveClients: serverManagerMocks.getActiveClients,
       stopServer: serverManagerMocks.stopServer
     }
     let resolveStop: (() => void) | undefined
-    serverManagerMocks.getRunningClients.mockResolvedValue([{ serverName: 'first' }])
+    serverManagerMocks.getActiveClients.mockResolvedValue([{ serverName: 'first' }])
     serverManagerMocks.stopServer.mockImplementation(
       () =>
         new Promise<void>((resolve) => {
@@ -317,7 +345,7 @@ describe('McpPresenter#setMcpServerEnabled', () => {
     const secondShutdown = presenter.shutdown()
     await Promise.resolve()
 
-    expect(serverManagerMocks.getRunningClients).toHaveBeenCalledTimes(1)
+    expect(serverManagerMocks.getActiveClients).toHaveBeenCalledTimes(1)
     expect(serverManagerMocks.stopServer).toHaveBeenCalledTimes(1)
 
     resolveStop?.()
