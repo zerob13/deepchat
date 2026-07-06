@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.8-beta.3 (2026-07-06)
+- Added MCP OAuth authentication, assistant approval review mode, delete confirmations, and in-chat Agent Memory visibility
+- Reworked scheduled tasks into Cron Jobs with scheduler runtime, delivery routing, settings UI, and agent tool support
+- Improved Agent Memory lifecycle management, skill sync UX, startup performance, and packaged Linux OpenDAL native libraries
+- Fixed ACP permission requests, assistant loading state, attachment replay behavior, MCP session tools, skill adoption, and multiple chat/settings regressions
+- 新增 MCP OAuth 认证、Assistant approval review mode、删除确认，以及聊天内 Agent Memory 可见性
+- 将 scheduled tasks 重构为 Cron Jobs，支持 scheduler runtime、delivery routing、设置页 UI 和 Agent tool
+- 改进 Agent Memory 生命周期管理、skill sync 体验、启动性能，并补齐 Linux OpenDAL native libraries 打包
+- 修复 ACP permission requests、Assistant loading state、附件内容重复回放、MCP session tools、skill adopt 和多项聊天/设置回归问题
+
 ## v1.0.8-beta.2 (2026-06-30)
 - Added agent-scoped plugin extension controls for skills, MCP servers, and tools
 - Added Agent Memory health snapshots and audit details in settings
