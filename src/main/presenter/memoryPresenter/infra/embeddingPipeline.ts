@@ -1,7 +1,11 @@
 import logger from '@shared/logger'
 
 import {
+  ERROR_RETRY_BATCH_LIMIT,
+  ERROR_RETRY_COOLDOWN_MS,
   EMBEDDING_PREWARM_TEXT,
+  ORPHAN_RECONCILE_BATCH,
+  ORPHAN_RECONCILE_RETRY_COOLDOWN_MS,
   REINDEX_BATCH_SIZE,
   REINDEX_MAX_BATCHES,
   WARM_DIMENSION_FAILURE_COOLDOWN_MS
@@ -26,6 +30,11 @@ interface EmbeddingPipelineRuntimeState {
   embeddingDrains: Map<string, Promise<unknown>>
   reindexing: Map<string, Promise<void>>
   backfilling: Map<string, Promise<void>>
+  errorRetryAt: Map<string, number>
+  errorRetryAfterId: Map<string, string | null>
+  orphanVectorReconciles: Map<string, Promise<void>>
+  orphanVectorReconciled: Set<string>
+  orphanVectorReconcileRetryAt: Map<string, number>
 }
 
 export class EmbeddingPipeline {
@@ -35,6 +44,12 @@ export class EmbeddingPipeline {
   private readonly embeddingDrains = new Map<string, Promise<unknown>>()
   private readonly reindexing = new Map<string, Promise<void>>()
   private readonly backfilling = new Map<string, Promise<void>>()
+  private readonly errorRetryAt = new Map<string, number>()
+  private readonly errorRetryAfterId = new Map<string, string | null>()
+  private readonly orphanVectorReconciles = new Map<string, Promise<void>>()
+  private readonly orphanVectorReconcileTokens = new Map<string, symbol>()
+  private readonly orphanVectorReconciled = new Set<string>()
+  private readonly orphanVectorReconcileRetryAt = new Map<string, number>()
 
   constructor(
     private readonly ctx: MemoryRuntimeContext,
@@ -72,7 +87,40 @@ export class EmbeddingPipeline {
   private async drainPendingEmbeddings(agentId: string, limit: number): Promise<void> {
     if (!this.ctx.canContinueAgentMemoryTask(agentId)) return
     const config = this.ctx.deps.resolveAgentConfig(agentId)
-    const pending = this.ctx.deps.repository.listPendingEmbedding(limit, agentId)
+    let pending = this.ctx.deps.repository.listPendingEmbedding(limit, agentId)
+    if (!pending.length) {
+      const lastRetryAt = this.errorRetryAt.get(agentId) ?? 0
+      const now = Date.now()
+      if (now - lastRetryAt >= ERROR_RETRY_COOLDOWN_MS) {
+        let afterId = this.errorRetryAfterId.get(agentId) ?? null
+        let retryIds = this.ctx.deps.repository.listEmbeddingStatusIds(
+          agentId,
+          ['error'],
+          ERROR_RETRY_BATCH_LIMIT,
+          afterId
+        )
+        if (!retryIds.length && afterId !== null) {
+          afterId = null
+          retryIds = this.ctx.deps.repository.listEmbeddingStatusIds(
+            agentId,
+            ['error'],
+            ERROR_RETRY_BATCH_LIMIT,
+            null
+          )
+        }
+        if (retryIds.length) {
+          const requeued = this.ctx.deps.repository.requeueForEmbedding(
+            agentId,
+            ['error'],
+            retryIds.length,
+            afterId
+          )
+          this.errorRetryAt.set(agentId, now)
+          this.errorRetryAfterId.set(agentId, retryIds[retryIds.length - 1])
+          if (requeued > 0) pending = this.ctx.deps.repository.listPendingEmbedding(limit, agentId)
+        }
+      }
+    }
     if (!pending.length) return
 
     const embedding = config?.memoryEmbedding
@@ -112,6 +160,7 @@ export class EmbeddingPipeline {
           this.rows.isPendingEmbeddableRow(agentId, this.ctx.deps.repository.getById(pending[i].id))
         ) {
           this.ctx.deps.repository.updatePendingEmbeddingStatus(agentId, pending[i].id, 'error')
+          this.errorRetryAt.set(agentId, Date.now())
         }
       }
       if (!records.length) return
@@ -175,6 +224,7 @@ export class EmbeddingPipeline {
             }
           )
         } else if (!outcome.usable) {
+          this.errorRetryAt.set(agentId, Date.now())
           this.ctx.deps.repository.updatePendingEmbeddingStatus(agentId, record.memoryId, 'error')
         }
       }
@@ -196,6 +246,7 @@ export class EmbeddingPipeline {
       const liveRows = pending.filter((row) =>
         this.rows.isPendingEmbeddableRow(agentId, this.ctx.deps.repository.getById(row.id))
       )
+      if (liveRows.length) this.errorRetryAt.set(agentId, Date.now())
       for (const row of liveRows) {
         this.ctx.deps.repository.updatePendingEmbeddingStatus(agentId, row.id, 'error')
       }
@@ -209,6 +260,7 @@ export class EmbeddingPipeline {
     if (inflight) return inflight
     const tracked = this.runReindex(agentId, force).finally(() => {
       if (this.reindexing.get(agentId) === tracked) this.reindexing.delete(agentId)
+      if (!this.ctx.isDisposed) this.ctx.emitChanged(agentId, 'reindex')
     })
     this.reindexing.set(agentId, tracked)
     return tracked
@@ -230,6 +282,7 @@ export class EmbeddingPipeline {
       await locked.close()
       await this.ctx.deps.resetVectorStore(agentId)
     })
+    this.clearOrphanReconcileMarks(agentId)
     if (!this.ctx.canContinueAgentMemoryTask(agentId)) return
     this.ctx.emitChanged(agentId, 'reindex')
     await this.drainUntilExhausted(agentId)
@@ -337,10 +390,133 @@ export class EmbeddingPipeline {
     }
 
     this.vectorStore.markReady(agentId, embedding, dimensions)
+    this.scheduleOrphanVectorReconcile(agentId, embedding, dimensions, fingerprint)
     if (!this.reindexing.has(agentId)) {
       void this.ports.backfillEmbeddings(agentId).catch((error) => {
         logger.warn(`[Memory] backfill failed for ${agentId}: ${String(error)}`)
       })
+    }
+  }
+
+  private scheduleOrphanVectorReconcile(
+    agentId: string,
+    embedding: MemoryModelRef,
+    dimensions: number,
+    fingerprint: string
+  ): void {
+    const key = this.vectorStore.cacheKey(agentId, embedding, dimensions)
+    if (this.orphanVectorReconciled.has(key)) return
+    if (Date.now() < (this.orphanVectorReconcileRetryAt.get(key) ?? 0)) return
+    if (this.orphanVectorReconciles.has(key)) return
+
+    const token = Symbol(key)
+    this.orphanVectorReconcileTokens.set(key, token)
+    const tracked = this.waitForBackgroundTick()
+      .then(() =>
+        this.reconcileOrphanVectorsOnce(agentId, embedding, dimensions, fingerprint, key, token)
+      )
+      .catch((error) => {
+        if (this.isCurrentOrphanReconcile(key, token)) {
+          this.orphanVectorReconcileRetryAt.set(
+            key,
+            Date.now() + ORPHAN_RECONCILE_RETRY_COOLDOWN_MS
+          )
+        }
+        logger.warn(`[Memory] orphan vector reconcile failed for ${agentId}: ${String(error)}`)
+      })
+      .finally(() => {
+        if (this.orphanVectorReconciles.get(key) === tracked) {
+          this.orphanVectorReconciles.delete(key)
+          if (this.isCurrentOrphanReconcile(key, token)) {
+            this.orphanVectorReconcileTokens.delete(key)
+          }
+        }
+      })
+    this.orphanVectorReconciles.set(key, tracked)
+  }
+
+  private isCurrentOrphanReconcile(key: string, token: symbol): boolean {
+    return this.orphanVectorReconcileTokens.get(key) === token
+  }
+
+  private async reconcileOrphanVectorsOnce(
+    agentId: string,
+    embedding: MemoryModelRef,
+    dimensions: number,
+    fingerprint: string,
+    key: string,
+    token: symbol
+  ): Promise<void> {
+    if (!this.isCurrentOrphanReconcile(key, token)) return
+    if (this.orphanVectorReconciled.has(key)) return
+    const retryAt = this.orphanVectorReconcileRetryAt.get(key) ?? 0
+    if (Date.now() < retryAt) return
+    try {
+      const completed = await this.vectorStore.withAgentLock(agentId, async (locked) => {
+        if (!this.ctx.canUseCurrentMemoryEmbedding(agentId, embedding)) return false
+        const store = await locked.open(embedding, dimensions)
+        if (!store.isUsable()) {
+          return false
+        }
+        let afterId: string | null = null
+        for (let guard = 0; guard < REINDEX_MAX_BATCHES; guard += 1) {
+          const ids = await store.listMemoryIds(afterId, ORPHAN_RECONCILE_BATCH)
+          if (!ids.length) return true
+          afterId = ids[ids.length - 1]
+          const liveRows = this.ctx.deps.repository.listByIds(agentId, ids)
+          const liveIds = new Set(liveRows.map((row) => row.id))
+          const missingIds = ids.filter((id) => !liveIds.has(id))
+          if (missingIds.length) {
+            const prunableIds = [
+              ...new Set(
+                this.ctx.deps.repository.filterPrunableVectorRefs(
+                  agentId,
+                  missingIds,
+                  dimensions,
+                  fingerprint
+                )
+              )
+            ]
+            for (let start = 0; start < prunableIds.length; start += ORPHAN_RECONCILE_BATCH) {
+              if (!this.ctx.canUseCurrentMemoryEmbedding(agentId, embedding)) return false
+              await store.deleteByMemoryIds(
+                prunableIds.slice(start, start + ORPHAN_RECONCILE_BATCH)
+              )
+            }
+          }
+          if (ids.length < ORPHAN_RECONCILE_BATCH) {
+            return true
+          }
+        }
+        return false
+      })
+      if (!this.isCurrentOrphanReconcile(key, token)) return
+      if (completed) {
+        this.orphanVectorReconciled.add(key)
+        this.orphanVectorReconcileRetryAt.delete(key)
+      } else {
+        this.orphanVectorReconcileRetryAt.set(key, Date.now() + ORPHAN_RECONCILE_RETRY_COOLDOWN_MS)
+        logger.warn(
+          `[Memory] orphan vector reconcile did not complete full scan for ${agentId}; retrying later`
+        )
+      }
+    } catch (error) {
+      if (this.isCurrentOrphanReconcile(key, token)) {
+        this.orphanVectorReconcileRetryAt.set(key, Date.now() + ORPHAN_RECONCILE_RETRY_COOLDOWN_MS)
+      }
+      logger.warn(`[Memory] orphan vector reconcile failed for ${agentId}: ${String(error)}`)
+    }
+  }
+
+  private clearOrphanReconcileMarks(agentId: string): void {
+    for (const key of this.orphanVectorReconciled) {
+      if (key.startsWith(`${agentId}::`)) this.orphanVectorReconciled.delete(key)
+    }
+    for (const key of this.orphanVectorReconcileRetryAt.keys()) {
+      if (key.startsWith(`${agentId}::`)) this.orphanVectorReconcileRetryAt.delete(key)
+    }
+    for (const key of this.orphanVectorReconcileTokens.keys()) {
+      if (key.startsWith(`${agentId}::`)) this.orphanVectorReconcileTokens.delete(key)
     }
   }
 
@@ -406,6 +582,7 @@ export class EmbeddingPipeline {
       ...this.reindexing.values(),
       ...this.backfilling.values(),
       ...this.embeddingDrains.values(),
+      ...this.orphanVectorReconciles.values(),
       ...this.vectorStoreWarmups.values(),
       ...this.embeddingWarmups.values()
     ]
@@ -415,12 +592,14 @@ export class EmbeddingPipeline {
     const reindexing = this.reindexing.get(agentId)
     const backfilling = this.backfilling.get(agentId)
     const embeddingDrain = this.embeddingDrains.get(agentId)
+    const orphanReconciles = this.getAgentEntries(this.orphanVectorReconciles, agentId)
     const vectorWarmups = this.getAgentEntries(this.vectorStoreWarmups, agentId)
     const embeddingWarmups = this.getAgentEntries(this.embeddingWarmups, agentId)
     return [
       reindexing,
       backfilling,
       embeddingDrain,
+      ...orphanReconciles.map(([, promise]) => promise),
       ...vectorWarmups.map(([, promise]) => promise),
       ...embeddingWarmups.map(([, promise]) => promise)
     ].filter((promise): promise is Promise<unknown> => Boolean(promise))
@@ -440,6 +619,13 @@ export class EmbeddingPipeline {
     this.reindexing.delete(agentId)
     this.backfilling.delete(agentId)
     this.embeddingDrains.delete(agentId)
+    this.errorRetryAt.delete(agentId)
+    this.errorRetryAfterId.delete(agentId)
+    this.clearOrphanReconcileMarks(agentId)
+    for (const [key] of this.getAgentEntries(this.orphanVectorReconciles, agentId)) {
+      this.orphanVectorReconciles.delete(key)
+      this.orphanVectorReconcileTokens.delete(key)
+    }
     for (const [key] of this.getAgentEntries(this.vectorStoreWarmups, agentId)) {
       this.vectorStoreWarmups.delete(key)
     }
@@ -458,6 +644,12 @@ export class EmbeddingPipeline {
     this.embeddingDrains.clear()
     this.reindexing.clear()
     this.backfilling.clear()
+    this.errorRetryAt.clear()
+    this.errorRetryAfterId.clear()
+    this.orphanVectorReconciles.clear()
+    this.orphanVectorReconcileTokens.clear()
+    this.orphanVectorReconciled.clear()
+    this.orphanVectorReconcileRetryAt.clear()
   }
 
   /** @internal Live mutable state for legacy facade-oracle tests only. */
@@ -468,7 +660,12 @@ export class EmbeddingPipeline {
       vectorStoreDimensionFailures: this.vectorStoreDimensionFailures,
       embeddingDrains: this.embeddingDrains,
       reindexing: this.reindexing,
-      backfilling: this.backfilling
+      backfilling: this.backfilling,
+      errorRetryAt: this.errorRetryAt,
+      errorRetryAfterId: this.errorRetryAfterId,
+      orphanVectorReconciles: this.orphanVectorReconciles,
+      orphanVectorReconciled: this.orphanVectorReconciled,
+      orphanVectorReconcileRetryAt: this.orphanVectorReconcileRetryAt
     }
   }
 }
