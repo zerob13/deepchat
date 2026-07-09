@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.8-beta.4 (2026-07-09)
+- Added TokenLab and OpenCode Go provider support
+- Redesigned Agent Memory settings with inline configuration, inbox, diagnostics, persona, and list views
+- Improved Agent Memory reliability for retrieval, pruning, write coordination, vector storage, and audit handling
+- Optimized chat markdown rendering to reduce send-time jitter and improve message layout stability
+- Updated Computer Use driver/runtime metadata and renamed the bundled CUA skill to `computer-use`
+- 新增 TokenLab 和 OpenCode Go provider 支持
+- 重做 Agent Memory 设置页，加入 inline configuration、inbox、diagnostics、persona 和 list views
+- 改进 Agent Memory retrieval、pruning、write coordination、vector storage 与 audit handling 的可靠性
+- 优化聊天 Markdown 渲染，减少发送时抖动并提升消息布局稳定性
+- 更新 Computer Use driver/runtime 元数据，并将内置 CUA skill 重命名为 `computer-use`
+
 ## v1.0.8-beta.3 (2026-07-06)
 - Added MCP OAuth authentication, assistant approval review mode, delete confirmations, and in-chat Agent Memory visibility
 - Reworked scheduled tasks into Cron Jobs with scheduler runtime, delivery routing, settings UI, and agent tool support
