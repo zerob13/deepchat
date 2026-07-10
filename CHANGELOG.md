@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.9 (2026-07-10)
+- Fixed Agent Memory correctness edge cases and strengthened record-level privacy controls
+- Fixed chat scroll position jumping to the bottom during streaming output
+- Fixed chat history restoration race conditions that could cause message loss
+- 修复 Agent Memory 正确性边界问题，并强化记录级隐私控制
+- 修复流式输出时聊天滚动位置跳到底部的问题
+- 修复聊天历史恢复竞态条件可能导致消息丢失的问题
+
 ## v1.0.8 (2026-07-10)
 - Added the main-window Plugins Hub, Feishu/Lark install authentication, and streaming card delivery for remote control
 - Added MCP OAuth authentication, agent-scoped plugin controls for skills, MCP servers, and tools, plus improved skill sync workflows
