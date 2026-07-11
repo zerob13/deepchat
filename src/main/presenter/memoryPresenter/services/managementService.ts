@@ -3,14 +3,21 @@ import logger from '@shared/logger'
 import {
   MEMORY_ARCHIVE_CANDIDATE_LIFECYCLE_PREVIEW_LIMIT,
   MEMORY_ARCHIVE_CANDIDATE_LIFECYCLE_SCAN_LIMIT,
+  MEMORY_PAGE_DEFAULT_LIMIT,
+  MEMORY_PAGE_MAX_LIMIT,
   createEmptyMemoryHealth,
   type MemoryArchiveCandidateLifecyclePreview,
   type MemoryHealthDto,
   type MemoryLifecycle,
   type MemoryUpdateResult
 } from '@shared/contracts/routes/memory.routes'
-import { isAgentMemoryCategory, type AgentMemoryCategory } from '@shared/types/agent-memory'
+import {
+  AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
+  isAgentMemoryCategory,
+  type AgentMemoryCategory
+} from '@shared/types/agent-memory'
 import { parseAgentMemorySourceEntryIds } from '@shared/lib/agentMemoryLineage'
+import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
 import { deriveLifecycle, type DeriveLifecycleOptions } from '../core/lifecycle'
 import { resolveRetrieval } from '../core/scoring'
@@ -19,7 +26,14 @@ import {
   MEMORY_HEALTH_RECENT_FAILURES_LIMIT,
   MEMORY_HEALTH_TOP_ACCESSED_LIMIT
 } from '../runtimeConstants'
-import type { AgentMemoryRow, MemoryStatus, NormalizedMemoryCandidate } from '../types'
+import type {
+  AgentMemoryRow,
+  MemoryManagementPage,
+  MemoryManagementPageCursor,
+  MemoryStatus,
+  NormalizedMemoryCandidate
+} from '../types'
+import { FORGET_HALF_LIFE_MS } from '../types'
 import { embeddingFingerprint, type MemoryRuntimeContext } from '../context'
 import { MemoryRowMutations, type ManualEditFieldFlags } from './rowMutations'
 
@@ -142,6 +156,7 @@ export class ManagementService {
     if (!row || row.agent_id !== agentId) return false
     if (this.ctx.deps.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
     if (isInternalMemoryKind(row)) return false
+    this.ctx.invalidateAgentOperations(agentId)
     const alreadyArchived = row.status === 'archived'
     this.ctx.deps.repository.runInTransaction(() => {
       if (!alreadyArchived) {
@@ -172,6 +187,7 @@ export class ManagementService {
     if (!row || row.agent_id !== agentId) return false
     if (this.ctx.deps.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
     if (isInternalMemoryKind(row)) return false
+    this.ctx.invalidateAgentOperations(agentId)
     const alreadyArchived = row.status === 'archived'
     this.ctx.deps.repository.runInTransaction(() => {
       if (!alreadyArchived) {
@@ -194,6 +210,7 @@ export class ManagementService {
     return true
   }
 
+  /** @deprecated Use pageMemories for bounded management reads. */
   listMemories(agentId: string): AgentMemoryRow[] {
     this.ctx.assertSafeAgentId(agentId)
     if (!this.ctx.isManagedAgent(agentId)) return []
@@ -202,11 +219,42 @@ export class ManagementService {
       .filter((row) => !isInternalMemoryKind(row))
   }
 
+  pageMemories(
+    agentId: string,
+    cursor: MemoryManagementPageCursor | null,
+    limit: number
+  ): MemoryManagementPage {
+    this.ctx.assertSafeAgentId(agentId)
+    if (!this.ctx.isManagedAgent(agentId)) return { rows: [], nextCursor: null }
+    const normalizedLimit = Number.isFinite(limit)
+      ? Math.min(MEMORY_PAGE_MAX_LIMIT, Math.max(1, Math.floor(limit)))
+      : MEMORY_PAGE_DEFAULT_LIMIT
+    const rows = this.ctx.deps.repository.listManagementPage(agentId, cursor, normalizedLimit + 1)
+    const pageRows = rows.slice(0, normalizedLimit)
+    const lastRow = pageRows.at(-1)
+    return {
+      rows: pageRows,
+      nextCursor:
+        rows.length > normalizedLimit && lastRow
+          ? { createdAt: lastRow.created_at, id: lastRow.id }
+          : null
+    }
+  }
+
   getByIds(agentId: string, memoryIds: string[]): AgentMemoryRow[] {
     this.ctx.assertSafeAgentId(agentId)
     if (!this.ctx.isManagedAgent(agentId)) return []
     const orderedIds = [...new Set(memoryIds.filter((id) => id.length > 0))]
     const rows = this.ctx.deps.repository.listByIds(agentId, orderedIds)
+    const rowsById = new Map(rows.map((row) => [row.id, row]))
+    return orderedIds.map((id) => rowsById.get(id)).filter((row): row is AgentMemoryRow => !!row)
+  }
+
+  getManagementVisibleByIds(agentId: string, memoryIds: string[]): AgentMemoryRow[] {
+    this.ctx.assertSafeAgentId(agentId)
+    if (!this.ctx.isManagedAgent(agentId)) return []
+    const orderedIds = [...new Set(memoryIds.filter((id) => id.length > 0))]
+    const rows = this.ctx.deps.repository.listManagementVisibleByIds(agentId, orderedIds)
     const rowsById = new Map(rows.map((row) => [row.id, row]))
     return orderedIds.map((id) => rowsById.get(id)).filter((row): row is AgentMemoryRow => !!row)
   }
@@ -305,6 +353,9 @@ export class ManagementService {
       .map(toHealthTopAccessedItem)
       .filter((item): item is MemoryHealthDto['access']['topAccessed'][number] => item !== null)
 
+    const now = Date.now()
+    const minimumBaseAgeMs =
+      FORGET_HALF_LIFE_MS * (Math.log(ARCHIVE_DECAY_THRESHOLD) / Math.log(0.5))
     return {
       totalRows: stats.totalRows,
       byKind: stats.byKind,
@@ -317,11 +368,11 @@ export class ManagementService {
         stale
       },
       lifecycle: {
-        archiveCandidates: this.ctx.deps.repository.countArchiveCandidates(
-          agentId,
-          Date.now() - ARCHIVE_AGE_MS,
-          ARCHIVE_DECAY_THRESHOLD
-        ),
+        archiveCandidates: this.ctx.deps.repository.countArchiveEligible(agentId, {
+          now,
+          createdBefore: now - ARCHIVE_AGE_MS,
+          minimumBaseAgeMs
+        }),
         archived: stats.byStatus.archived
       },
       conflicts: {
@@ -371,6 +422,13 @@ export class ManagementService {
     }
 
     const hasContent = hasOwn(patch, 'content')
+    if (
+      hasContent &&
+      typeof patch.content === 'string' &&
+      unicodeCodePointLength(patch.content) > AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS
+    ) {
+      return { action: 'noop', reason: 'content-too-large' }
+    }
     const nextContent = hasContent ? String(patch.content ?? '').trim() : row.content
     if (hasContent && !nextContent) return { action: 'noop', reason: 'empty' }
 
@@ -503,6 +561,7 @@ export class ManagementService {
     const row = this.ctx.deps.repository.getById(memoryId)
     if (!row || row.agent_id !== agentId) return false
     if (this.ctx.deps.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
+    this.ctx.invalidateAgentOperations(agentId)
     this.ctx.deps.repository.delete(memoryId)
     this.ctx.markDomainMutationCommitted(agentId)
     if (row.kind !== 'working') {

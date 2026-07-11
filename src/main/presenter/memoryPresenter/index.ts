@@ -25,6 +25,8 @@ import type {
   MemoryLifecycle,
   MemoryUpdateResult
 } from '@shared/contracts/routes/memory.routes'
+import { AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS } from '@shared/types/agent-memory'
+import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 import type {
   MemoryExtractionInput,
   MemoryExtractionResult,
@@ -45,6 +47,7 @@ import { ConflictService } from './services/conflictService'
 import { MaintenanceService } from './services/maintenanceService'
 import { WriteCoordinator } from './services/writeCoordinator'
 import { ManagementService } from './services/managementService'
+import { BUILTIN_DEEPCHAT_AGENT_ID } from '../agentRepository'
 
 export { appendMemorySection, appendMemorySectionWithManifest, buildMemorySection, isSafeAgentId }
 export type {
@@ -69,14 +72,7 @@ export class MemoryPresenter implements MemoryRuntimePort {
   private readonly management: ManagementService
 
   constructor(deps: MemoryPresenterDeps) {
-    let retrievalService: RetrievalService | null = null
-    this.runtime = new MemoryRuntimeContext(
-      deps,
-      (agentId) => {
-        retrievalService?.invalidateKeywordStats(agentId)
-      },
-      new MemoryProviderGateway(deps)
-    )
+    this.runtime = new MemoryRuntimeContext(deps, undefined, new MemoryProviderGateway(deps))
     this.rows = new MemoryRowMutations(this.runtime)
     this.vectorStore = new VectorStoreManager(this.runtime)
     this.embedding = new EmbeddingPipeline(this.runtime, this.vectorStore, this.rows, {
@@ -101,8 +97,6 @@ export class MemoryPresenter implements MemoryRuntimePort {
           memoryIds
         )
     })
-    retrievalService = this.retrieval
-
     this.reflection = new ReflectionService(this.runtime, {
       syncWorkingMemoryAfterMutation: (agentId) =>
         this.workingMemory.syncWorkingMemoryAfterMutation(agentId),
@@ -123,8 +117,8 @@ export class MemoryPresenter implements MemoryRuntimePort {
     maintenanceService = new MaintenanceService(this.runtime, this.rows, {
       queryNeighborsByMemoryId: (agentId, embedding, dimensions, memoryId, topK) =>
         this.vectorStore.queryNeighborsByMemoryId(agentId, embedding, dimensions, memoryId, topK),
-      getWarmVectorStoreDimension: (agentId, embedding) =>
-        this.vectorStore.getWarmVectorStoreDimension(agentId, embedding),
+      getReadyCertificateDimension: (agentId, embedding) =>
+        this.vectorStore.getReadyCertificateDimension(agentId, embedding),
       deletePrunableVectorsForMemoryIds: (agentId, embedding, dimensions, memoryIds) =>
         this.vectorStore.deletePrunableVectorsForMemoryIds(
           agentId,
@@ -138,14 +132,15 @@ export class MemoryPresenter implements MemoryRuntimePort {
       warmVectorStore: (agentId, embedding) => this.embedding.warmVectorStore(agentId, embedding),
       warmEmbeddingConnection: (agentId, embedding) =>
         this.embedding.warmEmbeddingConnection(agentId, embedding),
-      maybeReflect: (agentId, model) =>
-        this.reflection.runMaintenanceReflectionPass(agentId, model),
-      maybeEvolvePersona: (agentId, model) =>
-        this.persona.runMaintenancePersonaPass(agentId, model),
-      runChallengeResolutionPass: (agentId, model) =>
-        this.conflict.runChallengeResolutionPass(agentId, model),
+      maybeReflect: (agentId, model, budget) =>
+        this.reflection.runMaintenanceReflectionPass(agentId, model, undefined, budget),
+      maybeEvolvePersona: (agentId, model, budget) =>
+        this.persona.runMaintenancePersonaPass(agentId, model, undefined, budget),
+      runChallengeResolutionPass: (agentId, model, budget) =>
+        this.conflict.runChallengeResolutionPass(agentId, model, budget),
       repairConflictIntegrity: (agentId) => {
-        this.conflict.repairConflictIntegrity(agentId)
+        const result = this.conflict.repairConflictIntegrity(agentId)
+        return Object.values(result).some((count) => count > 0)
       },
       runConsolidationPass: (agentId) => this.runConsolidationPass(agentId)
     })
@@ -154,8 +149,15 @@ export class MemoryPresenter implements MemoryRuntimePort {
     this.writeCoordinator = new WriteCoordinator(this.runtime, this.rows, {
       retrieveForDecision: (agentId, query, now) =>
         this.retrieval.retrieveForDecision(agentId, query, now),
+      retrieveForDecisions: (agentId, candidates, now, queryVectors, pinnedIdsByCandidate) =>
+        this.retrieval.retrieveForDecisions(
+          agentId,
+          candidates,
+          now,
+          queryVectors,
+          pinnedIdsByCandidate
+        ),
       markWorkingMemoryDirty: (agentId) => this.workingMemory.markWorkingMemoryDirty(agentId),
-      flushWorkingMemoryIfDirty: (agentId) => this.workingMemory.flushWorkingMemoryIfDirty(agentId),
       triggerEmbedding: (agentId) => this.embedding.processPendingEmbeddings(agentId),
       scheduleConsolidation: (agentId) => this.maintenance.scheduleConsolidation(agentId)
     })
@@ -197,9 +199,7 @@ export class MemoryPresenter implements MemoryRuntimePort {
   }
 
   writeMemoriesSync(candidates: MemoryCandidate[], options: WriteMemoriesOptions): string[] {
-    const ids = this.writeCoordinator.writeMemoriesSync(candidates, options)
-    if (ids.length > 0) this.retrieval.invalidateKeywordStats(options.agentId)
-    return ids
+    return this.writeCoordinator.writeMemoriesSync(candidates, options)
   }
 
   processPendingEmbeddings(agentId: string, limit = 50): Promise<void> {
@@ -223,10 +223,27 @@ export class MemoryPresenter implements MemoryRuntimePort {
   }
 
   onAgentMemoryMaintenanceConfigChanged(agentId: string, delayMs?: number): void {
+    const embedding = this.runtime.deps.resolveAgentConfig(agentId)?.memoryEmbedding
+    const identityChanged = this.vectorStore.noteEmbeddingConfig(
+      agentId,
+      embedding?.providerId && embedding?.modelId
+        ? { providerId: embedding.providerId, modelId: embedding.modelId }
+        : null
+    )
+    if (identityChanged) this.runtime.invalidateAgentOperations(agentId)
     this.maintenance.onAgentMemoryMaintenanceConfigChanged(agentId, delayMs)
   }
 
   onBuiltinDeepChatMemoryMaintenanceConfigChanged(): void {
+    const embedding =
+      this.runtime.deps.resolveAgentConfig(BUILTIN_DEEPCHAT_AGENT_ID)?.memoryEmbedding
+    const identityChanged = this.vectorStore.noteEmbeddingConfig(
+      BUILTIN_DEEPCHAT_AGENT_ID,
+      embedding?.providerId && embedding?.modelId
+        ? { providerId: embedding.providerId, modelId: embedding.modelId }
+        : null
+    )
+    if (identityChanged) this.runtime.invalidateAgentOperations(BUILTIN_DEEPCHAT_AGENT_ID)
     this.maintenance.onBuiltinDeepChatMemoryMaintenanceConfigChanged()
   }
 
@@ -269,6 +286,9 @@ export class MemoryPresenter implements MemoryRuntimePort {
     options: WriteMemoriesOptions,
     model?: { providerId: string; modelId: string } | null
   ): Promise<MemoryWriteOutcome> {
+    if (unicodeCodePointLength(candidate.content) > AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS) {
+      return { action: 'noop', reason: 'content-too-large' }
+    }
     return this.writeCoordinator.rememberMemory(candidate, options, model)
   }
 
@@ -294,6 +314,10 @@ export class MemoryPresenter implements MemoryRuntimePort {
     },
     sessionId?: string | null
   ): Promise<MemoryWriteOutcome> {
+    this.runtime.assertSafeAgentId(agentId)
+    if (unicodeCodePointLength(input.content) > AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS) {
+      return { action: 'noop', reason: 'content-too-large' }
+    }
     return this.writeCoordinator.addUserMemory(agentId, input, sessionId)
   }
 
@@ -374,12 +398,21 @@ export class MemoryPresenter implements MemoryRuntimePort {
     return this.persona.rollbackPersona(agentId, versionId)
   }
 
+  /** @deprecated Use pageMemories for bounded management reads. */
   listMemories(agentId: string): AgentMemoryRow[] {
     return this.management.listMemories(agentId)
   }
 
+  pageMemories(agentId: string, cursor: { createdAt: number; id: string } | null, limit: number) {
+    return this.management.pageMemories(agentId, cursor, limit)
+  }
+
   getByIds(agentId: string, memoryIds: string[]): AgentMemoryRow[] {
     return this.management.getByIds(agentId, memoryIds)
+  }
+
+  getManagementVisibleByIds(agentId: string, memoryIds: string[]): AgentMemoryRow[] {
+    return this.management.getManagementVisibleByIds(agentId, memoryIds)
   }
 
   getLifecycle(agentId: string, memoryId: string): MemoryLifecycle | null {

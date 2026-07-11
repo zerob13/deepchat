@@ -146,9 +146,67 @@ export class FakeRepository implements MemoryRepositoryPort {
     return result
   }
 
+  listManagementPage(
+    agentId: string,
+    cursor: { createdAt: number; id: string } | null,
+    limit: number
+  ) {
+    return this.listByAgent(agentId, { includeArchived: true })
+      .filter((row) => row.kind !== 'persona')
+      .filter(
+        (row) =>
+          cursor === null ||
+          row.created_at < cursor.createdAt ||
+          (row.created_at === cursor.createdAt && row.id < cursor.id)
+      )
+      .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+      .slice(0, Math.max(1, Math.floor(limit)))
+  }
+
+  listManagementVisibleByIds(agentId: string, ids: string[]) {
+    const idSet = new Set(ids)
+    return [...this.rows.values()].filter(
+      (row) =>
+        row.agent_id === agentId &&
+        idSet.has(row.id) &&
+        row.superseded_by === null &&
+        row.status !== 'conflicted' &&
+        row.kind !== 'persona' &&
+        row.kind !== 'working'
+    )
+  }
+
   listByIds(agentId: string, ids: string[]) {
     const idSet = new Set(ids)
     return [...this.rows.values()].filter((row) => row.agent_id === agentId && idSet.has(row.id))
+  }
+
+  getCognitiveMaintenanceInput(
+    agentId: string,
+    options: { kinds: AgentMemoryRow['kind'][]; watermark: number; limit: number }
+  ) {
+    const eligible = [...this.rows.values()].filter(
+      (row) =>
+        row.agent_id === agentId &&
+        row.superseded_by === null &&
+        row.status !== 'archived' &&
+        row.status !== 'conflicted' &&
+        options.kinds.includes(row.kind)
+    )
+    return {
+      eligibleCount: eligible.length,
+      importanceAfterWatermark: eligible
+        .filter((row) => row.created_at > options.watermark)
+        .reduce((sum, row) => sum + Math.min(1, Math.max(0, row.importance)), 0),
+      maxCreatedAt: eligible.reduce((max, row) => Math.max(max, row.created_at), 0),
+      topRows: eligible
+        .slice()
+        .sort(
+          (a, b) =>
+            b.importance - a.importance || b.created_at - a.created_at || b.id.localeCompare(a.id)
+        )
+        .slice(0, Math.max(0, Math.floor(options.limit)))
+    }
   }
 
   getActivePersona(agentId: string) {
@@ -213,25 +271,16 @@ export class FakeRepository implements MemoryRepositoryPort {
       .slice(0, limit)
   }
 
-  getRecallKeywordTermStats(agentId: string, terms: string[]) {
-    const normalizedTerms = [...new Set(terms.map((term) => term.trim().toLowerCase()))].filter(
-      Boolean
-    )
-    const rows = [...this.rows.values()].filter(
-      (row) =>
-        row.agent_id === agentId &&
-        !row.superseded_by &&
-        row.conflict_state === null &&
-        row.status !== 'archived' &&
-        row.status !== 'conflicted' &&
-        row.kind !== 'persona' &&
-        row.kind !== 'working'
-    )
-    return normalizedTerms.map((term) => ({
-      term,
-      hitCount: rows.filter((row) => row.content.toLowerCase().includes(term)).length,
-      totalRows: rows.length
-    }))
+  searchWithStrategy(
+    agentId: string,
+    query: string,
+    limit = 20,
+    options: { matchMode?: 'all' | 'any' } = {}
+  ) {
+    return {
+      rows: this.search(agentId, query, limit, options),
+      strategy: 'like-fallback' as const
+    }
   }
 
   listPendingEmbedding(limit = 50, agentId?: string) {
@@ -274,32 +323,72 @@ export class FakeRepository implements MemoryRepositoryPort {
     row.decision_revision += 1
   }
 
-  updatePendingEmbeddingStatus(
-    agentId: string,
-    id: string,
-    status: AgentMemoryRow['status'],
-    embedding?: {
-      embeddingId?: string | null
-      embeddingDim?: number | null
-      embeddingModel?: string | null
-    }
-  ) {
+  activateForEmbeddingIfRevision(agentId: string, id: string, expectedRevision: number) {
     const row = this.rows.get(id)
-    if (
-      !row ||
-      row.agent_id !== agentId ||
-      row.status !== 'pending_embedding' ||
-      row.superseded_by ||
-      row.kind === 'persona' ||
-      row.kind === 'working'
-    ) {
-      return false
-    }
-    row.status = status
-    row.embedding_id = embedding?.embeddingId ?? null
-    row.embedding_dim = embedding?.embeddingDim ?? null
-    row.embedding_model = embedding?.embeddingModel ?? null
+    if (!row || row.agent_id !== agentId || row.decision_revision !== expectedRevision) return false
+    this.activateForEmbedding(id)
     return true
+  }
+
+  markPendingEmbeddingsReady(
+    agentId: string,
+    updates: ReadonlyArray<{
+      id: string
+      expectedRevision: number
+      embeddingId: string
+      embeddingDim: number
+      embeddingModel: string
+    }>
+  ) {
+    const updated: string[] = []
+    for (const update of updates) {
+      const row = this.rows.get(update.id)
+      if (
+        !row ||
+        row.agent_id !== agentId ||
+        row.decision_revision !== update.expectedRevision ||
+        row.status !== 'pending_embedding' ||
+        row.superseded_by !== null ||
+        row.kind === 'persona' ||
+        row.kind === 'working'
+      ) {
+        continue
+      }
+      row.status = 'embedded'
+      row.embedding_id = update.embeddingId
+      row.embedding_dim = update.embeddingDim
+      row.embedding_model = update.embeddingModel
+      updated.push(row.id)
+    }
+    return updated
+  }
+
+  markPendingEmbeddingsError(
+    agentId: string,
+    updates: ReadonlyArray<{ id: string; expectedRevision: number }>,
+    status: 'error' | 'fts_only' = 'error'
+  ) {
+    const updated: string[] = []
+    for (const update of updates) {
+      const row = this.rows.get(update.id)
+      if (
+        !row ||
+        row.agent_id !== agentId ||
+        row.decision_revision !== update.expectedRevision ||
+        row.status !== 'pending_embedding' ||
+        row.superseded_by !== null ||
+        row.kind === 'persona' ||
+        row.kind === 'working'
+      ) {
+        continue
+      }
+      row.status = status
+      row.embedding_id = null
+      row.embedding_dim = null
+      row.embedding_model = null
+      updated.push(row.id)
+    }
+    return updated
   }
 
   requeueForEmbedding(
@@ -360,6 +449,30 @@ export class FakeRepository implements MemoryRepositoryPort {
       .map((row) => row.id)
   }
 
+  listCurrentEmbeddedIds(
+    agentId: string,
+    embeddingDim: number,
+    embeddingModel: string,
+    afterId: string | null,
+    limit: number
+  ) {
+    return [...this.rows.values()]
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.status === 'embedded' &&
+          row.superseded_by === null &&
+          row.kind !== 'persona' &&
+          row.kind !== 'working' &&
+          row.embedding_dim === embeddingDim &&
+          row.embedding_model === embeddingModel &&
+          (afterId === null || row.id > afterId)
+      )
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .slice(0, Math.max(0, Math.floor(limit)))
+      .map((row) => row.id)
+  }
+
   markSuperseded(id: string, supersededBy: string | null) {
     const row = this.rows.get(id)
     if (row) {
@@ -410,23 +523,6 @@ export class FakeRepository implements MemoryRepositoryPort {
     if (row) {
       row.decay_score = decayScore
       if (consolidatedAt !== null) row.last_consolidated_at = consolidatedAt
-    }
-  }
-
-  refreshDecayScoresForAgent(agentId: string, now: number, halfLifeMs: number) {
-    for (const row of this.listByAgent(agentId)) {
-      if (row.kind === 'persona') continue
-      const anchor = row.last_accessed ?? row.created_at
-      const age = Math.max(0, now - anchor)
-      const importance = Math.min(1, Math.max(0, row.importance))
-      row.decay_score = Math.pow(0.5, age / (halfLifeMs * (1 + importance)))
-    }
-  }
-
-  stampConsolidationForAgent(agentId: string, at: number) {
-    for (const row of this.listByAgent(agentId)) {
-      if (row.kind === 'persona') continue
-      row.last_consolidated_at = at
     }
   }
 
@@ -656,21 +752,59 @@ export class FakeRepository implements MemoryRepositoryPort {
     }
   }
 
-  listArchiveCandidates(agentId: string, before: number, decayBelow: number) {
+  archiveEligibleBatch(
+    agentId: string,
+    options: {
+      now: number
+      createdBefore: number
+      minimumBaseAgeMs: number
+      limit: number
+    }
+  ) {
+    const eligible = [...this.rows.values()]
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.superseded_by === null &&
+          row.conflict_state === null &&
+          row.status !== 'archived' &&
+          row.status !== 'conflicted' &&
+          row.is_anchor === 0 &&
+          row.kind !== 'persona' &&
+          row.kind !== 'working' &&
+          row.created_at < options.createdBefore &&
+          options.now - (row.last_accessed ?? row.created_at) >
+            options.minimumBaseAgeMs * (1 + Math.min(1, Math.max(0, row.importance)))
+      )
+      .sort(
+        (a, b) =>
+          (a.last_accessed ?? a.created_at) - (b.last_accessed ?? b.created_at) ||
+          a.created_at - b.created_at ||
+          a.id.localeCompare(b.id)
+      )
+      .slice(0, Math.max(0, Math.floor(options.limit)))
+    eligible.forEach((row) => this.archive(row.id, options.now))
+    return eligible.map((row) => row.id)
+  }
+
+  countArchiveEligible(
+    agentId: string,
+    options: { now: number; createdBefore: number; minimumBaseAgeMs: number }
+  ) {
     return [...this.rows.values()].filter(
       (row) =>
         row.agent_id === agentId &&
-        !row.superseded_by &&
+        row.superseded_by === null &&
+        row.conflict_state === null &&
         row.status !== 'archived' &&
         row.status !== 'conflicted' &&
         row.is_anchor === 0 &&
         row.kind !== 'persona' &&
         row.kind !== 'working' &&
-        row.access_count === 0 &&
-        row.created_at < before &&
-        row.decay_score !== null &&
-        row.decay_score < decayBelow
-    )
+        row.created_at < options.createdBefore &&
+        options.now - (row.last_accessed ?? row.created_at) >
+          options.minimumBaseAgeMs * (1 + Math.min(1, Math.max(0, row.importance)))
+    ).length
   }
 
   listArchiveCandidateLifecycleRows(agentId: string, before: number, limit: number) {
@@ -686,7 +820,6 @@ export class FakeRepository implements MemoryRepositoryPort {
           row.is_anchor === 0 &&
           row.kind !== 'persona' &&
           row.kind !== 'working' &&
-          row.access_count === 0 &&
           row.created_at < before
       )
       .sort(
@@ -697,10 +830,6 @@ export class FakeRepository implements MemoryRepositoryPort {
       )
       .slice(0, cappedLimit)
       .map(toLifecycleRow)
-  }
-
-  countArchiveCandidates(agentId: string, before: number, decayBelow: number) {
-    return this.listArchiveCandidates(agentId, before, decayBelow).length
   }
 
   listTopAccessed(agentId: string, limit: number) {
@@ -797,6 +926,128 @@ export class FakeRepository implements MemoryRepositoryPort {
       .sort((left, right) => left.created_at - right.created_at || left.id.localeCompare(right.id))
   }
 
+  listConflictChallengersForMaintenance(agentId: string, limit: number): AgentMemoryRow[] {
+    return [...this.rows.values()]
+      .filter((challenger) => {
+        const target = challenger.conflict_with
+          ? this.rows.get(challenger.conflict_with)
+          : undefined
+        return (
+          challenger.agent_id === agentId &&
+          challenger.status === 'conflicted' &&
+          challenger.superseded_by === null &&
+          target?.agent_id === agentId &&
+          target.conflict_state === 'challenged' &&
+          target.superseded_by === null
+        )
+      })
+      .sort(
+        (a, b) =>
+          (a.last_consolidated_at ?? 0) - (b.last_consolidated_at ?? 0) ||
+          a.created_at - b.created_at ||
+          a.id.localeCompare(b.id)
+      )
+      .slice(0, Math.max(0, Math.floor(limit)))
+  }
+
+  listConflictSiblings(
+    agentId: string,
+    targetId: string,
+    excludeChallengerId: string
+  ): AgentMemoryRow[] {
+    return [...this.rows.values()]
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.conflict_with === targetId &&
+          row.status === 'conflicted' &&
+          row.superseded_by === null &&
+          row.id !== excludeChallengerId
+      )
+      .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+  }
+
+  retireConflictSiblings(
+    agentId: string,
+    targetId: string,
+    excludeChallengerId: string,
+    winnerId: string,
+    at: number
+  ) {
+    const siblings = this.listConflictSiblings(agentId, targetId, excludeChallengerId)
+    for (const sibling of siblings) {
+      sibling.conflict_with = null
+      sibling.superseded_by = winnerId
+      this.archive(sibling.id, at)
+    }
+    return siblings.length
+  }
+
+  clearTargetConflictIfNoChallengers(agentId: string, targetId: string) {
+    const target = this.rows.get(targetId)
+    if (
+      !target ||
+      target.agent_id !== agentId ||
+      target.conflict_state !== 'challenged' ||
+      this.listConflictSiblings(agentId, targetId, '').length > 0
+    ) {
+      return false
+    }
+    this.markConflict(targetId, null)
+    return true
+  }
+
+  repairConflictIntegrityBatch(agentId: string, limit: number) {
+    const result = {
+      repairedTargets: 0,
+      archivedChallengers: 0,
+      clearedTargets: 0,
+      clearedLinks: 0
+    }
+    const rows = this.listConflictIntegrityRows(agentId).slice(
+      0,
+      Math.max(0, Math.min(256, Math.floor(limit)))
+    )
+    for (const row of rows) {
+      if (row.status !== 'conflicted' && row.conflict_with !== null) {
+        row.conflict_with = null
+        row.decision_revision += 1
+        result.clearedLinks += 1
+      }
+    }
+    for (const challenger of rows) {
+      if (challenger.status !== 'conflicted') continue
+      const target = challenger.conflict_with ? this.rows.get(challenger.conflict_with) : undefined
+      const validTarget =
+        !!target &&
+        target.id !== challenger.id &&
+        target.agent_id === agentId &&
+        target.status !== 'archived' &&
+        target.status !== 'conflicted' &&
+        target.superseded_by === null
+      if (!validTarget || challenger.superseded_by !== null) {
+        challenger.conflict_with = null
+        this.archive(challenger.id)
+        result.archivedChallengers += 1
+        continue
+      }
+      if (target.conflict_state !== 'challenged') {
+        this.markConflict(target.id, 'challenged')
+        result.repairedTargets += 1
+      }
+    }
+    for (const target of rows) {
+      if (
+        target.conflict_state === 'challenged' &&
+        this.listConflictSiblings(agentId, target.id, '').length === 0
+      ) {
+        this.markConflict(target.id, null)
+        result.clearedTargets += 1
+      }
+    }
+    return result
+  }
+
   getPersonaCounts(agentId: string): { total: number; draft: number } {
     const versions = this.listPersonaVersions(agentId)
     return {
@@ -868,6 +1119,22 @@ export class FakeRepository implements MemoryRepositoryPort {
           .map((row) => row.agent_id)
       )
     ]
+  }
+
+  listRecentlyActiveAgentIds(candidateAgentIds: readonly string[], limit: number) {
+    const candidates = new Set(candidateAgentIds)
+    const activityByAgent = new Map<string, number>()
+    for (const row of this.rows.values()) {
+      if (row.status === 'archived' || !candidates.has(row.agent_id)) continue
+      activityByAgent.set(
+        row.agent_id,
+        Math.max(activityByAgent.get(row.agent_id) ?? 0, row.last_accessed ?? row.created_at)
+      )
+    }
+    return [...activityByAgent.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, Math.max(0, Math.floor(limit)))
+      .map(([agentId]) => agentId)
   }
 
   listConsolidationScanRows(
@@ -1091,6 +1358,26 @@ export class FakeAuditRepository implements MemoryAuditRepositoryPort {
       }
     }
     return stats
+  }
+
+  pruneOperationalEvents(agentId: string, keep = 10_000, limit = 500): number {
+    const operationalTypes = new Set([
+      'memory/maintenance_llm',
+      'memory/reflect',
+      'memory/repair',
+      'memory/conflict_repair',
+      'memory/extract'
+    ])
+    const normalizedKeep = Math.max(0, Math.floor(keep))
+    const normalizedLimit = Math.min(500, Math.max(0, Math.floor(limit)))
+    const prunableIds = this.rows
+      .filter((row) => row.agent_id === agentId && operationalTypes.has(row.event_type))
+      .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+      .slice(normalizedKeep, normalizedKeep + normalizedLimit)
+      .map((row) => row.id)
+    const prunable = new Set(prunableIds)
+    this.rows = this.rows.filter((row) => !prunable.has(row.id))
+    return prunable.size
   }
 }
 

@@ -10,6 +10,33 @@ import {
 } from './core/scoring'
 import type { AgentMemoryRow } from './types'
 
+function materializedRowCount(value: unknown): number {
+  if (Array.isArray(value)) return value.length
+  if (!value || typeof value !== 'object') return 0
+  const record = value as Record<string, unknown>
+  if (Array.isArray(record.rows)) return record.rows.length
+  if (Array.isArray(record.topRows)) return record.topRows.length
+  return 0
+}
+
+function observeRepository(deps: MemoryPresenterDeps): MemoryPresenterDeps['repository'] {
+  const observer = deps.perfObserver
+  if (!observer) return deps.repository
+  const repository = deps.repository
+  return new Proxy(repository, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver)
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) => {
+        observer.increment('repositoryCalls')
+        const result = Reflect.apply(value, target, args)
+        observer.increment('materializedRows', materializedRowCount(result))
+        return result
+      }
+    }
+  })
+}
+
 export type MemoryModelRef = { providerId: string; modelId: string }
 
 export interface MemoryOperationFence {
@@ -52,17 +79,31 @@ export function isUniqueConstraintError(error: unknown): boolean {
   return /UNIQUE constraint failed/i.test(message)
 }
 
+function isEquivalentProvenanceOwner(
+  owner: AgentMemoryRow | undefined,
+  kind: string,
+  normalizedContent: string
+): owner is AgentMemoryRow {
+  return (
+    owner !== undefined &&
+    owner.kind === kind &&
+    normalizeForProvenanceV2(owner.content) === normalizedContent
+  )
+}
+
 export class MemoryRuntimeContext {
   private disposed = false
   private readonly readEpochByAgent = new Map<string, number>()
   private readonly operationGenerationByAgent = new Map<string, number>()
   readonly provider: MemoryProviderPort
+  readonly deps: MemoryPresenterDeps
 
   constructor(
-    readonly deps: MemoryPresenterDeps,
+    deps: MemoryPresenterDeps,
     private readonly onAgentMemoryMutated: ((agentId: string) => void) | undefined,
     provider: MemoryProviderPort
   ) {
+    this.deps = { ...deps, repository: observeRepository(deps) }
     this.provider = provider
   }
 
@@ -108,8 +149,13 @@ export class MemoryRuntimeContext {
   }
 
   resolveProvenance(agentId: string, kind: string, content: string): AgentMemoryRow | undefined {
+    const normalizedContent = normalizeForProvenanceV2(content)
     const v2Key = buildMemoryProvenanceKey(agentId, kind, content)
-    const v2Owner = this.deps.repository.getByProvenanceKey(agentId, v2Key)
+    const resolveEquivalentV2Owner = (): AgentMemoryRow | undefined => {
+      const owner = this.deps.repository.getByProvenanceKey(agentId, v2Key)
+      return isEquivalentProvenanceOwner(owner, kind, normalizedContent) ? owner : undefined
+    }
+    const v2Owner = resolveEquivalentV2Owner()
     if (v2Owner) return v2Owner
 
     const legacyKey = buildLegacyMemoryProvenanceKey(agentId, kind, content)
@@ -117,7 +163,7 @@ export class MemoryRuntimeContext {
     if (
       !legacyOwner ||
       legacyOwner.kind !== kind ||
-      normalizeForProvenanceV2(legacyOwner.content) !== normalizeForProvenanceV2(content)
+      normalizeForProvenanceV2(legacyOwner.content) !== normalizedContent
     ) {
       return undefined
     }
@@ -128,10 +174,10 @@ export class MemoryRuntimeContext {
       })
       return rekeyed
         ? (this.deps.repository.getById(legacyOwner.id) ?? legacyOwner)
-        : this.deps.repository.getByProvenanceKey(agentId, v2Key)
+        : resolveEquivalentV2Owner()
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
-      return this.deps.repository.getByProvenanceKey(agentId, v2Key)
+      return resolveEquivalentV2Owner()
     }
   }
 

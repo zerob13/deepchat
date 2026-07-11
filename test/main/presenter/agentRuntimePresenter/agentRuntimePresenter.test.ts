@@ -257,6 +257,9 @@ function createMockSqlitePresenter() {
     deleteByMessageIds: vi.fn()
   }
   let deepchatTapeEntriesTable: any
+  let memoryIngestionProjectionCurrent = false
+  let memoryIngestionProjectionMaxEntryId = 0
+  let memoryIngestionProjectionRows: any[] = []
   return {
     getDatabase: vi.fn(() => ({
       transaction: (fn: () => unknown) => () => fn()
@@ -354,6 +357,7 @@ function createMockSqlitePresenter() {
           created_at: input.createdAt ?? Date.now()
         }
         tapeEntries.push(row)
+        memoryIngestionProjectionCurrent = false
         return row
       }),
       appendAnchor: vi.fn((input: any) => {
@@ -372,6 +376,14 @@ function createMockSqlitePresenter() {
       }),
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
+      ),
+      getMaxEntryId: vi.fn((sessionId: string) =>
+        Math.max(
+          0,
+          ...tapeEntries
+            .filter((entry) => entry.session_id === sessionId)
+            .map((entry) => entry.entry_id)
+        )
       ),
       getLatestAnchor: vi.fn(
         (sessionId: string) =>
@@ -405,8 +417,47 @@ function createMockSqlitePresenter() {
             tapeEntries.splice(index, 1)
           }
         }
+        memoryIngestionProjectionCurrent = false
       })
     }),
+    deepchatMemoryIngestionProjectionTable: {
+      readCurrentRange: vi.fn(
+        (sessionId: string, fromOrderSeqExclusive: number, toOrderSeqInclusive: number) => {
+          const maxEntryId = deepchatTapeEntriesTable.getMaxEntryId(sessionId)
+          const current =
+            memoryIngestionProjectionCurrent && memoryIngestionProjectionMaxEntryId === maxEntryId
+          return {
+            current,
+            maxEntryId,
+            rows: current
+              ? memoryIngestionProjectionRows.filter(
+                  (row) =>
+                    row.session_id === sessionId &&
+                    row.order_seq > fromOrderSeqExclusive &&
+                    row.order_seq <= toOrderSeqInclusive
+                )
+              : []
+          }
+        }
+      ),
+      replaceSession: vi.fn((sessionId: string, rows: any[], maxEntryId: number) => {
+        memoryIngestionProjectionRows = rows.map((row) => ({
+          session_id: row.sessionId,
+          message_id: row.messageId,
+          order_seq: row.orderSeq,
+          entry_id: row.entryId,
+          role: row.role,
+          content: row.content,
+          status: row.status,
+          had_tool_use: row.hadToolUse ? 1 : 0
+        }))
+        memoryIngestionProjectionMaxEntryId = maxEntryId
+        memoryIngestionProjectionCurrent = true
+      }),
+      invalidateSession: vi.fn(() => {
+        memoryIngestionProjectionCurrent = false
+      })
+    },
     deepchatMessagesTable,
     deepchatUserMessagesTable: {
       upsert: vi.fn(),
@@ -1157,6 +1208,190 @@ describe('AgentRuntimePresenter', () => {
         })
       )
       expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+    })
+
+    it('rebuilds memory ingestion projection once and uses bounded range reads afterward', () => {
+      installRuntimeRecords([
+        userRecord('u1', 1, 'Read package metadata.'),
+        assistantRecord('a1', 2, [toolBlock('tool-1')])
+      ])
+      let current = false
+      let projectedRows: any[] = []
+      let projectedMaxEntryId = 0
+      const replaceSession = vi.fn((_sessionId: string, rows: any[], maxEntryId: number) => {
+        projectedRows = rows.map((row) => ({
+          session_id: row.sessionId,
+          message_id: row.messageId,
+          order_seq: row.orderSeq,
+          entry_id: row.entryId,
+          role: row.role,
+          content: row.content,
+          status: row.status,
+          had_tool_use: row.hadToolUse ? 1 : 0
+        }))
+        projectedMaxEntryId = maxEntryId
+        current = true
+      })
+      const readCurrentRange = vi.fn(
+        (_sessionId: string, fromExclusive: number, toInclusive: number) => ({
+          current,
+          maxEntryId: current
+            ? projectedMaxEntryId
+            : sqlitePresenter.deepchatTapeEntriesTable.getMaxEntryId('s1'),
+          rows: current
+            ? projectedRows.filter(
+                (row) => row.order_seq > fromExclusive && row.order_seq <= toInclusive
+              )
+            : []
+        })
+      )
+      ;(sqlitePresenter as any).deepchatMemoryIngestionProjectionTable = {
+        readCurrentRange,
+        replaceSession,
+        invalidateSession: vi.fn()
+      }
+
+      const rebuiltWindow = (agent as any).buildMemoryExtractionWindow('s1', 0, 2)
+      expect(rebuiltWindow).toEqual(
+        expect.objectContaining({
+          hadToolUse: true,
+          visibleTextChars: 'User: Read package metadata.'.length
+        })
+      )
+      expect(replaceSession).toHaveBeenCalledTimes(1)
+      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+
+      sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+      const rangeWindow = (agent as any).buildMemoryExtractionWindow('s1', 0, 2)
+
+      expect(rangeWindow).toEqual(rebuiltWindow)
+      expect(replaceSession).toHaveBeenCalledTimes(1)
+      expect(readCurrentRange).toHaveBeenCalledTimes(2)
+      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the authoritative Tape view when projection validation fails', () => {
+      installRuntimeRecords([userRecord('u1', 1, 'Keep the fallback safe.')])
+      const invalidateSession = vi.fn()
+      ;(sqlitePresenter as any).deepchatMemoryIngestionProjectionTable = {
+        readCurrentRange: vi.fn(() => {
+          throw new Error('projection unavailable')
+        }),
+        replaceSession: vi.fn(),
+        invalidateSession
+      }
+      sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+
+      const window = (agent as any).buildMemoryExtractionWindow('s1', 0, 1)
+
+      expect(window).toEqual(
+        expect.objectContaining({
+          hadToolUse: false,
+          visibleTextChars: 'User: Keep the fallback safe.'.length
+        })
+      )
+      expect(invalidateSession).toHaveBeenCalledWith('s1')
+      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+
+      expect((agent as any).buildMemoryExtractionWindow('s1', 0, 1)).toBeNull()
+      expect(
+        sqlitePresenter.deepchatMemoryIngestionProjectionTable.readCurrentRange
+      ).toHaveBeenCalledTimes(1)
+      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+    })
+
+    it('cools repeated projection rebuild failures and recovers after the retry window', () => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+      try {
+        installRuntimeRecords([userRecord('u1', 1, 'Keep projection recovery bounded.')])
+        let current = false
+        let failReplacement = true
+        let projectedRows: any[] = []
+        let projectedMaxEntryId = 0
+        const readCurrentRange = vi.fn(
+          (_sessionId: string, fromExclusive: number, toInclusive: number) => ({
+            current,
+            maxEntryId: current
+              ? projectedMaxEntryId
+              : sqlitePresenter.deepchatTapeEntriesTable.getMaxEntryId('s1'),
+            rows: current
+              ? projectedRows.filter(
+                  (row) => row.order_seq > fromExclusive && row.order_seq <= toInclusive
+                )
+              : []
+          })
+        )
+        const replaceSession = vi.fn((_sessionId: string, rows: any[], maxEntryId: number) => {
+          if (failReplacement) throw new Error('projection rebuild failed')
+          projectedRows = rows.map((row) => ({
+            session_id: row.sessionId,
+            message_id: row.messageId,
+            order_seq: row.orderSeq,
+            entry_id: row.entryId,
+            role: row.role,
+            content: row.content,
+            status: row.status,
+            had_tool_use: row.hadToolUse ? 1 : 0
+          }))
+          projectedMaxEntryId = maxEntryId
+          current = true
+        })
+        ;(sqlitePresenter as any).deepchatMemoryIngestionProjectionTable = {
+          readCurrentRange,
+          replaceSession,
+          invalidateSession: vi.fn(() => {
+            current = false
+          })
+        }
+        sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+
+        const fallback = (agent as any).buildMemoryExtractionWindow('s1', 0, 1)
+        expect(fallback.chunks.every((chunk: any) => chunk.cursorCommitOrderSeq === null)).toBe(
+          true
+        )
+        expect(replaceSession).toHaveBeenCalledTimes(1)
+        expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+
+        expect((agent as any).buildMemoryExtractionWindow('s1', 0, 1)).toBeNull()
+        expect(readCurrentRange).toHaveBeenCalledTimes(1)
+        expect(replaceSession).toHaveBeenCalledTimes(1)
+        expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+
+        now.mockReturnValue(31_000)
+        failReplacement = false
+        const recovered = (agent as any).buildMemoryExtractionWindow('s1', 0, 1)
+        expect(recovered.chunks.at(-1)?.cursorCommitOrderSeq).toBe(1)
+        expect(replaceSession).toHaveBeenCalledTimes(2)
+
+        expect((agent as any).buildMemoryExtractionWindow('s1', 0, 1)).toEqual(recovered)
+        expect(readCurrentRange).toHaveBeenCalledTimes(3)
+        expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(2)
+      } finally {
+        now.mockRestore()
+      }
+    })
+
+    it('bounds projection failure cooldown state and clears it with session lifecycle', async () => {
+      const internals = agent as any
+      internals.recordMemoryIngestionProjectionFailure('s1')
+      expect(internals.memoryIngestionProjectionRetryAfter.has('s1')).toBe(true)
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      expect(internals.memoryIngestionProjectionRetryAfter.has('s1')).toBe(false)
+
+      internals.recordMemoryIngestionProjectionFailure('s1')
+      await agent.clearMessages('s1')
+      expect(internals.memoryIngestionProjectionRetryAfter.has('s1')).toBe(false)
+
+      for (let index = 0; index < 257; index += 1) {
+        internals.recordMemoryIngestionProjectionFailure(`session-${index}`)
+      }
+      expect(internals.memoryIngestionProjectionRetryAfter.size).toBe(256)
+      expect(internals.memoryIngestionProjectionRetryAfter.has('session-0')).toBe(false)
+
+      internals.recordMemoryIngestionProjectionFailure('s1')
+      await agent.destroySession('s1')
+      expect(internals.memoryIngestionProjectionRetryAfter.has('s1')).toBe(false)
     })
 
     it('drops an in-flight extraction commit after clearMessages resets the session', async () => {

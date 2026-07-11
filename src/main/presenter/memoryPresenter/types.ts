@@ -23,6 +23,7 @@ import type {
 } from '@shared/types/agent-interface'
 import type { AgentMemoryCategory } from '@shared/types/agent-memory'
 import type { LLM_EMBEDDING_ATTRS } from '@shared/presenter'
+import type { MemoryPerfObserver } from './ports'
 
 export type {
   AgentMemoryKind,
@@ -37,6 +38,26 @@ export type {
   AgentMemoryHealthStats
 }
 
+export interface EmbeddedMemoryUpdate {
+  id: string
+  expectedRevision: number
+  embeddingId: string
+  embeddingDim: number
+  embeddingModel: string
+}
+
+export interface FailedEmbeddingUpdate {
+  id: string
+  expectedRevision: number
+}
+
+export interface MemoryCognitiveMaintenanceInput {
+  eligibleCount: number
+  importanceAfterWatermark: number
+  maxCreatedAt: number
+  topRows: AgentMemoryRow[]
+}
+
 // SQLite repository port. AgentMemoryTable satisfies it structurally; the abstraction lets
 // the presenter's scoring/dedup/staging logic be unit-tested without the native module.
 export interface MemoryRepositoryPort {
@@ -45,7 +66,21 @@ export interface MemoryRepositoryPort {
   getByProvenanceKey(agentId: string, provenanceKey: string): AgentMemoryRow | undefined
   rekeyProvenance(agentId: string, id: string, expectedKey: string, nextKey: string): boolean
   listByAgent(agentId: string, options?: AgentMemoryListOptions): AgentMemoryRow[]
+  listManagementPage(
+    agentId: string,
+    cursor: MemoryManagementPageCursor | null,
+    limit: number
+  ): AgentMemoryRow[]
+  listManagementVisibleByIds(agentId: string, ids: string[]): AgentMemoryRow[]
   listByIds(agentId: string, ids: string[]): AgentMemoryRow[]
+  getCognitiveMaintenanceInput(
+    agentId: string,
+    options: {
+      kinds: AgentMemoryKind[]
+      watermark: number
+      limit: number
+    }
+  ): MemoryCognitiveMaintenanceInput
   getActivePersona(agentId: string): AgentMemoryRow | undefined
   getDraftPersona(agentId: string): AgentMemoryRow | undefined
   setPersonaState(id: string, state: AgentMemoryPersonaState, supersededBy?: string | null): void
@@ -57,7 +92,12 @@ export interface MemoryRepositoryPort {
     limit?: number,
     options?: { matchMode?: 'all' | 'any' }
   ): AgentMemoryRow[]
-  getRecallKeywordTermStats(agentId: string, terms: string[]): RecallKeywordTermStat[]
+  searchWithStrategy(
+    agentId: string,
+    query: string,
+    limit?: number,
+    options?: { matchMode?: 'all' | 'any' }
+  ): MemoryKeywordSearchResult
   listPendingEmbedding(limit?: number, agentId?: string): AgentMemoryRow[]
   updateStatus(
     id: string,
@@ -69,16 +109,13 @@ export interface MemoryRepositoryPort {
     }
   ): void
   activateForEmbedding(id: string): void
-  updatePendingEmbeddingStatus(
+  activateForEmbeddingIfRevision(agentId: string, id: string, expectedRevision: number): boolean
+  markPendingEmbeddingsReady(agentId: string, updates: readonly EmbeddedMemoryUpdate[]): string[]
+  markPendingEmbeddingsError(
     agentId: string,
-    id: string,
-    status: AgentMemoryStatus,
-    embedding?: {
-      embeddingId?: string | null
-      embeddingDim?: number | null
-      embeddingModel?: string | null
-    }
-  ): boolean
+    updates: readonly FailedEmbeddingUpdate[],
+    status?: Extract<AgentMemoryStatus, 'error' | 'fts_only'>
+  ): string[]
   // Bulk-resets the embedding state of an agent's non-superseded rows in the given statuses back
   // to pending_embedding (one SQL UPDATE), returning how many rows changed. Used by reindex and
   // backfill so the requeue never loops per row on the caller's stack.
@@ -94,6 +131,13 @@ export interface MemoryRepositoryPort {
     limit: number,
     afterId?: string | null
   ): string[]
+  listCurrentEmbeddedIds(
+    agentId: string,
+    embeddingDim: number,
+    embeddingModel: string,
+    afterId: string | null,
+    limit: number
+  ): string[]
   markSuperseded(id: string, supersededBy: string | null): void
   markSupersededIfRevision(
     agentId: string,
@@ -104,8 +148,6 @@ export interface MemoryRepositoryPort {
   recordAccess(id: string, accessedAt?: number): void
   recordAccessBatch(ids: string[], accessedAt?: number): void
   updateDecayScore(id: string, decayScore: number | null, consolidatedAt?: number | null): void
-  refreshDecayScoresForAgent(agentId: string, now: number, halfLifeMs: number): void
-  stampConsolidationForAgent(agentId: string, at: number): void
   updateContent(
     id: string,
     content: string,
@@ -146,13 +188,24 @@ export interface MemoryRepositoryPort {
   hasStaleEmbeddings(agentId: string, currentDim: number, fingerprint: string): boolean
   countStaleEmbeddings(agentId: string, currentDim: number, fingerprint: string): number
   archive(id: string, at?: number): void
-  listArchiveCandidates(agentId: string, before: number, decayBelow: number): AgentMemoryRow[]
+  archiveEligibleBatch(
+    agentId: string,
+    options: {
+      now: number
+      createdBefore: number
+      minimumBaseAgeMs: number
+      limit: number
+    }
+  ): string[]
+  countArchiveEligible(
+    agentId: string,
+    options: { now: number; createdBefore: number; minimumBaseAgeMs: number }
+  ): number
   listArchiveCandidateLifecycleRows(
     agentId: string,
     before: number,
     limit: number
   ): AgentMemoryLifecycleRow[]
-  countArchiveCandidates(agentId: string, before: number, decayBelow: number): number
   listTopAccessed(agentId: string, limit: number): AgentMemoryRow[]
   delete(id: string): void
   clearByAgent(agentId: string): number
@@ -168,6 +221,29 @@ export interface MemoryRepositoryPort {
   countConflictPairs(agentId: string): number
   isUnresolvedConflictParticipant(agentId: string, memoryId: string): boolean
   listConflictIntegrityRows(agentId: string): AgentMemoryRow[]
+  listConflictChallengersForMaintenance(agentId: string, limit: number): AgentMemoryRow[]
+  retireConflictSiblings(
+    agentId: string,
+    targetId: string,
+    excludeChallengerId: string,
+    winnerId: string,
+    at: number
+  ): number
+  clearTargetConflictIfNoChallengers(agentId: string, targetId: string): boolean
+  repairConflictIntegrityBatch(
+    agentId: string,
+    limit: number
+  ): {
+    repairedTargets: number
+    archivedChallengers: number
+    clearedTargets: number
+    clearedLinks: number
+  }
+  listConflictSiblings(
+    agentId: string,
+    targetId: string,
+    excludeChallengerId: string
+  ): AgentMemoryRow[]
   getPersonaCounts(agentId: string): { total: number; draft: number }
   hasActiveMemory(agentId: string): boolean
   runInTransaction<T>(fn: () => T): T
@@ -177,6 +253,7 @@ export interface MemoryRepositoryPort {
     after?: AgentMemoryWorkingCandidateCursor
   ): AgentMemoryRow[]
   listAgentIdsWithMemories(): string[]
+  listRecentlyActiveAgentIds(candidateAgentIds: readonly string[], limit: number): string[]
   listConsolidationScanRows(
     agentId: string,
     options: {
@@ -205,12 +282,6 @@ export interface MemoryRepositoryPort {
   ): number
 }
 
-export interface RecallKeywordTermStat {
-  term: string
-  hitCount: number
-  totalRows: number
-}
-
 export interface MemoryAuditRepositoryPort {
   insert(input: AgentMemoryAuditInsertInput): AgentMemoryAuditRow
   listByAgent(agentId: string, options?: number | MemoryAuditListOptions): AgentMemoryAuditRow[]
@@ -221,6 +292,7 @@ export interface MemoryAuditRepositoryPort {
     scanLimit: number,
     failuresLimit: number
   ): AgentMemoryHealthAuditStats
+  pruneOperationalEvents(agentId: string, keep?: number, limit?: number): number
 }
 
 export interface MemoryAuditListOptions {
@@ -263,6 +335,16 @@ export interface MemoryVectorRef {
 export interface ConsolidationScanCursor {
   createdAt: number
   id: string
+}
+
+export interface MemoryManagementPageCursor {
+  createdAt: number
+  id: string
+}
+
+export interface MemoryManagementPage {
+  rows: AgentMemoryRow[]
+  nextCursor: MemoryManagementPageCursor | null
 }
 
 // Vector store port (DuckDB), isolated per agent: one database each, with independent dimensions.
@@ -342,6 +424,25 @@ export interface MemoryRecallItem {
   }
 }
 
+export interface MemoryDecisionNeighborSet {
+  neighbors: MemoryRecallItem[]
+  queryVector?: MemoryDecisionQueryVectorSnapshot
+}
+
+export interface MemoryDecisionQueryVectorSnapshot {
+  vector: number[]
+  providerId: string
+  modelId: string
+  dimensions: number
+}
+
+export type MemoryKeywordSearchStrategy = 'fts-only' | 'like-fallback'
+
+export interface MemoryKeywordSearchResult {
+  rows: AgentMemoryRow[]
+  strategy: MemoryKeywordSearchStrategy
+}
+
 // A retrieval hit paired with its authoritative row for the read-only search facade. The route
 // layer projects the row to the memory DTO and attaches the score; keeping the row here avoids the
 // presenter depending on the DTO projection that lives at the IPC boundary.
@@ -395,11 +496,13 @@ export interface MemoryStatus {
 export interface MemoryPresenterDeps {
   repository: MemoryRepositoryPort
   auditRepository?: MemoryAuditRepositoryPort
+  perfObserver?: MemoryPerfObserver
   resolveAgentConfig: (agentId: string) => DeepChatAgentConfig | null
   resolveAgentDefaultModel?: (agentId: string) => { providerId: string; modelId: string } | null
   // True only for a real, existing DeepChat agent. Management surfaces use it to refuse
   // reads/writes against arbitrary or nonexistent agents; skipped when absent (e.g. tests).
   isManagedAgent?: (agentId: string) => boolean
+  listManagedMemoryAgentIds?: () => string[]
   executeWithRateLimit: (
     providerId: string,
     options: { signal: AbortSignal; purpose: string }
