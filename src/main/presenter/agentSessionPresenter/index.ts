@@ -1,4 +1,6 @@
 import logger from '@shared/logger'
+import type { AgentManager } from '@/agent/manager/agentManager'
+import type { DirectAcpSessionHandle } from '@/agent/manager/sessionHandles'
 import type {
   Agent,
   AgentTapeAnchorResult,
@@ -15,7 +17,6 @@ import type {
   SessionListItem,
   SessionLightweightListResult,
   SessionPageCursor,
-  IAgentImplementation,
   CreateSessionInput,
   CreateDetachedSessionInput,
   SessionRecord,
@@ -63,9 +64,9 @@ import type {
   DeepChatMessageRow,
   DeepChatMessageUsageCandidateRow
 } from '../sqlitePresenter/tables/deepchatMessages'
-import { AgentRegistry } from './agentRegistry'
-import { NewSessionManager } from './sessionManager'
-import { NewMessageManager } from './messageManager'
+import { AppSessionService } from '@/agent/shared/appSessionService'
+import type { AgentSharedDataPorts } from '@/agent/shared/agentSharedData'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { LegacyChatImportService } from './legacyImportService'
 import { publishDeepchatEvent } from '@/routes/publishDeepchatEvent'
 import {
@@ -85,9 +86,13 @@ import {
   resolveUsageModelId,
   resolveUsageProviderId
 } from '../usageStats'
-import { rtkRuntimeService } from '@/lib/agentRuntime/rtkRuntimeService'
-import { resolveAcpAgentAlias } from '../configPresenter/acpRegistryConstants'
-import type { ProviderSessionPort, SessionPermissionPort, SessionUiPort } from '../runtimePorts'
+import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
+import { resolveAcpAgentAlias } from '@shared/utils/acpAgentAlias'
+import type {
+  AcpAsLlmProviderSessionControlPort,
+  SessionPermissionPort,
+  SessionUiPort
+} from '../runtimePorts'
 
 type SearchableSessionRow = {
   id: string
@@ -132,9 +137,6 @@ const LEGACY_AGENT_TOOL_NAME_MAP: Record<string, string> = {
   yo_browser_window_open: 'load_url',
   yo_browser_window_list: 'get_browser_status'
 }
-
-type LegacySessionRuntimePort = SessionUiPort &
-  Pick<SessionPermissionPort, 'clearSessionPermissions' | 'approvePermission'>
 
 const clampHistorySearchLimit = (value: number | undefined): number => {
   if (typeof value !== 'number' || Number.isNaN(value)) {
@@ -262,15 +264,15 @@ const extractSearchableMessageContent = (rawContent: string): string => {
 }
 
 export class AgentSessionPresenter {
-  private agentRegistry: AgentRegistry
-  private sessionManager: NewSessionManager
-  private messageManager: NewMessageManager
+  private agentManager: AgentManager
+  private sessionManager: AppSessionService
   private sqlitePresenter: SQLitePresenter
   private llmProviderPresenter: ILlmProviderPresenter
   private configPresenter: IConfigPresenter
+  private sharedData: AgentSharedDataPorts
   private legacyImportService: LegacyChatImportService
   private skillPresenter?: Pick<ISkillPresenter, 'setActiveSkills' | 'clearNewAgentSessionSkills'>
-  private providerSessionPort?: ProviderSessionPort
+  private acpAsLlmProviderSessionControl?: AcpAsLlmProviderSessionControlPort
   private sessionPermissionPort?: SessionPermissionPort
   private sessionUiPort?: SessionUiPort
   private usageStatsBackfillPromise: Promise<void> | null = null
@@ -279,46 +281,43 @@ export class AgentSessionPresenter {
   private readonly sessionStatusSnapshots = new Map<string, SessionWithState['status']>()
 
   constructor(
-    agentRuntimeAgent: IAgentImplementation,
+    agentManager: AgentManager,
+    appSessionService: AppSessionService,
     llmProviderPresenter: ILlmProviderPresenter,
     configPresenter: IConfigPresenter,
     sqlitePresenter: SQLitePresenter,
+    sharedData: AgentSharedDataPorts,
     skillPresenter?: Pick<ISkillPresenter, 'setActiveSkills' | 'clearNewAgentSessionSkills'>,
-    sessionRuntimePort?: LegacySessionRuntimePort,
     runtimePorts?: {
-      providerSessionPort?: ProviderSessionPort
+      acpAsLlmProviderSessionControl?: AcpAsLlmProviderSessionControlPort
       sessionPermissionPort?: SessionPermissionPort
       sessionUiPort?: SessionUiPort
     }
   ) {
+    this.agentManager = agentManager
     this.sqlitePresenter = sqlitePresenter
     this.llmProviderPresenter = llmProviderPresenter
     this.configPresenter = configPresenter
+    this.sharedData = sharedData
     this.skillPresenter = skillPresenter
-    this.agentRegistry = new AgentRegistry()
-    this.sessionManager = new NewSessionManager(sqlitePresenter)
-    this.messageManager = new NewMessageManager(this.agentRegistry)
+    this.sessionManager = appSessionService
     this.legacyImportService = new LegacyChatImportService(sqlitePresenter)
-    this.providerSessionPort = runtimePorts?.providerSessionPort
-    this.sessionPermissionPort = runtimePorts?.sessionPermissionPort ?? sessionRuntimePort
-    this.sessionUiPort = runtimePorts?.sessionUiPort ?? sessionRuntimePort
-
-    // Register the built-in deepchat agent
-    this.agentRegistry.register(
-      { id: 'deepchat', name: 'DeepChat', type: 'deepchat', enabled: true },
-      agentRuntimeAgent
-    )
+    this.acpAsLlmProviderSessionControl = runtimePorts?.acpAsLlmProviderSessionControl
+    this.sessionPermissionPort = runtimePorts?.sessionPermissionPort
+    this.sessionUiPort = runtimePorts?.sessionUiPort
   }
 
   // ---- IPC-facing methods ----
 
   async createSession(input: CreateSessionInput, webContentsId: number): Promise<SessionWithState> {
-    const agentId = input.agentId || 'deepchat'
+    const requestedAgentId = input.agentId || 'deepchat'
+    const resolvedAgent = this.agentManager.resolveBackend(requestedAgentId)
+    const agentId = resolvedAgent.descriptor.id
     logger.info(
       `[AgentSessionPresenter] createSession agent=${agentId} webContentsId=${webContentsId}`
     )
     const normalizedInput = this.normalizeCreateSessionInput(input)
-    const agentType = await this.getAgentType(agentId)
+    const agentType = resolvedAgent.kind
     const deepChatAgentConfig =
       agentType === 'deepchat' ? await this.resolveDeepChatAgentConfigCompat(agentId) : null
     const projectDir = this.resolveCreateSessionProjectDir(
@@ -337,20 +336,22 @@ export class AgentSessionPresenter {
       deepChatAgentConfig?.subagentEnabled
     )
 
-    const agent = await this.resolveAgentImplementation(agentId)
-
     // Resolve provider/model
     const defaultModel = this.configPresenter.getDefaultModel()
     const providerId =
-      input.providerId ??
-      deepChatAgentConfig?.defaultModelPreset?.providerId ??
-      defaultModel?.providerId ??
-      ''
+      agentType === 'acp'
+        ? 'acp'
+        : (input.providerId ??
+          deepChatAgentConfig?.defaultModelPreset?.providerId ??
+          defaultModel?.providerId ??
+          '')
     const modelId =
-      input.modelId ??
-      deepChatAgentConfig?.defaultModelPreset?.modelId ??
-      defaultModel?.modelId ??
-      ''
+      agentType === 'acp'
+        ? agentId
+        : (input.modelId ??
+          deepChatAgentConfig?.defaultModelPreset?.modelId ??
+          defaultModel?.modelId ??
+          '')
     const permissionMode =
       input.permissionMode !== undefined
         ? normalizePermissionMode(input.permissionMode)
@@ -394,15 +395,15 @@ export class AgentSessionPresenter {
       initConfig.generationSettings = generationSettings
     }
     try {
-      await this.initializeSessionRuntime(agent, sessionId, initConfig)
+      await this.initializeSessionRuntime(sessionId, initConfig)
     } catch (error) {
-      await this.cleanupFailedSessionInitialization(agent, sessionId, providerId)
+      await this.cleanupFailedSessionInitialization(sessionId, providerId)
       throw error
     }
     logger.info(`[AgentSessionPresenter] agent.initSession done`)
 
     // Bind to window and emit activated
-    this.sessionManager.bindWindow(webContentsId, sessionId)
+    this.sessionManager.bindWindow(webContentsId, toAppSessionId(sessionId))
     this.emitSessionListUpdated({
       sessionIds: [sessionId],
       reason: 'created',
@@ -411,7 +412,8 @@ export class AgentSessionPresenter {
     })
 
     // Return enriched session first
-    const state = await agent.getSessionState(sessionId)
+    const { handle } = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId))
+    const state = await handle.snapshot()
     const sessionResult: SessionWithState = {
       id: sessionId,
       agentId,
@@ -434,33 +436,16 @@ export class AgentSessionPresenter {
     const hasInitialTurn =
       normalizedInput.text.trim().length > 0 || (normalizedInput.files?.length ?? 0) > 0
     if (hasInitialTurn) {
-      logger.info(`[AgentSessionPresenter] firing queuePendingInput (non-blocking)`)
-      if (agent.queuePendingInput) {
-        agent
-          .queuePendingInput(
-            sessionId,
-            this.withInitialMessageActiveSkills(normalizedInput, input.activeSkills),
-            {
-              source: 'send',
-              projectDir
-            }
-          )
-          .catch((err) => {
-            console.error('[AgentSessionPresenter] queuePendingInput failed:', err)
-          })
-      } else {
-        agent
-          .processMessage(
-            sessionId,
-            this.withInitialMessageActiveSkills(normalizedInput, input.activeSkills),
-            {
-              projectDir
-            }
-          )
-          .catch((err) => {
-            console.error('[AgentSessionPresenter] processMessage failed:', err)
-          })
-      }
+      logger.info(`[AgentSessionPresenter] firing initial send (non-blocking)`)
+      handle
+        .send({
+          content: this.withInitialMessageActiveSkills(normalizedInput, input.activeSkills),
+          context: { projectDir },
+          queue: { source: 'send', projectDir }
+        })
+        .catch((err) => {
+          console.error('[AgentSessionPresenter] initial send failed:', err)
+        })
       void this.generateSessionTitle(sessionId, title, providerId, modelId)
     }
 
@@ -468,9 +453,11 @@ export class AgentSessionPresenter {
   }
 
   async createDetachedSession(input: CreateDetachedSessionInput): Promise<SessionWithState> {
-    const agentId = input.agentId?.trim() || 'deepchat'
+    const requestedAgentId = input.agentId?.trim() || 'deepchat'
+    const resolvedAgent = this.agentManager.resolveBackend(requestedAgentId)
+    const agentId = resolvedAgent.descriptor.id
     const title = input.title?.trim() || 'New Chat'
-    const agentType = await this.getAgentType(agentId)
+    const agentType = resolvedAgent.kind
     const deepChatAgentConfig =
       agentType === 'deepchat' ? await this.resolveDeepChatAgentConfigCompat(agentId) : null
     const projectDir =
@@ -489,19 +476,21 @@ export class AgentSessionPresenter {
       input.subagentEnabled,
       deepChatAgentConfig?.subagentEnabled
     )
-    const agent = await this.resolveAgentImplementation(agentId)
-
     const defaultModel = this.configPresenter.getDefaultModel()
     const providerId =
-      input.providerId ??
-      deepChatAgentConfig?.defaultModelPreset?.providerId ??
-      defaultModel?.providerId ??
-      ''
+      agentType === 'acp'
+        ? 'acp'
+        : (input.providerId ??
+          deepChatAgentConfig?.defaultModelPreset?.providerId ??
+          defaultModel?.providerId ??
+          '')
     const modelId =
-      input.modelId ??
-      deepChatAgentConfig?.defaultModelPreset?.modelId ??
-      defaultModel?.modelId ??
-      ''
+      agentType === 'acp'
+        ? agentId
+        : (input.modelId ??
+          deepChatAgentConfig?.defaultModelPreset?.modelId ??
+          defaultModel?.modelId ??
+          '')
     const permissionMode =
       input.permissionMode !== undefined
         ? normalizePermissionMode(input.permissionMode)
@@ -524,7 +513,7 @@ export class AgentSessionPresenter {
     })
 
     try {
-      await this.initializeSessionRuntime(agent, sessionId, {
+      await this.initializeSessionRuntime(sessionId, {
         agentId,
         providerId,
         modelId,
@@ -533,7 +522,7 @@ export class AgentSessionPresenter {
         generationSettings
       })
     } catch (error) {
-      await this.cleanupFailedSessionInitialization(agent, sessionId, providerId)
+      await this.cleanupFailedSessionInitialization(sessionId, providerId)
       throw error
     }
 
@@ -546,7 +535,9 @@ export class AgentSessionPresenter {
       reason: 'created'
     })
 
-    const state = await agent.getSessionState(sessionId)
+    const state = await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.snapshot()
     return {
       id: sessionId,
       agentId,
@@ -606,7 +597,6 @@ export class AgentSessionPresenter {
     }
     this.assertAcpSessionHasWorkdir(runtimeConfig.providerId, projectDir)
 
-    const agent = await this.resolveAgentImplementation(runtimeConfig.agentId)
     let lastError: unknown = null
 
     for (let attempt = 1; attempt <= SUBAGENT_SESSION_INIT_MAX_ATTEMPTS; attempt += 1) {
@@ -620,7 +610,7 @@ export class AgentSessionPresenter {
       })
 
       try {
-        await this.initializeSessionRuntime(agent, sessionId, {
+        await this.initializeSessionRuntime(sessionId, {
           agentId: runtimeConfig.agentId,
           providerId: runtimeConfig.providerId,
           modelId: runtimeConfig.modelId,
@@ -646,7 +636,7 @@ export class AgentSessionPresenter {
         return session
       } catch (error) {
         lastError = error
-        await this.cleanupFailedSessionInitialization(agent, sessionId, runtimeConfig.providerId)
+        await this.cleanupFailedSessionInitialization(sessionId, runtimeConfig.providerId)
 
         if (attempt >= SUBAGENT_SESSION_INIT_MAX_ATTEMPTS) {
           throw error
@@ -679,27 +669,30 @@ export class AgentSessionPresenter {
       throw new Error('ACP draft session requires a non-empty projectDir.')
     }
 
-    await this.assertAcpAgent(agentId)
-    const agent = await this.resolveAgentImplementation(agentId)
+    const resolvedAgent = this.agentManager.resolveBackend(agentId)
+    if (resolvedAgent.kind !== 'acp') {
+      throw new Error(`Agent ${agentId} is not an ACP agent.`)
+    }
+    const canonicalAgentId = resolvedAgent.descriptor.id
     const permissionMode = normalizePermissionMode(input.permissionMode)
 
-    let record = await this.findReusableDraftSession(agentId, projectDir, agent)
+    let record = await this.findReusableDraftSession(canonicalAgentId, projectDir)
     let createdDraftSession = false
     if (!record) {
-      const sessionId = this.sessionManager.create(agentId, 'New Chat', projectDir, {
+      const sessionId = this.sessionManager.create(canonicalAgentId, 'New Chat', projectDir, {
         isDraft: true,
         subagentEnabled: false
       })
       try {
-        await this.ensureSessionRuntimeInitialized(agent, sessionId, {
-          agentId,
+        await this.ensureSessionRuntimeInitialized(sessionId, {
+          agentId: canonicalAgentId,
           providerId: 'acp',
-          modelId: agentId,
+          modelId: canonicalAgentId,
           projectDir,
           permissionMode
         })
       } catch (error) {
-        await this.cleanupFailedSessionInitialization(agent, sessionId, 'acp')
+        await this.cleanupFailedSessionInitialization(sessionId, 'acp')
         throw error
       }
       record = this.sessionManager.get(sessionId)
@@ -708,28 +701,30 @@ export class AgentSessionPresenter {
       }
       createdDraftSession = true
     } else {
-      await this.ensureSessionRuntimeInitialized(agent, record.id, {
-        agentId,
+      await this.ensureSessionRuntimeInitialized(record.id, {
+        agentId: canonicalAgentId,
         providerId: 'acp',
-        modelId: agentId,
+        modelId: canonicalAgentId,
         projectDir,
         permissionMode
       })
     }
 
-    await (this.providerSessionPort?.prepareAcpSession?.(record.id, agentId, projectDir) ??
-      this.llmProviderPresenter.prepareAcpSession(record.id, agentId, projectDir))
+    const handle = this.requireDirectAcpHandle(record.id)
+    await handle.acp.prepare()
     this.emitSessionListUpdated({
       sessionIds: [record.id],
       reason: createdDraftSession ? 'created' : 'updated'
     })
 
-    const state = await agent.getSessionState(record.id)
+    const state = await this.agentManager
+      .resolveSessionHandle(toAppSessionId(record.id))
+      .handle.snapshot()
     return {
       ...record,
       status: state?.status ?? 'idle',
       providerId: state?.providerId ?? 'acp',
-      modelId: state?.modelId ?? agentId
+      modelId: state?.modelId ?? canonicalAgentId
     }
   }
 
@@ -754,15 +749,11 @@ export class AgentSessionPresenter {
       if (!session) throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    const state = await agent.getSessionState(sessionId)
-    const hadMessages = await agent.hasMessages(sessionId)
+    const { handle } = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId))
+    const state = await handle.snapshot()
+    const hadMessages = await this.sharedData.transcript.hasMessages(sessionId)
     let providerId = state?.providerId ?? ''
-    if (!providerId) {
-      if ((await this.getAgentType(session.agentId)) === 'acp') {
-        providerId = 'acp'
-      }
-    }
+    if (!providerId && handle.kind === 'acp') providerId = 'acp'
     this.assertAcpSessionHasWorkdir(providerId, session.projectDir ?? null)
     await this.syncAcpSessionWorkdir(
       providerId,
@@ -770,23 +761,16 @@ export class AgentSessionPresenter {
       session.agentId,
       session.projectDir ?? null
     )
-    if (agent.queuePendingInput) {
-      await agent.queuePendingInput(sessionId, normalizedInput, {
+    const result = await handle.send({
+      content: normalizedInput,
+      context: {
+        projectDir: session.projectDir ?? null,
+        maxProviderRounds: options?.maxProviderRounds
+      },
+      queue: {
         source: 'send',
         projectDir: session.projectDir ?? null
-      })
-      if (!hadMessages && !wasDraft) {
-        void this.generateSessionTitle(sessionId, session.title, providerId, state?.modelId ?? '')
       }
-      return {
-        requestId: null,
-        messageId: null
-      }
-    }
-
-    const result = await agent.processMessage(sessionId, normalizedInput, {
-      projectDir: session.projectDir ?? null,
-      maxProviderRounds: options?.maxProviderRounds
     })
     if (!hadMessages && !wasDraft) {
       void this.generateSessionTitle(sessionId, session.title, providerId, state?.modelId ?? '')
@@ -810,12 +794,10 @@ export class AgentSessionPresenter {
       if (!session) throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    const state = await agent.getSessionState(sessionId)
+    const { handle } = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId))
+    const state = await handle.snapshot()
     let providerId = state?.providerId ?? ''
-    if (!providerId && (await this.getAgentType(session.agentId)) === 'acp') {
-      providerId = 'acp'
-    }
+    if (!providerId && handle.kind === 'acp') providerId = 'acp'
     this.assertAcpSessionHasWorkdir(providerId, session.projectDir ?? null)
     await this.syncAcpSessionWorkdir(
       providerId,
@@ -824,9 +806,7 @@ export class AgentSessionPresenter {
       session.projectDir ?? null
     )
 
-    if (agent.steerActiveTurn) {
-      await agent.steerActiveTurn(sessionId, normalizedInput)
-    }
+    await handle.pending.steerActiveTurn(normalizedInput)
   }
 
   async listPendingInputs(sessionId: string) {
@@ -834,11 +814,9 @@ export class AgentSessionPresenter {
     if (!session) {
       return []
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.listPendingInputs) {
-      return []
-    }
-    return await agent.listPendingInputs(sessionId)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.pending.list()
   }
 
   async queuePendingInput(sessionId: string, content: string | SendMessageInput) {
@@ -859,17 +837,9 @@ export class AgentSessionPresenter {
       currentSession = this.sessionManager.get(sessionId) ?? currentSession
     }
 
-    const agent = await this.resolveAgentImplementation(currentSession.agentId)
-    if (!agent.queuePendingInput) {
-      throw new Error(`Agent ${currentSession.agentId} does not support pending inputs.`)
-    }
-
-    let providerId = (await agent.getSessionState(sessionId))?.providerId ?? ''
-    if (!providerId) {
-      if ((await this.getAgentType(currentSession.agentId)) === 'acp') {
-        providerId = 'acp'
-      }
-    }
+    const { handle } = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId))
+    let providerId = (await handle.snapshot())?.providerId ?? ''
+    if (!providerId && handle.kind === 'acp') providerId = 'acp'
     this.assertAcpSessionHasWorkdir(providerId, currentSession.projectDir ?? null)
     await this.syncAcpSessionWorkdir(
       providerId,
@@ -877,7 +847,7 @@ export class AgentSessionPresenter {
       currentSession.agentId,
       currentSession.projectDir ?? null
     )
-    return await agent.queuePendingInput(sessionId, normalizedInput, {
+    return await handle.pending.queue(normalizedInput, {
       source: 'queue',
       projectDir: currentSession.projectDir ?? null
     })
@@ -888,11 +858,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.updateQueuedInput) {
-      throw new Error(`Agent ${session.agentId} does not support pending input edits.`)
-    }
-    return await agent.updateQueuedInput(sessionId, itemId, this.normalizeSendMessageInput(content))
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.pending.update(itemId, this.normalizeSendMessageInput(content))
   }
 
   async moveQueuedInput(sessionId: string, itemId: string, toIndex: number) {
@@ -900,11 +868,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.moveQueuedInput) {
-      throw new Error(`Agent ${session.agentId} does not support pending input sorting.`)
-    }
-    return await agent.moveQueuedInput(sessionId, itemId, toIndex)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.pending.move(itemId, toIndex)
   }
 
   async convertPendingInputToSteer(sessionId: string, itemId: string) {
@@ -912,11 +878,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.convertPendingInputToSteer) {
-      throw new Error(`Agent ${session.agentId} does not support steer conversion.`)
-    }
-    return await agent.convertPendingInputToSteer(sessionId, itemId)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.pending.convertToSteer(itemId)
   }
 
   async steerPendingInput(sessionId: string, itemId: string) {
@@ -924,11 +888,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.steerPendingInput) {
-      throw new Error(`Agent ${session.agentId} does not support steering queued inputs.`)
-    }
-    return await agent.steerPendingInput(sessionId, itemId)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.pending.steer(itemId)
   }
 
   async deletePendingInput(sessionId: string, itemId: string): Promise<void> {
@@ -936,11 +898,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.deletePendingInput) {
-      throw new Error(`Agent ${session.agentId} does not support pending input deletion.`)
-    }
-    await agent.deletePendingInput(sessionId, itemId)
+    await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.pending.delete(itemId)
   }
 
   async retryMessage(sessionId: string, messageId: string): Promise<void> {
@@ -948,11 +908,15 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.retryMessage) {
-      throw new Error(`Agent ${session.agentId} does not support message retry.`)
-    }
-    await agent.retryMessage(sessionId, messageId)
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    const prepared = await this.sharedData.transcriptMutation.prepareRetryMessage(
+      sessionId,
+      messageId
+    )
+    await handle.send({
+      content: prepared.content,
+      context: { projectDir: prepared.projectDir, emitRefreshBeforeStream: true }
+    })
   }
 
   async deleteMessage(sessionId: string, messageId: string): Promise<void> {
@@ -960,11 +924,8 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.deleteMessage) {
-      throw new Error(`Agent ${session.agentId} does not support message deletion.`)
-    }
-    await agent.deleteMessage(sessionId, messageId)
+    await this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle.cancel()
+    await this.sharedData.transcriptMutation.deleteMessage(sessionId, messageId)
   }
 
   async editUserMessage(
@@ -976,11 +937,7 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.editUserMessage) {
-      throw new Error(`Agent ${session.agentId} does not support user message editing.`)
-    }
-    return await agent.editUserMessage(sessionId, messageId, text)
+    return await this.sharedData.transcriptMutation.editUserMessage(sessionId, messageId, text)
   }
 
   async forkSession(
@@ -993,19 +950,15 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sourceSessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(sourceSession.agentId)
-    if (!agent.forkSessionFromMessage) {
-      throw new Error(`Agent ${sourceSession.agentId} does not support session fork.`)
-    }
-
-    const sourceState = await agent.getSessionState(sourceSessionId)
+    const sourceHandle = this.agentManager.resolveSessionHandle(
+      toAppSessionId(sourceSessionId)
+    ).handle
+    const sourceState = await sourceHandle.snapshot()
     if (!sourceState) {
       throw new Error(`Session state not found: ${sourceSessionId}`)
     }
 
-    const generationSettings = agent.getGenerationSettings
-      ? await agent.getGenerationSettings(sourceSessionId)
-      : null
+    const generationSettings = await sourceHandle.settings.getGenerationSettings()
 
     const title = this.buildForkTitle(sourceSession.title, newTitle)
     const targetSessionId = this.sessionManager.create(
@@ -1016,7 +969,7 @@ export class AgentSessionPresenter {
     )
 
     try {
-      await this.initializeSessionRuntime(agent, targetSessionId, {
+      await this.initializeSessionRuntime(targetSessionId, {
         agentId: sourceSession.agentId,
         providerId: sourceState.providerId,
         modelId: sourceState.modelId,
@@ -1024,10 +977,14 @@ export class AgentSessionPresenter {
         permissionMode: sourceState.permissionMode,
         generationSettings: generationSettings ?? undefined
       })
-      await agent.forkSessionFromMessage(sourceSessionId, targetSessionId, targetMessageId)
+      await this.sharedData.transcriptMutation.forkSessionFromMessage(
+        sourceSessionId,
+        targetSessionId,
+        targetMessageId
+      )
     } catch (error) {
       try {
-        await agent.destroySession(targetSessionId)
+        await this.agentManager.resolveSessionHandle(toAppSessionId(targetSessionId)).handle.close()
       } catch (cleanupError) {
         console.warn(
           `[AgentSessionPresenter] Failed to cleanup forked session runtime ${targetSessionId}:`,
@@ -1048,7 +1005,9 @@ export class AgentSessionPresenter {
       throw new Error(`Forked session not found: ${targetSessionId}`)
     }
 
-    const targetState = await agent.getSessionState(targetSessionId)
+    const targetState = await this.agentManager
+      .resolveSessionHandle(toAppSessionId(targetSessionId))
+      .handle.snapshot()
     return {
       ...record,
       status: targetState?.status ?? 'idle',
@@ -1127,8 +1086,7 @@ export class AgentSessionPresenter {
   async getMessages(sessionId: string): Promise<ChatMessageRecord[]> {
     const session = this.sessionManager.get(sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    return agent.getMessages(sessionId)
+    return await this.sharedData.transcript.getMessages(sessionId)
   }
 
   async listMessagesPage(
@@ -1143,36 +1101,7 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (agent.listMessagesPage) {
-      return await agent.listMessagesPage(sessionId, options)
-    }
-
-    const messages = await agent.getMessages(sessionId)
-    const limit = Math.min(Math.max(Math.floor(options?.limit ?? 100), 1), 500)
-    const cursor = options?.cursor ?? null
-    const filtered = cursor
-      ? messages.filter(
-          (message) =>
-            message.orderSeq < cursor.orderSeq ||
-            (message.orderSeq === cursor.orderSeq && message.id < cursor.id)
-        )
-      : messages
-    const pageMessages = filtered.slice(Math.max(filtered.length - limit, 0))
-    const hasMore = filtered.length > pageMessages.length
-    const nextCursor =
-      hasMore && pageMessages.length > 0
-        ? {
-            orderSeq: pageMessages[0].orderSeq,
-            id: pageMessages[0].id
-          }
-        : null
-
-    return {
-      messages: pageMessages,
-      nextCursor,
-      hasMore
-    }
+    return await this.sharedData.transcript.listMessagesPage(sessionId, options)
   }
 
   async searchHistory(query: string, options?: HistorySearchOptions): Promise<HistorySearchHit[]> {
@@ -1344,8 +1273,8 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.getSessionCompactionState) {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind !== 'deepchat') {
       return {
         status: 'idle',
         cursorOrderSeq: 1,
@@ -1353,7 +1282,7 @@ export class AgentSessionPresenter {
       }
     }
 
-    return await agent.getSessionCompactionState(sessionId)
+    return await handle.deepchat.getCompactionState()
   }
 
   async compactSession(
@@ -1364,19 +1293,17 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.compactSession) {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind !== 'deepchat') {
       throw new Error(`Agent ${session.agentId} does not support manual compaction.`)
     }
 
-    const agentType = await this.getAgentType(session.agentId)
-    const state = await agent.getSessionState(sessionId)
-    const providerId = state?.providerId || (agentType === 'acp' ? 'acp' : '')
-    if (agentType === 'acp' || providerId === 'acp') {
+    const state = await handle.snapshot()
+    if (state?.providerId === 'acp') {
       throw new Error('Manual compaction is only available for DeepChat agent sessions.')
     }
 
-    return await agent.compactSession(sessionId)
+    return await handle.deepchat.compact()
   }
 
   async getTapeInfo(sessionId: string): Promise<AgentTapeInfo> {
@@ -1385,12 +1312,7 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.getTapeInfo) {
-      throw new Error(`Agent ${session.agentId} does not support tape info.`)
-    }
-
-    return await agent.getTapeInfo(sessionId)
+    return await this.sharedData.tape.getTapeInfo(sessionId)
   }
 
   async searchTape(
@@ -1403,12 +1325,7 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.searchTape) {
-      throw new Error(`Agent ${session.agentId} does not support tape search.`)
-    }
-
-    return await agent.searchTape(sessionId, query, options)
+    return await this.sharedData.tape.searchTape(sessionId, query, options)
   }
 
   async getTapeContext(
@@ -1421,12 +1338,7 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.getTapeContext) {
-      throw new Error(`Agent ${session.agentId} does not support tape context.`)
-    }
-
-    return await agent.getTapeContext(sessionId, entryIds, options)
+    return await this.sharedData.tape.getTapeContext(sessionId, entryIds, options)
   }
 
   async listTapeAnchors(
@@ -1438,12 +1350,7 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.listTapeAnchors) {
-      throw new Error(`Agent ${session.agentId} does not support tape anchors.`)
-    }
-
-    return await agent.listTapeAnchors(sessionId, options)
+    return await this.sharedData.tape.listTapeAnchors(sessionId, options)
   }
 
   async handoffTape(
@@ -1456,12 +1363,7 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.handoffTape) {
-      throw new Error(`Agent ${session.agentId} does not support tape handoff.`)
-    }
-
-    return await agent.handoffTape(sessionId, name, state)
+    return await this.sharedData.tape.handoffTape(sessionId, name, state)
   }
 
   async listMessageViewManifests(messageId: string): Promise<DeepChatTapeViewManifestRecord[]> {
@@ -1475,10 +1377,10 @@ export class AgentSessionPresenter {
     if (!session) return []
 
     try {
-      const agent = await this.resolveAgentImplementation(session.agentId)
-      if (!agent.listMessageViewManifests) return []
-
-      return await agent.listMessageViewManifests(message.session_id, normalizedMessageId)
+      return await this.sharedData.tape.listMessageViewManifests(
+        message.session_id,
+        normalizedMessageId
+      )
     } catch (error) {
       logger.warn('[AgentSessionPresenter] Failed to list message view manifests', {
         messageId: normalizedMessageId,
@@ -1502,10 +1404,7 @@ export class AgentSessionPresenter {
     if (!session) return null
 
     try {
-      const agent = await this.resolveAgentImplementation(session.agentId)
-      if (!agent.exportMessageTapeReplaySlice) return null
-
-      return await agent.exportMessageTapeReplaySlice(
+      return await this.sharedData.tape.exportMessageTapeReplaySlice(
         message.session_id,
         normalizedMessageId,
         options
@@ -1537,12 +1436,23 @@ export class AgentSessionPresenter {
       throw new Error(`Session ${childSessionId} is not a child of ${parentSessionId}.`)
     }
 
-    const agent = await this.resolveAgentImplementation(parentSession.agentId)
-    if (!agent.mergeSubagentTape) {
-      throw new Error(`Agent ${parentSession.agentId} does not support subagent tape merge.`)
+    const resolved = this.agentManager.resolveSubagentFacet(toAppSessionId(parentSessionId))
+    switch (resolved.kind) {
+      case 'deepchat':
+        await resolved.facet.mergeTape(
+          toAppSessionId(parentSessionId),
+          toAppSessionId(childSessionId),
+          meta
+        )
+        break
+      case 'acp':
+        await resolved.facet.mergeTape(
+          toAppSessionId(parentSessionId),
+          toAppSessionId(childSessionId),
+          meta
+        )
+        break
     }
-
-    await agent.mergeSubagentTape(parentSessionId, childSessionId, meta)
   }
 
   async discardSubagentTape(
@@ -1563,12 +1473,23 @@ export class AgentSessionPresenter {
       throw new Error(`Session ${childSessionId} is not a child of ${parentSessionId}.`)
     }
 
-    const agent = await this.resolveAgentImplementation(parentSession.agentId)
-    if (!agent.discardSubagentTape) {
-      throw new Error(`Agent ${parentSession.agentId} does not support subagent tape discard.`)
+    const resolved = this.agentManager.resolveSubagentFacet(toAppSessionId(parentSessionId))
+    switch (resolved.kind) {
+      case 'deepchat':
+        await resolved.facet.discardTape(
+          toAppSessionId(parentSessionId),
+          toAppSessionId(childSessionId),
+          meta
+        )
+        break
+      case 'acp':
+        await resolved.facet.discardTape(
+          toAppSessionId(parentSessionId),
+          toAppSessionId(childSessionId),
+          meta
+        )
+        break
     }
-
-    await agent.discardSubagentTape(parentSessionId, childSessionId, meta)
   }
 
   async getSearchResults(messageId: string, searchId?: string): Promise<SearchResult[]> {
@@ -1818,12 +1739,11 @@ export class AgentSessionPresenter {
   async getMessageIds(sessionId: string): Promise<string[]> {
     const session = this.sessionManager.get(sessionId)
     if (!session) throw new Error(`Session not found: ${sessionId}`)
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    return agent.getMessageIds(sessionId)
+    return await this.sharedData.transcript.getMessageIds(sessionId)
   }
 
   async getMessage(messageId: string): Promise<ChatMessageRecord | null> {
-    return this.messageManager.getMessage(messageId)
+    return await this.sharedData.transcript.getMessage(messageId)
   }
 
   async translateText(text: string, locale?: string, agentId?: string): Promise<string> {
@@ -1867,7 +1787,7 @@ export class AgentSessionPresenter {
   }
 
   async activateSession(webContentsId: number, sessionId: string): Promise<void> {
-    this.sessionManager.bindWindow(webContentsId, sessionId)
+    this.sessionManager.bindWindow(webContentsId, toAppSessionId(sessionId))
     publishDeepchatEvent('sessions.updated', {
       sessionIds: [sessionId],
       reason: 'activated',
@@ -1946,12 +1866,8 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.clearMessages) {
-      throw new Error(`Agent ${session.agentId} does not support clearing messages.`)
-    }
-
-    await agent.clearMessages(sessionId)
+    await this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle.cancel()
+    await this.sharedData.transcriptMutation.clearMessages(sessionId)
     this.emitSessionListUpdated({
       sessionIds: [sessionId],
       reason: 'updated'
@@ -1967,11 +1883,9 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    const state = await agent.getSessionState(sessionId)
-    const generationSettings = agent.getGenerationSettings
-      ? await agent.getGenerationSettings(sessionId)
-      : null
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    const state = await handle.snapshot()
+    const generationSettings = await handle.settings.getGenerationSettings()
     const providerId = state?.providerId?.trim() ?? ''
     const modelId = state?.modelId?.trim() ?? ''
 
@@ -1981,7 +1895,7 @@ export class AgentSessionPresenter {
       modelId,
       generationSettings
     )
-    const records = await agent.getMessages(sessionId)
+    const records = await this.sharedData.transcript.getMessages(sessionId)
     const exportMessages = records
       .filter((record) => record.status === 'sent')
       .sort((a, b) => a.orderSeq - b.orderSeq)
@@ -2204,8 +2118,7 @@ export class AgentSessionPresenter {
   async cancelGeneration(sessionId: string): Promise<void> {
     const session = this.sessionManager.get(sessionId)
     if (!session) return
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    await agent.cancelGeneration(sessionId)
+    await this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle.cancel()
   }
 
   clearSessionPermissions(sessionId: string): void {
@@ -2222,11 +2135,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.respondToolInteraction) {
-      throw new Error(`Agent ${session.agentId} does not support tool interaction response.`)
-    }
-    return await agent.respondToolInteraction(sessionId, messageId, toolCallId, response)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.toolInteractions.respond(messageId, toolCallId, response)
   }
 
   async getAcpSessionCommands(sessionId: string): Promise<
@@ -2238,11 +2149,14 @@ export class AgentSessionPresenter {
   > {
     const session = this.sessionManager.get(sessionId)
     if (!session) return []
-    if (!(await this.isAcpBackedSession(sessionId, session.agentId))) {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind === 'acp') {
+      return await handle.acp.getCommands()
+    }
+    if ((await handle.snapshot())?.providerId !== 'acp') {
       return []
     }
-    return await (this.providerSessionPort?.getAcpSessionCommands?.(sessionId) ??
-      this.llmProviderPresenter.getAcpSessionCommands(sessionId))
+    return await this.requireAcpAsLlmProviderSessionControl().getAcpSessionCommands(sessionId)
   }
 
   async getAcpSessionConfigOptions(sessionId: string): Promise<AcpConfigState | null> {
@@ -2250,11 +2164,14 @@ export class AgentSessionPresenter {
     if (!session) {
       return null
     }
-    if (!(await this.isAcpBackedSession(sessionId, session.agentId))) {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind === 'acp') {
+      return await handle.acp.getConfigOptions()
+    }
+    if ((await handle.snapshot())?.providerId !== 'acp') {
       return null
     }
-    return await (this.providerSessionPort?.getAcpSessionConfigOptions?.(sessionId) ??
-      this.llmProviderPresenter.getAcpSessionConfigOptions(sessionId))
+    return await this.requireAcpAsLlmProviderSessionControl().getAcpSessionConfigOptions(sessionId)
   }
 
   async setAcpSessionConfigOption(
@@ -2266,14 +2183,18 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    if (!(await this.isAcpBackedSession(sessionId, session.agentId))) {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind === 'acp') {
+      return await handle.acp.setConfigOption(configId, value)
+    }
+    if ((await handle.snapshot())?.providerId !== 'acp') {
       throw new Error('ACP session config options are only available for ACP sessions.')
     }
-    return await (this.providerSessionPort?.setAcpSessionConfigOption?.(
+    return await this.requireAcpAsLlmProviderSessionControl().setAcpSessionConfigOption(
       sessionId,
       configId,
       value
-    ) ?? this.llmProviderPresenter.setAcpSessionConfigOption(sessionId, configId, value))
+    )
   }
 
   async getPermissionMode(sessionId: string): Promise<PermissionMode> {
@@ -2281,11 +2202,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.getPermissionMode) {
-      return 'full_access'
-    }
-    return await agent.getPermissionMode(sessionId)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.settings.getPermissionMode()
   }
 
   async setPermissionMode(sessionId: string, mode: PermissionMode): Promise<void> {
@@ -2293,11 +2212,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.setPermissionMode) {
-      return
-    }
-    await agent.setPermissionMode(sessionId, mode)
+    await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.settings.setPermissionMode(mode)
   }
 
   async setSessionSubagentEnabled(sessionId: string, enabled: boolean): Promise<SessionWithState> {
@@ -2310,7 +2227,8 @@ export class AgentSessionPresenter {
       throw new Error('Only regular sessions can change subagent state.')
     }
 
-    if ((await this.getAgentType(session.agentId)) !== 'deepchat') {
+    const { descriptor } = this.agentManager.resolveSessionBackend(toAppSessionId(sessionId))
+    if (descriptor.kind !== 'deepchat') {
       throw new Error('Only DeepChat sessions can change subagent state.')
     }
 
@@ -2348,17 +2266,12 @@ export class AgentSessionPresenter {
       throw new Error('setSessionModel requires providerId and modelId.')
     }
 
-    if ((await this.getAgentType(session.agentId)) === 'acp') {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind !== 'deepchat') {
       throw new Error('ACP session model is locked.')
     }
-
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.setSessionModel) {
-      throw new Error(`Agent ${session.agentId} does not support session model switching.`)
-    }
-
-    await agent.setSessionModel(sessionId, nextProviderId, nextModelId)
-    const state = await agent.getSessionState(sessionId)
+    await handle.deepchat.setModel(nextProviderId, nextModelId)
+    const state = await handle.snapshot()
     const updated: SessionWithState = {
       ...session,
       status: state?.status ?? 'idle',
@@ -2381,11 +2294,9 @@ export class AgentSessionPresenter {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    const state = await agent.getSessionState(sessionId)
-    const providerId =
-      state?.providerId?.trim() ||
-      ((await this.getAgentType(session.agentId)) === 'acp' ? 'acp' : '')
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    const state = await handle.snapshot()
+    const providerId = state?.providerId?.trim() || (handle.kind === 'acp' ? 'acp' : '')
     const normalizedProjectDir = projectDir?.trim() || null
     this.assertAcpSessionHasWorkdir(providerId, normalizedProjectDir)
 
@@ -2396,9 +2307,7 @@ export class AgentSessionPresenter {
       this.sqlitePresenter.newEnvironmentsTable.syncPath(normalizedProjectDir)
     }
 
-    if (agent.setSessionProjectDir) {
-      await agent.setSessionProjectDir(sessionId, normalizedProjectDir)
-    }
+    await handle.settings.setProjectDir(normalizedProjectDir)
     await this.syncAcpSessionWorkdir(providerId, sessionId, session.agentId, normalizedProjectDir)
 
     const updated = this.sessionManager.get(sessionId)
@@ -2422,11 +2331,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.getGenerationSettings) {
-      return null
-    }
-    return await agent.getGenerationSettings(sessionId)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.settings.getGenerationSettings()
   }
 
   async getSessionDisabledAgentTools(sessionId: string): Promise<string[]> {
@@ -2450,13 +2357,8 @@ export class AgentSessionPresenter {
     const normalized = this.normalizeDisabledAgentTools(disabledAgentTools)
     this.sessionManager.updateDisabledAgentTools(sessionId, normalized)
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (
-      'invalidateSessionSystemPromptCache' in agent &&
-      typeof agent.invalidateSessionSystemPromptCache === 'function'
-    ) {
-      agent.invalidateSessionSystemPromptCache(sessionId)
-    }
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind === 'deepchat') handle.deepchat.invalidateSystemPromptCache()
 
     return normalized
   }
@@ -2469,11 +2371,9 @@ export class AgentSessionPresenter {
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`)
     }
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    if (!agent.updateGenerationSettings) {
-      throw new Error(`Agent ${session.agentId} does not support generation settings updates.`)
-    }
-    return await agent.updateGenerationSettings(sessionId, settings)
+    return await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.settings.updateGenerationSettings(settings)
   }
 
   private async generateSessionTitle(
@@ -2565,8 +2465,10 @@ export class AgentSessionPresenter {
     const POLL_MS = 250
     const startedAt = Date.now()
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-    const readTitleMessages = async (agent: IAgentImplementation) => {
-      const titleMessages = this.buildTitleMessages(await agent.getMessages(sessionId))
+    const readTitleMessages = async () => {
+      const titleMessages = this.buildTitleMessages(
+        await this.sharedData.transcript.getMessages(sessionId)
+      )
       return titleMessages.length > 0 ? titleMessages : null
     }
 
@@ -2574,30 +2476,28 @@ export class AgentSessionPresenter {
       const session = this.sessionManager.get(sessionId)
       if (!session) return null
 
-      const agent = await this.resolveAgentImplementation(session.agentId)
-      const state = await agent.getSessionState(sessionId)
+      const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+      const state = await handle.snapshot()
       if (!state) return null
       if (state.status === 'error') return null
       if (state.status === 'idle') {
-        const titleMessages = await readTitleMessages(agent)
+        const titleMessages = await readTitleMessages()
         if (titleMessages) {
           return titleMessages
         }
       }
 
-      if (agent.waitForFirstTurnReady) {
-        const remainingMs = MAX_WAIT_MS - (Date.now() - startedAt)
-        const ready = await agent.waitForFirstTurnReady(sessionId, {
-          timeoutMs: Math.min(POLL_MS, Math.max(0, remainingMs))
-        })
-        if (!ready) {
-          continue
-        }
+      const remainingMs = MAX_WAIT_MS - (Date.now() - startedAt)
+      const ready = await handle.waitForFirstTurnReady({
+        timeoutMs: Math.min(POLL_MS, Math.max(0, remainingMs))
+      })
+      if (!ready) {
+        continue
+      }
 
-        const titleMessages = await readTitleMessages(agent)
-        if (titleMessages) {
-          return titleMessages
-        }
+      const titleMessages = await readTitleMessages()
+      if (titleMessages) {
+        return titleMessages
       }
 
       await sleep(POLL_MS)
@@ -2610,11 +2510,9 @@ export class AgentSessionPresenter {
     record: SessionRecord,
     mode: 'full' | 'list' = 'full'
   ): Promise<SessionWithState> {
-    const agent = await this.resolveAgentImplementation(record.agentId)
-    const state =
-      mode === 'list' && agent.getSessionListState
-        ? await agent.getSessionListState(record.id)
-        : await agent.getSessionState(record.id)
+    const state = await this.agentManager
+      .resolveSessionHandle(toAppSessionId(record.id))
+      .handle.snapshot({ lightweight: mode === 'list' })
     const status = state?.status ?? 'idle'
     this.sessionStatusSnapshots.set(record.id, status)
     return {
@@ -2680,48 +2578,19 @@ export class AgentSessionPresenter {
     }
   }
 
-  private async resolveAgentImplementation(agentId: string): Promise<IAgentImplementation> {
-    const resolvedAgentId = resolveAcpAgentAlias(agentId)
-
-    if (this.agentRegistry.has(resolvedAgentId)) {
-      return this.agentRegistry.resolve(resolvedAgentId)
+  private requireDirectAcpHandle(sessionId: string): DirectAcpSessionHandle {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (handle.kind !== 'acp') {
+      throw new Error(`Session ${sessionId} is not a direct ACP session.`)
     }
-
-    const agentType = await this.getAgentType(resolvedAgentId)
-    if (agentType === 'deepchat' || agentType === 'acp') {
-      return this.agentRegistry.resolve('deepchat')
-    }
-
-    throw new Error(`Agent not found: ${agentId}`)
+    return handle
   }
 
-  private async assertAcpAgent(agentId: string): Promise<void> {
-    const resolvedAgentId = resolveAcpAgentAlias(agentId)
-    if ((await this.getAgentType(resolvedAgentId)) !== 'acp') {
-      throw new Error(`Agent ${agentId} is not an ACP agent.`)
+  private requireAcpAsLlmProviderSessionControl(): AcpAsLlmProviderSessionControlPort {
+    if (this.acpAsLlmProviderSessionControl) {
+      return this.acpAsLlmProviderSessionControl
     }
-  }
-
-  private async getAgentType(agentId: string): Promise<'deepchat' | 'acp' | null> {
-    if (typeof this.configPresenter.getAgentType !== 'function') {
-      const resolvedAgentId = resolveAcpAgentAlias(agentId)
-      if (resolvedAgentId === 'deepchat') {
-        return 'deepchat'
-      }
-      const fallbackAgent = await this.configPresenter.getAgent?.(resolvedAgentId)
-      if (fallbackAgent?.type === 'acp' || fallbackAgent?.type === 'deepchat') {
-        return fallbackAgent.type
-      }
-
-      const acpAgents = await this.configPresenter.getAcpAgents?.()
-      if (acpAgents?.some((agent) => resolveAcpAgentAlias(agent.id) === resolvedAgentId)) {
-        return 'acp'
-      }
-
-      return null
-    }
-
-    return await this.configPresenter.getAgentType(resolveAcpAgentAlias(agentId))
+    throw new Error('ACP-as-LLM provider session control is not available.')
   }
 
   private async resolveDeepChatAgentConfigCompat(
@@ -2763,7 +2632,7 @@ export class AgentSessionPresenter {
     fallbackProviderId: string,
     fallbackModelId: string
   ): Promise<{ providerId: string; modelId: string }> {
-    if ((await this.getAgentType(agentId)) === 'deepchat') {
+    if (this.agentManager.resolveBackend(agentId).kind === 'deepchat') {
       const config = await this.resolveDeepChatAgentConfigCompat(agentId)
       const providerId = config?.assistantModel?.providerId?.trim()
       const modelId = config?.assistantModel?.modelId?.trim()
@@ -2834,18 +2703,19 @@ export class AgentSessionPresenter {
   }> {
     const trimmedAgentId = input.agentId.trim()
     const resolvedAgentId = resolveAcpAgentAlias(trimmedAgentId)
-    const normalizedTargetAgentId = input.targetAgentId?.trim() ? resolvedAgentId : null
-    const agentType = await this.getAgentType(resolvedAgentId)
-    if (agentType !== 'deepchat' && agentType !== 'acp') {
+    let descriptor
+    try {
+      descriptor = this.agentManager.resolveBackend(resolvedAgentId).descriptor
+    } catch {
       throw new Error(`Agent ${input.agentId} is not a valid subagent target.`)
     }
 
-    if (agentType === 'acp') {
+    if (descriptor.kind === 'acp') {
       return {
-        agentId: resolvedAgentId,
-        targetAgentId: normalizedTargetAgentId,
+        agentId: descriptor.id,
+        targetAgentId: input.targetAgentId?.trim() ? descriptor.id : null,
         providerId: 'acp',
-        modelId: resolvedAgentId,
+        modelId: descriptor.id,
         generationSettings: {
           systemPrompt: ''
         },
@@ -2855,8 +2725,8 @@ export class AgentSessionPresenter {
     }
 
     return {
-      agentId: resolvedAgentId,
-      targetAgentId: normalizedTargetAgentId,
+      agentId: descriptor.id,
+      targetAgentId: input.targetAgentId?.trim() ? descriptor.id : null,
       providerId: input.providerId,
       modelId: input.modelId,
       generationSettings: input.generationSettings,
@@ -2870,27 +2740,32 @@ export class AgentSessionPresenter {
     isEmptyDraft: boolean
     blockReason?: AgentTransferBlockReason
   }> {
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    const state = await agent.getSessionState(session.id)
+    const { handle, facet } = this.agentManager.resolveTransferSource(toAppSessionId(session.id))
+    const state = await handle.snapshot()
     const status = state?.status ?? 'idle'
-    const hasMessages = await this.hasSessionMessages(agent, session.id)
+    let hasMessages = true
+    try {
+      hasMessages = await facet.hasMessages(toAppSessionId(session.id))
+    } catch (error) {
+      console.warn(
+        `[AgentSessionPresenter] Failed to inspect messages for session=${session.id}:`,
+        error
+      )
+    }
+    let hasPendingInput = false
+    try {
+      hasPendingInput = (await facet.listPendingInputs(toAppSessionId(session.id))).length > 0
+    } catch (error) {
+      console.warn(
+        `[AgentSessionPresenter] Failed to inspect pending input for session=${session.id}:`,
+        error
+      )
+      hasPendingInput = true
+    }
     const hasSubagentChildren =
       session.sessionKind === 'regular' &&
       this.sessionManager.list({ includeSubagents: true, parentSessionId: session.id }).length > 0
     const isEmptyDraft = Boolean(session.isDraft) && !hasMessages && !hasSubagentChildren
-    let hasPendingInput = false
-
-    if (agent.listPendingInputs) {
-      try {
-        hasPendingInput = (await agent.listPendingInputs(session.id)).length > 0
-      } catch (error) {
-        console.warn(
-          `[AgentSessionPresenter] Failed to inspect pending input for session=${session.id}:`,
-          error
-        )
-        hasPendingInput = true
-      }
-    }
 
     if (status === 'generating') {
       return { status, isEmptyDraft, blockReason: 'active' }
@@ -2928,16 +2803,17 @@ export class AgentSessionPresenter {
       throw new Error(`Session ${sessionId} cannot be moved: ${assessment.blockReason}`)
     }
 
-    const previousAgentId = session.agentId
     const targetContext = await this.resolveTransferTargetContext(targetAgentId, session.projectDir)
-    const previousAcpBacked = await this.isAcpBackedSession(sessionId, previousAgentId)
-    const agent = await this.resolveAgentImplementation(targetContext.agentId)
+    const source = this.agentManager.resolveTransferSource(toAppSessionId(sessionId))
+    const sourceState = await source.handle.snapshot()
+    const previousDirectAcp = source.handle.kind === 'acp'
+    const previousCompatibilityAcp =
+      source.handle.kind === 'deepchat' && sourceState?.providerId === 'acp'
+    const { facet: transferTarget } = this.agentManager.resolveDeepChatTransferTarget(
+      targetContext.agentId
+    )
 
-    if (!agent.setSessionAgentContext) {
-      throw new Error(`Agent ${targetContext.agentId} does not support session transfer.`)
-    }
-
-    await agent.setSessionAgentContext(sessionId, {
+    await transferTarget.setSessionAgentContext(toAppSessionId(sessionId), {
       agentId: targetContext.agentId,
       providerId: targetContext.providerId,
       modelId: targetContext.modelId,
@@ -2970,10 +2846,18 @@ export class AgentSessionPresenter {
       throw new Error(`Failed to build session state after transfer: ${sessionId}`)
     }
 
-    if (previousAcpBacked) {
+    if (previousDirectAcp && source.closeRuntime) {
       try {
-        await (this.providerSessionPort?.clearAcpSession?.(sessionId) ??
-          this.llmProviderPresenter.clearAcpSession(sessionId))
+        await source.closeRuntime()
+      } catch (error) {
+        console.warn(
+          `[AgentSessionPresenter] Failed to close direct ACP runtime after transfer ${sessionId}:`,
+          error
+        )
+      }
+    } else if (previousCompatibilityAcp) {
+      try {
+        await this.requireAcpAsLlmProviderSessionControl().clearAcpSession(sessionId)
       } catch (error) {
         console.warn(
           `[AgentSessionPresenter] Failed to clear stale ACP binding after transfer ${sessionId}:`,
@@ -2990,16 +2874,18 @@ export class AgentSessionPresenter {
     currentProjectDir: string | null
   ): Promise<AgentTransferTargetContext> {
     const resolvedAgentId = resolveAcpAgentAlias(targetAgentId.trim())
-    const agentType = await this.getAgentType(resolvedAgentId)
-    if (agentType === 'acp') {
-      throw new Error('Conversation history cannot be moved to ACP agents.')
-    }
-    if (agentType !== 'deepchat') {
+    let descriptor
+    try {
+      descriptor = this.agentManager.resolveBackend(resolvedAgentId).descriptor
+    } catch {
       throw new Error(`Target agent not found: ${targetAgentId}`)
+    }
+    if (descriptor.kind === 'acp') {
+      throw new Error('Conversation history cannot be moved to ACP agents.')
     }
 
     const currentProject = currentProjectDir?.trim() || null
-    const config = await this.resolveDeepChatAgentConfigCompat(resolvedAgentId)
+    const config = await this.resolveDeepChatAgentConfigCompat(descriptor.id)
     const defaultModel = this.configPresenter.getDefaultModel()
     const providerId =
       config?.defaultModelPreset?.providerId?.trim() || defaultModel?.providerId?.trim() || ''
@@ -3013,8 +2899,8 @@ export class AgentSessionPresenter {
     }
 
     return {
-      agentId: resolvedAgentId,
-      agentType,
+      agentId: descriptor.id,
+      agentType: 'deepchat',
       providerId,
       modelId,
       projectDir:
@@ -3026,7 +2912,7 @@ export class AgentSessionPresenter {
       generationSettings: this.mergeDeepChatDefaultGenerationSettings(config),
       disabledAgentTools: this.normalizeDisabledAgentTools(config?.disabledAgentTools),
       subagentEnabled: this.resolveSessionSubagentEnabled(
-        agentType,
+        'deepchat',
         undefined,
         config?.subagentEnabled
       )
@@ -3049,17 +2935,18 @@ export class AgentSessionPresenter {
       }
     }
 
-    const agent = await this.resolveAgentImplementation(session.agentId)
-    const state = await agent.getSessionState(sessionId)
-    let providerId = state?.providerId ?? ''
-    if (!providerId && (await this.getAgentType(session.agentId)) === 'acp') {
-      providerId = 'acp'
+    let backendCleanupError: unknown
+    try {
+      await this.agentManager.cleanupSessionBackends(toAppSessionId(sessionId))
+    } catch (error) {
+      backendCleanupError = error
     }
-    if (providerId === 'acp') {
-      await (this.providerSessionPort?.clearAcpSession?.(sessionId) ??
-        this.llmProviderPresenter.clearAcpSession(sessionId))
+    try {
+      await this.sharedData.sessionState.destroySession(sessionId)
+    } catch (error) {
+      if (!backendCleanupError) throw error
     }
-    await agent.destroySession(sessionId)
+    if (backendCleanupError) throw backendCleanupError
     this.sessionPermissionPort?.clearSessionPermissions(sessionId)
     await this.skillPresenter?.clearNewAgentSessionSkills?.(sessionId)
     this.sessionManager.delete(sessionId)
@@ -3069,28 +2956,14 @@ export class AgentSessionPresenter {
     return deletedSessionIds
   }
 
-  private async isAcpBackedSession(sessionId: string, agentId: string): Promise<boolean> {
-    const resolvedAgentId = resolveAcpAgentAlias(agentId)
-    const agent = await this.resolveAgentImplementation(agentId)
-    const state = await agent.getSessionState(sessionId)
-    let providerId = state?.providerId ?? ''
-    if (!providerId) {
-      if ((await this.getAgentType(resolvedAgentId)) === 'acp') {
-        providerId = 'acp'
-      }
-    }
-    return providerId === 'acp'
-  }
-
   private async findReusableDraftSession(
     agentId: string,
-    projectDir: string,
-    agent: IAgentImplementation
+    projectDir: string
   ): Promise<SessionRecord | null> {
     const candidates = this.sessionManager.list({ agentId, projectDir })
     for (const session of candidates) {
       if (!session.isDraft) continue
-      const hasMessages = await this.hasSessionMessages(agent, session.id)
+      const hasMessages = await this.hasSessionMessages(session.id)
       if (!hasMessages) {
         return session
       }
@@ -3098,12 +2971,9 @@ export class AgentSessionPresenter {
     return null
   }
 
-  private async hasSessionMessages(
-    agent: IAgentImplementation,
-    sessionId: string
-  ): Promise<boolean> {
+  private async hasSessionMessages(sessionId: string): Promise<boolean> {
     try {
-      return await agent.hasMessages(sessionId)
+      return await this.sharedData.transcript.hasMessages(sessionId)
     } catch (error) {
       console.warn(
         `[AgentSessionPresenter] Failed to inspect messages for session=${sessionId}:`,
@@ -3114,7 +2984,6 @@ export class AgentSessionPresenter {
   }
 
   private async ensureSessionRuntimeInitialized(
-    agent: IAgentImplementation,
     sessionId: string,
     config: {
       agentId?: string
@@ -3124,18 +2993,16 @@ export class AgentSessionPresenter {
       permissionMode: PermissionMode
     }
   ): Promise<void> {
-    const state = await agent.getSessionState(sessionId)
-    if (!state) {
-      await this.initializeSessionRuntime(agent, sessionId, config)
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (!(await handle.lifecycle.isInitialized())) {
+      await this.initializeSessionRuntime(sessionId, config)
       return
     }
+    const state = await handle.snapshot()
+    if (!state) throw new Error(`Session ${sessionId} not found`)
 
-    if (
-      state.permissionMode &&
-      state.permissionMode !== config.permissionMode &&
-      agent.setPermissionMode
-    ) {
-      await agent.setPermissionMode(sessionId, config.permissionMode)
+    if (state.permissionMode && state.permissionMode !== config.permissionMode) {
+      await handle.settings.setPermissionMode(config.permissionMode)
     }
 
     await this.syncAcpSessionWorkdir(
@@ -3147,7 +3014,6 @@ export class AgentSessionPresenter {
   }
 
   private async initializeSessionRuntime(
-    agent: IAgentImplementation,
     sessionId: string,
     config: {
       agentId?: string
@@ -3158,7 +3024,9 @@ export class AgentSessionPresenter {
       generationSettings?: Partial<SessionGenerationSettings>
     }
   ): Promise<void> {
-    await agent.initSession(sessionId, config)
+    await this.agentManager
+      .resolveSessionHandle(toAppSessionId(sessionId))
+      .handle.lifecycle.initialize(config)
     await this.syncAcpSessionWorkdir(
       config.providerId,
       sessionId,
@@ -3183,16 +3051,16 @@ export class AgentSessionPresenter {
     }
 
     try {
-      await (this.providerSessionPort?.setAcpWorkdir?.(
+      const handle = this.agentManager.resolveSessionHandle(toAppSessionId(conversationId)).handle
+      if (handle.kind === 'acp') {
+        await handle.acp.updateWorkdir(normalizedProjectDir)
+        return
+      }
+      await this.requireAcpAsLlmProviderSessionControl().setAcpWorkdir(
         conversationId,
         resolveAcpAgentAlias(agentId),
         normalizedProjectDir
-      ) ??
-        this.llmProviderPresenter.setAcpWorkdir(
-          conversationId,
-          resolveAcpAgentAlias(agentId),
-          normalizedProjectDir
-        ))
+      )
     } catch (error) {
       console.warn('[AgentSessionPresenter] Failed to sync ACP workdir for session:', {
         conversationId,
@@ -3205,14 +3073,13 @@ export class AgentSessionPresenter {
   }
 
   private async cleanupFailedSessionInitialization(
-    agent: IAgentImplementation,
     sessionId: string,
     providerId?: string
   ): Promise<void> {
-    if (providerId === 'acp') {
+    const handle = this.agentManager.resolveSessionHandle(toAppSessionId(sessionId)).handle
+    if (providerId === 'acp' && handle.kind !== 'acp') {
       try {
-        await (this.providerSessionPort?.clearAcpSession?.(sessionId) ??
-          this.llmProviderPresenter.clearAcpSession(sessionId))
+        await this.requireAcpAsLlmProviderSessionControl().clearAcpSession(sessionId)
       } catch (error) {
         console.warn(
           `[AgentSessionPresenter] Failed to clear ACP session after initialization error ${sessionId}:`,
@@ -3222,7 +3089,7 @@ export class AgentSessionPresenter {
     }
 
     try {
-      await agent.destroySession(sessionId)
+      await handle.close()
     } catch (cleanupError) {
       console.warn(
         `[AgentSessionPresenter] Failed to cleanup session runtime after initialization error ${sessionId}:`,
@@ -3239,7 +3106,7 @@ export class AgentSessionPresenter {
     modelId: string,
     generationSettings: SessionGenerationSettings | null
   ): Promise<CONVERSATION> {
-    const isAcpAgent = (await this.getAgentType(session.agentId)) === 'acp'
+    const isAcpAgent = this.agentManager.resolveBackend(session.agentId).kind === 'acp'
     const resolvedProviderId = providerId || (isAcpAgent ? 'acp' : '')
     const resolvedModelId = modelId || (isAcpAgent ? session.agentId : '')
     const modelConfig =

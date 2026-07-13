@@ -1,7 +1,9 @@
+import { AppSessionService } from '@/agent/shared/appSessionService'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentSessionPresenter } from '@/presenter/agentSessionPresenter/index'
 import { DeepChatMessageStore } from '@/presenter/agentRuntimePresenter/messageStore'
 import { DASHBOARD_STATS_BACKFILL_KEY, type UsageStatsRecordInput } from '@/presenter/usageStats'
+import { createDeepChatAgentBackendFixture } from '../../agent/manager/deepChatAgentBackendFixture'
 
 vi.mock('@/eventbus', () => ({
   eventBus: { sendToMain: vi.fn(), on: vi.fn() }
@@ -36,7 +38,7 @@ vi.mock('@/presenter', () => ({
   }
 }))
 
-vi.mock('@/lib/agentRuntime/rtkRuntimeService', () => ({
+vi.mock('@/agent/shared/process/rtkRuntimeService', () => ({
   rtkRuntimeService: {
     startHealthCheck: vi.fn().mockResolvedValue(undefined),
     retryHealthCheck: vi.fn().mockResolvedValue(undefined),
@@ -158,7 +160,6 @@ function createMockLlmProviderPresenter() {
     summaryTitles: vi.fn().mockResolvedValue('Usage Dashboard'),
     generateText: vi.fn().mockResolvedValue({ content: '' }),
     setAcpWorkdir: vi.fn().mockResolvedValue(undefined),
-    prepareAcpSession: vi.fn().mockResolvedValue(undefined),
     clearAcpSession: vi.fn().mockResolvedValue(undefined),
     getAcpSessionCommands: vi.fn().mockResolvedValue([])
   }
@@ -445,11 +446,30 @@ describe('AgentSessionPresenter usage dashboard', () => {
   function createPresenter() {
     const sqlitePresenter = createMockSqlitePresenter()
     const configPresenter = createMockConfigPresenter()
+    const deepChatAgent = createMockDeepChatAgent()
     const presenter = new AgentSessionPresenter(
-      createMockDeepChatAgent() as any,
+      {
+        resolveBackend: () => ({
+          kind: 'deepchat',
+          descriptor: { id: 'deepchat', kind: 'deepchat', source: 'builtin', config: {} },
+          backend: createDeepChatAgentBackendFixture(deepChatAgent as never)
+        })
+      } as any,
+      new AppSessionService({
+        newSessionsTable: sqlitePresenter.newSessionsTable,
+        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+      }),
       createMockLlmProviderPresenter() as any,
       configPresenter as any,
-      sqlitePresenter
+      sqlitePresenter,
+      {
+        sessionState: deepChatAgent,
+        transcript: deepChatAgent,
+        transcriptMutation: deepChatAgent,
+        tape: deepChatAgent
+      } as any
     )
 
     return {

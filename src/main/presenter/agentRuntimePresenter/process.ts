@@ -1,5 +1,6 @@
 import logger from '@shared/logger'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
+import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { PermissionRequestPayload } from '@shared/types/core/llm-events'
 import type {
   IoParams,
@@ -8,7 +9,6 @@ import type {
   ProcessResult,
   StreamState
 } from './types'
-import { createState } from './types'
 import { accumulate, finalizeTrailingPendingNarrativeBlocks } from './accumulator'
 import { startEcho } from './echo'
 import {
@@ -20,13 +20,22 @@ import {
   persistAbortExceptionPlanState
 } from './dispatch'
 import { isContextWindowErrorLike } from './contextWindowError'
+import {
+  DeepChatLoopEngine,
+  type DeepChatLoopCommitCallbacks,
+  type DeepChatLoopOutcome
+} from '@/agent/deepchat/loop/deepChatLoopEngine'
+import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
+import type { OutputSink } from '@/agent/deepchat/loop/ports'
+import { buildTapeToolFactInputs } from './tapeFacts'
 
-const MAX_TOOL_CALLS = 128
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
 const USER_CANCELED_GENERATION_ERROR = 'common.error.userCanceledGeneration'
-const NO_MODEL_RESPONSE_ERROR = 'common.error.noModelResponse'
+export const NO_MODEL_RESPONSE_ERROR = 'common.error.noModelResponse'
+const deepChatLoopEngine = new DeepChatLoopEngine()
 type PendingPermissionPayload = NonNullable<PendingToolInteraction['permission']>
 type PendingPermissionCommandInfo = NonNullable<PendingPermissionPayload['commandInfo']>
+type ToolRoundBatch = { prevBlockCount: number }
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
@@ -47,6 +56,24 @@ function stripTrailingErrorBlock(state: StreamState, message: string): void {
   if (lastBlock?.type === 'error' && lastBlock.content === message) {
     state.blocks.pop()
   }
+}
+
+export type ProviderTerminalDecision =
+  | { type: 'complete' }
+  | { type: 'error'; error: string; source: 'context' | 'empty' }
+
+export function resolveProviderTerminalDecision(state: StreamState): ProviderTerminalDecision {
+  if (state.stopReason === 'error') {
+    const streamErrorMessage = getLatestErrorMessage(state)
+    if (streamErrorMessage && isContextWindowErrorLike(streamErrorMessage)) {
+      stripTrailingErrorBlock(state, streamErrorMessage)
+      return { type: 'error', error: streamErrorMessage, source: 'context' }
+    }
+  }
+  if (state.blocks.length === 0 && !state.latestAgentPlanSnapshot) {
+    return { type: 'error', error: NO_MODEL_RESPONSE_ERROR, source: 'empty' }
+  }
+  return { type: 'complete' }
 }
 
 function parseAssistantBlocks(rawContent: string): AssistantMessageBlock[] {
@@ -200,7 +227,7 @@ function toStreamingProviderPermission(
   }
 }
 
-function appendStreamingProviderPermissionBlock(
+export function appendStreamingProviderPermissionBlock(
   state: StreamState,
   permissionPayload: PermissionRequestPayload
 ): {
@@ -265,10 +292,7 @@ function appendStreamingProviderPermissionBlock(
   }
 }
 
-function replaceLeadingSystemMessage(
-  messages: ProcessParams['messages'],
-  systemPrompt: string
-): void {
+function replaceLeadingSystemMessage(messages: ChatMessage[], systemPrompt: string): void {
   if (!systemPrompt) {
     return
   }
@@ -281,7 +305,7 @@ function replaceLeadingSystemMessage(
   messages.unshift({ role: 'system', content: systemPrompt })
 }
 
-function markStreamingProviderPermissionResolved(
+export function markStreamingProviderPermissionResolved(
   block: AssistantMessageBlock,
   granted: boolean,
   permissionType: 'read' | 'write' | 'all' | 'command'
@@ -297,15 +321,147 @@ function markStreamingProviderPermissionResolved(
   }
 }
 
+function settleLoopOutcome(
+  outcome: DeepChatLoopOutcome<ProcessResult>,
+  state: StreamState,
+  io: IoParams,
+  eventCount: number,
+  run: ProcessParams['run'],
+  outputSink: OutputSink
+): ProcessResult {
+  if (outcome.type === 'thrown') {
+    if (io.abortSignal.aborted || isAbortError(outcome.error)) {
+      logger.info(`[ProcessStream] aborted via exception after ${eventCount} events`)
+      persistAbortExceptionPlanState(state, io)
+      return {
+        status: 'aborted',
+        stopReason: 'user_stop',
+        errorMessage: USER_CANCELED_GENERATION_ERROR,
+        usage: buildUsageSnapshot(state)
+      }
+    }
+
+    console.error(`[ProcessStream] exception after ${eventCount} events:`, outcome.error)
+    outputSink.fail({
+      runId: run.runId,
+      sessionId: run.sessionId,
+      messageId: run.messageId,
+      error: outcome.error
+    })
+    return {
+      status: 'error',
+      stopReason: 'error',
+      errorMessage: outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
+      usage: buildUsageSnapshot(state)
+    }
+  }
+
+  if (outcome.type === 'halted') {
+    const result = outcome.result
+    if (result.status === 'paused') {
+      finalizePaused(state, io)
+    } else if (result.status === 'aborted') {
+      finalizeUserCanceledErrorIfNeeded(state, io)
+    } else if (result.status === 'error') {
+      outputSink.fail({
+        runId: run.runId,
+        sessionId: run.sessionId,
+        messageId: run.messageId,
+        error: result.terminalError ?? result.errorMessage ?? 'Unknown error'
+      })
+    } else {
+      outputSink.complete({
+        runId: run.runId,
+        sessionId: run.sessionId,
+        messageId: run.messageId,
+        blocks: state.blocks,
+        metadata: { ...state.metadata }
+      })
+    }
+    return result
+  }
+
+  if (outcome.type === 'max_provider_rounds') {
+    const errorMessage = `Maximum agent turns exceeded (${outcome.limit}).`
+    logger.info(`[ProcessStream] ${errorMessage}`)
+    outputSink.fail({
+      runId: run.runId,
+      sessionId: run.sessionId,
+      messageId: run.messageId,
+      error: errorMessage
+    })
+    return {
+      status: 'error',
+      terminalError: errorMessage,
+      stopReason: 'max_turns',
+      errorMessage,
+      usage: buildUsageSnapshot(state)
+    }
+  }
+
+  if (outcome.type === 'max_tool_calls') {
+    logger.info(
+      `[ProcessStream] max tool calls reached (${outcome.attemptedToolCount} > ${outcome.limit}), stopping`
+    )
+    state.planTerminalReason = 'max_steps'
+  }
+
+  if (io.abortSignal.aborted) {
+    finalizeUserCanceledErrorIfNeeded(state, io)
+    return {
+      status: 'aborted',
+      stopReason: 'user_stop',
+      errorMessage: USER_CANCELED_GENERATION_ERROR,
+      usage: buildUsageSnapshot(state)
+    }
+  }
+  const terminalDecision = resolveProviderTerminalDecision(state)
+  if (terminalDecision.type === 'error') {
+    outputSink.fail({
+      runId: run.runId,
+      sessionId: run.sessionId,
+      messageId: run.messageId,
+      error: terminalDecision.error
+    })
+    if (terminalDecision.source === 'context') {
+      return {
+        status: 'error',
+        terminalError: terminalDecision.error
+      }
+    }
+    return {
+      status: 'error',
+      terminalError: terminalDecision.error,
+      stopReason: 'error',
+      errorMessage: terminalDecision.error,
+      usage: buildUsageSnapshot(state)
+    }
+  }
+
+  outputSink.complete({
+    runId: run.runId,
+    sessionId: run.sessionId,
+    messageId: run.messageId,
+    blocks: state.blocks,
+    metadata: { ...state.metadata }
+  })
+  return {
+    status: 'completed',
+    stopReason: 'complete',
+    usage: buildUsageSnapshot(state)
+  }
+}
+
 /**
  * Unified stream processor. Handles both simple completions and multi-turn
  * tool-calling loops in a single code path.
  */
 export async function processStream(params: ProcessParams): Promise<ProcessResult> {
   const {
-    messages,
-    tools,
-    toolPresenter,
+    run,
+    toolCatalog,
+    toolExecution,
+    toolResults,
     coreStream,
     providerId,
     modelId,
@@ -315,291 +471,295 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
     interleavedReasoning,
     permissionMode,
     initialBlocks,
-    hooks,
-    io
+    notificationObserver,
+    controls,
+    diagnostics
   } = params
+  const io: IoParams = {
+    sessionId: run.sessionId,
+    requestId: run.runId,
+    messageId: run.messageId,
+    providerId,
+    modelId,
+    messageStore: params.io.messageStore,
+    abortSignal: run.abortController.signal
+  }
 
-  const state = createState()
+  const state = run.streamState
   state.metadata.provider = providerId
   state.metadata.model = modelId
   if (Array.isArray(initialBlocks) && initialBlocks.length > 0) {
     state.blocks = JSON.parse(JSON.stringify(initialBlocks)) as typeof state.blocks
   }
   const echo = startEcho(state, io)
-  const conversationMessages = [...messages]
+  const conversationMessages = run.messages
   params.onConversationMessagesChange?.(conversationMessages)
-  let currentTools = [...tools]
-  let toolCallCount = 0
-  let providerRoundCount = 0
-  const maxProviderRounds =
-    Number.isInteger(params.maxProviderRounds) && params.maxProviderRounds! > 0
-      ? params.maxProviderRounds!
-      : Number.POSITIVE_INFINITY
+  let currentTools = run.resources.toolDefinitions
   let firstProviderRoundReady = false
+  const outputSink: OutputSink = {
+    update: () => echo.flush(),
+    complete: () => finalize(state, io),
+    fail: ({ error }) => finalizeError(state, io, error)
+  }
+  const updateOutput = (): void => {
+    outputSink.update({
+      runId: run.runId,
+      sessionId: run.sessionId,
+      messageId: run.messageId,
+      blocks: state.blocks
+    })
+  }
 
   logger.info(`[ProcessStream] start session=${io.sessionId} message=${io.messageId}`)
   let eventCount = 0
+  const commits: DeepChatLoopCommitCallbacks<StreamState, ProcessResult, ProcessResult> = {
+    updateOutput: ({ outcome }) => {
+      if (outcome === 'halted' || firstProviderRoundReady || state.blocks.length === 0) {
+        return
+      }
+
+      firstProviderRoundReady = true
+      updateOutput()
+      try {
+        params.onFirstProviderRoundReady?.()
+      } catch (error) {
+        console.warn('[ProcessStream] first provider round readiness callback failed:', error)
+      }
+    },
+    afterRoundPersisted: async () => {
+      updateOutput()
+      const record = io.messageStore.getMessage(run.messageId)
+      if (!record) return
+      try {
+        for (const input of buildTapeToolFactInputs(record)) {
+          await params.io.tapeRecorder.appendToolFact(input)
+        }
+      } catch (error) {
+        logger.warn(
+          `[ProcessStream] Failed to append tool facts: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+    },
+    settleTurn: ({ outcome }) => {
+      if (outcome.type === 'thrown') {
+        return settleLoopOutcome(outcome, state, io, eventCount, run, outputSink)
+      }
+
+      try {
+        return settleLoopOutcome(outcome, state, io, eventCount, run, outputSink)
+      } catch (error) {
+        return settleLoopOutcome({ type: 'thrown', error }, state, io, eventCount, run, outputSink)
+      }
+    }
+  }
 
   try {
-    while (true) {
-      providerRoundCount += 1
-      if (providerRoundCount > maxProviderRounds) {
-        const errorMessage = `Maximum agent turns exceeded (${maxProviderRounds}).`
-        logger.info(`[ProcessStream] ${errorMessage}`)
-        finalizeError(state, io, errorMessage)
-        return {
-          status: 'error' as const,
-          terminalError: errorMessage,
-          stopReason: 'max_turns',
-          errorMessage,
-          usage: buildUsageSnapshot(state)
-        }
-      }
-
-      const prevBlockCount = state.blocks.length
-
-      const stream = coreStream(
-        conversationMessages,
-        modelId,
-        modelConfig,
-        temperature,
-        maxTokens,
-        currentTools
-      )
-
-      // Reset per-iteration accumulator state
-      state.completedToolCalls = []
-      state.pendingToolCalls.clear()
-
-      for await (const event of stream) {
-        eventCount++
-        if (io.abortSignal.aborted) {
-          logger.info(`[ProcessStream] aborted after ${eventCount} events`)
-          echo.stop()
-          finalizeUserCanceledErrorIfNeeded(state, io)
-          return {
-            status: 'aborted' as const,
-            stopReason: 'user_stop',
-            errorMessage: USER_CANCELED_GENERATION_ERROR,
-            usage: buildUsageSnapshot(state)
-          }
-        }
-
-        if (event.type === 'permission') {
-          const { actionBlock, permission, tool } = appendStreamingProviderPermissionBlock(
-            state,
-            event.permission
+    return await deepChatLoopEngine.run<StreamState, ToolRoundBatch, ProcessResult, ProcessResult>(
+      run,
+      {
+        maxProviderRounds: params.maxProviderRounds,
+        consumeProviderRound: async () => {
+          const prevBlockCount = state.blocks.length
+          const stream = coreStream(
+            conversationMessages,
+            modelId,
+            modelConfig,
+            temperature,
+            maxTokens,
+            currentTools
           )
-          hooks?.onPermissionRequest?.(permission, tool)
-          hooks?.onStreamingProviderPermission?.(permission, tool, (granted) => {
-            markStreamingProviderPermissionResolved(actionBlock, granted, permission.permissionType)
-            state.dirty = true
-            echo.flush()
-          })
-          echo.flush()
-          continue
-        }
 
-        accumulate(state, event)
-        if (event.type === 'plan' && state.latestAgentPlanSnapshot) {
-          state.latestAgentPlanSnapshot = {
-            ...state.latestAgentPlanSnapshot,
-            sessionId: io.sessionId,
-            messageId: io.messageId
+          // Reset per-iteration accumulator state
+          state.completedToolCalls = []
+          state.pendingToolCalls.clear()
+
+          for await (const event of stream) {
+            eventCount++
+            if (io.abortSignal.aborted) {
+              logger.info(`[ProcessStream] aborted after ${eventCount} events`)
+              echo.stop()
+              return {
+                type: 'halted',
+                result: {
+                  status: 'aborted',
+                  stopReason: 'user_stop',
+                  errorMessage: USER_CANCELED_GENERATION_ERROR,
+                  usage: buildUsageSnapshot(state)
+                }
+              }
+            }
+
+            if (event.type === 'permission') {
+              const { actionBlock, permission, tool } = appendStreamingProviderPermissionBlock(
+                state,
+                event.permission
+              )
+              emitDeepChatLoopNotification(notificationObserver, {
+                event: 'PermissionRequest',
+                permission,
+                tool
+              })
+              controls?.onStreamingProviderPermission?.(permission, tool, (granted) => {
+                markStreamingProviderPermissionResolved(
+                  actionBlock,
+                  granted,
+                  permission.permissionType
+                )
+                state.dirty = true
+                updateOutput()
+              })
+              updateOutput()
+              continue
+            }
+
+            accumulate(state, event)
+            if (event.type === 'plan' && state.latestAgentPlanSnapshot) {
+              state.latestAgentPlanSnapshot = {
+                ...state.latestAgentPlanSnapshot,
+                sessionId: io.sessionId,
+                messageId: io.messageId
+              }
+              publishPlanUpdated(io, state.latestAgentPlanSnapshot)
+            }
+            echo.schedule()
           }
-          publishPlanUpdated(io, state.latestAgentPlanSnapshot)
-        }
-        echo.schedule()
-      }
 
-      logger.info(
-        `[ProcessStream] stream iteration done reason=${state.stopReason} events=${eventCount} blocks=${state.blocks.length}`
-      )
+          logger.info(
+            `[ProcessStream] stream iteration done reason=${state.stopReason} events=${eventCount} blocks=${state.blocks.length}`
+          )
 
-      if (io.abortSignal.aborted) {
-        finalizeUserCanceledErrorIfNeeded(state, io)
-        return {
-          status: 'aborted' as const,
-          stopReason: 'user_stop',
-          errorMessage: USER_CANCELED_GENERATION_ERROR,
-          usage: buildUsageSnapshot(state)
-        }
-      }
-      if (!firstProviderRoundReady && state.blocks.length > 0) {
-        firstProviderRoundReady = true
-        echo.flush()
-        try {
-          params.onFirstProviderRoundReady?.()
-        } catch (error) {
-          console.warn('[ProcessStream] first provider round readiness callback failed:', error)
-        }
-      }
-
-      // Break conditions: not tool_use, abort, no completed tool calls
-      if (state.stopReason !== 'tool_use') break
-      if (state.completedToolCalls.length === 0) break
-
-      // Check max tool call limit
-      if (toolCallCount + state.completedToolCalls.length > MAX_TOOL_CALLS) {
-        logger.info(
-          `[ProcessStream] max tool calls reached (${toolCallCount + state.completedToolCalls.length} > ${MAX_TOOL_CALLS}), stopping`
-        )
-        state.planTerminalReason = 'max_steps'
-        break
-      }
-
-      // Execute tools and continue loop (toolPresenter is guaranteed non-null here
-      // because completedToolCalls > 0 means tools were requested, which requires
-      // tools.length > 0, which requires toolPresenter to be non-null)
-      const executed = await executeTools(
-        state,
-        conversationMessages,
-        prevBlockCount,
-        currentTools,
-        toolPresenter!,
-        modelId,
-        interleavedReasoning,
-        io,
-        permissionMode,
-        params.toolOutputGuard,
-        providerId === 'acp'
-          ? Number.MAX_SAFE_INTEGER
-          : modelConfig.contextLength > 0
-            ? modelConfig.contextLength
-            : UNKNOWN_CONTEXT_LIMIT,
-        maxTokens,
-        echo,
-        hooks,
-        providerId
-      )
-      toolCallCount += executed.executed
-      echo.flush()
-      io.messageStore.appendAssistantToolFactsSnapshot(io.messageId, 'tool_loop')
-
-      if (executed.terminalError) {
-        finalizeError(state, io, executed.terminalError)
-        return {
-          status: 'error' as const,
-          terminalError: executed.terminalError,
-          stopReason: 'error',
-          errorMessage: executed.terminalError,
-          usage: buildUsageSnapshot(state)
-        }
-      }
-
-      if (executed.pendingInteractions.length > 0) {
-        logger.info(
-          `[ProcessStream] paused for user interaction count=${executed.pendingInteractions.length}`
-        )
-        finalizePaused(state, io)
-        return {
-          status: 'paused' as const,
-          pendingInteractions: executed.pendingInteractions
-        }
-      }
-
-      // Check abort after tool execution
-      if (io.abortSignal.aborted) {
-        finalizeUserCanceledErrorIfNeeded(state, io)
-        return {
-          status: 'aborted' as const,
-          stopReason: 'user_stop',
-          errorMessage: USER_CANCELED_GENERATION_ERROR,
-          usage: buildUsageSnapshot(state)
-        }
-      }
-
-      if (params.shouldYieldForPendingInput?.()) {
-        finalize(state, io)
-        return {
-          status: 'completed' as const,
-          stopReason: 'pending_input',
-          usage: buildUsageSnapshot(state)
-        }
-      }
-
-      if (executed.toolsChanged) {
-        const activeSkillNames = hooks?.getActiveSkillNames?.()
-        if (params.refreshTools) {
-          try {
-            currentTools = await params.refreshTools(activeSkillNames)
-          } catch (error) {
-            console.warn('[ProcessStream] failed to refresh tools after skill activation:', error)
+          if (io.abortSignal.aborted) {
+            return {
+              type: 'halted',
+              result: {
+                status: 'aborted',
+                stopReason: 'user_stop',
+                errorMessage: USER_CANCELED_GENERATION_ERROR,
+                usage: buildUsageSnapshot(state)
+              }
+            }
           }
-        }
-        if (params.refreshSystemPrompt) {
-          try {
-            const refreshedSystemPrompt = await params.refreshSystemPrompt(
-              activeSkillNames,
-              currentTools
+
+          if (state.stopReason !== 'tool_use' || state.completedToolCalls.length === 0) {
+            return { type: 'terminal' }
+          }
+
+          return {
+            type: 'tool_batch',
+            batch: { prevBlockCount },
+            toolCallCount: state.completedToolCalls.length
+          }
+        },
+        executeToolBatch: async ({ batch }) => {
+          // A completed tool call implies that the tool presenter and definitions were available.
+          const executed = await executeTools(
+            state,
+            conversationMessages,
+            batch.prevBlockCount,
+            currentTools,
+            toolExecution!,
+            modelId,
+            interleavedReasoning,
+            io,
+            permissionMode,
+            toolResults,
+            providerId === 'acp'
+              ? Number.MAX_SAFE_INTEGER
+              : modelConfig.contextLength > 0
+                ? modelConfig.contextLength
+                : UNKNOWN_CONTEXT_LIMIT,
+            maxTokens,
+            echo,
+            {
+              notificationObserver,
+              controls,
+              diagnostics
+            },
+            providerId
+          )
+
+          if (executed.type === 'completed' && executed.terminalError) {
+            return {
+              type: 'halted',
+              result: {
+                status: 'error',
+                terminalError: executed.terminalError,
+                stopReason: 'error',
+                errorMessage: executed.terminalError,
+                usage: buildUsageSnapshot(state)
+              }
+            }
+          }
+
+          if (executed.type === 'paused') {
+            logger.info(
+              `[ProcessStream] paused for user interaction count=${executed.interactions.length}`
             )
-            replaceLeadingSystemMessage(conversationMessages, refreshedSystemPrompt)
-          } catch (error) {
-            console.warn(
-              '[ProcessStream] failed to refresh system prompt after skill activation:',
-              error
-            )
+            return {
+              type: 'halted',
+              result: {
+                status: 'paused',
+                pendingInteractions: [...executed.interactions],
+                toolBatchExecutionState: executed.executionState
+              }
+            }
           }
-        }
-      }
-    }
 
-    // Finalize
-    if (io.abortSignal.aborted) {
-      finalizeUserCanceledErrorIfNeeded(state, io)
-      return {
-        status: 'aborted' as const,
-        stopReason: 'user_stop',
-        errorMessage: USER_CANCELED_GENERATION_ERROR,
-        usage: buildUsageSnapshot(state)
-      }
-    }
-    if (state.stopReason === 'error') {
-      const streamErrorMessage = getLatestErrorMessage(state)
-      if (streamErrorMessage && isContextWindowErrorLike(streamErrorMessage)) {
-        stripTrailingErrorBlock(state, streamErrorMessage)
-        finalizeError(state, io, streamErrorMessage)
-        return {
-          status: 'error' as const,
-          terminalError: streamErrorMessage
+          if (io.abortSignal.aborted) {
+            return {
+              type: 'halted',
+              result: {
+                status: 'aborted',
+                stopReason: 'user_stop',
+                errorMessage: USER_CANCELED_GENERATION_ERROR,
+                usage: buildUsageSnapshot(state)
+              }
+            }
+          }
+
+          if (params.shouldYieldForPendingInput?.()) {
+            return {
+              type: 'halted',
+              result: {
+                status: 'completed',
+                stopReason: 'pending_input',
+                usage: buildUsageSnapshot(state)
+              }
+            }
+          }
+
+          if (executed.toolsChanged) {
+            const activeSkillNames = controls?.getActiveSkillNames?.()
+            run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
+            try {
+              run.resources.toolDefinitions = await toolCatalog.resolve({ activeSkillNames })
+              currentTools = run.resources.toolDefinitions
+            } catch (error) {
+              console.warn('[ProcessStream] failed to refresh tools after skill activation:', error)
+            }
+            if (params.refreshSystemPrompt) {
+              try {
+                const refreshedSystemPrompt = await params.refreshSystemPrompt(
+                  activeSkillNames,
+                  currentTools
+                )
+                replaceLeadingSystemMessage(conversationMessages, refreshedSystemPrompt)
+              } catch (error) {
+                console.warn(
+                  '[ProcessStream] failed to refresh system prompt after skill activation:',
+                  error
+                )
+              }
+            }
+          }
+
+          return { type: 'continue', executedToolCount: executed.executed }
         }
-      }
-    }
-    if (state.blocks.length === 0 && !state.latestAgentPlanSnapshot) {
-      finalizeError(state, io, NO_MODEL_RESPONSE_ERROR)
-      return {
-        status: 'error' as const,
-        terminalError: NO_MODEL_RESPONSE_ERROR,
-        stopReason: 'error',
-        errorMessage: NO_MODEL_RESPONSE_ERROR,
-        usage: buildUsageSnapshot(state)
-      }
-    }
-    finalize(state, io)
-    return {
-      status: 'completed' as const,
-      stopReason: 'complete',
-      usage: buildUsageSnapshot(state)
-    }
-  } catch (err) {
-    if (io.abortSignal.aborted || isAbortError(err)) {
-      logger.info(`[ProcessStream] aborted via exception after ${eventCount} events`)
-      persistAbortExceptionPlanState(state, io)
-      return {
-        status: 'aborted' as const,
-        stopReason: 'user_stop',
-        errorMessage: USER_CANCELED_GENERATION_ERROR,
-        usage: buildUsageSnapshot(state)
-      }
-    }
-    console.error(`[ProcessStream] exception after ${eventCount} events:`, err)
-    finalizeError(state, io, err)
-    return {
-      status: 'error' as const,
-      stopReason: 'error',
-      errorMessage: err instanceof Error ? err.message : String(err),
-      usage: buildUsageSnapshot(state)
-    }
+      },
+      commits
+    )
   } finally {
     echo.stop()
   }

@@ -29,9 +29,9 @@ import {
 } from '@shared/contracts/routes'
 import { createMainKernelRouteRuntime, dispatchDeepchatRoute } from '@/routes'
 import { setDeepchatEventWindowPresenter } from '@/routes/publishDeepchatEvent'
-import { killTerminal, writeToTerminal } from '@/presenter/configPresenter/acpInitHelper'
+import { killTerminal, writeToTerminal } from '@/agent/acp/launch/acpInitHelper'
 
-vi.mock('@/presenter/configPresenter/acpInitHelper', () => ({
+vi.mock('@/agent/acp/launch/acpInitHelper', () => ({
   writeToTerminal: vi.fn(),
   killTerminal: vi.fn()
 }))
@@ -637,6 +637,11 @@ function createRuntime() {
       skipped: 0,
       errors: []
     }),
+    refreshModels: vi.fn().mockResolvedValue(undefined)
+  } as unknown as ILlmProviderPresenter
+  const acpProviderAdminPort = {
+    warmupAcpProcess: vi.fn().mockResolvedValue(undefined),
+    getAcpProcessConfigOptions: vi.fn().mockResolvedValue(null),
     runAcpDebugAction: vi.fn().mockResolvedValue({
       status: 'ok',
       sessionId: 'debug-session',
@@ -650,9 +655,8 @@ function createRuntime() {
           payload: { ok: true }
         }
       ]
-    }),
-    refreshModels: vi.fn().mockResolvedValue(undefined)
-  } as unknown as ILlmProviderPresenter
+    })
+  }
 
   const mcpRouterItem = {
     uuid: 'router-item-1',
@@ -1267,6 +1271,7 @@ function createRuntime() {
     runtime: createMainKernelRouteRuntime({
       configPresenter,
       llmProviderPresenter,
+      acpProviderAdminPort,
       agentSessionPresenter,
       skillPresenter,
       skillSyncPresenter,
@@ -1288,6 +1293,7 @@ function createRuntime() {
     }),
     configPresenter,
     llmProviderPresenter,
+    acpProviderAdminPort,
     agentSessionPresenter,
     skillPresenter,
     skillSyncPresenter,
@@ -1529,6 +1535,64 @@ describe('dispatchDeepchatRoute', () => {
           scheduledAt: 123
         }
       })
+    )
+  })
+
+  it('routes ACP Cron Job prompts through the agent-session direct-routing facade', async () => {
+    const { cronJobs, configPresenter, agentSessionPresenter } = createRuntime()
+    vi.mocked(configPresenter.getAgentType).mockResolvedValue('acp')
+    vi.mocked(agentSessionPresenter.createDetachedSession).mockResolvedValue({
+      id: 'acp-session-1',
+      agentId: 'manual-acp',
+      title: 'ACP job',
+      projectDir: '/workspace',
+      isPinned: false,
+      isDraft: false,
+      sessionKind: 'regular',
+      parentSessionId: null,
+      subagentEnabled: false,
+      subagentMeta: null,
+      createdAt: 1,
+      updatedAt: 2,
+      status: 'idle',
+      providerId: 'acp',
+      modelId: 'manual-acp'
+    })
+    const starter = vi.mocked(cronJobs.setRunSessionStarter).mock.calls[0]?.[0] as
+      | CronJobRunSessionStarter
+      | undefined
+    const job = {
+      id: 'cron-acp',
+      name: 'ACP job',
+      agentId: 'manual-acp',
+      agentSnapshot: null,
+      modelPolicy: 'follow_agent',
+      permissionPolicy: 'follow_agent',
+      toolPolicy: 'follow_agent',
+      taskSystemInstruction: null,
+      taskPrompt: 'Review the workspace',
+      runtime: { maxTurns: 7 }
+    } as CronJob
+    const run = { id: 'run-acp', scheduledAt: 123 } as CronJobRun
+
+    await expect(starter!.createSessionForRun({ job, run })).resolves.toEqual({
+      sessionId: 'acp-session-1'
+    })
+    await expect(
+      starter!.startSessionRun({ job, run, sessionId: 'acp-session-1' })
+    ).resolves.toEqual({ outputMessageId: 'message-2' })
+
+    expect(agentSessionPresenter.createDetachedSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'manual-acp',
+        providerId: 'acp',
+        modelId: 'manual-acp'
+      })
+    )
+    expect(agentSessionPresenter.sendMessage).toHaveBeenCalledWith(
+      'acp-session-1',
+      'Review the workspace',
+      { maxProviderRounds: 7 }
     )
   })
 
@@ -3747,8 +3811,13 @@ describe('dispatchDeepchatRoute', () => {
   })
 
   it('dispatches provider query and tool interaction routes through typed services', async () => {
-    const { runtime, configPresenter, llmProviderPresenter, agentSessionPresenter } =
-      createRuntime()
+    const {
+      runtime,
+      configPresenter,
+      llmProviderPresenter,
+      acpProviderAdminPort,
+      agentSessionPresenter
+    } = createRuntime()
 
     const modelsResult = await dispatchDeepchatRoute(
       runtime,
@@ -3856,6 +3925,19 @@ describe('dispatchDeepchatRoute', () => {
       }
     )
 
+    const acpWarmupResult = await dispatchDeepchatRoute(
+      runtime,
+      'providers.warmupAcpProcess',
+      { agentId: 'codex-acp', workdir: '/repo' },
+      { webContentsId: 88, windowId: 3 }
+    )
+    const acpConfigResult = await dispatchDeepchatRoute(
+      runtime,
+      'providers.getAcpProcessConfigOptions',
+      { agentId: 'codex-acp', workdir: '/repo' },
+      { webContentsId: 88, windowId: 3 }
+    )
+
     const interactionResult = await dispatchDeepchatRoute(
       runtime,
       'chat.respondToolInteraction',
@@ -3887,12 +3969,17 @@ describe('dispatchDeepchatRoute', () => {
       page_number: 1,
       page_size: 50
     })
-    expect(llmProviderPresenter.runAcpDebugAction).toHaveBeenCalledWith({
+    expect(acpProviderAdminPort.runAcpDebugAction).toHaveBeenCalledWith({
       agentId: 'codex-acp',
       action: 'initialize',
       payload: {},
       webContentsId: 88
     })
+    expect(acpProviderAdminPort.warmupAcpProcess).toHaveBeenCalledWith('codex-acp', '/repo')
+    expect(acpProviderAdminPort.getAcpProcessConfigOptions).toHaveBeenCalledWith(
+      'codex-acp',
+      '/repo'
+    )
     expect(agentSessionPresenter.respondToolInteraction).toHaveBeenCalledWith(
       'session-1',
       'message-1',
@@ -3977,6 +4064,8 @@ describe('dispatchDeepchatRoute', () => {
         ]
       }
     })
+    expect(acpWarmupResult).toEqual({ warmedUp: true })
+    expect(acpConfigResult).toEqual({ state: null })
     expect(interactionResult).toEqual({
       accepted: true,
       resumed: true

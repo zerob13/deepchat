@@ -68,18 +68,20 @@ import { ModelStatusHelper } from './modelStatusHelper'
 import { ProviderModelHelper, PROVIDER_MODELS_DIR } from './providerModelHelper'
 import { SystemPromptHelper, DEFAULT_SYSTEM_PROMPT } from './systemPromptHelper'
 import { UiSettingsHelper } from './uiSettingsHelper'
-import { AcpConfHelper } from './acpConfHelper'
-import { AcpRegistryService } from './acpRegistryService'
-import { AcpLaunchSpecService } from './acpLaunchSpecService'
+import { AcpCatalogConfigAdapter } from './acpCatalogConfigAdapter'
+import { AcpRegistryService } from '@/agent/acp/catalog/acpRegistryService'
+import { AcpLaunchSpecService } from '@/agent/acp/launch/acpLaunchSpecService'
 import { AcpProvider } from '../llmProviderPresenter/providers/acpProvider'
-import { resolveAcpAgentAlias } from './acpRegistryConstants'
+import { resolveAcpAgentAlias } from '@shared/utils/acpAgentAlias'
 import { AgentRepository, BUILTIN_DEEPCHAT_AGENT_ID } from '../agentRepository'
 import { normalizeDeepChatSubagentConfig } from '@shared/lib/deepchatSubagents'
 import type { SQLitePresenter } from '../sqlitePresenter'
 import type { SettingsKey, SettingsSnapshotValues } from '@shared/contracts/routes'
 import { publishDeepchatEvent } from '@/routes/publishDeepchatEvent'
+import type { AgentCatalogEventSink } from '@/agent/shared/agentCatalogEventSink'
 import {
-  emitAcpAgentsChanged,
+  emitAcpAgentModelsChanged,
+  emitAgentCatalogChanged,
   emitCustomPromptsChanged,
   emitDefaultProjectPathChanged,
   emitDefaultSystemPromptChanged,
@@ -436,7 +438,7 @@ export class ConfigPresenter implements IConfigPresenter {
   private userDataPath: string
   private currentAppVersion: string
   private mcpConfHelper: McpConfHelper // Use MCP configuration helper
-  private acpConfHelper: AcpConfHelper
+  private acpCatalogConfigAdapter: AcpCatalogConfigAdapter
   private acpRegistryService: AcpRegistryService
   private acpLaunchSpecService: AcpLaunchSpecService
   private modelConfigHelper: ModelConfigHelper // Model configuration helper
@@ -447,7 +449,11 @@ export class ConfigPresenter implements IConfigPresenter {
   private systemPromptHelper: SystemPromptHelper
   private uiSettingsHelper: UiSettingsHelper
   private agentRepository: AgentRepository | null = null
-  private pendingAcpAgentsChanged = false
+  private readonly agentCatalogEventSink: AgentCatalogEventSink = {
+    publishChanged: (agentIds) => emitAgentCatalogChanged(this, agentIds)
+  }
+  private pendingAgentCatalogChanged = false
+  private pendingAcpAgentModelsChanged = false
   private isAttachingAgentRepository = false
   private deepChatAgentDeleteCleanup: ((agentId: string) => Promise<void>) | null = null
   private deepChatAgentMemoryMaintenanceConfigChanged: ((agentId: string) => void) | null = null
@@ -544,14 +550,16 @@ export class ConfigPresenter implements IConfigPresenter {
     // Initialize MCP configuration helper
     this.mcpConfHelper = new McpConfHelper()
 
-    this.acpConfHelper = new AcpConfHelper({ mcpConfHelper: this.mcpConfHelper })
+    this.acpCatalogConfigAdapter = new AcpCatalogConfigAdapter({
+      mcpConfHelper: this.mcpConfHelper
+    })
     this.acpRegistryService = new AcpRegistryService({
       isPrivacyModeEnabled: () => this.getPrivacyModeEnabled()
     })
     this.acpLaunchSpecService = new AcpLaunchSpecService(
       path.join(this.userDataPath, 'acp-registry')
     )
-    this.syncAcpProviderEnabled(this.acpConfHelper.getGlobalEnabled())
+    this.syncAcpProviderEnabled(this.acpCatalogConfigAdapter.getGlobalEnabled())
     void this.acpRegistryService
       .initialize()
       .then(() => {
@@ -630,10 +638,16 @@ export class ConfigPresenter implements IConfigPresenter {
       this.cleanupDeprecatedBuiltinAgentSelections()
     } finally {
       this.isAttachingAgentRepository = false
-      if (this.pendingAcpAgentsChanged) {
-        this.pendingAcpAgentsChanged = false
+      if (this.pendingAgentCatalogChanged) {
+        const publishAcpModels = this.pendingAcpAgentModelsChanged
+        this.pendingAgentCatalogChanged = false
+        this.pendingAcpAgentModelsChanged = false
         queueMicrotask(() => {
-          this.notifyAcpAgentsChanged()
+          if (publishAcpModels) {
+            this.notifyAcpAgentsChanged()
+            return
+          }
+          this.notifyAgentCatalogChanged()
         })
       }
     }
@@ -733,9 +747,9 @@ export class ConfigPresenter implements IConfigPresenter {
       }
     }
 
-    configTables.setAgentSetting('enabled', this.acpConfHelper.getGlobalEnabled())
+    configTables.setAgentSetting('enabled', this.acpCatalogConfigAdapter.getGlobalEnabled())
     configTables.setAgentSetting('version', '4')
-    configTables.setAgentMcpSelections(this.acpConfHelper.getSharedMcpSelections())
+    configTables.setAgentMcpSelections(this.acpCatalogConfigAdapter.getSharedMcpSelections())
     configTables.markConfigMigrationApplied()
   }
 
@@ -778,7 +792,7 @@ export class ConfigPresenter implements IConfigPresenter {
     const legacyAppStore = this.store as unknown as StoreLike<Record<string, unknown>>
     const appSettingsStore = new AppSettingsDbBackedStore(legacyAppStore, configTables)
     const legacyMcpStore = this.mcpConfHelper.getStoreForMigration()
-    const legacyAcpStore = this.acpConfHelper.getStoreForMigration()
+    const legacyAcpStore = this.acpCatalogConfigAdapter.getStoreForMigration()
 
     this.providerHelper.setStore(appSettingsStore)
     this.modelStatusHelper.setStore(appSettingsStore)
@@ -791,13 +805,13 @@ export class ConfigPresenter implements IConfigPresenter {
     this.mcpConfHelper.setStore(
       new McpDbStore(legacyMcpStore, configTables) as unknown as StoreLike<any>
     )
-    this.acpConfHelper.setStore(
+    this.acpCatalogConfigAdapter.setStore(
       new AcpDbStore(legacyAcpStore, configTables) as unknown as StoreLike<any>
     )
     this.dbBackedSettingsStore = appSettingsStore
 
     this.providerHelper.getProviders()
-    this.syncAcpProviderEnabled(this.acpConfHelper.getGlobalEnabled())
+    this.syncAcpProviderEnabled(this.acpCatalogConfigAdapter.getGlobalEnabled())
   }
 
   private getSettingsStoreForKey(key: string): StoreLike<Record<string, unknown>> {
@@ -891,13 +905,13 @@ export class ConfigPresenter implements IConfigPresenter {
     let migratedVersion = this.getSetting<number>('unifiedAgentsMigrationVersion') ?? 0
     let registryAgentsSynced = false
     if (migratedVersion < 1) {
-      this.acpConfHelper.getManualAgents().forEach((agent) => {
+      this.acpCatalogConfigAdapter.getManualAgents().forEach((agent) => {
         repository.createManualAcpAgent(agent)
       })
 
       this.syncRegistryAgentsToRepository(
-        this.acpConfHelper.getRegistryStates(),
-        this.acpConfHelper.getInstallStates()
+        this.acpCatalogConfigAdapter.getRegistryStates(),
+        this.acpCatalogConfigAdapter.getInstallStates()
       )
       registryAgentsSynced = true
       migratedVersion = 1
@@ -1041,7 +1055,7 @@ export class ConfigPresenter implements IConfigPresenter {
     if (updated && hasMemoryMaintenanceTriggerConfigUpdate(updates)) {
       this.notifyDeepChatAgentMemoryMaintenanceConfigChanged(BUILTIN_DEEPCHAT_AGENT_ID)
     }
-    this.notifyAcpAgentsChanged()
+    this.notifyAgentCatalogChanged()
   }
 
   private cleanupDeprecatedBuiltinAgentSelections(): void {
@@ -2432,11 +2446,11 @@ export class ConfigPresenter implements IConfigPresenter {
   }
 
   async getAcpEnabled(): Promise<boolean> {
-    return this.acpConfHelper.getGlobalEnabled()
+    return this.acpCatalogConfigAdapter.getGlobalEnabled()
   }
 
   async setAcpEnabled(enabled: boolean): Promise<void> {
-    const changed = this.acpConfHelper.setGlobalEnabled(enabled)
+    const changed = this.acpCatalogConfigAdapter.setGlobalEnabled(enabled)
     if (!changed) return
 
     logger.info('[ACP] setAcpEnabled: updating global toggle to', enabled)
@@ -2458,9 +2472,9 @@ export class ConfigPresenter implements IConfigPresenter {
 
     return registryAgents.map((agent) => {
       const overlay = this.agentRepository?.getAcpRegistryOverlay(agent.id) ?? {
-        enabled: this.acpConfHelper.getRegistryStates()[agent.id]?.enabled ?? false,
-        envOverride: this.acpConfHelper.getRegistryStates()[agent.id]?.envOverride,
-        installState: this.acpConfHelper.getInstallStates()[agent.id] ?? null
+        enabled: this.acpCatalogConfigAdapter.getRegistryStates()[agent.id]?.enabled ?? false,
+        envOverride: this.acpCatalogConfigAdapter.getRegistryStates()[agent.id]?.envOverride,
+        installState: this.acpCatalogConfigAdapter.getInstallStates()[agent.id] ?? null
       }
       return {
         ...agent,
@@ -2667,7 +2681,7 @@ export class ConfigPresenter implements IConfigPresenter {
   }
 
   async getAcpAgents(): Promise<AcpAgentConfig[]> {
-    const acpEnabled = this.acpConfHelper.getGlobalEnabled()
+    const acpEnabled = this.acpCatalogConfigAdapter.getGlobalEnabled()
     if (!acpEnabled) {
       return []
     }
@@ -2716,11 +2730,11 @@ export class ConfigPresenter implements IConfigPresenter {
   }
 
   async getAcpSharedMcpSelections(): Promise<string[]> {
-    return this.acpConfHelper.getSharedMcpSelections()
+    return this.acpCatalogConfigAdapter.getSharedMcpSelections()
   }
 
   async setAcpSharedMcpSelections(mcpIds: string[]): Promise<void> {
-    await this.acpConfHelper.setSharedMcpSelections(mcpIds)
+    await this.acpCatalogConfigAdapter.setSharedMcpSelections(mcpIds)
     this.handleAcpAgentsMutated()
   }
 
@@ -2763,7 +2777,7 @@ export class ConfigPresenter implements IConfigPresenter {
 
   async createDeepChatAgent(input: CreateDeepChatAgentInput): Promise<Agent> {
     const created = this.getAgentRepositoryOrThrow().createDeepChatAgent(input)
-    this.notifyAcpAgentsChanged()
+    this.notifyAgentCatalogChanged()
     return created
   }
 
@@ -2776,7 +2790,7 @@ export class ConfigPresenter implements IConfigPresenter {
       if (hasMemoryMaintenanceTriggerConfigUpdate(updates.config)) {
         this.notifyDeepChatAgentMemoryMaintenanceConfigChanged(agentId)
       }
-      this.notifyAcpAgentsChanged()
+      this.notifyAgentCatalogChanged()
     }
     return updated
   }
@@ -2790,13 +2804,13 @@ export class ConfigPresenter implements IConfigPresenter {
       })
     }
     if (removed) {
-      this.notifyAcpAgentsChanged()
+      this.notifyAgentCatalogChanged()
     }
     return removed
   }
 
   async getAgentMcpSelections(agentId: string, isBuiltin?: boolean): Promise<string[]> {
-    return await this.acpConfHelper.getAgentMcpSelections(agentId, isBuiltin)
+    return await this.acpCatalogConfigAdapter.getAgentMcpSelections(agentId, isBuiltin)
   }
 
   async setAgentMcpSelections(
@@ -2804,17 +2818,17 @@ export class ConfigPresenter implements IConfigPresenter {
     isBuiltin: boolean,
     mcpIds: string[]
   ): Promise<void> {
-    await this.acpConfHelper.setAgentMcpSelections(agentId, isBuiltin, mcpIds)
+    await this.acpCatalogConfigAdapter.setAgentMcpSelections(agentId, isBuiltin, mcpIds)
     this.handleAcpAgentsMutated()
   }
 
   async addMcpToAgent(agentId: string, isBuiltin: boolean, mcpId: string): Promise<void> {
-    await this.acpConfHelper.addMcpToAgent(agentId, isBuiltin, mcpId)
+    await this.acpCatalogConfigAdapter.addMcpToAgent(agentId, isBuiltin, mcpId)
     this.handleAcpAgentsMutated()
   }
 
   async removeMcpFromAgent(agentId: string, isBuiltin: boolean, mcpId: string): Promise<void> {
-    await this.acpConfHelper.removeMcpFromAgent(agentId, isBuiltin, mcpId)
+    await this.acpCatalogConfigAdapter.removeMcpFromAgent(agentId, isBuiltin, mcpId)
     this.handleAcpAgentsMutated()
   }
 
@@ -2881,16 +2895,30 @@ export class ConfigPresenter implements IConfigPresenter {
 
   private notifyAcpAgentsChanged(agentIds?: string[]) {
     if (!this.agentRepository || this.isAttachingAgentRepository) {
-      this.pendingAcpAgentsChanged = true
-      logger.info(
-        '[ACP] notifyAcpAgentsChanged: deferred until unified agent repository is attached'
-      )
+      this.pendingAgentCatalogChanged = true
+      this.pendingAcpAgentModelsChanged = true
+      logger.info('[ACP] agent changes deferred until unified agent repository is attached')
       return
     }
 
-    logger.info('[ACP] notifyAcpAgentsChanged: sending MODEL_LIST_CHANGED event for provider "acp"')
     emitModelsChanged('acp')
-    emitAcpAgentsChanged(this, agentIds)
+    this.agentCatalogEventSink.publishChanged(agentIds)
+    emitAcpAgentModelsChanged()
+    this.publishAgentSessionListRefreshed()
+  }
+
+  private notifyAgentCatalogChanged(agentIds?: string[]) {
+    if (!this.agentRepository || this.isAttachingAgentRepository) {
+      this.pendingAgentCatalogChanged = true
+      logger.info('Agent catalog change deferred until unified agent repository is attached')
+      return
+    }
+
+    this.agentCatalogEventSink.publishChanged(agentIds)
+    this.publishAgentSessionListRefreshed()
+  }
+
+  private publishAgentSessionListRefreshed(): void {
     publishDeepchatEvent('sessions.updated', {
       sessionIds: [],
       reason: 'list-refreshed'

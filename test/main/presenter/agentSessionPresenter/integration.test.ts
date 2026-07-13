@@ -1,3 +1,4 @@
+import { AppSessionService } from '@/agent/shared/appSessionService'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { AgentSessionPresenter } from '@/presenter/agentSessionPresenter/index'
 import { AgentRuntimePresenter } from '@/presenter/agentRuntimePresenter/index'
@@ -6,6 +7,9 @@ import { NewSessionHooksBridge } from '@/presenter/hooksNotifications/newSession
 import type { PermissionMode } from '@shared/types/agent-interface'
 import type { ReasoningEffort, Verbosity } from '@shared/types/model-db'
 import logger from '@shared/logger'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import type { DeepChatActiveGeneration } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { createDeepChatAgentBackendFixture } from '../../agent/manager/deepChatAgentBackendFixture'
 
 vi.mock('nanoid', () => {
   let counter = 0
@@ -363,6 +367,9 @@ function createMockSqlitePresenter() {
           .filter((m) => m.session_id === sessionId)
           .sort((a: any, b: any) => a.order_seq - b.order_seq)
       }),
+      hasBySession: vi.fn((sessionId: string) =>
+        messagesList.some((message) => message.session_id === sessionId)
+      ),
       getBySessionUpToOrderSeq: vi.fn((sessionId: string, maxOrderSeq: number) => {
         return messagesList
           .filter((m) => m.session_id === sessionId && m.order_seq <= maxOrderSeq)
@@ -629,6 +636,33 @@ function createMockToolPresenter() {
   } as any
 }
 
+function createDeepChatManager(deepchatAgent: AgentRuntimePresenter, sqlitePresenter: any) {
+  const backend = createDeepChatAgentBackendFixture(deepchatAgent, deepchatAgent.deepChatRuntime)
+  const descriptor = (agentId: string) => ({
+    id: agentId,
+    kind: 'deepchat' as const,
+    source: 'manual' as const,
+    config: {}
+  })
+  return {
+    resolveBackend: (agentId: string) => ({
+      kind: 'deepchat',
+      descriptor: descriptor(agentId),
+      backend
+    }),
+    resolveSessionHandle: (sessionId: string) => {
+      const session = sqlitePresenter.newSessionsTable.get(sessionId)
+      if (!session) throw new Error(`Session not found: ${sessionId}`)
+      return {
+        kind: 'deepchat',
+        descriptor: descriptor(session.agent_id ?? session.agentId),
+        handle: backend.open(sessionId)
+      }
+    },
+    cleanupSessionBackends: (sessionId: string) => backend.cleanupSession(toAppSessionId(sessionId))
+  }
+}
+
 describe('Integration: createSession end-to-end', () => {
   let sqlitePresenter: ReturnType<typeof createMockSqlitePresenter>
   let llmProvider: ReturnType<typeof createMockLlmProviderPresenter>
@@ -648,10 +682,22 @@ describe('Integration: createSession end-to-end', () => {
       createMockToolPresenter()
     )
     agentPresenter = new AgentSessionPresenter(
-      deepchatAgent as any,
+      createDeepChatManager(deepchatAgent, sqlitePresenter) as any,
+      new AppSessionService({
+        newSessionsTable: sqlitePresenter.newSessionsTable,
+        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+      }),
       llmProvider,
       configPresenter,
-      sqlitePresenter
+      sqlitePresenter,
+      {
+        sessionState: deepchatAgent,
+        transcript: deepchatAgent,
+        transcriptMutation: deepchatAgent,
+        tape: deepchatAgent
+      }
     )
   })
 
@@ -799,10 +845,24 @@ describe('Integration: ACP hooks bridge', () => {
       new NewSessionHooksBridge(hookDispatcher)
     )
     agentPresenter = new AgentSessionPresenter(
-      deepchatAgent as any,
+      createDeepChatManager(deepchatAgent, sqlitePresenter) as any,
+      new AppSessionService({
+        newSessionsTable: sqlitePresenter.newSessionsTable,
+        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+      }),
       llmProvider,
       configPresenter,
-      sqlitePresenter
+      sqlitePresenter,
+      {
+        sessionState: deepchatAgent,
+        transcript: deepchatAgent,
+        transcriptMutation: deepchatAgent,
+        tape: deepchatAgent
+      },
+      undefined,
+      { acpAsLlmProviderSessionControl: llmProvider }
     )
   })
 
@@ -878,10 +938,22 @@ describe('Integration: multi-turn context', () => {
       createMockToolPresenter()
     )
     agentPresenter = new AgentSessionPresenter(
-      deepchatAgent as any,
+      createDeepChatManager(deepchatAgent, sqlitePresenter) as any,
+      new AppSessionService({
+        newSessionsTable: sqlitePresenter.newSessionsTable,
+        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+      }),
       llmProvider,
       configPresenter,
-      sqlitePresenter
+      sqlitePresenter,
+      {
+        sessionState: deepchatAgent,
+        transcript: deepchatAgent,
+        transcriptMutation: deepchatAgent,
+        tape: deepchatAgent
+      }
     )
   })
 
@@ -914,6 +986,48 @@ describe('Integration: multi-turn context', () => {
     expect(secondCallMessages[secondCallMessages.length - 1]).toEqual({
       role: 'user',
       content: 'Follow up question'
+    })
+  })
+
+  it('keeps a strict overflow retry in one active provider round', async () => {
+    const sessionId = 's-loop-run'
+    const observedRuns: DeepChatActiveGeneration[] = []
+    let providerAttempt = 0
+    const providerInstance = {
+      coreStream: vi.fn(async function* () {
+        providerAttempt += 1
+        const run = deepchatAgent.deepChatRuntime
+          .getOrHydrate(toAppSessionId(sessionId))
+          .getActiveGeneration()
+        if (!run) throw new Error('Expected an active loop run')
+        observedRuns.push(run)
+
+        if (providerAttempt === 1) {
+          yield { type: 'error', error_message: 'input exceeds the context window' }
+          return
+        }
+        yield { type: 'text', content: 'Recovered by strict retry' }
+        yield { type: 'stop', stop_reason: 'complete' }
+      })
+    }
+    llmProvider.getProviderInstance.mockReturnValue(providerInstance)
+
+    await deepchatAgent.initSession(sessionId, {
+      providerId: 'openai',
+      modelId: 'gpt-4',
+      generationSettings: { contextLength: 8192, maxTokens: 4096 }
+    })
+    await deepchatAgent.processMessage(sessionId, 'Hello', { maxProviderRounds: 1 })
+
+    expect(providerInstance.coreStream).toHaveBeenCalledTimes(2)
+    expect(observedRuns).toHaveLength(2)
+    expect(observedRuns[0]).toBe(observedRuns[1])
+    expect(observedRuns[1]).toMatchObject({
+      providerRoundCount: 1,
+      requestSeq: 2,
+      providerRecovery: {
+        strictProviderOverflowRetryUsed: true
+      }
     })
   })
 
@@ -1223,7 +1337,11 @@ describe('Integration: multi-turn context', () => {
     llmProvider.getProviderInstance.mockReturnValue(providerInstance)
 
     await deepchatAgent.initSession('s-follow-up', { providerId: 'openai', modelId: 'gpt-4' })
-    ;(deepchatAgent as any).runtimeState.get('s-follow-up').status = 'generating'
+    const runtimeState = deepchatAgent.deepChatRuntime
+      .getOrHydrate(toAppSessionId('s-follow-up'))
+      .getRuntimeState()
+    if (!runtimeState) throw new Error('Missing runtime state for s-follow-up')
+    runtimeState.status = 'generating'
 
     await deepchatAgent.queuePendingInput('s-follow-up', 'Older queued prompt')
     expect(await deepchatAgent.listPendingInputs('s-follow-up')).toHaveLength(1)

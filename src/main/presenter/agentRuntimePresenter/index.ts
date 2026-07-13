@@ -14,7 +14,6 @@ import type {
   ChatMessagePageResult,
   ChatMessageRecord,
   DeepChatSessionState,
-  IAgentImplementation,
   MessagePageCursor,
   MessageStartResult,
   MessageFile,
@@ -81,18 +80,34 @@ import {
 } from '@shared/videoGenerationSettings'
 import { nanoid } from 'nanoid'
 import type { SQLitePresenter } from '../sqlitePresenter'
-import type {
-  DeepChatMemoryIngestionProjectionInput,
-  DeepChatMemoryIngestionProjectionRow
-} from '../sqlitePresenter/tables/deepchatMemoryIngestionProjection'
 import type { DeepChatTapeEntryRow } from '../sqlitePresenter/tables/deepchatTapeEntries'
 import { eventBus } from '@/eventbus'
 import { MCP_EVENTS } from '@/events'
 import {
   buildRuntimeCapabilitiesPrompt,
   buildSystemEnvPrompt
-} from '@/lib/agentRuntime/systemEnvPromptBuilder'
-import type { ContextBuildMetadata } from './contextBuilder'
+} from '@/agent/deepchat/resources/systemEnvPromptBuilder'
+import { createLoopRun, type LoopRun } from '@/agent/deepchat/loop/loopRun'
+import { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
+import { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
+import type {
+  BasePromptAssembler,
+  PostCompactionPromptAssembler,
+  ToolCatalogPort,
+  ToolExecutionPort,
+  ToolResultPort
+} from '@/agent/deepchat/loop/ports'
+import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { MemoryRuntimeCoordinator } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
+import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
+import type { MemoryPromptContributor } from '@/agent/deepchat/memory/memoryPromptContributor'
+import type {
+  DeepChatAgentInstance,
+  DeepChatAgentInstanceDelegate,
+  DeepChatToolProfileKind
+} from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import { createUserChatMessage, type ContextBuildMetadata } from './contextBuilder'
 import {
   buildTapeChatView,
   buildTapeResumeView,
@@ -117,13 +132,6 @@ import {
 import { buildPersistableMessageTracePayload } from './messageTracePayload'
 import { buildTerminalErrorBlocks, DeepChatMessageStore } from './messageStore'
 import { DeepChatTapeService } from './tapeService'
-import { buildEffectiveTapeView } from './tapeEffectiveView'
-import {
-  MEMORY_EXTRACTION_CHUNKS_PER_QUEUE_TASK,
-  buildMemoryExtractionChunks,
-  type MemoryExtractionChunk,
-  type MemoryExtractionMessage
-} from './memoryExtractionChunks'
 import {
   buildExcludedRefs,
   buildIncludedRefs,
@@ -132,23 +140,27 @@ import {
   resolveTapeViewManifestPolicy,
   type TapeViewContextSelection
 } from './tapeViewManifest'
-import { PendingInputCoordinator } from './pendingInputCoordinator'
-import { DeepChatPendingInputStore } from './pendingInputStore'
+import { PendingInputCoordinator } from '@/agent/deepchat/pending/pendingInputCoordinator'
+import { DeepChatPendingInputStore } from '@/agent/deepchat/pending/pendingInputStore'
 import { processStream } from './process'
 import { cloneBlocksForRenderer } from './echo'
 import { DeepChatSessionStore, type SessionSummaryState } from './sessionStore'
-import {
-  appendMemorySectionWithManifest,
-  type MemoryRuntimePort
-} from '../memoryPresenter/injection'
+import type { MemoryRuntimePort } from '../memoryPresenter/injection'
 import type {
   InterleavedReasoningConfig,
   PendingToolInteraction,
   ProcessResult,
+  StreamState,
   ToolPermissionReviewRequest,
   ToolPermissionReviewResult
 } from './types'
+import { createState } from './types'
 import { ToolOutputGuard } from './toolOutputGuard'
+import {
+  createToolCatalogPort as createPresenterToolCatalogPort,
+  createToolExecutionPort,
+  createToolResultPort
+} from './toolAdapters'
 import type { ProviderRequestTracePayload } from '../llmProviderPresenter/requestTrace'
 import type {
   DeepChatTapeViewPolicy,
@@ -156,10 +168,15 @@ import type {
   DeepChatTapeViewTaskType,
   DeepChatTapeViewTokenBudget
 } from '@shared/types/tape-view-manifest'
-import type { NewSessionHooksBridge } from '../hooksNotifications/newSessionBridge'
+import type { NewSessionHookNotificationObserver } from '../hooksNotifications/newSessionBridge'
 import { providerDbLoader } from '../configPresenter/providerDbLoader'
 import { resolveSessionVisionTarget } from '../vision/sessionVisionResolver'
-import type { ProviderCatalogPort, SessionPermissionPort, SessionUiPort } from '../runtimePorts'
+import type {
+  AcpAsLlmProviderPermissionPort,
+  ProviderCatalogPort,
+  SessionPermissionPort,
+  SessionUiPort
+} from '../runtimePorts'
 import { publishDeepchatEvent } from '@/routes/publishDeepchatEvent'
 import { extractToolCallImagePreviews } from '@/lib/toolCallImagePreviews'
 import {
@@ -174,15 +191,16 @@ import {
   prepareToolImagePreviewPresentation
 } from './imageGenerationBlocks'
 import { isContextWindowErrorLike } from './contextWindowError'
+import type { AcpAgentInstanceDependencyFactory, AcpPendingInputFacet } from '@/agent/acp/instance'
+import { AcpCompatibilityPromptBuilder } from '@/agent/acp/runtime'
+import {
+  AcpCompatibilityProjectionAdapter,
+  AcpRequestTraceAdapter
+} from './acpCompatibilityAdapters'
 
 type PendingInteractionEntry = {
   interaction: PendingToolInteraction
   blockIndex: number
-}
-
-type MemoryInjectionAccessTurnEntry = {
-  ids: Set<string>
-  touchedAt: number
 }
 
 type ProcessPendingInputSource = PendingInputEnqueueSource | 'steer'
@@ -201,6 +219,7 @@ type PendingTapeViewContext = {
 type DeferredToolExecutionResult = {
   responseText: string
   isError: boolean
+  invoked?: boolean
   toolSource?: 'mcp' | 'agent'
   serverName?: string
   offloadPath?: string
@@ -232,10 +251,6 @@ const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const AUTO_APPROVE_REVIEW_MAX_RECENT_MESSAGES = 8
 const AUTO_APPROVE_REVIEW_MAX_CONTENT_CHARS = 2_000
 const AUTO_APPROVE_REVIEW_TIMEOUT_MS = 30_000
-const MEMORY_INJECTION_ACCESS_TURN_TTL_MS = 30 * 60 * 1000
-const MEMORY_INJECTION_ACCESS_MAX_TURNS_PER_SESSION = 128
-const MEMORY_INGESTION_PROJECTION_RETRY_COOLDOWN_MS = 30_000
-const MEMORY_INGESTION_PROJECTION_FAILURE_CACHE_LIMIT = 256
 
 function normalizePermissionMode(mode: PermissionMode | null | undefined): PermissionMode {
   return mode === 'default' || mode === 'auto_approve' ? mode : 'full_access'
@@ -515,16 +530,6 @@ function getVerificationScriptNames(workdir: string): string[] {
     .map(([name]) => name)
 }
 
-type ActiveProviderPermission = {
-  requestId: string
-  sessionId: string
-  messageId: string
-  toolCallId: string
-  providerId: string
-  permissionType: 'read' | 'write' | 'all' | 'command'
-  resolve: (granted: boolean) => Promise<void>
-}
-
 type ProviderPermissionInteractionInput = {
   sessionId: string
   messageId: string
@@ -551,32 +556,6 @@ type PersistedSessionGenerationRow = {
   force_interleaved_thinking_compat: number | null
 }
 
-type SystemPromptCacheEntry = {
-  prompt: string
-  dayKey: string
-  fingerprint: string
-}
-
-type ToolProfileKind = 'code' | 'research' | 'analysis' | 'general'
-
-type ToolProfileCacheEntry = {
-  profile: ToolProfileKind
-  fingerprint: string
-  tools: MCPToolDefinition[]
-}
-
-type ActiveGeneration = {
-  runId: string
-  messageId: string
-  abortController: AbortController
-}
-
-type MemoryAdmissionWindow = {
-  chunks: MemoryExtractionChunk[]
-  hadToolUse: boolean
-  visibleTextChars: number
-}
-
 type SkillDraftStatus = 'pending' | 'viewed' | 'installed' | 'discarded' | 'error'
 
 type SkillDraftChoice = 'view' | 'install' | 'discard'
@@ -593,11 +572,8 @@ const SKILL_DRAFT_STATUS_BY_CHOICE: Record<Exclude<SkillDraftChoice, 'view'>, Sk
 }
 
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
-// Minimum new-message delta (since the memory cursor) before the fallback extracts.
-const MEMORY_FALLBACK_MIN_DELTA = 6
-// Minimum visible text for short non-tool fallback spans.
-const MEMORY_MIN_AGENTIC_TEXT_CHARS = 160
 const PRE_STREAM_SLOW_STEP_MS = 500
+const STALE_DEEPCHAT_INSTANCE_ERROR_NAME = 'StaleDeepChatAgentInstanceError'
 const createAbortError = (): Error => {
   if (typeof DOMException !== 'undefined') {
     return new DOMException('Aborted', 'AbortError')
@@ -605,6 +581,12 @@ const createAbortError = (): Error => {
 
   const error = new Error('Aborted')
   error.name = 'AbortError'
+  return error
+}
+
+const createStaleDeepChatInstanceError = (sessionId: string): Error => {
+  const error = new Error(`DeepChat agent instance was replaced: ${sessionId}`)
+  error.name = STALE_DEEPCHAT_INSTANCE_ERROR_NAME
   return error
 }
 
@@ -621,7 +603,7 @@ function buildTapeViewSelection(
   }
 }
 
-export class AgentRuntimePresenter implements IAgentImplementation {
+export class AgentRuntimePresenter {
   private readonly llmProviderPresenter: ILlmProviderPresenter
   private readonly configPresenter: IConfigPresenter
   private readonly sqlitePresenter: SQLitePresenter
@@ -631,43 +613,24 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   private readonly tapeService: DeepChatTapeService
   private readonly pendingInputStore: DeepChatPendingInputStore
   private readonly pendingInputCoordinator: PendingInputCoordinator
-  private readonly runtimeState: Map<string, DeepChatSessionState> = new Map()
-  private readonly sessionGenerationSettings: Map<string, SessionGenerationSettings> = new Map()
-  private readonly abortControllers: Map<string, AbortController> = new Map()
-  private readonly deferredToolAbortControllers: Map<string, AbortController> = new Map()
-  private readonly activeGenerations: Map<string, ActiveGeneration> = new Map()
-  private readonly firstTurnReadySessions: Set<string> = new Set()
-  private readonly firstTurnReadyWaiters: Map<string, Set<(ready: boolean) => void>> = new Map()
-  private readonly activeSteerPendingInputIds: Map<string, string> = new Map()
-  private readonly sessionAgentIds: Map<string, string> = new Map()
-  private readonly sessionProjectDirs: Map<string, string | null> = new Map()
-  private readonly systemPromptCache: Map<string, SystemPromptCacheEntry> = new Map()
-  private readonly toolProfileCache: Map<string, ToolProfileCacheEntry> = new Map()
-  private readonly runtimeActivatedSkillsBySession: Map<string, Set<string>> = new Map()
-  private readonly sessionCompactionStates: Map<string, SessionCompactionState> = new Map()
-  private readonly interactionLocks: Set<string> = new Set()
-  private readonly resumingMessages: Set<string> = new Set()
-  private readonly drainingPendingQueues: Set<string> = new Set()
-  private readonly activeProviderPermissions: Map<string, ActiveProviderPermission> = new Map()
+  readonly deepChatRuntime: DeepChatAgentRuntime
   private readonly compactionService: CompactionService
+  private readonly inputPreparationCoordinator = new InputPreparationCoordinator()
+  private readonly contextCoordinator = new DeepChatContextCoordinator()
   private readonly toolOutputGuard: ToolOutputGuard
-  private readonly hooksBridge?: NewSessionHooksBridge
+  private readonly toolExecutionPort: ToolExecutionPort | null
+  private readonly toolResultPort: ToolResultPort
+  private readonly hookNotificationObserver?: NewSessionHookNotificationObserver
   private readonly providerCatalogPort: Pick<
     ProviderCatalogPort,
     'getProviderModels' | 'getCustomModels'
   >
   private readonly sessionPermissionPort?: SessionPermissionPort
+  private readonly acpAsLlmProviderPermission?: AcpAsLlmProviderPermissionPort
   private readonly sessionUiPort?: SessionUiPort
-  private readonly memoryPort?: MemoryRuntimePort
-  private readonly memoryExtractionChains = new Map<string, Promise<void>>()
-  private readonly memoryExtractionQueue = new Map<
-    number,
-    { sessionId: string; queuedAt: number }
-  >()
-  private nextMemoryExtractionQueueId = 0
-  private readonly memoryExtractionEpochs = new Map<string, number>()
-  private readonly memoryIngestionProjectionRetryAfter = new Map<string, number>()
-  private readonly memoryInjectionAccessByTurn = new Map<string, MemoryInjectionAccessTurnEntry>()
+  private readonly memoryCoordinator: MemoryRuntimeCoordinator
+  private readonly memoryPromptContributor: MemoryPromptContributor
+  readonly memoryIngestionObserver: MemoryIngestionObserver
   private readonly cacheImage?: (data: string) => Promise<string>
   private readonly skillPresenter?: Pick<
     ISkillPresenter,
@@ -678,18 +641,19 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     | 'installDraftSkill'
     | 'discardDraftSkill'
   >
-  private toolRegistryRevision = 0
   private nextRunSequence = 0
+  private readonly postCompactionPromptAssembler: PostCompactionPromptAssembler
 
   constructor(
     llmProviderPresenter: ILlmProviderPresenter,
     configPresenter: IConfigPresenter,
     sqlitePresenter: SQLitePresenter,
     toolPresenter?: IToolPresenter,
-    hooksBridge?: NewSessionHooksBridge,
+    hookNotificationObserver?: NewSessionHookNotificationObserver,
     runtimePorts?: {
       providerCatalogPort?: Pick<ProviderCatalogPort, 'getProviderModels' | 'getCustomModels'>
       sessionPermissionPort?: SessionPermissionPort
+      acpAsLlmProviderPermission?: AcpAsLlmProviderPermissionPort
       sessionUiPort?: SessionUiPort
       memoryPort?: MemoryRuntimePort
       cacheImage?: (data: string) => Promise<string>
@@ -713,6 +677,53 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     this.tapeService = new DeepChatTapeService(sqlitePresenter)
     this.pendingInputStore = new DeepChatPendingInputStore(sqlitePresenter)
     this.pendingInputCoordinator = new PendingInputCoordinator(this.pendingInputStore)
+    this.deepChatRuntime = new DeepChatAgentRuntime((sessionId) =>
+      this.createDeepChatInstanceDelegate(sessionId)
+    )
+    this.memoryCoordinator = new MemoryRuntimeCoordinator({
+      memoryPort: runtimePorts?.memoryPort,
+      getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
+      getSessionRuntimeState: (sessionId) => this.getDeepChatRuntimeState(sessionId),
+      hasSessionRuntimeState: (sessionId) => Boolean(this.getDeepChatRuntimeState(sessionId)),
+      assertCurrentSessionHandle: (handle) => {
+        const sessionId = handle.sessionId
+        if (this.getHydratedDeepChatInstance(sessionId)?.getMemorySessionHandle() !== handle) {
+          throw createStaleDeepChatInstanceError(sessionId)
+        }
+      },
+      getNextMessageOrderSeq: (sessionId) => this.messageStore.getNextOrderSeq(sessionId),
+      getMessagesUpToOrderSeq: (sessionId, orderSeq) =>
+        this.messageStore.getMessagesUpToOrderSeq(sessionId, orderSeq),
+      getMemoryCursorOrderSeq: (sessionId) =>
+        this.sqlitePresenter.deepchatSessionsTable.getMemoryCursorOrderSeq(sessionId),
+      updateMemoryCursorOrderSeq: (sessionId, orderSeq) =>
+        this.sqlitePresenter.deepchatSessionsTable.updateMemoryCursorOrderSeq(sessionId, orderSeq),
+      rewindMemoryCursorOrderSeq: (sessionId, orderSeq) =>
+        this.sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq(sessionId, orderSeq),
+      getTapeRows: (sessionId) =>
+        this.sqlitePresenter.deepchatTapeEntriesTable.getBySession(sessionId),
+      appendTapeAnchor: (input) => {
+        this.sqlitePresenter.deepchatTapeEntriesTable.appendAnchor(input)
+      },
+      getIngestionProjection: () => this.sqlitePresenter.deepchatMemoryIngestionProjectionTable
+    })
+    this.memoryPromptContributor = this.memoryCoordinator
+    this.memoryIngestionObserver = this.memoryCoordinator
+    this.postCompactionPromptAssembler = {
+      assemble: async (input) => {
+        const promptWithSummary = appendSummarySection(input.basePrompt, input.summaryText)
+        const promptWithReconstruction = appendReconstructionAnchorStateSection(
+          promptWithSummary,
+          input.reconstructionAnchor
+        )
+        return await this.memoryPromptContributor.contribute({
+          session: input.memorySession,
+          basePrompt: promptWithReconstruction,
+          query: input.memoryQuery,
+          messageId: input.memoryMessageId
+        })
+      }
+    }
     this.compactionService = new CompactionService(
       this.sessionStore,
       this.messageStore,
@@ -728,14 +739,28 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
     )
     this.toolOutputGuard = new ToolOutputGuard()
-    this.hooksBridge = hooksBridge
+    this.toolExecutionPort = createToolExecutionPort(this.toolPresenter)
+    this.toolResultPort = createToolResultPort({
+      outputGuard: this.toolOutputGuard,
+      normalize: async (tool) =>
+        await this.normalizeToolResultContent({
+          sessionId: tool.sessionId,
+          toolCallId: tool.toolCallId,
+          toolName: tool.toolName,
+          toolArgs: tool.toolArgs,
+          content: tool.content,
+          isError: tool.isError,
+          abortSignal: tool.signal
+        })
+    })
+    this.hookNotificationObserver = hookNotificationObserver
     this.providerCatalogPort = runtimePorts?.providerCatalogPort ?? {
       getProviderModels: (providerId) => this.configPresenter.getProviderModels?.(providerId) ?? [],
       getCustomModels: (providerId) => this.configPresenter.getCustomModels?.(providerId) ?? []
     }
     this.sessionPermissionPort = runtimePorts?.sessionPermissionPort
+    this.acpAsLlmProviderPermission = runtimePorts?.acpAsLlmProviderPermission
     this.sessionUiPort = runtimePorts?.sessionUiPort
-    this.memoryPort = runtimePorts?.memoryPort
     this.cacheImage = runtimePorts?.cacheImage
     this.skillPresenter = runtimePorts?.skillPresenter
 
@@ -759,12 +784,294 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     eventBus.on(MCP_EVENTS.INITIALIZED, this.handleToolRegistryChanged)
   }
 
+  createAcpAgentInstanceDependencies(
+    input: Parameters<AcpAgentInstanceDependencyFactory>[0]
+  ): ReturnType<AcpAgentInstanceDependencyFactory> {
+    const { runtime, session } = input
+    const sessionId = session.sessionId
+    const rateLimitMessageId = `rate-limit-acp:${sessionId}`
+    const rateLimitRequestId = `acp:${sessionId}`
+    let queuedForRateLimit = false
+    const projection = new AcpCompatibilityProjectionAdapter({
+      messageStore: this.messageStore,
+      tapeService: this.tapeService,
+      writeViewManifest: async (input) => {
+        this.appendTapeViewManifest({
+          sessionId: input.sessionId,
+          messageId: input.messageId,
+          requestSeq: input.requestSeq,
+          taskType: input.taskType,
+          policy: input.policy,
+          policyVersion: input.policyVersion,
+          messages: input.messages,
+          tools: input.localToolDefinitions,
+          tokenBudget: input.tokenBudget,
+          providerId: input.providerId,
+          modelId: input.modelId,
+          summaryCursorOrderSeq: input.summaryCursorOrderSeq,
+          supportsVision: input.supportsVision,
+          supportsAudioInput: input.supportsAudioInput,
+          traceDebugEnabled: input.traceDebugEnabled
+        })
+      },
+      setStatus: (status) => this.setSessionStatus(sessionId, status)
+    })
+
+    return {
+      promptResources: {
+        resolve: async ({ content, scope, workdir, signal }) => {
+          this.throwIfAbortRequested(signal)
+          const state = await this.getSessionState(sessionId)
+          if (!state) throw new Error(`Session ${sessionId} not found`)
+          const resourceInstance = this.getDeepChatInstance(sessionId)
+          resourceInstance.setAgentId(session.descriptor.id)
+          resourceInstance.setProjectDir(workdir)
+          const generationSettings = await this.getEffectiveSessionGenerationSettings(
+            sessionId,
+            resourceInstance
+          )
+          const normalizedInput = this.normalizeUserMessageInput(content)
+          resourceInstance.replaceRuntimeActivatedSkills(normalizedInput.activeSkills ?? [])
+
+          let tools: MCPToolDefinition[] = []
+          let systemPrompt = ''
+          if (scope === 'regular') {
+            const sessionSkills = await this.resolveActiveSkillNamesForToolProfile(
+              sessionId,
+              resourceInstance
+            )
+            const activeSkills = this.resolveEffectiveActiveSkillNames(
+              sessionSkills,
+              resourceInstance
+            )
+            tools = await this.loadToolDefinitionsForSession(
+              sessionId,
+              workdir,
+              activeSkills,
+              resourceInstance
+            )
+            systemPrompt = await this.buildSystemPromptWithSkills(
+              sessionId,
+              generationSettings.systemPrompt,
+              tools,
+              activeSkills,
+              resourceInstance
+            )
+          }
+
+          this.throwIfAbortRequested(signal)
+          const traceEnabled =
+            this.configPresenter.getSetting<boolean>('traceDebugEnabled') === true
+          const contextLength = Math.max(1, generationSettings.contextLength)
+          const effectiveMaxTokens = capAgentRequestMaxTokens(
+            generationSettings.maxTokens,
+            contextLength
+          )
+          const summaryCursorOrderSeq =
+            this.sessionStore.getSummaryState(sessionId).summaryCursorOrderSeq
+          return {
+            latestUserMessage: createUserChatMessage(normalizedInput, false, false),
+            userContent: {
+              text: normalizedInput.text,
+              files: normalizedInput.files ?? [],
+              links: [],
+              search: false,
+              think: false,
+              ...(normalizedInput.activeSkills?.length
+                ? { activeSkills: normalizedInput.activeSkills }
+                : {}),
+              ...(normalizedInput.inlineItems?.length
+                ? { inlineItems: normalizedInput.inlineItems }
+                : {})
+            },
+            sections: {
+              configured: systemPrompt,
+              runtime: '',
+              environment: '',
+              skills: '',
+              activeSkills: '',
+              tooling: '',
+              permission: '',
+              verification: ''
+            },
+            localToolDefinitions: scope === 'regular' ? tools : [],
+            requestTimeoutMs: generationSettings.timeout,
+            traceEnabled,
+            viewManifest: {
+              taskType: 'chat',
+              policy: 'legacy_context_v1',
+              policyVersion: null,
+              tokenBudget: {
+                contextLength,
+                requestedMaxTokens: generationSettings.maxTokens,
+                effectiveMaxTokens,
+                reserveTokens: effectiveMaxTokens,
+                toolReserveTokens: estimateToolReserveTokens(tools)
+              },
+              summaryCursorOrderSeq,
+              supportsVision: false,
+              supportsAudioInput: false,
+              traceDebugEnabled: traceEnabled
+            }
+          }
+        }
+      },
+      promptBuilder: new AcpCompatibilityPromptBuilder(),
+      projection,
+      trace: new AcpRequestTraceAdapter(this.messageStore),
+      rateGate: {
+        wait: async (signal) => {
+          await this.llmProviderPresenter.executeWithRateLimit('acp', {
+            signal,
+            scope: 'acp-direct',
+            onQueued: (snapshot) => {
+              queuedForRateLimit = true
+              this.emitRateLimitWaitingMessage(
+                sessionId,
+                rateLimitMessageId,
+                rateLimitRequestId,
+                snapshot
+              )
+            }
+          })
+        },
+        clearWaiting: () => {
+          if (!queuedForRateLimit) return
+          this.clearRateLimitWaitingMessage(sessionId, rateLimitMessageId, rateLimitRequestId)
+          queuedForRateLimit = false
+        }
+      },
+      turns: {
+        startTurn: (input) => runtime.sessionPersistence.startTurn(input),
+        finishTurn: (input) => runtime.sessionPersistence.finishTurn(input)
+      },
+      debug: {
+        appendDebugEvent: (agentId, entry) => {
+          runtime.processManager.appendDebugEvent(agentId, entry)
+        }
+      },
+      observer: {
+        userPromptSubmitted: (input) => {
+          this.dispatchHook('UserPromptSubmit', {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            promptPreview: input.promptPreview,
+            providerId: 'acp',
+            modelId: input.agentId,
+            projectDir: input.workdir
+          })
+          this.dispatchHook('SessionStart', {
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            promptPreview: input.promptPreview,
+            providerId: 'acp',
+            modelId: input.agentId,
+            projectDir: input.workdir
+          })
+        },
+        terminal: (input) => {
+          this.dispatchHook('Stop', {
+            sessionId: input.sessionId,
+            providerId: 'acp',
+            modelId: input.agentId,
+            projectDir: input.workdir,
+            stop: {
+              reason: input.stopReason,
+              userStop: input.status === 'aborted'
+            }
+          })
+          this.dispatchHook('SessionEnd', {
+            sessionId: input.sessionId,
+            providerId: 'acp',
+            modelId: input.agentId,
+            projectDir: input.workdir,
+            error: input.errorMessage ? { message: input.errorMessage } : null
+          })
+        }
+      }
+    }
+  }
+
+  getAcpPendingInputFacet(): AcpPendingInputFacet {
+    return this.pendingInputCoordinator
+  }
+
   private requireSessionPermissionPort(): SessionPermissionPort {
     if (this.sessionPermissionPort) {
       return this.sessionPermissionPort
     }
 
     throw new Error('Session permission port is not available.')
+  }
+
+  private requireAcpAsLlmProviderPermission(): AcpAsLlmProviderPermissionPort {
+    if (this.acpAsLlmProviderPermission) {
+      return this.acpAsLlmProviderPermission
+    }
+    throw new Error('ACP-as-LLM provider permission control is not available.')
+  }
+
+  private getDeepChatInstance(sessionId: string): DeepChatAgentInstance {
+    return this.deepChatRuntime.getOrHydrate(toAppSessionId(sessionId))
+  }
+
+  private getHydratedDeepChatInstance(sessionId: string): DeepChatAgentInstance | undefined {
+    return this.deepChatRuntime.getHydrated(toAppSessionId(sessionId))
+  }
+
+  private getDeepChatRuntimeState(sessionId: string): DeepChatSessionState | undefined {
+    return this.getHydratedDeepChatInstance(sessionId)?.getRuntimeState()
+  }
+
+  private createBasePromptAssembler(expectedInstance: DeepChatAgentInstance): BasePromptAssembler {
+    return {
+      assemble: async (input) =>
+        await this.buildSystemPromptWithSkills(
+          input.sessionId,
+          input.configuredPrompt,
+          [...input.toolDefinitions],
+          [...input.activeSkillNames],
+          expectedInstance
+        )
+    }
+  }
+
+  private isCurrentDeepChatInstance(
+    sessionId: string,
+    expectedInstance: DeepChatAgentInstance
+  ): boolean {
+    return this.getHydratedDeepChatInstance(sessionId) === expectedInstance
+  }
+
+  private throwIfStaleDeepChatInstance(
+    sessionId: string,
+    expectedInstance: DeepChatAgentInstance
+  ): void {
+    if (!this.isCurrentDeepChatInstance(sessionId, expectedInstance)) {
+      throw createStaleDeepChatInstanceError(sessionId)
+    }
+  }
+
+  private isStaleDeepChatInstanceError(error: unknown): boolean {
+    return error instanceof Error && error.name === STALE_DEEPCHAT_INSTANCE_ERROR_NAME
+  }
+
+  private createDeepChatInstanceDelegate(sessionId: string): DeepChatAgentInstanceDelegate {
+    return {
+      send: async (input) => {
+        if (input.queue) {
+          await this.queuePendingInput(sessionId, input.content, input.queue)
+          return { requestId: null, messageId: null }
+        }
+        return await this.processMessage(sessionId, input.content, input.context)
+      },
+      cancel: async () => await this.cancelGeneration(sessionId),
+      snapshot: async (options) =>
+        options?.lightweight
+          ? await this.getSessionListState(sessionId)
+          : await this.getSessionState(sessionId),
+      close: async () => await this.destroySession(sessionId)
+    }
   }
 
   private async reviewToolPermissionForAutoApprove(
@@ -908,57 +1215,37 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       permissionMode,
       generationSettings
     )
-    this.sessionAgentIds.set(
-      sessionId,
-      config.agentId?.trim() || this.getSessionAgentId(sessionId) || 'deepchat'
-    )
-    this.sessionProjectDirs.set(sessionId, projectDir)
-    this.sessionGenerationSettings.set(sessionId, generationSettings)
-    this.runtimeState.set(sessionId, {
+    const instance = this.getDeepChatInstance(sessionId)
+    instance.setAgentId(config.agentId?.trim() || this.getSessionAgentId(sessionId) || 'deepchat')
+    instance.setProjectDir(projectDir)
+    instance.setGenerationSettings(generationSettings)
+    instance.setRuntimeState({
       status: 'idle',
       providerId: config.providerId,
       modelId: config.modelId,
       permissionMode
     })
-    this.sessionCompactionStates.set(sessionId, this.buildIdleCompactionState())
-    this.memoryIngestionProjectionRetryAfter.delete(sessionId)
+    instance.setCompactionState(this.buildIdleCompactionState())
+    this.memoryCoordinator.initializeSession(sessionId)
     this.clearFirstTurnReady(sessionId)
     this.invalidateSystemPromptCache(sessionId)
     this.invalidateToolProfileCache(sessionId)
   }
 
   async destroySession(sessionId: string): Promise<void> {
-    this.bumpMemoryExtractionEpoch(sessionId)
-    for (const [queueId, entry] of this.memoryExtractionQueue) {
-      if (entry.sessionId === sessionId) this.memoryExtractionQueue.delete(queueId)
-    }
-    this.observeMemoryExtractionQueue()
-    const controller =
-      this.activeGenerations.get(sessionId)?.abortController ?? this.abortControllers.get(sessionId)
-    if (controller) {
-      controller.abort()
-      this.abortControllers.delete(sessionId)
-    }
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    this.memoryCoordinator.beginSessionDestroy(sessionId)
+    instance?.abortAndClearGeneration()
     this.abortDeferredToolAbortControllers(sessionId)
-    this.activeGenerations.delete(sessionId)
     this.clearFirstTurnReady(sessionId)
-    this.activeSteerPendingInputIds.delete(sessionId)
     this.clearActiveProviderPermissionsForSession(sessionId)
 
     this.pendingInputCoordinator.deleteBySession(sessionId)
     this.messageStore.deleteBySession(sessionId)
     this.sessionStore.delete(sessionId)
-    this.runtimeState.delete(sessionId)
-    this.sessionAgentIds.delete(sessionId)
-    this.sessionGenerationSettings.delete(sessionId)
-    this.sessionProjectDirs.delete(sessionId)
-    this.systemPromptCache.delete(sessionId)
-    this.toolProfileCache.delete(sessionId)
-    this.runtimeActivatedSkillsBySession.delete(sessionId)
-    this.sessionCompactionStates.delete(sessionId)
-    this.memoryIngestionProjectionRetryAfter.delete(sessionId)
-    this.drainingPendingQueues.delete(sessionId)
-    this.clearMemoryInjectionAccessForSession(sessionId)
+    instance?.clearOwnedState()
+    this.deepChatRuntime.evict(toAppSessionId(sessionId))
+    this.memoryCoordinator.finishSessionDestroy(sessionId)
     this.toolPresenter?.clearConversationToolMapping?.(sessionId)
   }
 
@@ -974,7 +1261,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     hydrationMode: 'full' | 'summary'
   ): Promise<DeepChatSessionState | null> {
-    const state = this.runtimeState.get(sessionId)
+    const instance = this.getDeepChatInstance(sessionId)
+    const state = instance.getRuntimeState()
     if (state) {
       this.getSessionAgentId(sessionId)
       if (this.hasPendingInteractions(sessionId)) {
@@ -987,7 +1275,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
 
     const dbSession = this.sessionStore.get(sessionId) as PersistedSessionGenerationRow | undefined
-    if (!dbSession) return null
+    if (!dbSession) {
+      this.deepChatRuntime.evict(toAppSessionId(sessionId))
+      return null
+    }
 
     this.getSessionAgentId(sessionId)
     const rebuilt: DeepChatSessionState = {
@@ -996,7 +1287,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       modelId: dbSession.model_id,
       permissionMode: normalizePermissionMode(dbSession.permission_mode)
     }
-    this.runtimeState.set(sessionId, rebuilt)
+    instance.setRuntimeState(rebuilt)
     if (hydrationMode === 'full') {
       await this.getEffectiveSessionGenerationSettings(sessionId)
     }
@@ -1011,67 +1302,15 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     options?: { timeoutMs?: number }
   ): Promise<boolean> {
-    if (this.firstTurnReadySessions.has(sessionId)) {
-      return true
-    }
-
-    const timeoutMs = Math.max(0, options?.timeoutMs ?? 30000)
-    if (timeoutMs === 0) {
-      return false
-    }
-
-    return await new Promise<boolean>((resolve) => {
-      let settled = false
-      let timer: ReturnType<typeof setTimeout>
-
-      const waiters =
-        this.firstTurnReadyWaiters.get(sessionId) ?? new Set<(ready: boolean) => void>()
-      const cleanup = () => {
-        const current = this.firstTurnReadyWaiters.get(sessionId)
-        current?.delete(resolveWaiter)
-        if (current?.size === 0) {
-          this.firstTurnReadyWaiters.delete(sessionId)
-        }
-      }
-      const settle = (ready: boolean) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        cleanup()
-        resolve(ready)
-      }
-      const resolveWaiter = (ready: boolean) => settle(ready)
-
-      waiters.add(resolveWaiter)
-      this.firstTurnReadyWaiters.set(sessionId, waiters)
-      timer = setTimeout(() => settle(false), timeoutMs)
-    })
+    return await this.getDeepChatInstance(sessionId).waitForFirstTurnReady(options)
   }
 
   private markFirstTurnReady(sessionId: string): void {
-    if (this.firstTurnReadySessions.has(sessionId)) {
-      return
-    }
-
-    this.firstTurnReadySessions.add(sessionId)
-    this.settleFirstTurnReadyWaiters(sessionId, true)
+    this.getDeepChatInstance(sessionId).markFirstTurnReady()
   }
 
   private clearFirstTurnReady(sessionId: string): void {
-    this.firstTurnReadySessions.delete(sessionId)
-    this.settleFirstTurnReadyWaiters(sessionId, false)
-  }
-
-  private settleFirstTurnReadyWaiters(sessionId: string, ready: boolean): void {
-    const waiters = this.firstTurnReadyWaiters.get(sessionId)
-    if (!waiters) {
-      return
-    }
-
-    this.firstTurnReadyWaiters.delete(sessionId)
-    for (const waiter of waiters) {
-      waiter(ready)
-    }
+    this.getDeepChatInstance(sessionId).clearFirstTurnReady()
   }
 
   async queuePendingInput(
@@ -1126,8 +1365,9 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       return
     }
 
-    const activeGeneration = this.activeGenerations.get(sessionId)
-    const preStreamController = this.abortControllers.get(sessionId)
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    const activeGeneration = instance?.getActiveGeneration()
+    const preStreamController = instance?.getAbortController()
 
     if (activeGeneration) {
       // Enqueue the steer input first (it sorts ahead of queued items, and rapid successive steers
@@ -1147,7 +1387,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
 
     if (!this.canStartPendingQueueDrain(sessionId, state.status, 'enqueue')) {
-      if (this.drainingPendingQueues.has(sessionId) || state.status === 'generating') {
+      if (instance?.isPendingQueueDraining() || state.status === 'generating') {
         this.queueVisibleSteerInput(sessionId, normalizedInput)
         return
       }
@@ -1161,15 +1401,13 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
 
     const latestState = await this.getSessionState(sessionId)
-    if (this.drainingPendingQueues.has(sessionId) || latestState?.status === 'generating') {
+    if (instance?.isPendingQueueDraining() || latestState?.status === 'generating') {
       return
     }
 
     try {
       this.pendingInputCoordinator.deletePendingInput(sessionId, record.id)
-      if (this.activeSteerPendingInputIds.get(sessionId) === record.id) {
-        this.activeSteerPendingInputIds.delete(sessionId)
-      }
+      instance?.clearActiveSteerPendingInputId(record.id)
     } catch (deleteError) {
       console.error('[AgentRuntime] Failed to delete unstarted steer input:', deleteError)
     }
@@ -1218,8 +1456,9 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     // active turn exactly like steerActiveTurn so the abort settlement runs this item as the next turn.
     const record = this.pendingInputCoordinator.convertPendingInputToSteer(sessionId, itemId)
 
-    const activeGeneration = this.activeGenerations.get(sessionId)
-    const preStreamController = this.abortControllers.get(sessionId)
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    const activeGeneration = instance?.getActiveGeneration()
+    const preStreamController = instance?.getAbortController()
 
     if (activeGeneration) {
       // A stream is actively producing tokens: interrupt it while preserving its partial output.
@@ -1264,7 +1503,9 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       maxProviderRounds?: number
     }
   ): Promise<MessageStartResult> {
-    const state = this.runtimeState.get(sessionId)
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    if (!instance) throw new Error(`Session ${sessionId} not found`)
+    const state = instance.getRuntimeState()
     if (!state) throw new Error(`Session ${sessionId} not found`)
     if (this.hasPendingInteractions(sessionId)) {
       throw new Error('Pending tool interactions must be resolved before sending a new message.')
@@ -1276,7 +1517,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
     const supportsVision = this.supportsVision(state.providerId, state.modelId)
     const supportsAudioInput = this.supportsAudioInput(state.providerId, state.modelId)
-    const projectDir = this.resolveProjectDir(sessionId, context?.projectDir)
+    const projectDir = this.resolveProjectDir(sessionId, context?.projectDir, instance)
     logger.info(
       `[DeepChatAgent] processMessage session=${sessionId} content="${normalizedInput.text.slice(0, 60)}" projectDir=${projectDir ?? '<none>'}`
     )
@@ -1294,7 +1535,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       const preStreamStartedAt = Date.now()
       this.throwIfAbortRequested(preStreamAbortSignal)
       let stepStartedAt = Date.now()
-      const generationSettings = await this.getEffectiveSessionGenerationSettings(sessionId)
+      const generationSettings = await this.getEffectiveSessionGenerationSettings(
+        sessionId,
+        instance
+      )
       this.logSlowPreStreamStep(sessionId, 'generation-settings', stepStartedAt)
       const modelConfig = this.configPresenter.getModelConfig(state.modelId, state.providerId)
       const useContextBudget = this.shouldUseDeepChatContextBudget(
@@ -1316,34 +1560,37 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       )
       const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
       stepStartedAt = Date.now()
-      this.resetRuntimeActivatedSkills(sessionId)
-      this.setRuntimeActivatedSkills(sessionId, normalizedInput.activeSkills ?? [])
-      const sessionActiveSkillNames = await this.resolveActiveSkillNamesForToolProfile(sessionId)
+      instance.replaceRuntimeActivatedSkills(normalizedInput.activeSkills ?? [])
+      const sessionActiveSkillNames = await this.resolveActiveSkillNamesForToolProfile(
+        sessionId,
+        instance
+      )
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
       const effectiveActiveSkillNames = this.resolveEffectiveActiveSkillNames(
         sessionActiveSkillNames,
-        sessionId
+        instance
       )
       this.logSlowPreStreamStep(sessionId, 'active-skills', stepStartedAt)
       stepStartedAt = Date.now()
       const tools = await this.loadToolDefinitionsForSession(
         sessionId,
         projectDir,
-        effectiveActiveSkillNames
+        effectiveActiveSkillNames,
+        instance
       )
       this.logSlowPreStreamStep(sessionId, 'tool-definitions', stepStartedAt)
       const toolReserveTokens = estimateToolReserveTokens(tools)
       this.throwIfAbortRequested(preStreamAbortSignal)
       stepStartedAt = Date.now()
-      const baseSystemPrompt = await this.buildSystemPromptWithSkills(
-        sessionId,
-        generationSettings.systemPrompt,
-        tools,
-        effectiveActiveSkillNames
-      )
+      const basePromptAssembler = this.createBasePromptAssembler(instance)
+      const baseSystemPrompt = await basePromptAssembler.assemble({
+        sessionId: toAppSessionId(sessionId),
+        configuredPrompt: generationSettings.systemPrompt,
+        toolDefinitions: tools,
+        activeSkillNames: effectiveActiveSkillNames
+      })
       this.logSlowPreStreamStep(sessionId, 'system-prompt', stepStartedAt)
       this.throwIfAbortRequested(preStreamAbortSignal)
-      const tapeReady = this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore)
-      const historyRecords = getTapeContextHistoryRecords(tapeReady.historyRecords)
       const userContent: UserMessageContent = {
         text: normalizedInput.text,
         files: normalizedInput.files || [],
@@ -1356,61 +1603,85 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         ...(normalizedInput.inlineItems?.length ? { inlineItems: normalizedInput.inlineItems } : {})
       }
 
-      let compactionIntent: CompactionIntent | null = null
-      if (useContextBudget) {
-        stepStartedAt = Date.now()
-        compactionIntent = await this.compactionService.prepareForNextUserTurn({
-          sessionId,
-          providerId: state.providerId,
-          modelId: state.modelId,
-          systemPrompt: baseSystemPrompt,
-          contextLength: generationSettings.contextLength,
-          reserveTokens: maxTokens,
-          extraReserveTokens: toolReserveTokens,
-          supportsVision,
-          supportsAudioInput,
-          preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-          preserveEmptyInterleavedReasoning:
-            interleavedReasoning.preserveEmptyReasoningContent === true,
-          newUserContent: normalizedInput,
-          historyRecords,
-          signal: preStreamAbortSignal
-        })
-        this.logSlowPreStreamStep(sessionId, 'compaction-prepare', stepStartedAt)
-      }
-      let summaryState: SessionSummaryState
-
-      if (compactionIntent) {
-        const compactionMessageId = this.messageStore.createCompactionMessage(
-          sessionId,
-          this.messageStore.getNextOrderSeq(sessionId),
-          'compacting',
-          compactionIntent.previousState.summaryUpdatedAt
-        )
-        userMessageId = this.messageStore.createUserMessage(
-          sessionId,
-          this.messageStore.getNextOrderSeq(sessionId),
-          userContent
-        )
-        this.emitCompactionState(sessionId, {
-          status: 'compacting',
-          cursorOrderSeq: compactionIntent.targetCursorOrderSeq,
-          summaryUpdatedAt: compactionIntent.previousState.summaryUpdatedAt
-        })
-        summaryState = await this.applyCompactionIntent(sessionId, compactionIntent, {
-          compactionMessageId,
-          startedExternally: true,
-          signal: preStreamAbortSignal
-        })
-        this.triggerMemoryExtractionFromCompaction(sessionId, compactionIntent)
-      } else {
-        summaryState = this.sessionStore.getSummaryState(sessionId)
-        userMessageId = this.messageStore.createUserMessage(
-          sessionId,
-          this.messageStore.getNextOrderSeq(sessionId),
-          userContent
-        )
-      }
+      const preparedInput = await this.inputPreparationCoordinator.prepareInitial({
+        ensureHistory: () =>
+          getTapeContextHistoryRecords(
+            this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords
+          ),
+        prepareIntent: async (historyRecords) => {
+          if (!useContextBudget) {
+            return null
+          }
+          stepStartedAt = Date.now()
+          const intent = await this.compactionService.prepareForNextUserTurn({
+            sessionId,
+            providerId: state.providerId,
+            modelId: state.modelId,
+            systemPrompt: baseSystemPrompt,
+            contextLength: generationSettings.contextLength,
+            reserveTokens: maxTokens,
+            extraReserveTokens: toolReserveTokens,
+            supportsVision,
+            supportsAudioInput,
+            preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+            preserveEmptyInterleavedReasoning:
+              interleavedReasoning.preserveEmptyReasoningContent === true,
+            newUserContent: normalizedInput,
+            historyRecords,
+            signal: preStreamAbortSignal
+          })
+          this.logSlowPreStreamStep(sessionId, 'compaction-prepare', stepStartedAt)
+          return intent
+        },
+        createCompactionProjection: (intent) =>
+          this.messageStore.createCompactionMessage(
+            sessionId,
+            this.messageStore.getNextOrderSeq(sessionId),
+            'compacting',
+            intent.previousState.summaryUpdatedAt
+          ),
+        appendUserFact: () =>
+          this.messageStore.createUserMessage(
+            sessionId,
+            this.messageStore.getNextOrderSeq(sessionId),
+            userContent
+          ),
+        beginCompaction: (intent) => {
+          this.emitCompactionState(
+            sessionId,
+            {
+              status: 'compacting',
+              cursorOrderSeq: intent.targetCursorOrderSeq,
+              summaryUpdatedAt: intent.previousState.summaryUpdatedAt
+            },
+            instance
+          )
+        },
+        applyCompaction: async (intent, compactionMessageId) =>
+          await this.applyCompactionIntent(
+            sessionId,
+            intent,
+            {
+              compactionMessageId,
+              startedExternally: true,
+              signal: preStreamAbortSignal
+            },
+            instance
+          ),
+        readSummary: () => this.sessionStore.getSummaryState(sessionId),
+        afterCompactionApplyReturned: (intent) =>
+          this.memoryIngestionObserver.afterCompactionApplyReturned({
+            session: instance.getMemorySessionHandle(),
+            origin: 'initial',
+            targetCursorOrderSeq: intent.targetCursorOrderSeq
+          }),
+        checkpoints: {
+          assertCurrent: () => this.throwIfStaleDeepChatInstance(sessionId, instance)
+        }
+      })
+      const historyRecords = preparedInput.history
+      const summaryState = preparedInput.summary
+      userMessageId = preparedInput.userMessageId
       if (!userMessageId) {
         throw new Error('Failed to create user message.')
       }
@@ -1427,39 +1698,49 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       })
 
       stepStartedAt = Date.now()
-      const systemPrompt = await this.appendMemoryInjection(
-        sessionId,
-        appendReconstructionAnchorStateSection(
-          appendSummarySection(baseSystemPrompt, summaryState.summaryText),
-          this.sessionStore.getReconstructionAnchorPromptState(sessionId)
-        ),
-        normalizedInput.text,
-        userMessageId
-      )
-      this.logSlowPreStreamStep(sessionId, 'memory-injection', stepStartedAt)
-      stepStartedAt = Date.now()
-      const contextBuild = buildTapeChatView({
-        sessionId,
-        newUserContent: normalizedInput,
-        systemPrompt,
-        contextLength: contextBudgetLength,
-        reserveTokens: maxTokens,
-        messageStore: this.messageStore,
-        supportsVision,
-        historyRecords,
-        options: {
-          summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
-          supportsAudioInput,
-          extraReserveTokens: toolReserveTokens,
-          preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-          preserveEmptyInterleavedReasoning:
-            interleavedReasoning.preserveEmptyReasoningContent === true
-        }
+      const preparedContext = await this.contextCoordinator.assemble({
+        assemblePostCompactionPrompt: async () => {
+          const systemPrompt = await this.postCompactionPromptAssembler.assemble({
+            memorySession: instance.getMemorySessionHandle(),
+            basePrompt: baseSystemPrompt,
+            summaryText: summaryState.summaryText,
+            reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
+            memoryQuery: normalizedInput.text,
+            memoryMessageId: userMessageId
+          })
+          this.logSlowPreStreamStep(sessionId, 'memory-injection', stepStartedAt)
+          stepStartedAt = Date.now()
+          return systemPrompt
+        },
+        buildView: (systemPrompt) => {
+          const contextBuild = buildTapeChatView({
+            sessionId,
+            newUserContent: normalizedInput,
+            systemPrompt,
+            contextLength: contextBudgetLength,
+            reserveTokens: maxTokens,
+            messageStore: this.messageStore,
+            supportsVision,
+            historyRecords,
+            options: {
+              summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
+              supportsAudioInput,
+              extraReserveTokens: toolReserveTokens,
+              preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+              preserveEmptyInterleavedReasoning:
+                interleavedReasoning.preserveEmptyReasoningContent === true
+            }
+          })
+          this.logSlowPreStreamStep(sessionId, 'context-build', stepStartedAt)
+          return contextBuild
+        },
+        assertCurrent: () => this.throwIfStaleDeepChatInstance(sessionId, instance)
       })
-      this.logSlowPreStreamStep(sessionId, 'context-build', stepStartedAt)
+      const contextBuild = preparedContext.view
       const messages = contextBuild.messages
 
       const assistantOrderSeq = this.messageStore.getNextOrderSeq(sessionId)
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
       assistantMessageId = this.messageStore.createAssistantMessage(sessionId, assistantOrderSeq)
       this.toolPresenter?.clearAgentPlanState?.(sessionId)
       this.throwIfAbortRequested(preStreamAbortSignal)
@@ -1473,6 +1754,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         this.emitMessageRefresh(sessionId, assistantMessageId)
       }
 
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
       const streamResult = await this.runStreamForMessage({
         sessionId,
         messageId: assistantMessageId,
@@ -1481,23 +1763,23 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         promptPreview: normalizedInput.text,
         tools,
         baseSystemPrompt,
+        resourceInstance: instance,
         maxProviderRounds: context?.maxProviderRounds,
         refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-          const refreshedBasePrompt = await this.buildSystemPromptWithSkills(
-            sessionId,
-            generationSettings.systemPrompt,
-            refreshedTools,
-            activeSkillNames ?? effectiveActiveSkillNames
-          )
-          return await this.appendMemoryInjection(
-            sessionId,
-            appendReconstructionAnchorStateSection(
-              appendSummarySection(refreshedBasePrompt, summaryState.summaryText),
-              this.sessionStore.getReconstructionAnchorPromptState(sessionId)
-            ),
-            normalizedInput.text,
-            userMessageId
-          )
+          const refreshedBasePrompt = await basePromptAssembler.assemble({
+            sessionId: toAppSessionId(sessionId),
+            configuredPrompt: generationSettings.systemPrompt,
+            toolDefinitions: refreshedTools,
+            activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
+          })
+          return await this.postCompactionPromptAssembler.assemble({
+            memorySession: instance.getMemorySessionHandle(),
+            basePrompt: refreshedBasePrompt,
+            summaryText: summaryState.summaryText,
+            reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
+            memoryQuery: normalizedInput.text,
+            memoryMessageId: userMessageId
+          })
         },
         interleavedReasoning,
         viewContext: {
@@ -1538,7 +1820,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
               sessionId,
               context.pendingQueueItemId,
               pendingInputSource,
-              userMessageId
+              userMessageId,
+              instance
             )
             consumedPendingQueueItem = true
           }
@@ -1554,18 +1837,35 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
       if (result?.status === 'completed') {
         void this.drainPendingQueueIfPossible(sessionId, 'completed')
-        this.triggerMemoryExtractionFallback(sessionId)
       } else if (result?.status === 'aborted') {
         // Return-path abort: applyProcessResultStatus already dispatched terminal hooks + idle (guarded
         // by active run). Append the canceled block, then continue the queue with the next item.
         this.writeCanceledTerminalBlock(sessionId, assistantMessageId)
         void this.drainPendingQueueIfPossible(sessionId, 'completed')
       }
+      if (result) {
+        this.memoryIngestionObserver.afterTurnSettled({
+          session: instance.getMemorySessionHandle(),
+          origin: 'initial',
+          outcome: { kind: 'returned', status: result.status }
+        })
+      }
       return {
         requestId: assistantMessageId,
         messageId: assistantMessageId
       }
     } catch (err) {
+      this.memoryIngestionObserver.afterTurnSettled({
+        session: instance.getMemorySessionHandle(),
+        origin: 'initial',
+        outcome: { kind: 'thrown', error: err }
+      })
+      if (this.isStaleDeepChatInstanceError(err)) {
+        return {
+          requestId: assistantMessageId,
+          messageId: assistantMessageId
+        }
+      }
       console.error('[DeepChatAgent] processMessage error:', err)
       const aborted = this.isAbortError(err) || preStreamAbortSignal.aborted
       if (context?.pendingQueueItemId && !consumedPendingQueueItem) {
@@ -1584,7 +1884,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
                 sessionId,
                 context.pendingQueueItemId,
                 pendingInputSource,
-                userMessageId
+                userMessageId,
+                instance
               )
             }
           } else {
@@ -1643,7 +1944,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
     } finally {
       this.clearSessionAbortController(sessionId, preStreamAbortController)
-      this.resetRuntimeActivatedSkills(sessionId)
+      instance.replaceRuntimeActivatedSkills([])
     }
   }
 
@@ -1740,6 +2041,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
   private async handleSkillDraftInteraction(
     sessionId: string,
+    instance: DeepChatAgentInstance,
     blocks: AssistantMessageBlock[],
     actionBlock: AssistantMessageBlock,
     toolCall: NonNullable<AssistantMessageBlock['tool_call']>,
@@ -1829,8 +2131,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     this.updateSkillDraftToolCallResponse(blocks, toolCall.id!, responseText, !result.success)
 
     if (choice === 'install' && result.success) {
-      this.invalidateSystemPromptCache(sessionId)
-      this.invalidateToolProfileCache(sessionId)
+      instance.invalidateResourceCaches()
     }
 
     return { keepPending: false, waitingForUserMessage: false }
@@ -1842,11 +2143,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     toolCallId: string,
     response: ToolInteractionResponse
   ): Promise<ToolInteractionResult> {
-    const lockKey = `${messageId}:${toolCallId}`
-    if (this.interactionLocks.has(lockKey)) {
+    const instance = this.getDeepChatInstance(sessionId)
+    if (!instance.tryLockInteraction(messageId, toolCallId)) {
       return { resumed: false }
     }
-    this.interactionLocks.add(lockKey)
 
     try {
       const message = await this.messageStore.getMessage(messageId)
@@ -1858,13 +2158,21 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
 
       const blocks = this.parseAssistantBlocks(message.content)
-      const pendingEntries = this.collectPendingInteractionEntries(messageId, blocks)
+      const pendingEntries = this.reconcilePendingInteractionEntries(
+        instance,
+        this.collectPendingInteractionEntries(messageId, blocks)
+      )
+      this.replacePendingInteractions(instance, pendingEntries)
       if (pendingEntries.length === 0) {
         throw new Error('No pending interaction found in target message.')
       }
 
+      const firstPendingInteraction = instance.getFirstPendingInteraction()
       const currentEntry = pendingEntries[0]
-      if (currentEntry.interaction.toolCallId !== toolCallId) {
+      if (
+        firstPendingInteraction?.messageId !== messageId ||
+        firstPendingInteraction.toolCallId !== toolCallId
+      ) {
         throw new Error('Interaction queue out of order. Please handle the first pending item.')
       }
 
@@ -1885,11 +2193,15 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         if (this.isSkillDraftConfirmationBlock(actionBlock)) {
           const result = await this.handleSkillDraftInteraction(
             sessionId,
+            instance,
             blocks,
             actionBlock,
             toolCall,
             response
           )
+          if (!this.isCurrentDeepChatInstance(sessionId, instance)) {
+            return { resumed: false }
+          }
           waitingForUserMessage = result.waitingForUserMessage
           if (result.keepPending) {
             this.messageStore.updateAssistantContent(messageId, blocks)
@@ -1898,10 +2210,12 @@ export class AgentRuntimePresenter implements IAgentImplementation {
             this.setSessionStatus(sessionId, 'generating')
             return { resumed: false, handledInline: result.handledInline === true }
           }
+          instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
         } else if (response.kind === 'question_other') {
           const deferredResult = 'User chose to answer with a follow-up message.'
           this.markQuestionResolved(actionBlock, '')
           this.updateToolCallResponse(blocks, toolCall.id, deferredResult, false)
+          instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
           waitingForUserMessage = true
         } else {
           const answerText =
@@ -1912,6 +2226,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           }
           this.markQuestionResolved(actionBlock, normalizedAnswer)
           this.updateToolCallResponse(blocks, toolCall.id, normalizedAnswer, false)
+          instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
         }
       } else if (actionBlock.action_type === 'tool_call_permission') {
         if (response.kind !== 'permission') {
@@ -1932,7 +2247,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           })
           return { resumed: false }
         }
-        const state = this.runtimeState.get(sessionId)
+        const state = this.getDeepChatRuntimeState(sessionId)
         const projectDir = this.resolveProjectDir(sessionId)
         let shouldDispatchResolvedToolHook = false
 
@@ -1952,7 +2267,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
             }
           })
           const execution = await this.executeDeferredToolCall(sessionId, messageId, toolCall)
+          if (execution.invoked) {
+            instance.advancePendingToolBatch({ invokedCallId: toolCall.id })
+          }
           if (execution.terminalError) {
+            instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
             this.dispatchHook('PostToolUseFailure', {
               sessionId,
               messageId,
@@ -1993,6 +2312,13 @@ export class AgentRuntimePresenter implements IAgentImplementation {
               error: { message: execution.terminalError }
             })
             this.setSessionStatus(sessionId, 'error')
+            this.replacePendingInteractions(
+              instance,
+              this.reconcilePendingInteractionEntries(
+                instance,
+                this.collectPendingInteractionEntries(messageId, blocks)
+              )
+            )
             return { resumed: false }
           }
           const imagePresentation = prepareToolImagePreviewPresentation({
@@ -2024,6 +2350,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           }
 
           if (execution.requiresPermission && execution.permissionRequest) {
+            instance.transitionPendingInteractionOrigin(
+              messageId,
+              toolCall.id,
+              'post-call-permission'
+            )
             this.dispatchHook('PermissionRequest', {
               sessionId,
               messageId,
@@ -2046,11 +2377,13 @@ export class AgentRuntimePresenter implements IAgentImplementation {
               permissionRequest: JSON.stringify(execution.permissionRequest)
             }
           } else {
+            instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
             shouldDispatchResolvedToolHook = true
           }
         } else {
           this.markPermissionResolved(actionBlock, false, permissionType)
           this.updateToolCallResponse(blocks, toolCall.id, 'User denied the request.', true)
+          instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
           shouldDispatchResolvedToolHook = true
         }
 
@@ -2072,7 +2405,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
 
       this.messageStore.updateAssistantContent(messageId, blocks)
-      const remainingPending = this.collectPendingInteractionEntries(messageId, blocks)
+      const remainingPending = this.reconcilePendingInteractionEntries(
+        instance,
+        this.collectPendingInteractionEntries(messageId, blocks)
+      )
+      this.replacePendingInteractions(instance, remainingPending)
       this.emitMessageRefresh(sessionId, messageId)
 
       if (remainingPending.length > 0) {
@@ -2098,13 +2435,13 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       emitResolvedToolHook?.()
       return { resumed }
     } finally {
-      this.interactionLocks.delete(lockKey)
+      instance.unlockInteraction(messageId, toolCallId)
     }
   }
 
   async setPermissionMode(sessionId: string, mode: PermissionMode): Promise<void> {
     const normalizedMode = normalizePermissionMode(mode)
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     if (state) {
       state.permissionMode = normalizedMode
     }
@@ -2118,7 +2455,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       throw new Error('Session model update requires providerId and modelId.')
     }
 
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     const dbSession = this.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       throw new Error(`Session ${sessionId} not found`)
@@ -2137,7 +2474,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       state.providerId = nextProviderId
       state.modelId = nextModelId
     } else {
-      this.runtimeState.set(sessionId, {
+      this.getDeepChatInstance(sessionId).setRuntimeState({
         status: 'idle',
         providerId: nextProviderId,
         modelId: nextModelId,
@@ -2150,7 +2487,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       sessionId,
       this.buildPersistedGenerationSettingsReplacement(sanitized)
     )
-    this.sessionGenerationSettings.set(sessionId, sanitized)
+    this.getDeepChatInstance(sessionId).setGenerationSettings(sanitized)
     this.invalidateSystemPromptCache(sessionId)
     this.invalidateToolProfileCache(sessionId)
   }
@@ -2166,7 +2503,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       throw new Error('Session agent context update requires agentId, providerId and modelId.')
     }
 
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     const dbSession = this.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       throw new Error(`Session ${sessionId} not found`)
@@ -2183,7 +2520,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       config.generationSettings ?? {}
     )
 
-    this.runtimeState.set(sessionId, {
+    const instance = this.getDeepChatInstance(sessionId)
+    instance.setRuntimeState({
       status: state?.status ?? 'idle',
       providerId: nextProviderId,
       modelId: nextModelId,
@@ -2195,19 +2533,20 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       sessionId,
       this.buildPersistedGenerationSettingsReplacement(sanitizedGenerationSettings)
     )
-    this.sessionAgentIds.set(sessionId, nextAgentId)
-    this.sessionProjectDirs.set(sessionId, this.normalizeProjectDir(config.projectDir))
-    this.sessionGenerationSettings.set(sessionId, sanitizedGenerationSettings)
+    instance.setAgentId(nextAgentId)
+    instance.setProjectDir(this.normalizeProjectDir(config.projectDir))
+    instance.setGenerationSettings(sanitizedGenerationSettings)
     this.invalidateSystemPromptCache(sessionId)
     this.invalidateToolProfileCache(sessionId)
   }
 
   async setSessionProjectDir(sessionId: string, projectDir: string | null): Promise<void> {
     const normalized = this.normalizeProjectDir(projectDir)
-    const previous = this.sessionProjectDirs.has(sessionId)
-      ? (this.sessionProjectDirs.get(sessionId) ?? null)
+    const instance = this.getDeepChatInstance(sessionId)
+    const previous = instance.hasProjectDir()
+      ? instance.getProjectDir()
       : this.resolvePersistedSessionProjectDir(sessionId)
-    this.sessionProjectDirs.set(sessionId, normalized)
+    instance.setProjectDir(normalized)
     if (previous !== normalized) {
       this.invalidateSystemPromptCache(sessionId)
       this.invalidateToolProfileCache(sessionId)
@@ -2215,7 +2554,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   async getPermissionMode(sessionId: string): Promise<PermissionMode> {
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     if (state) {
       return state.permissionMode
     }
@@ -2224,7 +2563,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   async getGenerationSettings(sessionId: string): Promise<SessionGenerationSettings | null> {
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     const dbSession = this.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       return null
@@ -2236,7 +2575,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     settings: Partial<SessionGenerationSettings>
   ): Promise<SessionGenerationSettings> {
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     const dbSession = this.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       throw new Error(`Session ${sessionId} not found`)
@@ -2249,7 +2588,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
     const current = await this.getEffectiveSessionGenerationSettings(sessionId)
     const sanitized = await this.sanitizeGenerationSettings(providerId, modelId, settings, current)
-    this.sessionGenerationSettings.set(sessionId, sanitized)
+    this.getDeepChatInstance(sessionId).setGenerationSettings(sanitized)
     this.sessionStore.updateGenerationSettings(
       sessionId,
       this.buildPersistedGenerationSettingsPatch(settings, sanitized)
@@ -2266,16 +2605,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     // in-flight processMessage / resumeAssistantMessage handler, which always observes the abort and
     // settles exactly once. cancelGeneration deliberately does NOT clear the active generation, write
     // the terminal block, dispatch hooks, or set status.
-    const activeGeneration = this.activeGenerations.get(sessionId)
-    if (activeGeneration) {
-      activeGeneration.abortController.abort()
-    } else {
-      const controller = this.abortControllers.get(sessionId)
-      if (controller) {
-        controller.abort()
-        this.abortControllers.delete(sessionId)
-      }
-    }
+    this.getHydratedDeepChatInstance(sessionId)?.requestGenerationAbort()
     this.abortDeferredToolAbortControllers(sessionId)
     this.clearActiveProviderPermissionsForSession(sessionId)
   }
@@ -2307,13 +2637,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
    */
   private settleAbortedTurn(sessionId: string, messageId: string | null, runId?: string): void {
     this.writeCanceledTerminalBlock(sessionId, messageId)
-    this.dispatchTerminalHooks(sessionId, this.runtimeState.get(sessionId), {
+    this.dispatchTerminalHooks(sessionId, this.getDeepChatRuntimeState(sessionId), {
       status: 'aborted',
       stopReason: 'user_stop',
       errorMessage: 'common.error.userCanceledGeneration'
     })
-    const activeGeneration = this.activeGenerations.get(sessionId)
-    const controller = this.abortControllers.get(sessionId)
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    const activeGeneration = instance?.getActiveGeneration()
+    const controller = instance?.getAbortController()
     const hasReplacementController = Boolean(
       controller && (!activeGeneration || controller !== activeGeneration.abortController)
     )
@@ -2326,7 +2657,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   getActiveGeneration(sessionId: string): { eventId: string; runId: string } | null {
-    const activeGeneration = this.activeGenerations.get(sessionId)
+    const activeGeneration = this.getHydratedDeepChatInstance(sessionId)?.getActiveGeneration()
     if (!activeGeneration) {
       return null
     }
@@ -2338,7 +2669,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   async cancelGenerationByEventId(sessionId: string, eventId: string): Promise<boolean> {
-    const activeGeneration = this.activeGenerations.get(sessionId)
+    const activeGeneration = this.getHydratedDeepChatInstance(sessionId)?.getActiveGeneration()
     if (!activeGeneration || activeGeneration.messageId !== eventId) {
       return false
     }
@@ -2424,9 +2755,12 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
   ): void {
     try {
-      this.hooksBridge?.dispatch(event, {
-        ...context,
-        agentId: this.getSessionAgentId(context.sessionId) ?? 'deepchat'
+      this.hookNotificationObserver?.notify({
+        event,
+        context: {
+          ...context,
+          agentId: this.getSessionAgentId(context.sessionId) ?? 'deepchat'
+        }
       })
     } catch (error) {
       console.warn(`[DeepChatAgent] Failed to dispatch ${event} hook:`, error)
@@ -2434,617 +2768,19 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   private getSessionAgentId(sessionId: string): string | undefined {
-    const cached = this.sessionAgentIds.get(sessionId)?.trim()
+    const instance = this.deepChatRuntime.getHydrated(toAppSessionId(sessionId))
+    const cached = instance?.getAgentId()?.trim()
     if (cached) {
       return cached
     }
 
     const persisted = this.sqlitePresenter.newSessionsTable?.get(sessionId)?.agent_id?.trim()
     if (persisted) {
-      this.sessionAgentIds.set(sessionId, persisted)
+      instance?.setAgentId(persisted)
       return persisted
     }
 
     return undefined
-  }
-
-  // Appends the memory section (self-model + recalled memories) to the system prompt.
-  // No-op when the agent has memory disabled; any failure falls back to the original prompt.
-  private async appendMemoryInjection(
-    sessionId: string,
-    systemPrompt: string,
-    query: string,
-    messageId?: string | null
-  ): Promise<string> {
-    if (!this.memoryPort) {
-      return systemPrompt
-    }
-    try {
-      const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
-      if (!this.memoryPort.isEnabled(agentId)) {
-        return systemPrompt
-      }
-      const injection = await this.memoryPort.buildInjection(agentId, query)
-      if (!this.memoryPort.isEnabled(agentId)) return systemPrompt
-      const assembled = appendMemorySectionWithManifest(systemPrompt, injection)
-      if (assembled.manifest) {
-        if (this.memoryPort.isEnabled(agentId)) {
-          this.recordMemoryInjectionAccess(
-            agentId,
-            sessionId,
-            assembled.manifest.selected,
-            messageId
-          )
-        }
-        if (this.memoryPort.isEnabled(agentId)) {
-          try {
-            this.sqlitePresenter.deepchatTapeEntriesTable.appendAnchor({
-              sessionId,
-              name: 'memory/view_assembled',
-              state: assembled.manifest as unknown as Record<string, unknown>,
-              meta: messageId ? { messageId } : undefined
-            })
-          } catch (error) {
-            logger.warn(`[DeepChatAgent] memory view anchor skipped: ${String(error)}`)
-          }
-        }
-      }
-      return assembled.prompt
-    } catch (error) {
-      logger.warn(`[DeepChatAgent] memory injection skipped: ${String(error)}`)
-      return systemPrompt
-    }
-  }
-
-  private recordMemoryInjectionAccess(
-    agentId: string,
-    sessionId: string,
-    selected: Array<{ id: string }>,
-    messageId?: string | null
-  ): void {
-    if (!this.memoryPort || selected.length === 0) return
-    const selectedIds = [...new Set(selected.map((item) => item.id).filter(Boolean))]
-    if (!selectedIds.length) return
-
-    let idsToRecord = selectedIds
-    let seen: Set<string> | undefined
-    if (messageId) {
-      const now = Date.now()
-      this.pruneMemoryInjectionAccessForSession(sessionId, now)
-      const key = this.memoryInjectionAccessKey(sessionId, messageId)
-      let entry = this.memoryInjectionAccessByTurn.get(key)
-      if (!entry) {
-        entry = { ids: new Set(), touchedAt: now }
-        this.memoryInjectionAccessByTurn.set(key, entry)
-        this.pruneMemoryInjectionAccessForSession(sessionId, now)
-      } else {
-        entry.touchedAt = now
-      }
-      seen = entry.ids
-      const trackedIds = seen
-      idsToRecord = selectedIds.filter((id) => !trackedIds.has(id))
-      if (!idsToRecord.length) return
-    }
-
-    try {
-      this.memoryPort.recordInjectionAccess(agentId, idsToRecord)
-      if (seen) {
-        for (const id of idsToRecord) seen.add(id)
-      }
-    } catch (error) {
-      logger.warn(`[DeepChatAgent] memory access accounting skipped: ${String(error)}`)
-    }
-  }
-
-  private memoryInjectionAccessKey(sessionId: string, messageId: string): string {
-    return `${sessionId}\u0000${messageId}`
-  }
-
-  private clearMemoryInjectionAccessForSession(sessionId: string): void {
-    const prefix = `${sessionId}\u0000`
-    for (const key of this.memoryInjectionAccessByTurn.keys()) {
-      if (key.startsWith(prefix)) this.memoryInjectionAccessByTurn.delete(key)
-    }
-  }
-
-  private pruneMemoryInjectionAccessForSession(sessionId: string, now: number = Date.now()): void {
-    const prefix = `${sessionId}\u0000`
-    const entries: Array<{ key: string; touchedAt: number }> = []
-    for (const [key, entry] of this.memoryInjectionAccessByTurn) {
-      if (!key.startsWith(prefix)) continue
-      if (now - entry.touchedAt > MEMORY_INJECTION_ACCESS_TURN_TTL_MS) {
-        this.memoryInjectionAccessByTurn.delete(key)
-        continue
-      }
-      entries.push({ key, touchedAt: entry.touchedAt })
-    }
-    if (entries.length <= MEMORY_INJECTION_ACCESS_MAX_TURNS_PER_SESSION) return
-    entries.sort(
-      (left, right) => left.touchedAt - right.touchedAt || left.key.localeCompare(right.key)
-    )
-    const deleteCount = entries.length - MEMORY_INJECTION_ACCESS_MAX_TURNS_PER_SESSION
-    for (const entry of entries.slice(0, deleteCount)) {
-      this.memoryInjectionAccessByTurn.delete(entry.key)
-    }
-  }
-
-  private triggerMemoryExtractionFromCompaction(sessionId: string, intent: CompactionIntent): void {
-    if (!this.memoryPort) return
-    const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
-    if (!this.memoryPort.isEnabled(agentId)) return
-    const toOrderSeq = Math.max(1, intent.targetCursorOrderSeq)
-    this.enqueueSessionExtraction(sessionId, async (epoch) => {
-      if (!this.isMemoryExtractionEpochCurrent(sessionId, epoch)) return
-      const cursor =
-        this.sqlitePresenter.deepchatSessionsTable.getMemoryCursorOrderSeq(sessionId) ?? 0
-      const window = this.buildMemoryExtractionWindow(sessionId, cursor, toOrderSeq)
-      if (!window || window.visibleTextChars <= 0) return
-      await this.runMemoryExtractionChunks(
-        sessionId,
-        {
-          chunks: window.chunks,
-          reason: 'compaction'
-        },
-        epoch
-      )
-    })
-  }
-
-  // Serializes extraction per session; sibling sessions never block each other.
-  private enqueueSessionExtraction(
-    sessionId: string,
-    task: (epoch: number) => Promise<void>,
-    expectedEpoch?: number
-  ): void {
-    const queueId = ++this.nextMemoryExtractionQueueId
-    this.memoryExtractionQueue.set(queueId, { sessionId, queuedAt: Date.now() })
-    this.observeMemoryExtractionQueue()
-    const prev = this.memoryExtractionChains.get(sessionId) ?? Promise.resolve()
-    const runTask = async () => {
-      try {
-        const currentEpoch = this.ensureMemoryExtractionEpoch(sessionId)
-        if (expectedEpoch !== undefined && currentEpoch !== expectedEpoch) return
-        await task(expectedEpoch ?? currentEpoch)
-      } finally {
-        this.memoryExtractionQueue.delete(queueId)
-        this.observeMemoryExtractionQueue()
-      }
-    }
-    const next = prev.then(runTask, runTask).catch((error) => {
-      logger.warn(`[DeepChatAgent] memory extraction chain error: ${String(error)}`)
-    })
-    this.memoryExtractionChains.set(sessionId, next)
-    void next.finally(() => {
-      if (this.memoryExtractionChains.get(sessionId) === next) {
-        this.memoryExtractionChains.delete(sessionId)
-        if (!this.runtimeState.has(sessionId)) {
-          this.memoryExtractionEpochs.delete(sessionId)
-        }
-      }
-    })
-  }
-
-  private observeMemoryExtractionQueue(): void {
-    const oldestQueuedAt = this.memoryExtractionQueue.values().next().value?.queuedAt ?? null
-    this.memoryPort?.observeExtractionQueue?.(this.memoryExtractionQueue.size, oldestQueuedAt)
-  }
-
-  private getLatestUserQuery(sessionId: string): string {
-    const tailOrderSeq = this.messageStore.getNextOrderSeq(sessionId) - 1
-    if (tailOrderSeq < 0) return ''
-    const records = this.messageStore.getMessagesUpToOrderSeq(sessionId, tailOrderSeq)
-    for (let i = records.length - 1; i >= 0; i -= 1) {
-      if (records[i].role === 'user') return this.extractPlainTextFromRecord(records[i])
-    }
-    return ''
-  }
-
-  // Fallback for sessions that never trigger compaction; cursor-gated so it is a no-op
-  // once the tail is caught up or the unseen delta is below the threshold.
-  private triggerMemoryExtractionFallback(sessionId: string): void {
-    if (!this.memoryPort) return
-    const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
-    if (!this.memoryPort.isEnabled(agentId)) return
-
-    // Read the cursor and build the span inside the queued task so a later task sees the
-    // cursor a prior one advanced, instead of re-extracting the same stale span.
-    this.enqueueSessionExtraction(sessionId, async (epoch) => {
-      if (!this.isMemoryExtractionEpochCurrent(sessionId, epoch)) return
-      const tailOrderSeq = this.messageStore.getNextOrderSeq(sessionId) - 1
-      const cursor =
-        this.sqlitePresenter.deepchatSessionsTable.getMemoryCursorOrderSeq(sessionId) ?? 0
-      if (tailOrderSeq <= cursor) return
-      const window = this.buildMemoryExtractionWindow(sessionId, cursor, tailOrderSeq)
-      if (!window || window.visibleTextChars <= 0) return
-      const delta = tailOrderSeq - cursor
-      const admit =
-        window.hadToolUse ||
-        delta >= MEMORY_FALLBACK_MIN_DELTA ||
-        (delta >= 2 && window.visibleTextChars >= MEMORY_MIN_AGENTIC_TEXT_CHARS)
-      if (!admit) return
-      await this.runMemoryExtractionChunks(
-        sessionId,
-        {
-          chunks: window.chunks,
-          reason: 'fallback'
-        },
-        epoch
-      )
-    })
-  }
-
-  private async runMemoryExtractionChunks(
-    sessionId: string,
-    options: {
-      chunks: readonly MemoryExtractionChunk[]
-      reason: 'compaction' | 'fallback'
-    },
-    epoch: number
-  ): Promise<void> {
-    if (!this.memoryPort) return
-    try {
-      const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
-      if (!this.memoryPort.isEnabled(agentId)) return
-      const state = this.runtimeState.get(sessionId)
-      if (!state) return
-      if (!this.isMemoryExtractionEpochCurrent(sessionId, epoch)) return
-
-      const currentTaskChunks = options.chunks.slice(0, MEMORY_EXTRACTION_CHUNKS_PER_QUEUE_TASK)
-      for (const chunk of currentTaskChunks) {
-        if (!this.memoryPort.isEnabled(agentId)) return
-        if (!this.isMemoryExtractionEpochCurrent(sessionId, epoch)) return
-        const cursor =
-          this.sqlitePresenter.deepchatSessionsTable.getMemoryCursorOrderSeq(sessionId) ?? 0
-        if (chunk.coveredThroughOrderSeq <= cursor) continue
-
-        const result = await this.memoryPort.extractAndStore({
-          agentId,
-          spanText: chunk.text,
-          model: { providerId: state.providerId, modelId: state.modelId },
-          sourceSession: sessionId,
-          sourceEntryIds: chunk.sourceEntryIds
-        })
-        if (!result.ok || !this.memoryPort.isEnabled(agentId)) return
-        if (!this.isMemoryExtractionEpochCurrent(sessionId, epoch)) return
-
-        if (chunk.cursorCommitOrderSeq !== null) {
-          this.sqlitePresenter.deepchatSessionsTable.updateMemoryCursorOrderSeq(
-            sessionId,
-            chunk.cursorCommitOrderSeq
-          )
-        }
-
-        if (result.createdIds.length > 0) {
-          this.sqlitePresenter.deepchatTapeEntriesTable.appendAnchor({
-            sessionId,
-            name: 'memory/extract',
-            state: {
-              memoryIds: result.createdIds,
-              count: result.createdIds.length,
-              reason: options.reason,
-              sourceEntryIds: chunk.sourceEntryIds,
-              coveredThroughOrderSeq: chunk.coveredThroughOrderSeq,
-              cursorCommitOrderSeq: chunk.cursorCommitOrderSeq,
-              fragments: chunk.fragments
-            }
-          })
-        }
-      }
-
-      const remaining = options.chunks.slice(MEMORY_EXTRACTION_CHUNKS_PER_QUEUE_TASK)
-      if (
-        remaining.length > 0 &&
-        this.memoryPort.isEnabled(agentId) &&
-        this.isMemoryExtractionEpochCurrent(sessionId, epoch)
-      ) {
-        this.enqueueSessionExtraction(
-          sessionId,
-          async (continuationEpoch) => {
-            await this.runMemoryExtractionChunks(
-              sessionId,
-              { chunks: remaining, reason: options.reason },
-              continuationEpoch
-            )
-          },
-          epoch
-        )
-      }
-    } catch (error) {
-      logger.warn(`[DeepChatAgent] memory extraction skipped: ${String(error)}`)
-    }
-  }
-
-  // Builds the extraction span from the effective tape view (retractions, replacements and
-  // tool-dedup already applied) over (from, to]. Span text and lineage are gathered from the
-  // same pass so a message that contributes no text never leaks into sourceEntryIds.
-  private buildMemoryExtractionWindow(
-    sessionId: string,
-    fromOrderSeqExclusive: number,
-    toOrderSeqInclusive: number
-  ): MemoryAdmissionWindow | null {
-    if (toOrderSeqInclusive <= fromOrderSeqExclusive) return null
-    const ingestionRange = this.listMemoryIngestionRange(
-      sessionId,
-      fromOrderSeqExclusive,
-      toOrderSeqInclusive
-    )
-    let selected: Array<{
-      messageId: string
-      orderSeq: number
-      entryId: number
-      role: 'user' | 'assistant'
-      content: string
-    }>
-    let hadToolUse: boolean
-
-    if (ingestionRange) {
-      selected = ingestionRange.rows.map((row) => ({
-        messageId: row.message_id,
-        orderSeq: row.order_seq,
-        entryId: row.entry_id,
-        role: row.role,
-        content: row.content
-      }))
-      hadToolUse = ingestionRange.rows.some((row) => row.had_tool_use === 1)
-    } else {
-      return null
-    }
-
-    if (selected.length === 0) return null
-    const messages: MemoryExtractionMessage[] = []
-    for (const entry of selected) {
-      const text = this.extractPlainTextFromRecord(entry)
-      if (!text) continue
-      messages.push({
-        orderSeq: entry.orderSeq,
-        entryId: entry.entryId,
-        role: entry.role,
-        text
-      })
-    }
-    const chunks = buildMemoryExtractionChunks(messages)
-    const selectedTailOrderSeq = selected.at(-1)?.orderSeq
-    const lastChunk = chunks.at(-1)
-    if (lastChunk && selectedTailOrderSeq !== undefined && ingestionRange.cursorCommitAllowed) {
-      lastChunk.cursorCommitOrderSeq = selectedTailOrderSeq
-      lastChunk.coveredThroughOrderSeq = selectedTailOrderSeq
-    }
-    if (!ingestionRange.cursorCommitAllowed) {
-      chunks.forEach((chunk) => {
-        chunk.cursorCommitOrderSeq = null
-      })
-    }
-    return {
-      chunks,
-      hadToolUse,
-      visibleTextChars: chunks.reduce((total, chunk) => total + chunk.text.length, 0)
-    }
-  }
-
-  private listMemoryIngestionRange(
-    sessionId: string,
-    fromOrderSeqExclusive: number,
-    toOrderSeqInclusive: number
-  ): { rows: DeepChatMemoryIngestionProjectionRow[]; cursorCommitAllowed: boolean } | null {
-    const projectionTable = this.sqlitePresenter.deepchatMemoryIngestionProjectionTable
-    if (
-      !projectionTable ||
-      typeof projectionTable.readCurrentRange !== 'function' ||
-      typeof projectionTable.replaceSession !== 'function' ||
-      typeof projectionTable.invalidateSession !== 'function'
-    ) {
-      return this.buildFullTapeIngestionRange(
-        sessionId,
-        fromOrderSeqExclusive,
-        toOrderSeqInclusive,
-        false
-      )
-    }
-
-    if (this.isMemoryIngestionProjectionCoolingDown(sessionId)) return null
-
-    try {
-      const current = projectionTable.readCurrentRange(
-        sessionId,
-        fromOrderSeqExclusive,
-        toOrderSeqInclusive
-      )
-      if (current.current) {
-        this.memoryIngestionProjectionRetryAfter.delete(sessionId)
-        return { rows: current.rows, cursorCommitAllowed: true }
-      }
-      return this.rebuildMemoryIngestionRange(
-        sessionId,
-        fromOrderSeqExclusive,
-        toOrderSeqInclusive,
-        current.maxEntryId
-      )
-    } catch (error) {
-      this.recordMemoryIngestionProjectionFailure(sessionId)
-      try {
-        projectionTable.invalidateSession(sessionId)
-      } catch {}
-      logger.warn(
-        `[DeepChatAgent] memory ingestion projection unavailable; falling back to Tape: ${String(error)}`
-      )
-      return this.buildFullTapeIngestionRange(
-        sessionId,
-        fromOrderSeqExclusive,
-        toOrderSeqInclusive,
-        false
-      )
-    }
-  }
-
-  private rebuildMemoryIngestionRange(
-    sessionId: string,
-    fromOrderSeqExclusive: number,
-    toOrderSeqInclusive: number,
-    maxEntryId: number
-  ): { rows: DeepChatMemoryIngestionProjectionRow[]; cursorCommitAllowed: boolean } | null {
-    const tapeRows = this.sqlitePresenter.deepchatTapeEntriesTable.getBySession(sessionId)
-    const projectionTable = this.sqlitePresenter.deepchatMemoryIngestionProjectionTable
-    const view = buildEffectiveTapeView(tapeRows)
-    const projectionRows = this.projectionRowsFromEffectiveView(sessionId, view)
-    try {
-      projectionTable.replaceSession(sessionId, projectionRows, maxEntryId)
-      this.memoryIngestionProjectionRetryAfter.delete(sessionId)
-      return {
-        rows: this.filterMemoryIngestionRange(
-          projectionRows,
-          fromOrderSeqExclusive,
-          toOrderSeqInclusive
-        ),
-        cursorCommitAllowed: true
-      }
-    } catch (error) {
-      this.recordMemoryIngestionProjectionFailure(sessionId)
-      try {
-        projectionTable.invalidateSession(sessionId)
-      } catch {}
-      logger.warn(
-        `[DeepChatAgent] memory ingestion projection rebuild failed; using Tape without cursor commit: ${String(error)}`
-      )
-      return {
-        rows: this.filterMemoryIngestionRange(
-          projectionRows,
-          fromOrderSeqExclusive,
-          toOrderSeqInclusive
-        ),
-        cursorCommitAllowed: false
-      }
-    }
-  }
-
-  private isMemoryIngestionProjectionCoolingDown(sessionId: string): boolean {
-    const retryAfter = this.memoryIngestionProjectionRetryAfter.get(sessionId)
-    if (retryAfter === undefined) return false
-    if (Date.now() < retryAfter) return true
-    this.memoryIngestionProjectionRetryAfter.delete(sessionId)
-    return false
-  }
-
-  private recordMemoryIngestionProjectionFailure(sessionId: string): void {
-    if (this.memoryIngestionProjectionRetryAfter.has(sessionId)) {
-      this.memoryIngestionProjectionRetryAfter.delete(sessionId)
-    } else if (
-      this.memoryIngestionProjectionRetryAfter.size >=
-      MEMORY_INGESTION_PROJECTION_FAILURE_CACHE_LIMIT
-    ) {
-      const oldestSessionId = this.memoryIngestionProjectionRetryAfter.keys().next().value
-      if (oldestSessionId !== undefined) {
-        this.memoryIngestionProjectionRetryAfter.delete(oldestSessionId)
-      }
-    }
-    this.memoryIngestionProjectionRetryAfter.set(
-      sessionId,
-      Date.now() + MEMORY_INGESTION_PROJECTION_RETRY_COOLDOWN_MS
-    )
-  }
-
-  private buildFullTapeIngestionRange(
-    sessionId: string,
-    fromOrderSeqExclusive: number,
-    toOrderSeqInclusive: number,
-    cursorCommitAllowed: boolean
-  ): { rows: DeepChatMemoryIngestionProjectionRow[]; cursorCommitAllowed: boolean } | null {
-    try {
-      const view = buildEffectiveTapeView(
-        this.sqlitePresenter.deepchatTapeEntriesTable.getBySession(sessionId)
-      )
-      const rows = this.projectionRowsFromEffectiveView(sessionId, view)
-      return {
-        rows: this.filterMemoryIngestionRange(rows, fromOrderSeqExclusive, toOrderSeqInclusive),
-        cursorCommitAllowed
-      }
-    } catch (error) {
-      logger.warn(`[DeepChatAgent] authoritative Tape fallback failed: ${String(error)}`)
-      return null
-    }
-  }
-
-  private projectionRowsFromEffectiveView(
-    sessionId: string,
-    view: ReturnType<typeof buildEffectiveTapeView>
-  ): DeepChatMemoryIngestionProjectionInput[] {
-    const messageIdsWithToolUse = new Set<string>()
-    for (const row of view.rows) {
-      const messageId = this.readToolCallMessageId(row)
-      if (messageId) messageIdsWithToolUse.add(messageId)
-    }
-    return view.messageEntries.map((entry) => {
-      if (entry.record.status !== 'sent' && entry.record.status !== 'error') {
-        throw new Error('Effective Tape view exposed a pending message during rebuild.')
-      }
-      return {
-        sessionId,
-        messageId: entry.record.id,
-        orderSeq: entry.record.orderSeq,
-        entryId: entry.entryId,
-        role: entry.record.role,
-        content: entry.record.content,
-        status: entry.record.status,
-        hadToolUse: messageIdsWithToolUse.has(entry.record.id)
-      }
-    })
-  }
-
-  private filterMemoryIngestionRange(
-    rows: readonly DeepChatMemoryIngestionProjectionInput[],
-    fromOrderSeqExclusive: number,
-    toOrderSeqInclusive: number
-  ): DeepChatMemoryIngestionProjectionRow[] {
-    return rows
-      .filter((row) => row.orderSeq > fromOrderSeqExclusive && row.orderSeq <= toOrderSeqInclusive)
-      .map((row) => ({
-        session_id: row.sessionId,
-        message_id: row.messageId,
-        order_seq: row.orderSeq,
-        entry_id: row.entryId,
-        role: row.role,
-        content: row.content,
-        status: row.status,
-        had_tool_use: row.hadToolUse ? 1 : 0
-      }))
-  }
-
-  private readToolCallMessageId(row: DeepChatTapeEntryRow): string | null {
-    if (row.kind !== 'tool_call') return null
-    try {
-      const payload = JSON.parse(row.payload_json) as { messageId?: unknown }
-      return typeof payload.messageId === 'string' && payload.messageId.length > 0
-        ? payload.messageId
-        : null
-    } catch {
-      return null
-    }
-  }
-
-  private extractPlainTextFromRecord(record: Pick<ChatMessageRecord, 'role' | 'content'>): string {
-    try {
-      const parsed = JSON.parse(record.content) as unknown
-      if (record.role === 'user') {
-        const text = (parsed as { text?: unknown })?.text
-        return typeof text === 'string' ? text.trim() : ''
-      }
-      if (Array.isArray(parsed)) {
-        return parsed
-          .map((block) => {
-            const b = block as {
-              type?: string
-              content?: unknown
-            }
-            if (b?.type === 'content' && typeof b.content === 'string') return b.content
-            return ''
-          })
-          .filter(Boolean)
-          .join(' ')
-          .trim()
-      }
-      return ''
-    } catch {
-      return ''
-    }
   }
 
   private isAcpBackedSubagentSession(sessionId: string, providerId?: string): boolean {
@@ -3054,7 +2790,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
 
     const resolvedProviderId =
-      providerId?.trim() || this.runtimeState.get(sessionId)?.providerId?.trim() || ''
+      providerId?.trim() || this.getDeepChatRuntimeState(sessionId)?.providerId?.trim() || ''
     return resolvedProviderId === 'acp'
   }
 
@@ -3110,14 +2846,12 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   private getAbortSignalForSession(sessionId: string): AbortSignal | undefined {
-    return (
-      this.activeGenerations.get(sessionId)?.abortController.signal ??
-      this.abortControllers.get(sessionId)?.signal
-    )
+    return this.getHydratedDeepChatInstance(sessionId)?.getAbortSignal()
   }
 
   private ensureSessionAbortController(sessionId: string): AbortController {
-    const activeGeneration = this.activeGenerations.get(sessionId)
+    const instance = this.getDeepChatInstance(sessionId)
+    const activeGeneration = instance.getActiveGeneration()
     if (activeGeneration) {
       if (!activeGeneration.abortController.signal.aborted) {
         return activeGeneration.abortController
@@ -3127,40 +2861,25 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       this.clearActiveGeneration(sessionId, activeGeneration.runId)
     }
 
-    const existing = this.abortControllers.get(sessionId)
+    const existing = instance.getAbortController()
     if (existing) {
       existing.abort()
     }
 
     const controller = new AbortController()
-    this.abortControllers.set(sessionId, controller)
+    instance.setAbortController(controller)
     return controller
   }
 
   private clearSessionAbortController(sessionId: string, controller?: AbortController): void {
-    const current = this.abortControllers.get(sessionId)
-    if (!current) {
-      return
-    }
-    if (controller && current !== controller) {
-      return
-    }
-    this.abortControllers.delete(sessionId)
-  }
-
-  private buildDeferredToolAbortKey(sessionId: string, toolCallId: string): string {
-    return `${sessionId}:${toolCallId}`
+    this.getHydratedDeepChatInstance(sessionId)?.clearAbortController(controller)
   }
 
   private registerDeferredToolAbortController(
     sessionId: string,
     toolCallId: string
   ): AbortController {
-    const key = this.buildDeferredToolAbortKey(sessionId, toolCallId)
-    this.deferredToolAbortControllers.get(key)?.abort()
-    const controller = new AbortController()
-    this.deferredToolAbortControllers.set(key, controller)
-    return controller
+    return this.getDeepChatInstance(sessionId).registerDeferredToolAbortController(toolCallId)
   }
 
   private clearDeferredToolAbortController(
@@ -3168,26 +2887,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     toolCallId: string,
     controller?: AbortController
   ): void {
-    const key = this.buildDeferredToolAbortKey(sessionId, toolCallId)
-    const current = this.deferredToolAbortControllers.get(key)
-    if (!current) {
-      return
-    }
-    if (controller && current !== controller) {
-      return
-    }
-    this.deferredToolAbortControllers.delete(key)
+    this.getHydratedDeepChatInstance(sessionId)?.clearDeferredToolAbortController(
+      toolCallId,
+      controller
+    )
   }
 
   private abortDeferredToolAbortControllers(sessionId: string): void {
-    const prefix = `${sessionId}:`
-    for (const [key, controller] of this.deferredToolAbortControllers) {
-      if (!key.startsWith(prefix)) {
-        continue
-      }
-      controller.abort()
-      this.deferredToolAbortControllers.delete(key)
-    }
+    this.getHydratedDeepChatInstance(sessionId)?.abortDeferredToolCalls()
   }
 
   private throwIfAbortRequested(signal?: AbortSignal): void {
@@ -3368,38 +3075,50 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   async getSessionCompactionState(sessionId: string): Promise<SessionCompactionState> {
-    const runtimeState = this.runtimeState.get(sessionId)
+    return await this.getSessionCompactionStateForInstance(sessionId)
+  }
+
+  private async getSessionCompactionStateForInstance(
+    sessionId: string,
+    expectedInstance?: DeepChatAgentInstance
+  ): Promise<SessionCompactionState> {
+    const hydratedInstance = expectedInstance ?? this.getHydratedDeepChatInstance(sessionId)
+    const runtimeState = hydratedInstance?.getRuntimeState()
     const session = this.sessionStore.get(sessionId)
     if (!runtimeState && !session) {
       throw new Error(`Session ${sessionId} not found`)
     }
+    const instance = hydratedInstance ?? this.getDeepChatInstance(sessionId)
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
 
     const persistedState = this.summaryStateToCompactionState(
       this.sessionStore.getSummaryState(sessionId)
     )
-    const currentCompactionState = this.sessionCompactionStates.get(sessionId)
+    const currentCompactionState = instance.getCompactionState()
     if (currentCompactionState?.status === 'compacting') {
-      return { ...currentCompactionState }
+      return currentCompactionState
     }
 
     if (
       currentCompactionState &&
       this.isSameCompactionState(currentCompactionState, persistedState)
     ) {
-      return { ...currentCompactionState }
+      return currentCompactionState
     }
 
-    this.sessionCompactionStates.set(sessionId, persistedState)
+    instance.setCompactionState(persistedState)
     return { ...persistedState }
   }
 
   async compactSession(
     sessionId: string
   ): Promise<{ compacted: boolean; state: SessionCompactionState }> {
-    const state = this.runtimeState.get(sessionId) ?? (await this.getSessionListState(sessionId))
+    const instance = this.getDeepChatInstance(sessionId)
+    const state = instance.getRuntimeState() ?? (await this.getSessionListState(sessionId))
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
     const modelConfig = this.configPresenter.getModelConfig(state.modelId, state.providerId)
     if (this.shouldBypassDeepChatContextBudget(state.providerId, modelConfig, state.modelId)) {
       throw new Error('Manual compaction is only available for DeepChat agent sessions.')
@@ -3411,9 +3130,12 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       throw new Error('Pending tool interactions must be resolved before compacting.')
     }
 
-    this.setSessionStatus(sessionId, 'generating')
+    this.setSessionStatusForInstance(sessionId, instance, 'generating')
     try {
-      const generationSettings = await this.getEffectiveSessionGenerationSettings(sessionId)
+      const generationSettings = await this.getEffectiveSessionGenerationSettings(
+        sessionId,
+        instance
+      )
       const interleavedReasoning = this.resolveInterleavedReasoningConfig(
         state.providerId,
         state.modelId,
@@ -3426,20 +3148,22 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         state.modelId
       )
       const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
-      const activeSkillNames = await this.resolveActiveSkillNamesForToolProfile(sessionId)
-      const projectDir = this.resolveProjectDir(sessionId)
+      const activeSkillNames = await this.resolveActiveSkillNamesForToolProfile(sessionId, instance)
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
+      const projectDir = this.resolveProjectDir(sessionId, undefined, instance)
       const tools = await this.loadToolDefinitionsForSession(
         sessionId,
         projectDir,
-        activeSkillNames
+        activeSkillNames,
+        instance
       )
       const toolReserveTokens = estimateToolReserveTokens(tools)
-      const baseSystemPrompt = await this.buildSystemPromptWithSkills(
-        sessionId,
-        generationSettings.systemPrompt,
-        tools,
+      const baseSystemPrompt = await this.createBasePromptAssembler(instance).assemble({
+        sessionId: toAppSessionId(sessionId),
+        configuredPrompt: generationSettings.systemPrompt,
+        toolDefinitions: tools,
         activeSkillNames
-      )
+      })
       const tapeReady = this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore)
 
       const intent = await this.compactionService.prepareForManualCompaction({
@@ -3457,47 +3181,66 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           interleavedReasoning.preserveEmptyReasoningContent === true,
         historyRecords: tapeReady.historyRecords
       })
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
 
       if (!intent) {
         return {
           compacted: false,
-          state: await this.getSessionCompactionState(sessionId)
+          state: await this.getSessionCompactionStateForInstance(sessionId, instance)
         }
       }
 
-      const summaryState = await this.applyCompactionIntent(sessionId, intent)
+      const summaryState = await this.applyCompactionIntent(sessionId, intent, undefined, instance)
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
       const compacted = summaryState.summaryUpdatedAt !== intent.previousState.summaryUpdatedAt
       return {
         compacted,
-        state: await this.getSessionCompactionState(sessionId)
+        state: await this.getSessionCompactionStateForInstance(sessionId, instance)
       }
     } finally {
-      this.setSessionStatus(sessionId, 'idle')
+      this.setSessionStatusForInstance(sessionId, instance, 'idle')
     }
   }
 
   async clearMessages(sessionId: string): Promise<void> {
+    const instance = this.getDeepChatInstance(sessionId)
     const state = await this.getSessionState(sessionId)
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
 
     await this.cancelGeneration(sessionId)
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
     this.pendingInputCoordinator.deleteBySession(sessionId)
     this.clearFirstTurnReady(sessionId)
-    this.resetMemoryExtractionCursor(sessionId)
-    this.memoryIngestionProjectionRetryAfter.delete(sessionId)
+    this.memoryCoordinator.resetExtractionCursor(sessionId)
+    this.memoryCoordinator.clearProjectionRetry(sessionId)
     this.messageStore.deleteBySession(sessionId)
+    instance.replacePendingInteractions([])
     this.sessionStore.resetTape(sessionId)
-    this.resetSummaryState(sessionId)
-    this.setSessionStatus(sessionId, 'idle')
+    this.resetSummaryState(sessionId, instance)
+    this.setSessionStatusForInstance(sessionId, instance, 'idle')
   }
 
   async retryMessage(sessionId: string, messageId: string): Promise<void> {
+    const prepared = await this.prepareRetryMessage(sessionId, messageId)
+    await this.processMessage(sessionId, prepared.content, {
+      projectDir: prepared.projectDir,
+      emitRefreshBeforeStream: true
+    })
+  }
+
+  async prepareRetryMessage(
+    sessionId: string,
+    messageId: string
+  ): Promise<{ content: SendMessageInput; projectDir: string | null }> {
+    const instance = this.getDeepChatInstance(sessionId)
     const state = await this.getSessionState(sessionId)
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
     if (state.status === 'generating') {
       throw new Error('Cannot retry while session is generating.')
     }
@@ -3521,19 +3264,20 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     if (!sourceUserMessage) {
       throw new Error('No user message found for retry.')
     }
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
 
     const retryInput = this.extractUserMessageInput(sourceUserMessage.content)
     if (!retryInput.text.trim()) {
       throw new Error('Cannot retry an empty user message.')
     }
 
-    this.invalidateSummaryIfNeeded(sessionId, sourceUserMessage.orderSeq)
-    this.invalidateMemoryExtractionFromOrderSeq(sessionId, sourceUserMessage.orderSeq)
+    this.invalidateSummaryIfNeeded(sessionId, sourceUserMessage.orderSeq, instance)
+    this.memoryCoordinator.invalidateFromOrderSeq(sessionId, sourceUserMessage.orderSeq)
     this.messageStore.deleteFromOrderSeq(sessionId, sourceUserMessage.orderSeq)
-    await this.processMessage(sessionId, retryInput, {
-      projectDir: this.resolveProjectDir(sessionId),
-      emitRefreshBeforeStream: true
-    })
+    return {
+      content: retryInput,
+      projectDir: this.resolveProjectDir(sessionId, undefined, instance)
+    }
   }
 
   async deleteMessage(sessionId: string, messageId: string): Promise<void> {
@@ -3545,11 +3289,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     if (target.sessionId !== sessionId) {
       throw new Error(`Message ${messageId} does not belong to session ${sessionId}`)
     }
+    const instance = this.getDeepChatInstance(sessionId)
 
     await this.cancelGeneration(sessionId)
-    this.invalidateSummaryIfNeeded(sessionId, target.orderSeq)
-    this.invalidateMemoryExtractionFromOrderSeq(sessionId, target.orderSeq)
+    this.throwIfStaleDeepChatInstance(sessionId, instance)
+    this.invalidateSummaryIfNeeded(sessionId, target.orderSeq, instance)
+    this.memoryCoordinator.invalidateFromOrderSeq(sessionId, target.orderSeq)
     this.messageStore.deleteFromOrderSeq(sessionId, target.orderSeq)
+    this.refreshPendingInteractionsFromStore(sessionId)
     this.setSessionStatus(sessionId, 'idle')
   }
 
@@ -3574,10 +3321,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     if (!nextText) {
       throw new Error('Edited message cannot be empty.')
     }
+    const instance = this.getDeepChatInstance(sessionId)
 
     const nextContent = this.buildEditedUserContent(target.content, nextText)
-    this.invalidateSummaryIfNeeded(sessionId, target.orderSeq)
-    this.invalidateMemoryExtractionFromOrderSeq(sessionId, target.orderSeq)
+    this.invalidateSummaryIfNeeded(sessionId, target.orderSeq, instance)
+    this.memoryCoordinator.invalidateFromOrderSeq(sessionId, target.orderSeq)
     this.messageStore.updateMessageContent(messageId, nextContent)
 
     const updated = await this.messageStore.getMessage(messageId)
@@ -3600,8 +3348,9 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       throw new Error(`Message ${targetMessageId} does not belong to session ${sourceSessionId}`)
     }
 
+    const targetInstance = this.getDeepChatInstance(targetSessionId)
     this.messageStore.cloneSentMessagesToSession(sourceSessionId, targetSessionId, target.orderSeq)
-    this.resetSummaryState(targetSessionId)
+    this.resetSummaryState(targetSessionId, targetInstance)
   }
 
   private async runStreamForMessage(args: {
@@ -3609,6 +3358,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     messageId: string
     messages: ChatMessage[]
     projectDir: string | null
+    resourceInstance?: DeepChatAgentInstance
     tools?: MCPToolDefinition[]
     baseSystemPrompt?: string
     initialBlocks?: AssistantMessageBlock[]
@@ -3628,6 +3378,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       messageId,
       messages,
       projectDir,
+      resourceInstance: providedResourceInstance,
       tools: providedTools,
       baseSystemPrompt,
       initialBlocks,
@@ -3639,7 +3390,9 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       preStreamStartedAt,
       onRunRegistered
     } = args
-    const state = this.runtimeState.get(sessionId)
+    const resourceInstance = providedResourceInstance ?? this.getDeepChatInstance(sessionId)
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    const state = resourceInstance.getRuntimeState()
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
@@ -3662,7 +3415,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
     ).getProviderInstance(state.providerId)
 
-    const generationSettings = await this.getEffectiveSessionGenerationSettings(sessionId)
+    const generationSettings = await this.getEffectiveSessionGenerationSettings(
+      sessionId,
+      resourceInstance
+    )
     const baseModelConfig = this.configPresenter.getModelConfig(state.modelId, state.providerId)
     const interleavedReasoning =
       providedInterleavedReasoning ??
@@ -3699,13 +3455,53 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     const llmProviderPresenter = this.llmProviderPresenter
     const shouldBypassContextBudget = this.shouldBypassDeepChatContextBudget.bind(this)
     const recoverContextPressure = this.recoverRequestContextPressure.bind(this)
-    const replaceLeadingSystemPromptInPlace = this.replaceLeadingSystemPromptInPlace.bind(this)
+    const contextCoordinator = this.contextCoordinator
     const persistMessageTrace = this.persistMessageTrace.bind(this)
     const appendTapeViewManifest = this.appendTapeViewManifest.bind(this)
-    let requestSeq = Math.max(
+    const initialRequestSeq = Math.max(
       this.tapeService.listViewManifestsByMessage(sessionId, messageId)[0]?.requestSeq ?? 0,
       this.messageStore.getMaxMessageTraceRequestSeq(messageId)
     )
+
+    const temperature = generationSettings.temperature
+    const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
+
+    const streamSessionActiveSkillNames = await this.resolveActiveSkillNamesForToolProfile(
+      sessionId,
+      resourceInstance
+    )
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    const streamExtensionPolicy = await this.resolveAgentExtensionPolicy(
+      sessionId,
+      resourceInstance
+    )
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    const getEffectiveRuntimeSkillNames = (baseSkillNames = streamSessionActiveSkillNames) =>
+      this.resolveEffectiveActiveSkillNames(baseSkillNames, resourceInstance)
+    const toolCatalog = this.createSessionToolCatalogPort(sessionId, projectDir, resourceInstance)
+    const tools =
+      providedTools ??
+      (await toolCatalog.resolve({ activeSkillNames: getEffectiveRuntimeSkillNames() }))
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    const supportsVision = this.supportsVision(state.providerId, state.modelId)
+    const supportsAudioInput = this.supportsAudioInput(state.providerId, state.modelId)
+
+    const abortController = new AbortController()
+    const loopRun = createLoopRun<StreamState>({
+      runId: `${sessionId}:${++this.nextRunSequence}`,
+      sessionId: toAppSessionId(sessionId),
+      messageId,
+      abortController,
+      messages,
+      streamState: createState(),
+      resources: {
+        toolDefinitions: tools,
+        activeSkillNames: getEffectiveRuntimeSkillNames()
+      },
+      initialRequestSeq
+    })
+    const activeGeneration = this.registerActiveGeneration(sessionId, loopRun, resourceInstance)
+    onRunRegistered?.(activeGeneration.runId)
     if (traceEnabled) {
       const traceAwareConfig = modelConfig as ModelConfig & {
         requestTraceContext?: {
@@ -3722,33 +3518,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
             providerId: state.providerId,
             modelId: state.modelId,
             payload,
-            requestSeq
+            requestSeq: loopRun.requestSeq
           })
         }
       }
     }
-
-    const temperature = generationSettings.temperature
-    const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
-
-    const streamSessionActiveSkillNames =
-      await this.resolveActiveSkillNamesForToolProfile(sessionId)
-    const streamExtensionPolicy = await this.resolveAgentExtensionPolicy(sessionId)
-    const getEffectiveRuntimeSkillNames = (baseSkillNames = streamSessionActiveSkillNames) =>
-      this.resolveEffectiveActiveSkillNames(baseSkillNames, sessionId)
-    const tools =
-      providedTools ??
-      (await this.loadToolDefinitionsForSession(
-        sessionId,
-        projectDir,
-        getEffectiveRuntimeSkillNames()
-      ))
-    const supportsVision = this.supportsVision(state.providerId, state.modelId)
-    const supportsAudioInput = this.supportsAudioInput(state.providerId, state.modelId)
-
-    const abortController = new AbortController()
-    const activeGeneration = this.registerActiveGeneration(sessionId, messageId, abortController)
-    onRunRegistered?.(activeGeneration.runId)
     const rateLimitMessageId = this.buildRateLimitStreamMessageId(activeGeneration.runId)
     const emitRateLimitWaitingMessage = this.emitRateLimitWaitingMessage.bind(this)
     const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
@@ -3772,22 +3546,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         projectDir
       })
 
-      let contextOverflowHandoffAttemptedForRun = false
-      let strictProviderOverflowRetryUsedForRun = false
       let reviewConversationMessages = messages
       const result = await processStream({
-        messages,
-        tools,
+        run: loopRun,
         onConversationMessagesChange: (nextMessages) => {
           reviewConversationMessages = nextMessages
         },
         maxProviderRounds,
-        refreshTools: async (activeSkillNames) =>
-          await this.loadToolDefinitionsForSession(
-            sessionId,
-            projectDir,
-            getEffectiveRuntimeSkillNames(activeSkillNames)
-          ),
+        toolCatalog,
         refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
           if (refreshSystemPrompt) {
             return await refreshSystemPrompt(
@@ -3795,15 +3561,15 @@ export class AgentRuntimePresenter implements IAgentImplementation {
               refreshedTools
             )
           }
-          const refreshedBasePrompt = await this.buildSystemPromptWithSkills(
-            sessionId,
-            generationSettings.systemPrompt,
-            refreshedTools,
-            getEffectiveRuntimeSkillNames(activeSkillNames)
-          )
-          return refreshedBasePrompt
+          return await this.createBasePromptAssembler(resourceInstance).assemble({
+            sessionId: toAppSessionId(sessionId),
+            configuredPrompt: generationSettings.systemPrompt,
+            toolDefinitions: refreshedTools,
+            activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames)
+          })
         },
-        toolPresenter: this.toolPresenter,
+        toolExecution: this.toolExecutionPort,
+        toolResults: this.toolResultPort,
         coreStream: async function* (
           requestMessages,
           requestModelId,
@@ -3817,307 +3583,115 @@ export class AgentRuntimePresenter implements IAgentImplementation {
             requestModelConfig,
             requestModelId
           )
+          const isTtsRequest = isTtsModelConfig(requestModelConfig) || isTtsModelId(requestModelId)
+          const effectiveRequestTools: MCPToolDefinition[] = isTtsRequest ? [] : requestTools
           let queuedForRateLimit = false
-
-          try {
-            let preflightContextRecoveryAttempted = false
-            let providerOverflowRecoveryAttempted = false
-            let providerContextOverflowRecoveryApplied = false
-            let strictProviderOverflowRetryPending = false
-            let manifestSummaryCursorOrderSeq = viewContext?.summaryCursorOrderSeq ?? 1
-            const isTtsRequest =
-              isTtsModelConfig(requestModelConfig) || isTtsModelId(requestModelId)
-            const effectiveRequestTools: MCPToolDefinition[] = isTtsRequest ? [] : requestTools
-            const effectiveRequestToolReserveTokens =
-              estimateToolReserveTokens(effectiveRequestTools)
-
-            const prepareProviderAttempt = async (options?: {
-              strictProviderOverflowRetry?: boolean
-            }): Promise<{
-              providerMessages: ChatMessage[]
-              providerMaxTokens: number
-            }> => {
-              let providerMessages = requestMessages
-              let providerMaxTokens = requestMaxTokens
-              let manifestRequestedMaxTokens = requestMaxTokens
-              let manifestReserveTokens = requestMaxTokens
-              let strictExtraReserveTokens = 0
-              let recoveredFromContextPressure =
-                providerContextOverflowRecoveryApplied ||
-                options?.strictProviderOverflowRetry === true
-
-              if (!requestBypassesContextBudget) {
-                let requestedMaxTokens = requestMaxTokens
-                if (options?.strictProviderOverflowRetry) {
-                  strictProviderOverflowRetryUsedForRun = true
-                  requestedMaxTokens = getProviderOverflowRetryMaxTokens(requestMaxTokens)
-                  strictExtraReserveTokens = getProviderOverflowRetryExtraReserve(
-                    requestModelConfig.contextLength
-                  )
-                  requestMessages.splice(
-                    0,
-                    requestMessages.length,
-                    ...fitRequestMessagesToContextWindow({
-                      messages: requestMessages,
-                      contextLength: requestModelConfig.contextLength,
-                      reserveTokens:
-                        requestedMaxTokens +
-                        effectiveRequestToolReserveTokens +
-                        strictExtraReserveTokens,
-                      minimumProtectedTailCount: 0
-                    })
-                  )
-                }
-
-                let requestPreflight = preflightRequestContext({
-                  messages: requestMessages,
-                  tools: effectiveRequestTools,
+          yield* contextCoordinator.streamProviderAttempts({
+            run: loopRun,
+            requestMessages,
+            modelId: requestModelId,
+            modelConfig: requestModelConfig,
+            temperature: requestTemperature,
+            maxTokens: requestMaxTokens,
+            tools: effectiveRequestTools,
+            bypassContextBudget: requestBypassesContextBudget,
+            fallbackContextLength: contextBudgetLength,
+            supportsVision,
+            supportsAudioInput,
+            traceDebugEnabled: traceEnabled,
+            viewContext,
+            budget: {
+              estimateToolReserveTokens,
+              preflight: ({ messages, tools, requestedMaxTokens }) =>
+                preflightRequestContext({
+                  messages,
+                  tools,
                   contextLength: requestModelConfig.contextLength,
                   requestedMaxTokens
+                }),
+              fitStrictRetry: ({ messages, reserveTokens }) =>
+                fitRequestMessagesToContextWindow({
+                  messages,
+                  contextLength: requestModelConfig.contextLength,
+                  reserveTokens,
+                  minimumProtectedTailCount: 0
+                }),
+              getStrictRetryMaxTokens: getProviderOverflowRetryMaxTokens,
+              getStrictRetryExtraReserve: () =>
+                getProviderOverflowRetryExtraReserve(requestModelConfig.contextLength),
+              buildOverflowError: (preflight) =>
+                new Error(buildRequestContextOverflowErrorMessage(preflight)),
+              buildOverflowAfterRecoveryError: (preflight) =>
+                new Error(buildProviderContextOverflowAfterRecoveryErrorMessage(preflight))
+            },
+            recovery: {
+              recover: async ({ requestMessages, requestedMaxTokens, tools }) =>
+                await recoverContextPressure({
+                  sessionId,
+                  providerId: state.providerId,
+                  modelId: requestModelId,
+                  requestMessages,
+                  baseSystemPrompt,
+                  contextLength: requestModelConfig.contextLength,
+                  requestedMaxTokens,
+                  tools,
+                  supportsVision,
+                  supportsAudioInput,
+                  interleavedReasoning,
+                  minimumProtectedTailCount: 0,
+                  signal: abortController.signal,
+                  expectedInstance: resourceInstance
                 })
-                if (
-                  !options?.strictProviderOverflowRetry &&
-                  (requestPreflight.requiresContextPressureRecovery ||
-                    !requestPreflight.fitsWithinContext)
-                ) {
-                  preflightContextRecoveryAttempted = true
-                  recoveredFromContextPressure = true
-                  if (!contextOverflowHandoffAttemptedForRun) {
-                    contextOverflowHandoffAttemptedForRun = true
-                    const recovered = await recoverContextPressure({
+            },
+            manifest: {
+              resolvePolicy: resolveTapeViewManifestPolicy,
+              append: (manifest) =>
+                appendTapeViewManifest({
+                  sessionId,
+                  messageId,
+                  ...manifest,
+                  providerId: state.providerId,
+                  modelId: requestModelId
+                }),
+              onAppendError: (error) =>
+                logger.warn(
+                  `[DeepChatAgent] Failed to persist tape view manifest: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                )
+            },
+            rateGate: {
+              wait: async (signal) => {
+                await llmProviderPresenter.executeWithRateLimit(state.providerId, {
+                  signal,
+                  onQueued: (snapshot) => {
+                    queuedForRateLimit = true
+                    emitRateLimitWaitingMessage(
                       sessionId,
-                      providerId: state.providerId,
-                      modelId: requestModelId,
-                      requestMessages: requestPreflight.messages,
-                      baseSystemPrompt,
-                      contextLength: requestModelConfig.contextLength,
-                      requestedMaxTokens: requestPreflight.requestedMaxTokens,
-                      tools: effectiveRequestTools,
-                      supportsVision,
-                      supportsAudioInput,
-                      interleavedReasoning,
-                      minimumProtectedTailCount: 0,
-                      signal: abortController.signal
-                    })
-                    if (recovered.summaryCursorOrderSeq !== undefined) {
-                      manifestSummaryCursorOrderSeq = recovered.summaryCursorOrderSeq
-                    }
-                    requestMessages.splice(0, requestMessages.length, ...recovered.messages)
-                    if (recovered.systemPrompt) {
-                      replaceLeadingSystemPromptInPlace(requestMessages, recovered.systemPrompt)
-                    }
-                    requestPreflight = preflightRequestContext({
-                      messages: requestMessages,
-                      tools: effectiveRequestTools,
-                      contextLength: requestModelConfig.contextLength,
-                      requestedMaxTokens
-                    })
-                    requestMessages.splice(0, requestMessages.length, ...requestPreflight.messages)
+                      rateLimitMessageId,
+                      activeGeneration.runId,
+                      snapshot
+                    )
                   }
+                })
+              },
+              clearWaiting: () => {
+                if (!queuedForRateLimit) {
+                  return
                 }
-                if (!requestPreflight.fitsWithinContext) {
-                  throw new Error(buildRequestContextOverflowErrorMessage(requestPreflight))
-                }
-                providerMessages = requestPreflight.messages
-                providerMaxTokens = requestPreflight.effectiveMaxTokens
-                manifestRequestedMaxTokens = requestPreflight.requestedMaxTokens
-                manifestReserveTokens =
-                  requestPreflight.requestedMaxTokens + strictExtraReserveTokens
-              }
-              if (providerMessages.length === 0) {
-                throw new Error('Request was not sent because the prompt became empty.')
-              }
-
-              const manifestTokenBudget = {
-                contextLength: requestModelConfig.contextLength ?? contextBudgetLength,
-                requestedMaxTokens: manifestRequestedMaxTokens,
-                effectiveMaxTokens: providerMaxTokens,
-                reserveTokens: manifestReserveTokens,
-                toolReserveTokens: effectiveRequestToolReserveTokens
-              }
-
-              requestSeq += 1
-              const isInitialViewRequest = requestSeq === 1 && Boolean(viewContext)
-              const manifestPolicy = resolveTapeViewManifestPolicy({
-                recoveredFromContextPressure,
-                isInitialViewRequest,
-                viewPolicy: viewContext?.policy,
-                viewPolicyVersion: viewContext?.policyVersion
-              })
-              appendTapeViewManifest({
-                sessionId,
-                messageId,
-                requestSeq,
-                taskType: isInitialViewRequest ? viewContext!.taskType : 'tool_loop',
-                policy: manifestPolicy.policy,
-                policyVersion: manifestPolicy.policyVersion,
-                messages: providerMessages,
-                tools: effectiveRequestTools,
-                tokenBudget: manifestTokenBudget,
-                providerId: state.providerId,
-                modelId: requestModelId,
-                selection:
-                  isInitialViewRequest && !recoveredFromContextPressure
-                    ? viewContext!.selection
-                    : undefined,
-                summaryCursorOrderSeq: manifestSummaryCursorOrderSeq,
-                supportsVision: viewContext?.supportsVision ?? supportsVision,
-                supportsAudioInput: viewContext?.supportsAudioInput ?? supportsAudioInput,
-                traceDebugEnabled: viewContext?.traceDebugEnabled ?? traceEnabled
-              })
-
-              return { providerMessages, providerMaxTokens }
-            }
-
-            const recoverProviderContextOverflow = async (
-              providerMessages: ChatMessage[],
-              providerMaxTokens: number
-            ): Promise<void> => {
-              contextOverflowHandoffAttemptedForRun = true
-              providerOverflowRecoveryAttempted = true
-              const recovered = await recoverContextPressure({
-                sessionId,
-                providerId: state.providerId,
-                modelId: requestModelId,
-                requestMessages: providerMessages,
-                baseSystemPrompt,
-                contextLength: requestModelConfig.contextLength,
-                requestedMaxTokens: providerMaxTokens,
-                tools: effectiveRequestTools,
-                supportsVision,
-                supportsAudioInput,
-                interleavedReasoning,
-                minimumProtectedTailCount: 0,
-                signal: abortController.signal
-              })
-              if (recovered.summaryCursorOrderSeq !== undefined) {
-                manifestSummaryCursorOrderSeq = recovered.summaryCursorOrderSeq
-              }
-              providerContextOverflowRecoveryApplied = true
-              strictProviderOverflowRetryPending = recovered.summaryCursorOrderSeq === undefined
-              requestMessages.splice(0, requestMessages.length, ...recovered.messages)
-              if (recovered.systemPrompt) {
-                replaceLeadingSystemPromptInPlace(requestMessages, recovered.systemPrompt)
-              }
-            }
-
-            const buildProviderOverflowRetryFailure = (
-              providerMessages: ChatMessage[],
-              providerMaxTokens: number
-            ): Error => {
-              const retryPreflight = preflightRequestContext({
-                messages: providerMessages,
-                tools: effectiveRequestTools,
-                contextLength: requestModelConfig.contextLength,
-                requestedMaxTokens: providerMaxTokens
-              })
-              return new Error(
-                retryPreflight.fitsWithinContext
-                  ? buildProviderContextOverflowAfterRecoveryErrorMessage(retryPreflight)
-                  : buildRequestContextOverflowErrorMessage(retryPreflight)
-              )
-            }
-
-            const scheduleStrictProviderOverflowRetry = (): boolean => {
-              if (strictProviderOverflowRetryUsedForRun || strictProviderOverflowRetryPending) {
-                return false
-              }
-              strictProviderOverflowRetryPending = true
-              return true
-            }
-
-            providerAttemptLoop: for (;;) {
-              const strictProviderOverflowRetry = strictProviderOverflowRetryPending
-              strictProviderOverflowRetryPending = false
-              const { providerMessages, providerMaxTokens } = await prepareProviderAttempt({
-                strictProviderOverflowRetry
-              })
-
-              await llmProviderPresenter.executeWithRateLimit(state.providerId, {
-                signal: abortController.signal,
-                onQueued: (snapshot) => {
-                  queuedForRateLimit = true
-                  emitRateLimitWaitingMessage(
-                    sessionId,
-                    rateLimitMessageId,
-                    activeGeneration.runId,
-                    snapshot
-                  )
-                }
-              })
-              if (queuedForRateLimit) {
                 clearRateLimitWaitingMessage(sessionId, rateLimitMessageId, activeGeneration.runId)
                 queuedForRateLimit = false
               }
-              if (abortController.signal.aborted) {
-                throw createAbortError()
-              }
-
-              logPreStreamBoundary()
-              let yieldedProviderEvent = false
-              try {
-                for await (const event of provider.coreStream(
-                  providerMessages,
-                  requestModelId,
-                  requestModelConfig,
-                  requestTemperature,
-                  providerMaxTokens,
-                  effectiveRequestTools
-                )) {
-                  if (
-                    !yieldedProviderEvent &&
-                    !requestBypassesContextBudget &&
-                    isFirstProviderContextOverflowEvent(event)
-                  ) {
-                    if (
-                      strictProviderOverflowRetryUsedForRun ||
-                      providerOverflowRecoveryAttempted
-                    ) {
-                      throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
-                    }
-                    if (
-                      preflightContextRecoveryAttempted ||
-                      contextOverflowHandoffAttemptedForRun
-                    ) {
-                      if (!scheduleStrictProviderOverflowRetry()) {
-                        throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
-                      }
-                      continue providerAttemptLoop
-                    }
-                    await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
-                    continue providerAttemptLoop
-                  }
-                  yieldedProviderEvent = true
-                  yield event
-                }
-                break
-              } catch (error) {
-                if (
-                  !yieldedProviderEvent &&
-                  !requestBypassesContextBudget &&
-                  isContextWindowErrorLike(error)
-                ) {
-                  if (strictProviderOverflowRetryUsedForRun || providerOverflowRecoveryAttempted) {
-                    throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
-                  }
-                  if (preflightContextRecoveryAttempted || contextOverflowHandoffAttemptedForRun) {
-                    if (!scheduleStrictProviderOverflowRetry()) {
-                      throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
-                    }
-                    continue providerAttemptLoop
-                  }
-                  await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
-                  continue providerAttemptLoop
-                }
-                throw error
-              }
-            }
-          } catch (error) {
-            if (queuedForRateLimit) {
-              clearRateLimitWaitingMessage(sessionId, rateLimitMessageId, activeGeneration.runId)
-            }
-            throw error
-          }
+            },
+            provider: {
+              stream: ({ messages, modelId, modelConfig, temperature, maxTokens, tools }) =>
+                provider.coreStream(messages, modelId, modelConfig, temperature, maxTokens, tools),
+              beforeStream: logPreStreamBoundary
+            },
+            isContextOverflowEvent: isFirstProviderContextOverflowEvent,
+            isContextOverflowError: isContextWindowErrorLike,
+            createAbortError
+          })
         },
         providerId: state.providerId,
         modelId: state.modelId,
@@ -4126,7 +3700,6 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         maxTokens,
         interleavedReasoning,
         permissionMode: state.permissionMode,
-        toolOutputGuard: this.toolOutputGuard,
         initialBlocks,
         onFirstProviderRoundReady: () => {
           if (
@@ -4138,58 +3711,31 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         },
         shouldYieldForPendingInput: () =>
           Boolean(this.pendingInputCoordinator.getNextSteerInput(sessionId)),
-        hooks: {
+        notificationObserver: {
+          notify: (notification) => {
+            this.dispatchHook(notification.event, {
+              sessionId,
+              messageId,
+              providerId: state.providerId,
+              modelId: state.modelId,
+              projectDir,
+              tool: { ...notification.tool },
+              permission:
+                notification.event === 'PermissionRequest' ? { ...notification.permission } : null
+            })
+          }
+        },
+        controls: {
           getActiveSkillNames: () => getEffectiveRuntimeSkillNames(),
           getEnabledSkillNames: () =>
             this.normalizeNullablePolicyList(streamExtensionPolicy.enabledSkillNames),
           activateSkill: async (skillName) => {
-            const policy = await this.resolveAgentExtensionPolicy(sessionId)
+            const policy = await this.resolveAgentExtensionPolicy(sessionId, resourceInstance)
             if (this.filterSkillNamesByPolicy([skillName], policy).length === 0) {
               return getEffectiveRuntimeSkillNames()
             }
-            await this.activateRuntimeSkill(sessionId, skillName)
+            resourceInstance.activateRuntimeSkill(skillName)
             return getEffectiveRuntimeSkillNames()
-          },
-          onPreToolUse: (tool) => {
-            this.dispatchHook('PreToolUse', {
-              sessionId,
-              messageId,
-              providerId: state.providerId,
-              modelId: state.modelId,
-              projectDir,
-              tool
-            })
-          },
-          onPostToolUse: (tool) => {
-            this.dispatchHook('PostToolUse', {
-              sessionId,
-              messageId,
-              providerId: state.providerId,
-              modelId: state.modelId,
-              projectDir,
-              tool
-            })
-          },
-          onPostToolUseFailure: (tool) => {
-            this.dispatchHook('PostToolUseFailure', {
-              sessionId,
-              messageId,
-              providerId: state.providerId,
-              modelId: state.modelId,
-              projectDir,
-              tool
-            })
-          },
-          onPermissionRequest: (permission, tool) => {
-            this.dispatchHook('PermissionRequest', {
-              sessionId,
-              messageId,
-              providerId: state.providerId,
-              modelId: state.modelId,
-              projectDir,
-              permission,
-              tool
-            })
           },
           onStreamingProviderPermission: (permission, tool, commitDecision) => {
             this.registerActiveProviderPermission(
@@ -4200,6 +3746,19 @@ export class AgentRuntimePresenter implements IAgentImplementation {
               commitDecision
             )
           },
+          autoGrantPermission: async (permission) => {
+            await this.requireSessionPermissionPort().approvePermission(sessionId, permission)
+          },
+          reviewToolPermission: async (request) =>
+            await this.reviewToolPermissionForAutoApprove(request, {
+              providerId: state.providerId,
+              modelId: state.modelId,
+              messages: reviewConversationMessages.slice(-AUTO_APPROVE_REVIEW_MAX_RECENT_MESSAGES),
+              signal: abortController.signal
+            }),
+          cacheImage: this.cacheImage
+        },
+        diagnostics: {
           onInterleavedReasoningGap: (gap) => {
             console.warn(
               `[DeepChatAgent] Interleaved reasoning gap detected for ${gap.providerId}/${gap.modelId}. Update provider DB metadata at ${gap.providerDbSourceUrl}.`
@@ -4219,37 +3778,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
                 body: gap
               }
             })
-          },
-          autoGrantPermission: async (permission) => {
-            await this.requireSessionPermissionPort().approvePermission(sessionId, permission)
-          },
-          reviewToolPermission: async (request) =>
-            await this.reviewToolPermissionForAutoApprove(request, {
-              providerId: state.providerId,
-              modelId: state.modelId,
-              messages: reviewConversationMessages.slice(-AUTO_APPROVE_REVIEW_MAX_RECENT_MESSAGES),
-              signal: abortController.signal
-            }),
-          normalizeToolResult: async (tool) =>
-            await this.normalizeToolResultContent({
-              sessionId: tool.sessionId,
-              toolCallId: tool.toolCallId,
-              toolName: tool.toolName,
-              toolArgs: tool.toolArgs,
-              content: tool.content,
-              isError: tool.isError,
-              abortSignal: abortController.signal
-            }),
-          cacheImage: this.cacheImage
+          }
         },
         io: {
-          sessionId,
-          requestId: activeGeneration.runId,
-          messageId,
-          providerId: state.providerId,
-          modelId: state.modelId,
           messageStore: this.messageStore,
-          abortSignal: abortController.signal
+          tapeRecorder: this.tapeService
         }
       })
       return {
@@ -4280,44 +3813,36 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     supportsAudioInput: boolean
     traceDebugEnabled: boolean
   }): void {
-    try {
-      const sourceMaps = this.tapeService.getViewManifestSourceMaps(
-        params.sessionId,
-        params.messageId
-      )
-      const manifest = createTapeViewManifest({
-        sessionId: params.sessionId,
-        messageId: params.messageId,
-        requestSeq: params.requestSeq,
-        taskType: params.taskType,
-        policy: params.policy,
-        policyVersion: params.policyVersion ?? null,
-        messages: params.messages,
-        tools: params.tools,
-        latestEntryId: sourceMaps.latestEntryId,
-        anchorEntryIds: sourceMaps.reconstructionAnchorEntryIds,
-        reconstructionAnchorEntryId: sourceMaps.reconstructionAnchorEntryId,
-        included: params.selection
-          ? buildIncludedRefs(params.selection, sourceMaps)
-          : buildRequestRefs(params.messages, sourceMaps),
-        excluded: params.selection ? buildExcludedRefs(params.selection, sourceMaps) : [],
-        summaryCursor: params.selection?.summaryCursor,
-        tokenBudget: params.tokenBudget,
-        providerId: params.providerId,
-        modelId: params.modelId,
-        summaryCursorOrderSeq: params.summaryCursorOrderSeq,
-        supportsVision: params.supportsVision,
-        supportsAudioInput: params.supportsAudioInput,
-        traceDebugEnabled: params.traceDebugEnabled
-      })
-      this.tapeService.appendViewManifest(manifest)
-    } catch (error) {
-      logger.warn(
-        `[DeepChatAgent] Failed to persist tape view manifest: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
-    }
+    const sourceMaps = this.tapeService.getViewManifestSourceMaps(
+      params.sessionId,
+      params.messageId
+    )
+    const manifest = createTapeViewManifest({
+      sessionId: params.sessionId,
+      messageId: params.messageId,
+      requestSeq: params.requestSeq,
+      taskType: params.taskType,
+      policy: params.policy,
+      policyVersion: params.policyVersion ?? null,
+      messages: params.messages,
+      tools: params.tools,
+      latestEntryId: sourceMaps.latestEntryId,
+      anchorEntryIds: sourceMaps.reconstructionAnchorEntryIds,
+      reconstructionAnchorEntryId: sourceMaps.reconstructionAnchorEntryId,
+      included: params.selection
+        ? buildIncludedRefs(params.selection, sourceMaps)
+        : buildRequestRefs(params.messages, sourceMaps),
+      excluded: params.selection ? buildExcludedRefs(params.selection, sourceMaps) : [],
+      summaryCursor: params.selection?.summaryCursor,
+      tokenBudget: params.tokenBudget,
+      providerId: params.providerId,
+      modelId: params.modelId,
+      summaryCursorOrderSeq: params.summaryCursorOrderSeq,
+      supportsVision: params.supportsVision,
+      supportsAudioInput: params.supportsAudioInput,
+      traceDebugEnabled: params.traceDebugEnabled
+    })
+    this.tapeService.appendViewManifest(manifest)
   }
 
   private async recoverRequestContextPressure(params: {
@@ -4334,91 +3859,85 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     interleavedReasoning: InterleavedReasoningConfig
     minimumProtectedTailCount: number
     signal: AbortSignal
+    expectedInstance: DeepChatAgentInstance
   }): Promise<{ messages: ChatMessage[]; systemPrompt?: string; summaryCursorOrderSeq?: number }> {
-    let messages = params.requestMessages
-    const systemPromptBase =
-      params.baseSystemPrompt ?? this.getLeadingSystemPrompt(params.requestMessages) ?? ''
-    const tapeReady = this.tapeService.ensureSessionTapeReady(params.sessionId, this.messageStore)
-    const intent = await this.compactionService.prepareForContextPressureRecovery({
-      sessionId: params.sessionId,
-      providerId: params.providerId,
-      modelId: params.modelId,
-      systemPrompt: systemPromptBase,
-      contextLength: params.contextLength,
-      reserveTokens: params.requestedMaxTokens,
-      extraReserveTokens: estimateToolReserveTokens(params.tools),
-      supportsVision: params.supportsVision,
-      supportsAudioInput: params.supportsAudioInput,
-      preserveInterleavedReasoning: params.interleavedReasoning.preserveReasoningContent,
-      preserveEmptyInterleavedReasoning:
-        params.interleavedReasoning.preserveEmptyReasoningContent === true,
-      projectedMessages: this.withoutLeadingSystemMessage(params.requestMessages),
-      historyRecords: tapeReady.historyRecords,
-      signal: params.signal
+    const toolReserveTokens = estimateToolReserveTokens(params.tools)
+    return await this.contextCoordinator.recoverFromPressure<SessionSummaryState>({
+      requestMessages: params.requestMessages,
+      baseSystemPrompt: params.baseSystemPrompt,
+      requestedMaxTokens: params.requestedMaxTokens,
+      toolReserveTokens,
+      minimumProtectedTailCount: params.minimumProtectedTailCount,
+      prepareCompaction: async (systemPrompt) => {
+        const prepared = await this.inputPreparationCoordinator.prepareExisting({
+          ensureHistory: () =>
+            this.tapeService.ensureSessionTapeReady(params.sessionId, this.messageStore)
+              .historyRecords,
+          prepareIntent: async (historyRecords) =>
+            await this.compactionService.prepareForContextPressureRecovery({
+              sessionId: params.sessionId,
+              providerId: params.providerId,
+              modelId: params.modelId,
+              systemPrompt,
+              contextLength: params.contextLength,
+              reserveTokens: params.requestedMaxTokens,
+              extraReserveTokens: toolReserveTokens,
+              supportsVision: params.supportsVision,
+              supportsAudioInput: params.supportsAudioInput,
+              preserveInterleavedReasoning: params.interleavedReasoning.preserveReasoningContent,
+              preserveEmptyInterleavedReasoning:
+                params.interleavedReasoning.preserveEmptyReasoningContent === true,
+              projectedMessages: this.withoutLeadingSystemMessage(params.requestMessages),
+              historyRecords,
+              signal: params.signal
+            }),
+          applyCompaction: async (intent) =>
+            await this.applyCompactionIntent(
+              params.sessionId,
+              intent,
+              { signal: params.signal },
+              params.expectedInstance
+            ),
+          readSummary: () => this.sessionStore.getSummaryState(params.sessionId),
+          afterCompactionApplyReturned: (intent) =>
+            this.memoryIngestionObserver.afterCompactionApplyReturned({
+              session: params.expectedInstance.getMemorySessionHandle(),
+              origin: 'context-pressure',
+              targetCursorOrderSeq: intent.targetCursorOrderSeq
+            }),
+          checkpoints: {
+            assertCurrent: () =>
+              this.throwIfStaleDeepChatInstance(params.sessionId, params.expectedInstance)
+          }
+        })
+        return prepared.intent ? { applied: true, summary: prepared.summary } : { applied: false }
+      },
+      assemblePostCompactionPrompt: async (summaryState, systemPrompt) =>
+        await this.postCompactionPromptAssembler.assemble({
+          memorySession: params.expectedInstance.getMemorySessionHandle(),
+          basePrompt: systemPrompt,
+          summaryText: summaryState.summaryText,
+          reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(
+            params.sessionId
+          ),
+          memoryQuery: this.memoryCoordinator.getLatestUserQuery(params.sessionId),
+          memoryMessageId: null
+        }),
+      getSummaryCursorOrderSeq: (summaryState) => summaryState.summaryCursorOrderSeq,
+      fit: ({ messages, reserveTokens, minimumProtectedTailCount }) =>
+        fitRequestMessagesToContextWindow({
+          messages,
+          contextLength: params.contextLength,
+          reserveTokens,
+          minimumProtectedTailCount
+        }),
+      assertCurrent: () =>
+        this.throwIfStaleDeepChatInstance(params.sessionId, params.expectedInstance)
     })
-
-    if (!intent) {
-      return { messages }
-    }
-
-    const summaryState = await this.applyCompactionIntent(params.sessionId, intent, {
-      signal: params.signal
-    })
-    this.triggerMemoryExtractionFromCompaction(params.sessionId, intent)
-    const systemPrompt = await this.appendMemoryInjection(
-      params.sessionId,
-      appendReconstructionAnchorStateSection(
-        appendSummarySection(systemPromptBase, summaryState.summaryText),
-        this.sessionStore.getReconstructionAnchorPromptState(params.sessionId)
-      ),
-      this.getLatestUserQuery(params.sessionId),
-      null
-    )
-    messages = this.replaceLeadingSystemPrompt(messages, systemPrompt)
-
-    return {
-      messages: fitRequestMessagesToContextWindow({
-        messages,
-        contextLength: params.contextLength,
-        reserveTokens: params.requestedMaxTokens + estimateToolReserveTokens(params.tools),
-        minimumProtectedTailCount: params.minimumProtectedTailCount
-      }),
-      systemPrompt,
-      summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq
-    }
-  }
-
-  private getLeadingSystemPrompt(messages: ChatMessage[]): string | null {
-    const first = messages[0]
-    return first?.role === 'system' && typeof first.content === 'string' ? first.content : null
   }
 
   private withoutLeadingSystemMessage(messages: ChatMessage[]): ChatMessage[] {
     return messages[0]?.role === 'system' ? messages.slice(1) : messages
-  }
-
-  private replaceLeadingSystemPrompt(messages: ChatMessage[], systemPrompt: string): ChatMessage[] {
-    if (!systemPrompt) {
-      return this.withoutLeadingSystemMessage(messages)
-    }
-    if (messages[0]?.role === 'system') {
-      return [{ ...messages[0], content: systemPrompt }, ...messages.slice(1)]
-    }
-    return [{ role: 'system', content: systemPrompt }, ...messages]
-  }
-
-  private replaceLeadingSystemPromptInPlace(messages: ChatMessage[], systemPrompt: string): void {
-    if (!systemPrompt) {
-      if (messages[0]?.role === 'system') {
-        messages.shift()
-      }
-      return
-    }
-    if (messages[0]?.role === 'system') {
-      messages[0] = { ...messages[0], content: systemPrompt }
-      return
-    }
-    messages.unshift({ role: 'system', content: systemPrompt })
   }
 
   private async drainPendingQueueIfPossible(
@@ -4427,6 +3946,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   ): Promise<boolean> {
     const state = await this.getSessionState(sessionId)
     if (!state || !this.canStartPendingQueueDrain(sessionId, state.status, reason)) {
+      return false
+    }
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    if (!instance) {
       return false
     }
 
@@ -4442,20 +3965,20 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     const pendingInputSource: ProcessPendingInputSource = nextSteerInput ? 'steer' : 'queue'
     let claimedInput: PendingSessionInputRecord
 
-    this.drainingPendingQueues.add(sessionId)
+    instance.markPendingQueueDrainStarted()
     try {
       claimedInput =
         pendingInputSource === 'steer'
           ? this.pendingInputCoordinator.claimSteerInput(sessionId, nextPendingInput.id)
           : this.pendingInputCoordinator.claimQueuedInput(sessionId, nextPendingInput.id)
     } catch (error) {
-      this.drainingPendingQueues.delete(sessionId)
+      instance.markPendingQueueDrainFinished()
       console.error('[DeepChatAgent] drainPendingQueueIfPossible error:', error)
       return false
     }
 
     if (pendingInputSource === 'steer') {
-      this.activeSteerPendingInputIds.delete(sessionId)
+      instance.clearActiveSteerPendingInputId()
     }
 
     void this.processMessage(sessionId, claimedInput.payload, {
@@ -4467,7 +3990,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         console.error('[DeepChatAgent] drainPendingQueueIfPossible error:', error)
       })
       .finally(async () => {
-        this.drainingPendingQueues.delete(sessionId)
+        instance.markPendingQueueDrainFinished()
         try {
           if (
             this.pendingInputCoordinator.hasPendingTurnInput(sessionId) &&
@@ -4508,7 +4031,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     if (this.hasPendingInteractions(sessionId)) {
       return false
     }
-    if (this.drainingPendingQueues.has(sessionId)) {
+    if (this.getHydratedDeepChatInstance(sessionId)?.isPendingQueueDraining()) {
       return false
     }
     return true
@@ -4529,12 +4052,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     pendingQueueItemId: string,
     pendingInputSource: ProcessPendingInputSource,
-    userMessageId: string | null
+    userMessageId: string | null,
+    expectedInstance = this.getDeepChatInstance(sessionId)
   ): void {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
     const userMessage = userMessageId ? this.messageStore.getMessage(userMessageId) : null
     if (userMessage) {
-      this.invalidateSummaryIfNeeded(sessionId, userMessage.orderSeq)
-      this.invalidateMemoryExtractionFromOrderSeq(sessionId, userMessage.orderSeq)
+      this.invalidateSummaryIfNeeded(sessionId, userMessage.orderSeq, expectedInstance)
+      this.memoryCoordinator.invalidateFromOrderSeq(sessionId, userMessage.orderSeq)
       this.messageStore.deleteFromOrderSeq(sessionId, userMessage.orderSeq)
     }
     this.releaseClaimedPendingInput(sessionId, pendingQueueItemId, pendingInputSource)
@@ -4566,33 +4091,21 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
   private registerActiveGeneration(
     sessionId: string,
-    messageId: string,
-    abortController: AbortController
-  ): ActiveGeneration {
-    const generation: ActiveGeneration = {
-      runId: `${sessionId}:${++this.nextRunSequence}`,
-      messageId,
-      abortController
-    }
-    this.activeGenerations.set(sessionId, generation)
-    this.abortControllers.set(sessionId, abortController)
-    return generation
+    run: LoopRun<StreamState>,
+    expectedInstance = this.getDeepChatInstance(sessionId)
+  ): LoopRun<StreamState> {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
+    return expectedInstance.registerActiveGeneration(run)
   }
 
   private clearActiveGeneration(sessionId: string, runId: string): void {
-    const activeGeneration = this.activeGenerations.get(sessionId)
-    if (!activeGeneration || activeGeneration.runId !== runId) {
-      return
-    }
-    this.activeGenerations.delete(sessionId)
-    this.clearActiveProviderPermissionsForSession(sessionId)
-    if (this.abortControllers.get(sessionId) === activeGeneration.abortController) {
-      this.abortControllers.delete(sessionId)
+    if (this.getHydratedDeepChatInstance(sessionId)?.clearActiveGeneration(runId)) {
+      this.clearActiveProviderPermissionsForSession(sessionId)
     }
   }
 
   private isActiveRun(sessionId: string, runId: string): boolean {
-    return this.activeGenerations.get(sessionId)?.runId === runId
+    return this.getHydratedDeepChatInstance(sessionId)?.isActiveRun(runId) ?? false
   }
 
   private buildRateLimitStreamMessageId(runId: string): string {
@@ -4647,7 +4160,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   private resolveStreamRequestId(sessionId: string, messageId: string): string {
-    const activeGeneration = this.activeGenerations.get(sessionId)
+    const activeGeneration = this.getHydratedDeepChatInstance(sessionId)?.getActiveGeneration()
     if (activeGeneration?.messageId === messageId) {
       return activeGeneration.runId
     }
@@ -4663,15 +4176,25 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     // Terminal hooks describe the run that just ended, so they fire even if a newer run has since
     // become the active one. Session status, however, must not be clobbered by a stale run — guard it.
     const isActive = !runId || this.isActiveRun(sessionId, runId)
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     if (!result || !result.status) {
       if (isActive) {
+        this.getHydratedDeepChatInstance(sessionId)?.replacePendingInteractions([])
         this.setSessionStatus(sessionId, 'idle')
       }
       return
     }
     if (result.status === 'paused') {
       if (isActive) {
+        const instance = this.getHydratedDeepChatInstance(sessionId)
+        if (instance && result.toolBatchExecutionState) {
+          instance.replacePendingToolBatch(
+            result.pendingInteractions ?? [],
+            result.toolBatchExecutionState
+          )
+        } else {
+          instance?.replacePendingInteractions(result.pendingInteractions ?? [])
+        }
         this.setSessionStatus(sessionId, 'generating')
       }
       return
@@ -4679,6 +4202,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     if (result.status === 'completed') {
       this.dispatchTerminalHooks(sessionId, state, result)
       if (isActive) {
+        this.getHydratedDeepChatInstance(sessionId)?.replacePendingInteractions([])
         this.setSessionStatus(sessionId, 'idle')
       }
       return
@@ -4686,12 +4210,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     if (result.status === 'aborted') {
       this.dispatchTerminalHooks(sessionId, state, result)
       if (isActive) {
+        this.getHydratedDeepChatInstance(sessionId)?.replacePendingInteractions([])
         this.setSessionStatus(sessionId, 'idle')
       }
       return
     }
     this.dispatchTerminalHooks(sessionId, state, result)
     if (isActive) {
+      this.getHydratedDeepChatInstance(sessionId)?.replacePendingInteractions([])
       this.setSessionStatus(sessionId, 'error')
     }
   }
@@ -4702,25 +4228,29 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     initialBlocks: AssistantMessageBlock[],
     budgetToolCall?: ResumeBudgetToolCall | null
   ): Promise<boolean> {
-    if (this.resumingMessages.has(messageId)) {
+    const instance = this.getDeepChatInstance(sessionId)
+    if (!instance.tryBeginResume(messageId)) {
       return false
     }
-    this.resumingMessages.add(messageId)
     let preStreamAbortController: AbortController | null = null
     let preStreamAbortSignal: AbortSignal | undefined
     let streamRunId: string | undefined
 
     try {
-      const state = this.runtimeState.get(sessionId)
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
+      const state = instance.getRuntimeState()
       if (!state) {
         throw new Error(`Session ${sessionId} not found`)
       }
 
-      this.setSessionStatus(sessionId, 'generating')
+      this.setSessionStatusForInstance(sessionId, instance, 'generating')
       preStreamAbortController = this.ensureSessionAbortController(sessionId)
       preStreamAbortSignal = preStreamAbortController.signal
       this.throwIfAbortRequested(preStreamAbortSignal)
-      const generationSettings = await this.getEffectiveSessionGenerationSettings(sessionId)
+      const generationSettings = await this.getEffectiveSessionGenerationSettings(
+        sessionId,
+        instance
+      )
       const modelConfig = this.configPresenter.getModelConfig(state.modelId, state.providerId)
       const useContextBudget = this.shouldUseDeepChatContextBudget(
         state.providerId,
@@ -4740,28 +4270,38 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         state.modelId
       )
       const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
-      const projectDir = this.resolveProjectDir(sessionId)
-      const activeSkillNames = await this.resolveActiveSkillNamesForToolProfile(sessionId)
+      const projectDir = this.resolveProjectDir(sessionId, undefined, instance)
+      const activeSkillNames = await this.resolveActiveSkillNamesForToolProfile(sessionId, instance)
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
       const tools = await this.loadToolDefinitionsForSession(
         sessionId,
         projectDir,
-        activeSkillNames
+        activeSkillNames,
+        instance
       )
       const toolReserveTokens = estimateToolReserveTokens(tools)
       this.throwIfAbortRequested(preStreamAbortSignal)
-      const baseSystemPrompt = await this.buildSystemPromptWithSkills(
-        sessionId,
-        generationSettings.systemPrompt,
-        tools,
+      const baseSystemPrompt = await this.createBasePromptAssembler(instance).assemble({
+        sessionId: toAppSessionId(sessionId),
+        configuredPrompt: generationSettings.systemPrompt,
+        toolDefinitions: tools,
         activeSkillNames
-      )
+      })
       this.throwIfAbortRequested(preStreamAbortSignal)
-      const tapeReady = this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore)
-      const resumeTargetOrderSeq =
-        tapeReady.historyRecords.find((record) => record.id === messageId)?.orderSeq ??
-        this.messageStore.getMessage(messageId)?.orderSeq
-      const summaryState = useContextBudget
-        ? await this.resolveCompactionStateForResumeTurn({
+      let resumeTargetOrderSeq: number | undefined
+      const preparedInput = await this.inputPreparationCoordinator.prepareExisting({
+        ensureHistory: () =>
+          this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords,
+        refreshHistory: () =>
+          this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords,
+        prepareIntent: async (historyRecords) => {
+          resumeTargetOrderSeq =
+            historyRecords.find((record) => record.id === messageId)?.orderSeq ??
+            this.messageStore.getMessage(messageId)?.orderSeq
+          if (!useContextBudget) {
+            return null
+          }
+          return await this.compactionService.prepareForResumeTurn({
             sessionId,
             messageId,
             providerId: state.providerId,
@@ -4775,41 +4315,65 @@ export class AgentRuntimePresenter implements IAgentImplementation {
             preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
             preserveEmptyInterleavedReasoning:
               interleavedReasoning.preserveEmptyReasoningContent === true,
-            historyRecords: tapeReady.historyRecords,
-            compactionMessageOrderSeq: resumeTargetOrderSeq,
+            historyRecords,
             signal: preStreamAbortSignal
           })
-        : this.sessionStore.getSummaryState(sessionId)
-      this.throwIfAbortRequested(preStreamAbortSignal)
-      const resumeTapeReady = this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore)
-      const systemPrompt = await this.appendMemoryInjection(
-        sessionId,
-        appendReconstructionAnchorStateSection(
-          appendSummarySection(baseSystemPrompt, summaryState.summaryText),
-          this.sessionStore.getReconstructionAnchorPromptState(sessionId)
-        ),
-        this.getLatestUserQuery(sessionId),
-        messageId
-      )
-      const resumeContextBuild = buildTapeResumeView({
-        sessionId,
-        assistantMessageId: messageId,
-        systemPrompt,
-        contextLength: contextBudgetLength,
-        reserveTokens: maxTokens,
-        messageStore: this.messageStore,
-        supportsVision: this.supportsVision(state.providerId, state.modelId),
-        historyRecords: resumeTapeReady.historyRecords,
-        options: {
-          summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
-          fallbackProtectedTurnCount: 1,
-          supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
-          extraReserveTokens: toolReserveTokens,
-          preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-          preserveEmptyInterleavedReasoning:
-            interleavedReasoning.preserveEmptyReasoningContent === true
+        },
+        applyCompaction: async (intent) =>
+          await this.applyCompactionIntent(
+            sessionId,
+            intent,
+            {
+              compactionMessageOrderSeq: resumeTargetOrderSeq,
+              shiftMessagesFromCompactionOrderSeq: resumeTargetOrderSeq !== undefined,
+              signal: preStreamAbortSignal
+            },
+            instance
+          ),
+        readSummary: () => this.sessionStore.getSummaryState(sessionId),
+        checkpoints: {
+          assertCurrent: () => this.throwIfStaleDeepChatInstance(sessionId, instance),
+          beforeHistoryRefresh: () => {
+            this.throwIfStaleDeepChatInstance(sessionId, instance)
+            this.throwIfAbortRequested(preStreamAbortSignal)
+          }
         }
       })
+      const summaryState = preparedInput.summary
+      this.throwIfAbortRequested(preStreamAbortSignal)
+      const preparedContext = await this.contextCoordinator.assemble({
+        assemblePostCompactionPrompt: async () =>
+          await this.postCompactionPromptAssembler.assemble({
+            memorySession: instance.getMemorySessionHandle(),
+            basePrompt: baseSystemPrompt,
+            summaryText: summaryState.summaryText,
+            reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
+            memoryQuery: this.memoryCoordinator.getLatestUserQuery(sessionId),
+            memoryMessageId: messageId
+          }),
+        buildView: (systemPrompt) =>
+          buildTapeResumeView({
+            sessionId,
+            assistantMessageId: messageId,
+            systemPrompt,
+            contextLength: contextBudgetLength,
+            reserveTokens: maxTokens,
+            messageStore: this.messageStore,
+            supportsVision: this.supportsVision(state.providerId, state.modelId),
+            historyRecords: preparedInput.history,
+            options: {
+              summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
+              fallbackProtectedTurnCount: 1,
+              supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
+              extraReserveTokens: toolReserveTokens,
+              preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+              preserveEmptyInterleavedReasoning:
+                interleavedReasoning.preserveEmptyReasoningContent === true
+            }
+          }),
+        assertCurrent: () => this.throwIfStaleDeepChatInstance(sessionId, instance)
+      })
+      const resumeContextBuild = preparedContext.view
       let resumeContext = resumeContextBuild.messages
       if (budgetToolCall?.id && budgetToolCall.name && useContextBudget) {
         const resumeBudget = this.fitResumeBudgetForToolCall({
@@ -4823,6 +4387,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
         if (resumeBudget?.kind === 'tool_error') {
           await this.toolOutputGuard.cleanupOffloadedOutput(budgetToolCall.offloadPath)
+          this.throwIfStaleDeepChatInstance(sessionId, instance)
           this.updateToolCallResponse(initialBlocks, budgetToolCall.id, resumeBudget.message, true)
           this.messageStore.updateAssistantContent(messageId, initialBlocks)
           this.emitMessageRefresh(sessionId, messageId)
@@ -4833,6 +4398,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           )
         } else if (resumeBudget?.kind === 'terminal_error') {
           await this.toolOutputGuard.cleanupOffloadedOutput(budgetToolCall.offloadPath)
+          this.throwIfStaleDeepChatInstance(sessionId, instance)
           this.updateToolCallResponse(initialBlocks, budgetToolCall.id, resumeBudget.message, true)
           this.messageStore.setMessageError(messageId, initialBlocks)
           this.emitMessageRefresh(sessionId, messageId)
@@ -4844,16 +4410,23 @@ export class AgentRuntimePresenter implements IAgentImplementation {
             error: resumeBudget.message
           })
           this.setSessionStatus(sessionId, 'error')
+          this.memoryIngestionObserver.afterTurnSettled({
+            session: instance.getMemorySessionHandle(),
+            origin: 'resume',
+            outcome: { kind: 'returned', status: 'error' }
+          })
           return false
         }
       }
 
       this.throwIfAbortRequested(preStreamAbortSignal)
+      this.throwIfStaleDeepChatInstance(sessionId, instance)
       const streamResult = await this.runStreamForMessage({
         sessionId,
         messageId,
         messages: resumeContext,
         projectDir,
+        resourceInstance: instance,
         tools,
         baseSystemPrompt,
         initialBlocks,
@@ -4885,10 +4458,24 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       }
       if (result?.status === 'completed' || result?.status === 'aborted') {
         void this.drainPendingQueueIfPossible(sessionId, 'completed')
-        this.triggerMemoryExtractionFallback(sessionId)
+      }
+      if (result) {
+        this.memoryIngestionObserver.afterTurnSettled({
+          session: instance.getMemorySessionHandle(),
+          origin: 'resume',
+          outcome: { kind: 'returned', status: result.status }
+        })
       }
       return true
     } catch (error) {
+      this.memoryIngestionObserver.afterTurnSettled({
+        session: instance.getMemorySessionHandle(),
+        origin: 'resume',
+        outcome: { kind: 'thrown', error }
+      })
+      if (this.isStaleDeepChatInstanceError(error)) {
+        return false
+      }
       console.error('[DeepChatAgent] resumeAssistantMessage error:', error)
       if (this.isAbortError(error) || preStreamAbortSignal?.aborted) {
         this.clearSessionAbortController(sessionId, preStreamAbortController ?? undefined)
@@ -4905,7 +4492,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       throw error
     } finally {
       this.clearSessionAbortController(sessionId, preStreamAbortController ?? undefined)
-      this.resumingMessages.delete(messageId)
+      instance.finishResume(messageId)
     }
   }
 
@@ -4913,17 +4500,21 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     basePrompt: string,
     toolDefinitions: MCPToolDefinition[],
-    activeSkillNamesOverride?: string[]
+    activeSkillNamesOverride?: string[],
+    resourceInstance = this.getDeepChatInstance(sessionId)
   ): Promise<string> {
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
     const normalizedBase = basePrompt?.trim() ?? ''
-    const state = this.runtimeState.get(sessionId)
+    const state = resourceInstance.getRuntimeState()
     const providerId = state?.providerId?.trim() || 'unknown-provider'
     const modelId = state?.modelId?.trim() || 'unknown-model'
     if (this.isAcpBackedSubagentSession(sessionId, providerId)) {
       return normalizedBase
     }
 
-    const workdir = this.resolveProjectDir(sessionId)
+    const workdir = resourceInstance.hasProjectDir()
+      ? resourceInstance.getProjectDir()
+      : this.resolveProjectDir(sessionId, undefined, resourceInstance)
     const now = new Date()
     const dayKey = this.buildLocalDayKey(now)
 
@@ -4939,7 +4530,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     const skillDraftSuggestionsEnabled =
       this.configPresenter.getSkillDraftSuggestionsEnabled?.() ?? false
 
-    const extensionPolicy = await this.resolveAgentExtensionPolicy(sessionId)
+    const extensionPolicy = await this.resolveAgentExtensionPolicy(sessionId, resourceInstance)
     const allowedSkillNameSet =
       extensionPolicy.enabledSkillNames === null || extensionPolicy.enabledSkillNames === undefined
         ? null
@@ -5011,7 +4602,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     })
     this.logSlowPreStreamStep(sessionId, 'system-prompt.fingerprint', stepStartedAt)
 
-    const cachedPrompt = this.systemPromptCache.get(sessionId)
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    const cachedPrompt = resourceInstance.getSystemPromptCache()
     if (
       cachedPrompt &&
       cachedPrompt.dayKey === dayKey &&
@@ -5107,7 +4699,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     ])
     this.logSlowPreStreamStep(sessionId, 'system-prompt.compose', stepStartedAt)
 
-    this.systemPromptCache.set(sessionId, {
+    this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    resourceInstance.setSystemPromptCache({
       prompt: composedPrompt,
       dayKey,
       fingerprint
@@ -5280,48 +4873,13 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     ].join('\n')
   }
 
-  private resetRuntimeActivatedSkills(sessionId: string): void {
-    this.runtimeActivatedSkillsBySession.delete(sessionId)
-  }
-
-  private setRuntimeActivatedSkills(sessionId: string, skillNames: string[]): void {
-    const normalizedSkillNames = this.normalizeSkillNames(skillNames)
-    if (normalizedSkillNames.length === 0) {
-      return
-    }
-    this.runtimeActivatedSkillsBySession.set(sessionId, new Set(normalizedSkillNames))
-  }
-
-  private getRuntimeActivatedSkills(sessionId: string): string[] {
-    return this.normalizeSkillNames(
-      Array.from(this.runtimeActivatedSkillsBySession.get(sessionId) ?? [])
-    )
-  }
-
-  private async activateRuntimeSkill(sessionId: string, skillName: string): Promise<string[]> {
-    const normalizedSkillName = skillName.trim()
-    if (!normalizedSkillName) {
-      return this.getRuntimeActivatedSkills(sessionId)
-    }
-
-    let activeSkills = this.runtimeActivatedSkillsBySession.get(sessionId)
-    if (!activeSkills) {
-      activeSkills = new Set<string>()
-      this.runtimeActivatedSkillsBySession.set(sessionId, activeSkills)
-    }
-    activeSkills.add(normalizedSkillName)
-    this.invalidateSystemPromptCache(sessionId)
-    this.invalidateToolProfileCache(sessionId)
-    return this.getRuntimeActivatedSkills(sessionId)
-  }
-
   private resolveEffectiveActiveSkillNames(
     sessionActiveSkillNames: string[],
-    sessionId: string
+    instance: DeepChatAgentInstance
   ): string[] {
     return this.normalizeSkillNames([
       ...sessionActiveSkillNames,
-      ...this.getRuntimeActivatedSkills(sessionId)
+      ...instance.getRuntimeActivatedSkills()
     ])
   }
 
@@ -5416,27 +4974,28 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   private invalidateSystemPromptCache(sessionId: string): void {
-    this.systemPromptCache.delete(sessionId)
+    this.getHydratedDeepChatInstance(sessionId)?.invalidateSystemPromptCache()
   }
 
   private invalidateToolProfileCache(sessionId: string): void {
-    this.toolProfileCache.delete(sessionId)
+    this.getHydratedDeepChatInstance(sessionId)?.invalidateToolProfileCache()
   }
 
   private readonly handleToolRegistryChanged = (): void => {
-    this.toolRegistryRevision += 1
-    this.toolProfileCache.clear()
+    this.deepChatRuntime.markToolRegistryChanged()
   }
 
   private async getEffectiveSessionGenerationSettings(
-    sessionId: string
+    sessionId: string,
+    expectedInstance = this.getDeepChatInstance(sessionId)
   ): Promise<SessionGenerationSettings> {
-    const cached = this.sessionGenerationSettings.get(sessionId)
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
+    const cached = expectedInstance.getGenerationSettings()
     if (cached) {
       return { ...cached }
     }
 
-    const state = this.runtimeState.get(sessionId)
+    const state = expectedInstance.getRuntimeState()
     const dbSession = this.sessionStore.get(sessionId) as PersistedSessionGenerationRow | undefined
     const providerId = state?.providerId ?? dbSession?.provider_id
     const modelId = state?.modelId ?? dbSession?.model_id
@@ -5447,7 +5006,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
     const persistedPatch = dbSession ? this.mapPersistedGenerationPatch(dbSession) : {}
     const sanitized = await this.sanitizeGenerationSettings(providerId, modelId, persistedPatch)
-    this.sessionGenerationSettings.set(sessionId, sanitized)
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
+    expectedInstance.setGenerationSettings(sanitized)
     return { ...sanitized }
   }
 
@@ -6176,20 +5736,21 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     input: SendMessageInput
   ): PendingSessionInputRecord {
-    const mergeItemId = this.activeSteerPendingInputIds.get(sessionId) ?? null
+    const instance = this.getDeepChatInstance(sessionId)
+    const mergeItemId = instance.getActiveSteerPendingInputId() ?? null
     try {
       const record = this.pendingInputCoordinator.queueSteerInput(sessionId, input, {
         mergeItemId
       })
-      this.activeSteerPendingInputIds.set(sessionId, record.id)
+      instance.setActiveSteerPendingInputId(record.id)
       return record
     } catch (error) {
       if (!mergeItemId) {
         throw error
       }
-      this.activeSteerPendingInputIds.delete(sessionId)
+      instance.clearActiveSteerPendingInputId()
       const record = this.pendingInputCoordinator.queueSteerInput(sessionId, input)
-      this.activeSteerPendingInputIds.set(sessionId, record.id)
+      instance.setActiveSteerPendingInputId(record.id)
       return record
     }
   }
@@ -6267,7 +5828,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
   private collectPendingInteractionEntries(
     messageId: string,
-    blocks: AssistantMessageBlock[]
+    blocks: AssistantMessageBlock[],
+    orderOffset = 0
   ): PendingInteractionEntry[] {
     const entries: PendingInteractionEntry[] = []
 
@@ -6296,6 +5858,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           blockIndex: index,
           interaction: {
             type: 'question',
+            origin: this.isSkillDraftConfirmationBlock(block)
+              ? 'skill-draft-confirmation'
+              : 'question',
+            order: orderOffset + entries.length,
             messageId,
             toolCallId,
             toolName,
@@ -6321,6 +5887,11 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         blockIndex: index,
         interaction: {
           type: 'permission',
+          origin:
+            this.parsePermissionPayload(block)?.providerId?.trim() === 'acp'
+              ? 'acp-permission'
+              : 'pre-check-permission',
+          order: orderOffset + entries.length,
           messageId,
           toolCallId,
           toolName,
@@ -6334,6 +5905,39 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
 
     return entries
+  }
+
+  private replacePendingInteractions(
+    instance: DeepChatAgentInstance,
+    entries: readonly PendingInteractionEntry[]
+  ): void {
+    instance.replacePendingInteractions(
+      entries.map(({ interaction }) => ({
+        messageId: interaction.messageId,
+        toolCallId: interaction.toolCallId,
+        origin: interaction.origin,
+        order: interaction.order
+      }))
+    )
+  }
+
+  private reconcilePendingInteractionEntries(
+    instance: DeepChatAgentInstance,
+    entries: PendingInteractionEntry[]
+  ): PendingInteractionEntry[] {
+    const knownInteractions = instance.getPendingInteractions()
+    for (const entry of entries) {
+      const known = knownInteractions.find(
+        (interaction) =>
+          interaction.messageId === entry.interaction.messageId &&
+          interaction.toolCallId === entry.interaction.toolCallId
+      )
+      if (known) {
+        entry.interaction.origin = known.origin
+        entry.interaction.order = known.order
+      }
+    }
+    return entries.sort((left, right) => left.interaction.order - right.interaction.order)
   }
 
   private parseQuestionOptions(raw: unknown): Array<{ label: string; description?: string }> {
@@ -6434,15 +6038,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       return
     }
 
-    this.activeProviderPermissions.set(requestId, {
+    this.getDeepChatInstance(sessionId).registerActiveProviderPermission({
       requestId,
-      sessionId,
       messageId,
       toolCallId: tool.callId || '',
       providerId,
       permissionType: permission.permissionType,
       resolve: async (granted: boolean) => {
-        await this.llmProviderPresenter.resolveAgentPermission(requestId, granted)
+        await this.requireAcpAsLlmProviderPermission().resolveAgentPermission(requestId, granted)
         commitDecision(granted)
       }
     })
@@ -6451,20 +6054,26 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   private async resolveProviderPermissionInteraction(
     input: ProviderPermissionInteractionInput
   ): Promise<void> {
-    const active = this.activeProviderPermissions.get(input.requestId)
+    const instance = this.getHydratedDeepChatInstance(input.sessionId)
+    const active = instance?.getActiveProviderPermission(input.requestId)
     let resolution: { status: 'resolved' } | { status: 'stale'; error: unknown }
 
     try {
       resolution = await this.resolveProviderPermissionSafely(
         active
           ? () => active.resolve(input.granted)
-          : () => this.llmProviderPresenter.resolveAgentPermission(input.requestId, input.granted)
+          : () =>
+              this.requireAcpAsLlmProviderPermission().resolveAgentPermission(
+                input.requestId,
+                input.granted
+              )
       )
     } finally {
-      this.activeProviderPermissions.delete(input.requestId)
+      instance?.clearActiveProviderPermission(input.requestId, active)
     }
 
     if (active && resolution.status === 'resolved') {
+      this.refreshPendingInteractionsFromStore(input.sessionId)
       return
     }
 
@@ -6484,6 +6093,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       resolution.status === 'stale' ? 'Permission request expired.' : undefined
     )
     this.finishProviderPermissionInteraction(input.sessionId, input.messageId)
+    this.refreshPendingInteractionsFromStore(input.sessionId)
   }
 
   private async resolveProviderPermissionSafely(
@@ -6546,18 +6156,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   private clearActiveProviderPermissionsForSession(sessionId: string): void {
-    for (const [requestId, permission] of this.activeProviderPermissions.entries()) {
-      if (permission.sessionId === sessionId) {
-        this.activeProviderPermissions.delete(requestId)
-        void this.resolveProviderPermissionSafely(() => permission.resolve(false)).catch(
-          (error) => {
-            console.warn(
-              `[DeepChatAgent] Failed to cancel ACP permission request ${requestId}:`,
-              error
-            )
-          }
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    for (const permission of instance?.takeActiveProviderPermissions() ?? []) {
+      void this.resolveProviderPermissionSafely(() => permission.resolve(false)).catch((error) => {
+        console.warn(
+          `[DeepChatAgent] Failed to cancel ACP permission request ${permission.requestId}:`,
+          error
         )
-      }
+      })
     }
   }
 
@@ -6727,7 +6333,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     messageId: string,
     toolCall: NonNullable<AssistantMessageBlock['tool_call']>
   ): Promise<DeferredToolExecutionResult> {
-    if (!this.toolPresenter) {
+    if (!this.toolExecutionPort) {
       return {
         responseText: 'Tool presenter is not available.',
         isError: true
@@ -6787,10 +6393,12 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       : null
     const deferredAbortSignal =
       deferredAbortController?.signal ?? this.getAbortSignalForSession(sessionId)
+    let invoked = false
 
     try {
       const extensionPolicy = await this.resolveAgentExtensionPolicy(sessionId)
-      const result = await this.toolPresenter.callTool(request, {
+      invoked = true
+      const result = await this.toolExecutionPort.execute(request, {
         agentId: this.getSessionAgentId(sessionId) ?? 'deepchat',
         enabledSkillNames: extensionPolicy.enabledSkillNames ?? undefined,
         onProgress: (update) => {
@@ -6816,6 +6424,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         return {
           responseText: this.toolContentToText(rawData.content),
           isError: true,
+          invoked,
           requiresPermission: true,
           permissionRequest: rawData.permissionRequest as PendingToolInteraction['permission']
         }
@@ -6853,17 +6462,17 @@ export class AgentRuntimePresenter implements IAgentImplementation {
           content: rawData.content,
           cacheImage: this.cacheImage
         }))
-      const normalizedContent = await this.normalizeToolResultContent({
+      const normalizedContent = await this.toolResultPort.normalize({
         sessionId,
         toolCallId: toolCall.id || '',
         toolName,
         toolArgs: toolCall.params || '{}',
         content: rawData.content,
         isError: rawData.isError === true,
-        abortSignal: deferredAbortSignal
+        signal: deferredAbortSignal
       })
       const responseText = this.toolContentToText(normalizedContent)
-      const prepared = await this.toolOutputGuard.prepareToolOutput({
+      const prepared = await this.toolResultPort.prepare({
         sessionId,
         toolCallId: toolCall.id || '',
         toolName,
@@ -6872,12 +6481,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       if (prepared.kind === 'tool_error') {
         return {
           responseText: prepared.message,
-          isError: true
+          isError: true,
+          invoked
         }
       }
       return {
         responseText: prepared.content,
         isError: Boolean(rawData.isError),
+        invoked,
         toolSource: toolDefinition.source,
         serverName: toolDefinition.server.name,
         offloadPath: prepared.offloadPath,
@@ -6890,7 +6501,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       const errorText = error instanceof Error ? error.message : String(error)
       return {
         responseText: `Error: ${errorText}`,
-        isError: true
+        isError: true,
+        invoked
       }
     } finally {
       if (toolCall.id) {
@@ -6906,62 +6518,87 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   private async loadToolDefinitionsForSession(
     sessionId: string,
     projectDir: string | null,
-    activeSkillNamesOverride?: string[]
+    activeSkillNamesOverride?: string[],
+    providedResourceInstance?: DeepChatAgentInstance
   ): Promise<MCPToolDefinition[]> {
     if (!this.toolPresenter) {
       return []
     }
 
-    const providerId = this.runtimeState.get(sessionId)?.providerId?.trim()
-    if (this.isAcpBackedSubagentSession(sessionId, providerId)) {
-      return []
-    }
+    const resourceInstance = providedResourceInstance ?? this.getDeepChatInstance(sessionId)
+    const catalog = this.createSessionToolCatalogPort(sessionId, projectDir, resourceInstance)
+    return await catalog.resolve(
+      activeSkillNamesOverride === undefined
+        ? undefined
+        : { activeSkillNames: activeSkillNamesOverride }
+    )
+  }
 
-    try {
-      const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
-      const policy = await this.resolveAgentExtensionPolicy(sessionId)
-      const effectiveActiveSkillNames =
-        activeSkillNamesOverride === undefined
-          ? await this.resolveActiveSkillNamesForToolProfile(sessionId)
-          : this.filterSkillNamesByPolicy(activeSkillNamesOverride, policy)
-      const profile = await this.resolveToolProfile(
-        sessionId,
-        projectDir,
-        effectiveActiveSkillNames,
-        policy
-      )
-      const cachedProfile = this.toolProfileCache.get(sessionId)
-      if (
-        cachedProfile &&
-        cachedProfile.profile === profile.kind &&
-        cachedProfile.fingerprint === profile.fingerprint
-      ) {
-        this.toolPresenter.syncAgentToolContext?.({
-          chatMode: 'agent',
-          agentWorkspacePath: projectDir
-        })
-        return cachedProfile.tools
+  private createSessionToolCatalogPort(
+    sessionId: string,
+    projectDir: string | null,
+    resourceInstance: DeepChatAgentInstance
+  ): ToolCatalogPort {
+    const catalog = createPresenterToolCatalogPort<DeepChatToolProfileKind>({
+      toolPresenter: this.toolPresenter,
+      resolveContext: async (activeSkillNamesOverride) => {
+        this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+        const agentId =
+          resourceInstance.getAgentId()?.trim() || this.getSessionAgentId(sessionId) || 'deepchat'
+        const policy = await this.resolveAgentExtensionPolicy(sessionId, resourceInstance)
+        const effectiveActiveSkillNames =
+          activeSkillNamesOverride === undefined
+            ? await this.resolveActiveSkillNamesForToolProfile(sessionId, resourceInstance)
+            : this.filterSkillNamesByPolicy(activeSkillNamesOverride, policy)
+        const profile = await this.resolveToolProfile(
+          sessionId,
+          projectDir,
+          effectiveActiveSkillNames,
+          policy,
+          resourceInstance
+        )
+        this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+
+        return {
+          profile: profile.kind,
+          fingerprint: profile.fingerprint,
+          cached: resourceInstance.getToolProfileCache(),
+          context: {
+            agentId,
+            disabledAgentTools: this.getDisabledAgentTools(sessionId),
+            chatMode: 'agent',
+            conversationId: sessionId,
+            agentWorkspacePath: projectDir,
+            activeSkillNames: effectiveActiveSkillNames
+          }
+        }
+      },
+      commitCache: (entry) => {
+        this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+        resourceInstance.setToolProfileCache(entry)
       }
+    })
 
-      const tools = await this.toolPresenter.getAllToolDefinitions({
-        agentId,
-        disabledAgentTools: this.getDisabledAgentTools(sessionId),
-        chatMode: 'agent',
-        conversationId: sessionId,
-        agentWorkspacePath: projectDir,
-        activeSkillNames: effectiveActiveSkillNames
-      })
+    return {
+      resolve: async (request) => {
+        if (!this.toolPresenter) {
+          return []
+        }
 
-      this.toolProfileCache.set(sessionId, {
-        profile: profile.kind,
-        fingerprint: profile.fingerprint,
-        tools
-      })
+        this.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+        const providerId = resourceInstance.getRuntimeState()?.providerId?.trim()
+        if (this.isAcpBackedSubagentSession(sessionId, providerId)) {
+          return []
+        }
 
-      return tools
-    } catch (error) {
-      console.error('[DeepChatAgent] failed to fetch tool definitions:', error)
-      return []
+        try {
+          return await catalog.resolve(request)
+        } catch (error) {
+          if (this.isStaleDeepChatInstanceError(error)) throw error
+          console.error('[DeepChatAgent] failed to fetch tool definitions:', error)
+          return []
+        }
+      }
     }
   }
 
@@ -6969,19 +6606,23 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     sessionId: string,
     projectDir: string | null,
     activeSkillNamesOverride?: string[],
-    extensionPolicy?: AgentExtensionPolicy
-  ): Promise<{ kind: ToolProfileKind; fingerprint: string }> {
+    extensionPolicy?: AgentExtensionPolicy,
+    resourceInstance?: DeepChatAgentInstance
+  ): Promise<{ kind: DeepChatToolProfileKind; fingerprint: string }> {
     const normalizedProjectDir = projectDir?.trim() || null
     const skillsEnabled = this.configPresenter.getSkillsEnabled()
-    const policy = extensionPolicy ?? (await this.resolveAgentExtensionPolicy(sessionId))
+    const policy =
+      extensionPolicy ?? (await this.resolveAgentExtensionPolicy(sessionId, resourceInstance))
     const activeSkillNames = this.filterSkillNamesByPolicy(
-      activeSkillNamesOverride ?? (await this.resolveActiveSkillNamesForToolProfile(sessionId)),
+      activeSkillNamesOverride ??
+        (await this.resolveActiveSkillNamesForToolProfile(sessionId, resourceInstance)),
       policy
     )
     const disabledAgentTools = this.getDisabledAgentTools(sessionId)
-    const state = this.runtimeState.get(sessionId)
-    const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
-    const kind: ToolProfileKind = normalizedProjectDir ? 'code' : 'general'
+    const state = resourceInstance?.getRuntimeState() ?? this.getDeepChatRuntimeState(sessionId)
+    const agentId =
+      resourceInstance?.getAgentId()?.trim() || this.getSessionAgentId(sessionId) || 'deepchat'
+    const kind: DeepChatToolProfileKind = normalizedProjectDir ? 'code' : 'general'
 
     return {
       kind,
@@ -6991,7 +6632,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
         projectDir: normalizedProjectDir ?? '',
         providerId: state?.providerId ?? '',
         modelId: state?.modelId ?? '',
-        toolRegistryRevision: this.toolRegistryRevision,
+        toolRegistryRevision: this.deepChatRuntime.getToolRegistryRevision(),
         disabledAgentTools: [...disabledAgentTools].sort((left, right) =>
           left.localeCompare(right)
         ),
@@ -7002,13 +6643,16 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
   }
 
-  private async resolveActiveSkillNamesForToolProfile(sessionId: string): Promise<string[]> {
+  private async resolveActiveSkillNamesForToolProfile(
+    sessionId: string,
+    resourceInstance?: DeepChatAgentInstance
+  ): Promise<string[]> {
     if (!this.configPresenter.getSkillsEnabled() || !this.skillPresenter?.getActiveSkills) {
       return []
     }
 
     try {
-      const policy = await this.resolveAgentExtensionPolicy(sessionId)
+      const policy = await this.resolveAgentExtensionPolicy(sessionId, resourceInstance)
       return this.filterSkillNamesByPolicy(
         this.normalizeSkillNames(await this.skillPresenter.getActiveSkills(sessionId)),
         policy
@@ -7022,8 +6666,12 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
   }
 
-  private async resolveAgentExtensionPolicy(sessionId: string): Promise<AgentExtensionPolicy> {
-    const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
+  private async resolveAgentExtensionPolicy(
+    sessionId: string,
+    resourceInstance?: DeepChatAgentInstance
+  ): Promise<AgentExtensionPolicy> {
+    const agentId =
+      resourceInstance?.getAgentId()?.trim() || this.getSessionAgentId(sessionId) || 'deepchat'
     if (typeof this.configPresenter.resolveDeepChatAgentConfig !== 'function') {
       return {}
     }
@@ -7254,7 +6902,7 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     abortSignal?: AbortSignal
   ): Promise<{ providerId: string; modelId: string } | null> {
     this.throwIfAbortRequested(abortSignal)
-    const state = this.runtimeState.get(sessionId)
+    const state = this.getDeepChatRuntimeState(sessionId)
     const dbSession = this.sessionStore.get(sessionId)
     const agentId = this.getSessionAgentId(sessionId) ?? 'deepchat'
     const resolved = await resolveSessionVisionTarget({
@@ -7313,16 +6961,28 @@ export class AgentRuntimePresenter implements IAgentImplementation {
   }
 
   private hasPendingInteractions(sessionId: string): boolean {
+    return this.refreshPendingInteractionsFromStore(sessionId)
+  }
+
+  private refreshPendingInteractionsFromStore(sessionId: string): boolean {
     const messages = this.messageStore.getMessages(sessionId)
+    const pendingEntries: PendingInteractionEntry[] = []
     for (const message of messages) {
       if (message.role !== 'assistant') continue
       const blocks = this.parseAssistantBlocks(message.content)
-      const pendingEntries = this.collectPendingInteractionEntries(message.id, blocks)
-      if (pendingEntries.length > 0) {
-        return true
-      }
+      pendingEntries.push(
+        ...this.collectPendingInteractionEntries(message.id, blocks, pendingEntries.length)
+      )
     }
-    return false
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    if (instance) {
+      this.replacePendingInteractions(
+        instance,
+        this.reconcilePendingInteractionEntries(instance, pendingEntries)
+      )
+      return instance.hasPendingInteractions()
+    }
+    return pendingEntries.length > 0
   }
 
   private isAwaitingToolQuestionFollowUp(sessionId: string): boolean {
@@ -7352,31 +7012,6 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     })
   }
 
-  private async resolveCompactionStateForResumeTurn(params: {
-    sessionId: string
-    messageId: string
-    providerId: string
-    modelId: string
-    systemPrompt: string
-    contextLength: number
-    reserveTokens: number
-    extraReserveTokens?: number
-    supportsVision: boolean
-    supportsAudioInput: boolean
-    preserveInterleavedReasoning: boolean
-    preserveEmptyInterleavedReasoning?: boolean
-    historyRecords?: ChatMessageRecord[]
-    compactionMessageOrderSeq?: number
-    signal?: AbortSignal
-  }): Promise<SessionSummaryState> {
-    const intent = await this.compactionService.prepareForResumeTurn(params)
-    return await this.applyCompactionIntent(params.sessionId, intent, {
-      compactionMessageOrderSeq: params.compactionMessageOrderSeq,
-      shiftMessagesFromCompactionOrderSeq: params.compactionMessageOrderSeq !== undefined,
-      signal: params.signal
-    })
-  }
-
   private async applyCompactionIntent(
     sessionId: string,
     intent: CompactionIntent | null,
@@ -7386,8 +7021,10 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       shiftMessagesFromCompactionOrderSeq?: boolean
       startedExternally?: boolean
       signal?: AbortSignal
-    }
+    },
+    expectedInstance = this.getDeepChatInstance(sessionId)
   ): Promise<SessionSummaryState> {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
     if (!intent) {
       return this.sessionStore.getSummaryState(sessionId)
     }
@@ -7413,27 +7050,34 @@ export class AgentRuntimePresenter implements IAgentImplementation {
 
     if (!options?.startedExternally) {
       this.emitMessageRefresh(sessionId, compactionMessageId)
-      this.emitCompactionState(sessionId, {
-        status: 'compacting',
-        cursorOrderSeq: intent.targetCursorOrderSeq,
-        summaryUpdatedAt: intent.previousState.summaryUpdatedAt
-      })
+      this.emitCompactionState(
+        sessionId,
+        {
+          status: 'compacting',
+          cursorOrderSeq: intent.targetCursorOrderSeq,
+          summaryUpdatedAt: intent.previousState.summaryUpdatedAt
+        },
+        expectedInstance
+      )
     }
 
     let result: Awaited<ReturnType<CompactionService['applyCompaction']>>
     try {
       result = await this.compactionService.applyCompaction(intent, options?.signal)
     } catch (error) {
+      this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
       if (this.isAbortError(error) || options?.signal?.aborted) {
         this.messageStore.deleteMessage(compactionMessageId)
         this.emitMessageRefresh(sessionId, compactionMessageId)
         this.emitCompactionState(
           sessionId,
-          this.summaryStateToCompactionState(intent.previousState)
+          this.summaryStateToCompactionState(intent.previousState),
+          expectedInstance
         )
       }
       throw error
     }
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
     if (result.succeeded) {
       this.messageStore.updateCompactionMessage(
         compactionMessageId,
@@ -7448,7 +7092,8 @@ export class AgentRuntimePresenter implements IAgentImplementation {
       sessionId,
       result.succeeded
         ? this.summaryStateToCompactionState(result.summaryState, 'compacted')
-        : this.summaryStateToCompactionState(result.summaryState)
+        : this.summaryStateToCompactionState(result.summaryState),
+      expectedInstance
     )
     return result.summaryState
   }
@@ -7488,8 +7133,13 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     )
   }
 
-  private emitCompactionState(sessionId: string, state: SessionCompactionState): void {
-    this.sessionCompactionStates.set(sessionId, { ...state })
+  private emitCompactionState(
+    sessionId: string,
+    state: SessionCompactionState,
+    expectedInstance = this.getDeepChatInstance(sessionId)
+  ): void {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
+    expectedInstance.setCompactionState(state)
     publishDeepchatEvent('sessions.compaction.changed', {
       sessionId,
       status: state.status,
@@ -7499,58 +7149,42 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     })
   }
 
-  private resetSummaryState(sessionId: string): void {
+  private resetSummaryState(
+    sessionId: string,
+    expectedInstance = this.getDeepChatInstance(sessionId)
+  ): void {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
     this.sessionStore.resetSummaryState(sessionId)
-    this.emitCompactionState(sessionId, this.buildIdleCompactionState())
+    this.emitCompactionState(sessionId, this.buildIdleCompactionState(), expectedInstance)
   }
 
-  private ensureMemoryExtractionEpoch(sessionId: string): number {
-    if (!this.memoryExtractionEpochs.has(sessionId)) {
-      this.memoryExtractionEpochs.set(sessionId, 0)
-    }
-    return this.memoryExtractionEpochs.get(sessionId) ?? 0
-  }
-
-  private bumpMemoryExtractionEpoch(sessionId: string): void {
-    const epoch = this.memoryExtractionEpochs.get(sessionId) ?? 0
-    this.memoryExtractionEpochs.set(sessionId, epoch + 1)
-  }
-
-  private isMemoryExtractionEpochCurrent(sessionId: string, epoch: number): boolean {
-    return this.memoryExtractionEpochs.get(sessionId) === epoch
-  }
-
-  private resetMemoryExtractionCursor(sessionId: string): void {
-    this.bumpMemoryExtractionEpoch(sessionId)
-    this.sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq(sessionId, 0)
-  }
-
-  private invalidateMemoryExtractionFromOrderSeq(sessionId: string, orderSeq: number): void {
-    this.bumpMemoryExtractionEpoch(sessionId)
-    const memoryCursor =
-      this.sqlitePresenter.deepchatSessionsTable.getMemoryCursorOrderSeq(sessionId) ?? 0
-    if (orderSeq <= memoryCursor) {
-      this.sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq(
-        sessionId,
-        Math.max(0, Math.floor(orderSeq) - 1)
-      )
-    }
-  }
-
-  private invalidateSummaryIfNeeded(sessionId: string, orderSeq: number): void {
+  private invalidateSummaryIfNeeded(
+    sessionId: string,
+    orderSeq: number,
+    expectedInstance = this.getDeepChatInstance(sessionId)
+  ): void {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
     const summaryState = this.sessionStore.getSummaryState(sessionId)
     if (orderSeq < summaryState.summaryCursorOrderSeq) {
-      this.resetSummaryState(sessionId)
+      this.resetSummaryState(sessionId, expectedInstance)
     }
   }
 
-  private setSessionStatus(sessionId: string, status: DeepChatSessionState['status']): void {
-    const current = this.runtimeState.get(sessionId)
+  private setSessionStatusForInstance(
+    sessionId: string,
+    expectedInstance: DeepChatAgentInstance,
+    status: DeepChatSessionState['status']
+  ): boolean {
+    if (!this.isCurrentDeepChatInstance(sessionId, expectedInstance)) {
+      return false
+    }
+
+    const current = expectedInstance.getRuntimeState()
     if (!current) {
-      return
+      return false
     }
     if (current.status === status) {
-      return
+      return true
     }
     current.status = status
     publishDeepchatEvent('sessions.status.changed', {
@@ -7570,6 +7204,14 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     })
 
     this.sessionUiPort?.refreshSessionUi()
+    return true
+  }
+
+  private setSessionStatus(sessionId: string, status: DeepChatSessionState['status']): void {
+    const instance = this.getHydratedDeepChatInstance(sessionId)
+    if (instance) {
+      this.setSessionStatusForInstance(sessionId, instance, status)
+    }
   }
 
   private emitMessageRefresh(sessionId: string, messageId: string): void {
@@ -7620,23 +7262,28 @@ export class AgentRuntimePresenter implements IAgentImplementation {
     }
   }
 
-  private resolveProjectDir(sessionId: string, incoming?: string | null): string | null {
+  private resolveProjectDir(
+    sessionId: string,
+    incoming?: string | null,
+    expectedInstance = this.getDeepChatInstance(sessionId)
+  ): string | null {
+    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
+    const instance = expectedInstance
     if (incoming !== undefined) {
       const normalized = this.normalizeProjectDir(incoming)
-      const previous = this.sessionProjectDirs.get(sessionId) ?? null
-      this.sessionProjectDirs.set(sessionId, normalized)
+      const previous = instance.getProjectDir()
+      instance.setProjectDir(normalized)
       if (previous !== normalized) {
-        this.invalidateSystemPromptCache(sessionId)
-        this.invalidateToolProfileCache(sessionId)
+        instance.invalidateResourceCaches()
       }
       return normalized
     }
-    if (this.sessionProjectDirs.has(sessionId)) {
-      return this.sessionProjectDirs.get(sessionId) ?? null
+    if (instance.hasProjectDir()) {
+      return instance.getProjectDir()
     }
 
     const persisted = this.resolvePersistedSessionProjectDir(sessionId)
-    this.sessionProjectDirs.set(sessionId, persisted)
+    instance.setProjectDir(persisted)
     return persisted
   }
 }
