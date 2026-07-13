@@ -10,6 +10,8 @@ import logger from '@shared/logger'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatActiveGeneration } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import { createDeepChatAgentBackendFixture } from '../../agent/manager/deepChatAgentBackendFixture'
+import { createProjectionCoordinatorFixture } from './projectionCoordinatorFixture'
+import { createAssignmentCoordinatorFixture } from './assignmentCoordinatorFixture'
 
 vi.mock('nanoid', () => {
   let counter = 0
@@ -681,23 +683,41 @@ describe('Integration: createSession end-to-end', () => {
       sqlitePresenter,
       createMockToolPresenter()
     )
-    agentPresenter = new AgentSessionPresenter(
-      createDeepChatManager(deepchatAgent, sqlitePresenter) as any,
-      new AppSessionService({
-        newSessionsTable: sqlitePresenter.newSessionsTable,
-        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
-        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
-        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
-      }),
-      llmProvider,
+    const agentManager = createDeepChatManager(deepchatAgent, sqlitePresenter) as any
+    const appSessionService = new AppSessionService({
+      newSessionsTable: sqlitePresenter.newSessionsTable,
+      deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+      deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+      newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+    })
+    const sharedData = {
+      sessionState: deepchatAgent,
+      transcript: deepchatAgent,
+      transcriptMutation: deepchatAgent,
+      tape: deepchatAgent
+    }
+    const projection = createProjectionCoordinatorFixture({
+      agentManager,
+      appSessionService,
+      llmProviderPresenter: llmProvider,
       configPresenter,
       sqlitePresenter,
-      {
-        sessionState: deepchatAgent,
-        transcript: deepchatAgent,
-        transcriptMutation: deepchatAgent,
-        tape: deepchatAgent
-      }
+      sharedData
+    })
+    const sessionApplications = createAssignmentCoordinatorFixture({
+      agentManager,
+      appSessionService,
+      configPresenter,
+      sqlitePresenter,
+      sharedData,
+      projection,
+      acp: llmProvider
+    })
+    agentPresenter = new AgentSessionPresenter(
+      projection,
+      sessionApplications.lifecycle,
+      sessionApplications.assignment,
+      sessionApplications.turn
     )
   })
 
@@ -844,25 +864,41 @@ describe('Integration: ACP hooks bridge', () => {
       createMockToolPresenter(),
       new NewSessionHooksBridge(hookDispatcher)
     )
-    agentPresenter = new AgentSessionPresenter(
-      createDeepChatManager(deepchatAgent, sqlitePresenter) as any,
-      new AppSessionService({
-        newSessionsTable: sqlitePresenter.newSessionsTable,
-        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
-        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
-        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
-      }),
-      llmProvider,
+    const agentManager = createDeepChatManager(deepchatAgent, sqlitePresenter) as any
+    const appSessionService = new AppSessionService({
+      newSessionsTable: sqlitePresenter.newSessionsTable,
+      deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+      deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+      newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+    })
+    const sharedData = {
+      sessionState: deepchatAgent,
+      transcript: deepchatAgent,
+      transcriptMutation: deepchatAgent,
+      tape: deepchatAgent
+    }
+    const projection = createProjectionCoordinatorFixture({
+      agentManager,
+      appSessionService,
+      llmProviderPresenter: llmProvider,
       configPresenter,
       sqlitePresenter,
-      {
-        sessionState: deepchatAgent,
-        transcript: deepchatAgent,
-        transcriptMutation: deepchatAgent,
-        tape: deepchatAgent
-      },
-      undefined,
-      { acpAsLlmProviderSessionControl: llmProvider }
+      sharedData
+    })
+    const sessionApplications = createAssignmentCoordinatorFixture({
+      agentManager,
+      appSessionService,
+      configPresenter,
+      sqlitePresenter,
+      sharedData,
+      projection,
+      acp: llmProvider
+    })
+    agentPresenter = new AgentSessionPresenter(
+      projection,
+      sessionApplications.lifecycle,
+      sessionApplications.assignment,
+      sessionApplications.turn
     )
   })
 
@@ -937,23 +973,41 @@ describe('Integration: multi-turn context', () => {
       sqlitePresenter,
       createMockToolPresenter()
     )
-    agentPresenter = new AgentSessionPresenter(
-      createDeepChatManager(deepchatAgent, sqlitePresenter) as any,
-      new AppSessionService({
-        newSessionsTable: sqlitePresenter.newSessionsTable,
-        deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
-        deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
-        newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
-      }),
-      llmProvider,
+    const agentManager = createDeepChatManager(deepchatAgent, sqlitePresenter) as any
+    const appSessionService = new AppSessionService({
+      newSessionsTable: sqlitePresenter.newSessionsTable,
+      deepchatSessionMetadataTable: sqlitePresenter.deepchatSessionMetadataTable,
+      deepchatSearchDocumentsTable: sqlitePresenter.deepchatSearchDocumentsTable,
+      newEnvironmentsTable: sqlitePresenter.newEnvironmentsTable
+    })
+    const sharedData = {
+      sessionState: deepchatAgent,
+      transcript: deepchatAgent,
+      transcriptMutation: deepchatAgent,
+      tape: deepchatAgent
+    }
+    const projection = createProjectionCoordinatorFixture({
+      agentManager,
+      appSessionService,
+      llmProviderPresenter: llmProvider,
       configPresenter,
       sqlitePresenter,
-      {
-        sessionState: deepchatAgent,
-        transcript: deepchatAgent,
-        transcriptMutation: deepchatAgent,
-        tape: deepchatAgent
-      }
+      sharedData
+    })
+    const sessionApplications = createAssignmentCoordinatorFixture({
+      agentManager,
+      appSessionService,
+      configPresenter,
+      sqlitePresenter,
+      sharedData,
+      projection,
+      acp: llmProvider
+    })
+    agentPresenter = new AgentSessionPresenter(
+      projection,
+      sessionApplications.lifecycle,
+      sessionApplications.assignment,
+      sessionApplications.turn
     )
   })
 
