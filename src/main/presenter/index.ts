@@ -83,7 +83,10 @@ import type {
   MemoryIngestionObserver
 } from '@/agent/deepchat/memory/memoryIngestionObserver'
 import { MemoryPresenter, isSafeAgentId } from './memoryPresenter'
-import { MemoryVectorStore } from './memoryPresenter/infra/memoryVectorStore'
+import {
+  createMemoryVectorStorePaths,
+  MemoryVectorStore
+} from './memoryPresenter/infra/memoryVectorStore'
 import { ProjectPresenter } from './projectPresenter'
 import { RemoteControlPresenter } from './remoteControlPresenter'
 import type { RemoteControlPresenterLike } from './remoteControlPresenter/interface'
@@ -589,7 +592,9 @@ export class Presenter implements IPresenter {
     }
     // Initialize agent memory layer (opt-in per agent; vectors stored separately from knowledge base)
     const memoryDbDir = path.join(dbDir, 'AgentMemory')
-    const memoryVectorDbPath = (agentId: string) => path.join(memoryDbDir, `${agentId}.duckdb`)
+    MemoryVectorStore.recoverQuarantinedStores(memoryDbDir)
+    const memoryVectorDbPaths = (agentId: string) =>
+      createMemoryVectorStorePaths(memoryDbDir, agentId)
     this.memoryPresenter = new MemoryPresenter({
       repository: (this.sqlitePresenter as unknown as import('./sqlitePresenter').SQLitePresenter)
         .agentMemoryTable,
@@ -626,13 +631,21 @@ export class Presenter implements IPresenter {
         if (!isSafeAgentId(agentId)) {
           throw new Error(`[Memory] refusing to open vector store for unsafe agentId: ${agentId}`)
         }
-        return MemoryVectorStore.create(memoryVectorDbPath(agentId), dimensions, embedding)
+        return MemoryVectorStore.create(memoryVectorDbPaths(agentId), dimensions, embedding)
       },
       resetVectorStore: async (agentId) => {
         if (!isSafeAgentId(agentId)) {
           throw new Error(`[Memory] refusing to reset vector store for unsafe agentId: ${agentId}`)
         }
-        MemoryVectorStore.destroyFile(memoryVectorDbPath(agentId))
+        MemoryVectorStore.destroyFiles(memoryVectorDbPaths(agentId))
+      },
+      markVectorStoreQuarantined: (agentId) => {
+        if (!isSafeAgentId(agentId)) {
+          throw new Error(
+            `[Memory] refusing to quarantine vector store for unsafe agentId: ${agentId}`
+          )
+        }
+        MemoryVectorStore.markQuarantined(memoryVectorDbPaths(agentId))
       },
       onMemoryChanged: (agentId, reason, context) =>
         publishDeepchatEvent('memory.updated', {
@@ -646,11 +659,13 @@ export class Presenter implements IPresenter {
     })
     ;(
       this.configPresenter as IConfigPresenter & {
-        setDeepChatAgentDeleteCleanup?: (cleanup: (agentId: string) => Promise<void>) => void
+        setDeepChatAgentDeleteCleanup?: (
+          cleanup: (agentId: string) => Promise<{ cleanupPendingRestart: boolean }>
+        ) => void
       }
-    ).setDeepChatAgentDeleteCleanup?.(async (agentId) => {
-      await this.memoryPresenter.cleanupDeletedAgentResources(agentId)
-    })
+    ).setDeepChatAgentDeleteCleanup?.((agentId) =>
+      this.memoryPresenter.cleanupDeletedAgentResources(agentId)
+    )
     ;(
       this.configPresenter as IConfigPresenter & {
         setDeepChatAgentMemoryMaintenanceConfigChanged?: (
