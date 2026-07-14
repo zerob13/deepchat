@@ -628,7 +628,22 @@ const SKILL_DRAFT_STATUS_BY_CHOICE: Record<Exclude<SkillDraftChoice, 'view'>, Sk
 
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
 const PRE_STREAM_SLOW_STEP_MS = 500
+export const PRE_STREAM_STUCK_WARN_MS = 5_000
+export const PRE_STREAM_STUCK_ESCALATION_MS = 30_000
 const STALE_DEEPCHAT_INSTANCE_ERROR_NAME = 'StaleDeepChatAgentInstanceError'
+
+interface PreStreamStepWatchdog {
+  complete(): void
+  cancel(): void
+}
+
+interface PreStreamStepInput {
+  sessionId: string
+  messageId?: string | null
+  step: string
+  signal?: AbortSignal
+}
+
 const createAbortError = (): Error => {
   if (typeof DOMException !== 'undefined') {
     return new DOMException('Aborted', 'AbortError')
@@ -1598,12 +1613,19 @@ export class AgentRuntimePresenter {
     try {
       const preStreamStartedAt = Date.now()
       this.throwIfAbortRequested(preStreamAbortSignal)
-      let stepStartedAt = Date.now()
-      const generationSettings = await awaitWithAbort(
-        this.getEffectiveSessionGenerationSettings(sessionId, instance),
-        preStreamAbortSignal
+      const generationSettings = await this.runPreStreamStep(
+        {
+          sessionId,
+          messageId: userMessageId,
+          step: 'generation-settings',
+          signal: preStreamAbortSignal
+        },
+        () =>
+          awaitWithAbort(
+            this.getEffectiveSessionGenerationSettings(sessionId, instance),
+            preStreamAbortSignal
+          )
       )
-      this.logSlowPreStreamStep(sessionId, 'generation-settings', stepStartedAt)
       const modelConfig = this.configPresenter.getModelConfig(state.modelId, state.providerId)
       const useContextBudget = this.shouldUseDeepChatContextBudget(
         state.providerId,
@@ -1623,43 +1645,64 @@ export class AgentRuntimePresenter {
         state.modelId
       )
       const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
-      stepStartedAt = Date.now()
       instance.replaceRuntimeActivatedSkills(normalizedInput.activeSkills ?? [])
-      const sessionActiveSkillNames = await awaitWithAbort(
-        this.resolveActiveSkillNamesForToolProfile(sessionId, instance),
-        preStreamAbortSignal
+      const sessionActiveSkillNames = await this.runPreStreamStep(
+        {
+          sessionId,
+          messageId: userMessageId,
+          step: 'active-skills',
+          signal: preStreamAbortSignal
+        },
+        () =>
+          awaitWithAbort(
+            this.resolveActiveSkillNamesForToolProfile(sessionId, instance),
+            preStreamAbortSignal
+          )
       )
       this.throwIfStaleDeepChatInstance(sessionId, instance)
       const effectiveActiveSkillNames = this.resolveEffectiveActiveSkillNames(
         sessionActiveSkillNames,
         instance
       )
-      this.logSlowPreStreamStep(sessionId, 'active-skills', stepStartedAt)
-      stepStartedAt = Date.now()
-      const tools = await awaitWithAbort(
-        this.loadToolDefinitionsForSession(
+      const tools = await this.runPreStreamStep(
+        {
           sessionId,
-          projectDir,
-          effectiveActiveSkillNames,
-          instance
-        ),
-        preStreamAbortSignal
+          messageId: userMessageId,
+          step: 'tool-definitions',
+          signal: preStreamAbortSignal
+        },
+        () =>
+          awaitWithAbort(
+            this.loadToolDefinitionsForSession(
+              sessionId,
+              projectDir,
+              effectiveActiveSkillNames,
+              instance
+            ),
+            preStreamAbortSignal
+          )
       )
-      this.logSlowPreStreamStep(sessionId, 'tool-definitions', stepStartedAt)
       const toolReserveTokens = estimateToolReserveTokens(tools)
       this.throwIfAbortRequested(preStreamAbortSignal)
-      stepStartedAt = Date.now()
       const basePromptAssembler = this.createBasePromptAssembler(instance)
-      const baseSystemPrompt = await awaitWithAbort(
-        basePromptAssembler.assemble({
-          sessionId: toAppSessionId(sessionId),
-          configuredPrompt: generationSettings.systemPrompt,
-          toolDefinitions: tools,
-          activeSkillNames: effectiveActiveSkillNames
-        }),
-        preStreamAbortSignal
+      const baseSystemPrompt = await this.runPreStreamStep(
+        {
+          sessionId,
+          messageId: userMessageId,
+          step: 'system-prompt',
+          signal: preStreamAbortSignal
+        },
+        () =>
+          awaitWithAbort(
+            basePromptAssembler.assemble({
+              sessionId: toAppSessionId(sessionId),
+              configuredPrompt: generationSettings.systemPrompt,
+              toolDefinitions: tools,
+              activeSkillNames: effectiveActiveSkillNames
+            }),
+            preStreamAbortSignal
+          )
       )
-      this.logSlowPreStreamStep(sessionId, 'system-prompt', stepStartedAt)
       this.throwIfAbortRequested(preStreamAbortSignal)
       const userContent: UserMessageContent = {
         text: normalizedInput.text,
@@ -1675,33 +1718,41 @@ export class AgentRuntimePresenter {
 
       const preparedInput = await this.inputPreparationCoordinator.prepareInitial({
         ensureHistory: () =>
-          getTapeContextHistoryRecords(
-            this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords
+          this.runSynchronousPreStreamStep(sessionId, 'tape-ready', () =>
+            getTapeContextHistoryRecords(
+              this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords
+            )
           ),
         prepareIntent: async (historyRecords) => {
           if (!useContextBudget) {
             return null
           }
-          stepStartedAt = Date.now()
-          const intent = await this.compactionService.prepareForNextUserTurn({
-            sessionId,
-            providerId: state.providerId,
-            modelId: state.modelId,
-            systemPrompt: baseSystemPrompt,
-            contextLength: generationSettings.contextLength,
-            reserveTokens: maxTokens,
-            extraReserveTokens: toolReserveTokens,
-            supportsVision,
-            supportsAudioInput,
-            preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-            preserveEmptyInterleavedReasoning:
-              interleavedReasoning.preserveEmptyReasoningContent === true,
-            newUserContent: normalizedInput,
-            historyRecords,
-            signal: preStreamAbortSignal
-          })
-          this.logSlowPreStreamStep(sessionId, 'compaction-prepare', stepStartedAt)
-          return intent
+          return await this.runPreStreamStep(
+            {
+              sessionId,
+              messageId: userMessageId,
+              step: 'compaction-prepare',
+              signal: preStreamAbortSignal
+            },
+            () =>
+              this.compactionService.prepareForNextUserTurn({
+                sessionId,
+                providerId: state.providerId,
+                modelId: state.modelId,
+                systemPrompt: baseSystemPrompt,
+                contextLength: generationSettings.contextLength,
+                reserveTokens: maxTokens,
+                extraReserveTokens: toolReserveTokens,
+                supportsVision,
+                supportsAudioInput,
+                preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+                preserveEmptyInterleavedReasoning:
+                  interleavedReasoning.preserveEmptyReasoningContent === true,
+                newUserContent: normalizedInput,
+                historyRecords,
+                signal: preStreamAbortSignal
+              })
+          )
         },
         createCompactionProjection: (intent) =>
           this.messageStore.createCompactionMessage(
@@ -1711,10 +1762,12 @@ export class AgentRuntimePresenter {
             intent.previousState.summaryUpdatedAt
           ),
         appendUserFact: () =>
-          this.messageStore.createUserMessage(
-            sessionId,
-            this.messageStore.getNextOrderSeq(sessionId),
-            userContent
+          this.runSynchronousPreStreamStep(sessionId, 'user-message-create', () =>
+            this.messageStore.createUserMessage(
+              sessionId,
+              this.messageStore.getNextOrderSeq(sessionId),
+              userContent
+            )
           ),
         beginCompaction: (intent) => {
           this.emitCompactionState(
@@ -1728,15 +1781,24 @@ export class AgentRuntimePresenter {
           )
         },
         applyCompaction: async (intent, compactionMessageId) =>
-          await this.applyCompactionIntent(
-            sessionId,
-            intent,
+          await this.runPreStreamStep(
             {
-              compactionMessageId,
-              startedExternally: true,
+              sessionId,
+              messageId: userMessageId,
+              step: 'compaction-apply',
               signal: preStreamAbortSignal
             },
-            instance
+            () =>
+              this.applyCompactionIntent(
+                sessionId,
+                intent,
+                {
+                  compactionMessageId,
+                  startedExternally: true,
+                  signal: preStreamAbortSignal
+                },
+                instance
+              )
           ),
         readSummary: () => this.sessionStore.getSummaryState(sessionId),
         afterCompactionApplyReturned: (intent) =>
@@ -1767,25 +1829,32 @@ export class AgentRuntimePresenter {
         projectDir
       })
 
-      stepStartedAt = Date.now()
       const preparedContext = await this.contextCoordinator.assemble({
         assemblePostCompactionPrompt: async () => {
-          const systemPrompt = await awaitWithAbort(
-            this.postCompactionPromptAssembler.assemble({
-              memorySession: instance.getMemorySessionHandle(),
-              basePrompt: baseSystemPrompt,
-              summaryText: summaryState.summaryText,
-              reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
-              memoryQuery: normalizedInput.text,
-              memoryMessageId: userMessageId
-            }),
-            preStreamAbortSignal
+          return await this.runPreStreamStep(
+            {
+              sessionId,
+              messageId: userMessageId,
+              step: 'memory-injection',
+              signal: preStreamAbortSignal
+            },
+            () =>
+              awaitWithAbort(
+                this.postCompactionPromptAssembler.assemble({
+                  memorySession: instance.getMemorySessionHandle(),
+                  basePrompt: baseSystemPrompt,
+                  summaryText: summaryState.summaryText,
+                  reconstructionAnchor:
+                    this.sessionStore.getReconstructionAnchorPromptState(sessionId),
+                  memoryQuery: normalizedInput.text,
+                  memoryMessageId: userMessageId
+                }),
+                preStreamAbortSignal
+              )
           )
-          this.logSlowPreStreamStep(sessionId, 'memory-injection', stepStartedAt)
-          stepStartedAt = Date.now()
-          return systemPrompt
         },
         buildView: (systemPrompt) => {
+          const contextBuildStartedAt = Date.now()
           const contextBuild = buildTapeChatView({
             sessionId,
             newUserContent: normalizedInput,
@@ -1804,7 +1873,7 @@ export class AgentRuntimePresenter {
                 interleavedReasoning.preserveEmptyReasoningContent === true
             }
           })
-          this.logSlowPreStreamStep(sessionId, 'context-build', stepStartedAt)
+          this.logSlowPreStreamStep(sessionId, 'context-build', contextBuildStartedAt)
           return contextBuild
         },
         assertCurrent: () => this.throwIfStaleDeepChatInstance(sessionId, instance)
@@ -1814,7 +1883,11 @@ export class AgentRuntimePresenter {
 
       const assistantOrderSeq = this.messageStore.getNextOrderSeq(sessionId)
       this.throwIfStaleDeepChatInstance(sessionId, instance)
-      assistantMessageId = this.messageStore.createAssistantMessage(sessionId, assistantOrderSeq)
+      assistantMessageId = this.runSynchronousPreStreamStep(
+        sessionId,
+        'assistant-message-create',
+        () => this.messageStore.createAssistantMessage(sessionId, assistantOrderSeq)
+      )
       this.toolPresenter?.clearAgentPlanState?.(sessionId)
       this.throwIfAbortRequested(preStreamAbortSignal)
 
@@ -1828,49 +1901,64 @@ export class AgentRuntimePresenter {
       }
 
       this.throwIfStaleDeepChatInstance(sessionId, instance)
-      const streamResult = await this.runStreamForMessage({
-        sessionId,
-        messageId: assistantMessageId,
-        messages,
-        projectDir,
-        promptPreview: normalizedInput.text,
-        tools,
-        baseSystemPrompt,
-        resourceInstance: instance,
-        abortController: preStreamAbortController,
-        maxProviderRounds: context?.maxProviderRounds,
-        refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-          const refreshedBasePrompt = await basePromptAssembler.assemble({
-            sessionId: toAppSessionId(sessionId),
-            configuredPrompt: generationSettings.systemPrompt,
-            toolDefinitions: refreshedTools,
-            activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
-          })
-          return await this.postCompactionPromptAssembler.assemble({
-            memorySession: instance.getMemorySessionHandle(),
-            basePrompt: refreshedBasePrompt,
-            summaryText: summaryState.summaryText,
-            reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
-            memoryQuery: normalizedInput.text,
-            memoryMessageId: userMessageId
-          })
+      const providerBoundary = this.startPreStreamProviderBoundaryWatchdog(
+        {
+          sessionId,
+          messageId: assistantMessageId,
+          step: 'pre-stream-provider-start',
+          signal: preStreamAbortSignal
         },
-        interleavedReasoning,
-        viewContext: {
-          taskType: 'chat',
-          policy: contextBuild.policyId,
-          policyVersion: contextBuild.policyVersion,
-          selection: buildTapeViewSelection(contextBuild.metadata, userMessageId),
-          summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
-          supportsVision,
-          supportsAudioInput,
-          traceDebugEnabled: this.configPresenter.getSetting<boolean>('traceDebugEnabled') === true
-        },
-        preStreamStartedAt,
-        onRunRegistered: (runId) => {
-          streamRunId = runId
-        }
-      })
+        preStreamStartedAt
+      )
+      let streamResult: { runId: string; result: ProcessResult }
+      try {
+        streamResult = await this.runStreamForMessage({
+          sessionId,
+          messageId: assistantMessageId,
+          messages,
+          projectDir,
+          promptPreview: normalizedInput.text,
+          tools,
+          baseSystemPrompt,
+          resourceInstance: instance,
+          abortController: preStreamAbortController,
+          maxProviderRounds: context?.maxProviderRounds,
+          refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
+            const refreshedBasePrompt = await basePromptAssembler.assemble({
+              sessionId: toAppSessionId(sessionId),
+              configuredPrompt: generationSettings.systemPrompt,
+              toolDefinitions: refreshedTools,
+              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
+            })
+            return await this.postCompactionPromptAssembler.assemble({
+              memorySession: instance.getMemorySessionHandle(),
+              basePrompt: refreshedBasePrompt,
+              summaryText: summaryState.summaryText,
+              reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
+              memoryQuery: normalizedInput.text,
+              memoryMessageId: userMessageId
+            })
+          },
+          interleavedReasoning,
+          viewContext: {
+            taskType: 'chat',
+            policy: contextBuild.policyId,
+            policyVersion: contextBuild.policyVersion,
+            selection: buildTapeViewSelection(contextBuild.metadata, userMessageId),
+            summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
+            supportsVision,
+            supportsAudioInput,
+            traceDebugEnabled:
+              this.configPresenter.getSetting<boolean>('traceDebugEnabled') === true
+          },
+          onBeforeProviderStream: providerBoundary.complete,
+          onRunRegistered: (runId) => {
+            streamRunId = runId
+          }
+        })
+      } finally {
+        providerBoundary.cancel()
+      }
       const { runId, result } = streamResult
       streamRunId = runId
       if (context?.pendingQueueItemId && !consumedPendingQueueItem) {
@@ -2070,6 +2158,100 @@ export class AgentRuntimePresenter {
     logger.warn(
       `[DeepChatAgent] pre-stream step slow session=${sessionId} step=${step} elapsed=${elapsed}ms`
     )
+  }
+
+  private startPreStreamStepWatchdog(input: PreStreamStepInput): PreStreamStepWatchdog {
+    const { sessionId, messageId, step, signal } = input
+    const startedAt = Date.now()
+    let closed = signal?.aborted === true
+    let warnTimer: ReturnType<typeof setTimeout> | null = null
+    let escalationTimer: ReturnType<typeof setTimeout> | null = null
+
+    const clearTimers = () => {
+      if (warnTimer) clearTimeout(warnTimer)
+      if (escalationTimer) clearTimeout(escalationTimer)
+      warnTimer = null
+      escalationTimer = null
+      signal?.removeEventListener('abort', cancel)
+    }
+    const close = (completed: boolean) => {
+      if (closed) return
+      closed = true
+      clearTimers()
+      if (completed) this.logSlowPreStreamStep(sessionId, step, startedAt)
+    }
+    const cancel = () => close(false)
+    const logStuck = (escalated: boolean) => {
+      if (closed) return
+      logger.warn(
+        `[DeepChatAgent] pre-stream step STUCK${escalated ? ' escalation' : ''} session=${sessionId} message=${messageId ?? '<pending>'} step=${step} elapsedMs=${Date.now() - startedAt}`
+      )
+    }
+
+    if (!closed) {
+      signal?.addEventListener('abort', cancel, { once: true })
+      warnTimer = setTimeout(() => logStuck(false), PRE_STREAM_STUCK_WARN_MS)
+      escalationTimer = setTimeout(() => logStuck(true), PRE_STREAM_STUCK_ESCALATION_MS)
+      if (typeof warnTimer.unref === 'function') warnTimer.unref()
+      if (typeof escalationTimer.unref === 'function') escalationTimer.unref()
+    }
+
+    return {
+      complete: () => close(true),
+      cancel
+    }
+  }
+
+  private async runPreStreamStep<T>(
+    input: PreStreamStepInput,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    this.throwIfAbortRequested(input.signal)
+    const watchdog = this.startPreStreamStepWatchdog(input)
+    try {
+      const result = await operation()
+      watchdog.complete()
+      return result
+    } catch (error) {
+      watchdog.cancel()
+      throw error
+    }
+  }
+
+  private runSynchronousPreStreamStep<T>(sessionId: string, step: string, operation: () => T): T {
+    const startedAt = Date.now()
+    try {
+      return operation()
+    } finally {
+      this.logSlowPreStreamStep(sessionId, step, startedAt)
+    }
+  }
+
+  private startPreStreamProviderBoundaryWatchdog(
+    input: PreStreamStepInput,
+    preStreamStartedAt: number
+  ): PreStreamStepWatchdog {
+    const watchdog = this.startPreStreamStepWatchdog(input)
+    let crossed = false
+    const close = (completed: boolean) => {
+      if (crossed) return false
+      crossed = true
+      if (completed) {
+        watchdog.complete()
+      } else {
+        watchdog.cancel()
+      }
+      return true
+    }
+    return {
+      complete: () => {
+        if (!close(true)) return
+        this.logSlowPreStreamStep(input.sessionId, 'pre-stream-total', preStreamStartedAt)
+      },
+      cancel: () => {
+        close(false)
+      }
+    }
   }
 
   private resolveSkillDraftChoice(answerText: string): SkillDraftChoice | null {
@@ -3645,7 +3827,7 @@ export class AgentRuntimePresenter {
       toolDefinitions: MCPToolDefinition[]
     ) => Promise<string>
     maxProviderRounds?: number
-    preStreamStartedAt?: number
+    onBeforeProviderStream?: () => void
     onRunRegistered?: (runId: string) => void
     abortController?: AbortController
   }): Promise<{ runId: string; result: ProcessResult }> {
@@ -3664,7 +3846,7 @@ export class AgentRuntimePresenter {
       viewContext,
       refreshSystemPrompt,
       maxProviderRounds,
-      preStreamStartedAt,
+      onBeforeProviderStream,
       onRunRegistered,
       abortController: providedAbortController
     } = args
@@ -3810,14 +3992,11 @@ export class AgentRuntimePresenter {
     const rateLimitMessageId = this.buildRateLimitStreamMessageId(activeGeneration.runId)
     const emitRateLimitWaitingMessage = this.emitRateLimitWaitingMessage.bind(this)
     const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
-    let loggedPreStreamBoundary = false
-    const logPreStreamBoundary = () => {
-      if (loggedPreStreamBoundary || preStreamStartedAt === undefined) {
-        return
-      }
-
-      loggedPreStreamBoundary = true
-      this.logSlowPreStreamStep(sessionId, 'pre-stream-provider-start', preStreamStartedAt)
+    let crossedPreStreamBoundary = false
+    const crossPreStreamBoundary = () => {
+      if (crossedPreStreamBoundary) return
+      crossedPreStreamBoundary = true
+      onBeforeProviderStream?.()
     }
 
     try {
@@ -3947,6 +4126,7 @@ export class AgentRuntimePresenter {
                 )
             },
             rateGate: {
+              beforeWait: crossPreStreamBoundary,
               wait: async (signal) => {
                 await llmProviderPresenter.executeWithRateLimit(state.providerId, {
                   signal,
@@ -3975,7 +4155,7 @@ export class AgentRuntimePresenter {
                 provider.coreStream(messages, modelId, modelConfig, temperature, maxTokens, tools),
               beforeStream: () => {
                 onProviderRequestStart?.()
-                logPreStreamBoundary()
+                crossPreStreamBoundary()
               }
             },
             isContextOverflowEvent: isFirstProviderContextOverflowEvent,
@@ -4542,10 +4722,20 @@ export class AgentRuntimePresenter {
       this.setSessionStatusForInstance(sessionId, instance, 'generating')
       preStreamAbortController = this.ensureSessionAbortController(sessionId)
       preStreamAbortSignal = preStreamAbortController.signal
+      const preStreamStartedAt = Date.now()
       this.throwIfAbortRequested(preStreamAbortSignal)
-      const generationSettings = await awaitWithAbort(
-        this.getEffectiveSessionGenerationSettings(sessionId, instance),
-        preStreamAbortSignal
+      const generationSettings = await this.runPreStreamStep(
+        {
+          sessionId,
+          messageId,
+          step: 'generation-settings',
+          signal: preStreamAbortSignal
+        },
+        () =>
+          awaitWithAbort(
+            this.getEffectiveSessionGenerationSettings(sessionId, instance),
+            preStreamAbortSignal
+          )
       )
       const modelConfig = this.configPresenter.getModelConfig(state.modelId, state.providerId)
       const useContextBudget = this.shouldUseDeepChatContextBudget(
@@ -4567,33 +4757,55 @@ export class AgentRuntimePresenter {
       )
       const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
       const projectDir = this.resolveProjectDir(sessionId, undefined, instance)
-      const activeSkillNames = await awaitWithAbort(
-        this.resolveActiveSkillNamesForToolProfile(sessionId, instance),
-        preStreamAbortSignal
+      const activeSkillNames = await this.runPreStreamStep(
+        { sessionId, messageId, step: 'active-skills', signal: preStreamAbortSignal },
+        () =>
+          awaitWithAbort(
+            this.resolveActiveSkillNamesForToolProfile(sessionId, instance),
+            preStreamAbortSignal
+          )
       )
       this.throwIfStaleDeepChatInstance(sessionId, instance)
-      const tools = await awaitWithAbort(
-        this.loadToolDefinitionsForSession(sessionId, projectDir, activeSkillNames, instance),
-        preStreamAbortSignal
+      const tools = await this.runPreStreamStep(
+        { sessionId, messageId, step: 'tool-definitions', signal: preStreamAbortSignal },
+        () =>
+          awaitWithAbort(
+            this.loadToolDefinitionsForSession(sessionId, projectDir, activeSkillNames, instance),
+            preStreamAbortSignal
+          )
       )
       const toolReserveTokens = estimateToolReserveTokens(tools)
       this.throwIfAbortRequested(preStreamAbortSignal)
-      const baseSystemPrompt = await awaitWithAbort(
-        this.createBasePromptAssembler(instance).assemble({
-          sessionId: toAppSessionId(sessionId),
-          configuredPrompt: generationSettings.systemPrompt,
-          toolDefinitions: tools,
-          activeSkillNames
-        }),
-        preStreamAbortSignal
+      const baseSystemPrompt = await this.runPreStreamStep(
+        { sessionId, messageId, step: 'system-prompt', signal: preStreamAbortSignal },
+        () =>
+          awaitWithAbort(
+            this.createBasePromptAssembler(instance).assemble({
+              sessionId: toAppSessionId(sessionId),
+              configuredPrompt: generationSettings.systemPrompt,
+              toolDefinitions: tools,
+              activeSkillNames
+            }),
+            preStreamAbortSignal
+          )
       )
       this.throwIfAbortRequested(preStreamAbortSignal)
       let resumeTargetOrderSeq: number | undefined
       const preparedInput = await this.inputPreparationCoordinator.prepareExisting({
         ensureHistory: () =>
-          this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords,
+          this.runSynchronousPreStreamStep(
+            sessionId,
+            'tape-ready',
+            () =>
+              this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords
+          ),
         refreshHistory: () =>
-          this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords,
+          this.runSynchronousPreStreamStep(
+            sessionId,
+            'tape-ready',
+            () =>
+              this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore).historyRecords
+          ),
         prepareIntent: async (historyRecords) => {
           resumeTargetOrderSeq =
             historyRecords.find((record) => record.id === messageId)?.orderSeq ??
@@ -4601,34 +4813,47 @@ export class AgentRuntimePresenter {
           if (!useContextBudget) {
             return null
           }
-          return await this.compactionService.prepareForResumeTurn({
-            sessionId,
-            messageId,
-            providerId: state.providerId,
-            modelId: state.modelId,
-            systemPrompt: baseSystemPrompt,
-            contextLength: generationSettings.contextLength,
-            reserveTokens: maxTokens,
-            extraReserveTokens: toolReserveTokens,
-            supportsVision: this.supportsVision(state.providerId, state.modelId),
-            supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
-            preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-            preserveEmptyInterleavedReasoning:
-              interleavedReasoning.preserveEmptyReasoningContent === true,
-            historyRecords,
-            signal: preStreamAbortSignal
-          })
+          return await this.runPreStreamStep(
+            { sessionId, messageId, step: 'compaction-prepare', signal: preStreamAbortSignal },
+            () =>
+              this.compactionService.prepareForResumeTurn({
+                sessionId,
+                messageId,
+                providerId: state.providerId,
+                modelId: state.modelId,
+                systemPrompt: baseSystemPrompt,
+                contextLength: generationSettings.contextLength,
+                reserveTokens: maxTokens,
+                extraReserveTokens: toolReserveTokens,
+                supportsVision: this.supportsVision(state.providerId, state.modelId),
+                supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
+                preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+                preserveEmptyInterleavedReasoning:
+                  interleavedReasoning.preserveEmptyReasoningContent === true,
+                historyRecords,
+                signal: preStreamAbortSignal
+              })
+          )
         },
         applyCompaction: async (intent) =>
-          await this.applyCompactionIntent(
-            sessionId,
-            intent,
+          await this.runPreStreamStep(
             {
-              compactionMessageOrderSeq: resumeTargetOrderSeq,
-              shiftMessagesFromCompactionOrderSeq: resumeTargetOrderSeq !== undefined,
+              sessionId,
+              messageId,
+              step: 'compaction-apply',
               signal: preStreamAbortSignal
             },
-            instance
+            () =>
+              this.applyCompactionIntent(
+                sessionId,
+                intent,
+                {
+                  compactionMessageOrderSeq: resumeTargetOrderSeq,
+                  shiftMessagesFromCompactionOrderSeq: resumeTargetOrderSeq !== undefined,
+                  signal: preStreamAbortSignal
+                },
+                instance
+              )
           ),
         readSummary: () => this.sessionStore.getSummaryState(sessionId),
         checkpoints: {
@@ -4643,19 +4868,25 @@ export class AgentRuntimePresenter {
       this.throwIfAbortRequested(preStreamAbortSignal)
       const preparedContext = await this.contextCoordinator.assemble({
         assemblePostCompactionPrompt: async () =>
-          await awaitWithAbort(
-            this.postCompactionPromptAssembler.assemble({
-              memorySession: instance.getMemorySessionHandle(),
-              basePrompt: baseSystemPrompt,
-              summaryText: summaryState.summaryText,
-              reconstructionAnchor: this.sessionStore.getReconstructionAnchorPromptState(sessionId),
-              memoryQuery: this.memoryCoordinator.getLatestUserQuery(sessionId),
-              memoryMessageId: messageId
-            }),
-            preStreamAbortSignal
+          await this.runPreStreamStep(
+            { sessionId, messageId, step: 'memory-injection', signal: preStreamAbortSignal },
+            () =>
+              awaitWithAbort(
+                this.postCompactionPromptAssembler.assemble({
+                  memorySession: instance.getMemorySessionHandle(),
+                  basePrompt: baseSystemPrompt,
+                  summaryText: summaryState.summaryText,
+                  reconstructionAnchor:
+                    this.sessionStore.getReconstructionAnchorPromptState(sessionId),
+                  memoryQuery: this.memoryCoordinator.getLatestUserQuery(sessionId),
+                  memoryMessageId: messageId
+                }),
+                preStreamAbortSignal
+              )
           ),
-        buildView: (systemPrompt) =>
-          buildTapeResumeView({
+        buildView: (systemPrompt) => {
+          const contextBuildStartedAt = Date.now()
+          const contextBuild = buildTapeResumeView({
             sessionId,
             assistantMessageId: messageId,
             systemPrompt,
@@ -4673,7 +4904,10 @@ export class AgentRuntimePresenter {
               preserveEmptyInterleavedReasoning:
                 interleavedReasoning.preserveEmptyReasoningContent === true
             }
-          }),
+          })
+          this.logSlowPreStreamStep(sessionId, 'context-build', contextBuildStartedAt)
+          return contextBuild
+        },
         assertCurrent: () => this.throwIfStaleDeepChatInstance(sessionId, instance)
       })
       const resumeContextBuild = preparedContext.view
@@ -4689,7 +4923,9 @@ export class AgentRuntimePresenter {
         })
 
         if (resumeBudget?.kind === 'tool_error') {
-          await this.toolOutputGuard.cleanupOffloadedOutput(budgetToolCall.offloadPath)
+          await this.runPreStreamStep({ sessionId, messageId, step: 'tool-output-cleanup' }, () =>
+            this.toolOutputGuard.cleanupOffloadedOutput(budgetToolCall.offloadPath)
+          )
           this.throwIfStaleDeepChatInstance(sessionId, instance)
           this.updateToolCallResponse(initialBlocks, budgetToolCall.id, resumeBudget.message, true)
           this.messageStore.updateAssistantContent(messageId, initialBlocks)
@@ -4700,7 +4936,9 @@ export class AgentRuntimePresenter {
             resumeBudget.message
           )
         } else if (resumeBudget?.kind === 'terminal_error') {
-          await this.toolOutputGuard.cleanupOffloadedOutput(budgetToolCall.offloadPath)
+          await this.runPreStreamStep({ sessionId, messageId, step: 'tool-output-cleanup' }, () =>
+            this.toolOutputGuard.cleanupOffloadedOutput(budgetToolCall.offloadPath)
+          )
           this.throwIfStaleDeepChatInstance(sessionId, instance)
           this.updateToolCallResponse(initialBlocks, budgetToolCall.id, resumeBudget.message, true)
           const terminalMetadata = stampTerminalMetadata(
@@ -4739,33 +4977,49 @@ export class AgentRuntimePresenter {
 
       this.throwIfAbortRequested(preStreamAbortSignal)
       this.throwIfStaleDeepChatInstance(sessionId, instance)
-      const streamResult = await this.runStreamForMessage({
-        sessionId,
-        messageId,
-        messages: resumeContext,
-        projectDir,
-        resourceInstance: instance,
-        abortController: preStreamAbortController,
-        tools,
-        baseSystemPrompt,
-        initialBlocks,
-        initialAccounting: resumeAccounting,
-        maxProviderRounds: resumeAccounting.maxProviderRounds,
-        interleavedReasoning,
-        viewContext: {
-          taskType: 'resume',
-          policy: resumeContextBuild.policyId,
-          policyVersion: resumeContextBuild.policyVersion,
-          selection: buildTapeViewSelection(resumeContextBuild.metadata),
-          summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
-          supportsVision: this.supportsVision(state.providerId, state.modelId),
-          supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
-          traceDebugEnabled: this.configPresenter.getSetting<boolean>('traceDebugEnabled') === true
+      const providerBoundary = this.startPreStreamProviderBoundaryWatchdog(
+        {
+          sessionId,
+          messageId,
+          step: 'pre-stream-provider-start',
+          signal: preStreamAbortSignal
         },
-        onRunRegistered: (runId) => {
-          streamRunId = runId
-        }
-      })
+        preStreamStartedAt
+      )
+      let streamResult: { runId: string; result: ProcessResult }
+      try {
+        streamResult = await this.runStreamForMessage({
+          sessionId,
+          messageId,
+          messages: resumeContext,
+          projectDir,
+          resourceInstance: instance,
+          abortController: preStreamAbortController,
+          tools,
+          baseSystemPrompt,
+          initialBlocks,
+          initialAccounting: resumeAccounting,
+          maxProviderRounds: resumeAccounting.maxProviderRounds,
+          interleavedReasoning,
+          viewContext: {
+            taskType: 'resume',
+            policy: resumeContextBuild.policyId,
+            policyVersion: resumeContextBuild.policyVersion,
+            selection: buildTapeViewSelection(resumeContextBuild.metadata),
+            summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
+            supportsVision: this.supportsVision(state.providerId, state.modelId),
+            supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
+            traceDebugEnabled:
+              this.configPresenter.getSetting<boolean>('traceDebugEnabled') === true
+          },
+          onBeforeProviderStream: providerBoundary.complete,
+          onRunRegistered: (runId) => {
+            streamRunId = runId
+          }
+        })
+      } finally {
+        providerBoundary.cancel()
+      }
       const { runId, result } = streamResult
       streamRunId = runId
       try {

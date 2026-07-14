@@ -29,6 +29,37 @@ export class VectorStoreQuarantineMarkerError extends Error {
   }
 }
 
+export class VectorStoreQueryTimeoutError extends Error {
+  constructor(
+    readonly agentId: string,
+    readonly timeoutMs: number
+  ) {
+    super(`[Memory] vector store query timed out for ${agentId} after ${timeoutMs}ms`)
+    this.name = 'VectorStoreQueryTimeoutError'
+  }
+}
+
+export class VectorStoreOperationTimeoutError extends Error {
+  constructor(
+    readonly agentId: string,
+    readonly operation: string,
+    readonly timeoutMs: number
+  ) {
+    super(`[Memory] vector store ${operation} timed out for ${agentId} after ${timeoutMs}ms`)
+    this.name = 'VectorStoreOperationTimeoutError'
+  }
+}
+
+export class VectorStoreLeaseUnavailableError extends Error {
+  constructor(
+    readonly reason: 'stopped' | 'admission-closed' | 'quarantined' | 'stale-identity',
+    message: string
+  ) {
+    super(message)
+    this.name = 'VectorStoreLeaseUnavailableError'
+  }
+}
+
 export type AgentMemoryKind = (typeof AGENT_MEMORY_HEALTH_KIND_KEYS)[number]
 export type AgentMemoryStatus = LegacyAgentMemoryStatus
 export type { AgentMemoryEmbeddingState, AgentMemoryLifecycleState }

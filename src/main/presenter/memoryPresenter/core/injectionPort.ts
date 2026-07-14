@@ -1,3 +1,5 @@
+import type { MemoryRetrievalDegradationCause } from '@shared/types/agent-memory'
+
 import type { AgentMemoryKind } from '../domain/types'
 import type {
   MemoryExtractionResult,
@@ -45,11 +47,16 @@ export interface MemoryInjectionManifest {
   tokenBudget: number
   estimatedTokens: number
   queryHash?: string
+  degradations?: MemoryRetrievalDegradationCause[]
 }
 
 export interface MemoryInjectionResult {
   payload: MemoryInjectionPayload
   manifest: MemoryInjectionManifest
+}
+
+export interface MemoryInjectionOptions {
+  signal?: AbortSignal
 }
 
 // Default token ceiling for the assembled memory injection (persona + working + recalled).
@@ -91,7 +98,11 @@ export function resolveInjectionTokenBudget(value: number | null | undefined): n
 // and tests can supply a fake implementation.
 export interface MemoryInjectionPort {
   isEnabled(agentId: string): boolean
-  buildInjection(agentId: string, query: string): Promise<MemoryInjectionResult | null>
+  buildInjection(
+    agentId: string,
+    query: string,
+    options?: MemoryInjectionOptions
+  ): Promise<MemoryInjectionResult | null>
 }
 
 // Adds extraction entry points on top of injection. Extraction is an independent cheap
@@ -348,10 +359,16 @@ export function appendMemorySectionWithManifest(
   if (!result) return { prompt: systemPrompt, manifest: null }
   const payload = normalizeMemoryInjectionInput(result)
   const assembled = assembleMemorySection(payload)
-  if (!assembled.section) return { prompt: systemPrompt, manifest: null }
   const baseManifest = 'manifest' in result ? result.manifest : assembled.manifest
+  const manifest = { ...baseManifest, ...assembled.manifest }
+  if (!assembled.section) {
+    return {
+      prompt: systemPrompt,
+      manifest: manifest.degradations?.length ? manifest : null
+    }
+  }
   return {
     prompt: `${systemPrompt}\n\n${READONLY_NOTICE}\n\n${assembled.section}`,
-    manifest: { ...baseManifest, ...assembled.manifest }
+    manifest
   }
 }

@@ -2,6 +2,7 @@ import logger from '@shared/logger'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import { appendMemorySectionWithManifest } from '@/presenter/memoryPresenter/injection'
 import type { MemoryRuntimePort } from '@/presenter/memoryPresenter/injection'
+import { withSoftDeadline } from '@/presenter/memoryPresenter/core/asyncDeadline'
 import { buildEffectiveTapeView } from '@/presenter/agentRuntimePresenter/tapeEffectiveView'
 import type {
   DeepChatMemoryIngestionCurrentRange,
@@ -23,6 +24,7 @@ import type { MemoryPromptContributor, MemorySessionHandle } from './memoryPromp
 
 const MEMORY_INJECTION_ACCESS_TURN_TTL_MS = 30 * 60 * 1000
 const MEMORY_INJECTION_ACCESS_MAX_TURNS_PER_SESSION = 128
+export const MEMORY_INJECTION_TIMEOUT_MS = 4_000
 const MEMORY_INGESTION_PROJECTION_RETRY_COOLDOWN_MS = 30_000
 const MEMORY_INGESTION_PROJECTION_FAILURE_CACHE_LIMIT = 256
 const MEMORY_INGESTION_DRAIN_TIMEOUT_MS = 5_000
@@ -140,10 +142,27 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
       const sessionId = input.session.sessionId
       const agentId = this.deps.getSessionAgentId(sessionId) ?? 'deepchat'
       if (!this.memoryPort.isEnabled(agentId)) return input.basePrompt
-      const injection = await this.memoryPort.buildInjection(agentId, input.query)
+      const injectionAbort = new AbortController()
+      const deadlineResult = await withSoftDeadline(
+        this.memoryPort.buildInjection(agentId, input.query, { signal: injectionAbort.signal }),
+        MEMORY_INJECTION_TIMEOUT_MS
+      )
+      if (deadlineResult.timedOut) {
+        injectionAbort.abort()
+        logger.warn(
+          `[DeepChatAgent] memory injection timed out for session=${sessionId}; sending without memory section`
+        )
+        return input.basePrompt
+      }
+      const injection = deadlineResult.value
       if (!this.memoryPort.isEnabled(agentId)) return input.basePrompt
       const assembled = appendMemorySectionWithManifest(input.basePrompt, injection)
       if (assembled.manifest) {
+        if (assembled.manifest.degradations?.length) {
+          logger.info(
+            `[DeepChatAgent] memory injection degraded for session=${sessionId} causes=${assembled.manifest.degradations.join(',')}`
+          )
+        }
         if (this.memoryPort.isEnabled(agentId)) {
           this.recordInjectionAccess(
             agentId,

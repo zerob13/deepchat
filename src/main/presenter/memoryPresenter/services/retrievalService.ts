@@ -12,6 +12,7 @@ import {
   fuse,
   resolveRetrieval
 } from '../core/scoring'
+import { withSoftDeadline } from '../core/asyncDeadline'
 import {
   buildRecallKeywordQuery,
   extractRecallKeywordCandidates,
@@ -20,6 +21,7 @@ import {
 import {
   resolveInjectionTokenBudget,
   type MemoryInjectionManifest,
+  type MemoryInjectionOptions,
   type MemoryInjectionPayload,
   type MemoryInjectionResult
 } from '../core/injectionPort'
@@ -39,6 +41,7 @@ import {
   type MemorySearchHit,
   type NormalizedMemoryCandidate
 } from '../types'
+import { VectorStoreLeaseUnavailableError, VectorStoreQueryTimeoutError } from '../domain/types'
 import { embeddingFingerprint, type MemoryModelRef, type MemoryRuntimeContext } from '../context'
 import type {
   MemoryAccessRepositoryPort,
@@ -48,8 +51,6 @@ import type {
   VectorStoreRetrievalPort,
   WorkingMemoryReadPort
 } from '../ports'
-
-type SoftTimeoutResult<T> = { timedOut: true } | { timedOut: false; value: T }
 
 type QueryEmbeddingInFlight = {
   startedAt: number
@@ -94,21 +95,24 @@ function clampRetrievalTopK(value: number): number {
   return Math.min(MAX_TOP_K, Math.max(1, Math.floor(value)))
 }
 
-async function withSoftTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number
-): Promise<SoftTimeoutResult<T>> {
-  let timeoutId: NodeJS.Timeout | undefined
-  const guarded = promise.then((value) => ({ timedOut: false, value }) as SoftTimeoutResult<T>)
-  guarded.catch(() => undefined)
-  const timeout = new Promise<SoftTimeoutResult<T>>((resolve) => {
-    timeoutId = setTimeout(() => resolve({ timedOut: true }), timeoutMs)
-  })
-  try {
-    return await Promise.race([guarded, timeout])
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId)
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted()
+}
+
+function vectorStoreDegradation(
+  error: unknown,
+  health: ReturnType<VectorStoreRetrievalPort['getRecallHealth']>,
+  activeStage: MemoryRecallLatencyStage
+): MemoryRetrievalDegradationCause {
+  if (error instanceof VectorStoreQueryTimeoutError || health === 'suspect') return 'storeTimeout'
+  if (
+    error instanceof VectorStoreLeaseUnavailableError ||
+    health === 'quarantined' ||
+    health === 'stopped'
+  ) {
+    return 'storeUnusable'
   }
+  return activeStage === 'queryEmbedding' ? 'embeddingError' : 'storeError'
 }
 
 export class RetrievalService {
@@ -272,7 +276,10 @@ export class RetrievalService {
       )
       let vectorContext: { embedding: MemoryModelRef; dimensions: number } | null = null
       if (currentEmbedding && this.ctx.canUseCurrentMemoryEmbedding(agentId, currentEmbedding)) {
-        if (!this.ports.vectorStore.hasReadyCertificate(agentId, currentEmbedding)) {
+        const recallHealth = this.ports.vectorStore.getRecallHealth(agentId)
+        if (recallHealth !== 'available') {
+          degradations.add(recallHealth === 'suspect' ? 'storeTimeout' : 'storeUnusable')
+        } else if (!this.ports.vectorStore.hasReadyCertificate(agentId, currentEmbedding)) {
           degradations.add('vectorCold')
           void this.ports
             .warmVectorStore(agentId, currentEmbedding, { delayOpen: true })
@@ -313,11 +320,18 @@ export class RetrievalService {
               }
             } catch (error) {
               const errorName = (error as { name?: string } | null)?.name
-              if (errorName !== 'AbortError' && errorName !== 'VectorStoreLeaseUnavailableError') {
+              if (
+                errorName !== 'AbortError' &&
+                !(error instanceof VectorStoreLeaseUnavailableError)
+              ) {
                 this.ports.vectorStore.clearReady(agentId)
               }
               degradations.add(
-                errorName === 'VectorStoreLeaseUnavailableError' ? 'storeUnusable' : 'storeError'
+                vectorStoreDegradation(
+                  error,
+                  this.ports.vectorStore.getRecallHealth(agentId),
+                  activeStage
+                )
               )
               logger.warn(`[Memory] batch vector recall degraded to FTS: ${String(error)}`)
             }
@@ -535,11 +549,13 @@ export class RetrievalService {
       topKOverride?: number
       enableInlinePrune?: boolean
       excludeConflictParticipants?: boolean
+      degradationCollector?: Set<MemoryRetrievalDegradationCause>
+      signal?: AbortSignal
     }
   ): Promise<MemoryRecallItem[]> {
     const totalStartedAt = performance.now()
     const latencyMs: Partial<Record<MemoryRecallLatencyStage, number>> = {}
-    const degradations = new Set<MemoryRetrievalDegradationCause>()
+    const degradations = options.degradationCollector ?? new Set<MemoryRetrievalDegradationCause>()
     let outcome: MemoryRetrievalOutcome = 'failed'
     let ftsCandidates = 0
     let vectorCandidates = 0
@@ -550,6 +566,7 @@ export class RetrievalService {
         outcome = 'disabled'
         return []
       }
+      throwIfAborted(options.signal)
       const config = this.ports.policy.resolveAgentConfig(agentId)
       const { topK, rrfK, similarityThreshold, weights } = resolveRetrieval(config?.memoryRetrieval)
       const normalizedQuery = query.trim()
@@ -579,13 +596,17 @@ export class RetrievalService {
       )
       if (keywordSearch?.strategy === 'like-fallback') degradations.add('ftsUnavailable')
       latencyMs.keyword = performance.now() - keywordStartedAt
+      throwIfAborted(options.signal)
 
       const vecCandidates: { memoryId: string; similarity: number }[] = []
       let vectorContext: { embedding: MemoryModelRef; dimensions: number } | null = null
       const embedding = config?.memoryEmbedding
       if (embedding?.providerId && embedding?.modelId) {
         const currentEmbedding = { providerId: embedding.providerId, modelId: embedding.modelId }
-        if (!this.ports.vectorStore.hasReadyCertificate(agentId, currentEmbedding)) {
+        const recallHealth = this.ports.vectorStore.getRecallHealth(agentId)
+        if (recallHealth !== 'available') {
+          degradations.add(recallHealth === 'suspect' ? 'storeTimeout' : 'storeUnusable')
+        } else if (!this.ports.vectorStore.hasReadyCertificate(agentId, currentEmbedding)) {
           degradations.add('vectorCold')
           void this.ports
             .warmVectorStore(agentId, currentEmbedding, { delayOpen: true })
@@ -607,10 +628,11 @@ export class RetrievalService {
             } else {
               const embeddingStartedAt = performance.now()
               activeStage = 'queryEmbedding'
-              const vectorsResult = await withSoftTimeout(
+              const vectorsResult = await withSoftDeadline(
                 queryEmbedding,
                 RECALL_QUERY_EMBEDDING_TIMEOUT_MS
               )
+              throwIfAborted(options.signal)
               latencyMs.queryEmbedding = performance.now() - embeddingStartedAt
               if (vectorsResult.timedOut) {
                 degradations.add('embeddingTimeout')
@@ -638,6 +660,7 @@ export class RetrievalService {
                     vector,
                     candidateLimit
                   )
+                  throwIfAborted(options.signal)
                   latencyMs.vector = performance.now() - vectorStartedAt
                   if (!this.ctx.canReadAgentMemory(agentId)) {
                     outcome = 'cancelled'
@@ -675,20 +698,24 @@ export class RetrievalService {
               }
             }
           } catch (error) {
+            if (options.signal?.aborted) throwIfAborted(options.signal)
             if (!this.ctx.canReadAgentMemory(agentId)) {
               outcome = 'cancelled'
               return []
             }
             const errorName = (error as { name?: string } | null)?.name
-            if (errorName !== 'AbortError' && errorName !== 'VectorStoreLeaseUnavailableError') {
+            if (
+              errorName !== 'AbortError' &&
+              !(error instanceof VectorStoreLeaseUnavailableError)
+            ) {
               this.ports.vectorStore.clearReady(agentId)
             }
             degradations.add(
-              errorName === 'VectorStoreLeaseUnavailableError'
-                ? 'storeUnusable'
-                : activeStage === 'queryEmbedding'
-                  ? 'embeddingError'
-                  : 'storeError'
+              vectorStoreDegradation(
+                error,
+                this.ports.vectorStore.getRecallHealth(agentId),
+                activeStage
+              )
             )
             logger.warn(`[Memory] vector recall degraded to FTS for ${agentId}: ${String(error)}`)
           }
@@ -699,6 +726,7 @@ export class RetrievalService {
         ...ftsRows.map((row) => row.id),
         ...vecCandidates.map((candidate) => candidate.memoryId)
       ]
+      throwIfAborted(options.signal)
       const revalidationStartedAt = performance.now()
       activeStage = 'authoritativeRevalidation'
       const authoritativeRows = candidateIds.length
@@ -726,6 +754,7 @@ export class RetrievalService {
             : null
         })
         .filter((match): match is { row: AgentMemoryRow; similarity: number } => match !== null)
+      throwIfAborted(options.signal)
       ftsCandidates = authoritativeFtsRows.length
       vectorCandidates = authoritativeVecMatches.length
 
@@ -734,6 +763,7 @@ export class RetrievalService {
         vectorContext &&
         this.ctx.canReadAgentMemory(agentId)
       ) {
+        throwIfAborted(options.signal)
         const liveVectorIds = new Set(authoritativeVecMatches.map((match) => match.row.id))
         const deadVectorIds = [
           ...new Set(
@@ -758,6 +788,7 @@ export class RetrievalService {
 
       const assemblyStartedAt = performance.now()
       activeStage = 'assembly'
+      throwIfAborted(options.signal)
       const results = fuse(authoritativeFtsRows, authoritativeVecMatches, {
         topK: effectiveTopK,
         rrfK,
@@ -776,7 +807,7 @@ export class RetrievalService {
       outcome = 'completed'
       return results
     } catch (error) {
-      if (!this.ctx.canReadAgentMemory(agentId)) outcome = 'cancelled'
+      if (options.signal?.aborted || !this.ctx.canReadAgentMemory(agentId)) outcome = 'cancelled'
       else {
         outcome = 'failed'
         degradations.add(
@@ -800,29 +831,44 @@ export class RetrievalService {
     }
   }
 
-  async buildInjection(agentId: string, query: string): Promise<MemoryInjectionResult | null> {
+  async buildInjection(
+    agentId: string,
+    query: string,
+    options: MemoryInjectionOptions = {}
+  ): Promise<MemoryInjectionResult | null> {
+    throwIfAborted(options.signal)
     const readEpoch = this.ctx.captureReadEpoch(agentId)
     const config = this.ports.policy.resolveAgentConfig(agentId)
+    const degradations = new Set<MemoryRetrievalDegradationCause>()
     const recalled = await this.retrieve(agentId, query, Date.now(), false, {
       purpose: 'injection',
       keywordQuery: this.buildAgentFacingRecallKeywordQuery(query),
-      keywordMatchMode: 'any'
+      keywordMatchMode: 'any',
+      degradationCollector: degradations,
+      signal: options.signal
     })
+    throwIfAborted(options.signal)
     if (!this.ctx.canReadAgentMemory(agentId) || !this.ctx.isReadEpochCurrent(agentId, readEpoch)) {
       return null
     }
     this.ports.workingMemory.flushWorkingMemoryIfDirty(agentId)
+    throwIfAborted(options.signal)
     const finalizedEpoch = this.ctx.captureReadEpoch(agentId)
     const persona = this.ports.repository.getActivePersona(agentId)
     const working = this.ports.workingMemory.readWorkingMemory(agentId)
     if (!working) this.ports.workingMemory.scheduleWorkingRefresh(agentId)
+    throwIfAborted(options.signal)
     if (
       !this.ctx.canReadAgentMemory(agentId) ||
       !this.ctx.isReadEpochCurrent(agentId, finalizedEpoch)
     ) {
       return null
     }
-    if (!persona && !working && recalled.length === 0) return null
+    const manifestDegradations = [...degradations].filter(
+      (degradation) => degradation !== 'vectorCold'
+    )
+    if (!persona && !working && recalled.length === 0 && manifestDegradations.length === 0)
+      return null
     const tokenBudget = resolveInjectionTokenBudget(config?.memoryInjectionTokenBudget)
     const payload: MemoryInjectionPayload = {
       selfModel: persona?.content ?? null,
@@ -844,7 +890,10 @@ export class RetrievalService {
       dropped: [],
       tokenBudget,
       estimatedTokens: 0,
-      queryHash: query.trim() ? buildMemoryProvenanceKey(agentId, 'query', query.trim()) : undefined
+      queryHash: query.trim()
+        ? buildMemoryProvenanceKey(agentId, 'query', query.trim())
+        : undefined,
+      ...(manifestDegradations.length > 0 ? { degradations: manifestDegradations } : {})
     }
     return { payload, manifest }
   }
