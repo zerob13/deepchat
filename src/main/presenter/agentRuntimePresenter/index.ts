@@ -290,7 +290,12 @@ export class AgentRuntimePresenter {
       toolPresenter: this.toolPresenter,
       sessionPermissionPort: this.sessionPermissionPort,
       getRuntimeState: (sessionId) => this.getDeepChatRuntimeState(sessionId),
+      getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
       getInstance: (sessionId) => this.getDeepChatInstance(sessionId),
+      beginSessionAgentReassignment: async (sessionId) =>
+        await this.memoryCoordinator.beginSessionAgentReassignment(sessionId),
+      finishSessionAgentReassignment: (sessionId) =>
+        this.memoryCoordinator.finishSessionAgentReassignment(sessionId),
       getEffectiveGenerationSettings: async (sessionId) =>
         await this.getEffectiveSessionGenerationSettings(sessionId),
       normalizeProjectDir: (projectDir) => this.normalizeProjectDir(projectDir),

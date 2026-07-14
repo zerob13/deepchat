@@ -70,8 +70,19 @@ function createHarness() {
   let tapeRows = rows.map(toTapeRow)
   const runtimeStates = new Map([['s1', { providerId: 'openai', modelId: 'gpt-4' }]])
   const handles = new Map<string, MemorySessionHandle>()
+  const executionGenerations = new Map<string, number>()
+  const isEnabled = vi.fn((_agentId: string) => true)
   const port = {
-    isEnabled: vi.fn(() => true),
+    isEnabled,
+    captureExecutionToken: vi.fn((agentId: string) => ({
+      agentId,
+      generation: executionGenerations.get(agentId) ?? 0
+    })),
+    canContinueExecution: vi.fn(
+      (token: { agentId: string; generation: number }) =>
+        isEnabled(token.agentId) &&
+        (executionGenerations.get(token.agentId) ?? 0) === token.generation
+    ),
     buildInjection: vi
       .fn<(agentId: string, query: string, options?: { signal?: AbortSignal }) => Promise<any>>()
       .mockResolvedValue(null),
@@ -121,6 +132,9 @@ function createHarness() {
     projection,
     runtimeStates,
     memorySession,
+    advanceExecution(agentId = 'agent-a') {
+      executionGenerations.set(agentId, (executionGenerations.get(agentId) ?? 0) + 1)
+    },
     get cursor() {
       return cursor
     },
@@ -213,6 +227,41 @@ describe('MemoryRuntimeCoordinator', () => {
     const promptWithoutAnchor = await coordinator.contribute(input)
     expect(promptWithoutAnchor).toContain('Remember Redis.')
     expect(port.recordInjectionAccess).toHaveBeenCalledWith('agent-a', ['selected'])
+    expect(deps.appendTapeAnchor).not.toHaveBeenCalled()
+  })
+
+  it('discards an injection admitted before an enabled ABA transition', async () => {
+    const { advanceExecution, coordinator, deps, memorySession, port } = createHarness()
+    const pendingInjection = deferred<any>()
+    port.buildInjection.mockReturnValue(pendingInjection.promise)
+
+    const contribution = coordinator.contribute({
+      session: memorySession,
+      basePrompt: 'base prompt',
+      query: 'redis',
+      messageId: 'message-1'
+    })
+    await tick()
+    advanceExecution()
+    advanceExecution()
+    pendingInjection.resolve({
+      payload: {
+        selfModel: null,
+        working: null,
+        memories: [{ id: 'stale', kind: 'semantic', content: 'stale memory' }]
+      },
+      manifest: {
+        policyVersion: 1,
+        selected: [{ id: 'stale', kind: 'semantic' }],
+        dropped: [],
+        tokenBudget: 1_200,
+        estimatedTokens: 10
+      }
+    })
+
+    await expect(contribution).resolves.toBe('base prompt')
+    expect(port.isEnabled).toHaveLastReturnedWith(true)
+    expect(port.recordInjectionAccess).not.toHaveBeenCalled()
     expect(deps.appendTapeAnchor).not.toHaveBeenCalled()
   })
 
@@ -398,7 +447,78 @@ describe('MemoryRuntimeCoordinator', () => {
     expect(port.observeExtractionQueue).toHaveBeenLastCalledWith(0, null)
   })
 
-  it('resolves epochs when queued tasks start and fences continuations by expected epoch', async () => {
+  it('drops a queued stale token and allows a fresh admission after re-enable', async () => {
+    const { advanceExecution, coordinator } = createHarness()
+    const first = deferred()
+    const events: string[] = []
+
+    coordinator.enqueueSessionExtraction('s1', async () => {
+      events.push('first-start')
+      await first.promise
+      events.push('first-end')
+    })
+    coordinator.enqueueSessionExtraction('s1', async () => {
+      events.push('stale')
+    })
+    await tick()
+
+    advanceExecution()
+    advanceExecution()
+    coordinator.enqueueSessionExtraction('s1', async () => {
+      events.push('fresh')
+    })
+    first.resolve()
+    await coordinator.waitForSession('s1')
+
+    expect(events).toEqual(['first-start', 'first-end', 'fresh'])
+  })
+
+  it('keeps the original execution token on queued chunk continuations', async () => {
+    const { advanceExecution, coordinator, port } = createHarness()
+    const blocker = deferred()
+    coordinator.enqueueSessionExtraction('s1', async () => blocker.promise)
+    await tick()
+
+    const chunks = [1, 2, 3, 4, 5].map((orderSeq) => ({
+      text: `User: memory ${orderSeq}`,
+      sourceEntryIds: [orderSeq],
+      cursorCommitOrderSeq: orderSeq,
+      coveredThroughOrderSeq: orderSeq,
+      fragments: [{ orderSeq, entryId: orderSeq, fragmentIndex: 0, isFinalFragment: true }]
+    }))
+    const executionToken = port.captureExecutionToken('agent-a')
+    await coordinator.runExtractionChunks(
+      's1',
+      { chunks, reason: 'fallback' },
+      coordinator.ensureSessionEpoch('s1'),
+      executionToken
+    )
+    expect(port.extractAndStore).toHaveBeenCalledTimes(4)
+
+    advanceExecution()
+    advanceExecution()
+    blocker.resolve()
+    await coordinator.waitForSession('s1')
+
+    expect(port.extractAndStore).toHaveBeenCalledTimes(4)
+  })
+
+  it('drops queued work when the session Agent identity changes', async () => {
+    const { coordinator, deps } = createHarness()
+    const blocker = deferred()
+    const queued = vi.fn()
+    coordinator.enqueueSessionExtraction('s1', async () => blocker.promise)
+    coordinator.enqueueSessionExtraction('s1', async () => queued())
+    await tick()
+
+    deps.getSessionAgentId.mockReturnValue('agent-b')
+    blocker.resolve()
+    await coordinator.waitForSession('s1')
+
+    expect(queued).not.toHaveBeenCalled()
+  })
+
+  it('binds ordinary and continuation session epochs at queue admission', async () => {
     const { coordinator } = createHarness()
     const first = deferred()
     const observed: Array<string | number> = []
@@ -424,7 +544,51 @@ describe('MemoryRuntimeCoordinator', () => {
     first.resolve()
     await coordinator.waitForSession('s1')
 
-    expect(observed).toEqual(['first', 0, 'next', 1])
+    expect(observed).toEqual(['first', 0])
+  })
+
+  it('drains old-Agent persistence before a session Agent reassignment', async () => {
+    const { coordinator, deps, port } = createHarness()
+    const persistence = deferred<{ ok: true; createdIds: string[] }>()
+    const chunk = {
+      text: 'User: Remember Redis.',
+      sourceEntryIds: [1],
+      cursorCommitOrderSeq: 1,
+      coveredThroughOrderSeq: 1,
+      fragments: [{ orderSeq: 1, entryId: 1, fragmentIndex: 0, isFinalFragment: true }]
+    }
+    port.extractAndStore.mockImplementationOnce(() => persistence.promise)
+    coordinator.enqueueSessionExtraction('s1', async (epoch, executionToken) => {
+      await coordinator.runExtractionChunks(
+        's1',
+        { chunks: [chunk], reason: 'fallback' },
+        epoch,
+        executionToken
+      )
+    })
+    await vi.waitFor(() => expect(port.extractAndStore).toHaveBeenCalledOnce())
+
+    let drained = false
+    const reassignment = coordinator.beginSessionAgentReassignment('s1').then(() => {
+      drained = true
+    })
+    const blockedAdmission = vi.fn()
+    coordinator.enqueueSessionExtraction('s1', async () => blockedAdmission())
+    await tick()
+
+    expect(drained).toBe(false)
+    expect(blockedAdmission).not.toHaveBeenCalled()
+    persistence.resolve({ ok: true, createdIds: ['late'] })
+    await reassignment
+
+    expect(deps.updateMemoryCursorOrderSeq).not.toHaveBeenCalled()
+    expect(deps.appendTapeAnchor).not.toHaveBeenCalled()
+    coordinator.finishSessionAgentReassignment('s1')
+
+    const freshAdmission = vi.fn()
+    coordinator.enqueueSessionExtraction('s1', async () => freshAdmission())
+    await coordinator.waitForSession('s1')
+    expect(freshAdmission).toHaveBeenCalledOnce()
   })
 
   it('clears destroyed-session queue diagnostics immediately', async () => {
@@ -452,11 +616,22 @@ describe('MemoryRuntimeCoordinator', () => {
     const epoch = coordinator.ensureSessionEpoch('s1')
     port.extractAndStore.mockResolvedValueOnce({ ok: false })
 
-    await coordinator.runExtractionChunks('s1', { chunks: [chunk], reason: 'fallback' }, epoch)
+    const executionToken = port.captureExecutionToken('agent-a')
+    await coordinator.runExtractionChunks(
+      's1',
+      { chunks: [chunk], reason: 'fallback' },
+      epoch,
+      executionToken
+    )
     expect(deps.updateMemoryCursorOrderSeq).not.toHaveBeenCalled()
 
     port.extractAndStore.mockResolvedValueOnce({ ok: true, createdIds: ['m1'] })
-    await coordinator.runExtractionChunks('s1', { chunks: [chunk], reason: 'fallback' }, epoch)
+    await coordinator.runExtractionChunks(
+      's1',
+      { chunks: [chunk], reason: 'fallback' },
+      epoch,
+      executionToken
+    )
     expect(deps.updateMemoryCursorOrderSeq).toHaveBeenCalledWith('s1', 1)
     expect(deps.appendTapeAnchor).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 's1', name: 'memory/extract' })
@@ -470,7 +645,8 @@ describe('MemoryRuntimeCoordinator', () => {
         chunks: [{ ...chunk, coveredThroughOrderSeq: 2, cursorCommitOrderSeq: 2 }],
         reason: 'fallback'
       },
-      epoch
+      epoch,
+      executionToken
     )
     coordinator.resetExtractionCursor('s1')
     pending.resolve({ ok: true, createdIds: ['late'] })

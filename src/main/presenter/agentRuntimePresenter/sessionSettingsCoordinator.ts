@@ -7,6 +7,7 @@ import type {
 import type { IConfigPresenter } from '@shared/presenter'
 import type { IToolPresenter } from '@shared/types/presenters/tool.presenter'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { BUILTIN_DEEPCHAT_AGENT_ID } from '@/agent/deepchat/deepChatAgentRepository'
 import type { SessionPermissionPort } from '../runtimePorts'
 import {
   buildPersistedGenerationSettingsPatch,
@@ -27,7 +28,10 @@ interface SessionSettingsCoordinatorDependencies {
   toolPresenter: IToolPresenter | null
   sessionPermissionPort?: SessionPermissionPort
   getRuntimeState(sessionId: string): DeepChatSessionState | undefined
+  getSessionAgentId(sessionId: string): string | undefined
   getInstance(sessionId: string): DeepChatAgentInstance
+  beginSessionAgentReassignment(sessionId: string): Promise<void>
+  finishSessionAgentReassignment(sessionId: string): void
   getEffectiveGenerationSettings(sessionId: string): Promise<SessionGenerationSettings>
   normalizeProjectDir(projectDir?: string | null): string | null
   resolvePersistedProjectDir(sessionId: string): string | null
@@ -117,33 +121,44 @@ export class SessionSettingsCoordinator {
       nextModelId,
       config.generationSettings ?? {}
     )
-    this.deps.sessionStore.updateSessionConfiguration(
-      sessionId,
-      nextProviderId,
-      nextModelId,
-      buildPersistedGenerationSettingsReplacement(generationSettings),
-      permissionMode
-    )
+    const isAgentReassignment =
+      (this.deps.getSessionAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID) !== nextAgentId
+    try {
+      if (isAgentReassignment) {
+        await this.deps.beginSessionAgentReassignment(sessionId)
+      }
+      this.deps.sessionStore.updateSessionConfiguration(
+        sessionId,
+        nextProviderId,
+        nextModelId,
+        buildPersistedGenerationSettingsReplacement(generationSettings),
+        permissionMode
+      )
 
-    const instance = this.deps.getInstance(sessionId)
-    instance.setRuntimeState({
-      status: state?.status ?? 'idle',
-      providerId: nextProviderId,
-      modelId: nextModelId,
-      permissionMode
-    })
-    instance.setAgentId(nextAgentId)
-    instance.setProjectDir(this.deps.normalizeProjectDir(config.projectDir))
-    instance.setGenerationSettings(generationSettings)
-    this.deps.sessionPermissionPort?.clearSessionPermissions(sessionId)
-    this.deps.toolPresenter?.clearAgentPlanState?.(sessionId)
-    instance.replaceRuntimeActivatedSkills([])
-    await this.deps.toolResolver.refilterActiveSkillsForAgentPolicy(
-      sessionId,
-      nextAgentId,
-      instance
-    )
-    this.invalidateCaches(sessionId)
+      const instance = this.deps.getInstance(sessionId)
+      instance.setRuntimeState({
+        status: state?.status ?? 'idle',
+        providerId: nextProviderId,
+        modelId: nextModelId,
+        permissionMode
+      })
+      instance.setAgentId(nextAgentId)
+      instance.setProjectDir(this.deps.normalizeProjectDir(config.projectDir))
+      instance.setGenerationSettings(generationSettings)
+      this.deps.sessionPermissionPort?.clearSessionPermissions(sessionId)
+      this.deps.toolPresenter?.clearAgentPlanState?.(sessionId)
+      instance.replaceRuntimeActivatedSkills([])
+      await this.deps.toolResolver.refilterActiveSkillsForAgentPolicy(
+        sessionId,
+        nextAgentId,
+        instance
+      )
+      this.invalidateCaches(sessionId)
+    } finally {
+      if (isAgentReassignment) {
+        this.deps.finishSessionAgentReassignment(sessionId)
+      }
+    }
   }
 
   setProjectDir(sessionId: string, projectDir: string | null): void {

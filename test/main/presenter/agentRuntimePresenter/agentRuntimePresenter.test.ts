@@ -716,12 +716,34 @@ describe('AgentRuntimePresenter', () => {
   const getMemoryCoordinator = () =>
     (agent as unknown as { memoryCoordinator: MemoryRuntimeCoordinator }).memoryCoordinator
 
+  let installedMemoryPort: any
   const setMemoryPort = (port: any) => {
-    getMemoryCoordinator().setPort(port)
+    const isEnabled = port.isEnabled ?? vi.fn(() => true)
+    installedMemoryPort = {
+      ...port,
+      isEnabled,
+      captureExecutionToken:
+        port.captureExecutionToken ?? vi.fn((agentId: string) => ({ agentId, generation: 0 })),
+      canContinueExecution:
+        port.canContinueExecution ??
+        vi.fn(
+          (token: { agentId: string; generation: number }) =>
+            token.generation === 0 && isEnabled(token.agentId)
+        )
+    }
+    getMemoryCoordinator().setPort(installedMemoryPort)
+  }
+
+  const captureMemoryExecutionToken = (sessionId = 's1') => {
+    if (!installedMemoryPort) throw new Error('memory port has not been installed')
+    const coordinator = getMemoryCoordinator()
+    const agentId = (coordinator as any).deps.getSessionAgentId(sessionId) ?? 'deepchat'
+    return installedMemoryPort.captureExecutionToken(agentId)
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    installedMemoryPort = undefined
     ;(processStream as ReturnType<typeof vi.fn>).mockReset()
     ;(processStream as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'completed' })
     const skillPresenter = getSkillPresenterMock()
@@ -1152,7 +1174,8 @@ describe('AgentRuntimePresenter', () => {
           ],
           reason: 'fallback'
         },
-        epoch
+        epoch,
+        captureMemoryExecutionToken()
       ) as Promise<void>
     }
 
@@ -1283,7 +1306,8 @@ describe('AgentRuntimePresenter', () => {
       await getMemoryCoordinator().runExtractionChunks(
         's1',
         { chunks: [1, 2, 3, 4, 5].map(extractionChunk), reason: 'fallback' },
-        epoch
+        epoch,
+        captureMemoryExecutionToken()
       )
       await waitForExtractionChain()
 
@@ -1308,7 +1332,8 @@ describe('AgentRuntimePresenter', () => {
       await getMemoryCoordinator().runExtractionChunks(
         's1',
         { chunks: [1, 2, 3].map(extractionChunk), reason: 'fallback' },
-        epoch
+        epoch,
+        captureMemoryExecutionToken()
       )
 
       expect(extractAndStore).toHaveBeenCalledTimes(2)
@@ -1331,7 +1356,8 @@ describe('AgentRuntimePresenter', () => {
       await getMemoryCoordinator().runExtractionChunks(
         's1',
         { chunks: [extractionChunk(2)], reason: 'compaction' },
-        epoch
+        epoch,
+        captureMemoryExecutionToken()
       )
 
       expect(sqlitePresenter.deepchatTapeEntriesTable.appendAnchor).toHaveBeenCalledWith(
@@ -5135,6 +5161,36 @@ describe('AgentRuntimePresenter', () => {
       expect(instance.getGenerationSettings()).toEqual(previousSettings)
       expect(invalidateSystemPromptCache).not.toHaveBeenCalled()
       expect(invalidateToolProfileCache).not.toHaveBeenCalled()
+    })
+
+    it('waits for old-Agent memory persistence before publishing a new Agent identity', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
+      const coordinator = getMemoryCoordinator()
+      const drain = deferred<void>()
+      const beginReassignment = vi
+        .spyOn(coordinator, 'beginSessionAgentReassignment')
+        .mockReturnValue(drain.promise)
+      const finishReassignment = vi
+        .spyOn(coordinator, 'finishSessionAgentReassignment')
+        .mockImplementation(() => undefined)
+
+      const update = agent.setSessionAgentContext('s1', {
+        agentId: 'other-agent',
+        providerId: 'anthropic',
+        modelId: 'claude-3-5-sonnet',
+        projectDir: '/private/project',
+        permissionMode: 'full_access'
+      })
+      await vi.waitFor(() => expect(beginReassignment).toHaveBeenCalledWith('s1'))
+
+      expect(instance.getAgentId()).toBe('deepchat')
+      expect(finishReassignment).not.toHaveBeenCalled()
+      drain.resolve(undefined)
+      await update
+
+      expect(instance.getAgentId()).toBe('other-agent')
+      expect(finishReassignment).toHaveBeenCalledWith('s1')
     })
 
     it('clears permissions and refilters active skills when rebinding host agent', async () => {

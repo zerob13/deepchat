@@ -8,7 +8,13 @@ import {
   type VectorStoreCleanupDisposition
 } from '../domain/types'
 import type { IMemoryVectorStore, MemoryVectorMatch } from '../types'
-import { embeddingFingerprint, type MemoryModelRef, type MemoryRuntimeContext } from '../context'
+import type { MemoryModelRef } from '../domain/types'
+import type { MemoryRuntimeContext } from '../context'
+import {
+  memoryEmbeddingFingerprint,
+  memoryEmbeddingStorageFingerprint,
+  resolveMemoryEmbedding
+} from '../core/executionIdentity'
 import type {
   MemoryAgentPolicyPort,
   MemoryEmbeddingRepositoryPort,
@@ -148,17 +154,12 @@ export class VectorStoreManager implements VectorStoreRetrievalPort {
   }
 
   private resolveCurrentEmbedding(agentId: string): MemoryModelRef | null {
-    const embedding = this.ports.policy.resolveAgentConfig(agentId)?.memoryEmbedding
-    return embedding?.providerId && embedding?.modelId
-      ? { providerId: embedding.providerId, modelId: embedding.modelId }
-      : null
+    return resolveMemoryEmbedding(this.ports.policy.resolveAgentConfig(agentId))
   }
 
   private syncConfigIdentity(agentId: string, embedding: MemoryModelRef | null): boolean {
     const state = this.leaseState(agentId)
-    const fingerprint = embedding
-      ? embeddingFingerprint(embedding.providerId, embedding.modelId)
-      : null
+    const fingerprint = memoryEmbeddingFingerprint(embedding)
     if (state.configFingerprint === undefined) {
       state.configFingerprint = fingerprint
       return false
@@ -1141,10 +1142,8 @@ export class VectorStoreManager implements VectorStoreRetrievalPort {
       resolvedEmbedding = { providerId: embedding.providerId, modelId: embedding.modelId }
     }
     if (targetDimensions === null) {
-      const fingerprint = embeddingFingerprint(
-        resolvedEmbedding.providerId,
-        resolvedEmbedding.modelId
-      )
+      const fingerprint = memoryEmbeddingStorageFingerprint(resolvedEmbedding)
+      if (!fingerprint) return 'skipped'
       targetDimensions =
         this.getReadyCertificateDimension(agentId, resolvedEmbedding) ??
         this.ports.repository.getCurrentEmbeddingDimension(agentId, fingerprint)
@@ -1194,7 +1193,7 @@ export class VectorStoreManager implements VectorStoreRetrievalPort {
           this.clearReady(agentId)
           return []
         }
-        const fingerprint = embeddingFingerprint(embedding.providerId, embedding.modelId)
+        const fingerprint = memoryEmbeddingStorageFingerprint(embedding)
         const prunableIds = this.ports.repository.filterPrunableVectorRefs(
           agentId,
           memoryIds,
@@ -1336,7 +1335,7 @@ export class VectorStoreManager implements VectorStoreRetrievalPort {
   }
 
   currentEmbeddingFingerprint(embedding: MemoryModelRef): string {
-    return embeddingFingerprint(embedding.providerId, embedding.modelId)
+    return memoryEmbeddingStorageFingerprint(embedding)
   }
 
   isQuarantined(agentId: string): boolean {
