@@ -156544,6 +156544,43 @@
           "type": "chat"
         },
         {
+          "id": "openai.gpt-5.6-luna",
+          "name": "GPT-5.6 Luna",
+          "display_name": "GPT-5.6 Luna",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 272000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-02-16",
+          "release_date": "2026-07-09",
+          "last_updated": "2026-07-09",
+          "cost": {
+            "input": 1,
+            "output": 6,
+            "cache_read": 0.1,
+            "cache_write": 1.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "openai.gpt-oss-safeguard-120b",
           "name": "GPT OSS Safeguard 120B",
           "display_name": "GPT OSS Safeguard 120B",
@@ -158218,6 +158255,43 @@
             "input": 0.06,
             "output": 0.24,
             "cache_read": 0.015
+          },
+          "type": "chat"
+        },
+        {
+          "id": "openai.gpt-5.6-sol",
+          "name": "GPT-5.6 Sol",
+          "display_name": "GPT-5.6 Sol",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 272000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-02-16",
+          "release_date": "2026-07-09",
+          "last_updated": "2026-07-09",
+          "cost": {
+            "input": 5,
+            "output": 30,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -159951,6 +160025,43 @@
             "output": 15,
             "cache_read": 0.3,
             "cache_write": 3.75
+          },
+          "type": "chat"
+        },
+        {
+          "id": "openai.gpt-5.6-terra",
+          "name": "GPT-5.6 Terra",
+          "display_name": "GPT-5.6 Terra",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 272000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-02-16",
+          "release_date": "2026-07-09",
+          "last_updated": "2026-07-09",
+          "cost": {
+            "input": 2.5,
+            "output": 15,
+            "cache_read": 0.25,
+            "cache_write": 3.125
           },
           "type": "chat"
         },
@@ -257676,9 +257787,53 @@
           "type": "chat"
         },
         {
+          "id": "kwaipilot/kat-coder-air-v2.5",
+          "name": "Kwaipilot: KAT-Coder-Air V2.5",
+          "display_name": "Kwaipilot: KAT-Coder-Air V2.5",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 80000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "chat"
+        },
+        {
           "id": "kwaipilot/kat-coder-pro-v2",
           "name": "Kwaipilot: KAT-Coder-Pro V2",
           "display_name": "Kwaipilot: KAT-Coder-Pro V2",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 80000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "chat"
+        },
+        {
+          "id": "kwaipilot/kat-coder-pro-v2.5",
+          "name": "Kwaipilot: KAT-Coder-Pro V2.5",
+          "display_name": "Kwaipilot: KAT-Coder-Pro V2.5",
           "modalities": {
             "input": [
               "text"
@@ -264461,7 +264616,7 @@
           },
           "limit": {
             "context": 1048576,
-            "output": 32768
+            "output": 131072
           },
           "temperature": true,
           "tool_call": true,
@@ -275079,40 +275234,6 @@
             "input": 0.2,
             "output": 1.15,
             "cache_read": 0.04
-          },
-          "type": "chat"
-        },
-        {
-          "id": "stepfun/step-3",
-          "name": "StepFun: Step-3",
-          "display_name": "StepFun: Step-3",
-          "modalities": {
-            "input": [
-              "image",
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 65536,
-            "output": 64000
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2025-01-01",
-          "release_date": "2025-07-31",
-          "last_updated": "2025-07-31",
-          "cost": {
-            "input": 0.21,
-            "output": 0.57
           },
           "type": "chat"
         },
