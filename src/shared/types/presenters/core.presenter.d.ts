@@ -1828,6 +1828,7 @@ export interface IMCPPresenter {
     remember?: boolean,
     conversationId?: string
   ): Promise<void>
+  clearSessionPermissions(conversationId: string): void
   // NPM Registry management methods
   getNpmRegistryStatus?(): Promise<{
     currentRegistry: string | null

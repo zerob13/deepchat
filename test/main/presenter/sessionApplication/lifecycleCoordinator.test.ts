@@ -169,9 +169,11 @@ function createHarness(initialSessions: SessionRecord[] = []) {
     resolveSubagentAssignment: vi.fn(
       async (input: {
         agentId: string
+        parentAgentId?: string | null
         targetAgentId?: string | null
         providerId: string
         modelId: string
+        permissionMode?: DeepChatSessionState['permissionMode']
         generationSettings?: Partial<SessionGenerationSettings>
         disabledAgentTools?: string[]
         activeSkills?: string[]
@@ -180,6 +182,7 @@ function createHarness(initialSessions: SessionRecord[] = []) {
         targetAgentId: input.targetAgentId ?? null,
         providerId: input.providerId,
         modelId: input.modelId,
+        permissionMode: input.permissionMode ?? 'full_access',
         generationSettings: input.generationSettings,
         disabledAgentTools: input.disabledAgentTools ?? [],
         activeSkills: input.activeSkills ?? []
@@ -219,6 +222,7 @@ function createHarness(initialSessions: SessionRecord[] = []) {
     })
   }
   const deletion = { deleteSessionTree: vi.fn().mockResolvedValue([]) }
+  const permissions = { cloneSessionPermissions: vi.fn() }
   const dependencies = {
     sessions,
     runtime,
@@ -228,7 +232,8 @@ function createHarness(initialSessions: SessionRecord[] = []) {
     workdir,
     initialTurn,
     projection,
-    deletion
+    deletion,
+    permissions
   } as unknown as SessionLifecycleCoordinatorDependencies
 
   return {
@@ -244,7 +249,8 @@ function createHarness(initialSessions: SessionRecord[] = []) {
     workdir,
     initialTurn,
     projection,
-    deletion
+    deletion,
+    permissions
   }
 }
 
@@ -449,6 +455,43 @@ describe('SessionLifecycleCoordinator', () => {
     )
     expect(warn).toHaveBeenCalledTimes(2)
     warn.mockRestore()
+  })
+
+  it('inherits approvals only for self-target subagents', async () => {
+    const harness = createHarness()
+
+    await harness.coordinator.createSubagentSession({
+      parentSessionId: 'parent',
+      parentAgentId: 'deepchat',
+      agentId: 'deepchat',
+      slotId: 'self',
+      displayName: 'Self child',
+      targetAgentId: 'deepchat',
+      projectDir: '/repo',
+      providerId: 'openai',
+      modelId: 'model-1',
+      permissionMode: 'default'
+    })
+
+    expect(harness.permissions.cloneSessionPermissions).toHaveBeenCalledExactlyOnceWith(
+      'parent',
+      'session-1'
+    )
+
+    await harness.coordinator.createSubagentSession({
+      parentSessionId: 'parent',
+      parentAgentId: 'deepchat',
+      agentId: 'reviewer',
+      slotId: 'reviewer',
+      displayName: 'Reviewer',
+      targetAgentId: 'reviewer',
+      projectDir: '/repo',
+      providerId: 'openai',
+      modelId: 'model-1',
+      permissionMode: 'default'
+    })
+
+    expect(harness.permissions.cloneSessionPermissions).toHaveBeenCalledTimes(1)
   })
 
   it('reuses an empty ACP draft and synchronizes changed permission state', async () => {

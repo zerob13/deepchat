@@ -57,6 +57,11 @@ export interface AcpProviderAdminPort {
 
 export interface SessionPermissionPort {
   clearSessionPermissions(sessionId: string): void
+  /**
+   * Copy non-MCP session approvals from parent to child. MCP temporary approvals are never
+   * inherited and the target MCP cache is cleared before cloning.
+   */
+  cloneSessionPermissions?(sourceSessionId: string, targetSessionId: string): void
   approvePermission(sessionId: string, permission: SessionPermissionRequest): Promise<void>
 }
 

@@ -1345,12 +1345,17 @@ async function runToolCall(params: {
         toolCallStarted = true
         onToolCallStarted?.(completedToolCall.id)
       }
+      const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
       const result = await toolExecution.execute(toolCall, {
         onProgress: applyProgressUpdate,
         signal: io.abortSignal,
         permissionMode: toolPermissionMode,
         activeSkillNames: controls?.getActiveSkillNames?.(),
-        enabledSkillNames: controls?.getEnabledSkillNames?.()
+        enabledSkillNames: controls?.getEnabledSkillNames?.(),
+        agentId: controls?.getAgentId?.(),
+        ...(enabledMcpServerIds === null || enabledMcpServerIds === undefined
+          ? {}
+          : { enabledMcpServerIds })
       })
       return result
     }
@@ -1403,6 +1408,30 @@ async function runToolCall(params: {
           }
         }
       }
+    }
+
+    // Never stage a permission payload as a successful tool result after auto-grant retry.
+    if (toolRawData?.requiresPermission) {
+      io.abortSignal.throwIfAborted()
+      const pendingPermission = normalizePermissionRequest(
+        toolRawData.permissionRequest as PermissionRequestLike | undefined,
+        {
+          toolName: toolContext.name,
+          serverName: toolContext.serverName,
+          description: `Permission required for ${toolContext.name}`
+        }
+      )
+      if (pendingPermission) {
+        return {
+          kind: 'permission',
+          permission: pendingPermission,
+          toolContext
+        }
+      }
+      return buildToolErrorOutcome(
+        execution,
+        new Error(`Tool ${toolContext.name} still requires permission after approval.`)
+      )
     }
 
     returnedToolResult = toolRawData
@@ -1749,6 +1778,20 @@ export async function executeTools(
 
     const execution = buildToolExecutionContext(tc, tools, io.sessionId, providerId)
     const { toolCall, toolContext } = execution
+
+    if (!execution.toolDef) {
+      stagedResults.push({
+        toolCallId: tc.id,
+        toolName: tc.name,
+        toolArgs: tc.arguments,
+        responseText: `Error: Tool is not available in the current session: ${tc.name}`,
+        isError: true,
+        searchPayload: null,
+        postHookKind: 'failure'
+      })
+      executed += 1
+      continue
+    }
 
     try {
       if (toolCall.function.name === QUESTION_TOOL_NAME) {

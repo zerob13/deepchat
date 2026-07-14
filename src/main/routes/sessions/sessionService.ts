@@ -7,6 +7,7 @@ import type {
 import type { Scheduler } from '../scheduler'
 
 const SESSION_OPERATION_TIMEOUT_MS = 5_000
+const SESSION_LIST_TIMEOUT_MS = 15_000
 const DEFAULT_RESTORE_MESSAGE_LIMIT = 100
 
 export type SessionRouteContext = {
@@ -50,11 +51,9 @@ export class SessionService {
     input: CreateSessionInput,
     context: SessionRouteContext
   ): Promise<SessionWithState> {
-    return await this.deps.scheduler.timeout({
-      task: this.deps.lifecycle.createSession(input, context.webContentsId),
-      ms: SESSION_OPERATION_TIMEOUT_MS,
-      reason: 'sessions.create'
-    })
+    // Creation mutates durable/session runtime state. Scheduler.timeout only races the promise and
+    // cannot cancel the underlying operation, so timing out here could publish a late duplicate.
+    return await this.deps.lifecycle.createSession(input, context.webContentsId)
   }
 
   async restoreSession(
@@ -119,7 +118,7 @@ export class SessionService {
   async listSessions(filters?: SessionListFilters) {
     return await this.deps.scheduler.timeout({
       task: this.deps.projection.listSessions(filters),
-      ms: SESSION_OPERATION_TIMEOUT_MS,
+      ms: SESSION_LIST_TIMEOUT_MS,
       reason: 'sessions.list'
     })
   }

@@ -6,7 +6,7 @@ import type {
   ToolInteractionResponse,
   ToolInteractionResult
 } from '@shared/types/agent-interface'
-import type { ProviderCatalogPort, SessionPermissionPort } from '@/presenter/runtimePorts'
+import type { SessionPermissionPort } from '@/presenter/runtimePorts'
 import type { Scheduler } from '../scheduler'
 
 const CHAT_LOOKUP_TIMEOUT_MS = 5_000
@@ -26,19 +26,30 @@ export interface ChatServiceTurnPort {
   ): Promise<ToolInteractionResult>
 }
 
+export interface ChatRespondToolInteractionInput {
+  sessionId: string
+  messageId: string
+  toolCallId: string
+  response: ToolInteractionResponse
+}
+
 export interface ChatServiceProjectionPort {
   getSession(sessionId: string): Promise<SessionWithState | null>
   getMessage(messageId: string): Promise<ChatMessageRecord | null>
 }
 
+/**
+ * Route-layer chat operations. Generation concurrency is owned by the agent runtime
+ * (queue / pending / active generation), not by this service's AbortController map.
+ * Controllers here only support route-level abort for the in-flight accept path.
+ */
 export class ChatService {
-  private readonly activeControllers = new Map<string, AbortController>()
+  private readonly acceptControllers = new Map<string, Set<AbortController>>()
 
   constructor(
     private readonly deps: {
       turn: ChatServiceTurnPort
       projection: ChatServiceProjectionPort
-      providerCatalogPort: Pick<ProviderCatalogPort, 'getAgentType'>
       sessionPermissionPort: Pick<SessionPermissionPort, 'clearSessionPermissions'>
       scheduler: Scheduler
     }
@@ -52,12 +63,10 @@ export class ChatService {
     requestId: string | null
     messageId: string | null
   }> {
-    if (this.activeControllers.has(sessionId)) {
-      throw new Error(`A stream is already active for session ${sessionId}`)
-    }
-
     const controller = new AbortController()
-    this.activeControllers.set(sessionId, controller)
+    const controllers = this.acceptControllers.get(sessionId) ?? new Set<AbortController>()
+    controllers.add(controller)
+    this.acceptControllers.set(sessionId, controllers)
 
     try {
       const session = await this.deps.scheduler.timeout({
@@ -68,16 +77,6 @@ export class ChatService {
 
       if (!session) {
         throw new Error(`Session not found: ${sessionId}`)
-      }
-
-      const agentType = await this.deps.scheduler.timeout({
-        task: this.deps.providerCatalogPort.getAgentType(session.agentId),
-        ms: CHAT_LOOKUP_TIMEOUT_MS,
-        reason: `chat.sendMessage:${sessionId}:agentType`
-      })
-
-      if (!agentType) {
-        throw new Error(`Agent type not found: ${session.agentId}`)
       }
 
       const result = await this.deps.scheduler.timeout({
@@ -94,29 +93,14 @@ export class ChatService {
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
-        const cleanupResults = await Promise.allSettled([
-          Promise.resolve(this.deps.sessionPermissionPort.clearSessionPermissions(sessionId)),
-          this.deps.turn.cancelGeneration(sessionId)
-        ])
-        const clearPermissionsResult = cleanupResults[0]
-        if (clearPermissionsResult?.status === 'rejected') {
-          console.warn(
-            `[ChatService] Failed to clear session permissions after send timeout for ${sessionId}:`,
-            clearPermissionsResult.reason
-          )
-        }
-        const cancelGenerationResult = cleanupResults[1]
-        if (cancelGenerationResult?.status === 'rejected') {
-          console.warn(
-            `[ChatService] Failed to cancel generation after send timeout for ${sessionId}:`,
-            cancelGenerationResult.reason
-          )
-        }
+        await this.bestEffortCancel(sessionId, 'send timeout')
       }
       throw error
     } finally {
-      if (this.activeControllers.get(sessionId) === controller) {
-        this.activeControllers.delete(sessionId)
+      const activeControllers = this.acceptControllers.get(sessionId)
+      activeControllers?.delete(controller)
+      if (activeControllers?.size === 0) {
+        this.acceptControllers.delete(sessionId)
       }
     }
   }
@@ -163,48 +147,52 @@ export class ChatService {
       return { stopped: false }
     }
 
-    const controller = this.activeControllers.get(targetSessionId)
-    if (controller) {
-      controller.abort()
-      this.activeControllers.delete(targetSessionId)
+    const controllers = this.acceptControllers.get(targetSessionId)
+    if (controllers) {
+      for (const controller of controllers) {
+        controller.abort()
+      }
+      this.acceptControllers.delete(targetSessionId)
     }
 
-    await this.deps.scheduler.timeout({
-      task: Promise.allSettled([
-        Promise.resolve().then(() =>
-          this.deps.sessionPermissionPort.clearSessionPermissions(targetSessionId)
-        ),
-        Promise.resolve().then(() => this.deps.turn.cancelGeneration(targetSessionId))
-      ]).then((results) => {
-        const clearPermissionsResult = results[0]
-        if (clearPermissionsResult?.status === 'rejected') {
-          console.warn(
-            `[ChatService] Failed to clear session permissions during stop for ${targetSessionId}:`,
-            clearPermissionsResult.reason
-          )
-        }
+    let cancelFailed = false
+    try {
+      await this.deps.scheduler.timeout({
+        task: Promise.allSettled([
+          Promise.resolve().then(() =>
+            this.deps.sessionPermissionPort.clearSessionPermissions(targetSessionId)
+          ),
+          Promise.resolve().then(() => this.deps.turn.cancelGeneration(targetSessionId))
+        ]).then((results) => {
+          const clearPermissionsResult = results[0]
+          if (clearPermissionsResult?.status === 'rejected') {
+            console.warn(
+              `[ChatService] Failed to clear session permissions during stop for ${targetSessionId}:`,
+              clearPermissionsResult.reason
+            )
+          }
 
-        const cancelGenerationResult = results[1]
-        if (cancelGenerationResult?.status === 'rejected') {
-          console.warn(
-            `[ChatService] Failed to cancel generation during stop for ${targetSessionId}:`,
-            cancelGenerationResult.reason
-          )
-        }
-      }),
-      ms: CHAT_STOP_TIMEOUT_MS,
-      reason: `chat.stopStream:${targetSessionId}`
-    })
+          const cancelGenerationResult = results[1]
+          if (cancelGenerationResult?.status === 'rejected') {
+            cancelFailed = true
+            console.warn(
+              `[ChatService] Failed to cancel generation during stop for ${targetSessionId}:`,
+              cancelGenerationResult.reason
+            )
+          }
+        }),
+        ms: CHAT_STOP_TIMEOUT_MS,
+        reason: `chat.stopStream:${targetSessionId}`
+      })
+    } catch (error) {
+      cancelFailed = true
+      console.warn(`[ChatService] Stop cleanup timed out for ${targetSessionId}:`, error)
+    }
 
-    return { stopped: true }
+    return { stopped: !cancelFailed }
   }
 
-  async respondToolInteraction(input: {
-    sessionId: string
-    messageId: string
-    toolCallId: string
-    response: ToolInteractionResponse
-  }): Promise<{
+  async respondToolInteraction(input: ChatRespondToolInteractionInput): Promise<{
     accepted: true
     resumed?: boolean
     waitingForUserMessage?: boolean
@@ -224,6 +212,39 @@ export class ChatService {
     return {
       accepted: true,
       ...result
+    }
+  }
+
+  private async bestEffortCancel(sessionId: string, reason: string): Promise<void> {
+    let cleanupResults: PromiseSettledResult<void>[]
+    try {
+      cleanupResults = await this.deps.scheduler.timeout({
+        task: Promise.allSettled([
+          Promise.resolve().then(() =>
+            this.deps.sessionPermissionPort.clearSessionPermissions(sessionId)
+          ),
+          Promise.resolve().then(() => this.deps.turn.cancelGeneration(sessionId))
+        ]),
+        ms: CHAT_STOP_TIMEOUT_MS,
+        reason: `chat.bestEffortCancel:${sessionId}`
+      })
+    } catch (error) {
+      console.warn(`[ChatService] Cleanup timed out after ${reason} for ${sessionId}:`, error)
+      return
+    }
+    const clearPermissionsResult = cleanupResults[0]
+    if (clearPermissionsResult?.status === 'rejected') {
+      console.warn(
+        `[ChatService] Failed to clear session permissions after ${reason} for ${sessionId}:`,
+        clearPermissionsResult.reason
+      )
+    }
+    const cancelGenerationResult = cleanupResults[1]
+    if (cancelGenerationResult?.status === 'rejected') {
+      console.warn(
+        `[ChatService] Failed to cancel generation after ${reason} for ${sessionId}:`,
+        cancelGenerationResult.reason
+      )
     }
   }
 }

@@ -312,10 +312,12 @@ export interface ResolvedSessionAssignment {
 
 export interface SubagentAssignmentInput {
   agentId: string
+  parentAgentId?: string | null
   targetAgentId?: string | null
   projectDir: string | null
   providerId: string
   modelId: string
+  permissionMode?: PermissionMode
   generationSettings?: Partial<SessionGenerationSettings>
   disabledAgentTools?: string[]
   activeSkills?: string[]
@@ -326,6 +328,7 @@ export interface ResolvedSubagentAssignment {
   targetAgentId: string | null
   providerId: string
   modelId: string
+  permissionMode: PermissionMode
   generationSettings?: Partial<SessionGenerationSettings>
   disabledAgentTools: string[]
   activeSkills: string[]
@@ -461,6 +464,7 @@ export type SessionLifecycleProjectionPort = Pick<
 export interface SessionLifecycleSubagentInput {
   parentSessionId: string
   agentId: string
+  parentAgentId?: string | null
   slotId: string
   displayName: string
   targetAgentId?: string | null
@@ -552,6 +556,11 @@ export type SessionDeletionStatePort = Pick<AgentSessionStatePort, 'destroySessi
 
 export interface SessionDeletionPermissionPort {
   clearSessionPermissions(sessionId: string): void
+}
+
+export interface SessionLifecyclePermissionPort {
+  clearSessionPermissions(sessionId: string): void
+  cloneSessionPermissions?(sourceSessionId: string, targetSessionId: string): void
 }
 
 export interface SessionDeletionSkillPort {

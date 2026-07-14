@@ -959,8 +959,7 @@ export class AgentToolManager {
       }
     }
 
-    const workspaceRoot =
-      dynamicWorkdir ?? this.agentWorkspacePath ?? this.getDefaultAgentWorkspacePath()
+    const workspaceRoot = this.resolveCallWorkspaceRoot(dynamicWorkdir, conversationId)
     const allowedDirectories = await this.buildAllowedDirectories(workspaceRoot, conversationId, {
       includeSkillRoots: toolName !== 'exec',
       includeRuntimeRoots: toolName !== 'exec',
@@ -1260,8 +1259,9 @@ export class AgentToolManager {
       ordered.push(resolved)
     }
 
+    // Only trust the call-scoped workspace path. Do not merge the manager's last
+    // syncContext workspace — that leaks across concurrent multi-agent sessions.
     addPath(workspacePath)
-    addPath(this.agentWorkspacePath)
 
     if (conversationId && includeSkillRoots) {
       const activeSkillRoots = await this.resolveActiveSkillRoots(
@@ -1782,6 +1782,12 @@ export class AgentToolManager {
     return tempDir
   }
 
+  private resolveCallWorkspaceRoot(dynamicWorkdir: string | null, conversationId?: string): string {
+    if (dynamicWorkdir) return dynamicWorkdir
+    if (conversationId) return this.getDefaultAgentWorkspacePath()
+    return this.agentWorkspacePath ?? this.getDefaultAgentWorkspacePath()
+  }
+
   private isSkillsEnabled(): boolean {
     return this.configPresenter.getSkillsEnabled()
   }
@@ -2019,8 +2025,7 @@ export class AgentToolManager {
         }
       }
 
-      const workspaceRoot =
-        dynamicWorkdir ?? this.agentWorkspacePath ?? this.getDefaultAgentWorkspacePath()
+      const workspaceRoot = this.resolveCallWorkspaceRoot(dynamicWorkdir, conversationId)
       const allowedDirectories = await this.buildAllowedDirectories(workspaceRoot, conversationId, {
         includeSkillRoots: toolName !== 'exec',
         includeRuntimeRoots: toolName !== 'exec',

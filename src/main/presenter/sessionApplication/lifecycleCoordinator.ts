@@ -20,6 +20,7 @@ import type {
   SessionLifecycleRuntimePort,
   SessionLifecycleSkillPort,
   SessionLifecycleStorePort,
+  SessionLifecyclePermissionPort,
   SessionLifecycleSubagentInput,
   SessionLifecycleTranscriptPort
 } from './ports'
@@ -36,6 +37,7 @@ export interface SessionLifecycleCoordinatorDependencies {
   initialTurn: SessionInitialTurnPort
   projection: SessionLifecycleProjectionPort
   deletion: SessionLifecycleDeletionPort
+  permissions?: SessionLifecyclePermissionPort
 }
 
 export class SessionLifecycleCoordinator implements SessionLifecyclePort {
@@ -213,10 +215,12 @@ export class SessionLifecycleCoordinator implements SessionLifecyclePort {
     const projectDir = input.projectDir?.trim() || null
     const runtimeConfig = await this.dependencies.assignmentPolicy.resolveSubagentAssignment({
       agentId,
+      parentAgentId: input.parentAgentId,
       targetAgentId: input.targetAgentId,
       projectDir,
       providerId: input.providerId,
       modelId: input.modelId,
+      permissionMode: input.permissionMode,
       generationSettings: input.generationSettings,
       disabledAgentTools: input.disabledAgentTools,
       activeSkills: input.activeSkills
@@ -249,11 +253,16 @@ export class SessionLifecycleCoordinator implements SessionLifecyclePort {
           providerId: runtimeConfig.providerId,
           modelId: runtimeConfig.modelId,
           projectDir,
-          permissionMode: input.permissionMode,
+          permissionMode: runtimeConfig.permissionMode,
           generationSettings: runtimeConfig.generationSettings
         })
         if (runtimeConfig.activeSkills.length > 0) {
           await this.dependencies.skills.setActiveSkills(sessionId, runtimeConfig.activeSkills)
+        }
+        const parentAgentId = input.parentAgentId?.trim()
+        if (parentAgentId && runtimeConfig.agentId === parentAgentId) {
+          // Only self-target children share the parent's trust boundary.
+          this.dependencies.permissions?.cloneSessionPermissions?.(parentSessionId, sessionId)
         }
         if (!this.dependencies.sessions.get(sessionId)) {
           throw new Error(`Subagent session not found after creation: ${sessionId}`)

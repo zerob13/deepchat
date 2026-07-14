@@ -559,6 +559,14 @@ export class Presenter implements IPresenter {
         this.commandPermissionService.clearConversation(sessionId)
         this.filePermissionService.clearConversation(sessionId)
         this.settingsPermissionService.clearConversation(sessionId)
+        this.mcpPresenter.clearSessionPermissions(sessionId)
+      },
+      cloneSessionPermissions: (sourceSessionId, targetSessionId) => {
+        // MCP temporary approvals are intentionally never inherited.
+        this.mcpPresenter.clearSessionPermissions(targetSessionId)
+        this.commandPermissionService.cloneConversation(sourceSessionId, targetSessionId)
+        this.filePermissionService.cloneConversation(sourceSessionId, targetSessionId)
+        this.settingsPermissionService.cloneConversation(sourceSessionId, targetSessionId)
       },
       approvePermission: async (sessionId, permission) => {
         const permissionType = permission.permissionType
@@ -918,7 +926,8 @@ export class Presenter implements IPresenter {
       workdir: this.sessionAgentAssignmentCoordinator,
       initialTurn: this.sessionTurnCoordinator,
       projection: this.sessionProjectionCoordinator,
-      deletion: this.sessionDeletionTransaction
+      deletion: this.sessionDeletionTransaction,
+      permissions: sessionPermissionPort
     })
     this.cronJobs.setRunSessionStarter(
       createCronJobRunSessionStarter({
