@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.10-beta.1 (2026-07-14)
+- Added Grok OAuth device login and DaoXE provider support
+- Reworked the agent runtime and session boundaries to improve isolation and lifecycle handling
+- Improved Agent Memory vector storage, embedding reindex recovery, and bounded workload reliability
+- Improved streaming rendering and preserved the active sidebar workspace while navigating chat history
+- Fixed ACP direct-runtime refresh and manual health checks
+- 新增 Grok OAuth 设备登录和 DaoXE Provider 支持
+- 重构 Agent runtime 与 session 边界，提升隔离性和生命周期处理能力
+- 改进 Agent Memory 向量存储、embedding reindex 恢复与有界工作负载的可靠性
+- 优化流式渲染，并在浏览聊天历史时保留侧边栏当前工作区
+- 修复 ACP direct runtime 刷新和手动健康检查问题
+
 ## v1.0.9 (2026-07-10)
 - Fixed Agent Memory correctness edge cases and strengthened record-level privacy controls
 - Fixed chat scroll position jumping to the bottom during streaming output
