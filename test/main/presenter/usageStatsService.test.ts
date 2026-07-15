@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DeepChatMessageStore } from '@/presenter/agentRuntimePresenter/messageStore'
 import { DASHBOARD_STATS_BACKFILL_KEY, type UsageStatsRecordInput } from '@/presenter/usageStats'
 import { UsageStatsService } from '@/presenter/usageStatsService'
+import type { PermissionMode } from '@shared/types/agent-interface'
 
 vi.mock('@/eventbus', () => ({
   eventBus: { sendToMain: vi.fn(), on: vi.fn() }
@@ -68,6 +69,7 @@ type SessionRow = {
   id: string
   provider_id: string
   model_id: string
+  permission_mode: PermissionMode
 }
 
 type MessageRow = {
@@ -161,11 +163,12 @@ function createMockSqlitePresenter() {
   const usageStats = new Map<string, UsageStatsRow>()
 
   const deepchatSessionsTable = {
-    create(sessionId: string, providerId: string, modelId: string) {
+    create(sessionId: string, providerId: string, modelId: string, permissionMode: PermissionMode) {
       sessions.set(sessionId, {
         id: sessionId,
         provider_id: providerId,
-        model_id: modelId
+        model_id: modelId,
+        permission_mode: permissionMode
       })
     },
     get(sessionId: string) {
@@ -436,7 +439,7 @@ describe('UsageStatsService', () => {
       'listAssistantUsageCandidatesPage'
     )
 
-    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o')
+    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o', 'full_access')
     sqlitePresenter.deepchatMessagesTable.insert({
       id: 'message-1',
       sessionId: 'session-1',
@@ -480,7 +483,7 @@ describe('UsageStatsService', () => {
 
   it('keeps concurrent backfill requests single-flight', async () => {
     const { service, sqlitePresenter, configPresenter } = createService()
-    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o')
+    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o', 'full_access')
     for (let index = 0; index < 50; index += 1) {
       sqlitePresenter.deepchatMessagesTable.insert({
         id: `message-${index}`,
@@ -549,7 +552,7 @@ describe('UsageStatsService', () => {
     const { service, sqlitePresenter } = createService()
     const messageStore = new DeepChatMessageStore(sqlitePresenter)
 
-    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o')
+    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o', 'full_access')
     sqlitePresenter.deepchatMessagesTable.insert({
       id: 'message-1',
       sessionId: 'session-1',
@@ -595,7 +598,7 @@ describe('UsageStatsService', () => {
   it('reads dashboard data from deepchat_usage_stats only', async () => {
     const { service, sqlitePresenter } = createService()
 
-    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o')
+    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o', 'full_access')
     sqlitePresenter.deepchatMessagesTable.insert({
       id: 'message-1',
       sessionId: 'session-1',

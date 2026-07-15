@@ -551,14 +551,13 @@ export function buildUserMessageContent(
 }
 
 export function createUserChatMessage(
-  input: string | SendMessageInput,
+  input: SendMessageInput,
   supportsVision: boolean,
   supportsAudioInput: boolean = false
 ): ChatMessage {
-  const normalizedInput = normalizeUserInput(input)
   return {
     role: 'user',
-    content: buildUserMessageContent(normalizedInput, supportsVision, supportsAudioInput, {
+    content: buildUserMessageContent(input, supportsVision, supportsAudioInput, {
       includeImageData: true,
       includeAudioData: true,
       includeFileContent: false
@@ -1086,7 +1085,7 @@ function buildSummaryCursorMetadata(
 
 export function buildContext(
   sessionId: string,
-  newUserContent: string | SendMessageInput,
+  newUserContent: SendMessageInput,
   systemPrompt: string,
   contextLength: number,
   reserveTokens: number,
@@ -1108,7 +1107,7 @@ export function buildContext(
 
 export function buildContextWithMetadata(
   sessionId: string,
-  newUserContent: string | SendMessageInput,
+  newUserContent: SendMessageInput,
   systemPrompt: string,
   contextLength: number,
   reserveTokens: number,
