@@ -17,11 +17,10 @@ const mocks = vi.hoisted(() => {
     legacyStart: vi.fn(async () => undefined),
     usageStart: vi.fn(async () => undefined),
     runMainline: vi.fn(async () => undefined),
-    runDisabledCleanup: vi.fn(async () => undefined),
+    runDisabledAgentToolCleanup: vi.fn(async () => undefined),
     rtkStart: vi.fn(async () => undefined),
     sessionDataMigrationSQLite: {},
-    configPresenter: {},
-    appSessionService: {}
+    configPresenter: {}
   }
 })
 
@@ -31,14 +30,13 @@ vi.mock('@/presenter', () => ({
     legacyChatImportService: { start: mocks.legacyStart },
     usageStatsService: { startBackfill: mocks.usageStart },
     sessionDataMigrationSQLite: mocks.sessionDataMigrationSQLite,
-    configPresenter: mocks.configPresenter,
-    appSessionService: mocks.appSessionService
+    configPresenter: mocks.configPresenter
   }
 }))
 
 vi.mock('@/presenter/startupMigrations/sessionDataMigrations', () => ({
   runMainlineNormalizationMigration: mocks.runMainline,
-  runDisabledSearchToolCleanupMigration: mocks.runDisabledCleanup
+  runDisabledAgentToolCapabilityCleanupMigration: mocks.runDisabledAgentToolCleanup
 }))
 
 vi.mock('@/agent/shared/process/rtkRuntimeService', () => ({
@@ -48,7 +46,7 @@ vi.mock('@/agent/shared/process/rtkRuntimeService', () => ({
 import { legacyImportHook } from '@/presenter/lifecyclePresenter/hooks/after-start/legacyImportHook'
 import { usageStatsBackfillHook } from '@/presenter/lifecyclePresenter/hooks/after-start/usageStatsBackfillHook'
 import { sqliteMainlineNormalizationHook } from '@/presenter/lifecyclePresenter/hooks/after-start/sqliteMainlineNormalizationHook'
-import { disabledSearchToolCleanupHook } from '@/presenter/lifecyclePresenter/hooks/after-start/disabledSearchToolCleanupHook'
+import { disabledAgentToolCleanupHook } from '@/presenter/lifecyclePresenter/hooks/after-start/disabledAgentToolCleanupHook'
 import { rtkHealthCheckHook } from '@/presenter/lifecyclePresenter/hooks/after-start/rtkHealthCheckHook'
 
 describe('startup maintenance hooks', () => {
@@ -80,11 +78,11 @@ describe('startup maintenance hooks', () => {
       labelKey: 'startup.main.sqliteMainlineNormalization'
     },
     {
-      hook: disabledSearchToolCleanupHook,
-      name: 'disabled-search-tool-cleanup',
+      hook: disabledAgentToolCleanupHook,
+      name: 'disabled-agent-tool-cleanup',
       priority: 23,
-      id: 'main:disabled-search-tool-cleanup',
-      labelKey: 'startup.main.disabledSearchToolCleanup'
+      id: 'main:disabled-agent-tool-cleanup',
+      labelKey: 'startup.main.disabledAgentToolCleanup'
     },
     {
       hook: rtkHealthCheckHook,
@@ -127,16 +125,14 @@ describe('startup maintenance hooks', () => {
     expect(mocks.runMainline).toHaveBeenCalledWith(
       {
         sqlitePresenter: mocks.sessionDataMigrationSQLite,
-        configPresenter: mocks.configPresenter,
-        appSessionService: mocks.appSessionService
+        configPresenter: mocks.configPresenter
       },
       mocks.taskContext
     )
-    expect(mocks.runDisabledCleanup).toHaveBeenCalledWith(
+    expect(mocks.runDisabledAgentToolCleanup).toHaveBeenCalledWith(
       {
         sqlitePresenter: mocks.sessionDataMigrationSQLite,
-        configPresenter: mocks.configPresenter,
-        appSessionService: mocks.appSessionService
+        configPresenter: mocks.configPresenter
       },
       mocks.taskContext
     )

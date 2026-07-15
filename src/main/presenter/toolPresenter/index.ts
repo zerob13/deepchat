@@ -15,13 +15,17 @@ import type { PermissionMode } from '@shared/types/agent-interface'
 import { resolveToolOffloadTemplatePath } from '@/agent/shared/storage/sessionPaths'
 import { QUESTION_TOOL_NAME } from '@/presenter/toolPresenter/agentTools/questionTool'
 import { ToolMapper, type ToolSource } from './toolMapper'
-import { CRON_JOB_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  CRON_JOB_AGENT_TOOL_NAME,
+  TAPE_TOOL_NAMES,
+  getAgentToolExposure,
+  isUserConfigurableAgentTool
+} from '@shared/agentTools'
 import {
   AgentToolManager,
   IMAGE_GENERATE_TOOL_NAME,
   UPDATE_PLAN_TOOL_NAME,
   AGENT_TAPE_TOOL_SERVER_NAME,
-  TAPE_TOOL_NAMES,
   CRON_JOB_TOOL_SERVER_NAME,
   type AgentToolCallResult
 } from './agentTools'
@@ -36,6 +40,7 @@ import { YO_BROWSER_TOOL_NAMES } from '../browser/YoBrowserToolDefinitions'
 
 export interface IToolPresenter {
   getAllToolDefinitions(context: ToolDefinitionContext): Promise<MCPToolDefinition[]>
+  getConfigurableAgentToolDefinitions(context: ToolDefinitionContext): Promise<MCPToolDefinition[]>
   syncAgentToolContext?(context: {
     chatMode?: 'agent' | 'acp agent'
     agentWorkspacePath?: string | null
@@ -112,6 +117,7 @@ type StoredMcpAccessContext = {
 export class ToolPresenter implements IToolPresenter {
   private readonly mapper: ToolMapper
   private readonly conversationMappers: Map<string, ToolMapper>
+  private globalMapperConversationId: string | null = null
   private readonly conversationMcpAccessContexts = new Map<string, StoredMcpAccessContext>()
   private readonly options: ToolPresenterOptions
   private agentToolManager: AgentToolManager | null = null
@@ -122,14 +128,18 @@ export class ToolPresenter implements IToolPresenter {
     this.conversationMappers = new Map()
   }
 
+  private createAgentToolManager(agentWorkspacePath: string | null): AgentToolManager {
+    return new AgentToolManager({
+      agentWorkspacePath,
+      configPresenter: this.options.configPresenter,
+      commandPermissionHandler: this.options.commandPermissionHandler,
+      runtimePort: this.options.agentToolRuntime
+    })
+  }
+
   private ensureAgentToolManager(agentWorkspacePath: string | null): AgentToolManager {
     if (!this.agentToolManager) {
-      this.agentToolManager = new AgentToolManager({
-        agentWorkspacePath,
-        configPresenter: this.options.configPresenter,
-        commandPermissionHandler: this.options.commandPermissionHandler,
-        runtimePort: this.options.agentToolRuntime
-      })
+      this.agentToolManager = this.createAgentToolManager(agentWorkspacePath)
     }
 
     return this.agentToolManager
@@ -189,7 +199,9 @@ export class ToolPresenter implements IToolPresenter {
         return false
       })
       const filteredAgentDefs = dedupedAgentDefs.filter(
-        (tool) => !disabledAgentToolSet.has(tool.function.name)
+        (tool) =>
+          !isUserConfigurableAgentTool(tool.function.name) ||
+          !disabledAgentToolSet.has(tool.function.name)
       )
       defs.push(...filteredAgentDefs)
       mapper.registerTools(filteredAgentDefs, 'agent')
@@ -199,6 +211,38 @@ export class ToolPresenter implements IToolPresenter {
 
     this.publishMapper(context.conversationId, mapper)
     return defs
+  }
+
+  /**
+   * Get only user-configurable Agent tool definitions for renderer settings.
+   * This query intentionally does not touch runtime mappings or MCP access context.
+   */
+  async getConfigurableAgentToolDefinitions(
+    context: ToolDefinitionContext
+  ): Promise<MCPToolDefinition[]> {
+    const chatMode = context.chatMode || 'agent'
+    const supportsVision = context.supportsVision || false
+    const agentWorkspacePath = context.agentWorkspacePath || null
+    const agentToolManager = this.createAgentToolManager(null)
+
+    try {
+      const agentDefs = withToolSource(
+        await agentToolManager.getAllToolDefinitions({
+          chatMode,
+          supportsVision,
+          agentWorkspacePath,
+          conversationId: context.conversationId,
+          activeSkillNames: context.activeSkillNames,
+          catalogPurpose: 'configurable'
+        }),
+        'agent'
+      )
+
+      return agentDefs.filter((tool) => isUserConfigurableAgentTool(tool.function.name))
+    } catch (error) {
+      console.warn('[ToolPresenter] Failed to load configurable Agent tool definitions', error)
+      return []
+    }
   }
 
   syncAgentToolContext(context: {
@@ -435,15 +479,18 @@ export class ToolPresenter implements IToolPresenter {
     for (const mapping of mapper.getAllMappings()) {
       this.mapper.registerTool(mapping.toolName, mapping.source, mapping.originalName)
     }
+    this.globalMapperConversationId = normalizedConversationId || null
   }
 
   private getToolSource(toolName: string, conversationId?: string): ToolSource | undefined {
     const normalizedConversationId = conversationId?.trim()
     if (normalizedConversationId) {
       const mapper = this.conversationMappers.get(normalizedConversationId)
-      const mappedSource = mapper?.getToolSource(toolName)
-      if (mappedSource) {
-        return mappedSource
+      if (mapper) {
+        return mapper.getToolSource(toolName)
+      }
+      if (this.globalMapperConversationId !== null) {
+        return undefined
       }
     }
 
@@ -672,17 +719,17 @@ export class ToolPresenter implements IToolPresenter {
   }
 
   private buildTapePrompt(tools: MCPToolDefinition[]): string {
-    if (tools.length === 0) {
+    const modelTools = tools.filter(
+      (tool) => getAgentToolExposure(tool.function.name) === 'system-model'
+    )
+    if (modelTools.length === 0) {
       return ''
     }
 
-    const toolNames = new Set(tools.map((tool) => tool.function.name))
-    const names = tools.map((tool) => `\`${tool.function.name}\``).join(', ')
+    const toolNames = new Set(modelTools.map((tool) => tool.function.name))
+    const names = modelTools.map((tool) => `\`${tool.function.name}\``).join(', ')
     const lines = ['## Tape Tools', `DeepChat tape tools are available in this session: ${names}.`]
 
-    if (toolNames.has(TAPE_TOOL_NAMES.info)) {
-      lines.push('`tape_info` inspects this DeepChat-scoped tape subset inspired by bub tape.info.')
-    }
     if (toolNames.has(TAPE_TOOL_NAMES.search)) {
       lines.push(
         '`tape_search` supports `query`, `limit`, `kinds`, `start`, and `end` for scoped canonical tape lookup.'
@@ -693,15 +740,6 @@ export class ToolPresenter implements IToolPresenter {
         '`tape_context` expands selected `entryIds` from compact `tape_search` results into bounded evidence/context without dumping raw payloads.'
       )
     }
-    if (toolNames.has(TAPE_TOOL_NAMES.anchors)) {
-      lines.push('`tape_anchors` lists recent bub-style phase-transition anchors.')
-    }
-    if (toolNames.has(TAPE_TOOL_NAMES.handoff)) {
-      lines.push(
-        '`tape_handoff` writes a bub-style phase-transition anchor. Include a compact `summary` when earlier history must be preserved.'
-      )
-    }
-
     return lines.join('\n')
   }
 

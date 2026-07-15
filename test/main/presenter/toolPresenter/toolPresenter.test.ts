@@ -8,8 +8,13 @@ import {
   UPDATE_PLAN_TOOL_NAME
 } from '@/presenter/toolPresenter/agentTools'
 import { CommandPermissionService } from '@/presenter/permission'
+import { QUESTION_TOOL_NAME } from '@/presenter/toolPresenter/agentTools/questionTool'
 import { IMAGE_GENERATE_TOOL_NAME } from '@shared/agentImageGenerationTool'
-import { CRON_JOB_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  CRON_JOB_AGENT_TOOL_NAME,
+  assertAgentToolExposure,
+  getAgentToolExposure
+} from '@shared/agentTools'
 
 vi.mock('electron', () => ({
   app: {
@@ -186,6 +191,34 @@ describe('ToolPresenter', () => {
       })
     )
     expect(mcpPresenter.callTool).not.toHaveBeenCalled()
+  })
+
+  it('keeps every Tape capability name reserved against same-name MCP tools', async () => {
+    const tapeToolNames = new Set<string>(Object.values(TAPE_TOOL_NAMES))
+    const toolPresenter = new ToolPresenter({
+      mcpPresenter: {
+        getAllToolDefinitions: vi
+          .fn()
+          .mockResolvedValue(
+            Object.values(TAPE_TOOL_NAMES).map((name) => buildToolDefinition(name, 'untrusted-mcp'))
+          )
+      } as any,
+      configPresenter: {
+        getSkillsEnabled: vi.fn().mockReturnValue(false),
+        getSkillsPath: vi.fn().mockReturnValue('C:\\skills'),
+        getModelConfig: vi.fn()
+      } as any,
+      commandPermissionHandler: new CommandPermissionService(),
+      agentToolRuntime: buildAgentToolRuntimeMock()
+    })
+
+    const defs = await toolPresenter.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\workspace'
+    })
+
+    expect(defs.some((definition) => tapeToolNames.has(definition.function.name))).toBe(false)
   })
 
   it('keeps ToolPresenter collision resolution behind the DeepChat catalog port', async () => {
@@ -442,6 +475,227 @@ describe('ToolPresenter', () => {
     expect(defs.some((tool) => tool.function.name === 'grep')).toBe(true)
     expect(defs.some((tool) => tool.function.name === 'find')).toBe(false)
     expect(defs.some((tool) => tool.function.name === 'ls')).toBe(false)
+  })
+
+  it('uses one exposure policy for Tape tools and defaults existing tools to configurable', () => {
+    expect(getAgentToolExposure(TAPE_TOOL_NAMES.search)).toBe('system-model')
+    expect(getAgentToolExposure(TAPE_TOOL_NAMES.context)).toBe('system-model')
+    expect(getAgentToolExposure(TAPE_TOOL_NAMES.info)).toBe('diagnostic')
+    expect(getAgentToolExposure(TAPE_TOOL_NAMES.anchors)).toBe('diagnostic')
+    expect(getAgentToolExposure(TAPE_TOOL_NAMES.handoff)).toBe('runtime-only')
+    expect(getAgentToolExposure('read')).toBe('user-configurable')
+    expect(getAgentToolExposure('__proto__')).toBe('user-configurable')
+    expect(() => assertAgentToolExposure(TAPE_TOOL_NAMES.handoff, 'user-configurable')).toThrow(
+      "Agent tool exposure mismatch for 'tape_handoff': expected 'user-configurable', registered 'runtime-only'."
+    )
+  })
+
+  it('keeps the recall pair in the runtime catalog despite stale disabled values', async () => {
+    const toolPresenter = new ToolPresenter({
+      mcpPresenter: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([])
+      } as any,
+      configPresenter: {
+        getSkillsEnabled: vi.fn().mockReturnValue(false),
+        getSkillsPath: vi.fn().mockReturnValue('C:\\skills'),
+        getModelConfig: vi.fn()
+      } as any,
+      commandPermissionHandler: new CommandPermissionService(),
+      agentToolRuntime: buildAgentToolRuntimeMock({
+        resolveConversationSessionInfo: vi.fn().mockResolvedValue({ agentType: 'deepchat' }),
+        getTapeInfo: vi.fn(),
+        searchTape: vi.fn(),
+        getTapeContext: vi.fn(),
+        listTapeAnchors: vi.fn(),
+        handoffTape: vi.fn()
+      })
+    })
+
+    const defs = await toolPresenter.getAllToolDefinitions({
+      disabledAgentTools: Object.values(TAPE_TOOL_NAMES),
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\runtime-workspace',
+      conversationId: 'conv-1'
+    })
+    const names = defs.map((tool) => tool.function.name)
+
+    expect(names).toEqual(expect.arrayContaining([TAPE_TOOL_NAMES.search, TAPE_TOOL_NAMES.context]))
+    expect(names).not.toContain(TAPE_TOOL_NAMES.info)
+    expect(names).not.toContain(TAPE_TOOL_NAMES.anchors)
+    expect(names).not.toContain(TAPE_TOOL_NAMES.handoff)
+  })
+
+  it('reads configurable definitions without publishing mappings or mutating runtime context', async () => {
+    const mcpPresenter = {
+      getAllToolDefinitions: vi
+        .fn()
+        .mockResolvedValue([buildToolDefinition('mcp_only', 'mcp-server')]),
+      callTool: vi.fn().mockResolvedValue({ content: 'mcp-result' })
+    } as any
+    const toolPresenter = new ToolPresenter({
+      mcpPresenter,
+      configPresenter: {
+        getSkillsEnabled: vi.fn().mockReturnValue(false),
+        getSkillsPath: vi.fn().mockReturnValue('C:\\skills'),
+        getModelConfig: vi.fn()
+      } as any,
+      commandPermissionHandler: new CommandPermissionService(),
+      agentToolRuntime: buildAgentToolRuntimeMock({
+        resolveConversationSessionInfo: vi.fn().mockResolvedValue({ agentType: 'deepchat' }),
+        getTapeInfo: vi.fn(),
+        searchTape: vi.fn(),
+        getTapeContext: vi.fn(),
+        listTapeAnchors: vi.fn(),
+        handoffTape: vi.fn()
+      })
+    })
+
+    await toolPresenter.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\runtime-workspace',
+      conversationId: 'conv-1',
+      agentId: 'agent-1',
+      enabledMcpServerIds: ['mcp-server']
+    })
+    const runtimeManager = (toolPresenter as any).agentToolManager
+
+    const configurableDefs = await toolPresenter.getConfigurableAgentToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\settings-workspace',
+      conversationId: 'conv-1',
+      disabledAgentTools: ['read']
+    })
+    const tapeToolNames = new Set<string>(Object.values(TAPE_TOOL_NAMES))
+
+    expect(configurableDefs.some((tool) => tool.function.name === 'read')).toBe(true)
+    expect(configurableDefs.some((tool) => tapeToolNames.has(tool.function.name))).toBe(false)
+    expect(configurableDefs.every((tool) => tool.source === 'agent')).toBe(true)
+    expect(mcpPresenter.getAllToolDefinitions).toHaveBeenCalledTimes(1)
+    expect((toolPresenter as any).agentToolManager).toBe(runtimeManager)
+    expect(runtimeManager.agentWorkspacePath).toBe('C:\\runtime-workspace')
+
+    await toolPresenter.callTool({
+      id: 'tool-1',
+      type: 'function',
+      function: { name: 'mcp_only', arguments: '{}' },
+      conversationId: 'conv-1'
+    })
+
+    expect(mcpPresenter.callTool).toHaveBeenCalledWith(
+      expect.objectContaining({ function: expect.objectContaining({ name: 'mcp_only' }) }),
+      expect.objectContaining({ agentId: 'agent-1', enabledServerIds: ['mcp-server'] })
+    )
+  })
+
+  it('does not fall back to another conversation mapping when a tool is unavailable', async () => {
+    const toolPresenter = new ToolPresenter({
+      mcpPresenter: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([])
+      } as any,
+      configPresenter: {
+        getSkillsEnabled: vi.fn().mockReturnValue(false),
+        getSkillsPath: vi.fn().mockReturnValue('C:\\skills'),
+        getModelConfig: vi.fn()
+      } as any,
+      commandPermissionHandler: new CommandPermissionService(),
+      agentToolRuntime: buildAgentToolRuntimeMock()
+    })
+
+    await toolPresenter.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\workspace-b',
+      conversationId: 'conv-b',
+      disabledAgentTools: [QUESTION_TOOL_NAME]
+    })
+    await toolPresenter.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\workspace-a',
+      conversationId: 'conv-a'
+    })
+
+    await expect(
+      toolPresenter.callTool({
+        id: 'tool-b',
+        type: 'function',
+        function: {
+          name: QUESTION_TOOL_NAME,
+          arguments: JSON.stringify({ question: 'Should not execute', options: [] })
+        },
+        conversationId: 'conv-b'
+      })
+    ).rejects.toThrow(`Tool ${QUESTION_TOOL_NAME} not found in any source`)
+
+    await expect(
+      toolPresenter.callTool({
+        id: 'tool-unknown',
+        type: 'function',
+        function: {
+          name: QUESTION_TOOL_NAME,
+          arguments: JSON.stringify({ question: 'Unknown conversation', options: [] })
+        },
+        conversationId: 'conv-unknown'
+      })
+    ).rejects.toThrow(`Tool ${QUESTION_TOOL_NAME} not found in any source`)
+
+    toolPresenter.clearConversationToolMapping('conv-b')
+    await expect(
+      toolPresenter.callTool({
+        id: 'tool-b-cleared',
+        type: 'function',
+        function: {
+          name: QUESTION_TOOL_NAME,
+          arguments: JSON.stringify({ question: 'Still should not execute', options: [] })
+        },
+        conversationId: 'conv-b'
+      })
+    ).rejects.toThrow(`Tool ${QUESTION_TOOL_NAME} not found in any source`)
+  })
+
+  it('keeps a draft-origin mapping available for the first persisted turn', async () => {
+    const toolPresenter = new ToolPresenter({
+      mcpPresenter: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([])
+      } as any,
+      configPresenter: {
+        getSkillsEnabled: vi.fn().mockReturnValue(false),
+        getSkillsPath: vi.fn().mockReturnValue('C:\\skills'),
+        getModelConfig: vi.fn()
+      } as any,
+      commandPermissionHandler: new CommandPermissionService(),
+      agentToolRuntime: buildAgentToolRuntimeMock()
+    })
+
+    await toolPresenter.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: 'C:\\workspace'
+    })
+    const callTool = vi.fn().mockResolvedValue('draft-result')
+    const agentToolManager = (toolPresenter as any).agentToolManager
+    agentToolManager.callTool = callTool
+
+    await expect(
+      toolPresenter.callTool({
+        id: 'draft-tool',
+        type: 'function',
+        function: {
+          name: QUESTION_TOOL_NAME,
+          arguments: JSON.stringify({ question: 'First turn', options: [] })
+        },
+        conversationId: 'persisted-session'
+      })
+    ).resolves.toMatchObject({ content: 'draft-result' })
+    expect(callTool).toHaveBeenCalledWith(
+      QUESTION_TOOL_NAME,
+      { question: 'First turn', options: [] },
+      'persisted-session',
+      expect.objectContaining({ toolCallId: 'draft-tool' })
+    )
   })
 
   it('exposes cronjob only when runtime ports are available and the tool is enabled', async () => {
@@ -966,7 +1220,7 @@ describe('ToolPresenter', () => {
     expect(withProgress).toContain('Before ending the turn, reconcile the checklist')
   })
 
-  it('describes only enabled tape tools in the tape prompt', () => {
+  it('omits diagnostic and runtime-only Tape capabilities from the model prompt', () => {
     const mcpPresenter = {
       getAllToolDefinitions: vi.fn().mockResolvedValue([]),
       callTool: vi.fn()
@@ -994,16 +1248,18 @@ describe('ToolPresenter', () => {
         {
           ...buildToolDefinition(TAPE_TOOL_NAMES.anchors, 'agent-tape'),
           source: 'agent'
+        },
+        {
+          ...buildToolDefinition(TAPE_TOOL_NAMES.handoff, 'agent-tape'),
+          source: 'agent'
         }
       ]
     })
 
-    expect(prompt).toContain('## Tape Tools')
-    expect(prompt).toContain('`tape_info` inspects')
-    expect(prompt).toContain('`tape_anchors` lists')
-    expect(prompt).not.toContain('`tape_search` supports')
-    expect(prompt).not.toContain('`tape_context` expands')
-    expect(prompt).not.toContain('`tape_handoff` writes')
+    expect(prompt).not.toContain('## Tape Tools')
+    expect(prompt).not.toContain('tape_info')
+    expect(prompt).not.toContain('tape_anchors')
+    expect(prompt).not.toContain('tape_handoff')
   })
 
   it('describes tape_context only when the context tool is enabled', () => {
