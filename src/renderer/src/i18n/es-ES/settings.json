@@ -792,7 +792,13 @@
     "unavailable": "N/A"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "Capacidad débil de Agent: solo admite llamadas a herramientas de respaldo heredadas"
+    "chatFallbackWarning": "Capacidad débil de Agent: solo admite llamadas a herramientas de respaldo heredadas",
+    "capability": {
+      "vision": "Capacidad de visión",
+      "functionCall": "Capacidad de llamadas a funciones",
+      "reasoning": "Capacidad de razonamiento",
+      "search": "Capacidad de búsqueda web"
+    }
   },
   "model": {
     "title": "Configuración del modelo",

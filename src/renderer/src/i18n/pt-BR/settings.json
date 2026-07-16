@@ -532,7 +532,13 @@
     "unavailable": "Indisponível"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "Capacidade fraca de Agent: suporta apenas chamadas de ferramentas de fallback legadas"
+    "chatFallbackWarning": "Capacidade fraca de Agent: suporta apenas chamadas de ferramentas de fallback legadas",
+    "capability": {
+      "vision": "Capacidade de visão",
+      "functionCall": "Capacidade de chamada de função",
+      "reasoning": "Capacidade de raciocínio",
+      "search": "Capacidade de busca na web"
+    }
   },
   "model": {
     "title": "Configurações do Modelo",

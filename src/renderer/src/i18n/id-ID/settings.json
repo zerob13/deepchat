@@ -792,7 +792,13 @@
     "unavailable": "Belum ada"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "Kemampuan Agent yang lemah: hanya mendukung panggilan alat fallback lama"
+    "chatFallbackWarning": "Kemampuan Agent yang lemah: hanya mendukung panggilan alat fallback lama",
+    "capability": {
+      "vision": "Kemampuan penglihatan",
+      "functionCall": "Kemampuan pemanggilan fungsi",
+      "reasoning": "Kemampuan penalaran",
+      "search": "Kemampuan pencarian web"
+    }
   },
   "model": {
     "title": "Pengaturan model",

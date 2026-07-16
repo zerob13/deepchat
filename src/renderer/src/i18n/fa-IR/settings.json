@@ -532,7 +532,13 @@
     "unavailable": "ناموجود"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "قابلیت ضعیف Agent: فقط از تماس‌های ابزار fallback قدیمی پشتیبانی می‌کند"
+    "chatFallbackWarning": "قابلیت ضعیف Agent: فقط از تماس‌های ابزار fallback قدیمی پشتیبانی می‌کند",
+    "capability": {
+      "vision": "قابلیت بینایی",
+      "functionCall": "قابلیت فراخوانی تابع",
+      "reasoning": "قابلیت استدلال",
+      "search": "قابلیت جستجوی وب"
+    }
   },
   "model": {
     "title": "تنظیمات مدل",

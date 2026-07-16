@@ -532,7 +532,13 @@
     "unavailable": "Indisponible"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "Capacité Agent faible : prend uniquement en charge les appels d'outils de secours hérités"
+    "chatFallbackWarning": "Capacité Agent faible : prend uniquement en charge les appels d'outils de secours hérités",
+    "capability": {
+      "vision": "Capacité de vision",
+      "functionCall": "Capacité d'appel de fonction",
+      "reasoning": "Capacité de raisonnement",
+      "search": "Capacité de recherche web"
+    }
   },
   "model": {
     "title": "Paramètres du modèle",

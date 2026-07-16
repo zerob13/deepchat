@@ -792,7 +792,13 @@
     "unavailable": "N/A"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "Słabe możliwości Agent: obsługuje tylko starsze wywołania narzędzi awaryjnych"
+    "chatFallbackWarning": "Słabe możliwości Agent: obsługuje tylko starsze wywołania narzędzi awaryjnych",
+    "capability": {
+      "vision": "Możliwość wizji",
+      "functionCall": "Możliwość wywoływania funkcji",
+      "reasoning": "Możliwość rozumowania",
+      "search": "Możliwość wyszukiwania w sieci"
+    }
   },
   "model": {
     "title": "Ustawienia modelu",

@@ -532,7 +532,13 @@
     "unavailable": "לא זמין"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "יכולת Agent חלשה: תומך רק בקריאות כלים של fallback מדור קודם"
+    "chatFallbackWarning": "יכולת Agent חלשה: תומך רק בקריאות כלים של fallback מדור קודם",
+    "capability": {
+      "vision": "יכולת ראייה",
+      "functionCall": "יכולת קריאת פונקציות",
+      "reasoning": "יכולת הסקת מסקנות",
+      "search": "יכולת חיפוש ברשת"
+    }
   },
   "model": {
     "title": "הגדרות מודל",

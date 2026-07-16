@@ -792,7 +792,13 @@
     "unavailable": "N/D"
   },
   "modelConfigItem": {
-    "chatFallbackWarning": "Capacità Agent debole: supporta solo chiamate strumenti legacy fallback"
+    "chatFallbackWarning": "Capacità Agent debole: supporta solo chiamate strumenti legacy fallback",
+    "capability": {
+      "vision": "Capacità di visione",
+      "functionCall": "Capacità di chiamata a funzione",
+      "reasoning": "Capacità di ragionamento",
+      "search": "Capacità di ricerca web"
+    }
   },
   "model": {
     "title": "Impostazioni modello",
