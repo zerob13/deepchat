@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid'
 import { z } from 'zod'
 import type { MCPToolDefinition } from '@shared/presenter'
-import type { DeepChatSubagentSlot } from '@shared/types/agent-interface'
+import type { DeepChatSubagentSlot, SubagentTapeLinkOutcome } from '@shared/types/agent-interface'
 import type { AgentToolProgressUpdate } from '@shared/types/presenters/tool.presenter'
 import type { AgentToolCallResult } from './agentToolManager'
 import type { AgentToolRuntimePort, ConversationSessionInfo } from '../runtimePorts'
@@ -293,7 +293,7 @@ const buildHandoffMessage = (params: {
   ].join('\n')
 }
 
-const isTerminalStatus = (status: SubagentTerminalStatus): boolean =>
+const isTerminalStatus = (status: SubagentTerminalStatus): status is SubagentTapeLinkOutcome =>
   status === 'completed' || status === 'error' || status === 'cancelled'
 
 export class SubagentOrchestratorTool {
@@ -552,6 +552,7 @@ export class SubagentOrchestratorTool {
     if (
       !task.sessionId ||
       task.tapeFinalized ||
+      !isTerminalStatus(task.status) ||
       (task.status === 'cancelled' &&
         (!task.handoffSettled || (task.cancellationPromise && !task.cancellationSettled)))
     ) {
@@ -564,27 +565,45 @@ export class SubagentOrchestratorTool {
     }
 
     const childSessionId = task.sessionId
-    const meta = {
+    const linkSubagentTape = this.runtimePort.linkSubagentTape?.bind(this.runtimePort)
+    if (!linkSubagentTape) {
+      task.tapeFinalizeError = 'Subagent Tape link capability is unavailable.'
+      return
+    }
+
+    const input = {
+      parentSessionId,
+      childSessionId,
       runId,
       taskId: task.taskId,
       slotId: task.slotId,
-      title: task.title,
-      status: task.status,
+      taskTitle: task.title,
+      outcome: task.status,
       resultSummary: task.resultSummary ?? null
     }
 
     task.tapeFinalizePromise = (async () => {
       try {
-        if (task.status === 'completed') {
-          await this.runtimePort.mergeSubagentTape?.(parentSessionId, childSessionId, meta)
-        } else {
-          await this.runtimePort.discardSubagentTape?.(parentSessionId, childSessionId, meta)
+        const receipt = await linkSubagentTape(input)
+        if (
+          receipt.linkEntry.sessionId !== parentSessionId ||
+          !Number.isSafeInteger(receipt.linkEntry.entryId) ||
+          receipt.linkEntry.entryId <= 0 ||
+          receipt.childSessionId !== childSessionId ||
+          !Number.isSafeInteger(receipt.childHeadEntryId) ||
+          receipt.childHeadEntryId < 0 ||
+          !Number.isSafeInteger(receipt.childEntryCount) ||
+          receipt.childEntryCount < 0 ||
+          receipt.childEntryCount > receipt.childHeadEntryId ||
+          receipt.outcome !== input.outcome
+        ) {
+          throw new Error('Subagent Tape link receipt does not match the finalized task.')
         }
         task.tapeFinalized = true
         task.tapeFinalizeError = undefined
       } catch (error) {
         task.tapeFinalizeError = errorMessage(error)
-        console.warn('[SubagentOrchestratorTool] Failed to finalize subagent tape fork:', {
+        console.warn('[SubagentOrchestratorTool] Failed to link finalized subagent Tape:', {
           parentSessionId,
           childSessionId: task.sessionId,
           status: task.status,
@@ -599,10 +618,6 @@ export class SubagentOrchestratorTool {
   }
 
   private async retryPendingTapeFinalization(run: MutableRunState): Promise<void> {
-    if (!isTerminalStatus(run.status)) {
-      return
-    }
-
     for (const task of run.tasks) {
       if (!task.sessionId || task.tapeFinalized || !isTerminalStatus(task.status)) {
         continue
@@ -615,12 +630,8 @@ export class SubagentOrchestratorTool {
       }
 
       if (!run.executionSettled) {
-        if (task.status !== 'cancelled' || !task.cancellationSettled) {
-          continue
-        }
-
-        // Cancellation settlement makes discard safe, but a slow tape backend must not turn the
-        // run deadline into another unbounded wait for foreground or polling callers.
+        // A terminal task can freeze independently while sibling tasks remain active. Keep polling
+        // non-blocking; finalizeTaskTape deduplicates in-flight work and guards cancellation settlement.
         void this.finalizeTaskTape(finalization)
           .then(() => this.updateRunStatus(run))
           .catch(() => undefined)
@@ -673,22 +684,18 @@ export class SubagentOrchestratorTool {
       if (!isTerminalStatus(run.status)) {
         await this.waitForRunCompletion(run, timeoutMs, options?.signal)
       }
-      if (isTerminalStatus(run.status)) {
-        await this.retryPendingTapeFinalization(run)
-      }
+      await this.retryPendingTapeFinalization(run)
       return isTerminalStatus(run.status)
         ? this.buildRunFinalResult(run)
         : this.buildRunProgressResult(run, 'Subagent run still active')
     }
 
     if (args.operation === 'log') {
-      if (isTerminalStatus(run.status)) {
-        await this.retryPendingTapeFinalization(run)
-      }
+      await this.retryPendingTapeFinalization(run)
       return this.buildRunFinalResult(run)
     }
 
-    if (args.operation === 'info' && isTerminalStatus(run.status)) {
+    if (args.operation === 'info') {
       await this.retryPendingTapeFinalization(run)
     }
 
@@ -1201,6 +1208,7 @@ export class SubagentOrchestratorTool {
         if (task.status === 'queued') {
           task.status = 'running'
         }
+        updateTaskStatusFromRuntime(task)
         emitProgress()
 
         await task.completion.promise
