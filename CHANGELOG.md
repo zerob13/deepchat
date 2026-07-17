@@ -1,14 +1,8 @@
 # Changelog
 
 ## v1.1.0-beta.3 (2026-07-17)
-- Restored MCP tool-result delivery and settings tooltips
-- Improved chat responsiveness and stability through ChatPage modularization
-- Refined UI interaction consistency and localized model capability tooltips
-- Reorganized main-process runtime boundaries for improved reliability
-- 修复 MCP 工具结果投递与设置页提示信息
-- 通过 ChatPage 模块化提升聊天响应性与稳定性
-- 优化界面交互一致性，并本地化模型能力提示
-- 重整主进程运行时边界，提升可靠性
+- Reworked the overall architecture and improved reliability
+- 重构整体架构，提升可靠性
 
 ## v1.1.0-beta.2 (2026-07-16)
 - Centralized Subagent capability policy ownership across the agent runtime and sessions
