@@ -37,16 +37,16 @@
           class="message-list-container relative h-full min-h-0 w-full min-w-0 overflow-y-auto"
           :class="{ 'dc-list-scrolling': isListScrolling }"
           @scroll.passive="onScroll"
-          @scrollend.passive="onListScrollEnd"
+          @scrollend.passive="listGestures.onListScrollEnd"
           @wheel.passive="onWheel"
-          @touchstart.passive="onListTouchStart"
-          @touchmove.passive="onListTouchMove"
-          @touchend.passive="onListTouchEnd"
-          @touchcancel.passive="onListTouchCancel"
-          @pointerdown.passive="onListPointerDown"
-          @pointermove.passive="onListPointerMove"
-          @pointerup.passive="onListPointerEnd"
-          @pointercancel.passive="onListPointerEnd"
+          @touchstart.passive="listGestures.onListTouchStart"
+          @touchmove.passive="listGestures.onListTouchMove"
+          @touchend.passive="listGestures.onListTouchEnd"
+          @touchcancel.passive="listGestures.onListTouchCancel"
+          @pointerdown.passive="listGestures.onListPointerDown"
+          @pointermove.passive="listGestures.onListPointerMove"
+          @pointerup.passive="listGestures.onListPointerEnd"
+          @pointercancel.passive="listGestures.onListPointerEnd"
         >
           <div ref="messageSearchRoot" class="min-h-full">
             <div
@@ -264,15 +264,7 @@ import ChatTopBar from '@/components/chat/ChatTopBar.vue'
 import ChatSearchBar from '@/components/chat/ChatSearchBar.vue'
 import ChatSessionSkeleton from '@/components/chat/ChatSessionSkeleton.vue'
 import MessageList from '@/components/chat/MessageList.vue'
-import type {
-  DisplayAssistantMessageBlock,
-  DisplayMessage,
-  DisplayMessageUsage
-} from '@/components/chat/messageListItems'
-import {
-  filterRenderableAssistantBlocks,
-  hasRenderableAssistantBlocks
-} from '@/components/chat/messageListItems'
+import type { DisplayAssistantMessageBlock } from '@/components/chat/messageListItems'
 import ChatInputBox from '@/components/chat/ChatInputBox.vue'
 import ChatInputToolbar from '@/components/chat/ChatInputToolbar.vue'
 import AgentProgressFloat from '@/components/chat/AgentProgressFloat.vue'
@@ -294,13 +286,7 @@ import { useSpotlightStore } from '@/stores/ui/spotlight'
 import { useModelStore } from '@/stores/modelStore'
 import { createSessionClient } from '@api/SessionClient'
 import { isManualCompactionCommand } from '@/components/chat/mentions/utils'
-import {
-  applyChatSearchHighlights,
-  collectChatSearchResults,
-  clearChatSearchHighlights,
-  setActiveChatSearchResult,
-  type ChatSearchResult
-} from '@/lib/chatSearch'
+import { clearChatSearchHighlights } from '@/lib/chatSearch'
 
 import { WORKSPACE_EVENTS } from '@/events'
 import { filterUnsupportedAudioAttachments } from '@/lib/audioInputSupport'
@@ -314,13 +300,16 @@ import { useChatScrollController } from '@/composables/chat/useChatScrollControl
 import { markChatSessionPerformance } from '@/composables/chat/chatSessionPerformance'
 import { type ChatScrollReason, type ChatScrollTarget } from '@/composables/chat/chatScrollState'
 import { playChatInputHeroFlight } from '@/lib/chatInputHero'
-import { scheduleStartupDeferredTask } from '@/lib/startupDeferred'
+import { usePlanFloatLifecycle } from './chat-page/usePlanFloatLifecycle'
+import { useDisplayMessages } from './chat-page/useDisplayMessages'
+import { useChatSearch } from './chat-page/useChatSearch'
+import { useListGestures } from './chat-page/useListGestures'
+import { useMessageVirtualization } from './chat-page/useMessageVirtualization'
+import { useComposerSubmit } from './chat-page/useComposerSubmit'
+import { useSessionRestore } from './chat-page/useSessionRestore'
 import type {
-  ChatMessageRecord,
-  AssistantMessageBlock,
   MessageFile,
   UserMessageInlineItem,
-  MessageMetadata,
   SendMessageInput,
   ToolInteractionResponse
 } from '@shared/types/agent-interface'
@@ -366,7 +355,6 @@ const MESSAGE_INITIAL_WINDOW_COUNT = 90
 const MESSAGE_WINDOW_OVERSCAN_PX = 2400
 /** After the user stops scrolling, wait this long before resuming windowing/measure. */
 const SCROLL_IDLE_MS = 140
-const PLAN_FLOAT_CLEAR_DELAY_MS = 1200
 const isAcpWorkdirMissing = computed(() => {
   const activeSession = sessionStore.activeSession
   if (!activeSession || activeSession.providerId !== 'acp') {
@@ -375,46 +363,27 @@ const isAcpWorkdirMissing = computed(() => {
   return !activeSession.projectDir?.trim()
 })
 
-const applyRestoredSessionSummary = (session: unknown) => {
-  const applyRestoredSession = (
-    sessionStore as typeof sessionStore & {
-      applyRestoredSession?: (session: unknown) => void
-    }
-  ).applyRestoredSession
-
-  if (typeof applyRestoredSession === 'function') {
-    applyRestoredSession(session)
-  }
-}
-
-async function loadMessagesForSession(sessionId: string, count?: number) {
-  const restoredSession = await messageStore.loadMessages(sessionId, count)
-  return restoredSession
-}
-
-async function restoreSessionMessages(id: string, requestId: number) {
-  console.info(`[Startup][Renderer] ChatPage restoring session ${id}`)
-  const pendingInputsPromise = pendingInputStore.loadPendingInputs(id)
-  const restoredSession = await loadMessagesForSession(id, INITIAL_MESSAGE_RESTORE_COUNT)
-
-  if (requestId !== sessionRestoreRequestId) {
-    return
-  }
-
-  if (restoredSession !== null) {
-    applyRestoredSessionSummary(restoredSession)
-  }
-  void pendingInputsPromise.then(() => {
-    if (requestId === sessionRestoreRequestId) {
-      markChatSessionPerformance('secondary-state-ready', id, chatScrollSessionEpoch)
-    }
-  })
-}
+const {
+  applyRestoredSessionSummary,
+  loadMessagesForSession,
+  currentRestoreRequestId,
+  canWriteSessionView,
+  beginSessionChange,
+  scheduleRestore,
+  deactivate: deactivateSessionRestore
+} = useSessionRestore({
+  sessionId: () => props.sessionId,
+  messageStore,
+  sessionStore,
+  pendingInputStore,
+  initialRestoreCount: INITIAL_MESSAGE_RESTORE_COUNT,
+  onSecondaryStateReady: (id) =>
+    markChatSessionPerformance('secondary-state-ready', id, chatScrollSessionEpoch)
+})
 
 // --- Auto-scroll ---
 const scrollContainer = ref<HTMLDivElement | null>(null)
 const messageSearchRoot = ref<HTMLDivElement | null>(null)
-const planFloatLingerBySession = ref<Record<string, boolean>>({})
 const chatInputHeroHostRef = ref<HTMLDivElement | null>(null)
 let chatScrollSessionEpoch = 0
 
@@ -435,21 +404,6 @@ const chatScrollController = useChatScrollController({
 })
 const pendingDeleteMessageId = ref<string | null>(null)
 const showDeleteMessageDialog = computed(() => Boolean(pendingDeleteMessageId.value))
-const pendingAssistantPlaceholder = ref<{
-  id: string
-  sessionId: string
-  baselineAssistantMessageIds: Set<string>
-  baselineMessageOrderSeq: number
-  baselineCreatedAt: number
-} | null>(null)
-const assistantRenderKeyByMessageId = ref<Record<string, string>>({})
-let pendingAssistantPlaceholderSeq = 0
-const scrollViewportTop = ref(0)
-const scrollViewportHeight = ref(0)
-const messageWindowOriginTop = ref(0)
-/** True while the user is actively flinging/dragging the list — freezes windowing/measure. */
-const isListScrolling = ref(false)
-const NEAR_BOTTOM_THRESHOLD = 80 // px
 const TOP_HISTORY_THRESHOLD = 80
 const MESSAGE_JUMP_RETRY_INTERVAL = 80
 const MESSAGE_HIGHLIGHT_DURATION = 2000
@@ -464,41 +418,9 @@ const SESSION_RESTORE_SCROLL_INTENT_KEYS = new Set([
   ' ',
   'Spacebar'
 ])
-const pendingMeasureQueue = new Map<string, number>()
-let scrollIdleTimer: number | null = null
-let pendingMeasureFlushFrame: number | null = null
-let isListGestureActive = false
-let pendingHistoryLoadAtIdle = false
-let hasUpwardPaginationIntent = false
-let lastGestureClientY: number | null = null
-const displayMessageCache = new Map<
-  string,
-  {
-    updatedAt: number
-    content: ChatMessageRecord['content']
-    metadata: ChatMessageRecord['metadata']
-    modelId: string
-    providerId: string
-    status: DisplayMessage['status']
-    renderKey?: string
-    message: DisplayMessage
-  }
->()
 const traceMessageId = ref<string | null>(null)
-const isChatSearchOpen = ref(false)
-const chatSearchQuery = ref('')
-const activeChatSearchIndex = ref(0)
-const chatSearchBarRef = ref<{
-  focusInput: () => void
-  selectInput: () => void
-} | null>(null)
 let spotlightJumpTimer: number | null = null
 let scrollReadFrame: number | null = null
-const planSnapshotClearTimers = new Map<string, number>()
-let chatSearchRefreshFrame: number | null = null
-let pendingChatSearchReveal = false
-let cancelSessionRestoreTask: (() => void) | null = null
-let hasScheduledInitialSessionRestore = false
 let cancelPlanUpdatedListener: (() => void) | null = null
 // The immediate session watcher can call clearMessageWindowMeasurements before
 // messageWindow exists; keep this no-op forward reference and rebind it to
@@ -509,14 +431,12 @@ let pendingMessageWindowMeasurements: MessageMeasurementSnapshot | null = null
 let restoreMessageWindowMeasurements = (snapshot: MessageMeasurementSnapshot) => {
   pendingMessageWindowMeasurements = snapshot
 }
+// Rebound after useChatSearch is created below (it needs the message window, which
+// is set up after the session-change watch that calls these on first run).
+let clearChatSearchStateRef = () => {}
+let cancelScheduledChatSearchRefreshRef = () => {}
 let measurementSessionId = ''
-let sessionRestoreRequestId = 0
-let isChatPageActive = true
 let handledCommittedSessionId: string | null = null
-type LogicalViewportAnchor = {
-  messageId: string
-  layoutTop: number
-}
 type HistoryLayoutAnchor = {
   messageId: string
   layoutTop: number
@@ -549,19 +469,6 @@ function isSessionRestoreKeyboardScrollIntent(event: KeyboardEvent): boolean {
   )
 }
 
-function captureLogicalViewportAnchor(): LogicalViewportAnchor | null {
-  const container = scrollContainer.value
-  if (!container) return null
-
-  const originTop = getMessageWindowOriginTop(container)
-  if (originTop === null) return null
-  const layoutViewportTop = Math.max(container.scrollTop - originTop, 0)
-  const entries = messageWindow.entries.value
-  const anchorIndex = findFirstEntryWithBottomAtOrAfter(entries, layoutViewportTop)
-  const anchor = entries[Math.min(anchorIndex, entries.length - 1)]
-  return anchor ? { messageId: anchor.id, layoutTop: anchor.top } : null
-}
-
 function messageIdSelector(messageId: string): string {
   const escapedMessageId =
     typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
@@ -576,26 +483,6 @@ function isBottomFollowingMode(): boolean {
     !chatScrollController.state.value.userOwned &&
     (chatScrollController.state.value.mode === 'restoring' ||
       chatScrollController.state.value.mode === 'following')
-  )
-}
-
-function restoreLogicalViewportAnchor(anchor: LogicalViewportAnchor | null): void {
-  if (!anchor || isBottomFollowingMode() || isListScrolling.value) return
-
-  const container = scrollContainer.value
-  const nextAnchor = messageWindow.getEntry(anchor.messageId)
-  if (!container || !nextAnchor) return
-
-  const delta = nextAnchor.top - anchor.layoutTop
-  if (Math.abs(delta) < 1) return
-
-  requestChatScroll(
-    'measurement-anchor',
-    {
-      kind: 'absolute',
-      top: container.scrollTop + delta
-    },
-    true
   )
 }
 
@@ -616,12 +503,6 @@ function waitForNextAnimationFrame(): Promise<void> {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve())
   })
-}
-
-function isAtBottom(): boolean {
-  const el = scrollContainer.value
-  if (!el) return true
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_THRESHOLD
 }
 
 function getMessageWindowOriginTop(el: HTMLElement): number | null {
@@ -668,162 +549,6 @@ function connectChatGeometryObserver(): void {
   viewportResizeObserver.observe(messageRoot)
 }
 
-function flushPendingMeasures(): void {
-  if (pendingMeasureFlushFrame !== null || pendingMeasureQueue.size === 0) return
-
-  pendingMeasureFlushFrame = window.requestAnimationFrame(() => {
-    pendingMeasureFlushFrame = null
-    const batch = Array.from(pendingMeasureQueue, ([messageId, height]) => ({ messageId, height }))
-    pendingMeasureQueue.clear()
-    applyMessageMeasures(batch)
-    flushPendingMeasures()
-  })
-}
-
-function finishListScrollingNow(): void {
-  isListScrolling.value = false
-  chatScrollController.notifyUserGestureEnd()
-  const el = scrollContainer.value
-  if (el) {
-    syncMessageViewportMetrics(el)
-  }
-  flushPendingMeasures()
-  if (pendingHistoryLoadAtIdle) {
-    pendingHistoryLoadAtIdle = false
-    void loadOlderMessagesAtTop()
-  }
-}
-
-function finishListScrollingAfterIdle(delay = SCROLL_IDLE_MS): void {
-  if (scrollIdleTimer !== null) {
-    window.clearTimeout(scrollIdleTimer)
-    scrollIdleTimer = null
-  }
-  if (delay <= 0 && !isListGestureActive) {
-    finishListScrollingNow()
-    return
-  }
-  scrollIdleTimer = window.setTimeout(() => {
-    scrollIdleTimer = null
-    if (isListGestureActive) {
-      finishListScrollingAfterIdle()
-      return
-    }
-    finishListScrollingNow()
-  }, delay)
-}
-
-function markListScrolling(): void {
-  if (!isListScrolling.value) {
-    isListScrolling.value = true
-    // Pin the current window around the start of the gesture so overscan is centered.
-    const el = scrollContainer.value
-    if (el) {
-      scrollViewportTop.value = el.scrollTop
-      scrollViewportHeight.value = el.clientHeight
-    }
-  }
-
-  if (isListGestureActive) {
-    if (scrollIdleTimer !== null) {
-      window.clearTimeout(scrollIdleTimer)
-      scrollIdleTimer = null
-    }
-    return
-  }
-
-  finishListScrollingAfterIdle()
-}
-
-function beginListGesture(kind: 'touch' | 'pointer', clientY?: number): void {
-  chatScrollController.notifyUserGestureStart(kind)
-  isListGestureActive = true
-  lastGestureClientY = clientY ?? null
-  markListScrolling()
-}
-
-function updateUpwardPaginationIntent(isUpward: boolean): void {
-  hasUpwardPaginationIntent = isUpward
-  if (!isUpward) {
-    pendingHistoryLoadAtIdle = false
-    return
-  }
-
-  if ((scrollContainer.value?.scrollTop ?? Number.POSITIVE_INFINITY) <= TOP_HISTORY_THRESHOLD) {
-    pendingHistoryLoadAtIdle = true
-  }
-}
-
-function endListGesture(): void {
-  if (!isListGestureActive) {
-    lastGestureClientY = null
-    return
-  }
-  isListGestureActive = false
-  lastGestureClientY = null
-  finishListScrollingAfterIdle(0)
-}
-
-function onListTouchStart(event: TouchEvent): void {
-  lastGestureClientY = event.touches[0]?.clientY ?? null
-}
-
-function onListTouchMove(event: TouchEvent): void {
-  const clientY = event.touches[0]?.clientY
-  if (clientY !== undefined && lastGestureClientY !== null) {
-    updateUpwardPaginationIntent(clientY > lastGestureClientY)
-  }
-  if (!isListGestureActive) {
-    beginListGesture('touch', clientY)
-    return
-  }
-  lastGestureClientY = clientY ?? lastGestureClientY
-  markListScrolling()
-}
-
-function onListTouchEnd(): void {
-  if (!isListGestureActive) {
-    lastGestureClientY = null
-    return
-  }
-  isListGestureActive = false
-  lastGestureClientY = null
-  finishListScrollingAfterIdle()
-}
-
-function onListTouchCancel(): void {
-  endListGesture()
-}
-
-function onListPointerDown(event: PointerEvent): void {
-  const viewport = scrollContainer.value
-  if (!viewport || viewport.scrollHeight <= viewport.clientHeight) return
-  const rect = viewport.getBoundingClientRect()
-  const scrollbarHitWidth = Math.max(viewport.offsetWidth - viewport.clientWidth, 12)
-  if (event.clientX < rect.right - scrollbarHitWidth) return
-  beginListGesture('pointer', event.clientY)
-}
-
-function onListPointerMove(event: PointerEvent): void {
-  if (isListGestureActive && event.buttons !== 0) {
-    if (lastGestureClientY !== null) {
-      updateUpwardPaginationIntent(event.clientY < lastGestureClientY)
-    }
-    lastGestureClientY = event.clientY
-    markListScrolling()
-  }
-}
-
-function onListPointerEnd(): void {
-  endListGesture()
-}
-
-function onListScrollEnd(): void {
-  if (!isListGestureActive) {
-    finishListScrollingAfterIdle(0)
-  }
-}
-
 function scrollDomToBottom(reason: ChatScrollReason): void {
   requestChatScroll(reason, { kind: 'bottom' })
 }
@@ -856,8 +581,7 @@ function scheduleScrollMetricsRead() {
 function onWheel(event: WheelEvent) {
   if (event.deltaY === 0) return
   chatScrollController.notifyUserGestureStart('wheel')
-  updateUpwardPaginationIntent(event.deltaY < 0)
-  markListScrolling()
+  listGestures.markWheelScrollIntent(event.deltaY < 0)
 }
 
 function onScroll() {
@@ -867,20 +591,22 @@ function onScroll() {
   const source = chatScrollController.notifyViewportScroll()
   const userInitiatedScroll = source === 'user'
   const hadUpwardPaginationIntent =
-    userInitiatedScroll && chatScrollController.state.value.userOwned && hasUpwardPaginationIntent
+    userInitiatedScroll && chatScrollController.state.value.userOwned
 
   scheduleScrollMetricsRead()
   if (userInitiatedScroll && chatScrollController.state.value.activeGesture) {
-    markListScrolling()
+    listGestures.markListScrolling()
   }
 
   if (el.scrollTop <= TOP_HISTORY_THRESHOLD && hadUpwardPaginationIntent) {
+    if (!listGestures.consumeUpwardPaginationIntent()) {
+      return
+    }
     if (chatScrollController.state.value.activeGesture || isListScrolling.value) {
-      pendingHistoryLoadAtIdle = true
+      listGestures.armPendingHistoryLoadAtIdle()
     } else {
       void loadOlderMessagesAtTop()
     }
-    hasUpwardPaginationIntent = false
   }
 }
 
@@ -908,7 +634,7 @@ async function loadOlderMessagesAtTop(): Promise<void> {
   }
 
   const sessionId = props.sessionId
-  const requestId = sessionRestoreRequestId
+  const requestId = currentRestoreRequestId()
   const previousScrollHeight = el.scrollHeight
   const previousEntryCount = messageWindow.entries.value.length
   // Use a stable row in the virtual layout as the pagination anchor. DOM scrollHeight
@@ -920,7 +646,11 @@ async function loadOlderMessagesAtTop(): Promise<void> {
     ? { messageId: firstExistingEntry.id, layoutTop: firstExistingEntry.top }
     : null
   const loadedCount = await messageStore.loadOlderMessages()
-  if (loadedCount === 0 || props.sessionId !== sessionId || sessionRestoreRequestId !== requestId) {
+  if (
+    loadedCount === 0 ||
+    props.sessionId !== sessionId ||
+    currentRestoreRequestId() !== requestId
+  ) {
     return
   }
 
@@ -937,7 +667,7 @@ async function loadOlderMessagesAtTop(): Promise<void> {
 
   if (!usesWindowedMessages || !historyAnchor || !nextAnchorEntry) {
     await nextTick()
-    if (props.sessionId !== sessionId || sessionRestoreRequestId !== requestId) {
+    if (props.sessionId !== sessionId || currentRestoreRequestId() !== requestId) {
       return
     }
 
@@ -967,7 +697,7 @@ async function loadOlderMessagesAtTop(): Promise<void> {
   scrollViewportHeight.value = container.clientHeight
 
   await nextTick()
-  if (props.sessionId !== sessionId || sessionRestoreRequestId !== requestId) {
+  if (props.sessionId !== sessionId || currentRestoreRequestId() !== requestId) {
     return
   }
 
@@ -1030,6 +760,104 @@ function cacheCurrentMessageMeasurements(): void {
   recentMessageMeasurementCache.set(measurementSessionId, captureMessageWindowMeasurements())
 }
 
+const {
+  displayMessages,
+  ephemeralRateLimitBlock,
+  ephemeralRateLimitMessageId,
+  hasFirstStreamingContent,
+  hasInlineStreamingTarget,
+  pendingAssistantPlaceholder,
+  createPendingAssistantPlaceholder,
+  clearPendingAssistantPlaceholder,
+  resetForSessionChange: resetDisplayMessagesForSessionChange
+} = useDisplayMessages({
+  sessionId: () => props.sessionId,
+  messageStore,
+  sessionStore,
+  modelStore,
+  isGenerating,
+  isSessionViewCommitted,
+  isCurrentSessionStreaming
+})
+
+const messageWindow = useMessageWindow({
+  messages: displayMessages
+})
+clearMessageWindowMeasurements = messageWindow.clearMeasurements
+captureMessageWindowMeasurements = messageWindow.captureMeasurements
+restoreMessageWindowMeasurements = messageWindow.restoreMeasurements
+if (pendingMessageWindowMeasurements) {
+  restoreMessageWindowMeasurements(pendingMessageWindowMeasurements)
+  pendingMessageWindowMeasurements = null
+}
+
+const listGestures = useListGestures({
+  viewport: scrollContainer,
+  scrollIdleMs: SCROLL_IDLE_MS,
+  topHistoryThreshold: TOP_HISTORY_THRESHOLD,
+  onGestureStart: (kind) => chatScrollController.notifyUserGestureStart(kind),
+  onGestureEnd: () => chatScrollController.notifyUserGestureEnd(),
+  onScrollingStart: () => virtualization.pinWindowToViewport(),
+  onScrollingSettled: () => {
+    const el = scrollContainer.value
+    if (el) syncMessageViewportMetrics(el)
+    virtualization.flushPendingMeasures()
+  },
+  onIdleHistoryLoad: () => {
+    void loadOlderMessagesAtTop()
+  }
+})
+const isListScrolling = listGestures.isListScrolling
+
+const virtualization = useMessageVirtualization({
+  viewport: scrollContainer,
+  displayMessages,
+  messageWindow,
+  windowingThreshold: MESSAGE_WINDOWING_THRESHOLD,
+  initialWindowCount: MESSAGE_INITIAL_WINDOW_COUNT,
+  overscanPx: MESSAGE_WINDOW_OVERSCAN_PX,
+  getWindowOriginTop: getMessageWindowOriginTop,
+  isListScrolling,
+  isBottomFollowingMode,
+  scrollToBottom: (force) => scrollToBottom(Boolean(force)),
+  requestAnchorScroll: (top) => {
+    requestChatScroll('measurement-anchor', { kind: 'absolute', top }, true)
+  },
+  currentScrollMode: () => chatScrollController.state.value.mode
+})
+const {
+  scrollViewportTop,
+  scrollViewportHeight,
+  messageWindowOriginTop,
+  visibleDisplayMessages,
+  messageWindowBeforeHeight,
+  messageWindowAfterHeight,
+  onMessageMeasure
+} = virtualization
+
+const {
+  isChatSearchOpen,
+  chatSearchQuery,
+  activeChatSearchIndex,
+  chatSearchBarRef,
+  chatSearchResults,
+  closeChatSearch,
+  clearChatSearchState,
+  goToNextChatSearchMatch,
+  goToPreviousChatSearchMatch,
+  handleSearchKeydown,
+  cancelScheduledChatSearchRefresh
+} = useChatSearch({
+  messageSearchRoot,
+  displayMessages,
+  visibleDisplayMessages,
+  hasWindowEntry: (messageId) => Boolean(messageWindow.getEntry(messageId)),
+  requestChatScroll,
+  waitForNextAnimationFrame
+})
+clearChatSearchStateRef = clearChatSearchState
+cancelScheduledChatSearchRefreshRef = cancelScheduledChatSearchRefresh
+
 // Load messages when sessionId changes, then scroll to bottom
 watch(
   () => props.sessionId,
@@ -1039,20 +867,14 @@ watch(
       cacheCurrentMessageMeasurements()
     }
     measurementSessionId = id
-    pendingHistoryLoadAtIdle = false
-    hasUpwardPaginationIntent = false
-    lastGestureClientY = null
+    listGestures.resetIntentForSessionChange()
     pendingDeleteMessageId.value = null
-    pendingAssistantPlaceholder.value = null
-    clearChatSearchState()
-    displayMessageCache.clear()
-    assistantRenderKeyByMessageId.value = {}
-    sessionRestoreRequestId += 1
+    clearChatSearchStateRef()
+    resetDisplayMessagesForSessionChange()
+    beginSessionChange()
     chatScrollSessionEpoch = chatScrollController.beginSession(id)
     markChatSessionPerformance('selected', id, chatScrollSessionEpoch)
     markChatSessionPerformance('preparation-started', id, chatScrollSessionEpoch)
-    cancelSessionRestoreTask?.()
-    cancelSessionRestoreTask = null
     clearMessageWindowMeasurements()
     const activatedFromCache = id ? (messageStore.activateRecentSessionView?.(id) ?? false) : false
     const cachedMeasurements = activatedFromCache ? recentMessageMeasurementCache.get(id) : null
@@ -1065,14 +887,7 @@ watch(
     }
     pendingInputStore.clear()
     if (id) {
-      const requestId = sessionRestoreRequestId
-      const runRestore = () => restoreSessionMessages(id, requestId)
-      if (!hasScheduledInitialSessionRestore) {
-        hasScheduledInitialSessionRestore = true
-        cancelSessionRestoreTask = scheduleStartupDeferredTask(runRestore)
-      } else {
-        void runRestore()
-      }
+      scheduleRestore(id)
       return
     }
   },
@@ -1120,536 +935,6 @@ watch(
   { immediate: true, flush: 'post' }
 )
 
-function resolveAssistantModelName(modelId: string): string {
-  if (!modelId) {
-    return 'Assistant'
-  }
-  const found = modelStore.findModelByIdOrName(modelId)
-  return found?.model?.name || modelId
-}
-
-function buildUsage(metadata: MessageMetadata): DisplayMessageUsage {
-  return {
-    context_usage: 0,
-    tokens_per_second: metadata.tokensPerSecond ?? 0,
-    total_tokens: metadata.totalTokens ?? 0,
-    generation_time: metadata.generationTime ?? 0,
-    first_token_time: metadata.firstTokenTime ?? 0,
-    reasoning_start_time: metadata.reasoningStartTime ?? 0,
-    reasoning_end_time: metadata.reasoningEndTime ?? 0,
-    input_tokens: metadata.inputTokens ?? 0,
-    output_tokens: metadata.outputTokens ?? 0
-  }
-}
-
-function toDisplayMessage(record: ChatMessageRecord): DisplayMessage {
-  const metadata = messageStore.getMessageMetadata(record)
-  const modelId = metadata.model || sessionStore.activeSession?.modelId || ''
-  const providerId = metadata.provider || sessionStore.activeSession?.providerId || ''
-  const cached = displayMessageCache.get(record.id)
-  if (
-    cached &&
-    cached.updatedAt === record.updatedAt &&
-    cached.content === record.content &&
-    cached.metadata === record.metadata &&
-    cached.modelId === modelId &&
-    cached.providerId === providerId &&
-    cached.status === record.status &&
-    cached.renderKey === assistantRenderKeyByMessageId.value[record.id]
-  ) {
-    return cached.message
-  }
-
-  const modelName = record.role === 'assistant' ? resolveAssistantModelName(modelId) : ''
-  const baseMessage = {
-    id: record.id,
-    timestamp: record.createdAt,
-    updatedAt: record.updatedAt,
-    avatar: '',
-    name: record.role === 'user' ? 'You' : 'Assistant',
-    model_name: modelName,
-    model_id: modelId,
-    model_provider: providerId,
-    status: record.status,
-    error: '',
-    usage: buildUsage(metadata),
-    conversationId: record.sessionId,
-    is_variant: 0,
-    orderSeq: record.orderSeq,
-    messageType: metadata.messageType === 'compaction' ? 'compaction' : 'normal',
-    compactionStatus: metadata.compactionStatus,
-    summaryUpdatedAt: metadata.summaryUpdatedAt ?? null
-  } as const
-
-  const streamingRenderKey = assistantRenderKeyByMessageId.value[record.id]
-  const nextMessage =
-    record.role === 'assistant'
-      ? ({
-          ...baseMessage,
-          ...(streamingRenderKey ? { renderKey: streamingRenderKey } : {}),
-          role: 'assistant',
-          content: filterRenderableAssistantBlocks(messageStore.getAssistantMessageBlocks(record))
-        } as DisplayMessage)
-      : ({
-          ...baseMessage,
-          role: 'user',
-          content: messageStore.getUserMessageContent(record)
-        } as DisplayMessage)
-
-  displayMessageCache.set(record.id, {
-    updatedAt: record.updatedAt,
-    content: record.content,
-    metadata: record.metadata,
-    modelId,
-    providerId,
-    status: record.status,
-    renderKey: streamingRenderKey,
-    message: nextMessage
-  })
-
-  return nextMessage
-}
-
-// Build a streaming assistant message from live blocks
-function toStreamingMessage(
-  blocks: AssistantMessageBlock[],
-  messageId?: string | null
-): DisplayMessage {
-  const modelId = sessionStore.activeSession?.modelId ?? ''
-  const now = Date.now()
-  const renderableBlocks = filterRenderableAssistantBlocks(blocks as DisplayAssistantMessageBlock[])
-  return {
-    // Key the streaming row by the real message id when we have one, so that when
-    // the persisted copy arrives at stream end Vue patches the SAME node in place
-    // (markdown DOM reused) instead of unmount/remount — no completion flash.
-    // Falls back to a synthetic id only when the backend hasn't assigned one yet.
-    id: messageId ?? '__streaming__',
-    content: renderableBlocks,
-    role: 'assistant',
-    timestamp: now,
-    updatedAt: now,
-    avatar: '',
-    name: 'Assistant',
-    model_name: resolveAssistantModelName(modelId),
-    model_id: modelId,
-    model_provider: sessionStore.activeSession?.providerId ?? '',
-    status: 'pending',
-    error: '',
-    usage: buildUsage({}),
-    conversationId: props.sessionId,
-    is_variant: 0,
-    orderSeq: Number.MAX_SAFE_INTEGER
-  }
-}
-
-function shouldRenderDisplayMessage(message: DisplayMessage): boolean {
-  if (message.role !== 'assistant') {
-    return true
-  }
-
-  if (message.messageType === 'compaction') {
-    return true
-  }
-
-  if (message.status === 'pending') {
-    return true
-  }
-
-  return hasRenderableAssistantBlocks(message.content)
-}
-
-const hasInlineStreamingTarget = computed(() => {
-  if (!isCurrentSessionStreaming.value) return false
-  const messageId = messageStore.currentStreamMessageId
-  if (!messageId) return false
-  return messageStore.messageCache.get(messageId)?.sessionId === props.sessionId
-})
-const hasFirstStreamingContent = computed(
-  () => messageStore.streamingBlocks.length > 0 && hasInlineStreamingTarget.value
-)
-
-const ephemeralRateLimitMessageId = computed(() => {
-  const messageId = messageStore.currentStreamMessageId
-  if (
-    !isCurrentSessionStreaming.value ||
-    !messageId ||
-    !messageId.startsWith(RATE_LIMIT_STREAM_MESSAGE_PREFIX)
-  ) {
-    return null
-  }
-
-  return messageId
-})
-
-const ephemeralRateLimitBlock = computed<DisplayAssistantMessageBlock | null>(() => {
-  if (!ephemeralRateLimitMessageId.value || messageStore.streamingBlocks.length === 0) {
-    return null
-  }
-
-  const [firstBlock] = messageStore.streamingBlocks as DisplayAssistantMessageBlock[]
-  if (
-    messageStore.streamingBlocks.length !== 1 ||
-    firstBlock?.type !== 'action' ||
-    firstBlock.action_type !== 'rate_limit'
-  ) {
-    return null
-  }
-
-  return firstBlock
-})
-
-const hasNewAssistantMessageAfterPendingPlaceholder = computed(() => {
-  const pending = pendingAssistantPlaceholder.value
-  if (!pending || pending.sessionId !== props.sessionId) return false
-
-  return messageStore.messages.some(
-    (message) =>
-      message.role === 'assistant' &&
-      !pending.baselineAssistantMessageIds.has(message.id) &&
-      isMessageAfterPendingAssistantBaseline(message, pending)
-  )
-})
-
-const shouldShowPendingAssistantPlaceholder = computed(() => {
-  const pending = pendingAssistantPlaceholder.value
-  return Boolean(
-    pending &&
-    pending.sessionId === props.sessionId &&
-    !hasFirstStreamingContent.value &&
-    !hasNewAssistantMessageAfterPendingPlaceholder.value &&
-    !ephemeralRateLimitBlock.value
-  )
-})
-
-const hasPendingAssistantMessage = computed(() =>
-  messageStore.messages.some(
-    (message) => message.role === 'assistant' && message.status === 'pending'
-  )
-)
-
-const shouldShowGeneratingAssistantPlaceholder = computed(
-  () =>
-    isGenerating.value &&
-    !shouldShowPendingAssistantPlaceholder.value &&
-    !hasFirstStreamingContent.value &&
-    !hasPendingAssistantMessage.value &&
-    !ephemeralRateLimitBlock.value
-)
-
-watch(
-  () => hasFirstStreamingContent.value || hasNewAssistantMessageAfterPendingPlaceholder.value,
-  (shouldClearPendingAssistant) => {
-    if (shouldClearPendingAssistant) {
-      bindPendingAssistantRenderKey()
-      pendingAssistantPlaceholder.value = null
-    }
-  }
-)
-
-function onDismissPlanFloat() {
-  agentPlanStore.dismiss(props.sessionId)
-}
-
-function createPendingAssistantPlaceholder(sessionId: string): string {
-  const id = `__pending_assistant_${Date.now()}_${++pendingAssistantPlaceholderSeq}`
-  const loadedMessages = messageStore.messages
-  const baselineAssistantMessageIds = new Set(
-    loadedMessages.filter((message) => message.role === 'assistant').map((message) => message.id)
-  )
-  const baselineMessageOrderSeq = Math.max(
-    Number.NEGATIVE_INFINITY,
-    ...loadedMessages.map((message) =>
-      Number.isFinite(message.orderSeq) ? message.orderSeq : Number.NEGATIVE_INFINITY
-    )
-  )
-  pendingAssistantPlaceholder.value = {
-    id,
-    sessionId,
-    baselineAssistantMessageIds,
-    baselineMessageOrderSeq,
-    baselineCreatedAt: Date.now()
-  }
-  return id
-}
-
-function isMessageAfterPendingAssistantBaseline(
-  message: ChatMessageRecord,
-  pending: NonNullable<typeof pendingAssistantPlaceholder.value>
-): boolean {
-  if (Number.isFinite(pending.baselineMessageOrderSeq) && Number.isFinite(message.orderSeq)) {
-    return message.orderSeq > pending.baselineMessageOrderSeq
-  }
-
-  return message.createdAt > pending.baselineCreatedAt
-}
-
-function clearPendingAssistantPlaceholder(id?: string): void {
-  if (!id || pendingAssistantPlaceholder.value?.id === id) {
-    pendingAssistantPlaceholder.value = null
-  }
-}
-
-function bindPendingAssistantRenderKey(): void {
-  const pending = pendingAssistantPlaceholder.value
-  const streamMessageId = messageStore.currentStreamMessageId
-  if (
-    !pending ||
-    pending.sessionId !== props.sessionId ||
-    !streamMessageId ||
-    !hasInlineStreamingTarget.value ||
-    assistantRenderKeyByMessageId.value[streamMessageId] === pending.id
-  ) {
-    return
-  }
-  assistantRenderKeyByMessageId.value = {
-    ...assistantRenderKeyByMessageId.value,
-    [streamMessageId]: pending.id
-  }
-}
-
-watch(
-  () => [messageStore.currentStreamMessageId, hasInlineStreamingTarget.value] as const,
-  bindPendingAssistantRenderKey
-)
-
-/**
- * Stable history list: intentionally does NOT read streamRevision / streamingBlocks,
- * so token-level updates do not rebuild every display message in long sessions.
- * The in-flight assistant row is owned by streamingDisplayTail instead.
- */
-const stableDisplayMessages = computed(() => {
-  void messageStore.lastPersistedRevision
-  if (!isSessionViewCommitted.value) {
-    return []
-  }
-  const streamId =
-    isCurrentSessionStreaming.value && hasInlineStreamingTarget.value
-      ? messageStore.currentStreamMessageId
-      : null
-
-  const msgs: DisplayMessage[] = []
-  const activeMessageIds = new Set<string>()
-  const cache = messageStore.messageCache
-
-  for (const id of messageStore.messageIds) {
-    if (streamId && id === streamId) {
-      continue
-    }
-    const message = cache.get(id)
-    if (!message || message.sessionId !== props.sessionId) continue
-    activeMessageIds.add(message.id)
-    const displayMessage = toDisplayMessage(message)
-    if (shouldRenderDisplayMessage(displayMessage)) {
-      msgs.push(displayMessage)
-    }
-  }
-
-  for (const cachedId of displayMessageCache.keys()) {
-    if (!activeMessageIds.has(cachedId) && cachedId !== streamId) {
-      displayMessageCache.delete(cachedId)
-    }
-  }
-
-  return msgs
-})
-
-/** High-frequency streaming row + pending placeholder only. */
-const streamingDisplayTail = computed(() => {
-  void messageStore.streamRevision
-  if (!isSessionViewCommitted.value) {
-    return []
-  }
-  const msgs: DisplayMessage[] = []
-
-  // Single-track: stream blocks are folded into the message record in place, so the
-  // generating message is the same id/node through completion (no flash).
-  if (isCurrentSessionStreaming.value && hasInlineStreamingTarget.value) {
-    const streamId = messageStore.currentStreamMessageId
-    const record = streamId ? messageStore.messageCache.get(streamId) : undefined
-    if (record) {
-      const displayMessage = toDisplayMessage(record)
-      if (shouldRenderDisplayMessage(displayMessage)) {
-        msgs.push(displayMessage)
-      }
-    }
-  } else if (
-    isCurrentSessionStreaming.value &&
-    messageStore.streamingBlocks.length > 0 &&
-    !hasInlineStreamingTarget.value &&
-    !ephemeralRateLimitBlock.value
-  ) {
-    msgs.push(toStreamingMessage(messageStore.streamingBlocks, messageStore.currentStreamMessageId))
-  }
-
-  if (shouldShowPendingAssistantPlaceholder.value && pendingAssistantPlaceholder.value) {
-    msgs.push(toStreamingMessage([], pendingAssistantPlaceholder.value.id))
-  } else if (shouldShowGeneratingAssistantPlaceholder.value) {
-    msgs.push(toStreamingMessage([], `__pending_assistant_generating_${props.sessionId}`))
-  }
-
-  return msgs
-})
-
-const displayMessages = computed(() => {
-  const stable = stableDisplayMessages.value
-  const tail = streamingDisplayTail.value
-  if (tail.length === 0) {
-    return stable
-  }
-
-  const streamId = messageStore.currentStreamMessageId
-  // Common path: virtual/fallback streaming rows and pending placeholders append at end.
-  if (!(streamId && hasInlineStreamingTarget.value && tail[0]?.id === streamId)) {
-    return stable.concat(tail)
-  }
-
-  // Re-insert the in-flight row at its messageIds order while reusing stable objects.
-  const stableById = new Map(stable.map((message) => [message.id, message]))
-  const ordered: DisplayMessage[] = []
-  for (const id of messageStore.messageIds) {
-    if (id === streamId) {
-      ordered.push(tail[0])
-      continue
-    }
-    const item = stableById.get(id)
-    if (item) {
-      ordered.push(item)
-    }
-  }
-  for (let i = 1; i < tail.length; i += 1) {
-    ordered.push(tail[i])
-  }
-  return ordered
-})
-
-const messageWindow = useMessageWindow({
-  messages: displayMessages
-})
-clearMessageWindowMeasurements = messageWindow.clearMeasurements
-captureMessageWindowMeasurements = messageWindow.captureMeasurements
-restoreMessageWindowMeasurements = messageWindow.restoreMeasurements
-if (pendingMessageWindowMeasurements) {
-  restoreMessageWindowMeasurements(pendingMessageWindowMeasurements)
-  pendingMessageWindowMeasurements = null
-}
-
-const findFirstEntryWithBottomAtOrAfter = (
-  entries: Array<{ bottom: number }>,
-  target: number
-): number => {
-  let low = 0
-  let high = entries.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (entries[middle].bottom >= target) {
-      high = middle
-    } else {
-      low = middle + 1
-    }
-  }
-  return low
-}
-
-const findFirstEntryWithTopAfter = (entries: Array<{ top: number }>, target: number): number => {
-  let low = 0
-  let high = entries.length
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2)
-    if (entries[middle].top > target) {
-      high = middle
-    } else {
-      low = middle + 1
-    }
-  }
-  return low
-}
-
-const messageWindowRange = computed(() => {
-  const entries = messageWindow.entries.value
-  const total = entries.length
-  if (total === 0) {
-    return { start: 0, end: 0, before: 0, after: 0 }
-  }
-
-  if (total <= MESSAGE_WINDOWING_THRESHOLD) {
-    return { start: 0, end: total, before: 0, after: 0 }
-  }
-
-  const viewportHeight = scrollViewportHeight.value
-  if (viewportHeight <= 0) {
-    const start = Math.max(0, total - MESSAGE_INITIAL_WINDOW_COUNT)
-    return {
-      start,
-      end: total,
-      before: entries[start]?.top ?? 0,
-      after: 0
-    }
-  }
-
-  const viewportTop = Math.max(scrollViewportTop.value - messageWindowOriginTop.value, 0)
-  const windowTop = Math.max(0, viewportTop - MESSAGE_WINDOW_OVERSCAN_PX)
-  const windowBottom = viewportTop + viewportHeight + MESSAGE_WINDOW_OVERSCAN_PX
-  let start = findFirstEntryWithBottomAtOrAfter(entries, windowTop)
-  if (start >= total) start = Math.max(0, total - MESSAGE_INITIAL_WINDOW_COUNT)
-
-  let end = findFirstEntryWithTopAfter(entries, windowBottom)
-  end = Math.min(total, Math.max(end, start + 1))
-
-  return {
-    start,
-    end,
-    before: entries[start]?.top ?? 0,
-    after: Math.max((messageWindow.totalHeight.value ?? 0) - (entries[end - 1]?.bottom ?? 0), 0)
-  }
-})
-
-const visibleDisplayMessages = computed(() =>
-  displayMessages.value.slice(messageWindowRange.value.start, messageWindowRange.value.end)
-)
-const messageWindowBeforeHeight = computed(() => messageWindowRange.value.before)
-const messageWindowAfterHeight = computed(() => messageWindowRange.value.after)
-const chatSearchResults = computed(() =>
-  collectChatSearchResults(displayMessages.value, chatSearchQuery.value)
-)
-
-function applyMessageMeasures(payloads: Array<{ messageId: string; height: number }>) {
-  if (payloads.length === 0) return
-
-  // Snapshot the logical entry before changing the height map. DOM rects are
-  // intentionally not used here: waiting for a later rendered rect produces a
-  // visible drift frame before the corrective scroll.
-  const isBottomFollowing = isBottomFollowingMode()
-  const usesWindowedMessages = messageWindow.entries.value.length > MESSAGE_WINDOWING_THRESHOLD
-  const preChangeAnchor =
-    isBottomFollowing || !usesWindowedMessages ? null : captureLogicalViewportAnchor()
-
-  let changed = false
-  for (const payload of payloads) {
-    const delta = messageWindow.setMeasuredHeight(payload.messageId, payload.height)
-    if (delta === 0) continue
-    changed = true
-  }
-  if (!changed) return
-  messageWindow.flushMeasurements()
-
-  if (isBottomFollowing) {
-    // Unified coalesced auto-follow path (same as streamRevision watcher).
-    scrollToBottom(chatScrollController.state.value.mode === 'restoring')
-  } else if (usesWindowedMessages) {
-    restoreLogicalViewportAnchor(preChangeAnchor)
-  }
-}
-
-function onMessageMeasure(payload: { messageId: string; height: number }) {
-  // Always batch row measurements. Window mounts commonly emit many ResizeObserver
-  // callbacks in the same frame; committing them one-by-one makes the spacer and
-  // rendered range chase each other.
-  pendingMeasureQueue.set(payload.messageId, payload.height)
-  if (!isListScrolling.value) {
-    flushPendingMeasures()
-  }
-}
-
 const traceMessageIds = computed(() =>
   messageStore.messages
     .filter((msg) => msg.role === 'assistant' && (msg.traceCount ?? 0) > 0)
@@ -1681,193 +966,16 @@ watch(
   { flush: 'post' }
 )
 
-async function refreshChatSearchHighlights(revealActive: boolean) {
-  if (!isChatSearchOpen.value) {
-    return
-  }
-
-  await nextTick()
-  if (!isChatSearchOpen.value) {
-    return
-  }
-
-  const root = messageSearchRoot.value
-  applyChatSearchHighlights(root, chatSearchQuery.value)
-
-  if (chatSearchResults.value.length === 0) {
-    activeChatSearchIndex.value = 0
-    return
-  }
-
-  const nextIndex = Math.min(activeChatSearchIndex.value, chatSearchResults.value.length - 1)
-  activeChatSearchIndex.value = nextIndex
-  const activeResult = chatSearchResults.value[nextIndex]
-  if (revealActive) {
-    await revealChatSearchResult(activeResult, 'auto')
-  } else {
-    setActiveChatSearchResult(root, activeResult, { scroll: false })
-  }
-}
-
-async function revealChatSearchResult(
-  result: ChatSearchResult | undefined,
-  behavior: ScrollBehavior = 'auto'
-) {
-  if (!result) return
-
-  await nextTick()
-  const root = messageSearchRoot.value
-  applyChatSearchHighlights(root, chatSearchQuery.value)
-
-  const entry = messageWindow.getEntry(result.messageId)
-  if (!entry) return
-  const requestId = requestChatScroll('search-navigation', {
-    kind: 'message',
-    messageId: result.messageId,
-    align: 'one-third'
-  })
-  if (requestId === null) return
-  await waitForNextAnimationFrame()
-  await nextTick()
-  applyChatSearchHighlights(root, chatSearchQuery.value)
-  setActiveChatSearchResult(root, result, { behavior, scroll: false })
-}
-
-function cancelScheduledChatSearchRefresh() {
-  pendingChatSearchReveal = false
-  if (chatSearchRefreshFrame === null) {
-    return
-  }
-
-  window.cancelAnimationFrame(chatSearchRefreshFrame)
-  chatSearchRefreshFrame = null
-}
-
-function scheduleChatSearchHighlights(revealActive = false) {
-  if (!isChatSearchOpen.value) {
-    return
-  }
-  pendingChatSearchReveal ||= revealActive
-  if (chatSearchRefreshFrame !== null) return
-
-  chatSearchRefreshFrame = window.requestAnimationFrame(() => {
-    chatSearchRefreshFrame = null
-    const shouldReveal = pendingChatSearchReveal
-    pendingChatSearchReveal = false
-    void refreshChatSearchHighlights(shouldReveal)
-  })
-}
-
-function focusChatSearchInput() {
-  nextTick(() => {
-    chatSearchBarRef.value?.selectInput()
-  })
-}
-
-function clearChatSearchState() {
-  cancelScheduledChatSearchRefresh()
-  clearChatSearchHighlights(messageSearchRoot.value)
-  chatSearchQuery.value = ''
-  activeChatSearchIndex.value = 0
-  isChatSearchOpen.value = false
-}
-
-function openChatSearch() {
-  isChatSearchOpen.value = true
-  focusChatSearchInput()
-  void refreshChatSearchHighlights(true)
-}
-
-function closeChatSearch() {
-  clearChatSearchState()
-}
-
-function activateChatSearchMatch(index: number, behavior: ScrollBehavior = 'auto') {
-  if (chatSearchResults.value.length === 0) {
-    activeChatSearchIndex.value = 0
-    return
-  }
-
-  const normalizedIndex =
-    ((index % chatSearchResults.value.length) + chatSearchResults.value.length) %
-    chatSearchResults.value.length
-
-  activeChatSearchIndex.value = normalizedIndex
-  void revealChatSearchResult(chatSearchResults.value[normalizedIndex], behavior)
-}
-
-function goToNextChatSearchMatch() {
-  activateChatSearchMatch(activeChatSearchIndex.value + 1)
-}
-
-function goToPreviousChatSearchMatch() {
-  activateChatSearchMatch(activeChatSearchIndex.value - 1)
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  const element = target instanceof HTMLElement ? target : null
-  if (!element) {
-    return false
-  }
-
-  return Boolean(element.closest('input, textarea, select, [contenteditable="true"]'))
-}
-
 function handleWindowKeydown(event: KeyboardEvent) {
   if (isSessionRestoreKeyboardScrollIntent(event)) {
-    chatScrollController.notifyUserGestureStart('keyboard')
-    updateUpwardPaginationIntent(
+    listGestures.markKeyboardScrollIntent(
       event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'Home'
     )
-    markListScrolling()
   }
 
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
-    event.preventDefault()
-    openChatSearch()
-    return
-  }
-
-  if (!isChatSearchOpen.value) {
-    return
-  }
-
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeChatSearch()
-    return
-  }
-
-  if (event.key === 'Enter' && !isEditableTarget(event.target)) {
-    event.preventDefault()
-    if (event.shiftKey) {
-      goToPreviousChatSearchMatch()
-      return
-    }
-
-    goToNextChatSearchMatch()
-  }
+  handleSearchKeydown(event)
 }
 
-watch(chatSearchQuery, () => {
-  activeChatSearchIndex.value = 0
-  scheduleChatSearchHighlights(true)
-})
-
-watch(
-  [visibleDisplayMessages, chatSearchResults],
-  () => {
-    if (!isChatSearchOpen.value) {
-      return
-    }
-
-    scheduleChatSearchHighlights(false)
-  },
-  { flush: 'post' }
-)
-
-const message = ref('')
-const attachedFiles = ref<MessageFile[]>([])
 const chatInputRef = ref<{
   triggerAttach: () => void
   insertRecognizedText?: (text: string) => void
@@ -1931,7 +1039,6 @@ const voiceInput = useSpeechRecognition({
 const isVoiceInputListening = computed(() => voiceInput.isListening.value)
 const isVoiceInputTranscribing = computed(() => voiceInput.isTranscribing.value)
 let voiceInputConfigToken = 0
-let attachmentFilterToken = 0
 
 async function refreshVoiceInputAvailability() {
   const selection = getActiveModelSelection()
@@ -2116,224 +1223,21 @@ const pendingInteractions = computed<PendingInteractionView[]>(() => {
 
 const activePendingInteraction = computed(() => pendingInteractions.value[0] ?? null)
 
-function readSessionStatus(sessionId: string): 'working' | 'completed' | 'error' | 'none' | null {
-  if (sessionStore.activeSession?.id === sessionId) {
-    return sessionStore.activeSession.status
-  }
-
-  return sessionStore.sessions.find((session) => session.id === sessionId)?.status ?? null
-}
-
-function hasPendingInteractionForSession(sessionId: string): boolean {
-  return pendingInteractions.value.some((interaction) => interaction.sessionId === sessionId)
-}
-
-function isSessionPlanActive(sessionId: string): boolean {
-  if (sessionId === props.sessionId && isCurrentSessionStreaming.value) {
-    return true
-  }
-
-  return readSessionStatus(sessionId) === 'working'
-}
-
-function isPlanFloatLingerActive(sessionId: string): boolean {
-  return planFloatLingerBySession.value[sessionId] === true
-}
-
-function setPlanFloatLingerActive(sessionId: string, active: boolean): void {
-  const current = planFloatLingerBySession.value[sessionId] === true
-  if (current === active) {
-    return
-  }
-
-  const next = { ...planFloatLingerBySession.value }
-  if (active) {
-    next[sessionId] = true
-  } else {
-    delete next[sessionId]
-  }
-  planFloatLingerBySession.value = next
-}
-
-function shouldShowPlanSnapshotForSession(sessionId: string): boolean {
-  return (
-    isSessionPlanActive(sessionId) ||
-    hasPendingInteractionForSession(sessionId) ||
-    isPlanFloatLingerActive(sessionId)
-  )
-}
-
-const latestPlanSnapshot = computed(() => {
-  if (!shouldShowPlanSnapshotForSession(props.sessionId)) {
-    return null
-  }
-
-  if (!agentPlanStore.isVisible(props.sessionId)) {
-    return null
-  }
-
-  const snapshot = agentPlanStore.snapshots[props.sessionId]
-  if (!snapshot || snapshot.plan.length === 0) {
-    return null
-  }
-  return snapshot
+const {
+  latestPlanSnapshot,
+  isPlanFloatCollapsed,
+  beginPlanTurn,
+  clearPlanSnapshotForDeletedMessage,
+  scheduleInactivePlanSnapshotClear,
+  cancelAllPlanSnapshotClearTimers,
+  onDismissPlanFloat
+} = usePlanFloatLifecycle({
+  sessionId: () => props.sessionId,
+  agentPlanStore,
+  sessionStore,
+  isCurrentSessionStreaming,
+  pendingInteractions
 })
-
-const isPlanFloatCollapsed = computed(() => agentPlanStore.isCollapsed(props.sessionId))
-
-function cancelPlanSnapshotClearTimer(sessionId: string) {
-  const timer = planSnapshotClearTimers.get(sessionId)
-  if (timer === undefined) {
-    return
-  }
-
-  window.clearTimeout(timer)
-  planSnapshotClearTimers.delete(sessionId)
-}
-
-function cancelAllPlanSnapshotClearTimers() {
-  for (const timer of planSnapshotClearTimers.values()) {
-    window.clearTimeout(timer)
-  }
-  planSnapshotClearTimers.clear()
-}
-
-function canLingerPlanSnapshot(sessionId: string): boolean {
-  const snapshot = agentPlanStore.snapshots[sessionId]
-  if (!snapshot || snapshot.plan.length === 0) {
-    return false
-  }
-
-  return (
-    Boolean(snapshot.terminalReason) || snapshot.plan.every((entry) => entry.status === 'completed')
-  )
-}
-
-function scheduleInactivePlanSnapshotClear(sessionId: string = props.sessionId) {
-  const snapshot = agentPlanStore.snapshots[sessionId]
-  if (!snapshot) {
-    cancelPlanSnapshotClearTimer(sessionId)
-    setPlanFloatLingerActive(sessionId, false)
-    return
-  }
-
-  if (isSessionPlanActive(sessionId) || hasPendingInteractionForSession(sessionId)) {
-    cancelPlanSnapshotClearTimer(sessionId)
-    setPlanFloatLingerActive(sessionId, false)
-    return
-  }
-
-  cancelPlanSnapshotClearTimer(sessionId)
-
-  if (!canLingerPlanSnapshot(sessionId)) {
-    setPlanFloatLingerActive(sessionId, false)
-    return
-  }
-
-  setPlanFloatLingerActive(sessionId, true)
-  const timer = window.setTimeout(() => {
-    planSnapshotClearTimers.delete(sessionId)
-    if (!isSessionPlanActive(sessionId) && !hasPendingInteractionForSession(sessionId)) {
-      agentPlanStore.clearSnapshot(sessionId)
-      setPlanFloatLingerActive(sessionId, false)
-    }
-  }, PLAN_FLOAT_CLEAR_DELAY_MS)
-  planSnapshotClearTimers.set(sessionId, timer)
-}
-
-function resetPlanSnapshotLifecycle(sessionId: string): void {
-  cancelPlanSnapshotClearTimer(sessionId)
-  setPlanFloatLingerActive(sessionId, false)
-}
-
-function beginPlanTurn(sessionId: string): void {
-  resetPlanSnapshotLifecycle(sessionId)
-  agentPlanStore.beginTurn(sessionId)
-}
-
-function clearPlanSnapshotForDeletedMessage(sessionId: string, messageId: string): void {
-  const snapshot = agentPlanStore.snapshots[sessionId]
-  if (snapshot?.messageId !== messageId) {
-    return
-  }
-
-  resetPlanSnapshotLifecycle(sessionId)
-  agentPlanStore.clearSnapshot(sessionId)
-}
-
-const planSnapshotLifecycleKey = computed(() =>
-  Object.values(agentPlanStore.snapshots)
-    .map((snapshot) => {
-      const terminal = snapshot.terminalReason ?? ''
-      const statuses = snapshot.plan.map((entry) => entry.status).join(',')
-      return `${snapshot.sessionId}:${snapshot.messageId ?? ''}:${snapshot.revision}:${terminal}:${statuses}`
-    })
-    .join('|')
-)
-
-const sessionStatusLifecycleKey = computed(() => {
-  const entries = sessionStore.sessions.map((session) => `${session.id}:${session.status}`)
-  const active = sessionStore.activeSession
-  if (active) {
-    entries.push(`${active.id}:${active.status}`)
-  }
-  entries.push(
-    `${props.sessionId}:${isCurrentSessionStreaming.value ? 'streaming' : 'not-streaming'}`
-  )
-  return entries.sort().join('|')
-})
-
-const pendingInteractionLifecycleKey = computed(() =>
-  pendingInteractions.value
-    .map(
-      (interaction) => `${interaction.sessionId}:${interaction.messageId}:${interaction.toolCallId}`
-    )
-    .join('|')
-)
-
-function syncPlanSnapshotLifecycle(): void {
-  for (const sessionId of Object.keys(agentPlanStore.snapshots)) {
-    scheduleInactivePlanSnapshotClear(sessionId)
-  }
-}
-
-watch(
-  [planSnapshotLifecycleKey, sessionStatusLifecycleKey, pendingInteractionLifecycleKey],
-  () => {
-    syncPlanSnapshotLifecycle()
-  },
-  { flush: 'post' }
-)
-
-const hasInputText = computed(() => Boolean(message.value.trim()))
-const hasAttachments = computed(() => attachedFiles.value.length > 0)
-const hasDraftInput = computed(() => hasInputText.value || hasAttachments.value)
-const isQueueSubmitDisabled = computed(
-  () =>
-    isSessionViewPreparing.value ||
-    isAcpWorkdirMissing.value ||
-    !hasDraftInput.value ||
-    Boolean(activePendingInteraction.value) ||
-    isHandlingInteraction.value ||
-    pendingInputStore.isAtCapacity
-)
-const isInputSubmitDisabled = computed(
-  () =>
-    isSessionViewPreparing.value ||
-    isAcpWorkdirMissing.value ||
-    Boolean(activePendingInteraction.value) ||
-    isHandlingInteraction.value ||
-    (isGenerating.value && pendingInputStore.isAtCapacity) ||
-    !hasDraftInput.value
-)
-const disableQueueSteerAction = computed(
-  () =>
-    isSessionViewPreparing.value ||
-    !isGenerating.value ||
-    isAcpWorkdirMissing.value ||
-    Boolean(activePendingInteraction.value) ||
-    isHandlingInteraction.value
-)
 
 function getActiveModelSelection(): { providerId: string; modelId: string } | null {
   const activeSession = sessionStore.activeSession
@@ -2347,264 +1251,47 @@ function getActiveModelSelection(): { providerId: string; modelId: string } | nu
   }
 }
 
-function notifyUnsupportedAudioAttachments(
-  selection: { providerId: string; modelId: string },
-  rejectedAudioFiles: MessageFile[]
-) {
-  if (rejectedAudioFiles.length === 0) {
-    return
-  }
-
-  const modelLabel =
-    modelStore.findChatSelectableModel(selection.providerId, selection.modelId)?.model.name ??
-    selection.modelId
-
-  toast({
-    title: t('chat.input.audioInputUnsupportedTitle'),
-    description: t('chat.input.audioInputUnsupportedDescription', {
-      count: rejectedAudioFiles.length,
-      model: modelLabel
-    })
-  })
-}
-
-async function prepareFilesForCurrentModel(files: MessageFile[]): Promise<MessageFile[]> {
-  const selection = getActiveModelSelection()
-  if (!selection || files.length === 0) {
-    return files
-  }
-
-  try {
-    const capabilities = await modelClient.getCapabilities(selection.providerId, selection.modelId)
-    if (capabilities.supportsAudioInput !== false) {
-      return files
-    }
-
-    const { acceptedFiles, rejectedAudioFiles } = filterUnsupportedAudioAttachments(files, false)
-    notifyUnsupportedAudioAttachments(selection, rejectedAudioFiles)
-    return acceptedFiles
-  } catch (error) {
-    console.warn('[ChatPage] Failed to resolve audio input capability:', error)
-    return files
-  }
-}
-
-const getComposerSkillsSnapshot = (): string[] => {
-  return Array.from(new Set(chatInputRef.value?.getPendingSkillsSnapshot?.() ?? []))
-}
-
-const clearComposerSkills = () => {
-  chatInputRef.value?.clearPendingSkills?.()
-}
-
-const getComposerInlineItemsSnapshot = (): UserMessageInlineItem[] => {
-  return chatInputRef.value?.getInlineItemsSnapshot?.() ?? []
-}
-
-const withMessageSkills = (text: string, files: MessageFile[]) => {
-  const activeSkills = getComposerSkillsSnapshot()
-  const inlineItems = getComposerInlineItemsSnapshot()
-  return {
-    text,
-    files,
-    ...(activeSkills.length > 0 ? { activeSkills } : {}),
-    ...(inlineItems.length > 0 ? { inlineItems } : {})
-  }
-}
-
-function canWriteSessionView(sessionId: string, restoreRequestId: number): boolean {
-  return (
-    isChatPageActive &&
-    sessionRestoreRequestId === restoreRequestId &&
-    props.sessionId === sessionId &&
-    messageStore.currentSessionId === sessionId &&
-    messageStore.committedSessionId === sessionId
-  )
-}
-
-function beginOutgoingTurnFeedback(sessionId: string, payload: SendMessageInput) {
-  const optimisticUserMessageId = messageStore.addOptimisticUserMessage(sessionId, payload)
-  if (!optimisticUserMessageId) return null
-
-  const pendingAssistantPlaceholderId = createPendingAssistantPlaceholder(sessionId)
-  beginPlanTurn(sessionId)
-  return { optimisticUserMessageId, pendingAssistantPlaceholderId }
-}
-
-async function sendMessageWithOutgoingTurnFeedback(
-  sessionId: string,
-  payload: SendMessageInput,
-  feedback: NonNullable<ReturnType<typeof beginOutgoingTurnFeedback>>
-) {
-  try {
-    await chatClient.sendMessage(sessionId, payload)
-  } catch (error) {
-    clearPendingAssistantPlaceholder(feedback.pendingAssistantPlaceholderId)
-    messageStore.removeOptimisticMessage(feedback.optimisticUserMessageId, sessionId)
-    console.error('[ChatPage] send message failed:', error)
-  }
-}
-
-async function onSubmit() {
-  if (isReadOnlySession.value) return
-  if (isSessionViewPreparing.value) return
-  if (isAcpWorkdirMissing.value) return
-  if (activePendingInteraction.value || isHandlingInteraction.value) return
-  const sessionId = props.sessionId
-  const restoreRequestId = sessionRestoreRequestId
-  const text = message.value.trim()
-  const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (!text && files.length === 0) return
-  const handledCompaction = await handleManualCompactionCommand(text, sessionId, restoreRequestId)
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (handledCompaction) {
-    if (!isGenerating.value) {
-      message.value = ''
-    }
-    return
-  }
-  const payload = withMessageSkills(text, files)
-  if (isGenerating.value) {
-    await pendingInputStore.queueInput(sessionId, payload)
-    if (!canWriteSessionView(sessionId, restoreRequestId)) return
-    message.value = ''
-    attachedFiles.value = []
-    clearComposerSkills()
-    schedulePostSubmitScrollToBottom()
-  } else {
-    const feedback = beginOutgoingTurnFeedback(sessionId, payload)
-    if (!feedback) return
-    message.value = ''
-    attachedFiles.value = []
-    clearComposerSkills()
-    schedulePostSubmitScrollToBottom()
-    await sendMessageWithOutgoingTurnFeedback(sessionId, payload, feedback)
-  }
-}
-
-async function onCommandSubmit(command: string) {
-  if (isReadOnlySession.value) return
-  if (isSessionViewPreparing.value) return
-  if (isAcpWorkdirMissing.value) return
-  if (activePendingInteraction.value || isHandlingInteraction.value) return
-  const sessionId = props.sessionId
-  const restoreRequestId = sessionRestoreRequestId
-  const text = command.trim()
-  if (!text) return
-
-  const handledCompaction = await handleManualCompactionCommand(text, sessionId, restoreRequestId)
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (handledCompaction) {
-    return
-  }
-
-  const files = await prepareFilesForCurrentModel([...attachedFiles.value])
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  const payload = withMessageSkills(text, files)
-  if (isGenerating.value) {
-    await pendingInputStore.queueInput(sessionId, payload)
-    if (!canWriteSessionView(sessionId, restoreRequestId)) return
-    attachedFiles.value = []
-    clearComposerSkills()
-    schedulePostSubmitScrollToBottom()
-    return
-  }
-  const feedback = beginOutgoingTurnFeedback(sessionId, payload)
-  if (!feedback) return
-  attachedFiles.value = []
-  clearComposerSkills()
-  schedulePostSubmitScrollToBottom()
-  await sendMessageWithOutgoingTurnFeedback(sessionId, payload, feedback)
-}
-
-async function handleManualCompactionCommand(
-  text: string,
-  sessionId: string,
-  restoreRequestId: number
-): Promise<boolean> {
-  if (!isManualCompactionCommand(text)) {
-    return false
-  }
-  if (sessionStore.activeSession?.providerId === 'acp') {
-    return false
-  }
-  if (isGenerating.value) {
-    return true
-  }
-  if (!canWriteSessionView(sessionId, restoreRequestId)) {
-    return true
-  }
-
-  try {
-    const result = await sessionClient.compactSession(sessionId)
-    if (!canWriteSessionView(sessionId, restoreRequestId)) return true
-    const restoredSession = await loadMessagesForSession(sessionId)
-    if (!canWriteSessionView(sessionId, restoreRequestId) || restoredSession === null) return true
-    applyRestoredSessionSummary(restoredSession)
-    if (!result.compacted) {
-      toast({
-        title: t('chat.compaction.noopTitle'),
-        description: t('chat.compaction.noopDescription')
-      })
-    }
-  } catch (error) {
-    console.error('[ChatPage] manual compaction failed:', error)
-    toast({
-      title: t('chat.compaction.failedTitle'),
-      description: error instanceof Error ? error.message : String(error),
-      variant: 'destructive'
-    })
-  }
-  return true
-}
-
-async function onQueueSubmit() {
-  if (isReadOnlySession.value) return
-  if (isSessionViewPreparing.value) return
-  if (isAcpWorkdirMissing.value) return
-  if (activePendingInteraction.value || isHandlingInteraction.value) return
-  const sessionId = props.sessionId
-  const restoreRequestId = sessionRestoreRequestId
-  const text = message.value.trim()
-  const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (!text && files.length === 0) return
-  const handledCompaction = await handleManualCompactionCommand(text, sessionId, restoreRequestId)
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (handledCompaction) {
-    return
-  }
-  await pendingInputStore.queueInput(sessionId, withMessageSkills(text, files))
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  message.value = ''
-  attachedFiles.value = []
-  clearComposerSkills()
-}
-
-async function onSteer() {
-  if (isReadOnlySession.value) return
-  if (isSessionViewPreparing.value) return
-  if (isAcpWorkdirMissing.value) return
-  if (activePendingInteraction.value || isHandlingInteraction.value) return
-  const sessionId = props.sessionId
-  const restoreRequestId = sessionRestoreRequestId
-  const text = message.value.trim()
-  const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (!text && files.length === 0) return
-  const handledCompaction = await handleManualCompactionCommand(text, sessionId, restoreRequestId)
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  if (handledCompaction) {
-    return
-  }
-  beginPlanTurn(sessionId)
-  await chatClient.steerActiveTurn(sessionId, withMessageSkills(text, files))
-  if (!canWriteSessionView(sessionId, restoreRequestId)) return
-  message.value = ''
-  attachedFiles.value = []
-  clearComposerSkills()
-}
+const {
+  message,
+  attachedFiles,
+  hasDraftInput,
+  isQueueSubmitDisabled,
+  isInputSubmitDisabled,
+  disableQueueSteerAction,
+  onSubmit,
+  onCommandSubmit,
+  onQueueSubmit,
+  onSteer,
+  onFilesChange,
+  invalidatePendingAttachmentFilter
+} = useComposerSubmit({
+  sessionId: () => props.sessionId,
+  currentRestoreRequestId,
+  canWriteSessionView,
+  messageStore,
+  sessionStore,
+  modelStore,
+  pendingInputStore,
+  chatClient,
+  sessionClient,
+  modelClient,
+  chatInputRef,
+  isReadOnlySession,
+  isSessionViewPreparing,
+  isAcpWorkdirMissing,
+  isGenerating,
+  hasBlockingInteraction: () =>
+    Boolean(activePendingInteraction.value) || isHandlingInteraction.value,
+  getActiveModelSelection,
+  createPendingAssistantPlaceholder,
+  clearPendingAssistantPlaceholder,
+  beginPlanTurn,
+  schedulePostSubmitScrollToBottom,
+  loadMessagesForSession,
+  applyRestoredSessionSummary,
+  toast,
+  t
+})
 
 function onAttach() {
   chatInputRef.value?.triggerAttach()
@@ -2616,16 +1303,6 @@ function onToggleVoiceInput() {
   }
 
   void voiceInput.toggle()
-}
-
-async function onFilesChange(files: MessageFile[]) {
-  const token = ++attachmentFilterToken
-  const filteredFiles = await prepareFilesForCurrentModel(files)
-  if (token !== attachmentFilterToken) {
-    return
-  }
-
-  attachedFiles.value = filteredFiles
 }
 
 async function onToolInteractionRespond(response: ToolInteractionResponse) {
@@ -2825,16 +1502,13 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  isChatPageActive = false
-  sessionRestoreRequestId += 1
-  attachmentFilterToken += 1
+  deactivateSessionRestore()
+  invalidatePendingAttachmentFilter()
   cacheCurrentMessageMeasurements()
   removeModelConfigChangedListener()
   cancelAllPlanSnapshotClearTimers()
   cancelPlanUpdatedListener?.()
   cancelPlanUpdatedListener = null
-  cancelSessionRestoreTask?.()
-  cancelSessionRestoreTask = null
   voiceInput.cleanup()
   window.removeEventListener('context-menu-ask-ai', handleContextMenuAskAI)
   window.removeEventListener(
@@ -2854,20 +1528,8 @@ onUnmounted(() => {
     window.cancelAnimationFrame(scrollReadFrame)
     scrollReadFrame = null
   }
-  if (scrollIdleTimer !== null) {
-    window.clearTimeout(scrollIdleTimer)
-    scrollIdleTimer = null
-  }
-  if (pendingMeasureFlushFrame !== null) {
-    window.cancelAnimationFrame(pendingMeasureFlushFrame)
-    pendingMeasureFlushFrame = null
-  }
-  isListScrolling.value = false
-  isListGestureActive = false
-  pendingHistoryLoadAtIdle = false
-  hasUpwardPaginationIntent = false
-  lastGestureClientY = null
-  pendingMeasureQueue.clear()
+  listGestures.reset()
+  virtualization.cancelPendingMeasureFlush()
   cancelScheduledChatSearchRefresh()
   pendingInputStore.clear()
 })
