@@ -345,6 +345,7 @@ import {
   shortcutUnregisterRoute
 } from './routes/shortcut.routes'
 import { startupGetBootstrapRoute } from './routes/startup.routes'
+import { performanceRecordRendererRoute } from './routes/performance.routes'
 import {
   sessionsActivateRoute,
   sessionsClearMessagesRoute,
@@ -519,6 +520,7 @@ export * from './routes/nowledgeMem.routes'
 export * from './routes/onboarding.routes'
 export * from './routes/oauth.routes'
 export * from './routes/plugins.routes'
+export * from './routes/performance.routes'
 export * from './routes/providers.routes'
 export * from './routes/project.routes'
 export * from './routes/remote-control.routes'
@@ -771,7 +773,8 @@ const DEEPCHAT_ROUTE_CATALOG_PART_3 = {
   [settingsListSystemFontsRoute.name]: settingsListSystemFontsRoute,
   [settingsUpdateRoute.name]: settingsUpdateRoute,
   [settingsActivityListRoute.name]: settingsActivityListRoute,
-  [startupGetBootstrapRoute.name]: startupGetBootstrapRoute
+  [startupGetBootstrapRoute.name]: startupGetBootstrapRoute,
+  [performanceRecordRendererRoute.name]: performanceRecordRendererRoute
 } satisfies Record<string, RouteContract>
 
 const DEEPCHAT_ROUTE_CATALOG_PART_4 = {

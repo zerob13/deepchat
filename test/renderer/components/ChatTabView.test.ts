@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { defineComponent, onUnmounted, reactive } from 'vue'
+import { defineComponent, onUnmounted, provide, reactive } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type SetupOptions = {
@@ -10,7 +10,12 @@ type SetupOptions = {
   newConversationTargetAgentId?: string | null
   sessionError?: string | null
   activeSessionId?: string | null
+  bootstrapActiveSessionId?: string | null
   bootstrapReject?: boolean
+  performanceReporter?: {
+    recordStartup: ReturnType<typeof vi.fn>
+    observeStartupWorkload: ReturnType<typeof vi.fn>
+  }
 }
 
 const setup = async (options: SetupOptions = {}) => {
@@ -43,7 +48,10 @@ const setup = async (options: SetupOptions = {}) => {
     error: options.sessionError ?? null,
     newConversationTargetAgentId: options.newConversationTargetAgentId ?? 'deepchat',
     hasLoadedInitialPage: false,
-    applyBootstrapShell: vi.fn().mockResolvedValue(undefined),
+    applyBootstrapShell: vi.fn().mockImplementation(async ({ activeSessionId, activeSession }) => {
+      sessionStore.activeSessionId = activeSessionId
+      sessionStore.activeSession = activeSession
+    }),
     fetchSessions: vi.fn().mockResolvedValue(undefined),
     startNewConversation: vi.fn().mockResolvedValue(undefined)
   })
@@ -97,8 +105,16 @@ const setup = async (options: SetupOptions = {}) => {
 
         return {
           startupRunId: 'run-1',
-          activeSessionId: sessionStore.activeSessionId,
-          activeSession: sessionStore.activeSession,
+          activeSessionId:
+            options.bootstrapActiveSessionId === undefined
+              ? sessionStore.activeSessionId
+              : options.bootstrapActiveSessionId,
+          activeSession:
+            options.bootstrapActiveSessionId === undefined
+              ? sessionStore.activeSession
+              : options.bootstrapActiveSessionId
+                ? { ...sessionStore.activeSession, id: options.bootstrapActiveSessionId }
+                : null,
           agents:
             agentStore.selectedAgentId === null
               ? []
@@ -172,7 +188,7 @@ const setup = async (options: SetupOptions = {}) => {
       template: '<div data-testid="new-thread-page" />'
     })
   }))
-  vi.doMock('@/pages/ChatPage.vue', () => ({
+  vi.doMock('@/features/chat-page/ChatPage.vue', () => ({
     default: defineComponent({
       name: 'ChatPage',
       props: {
@@ -198,7 +214,18 @@ const setup = async (options: SetupOptions = {}) => {
   }))
 
   const ChatTabView = (await import('@/views/ChatTabView.vue')).default
-  const wrapper = mount(ChatTabView)
+  const { RENDERER_PERFORMANCE_REPORTER } =
+    await import('@/platform/performance/rendererPerformance')
+  const Host = defineComponent({
+    components: { ChatTabView },
+    setup() {
+      if (options.performanceReporter) {
+        provide(RENDERER_PERFORMANCE_REPORTER, options.performanceReporter as never)
+      }
+    },
+    template: '<ChatTabView />'
+  })
+  const wrapper = mount(Host)
 
   await flushPromises()
   await vi.runAllTimersAsync()
@@ -237,6 +264,54 @@ describe('ChatTabView startup and routing', () => {
     expect(markStartupInteractive).toHaveBeenCalledTimes(1)
     expect(modelStore.initialize).toHaveBeenCalledTimes(1)
     expect(ollamaStore.initialize).toHaveBeenCalledTimes(1)
+  })
+
+  it('records bootstrap, route, interactive, and deferred phases through the app-scoped reporter', async () => {
+    const performanceReporter = {
+      recordStartup: vi.fn(),
+      observeStartupWorkload: vi.fn()
+    }
+
+    await setup({ performanceReporter })
+
+    expect(performanceReporter.recordStartup).toHaveBeenCalledWith('bootstrap-ready', {
+      startupRunId: 'run-1'
+    })
+    expect(performanceReporter.recordStartup).toHaveBeenCalledWith('route-ready')
+    expect(performanceReporter.recordStartup).toHaveBeenCalledWith('interactive')
+    expect(performanceReporter.recordStartup).toHaveBeenCalledWith('deferred-settled')
+  })
+
+  it('starts the initial session request only after bootstrap shell hydration', async () => {
+    const { sessionStore } = await setup({
+      currentRoute: 'chat',
+      activeSessionId: null,
+      bootstrapActiveSessionId: 'bootstrap-session'
+    })
+
+    expect(sessionStore.applyBootstrapShell).toHaveBeenCalledWith(
+      expect.objectContaining({ activeSessionId: 'bootstrap-session' })
+    )
+    expect(sessionStore.fetchSessions).toHaveBeenCalledTimes(1)
+    expect(sessionStore.fetchSessions.mock.invocationCallOrder[0]).toBeGreaterThan(
+      sessionStore.applyBootstrapShell.mock.invocationCallOrder[0]
+    )
+    expect(sessionStore.activeSessionId).toBe('bootstrap-session')
+  })
+
+  it('preserves an explicit null bootstrap session id', async () => {
+    const { sessionStore } = await setup({
+      currentRoute: 'chat',
+      activeSessionId: 'session-1',
+      bootstrapActiveSessionId: null
+    })
+
+    expect(sessionStore.applyBootstrapShell).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeSessionId: null,
+        activeSession: null
+      })
+    )
   })
 
   it('hydrates the route from the session store state and keeps provider warmup on demand', async () => {

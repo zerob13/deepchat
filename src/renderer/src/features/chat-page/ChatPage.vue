@@ -247,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, toRaw } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { TooltipProvider } from '@shadcn/components/ui/tooltip'
 import {
@@ -264,7 +264,6 @@ import ChatTopBar from '@/components/chat/ChatTopBar.vue'
 import ChatSearchBar from '@/components/chat/ChatSearchBar.vue'
 import ChatSessionSkeleton from '@/components/chat/ChatSessionSkeleton.vue'
 import MessageList from '@/components/chat/MessageList.vue'
-import type { DisplayAssistantMessageBlock } from '@/components/chat/messageListItems'
 import ChatInputBox from '@/components/chat/ChatInputBox.vue'
 import ChatInputToolbar from '@/components/chat/ChatInputToolbar.vue'
 import AgentProgressFloat from '@/components/chat/AgentProgressFloat.vue'
@@ -275,7 +274,7 @@ import MemoryTurnDialog from '@/components/chat/MemoryTurnDialog.vue'
 import MemoryUpdateChip from '@/components/chat/MemoryUpdateChip.vue'
 import TraceDialog from '@/components/trace/TraceDialog.vue'
 import { useToast } from '@/components/use-toast'
-import { createChatClient } from '../../api/ChatClient'
+import { createChatClient } from '../../../api/ChatClient'
 import { createModelClient } from '@api/ModelClient'
 import { useUiSettingsStore } from '@/stores/uiSettingsStore'
 import { useSessionStore } from '@/stores/ui/session'
@@ -285,12 +284,9 @@ import { useAgentPlanStore } from '@/stores/ui/agentPlan'
 import { useSpotlightStore } from '@/stores/ui/spotlight'
 import { useModelStore } from '@/stores/modelStore'
 import { createSessionClient } from '@api/SessionClient'
-import { isManualCompactionCommand } from '@/components/chat/mentions/utils'
 import { clearChatSearchHighlights } from '@/lib/chatSearch'
 
 import { WORKSPACE_EVENTS } from '@/events'
-import { filterUnsupportedAudioAttachments } from '@/lib/audioInputSupport'
-import { useSpeechRecognition } from '@/components/chat/composables/useSpeechRecognition'
 import {
   useMessageWindow,
   type MessageMeasurementSnapshot
@@ -298,25 +294,47 @@ import {
 import { recentMessageMeasurementCache } from '@/composables/message/recentMessageMeasurementCache'
 import { useChatScrollController } from '@/composables/chat/useChatScrollController'
 import { markChatSessionPerformance } from '@/composables/chat/chatSessionPerformance'
+import {
+  RENDERER_PERFORMANCE_REPORTER,
+  type RendererPerformanceReporter
+} from '@/platform/performance/rendererPerformance'
 import { type ChatScrollReason, type ChatScrollTarget } from '@/composables/chat/chatScrollState'
 import { playChatInputHeroFlight } from '@/lib/chatInputHero'
-import { usePlanFloatLifecycle } from './chat-page/usePlanFloatLifecycle'
-import { useDisplayMessages } from './chat-page/useDisplayMessages'
-import { useChatSearch } from './chat-page/useChatSearch'
-import { useListGestures } from './chat-page/useListGestures'
-import { useMessageVirtualization } from './chat-page/useMessageVirtualization'
-import { useComposerSubmit } from './chat-page/useComposerSubmit'
-import { useSessionRestore } from './chat-page/useSessionRestore'
+import { usePlanFloatLifecycle } from './composables/usePlanFloatLifecycle'
+import { useDisplayMessages } from './composables/useDisplayMessages'
+import { useChatSearch } from './composables/useChatSearch'
+import { useListGestures } from './composables/useListGestures'
+import { useMessageVirtualization } from './composables/useMessageVirtualization'
+import { useComposerSubmit } from './composables/useComposerSubmit'
+import { useSessionRestore } from './composables/useSessionRestore'
+import { useVoiceInput } from './composables/useVoiceInput'
+import { useToolInteraction } from './composables/useToolInteraction'
+import { useMessageActions } from './composables/useMessageActions'
+import { usePendingInputActions } from './composables/usePendingInputActions'
+import { useChatPageEventBridge } from './composables/useChatPageEventBridge'
 import type {
   MessageFile,
   UserMessageInlineItem,
-  SendMessageInput,
-  ToolInteractionResponse
+  SendMessageInput
 } from '@shared/types/agent-interface'
 
 const props = defineProps<{
   sessionId: string
 }>()
+
+const performanceReporter = inject<RendererPerformanceReporter | null>(
+  RENDERER_PERFORMANCE_REPORTER,
+  null
+)
+
+function recordChatSessionPerformance(
+  phase: Parameters<typeof markChatSessionPerformance>[0],
+  sessionId: string,
+  sessionEpoch: number
+): void {
+  markChatSessionPerformance(phase, sessionId, sessionEpoch)
+  performanceReporter?.recordChatSession(phase, sessionEpoch)
+}
 
 const uiSettingsStore = useUiSettingsStore()
 const sessionStore = useSessionStore()
@@ -378,7 +396,7 @@ const {
   pendingInputStore,
   initialRestoreCount: INITIAL_MESSAGE_RESTORE_COUNT,
   onSecondaryStateReady: (id) =>
-    markChatSessionPerformance('secondary-state-ready', id, chatScrollSessionEpoch)
+    recordChatSessionPerformance('secondary-state-ready', id, chatScrollSessionEpoch)
 })
 
 // --- Auto-scroll ---
@@ -402,8 +420,6 @@ const chatScrollController = useChatScrollController({
     if (container) syncMessageViewportMetrics(container)
   }
 })
-const pendingDeleteMessageId = ref<string | null>(null)
-const showDeleteMessageDialog = computed(() => Boolean(pendingDeleteMessageId.value))
 const TOP_HISTORY_THRESHOLD = 80
 const MESSAGE_JUMP_RETRY_INTERVAL = 80
 const MESSAGE_HIGHLIGHT_DURATION = 2000
@@ -421,7 +437,6 @@ const SESSION_RESTORE_SCROLL_INTENT_KEYS = new Set([
 const traceMessageId = ref<string | null>(null)
 let spotlightJumpTimer: number | null = null
 let scrollReadFrame: number | null = null
-let cancelPlanUpdatedListener: (() => void) | null = null
 // The immediate session watcher can call clearMessageWindowMeasurements before
 // messageWindow exists; keep this no-op forward reference and rebind it to
 // messageWindow.clearMeasurements after useMessageWindow is created below.
@@ -435,6 +450,7 @@ let restoreMessageWindowMeasurements = (snapshot: MessageMeasurementSnapshot) =>
 // is set up after the session-change watch that calls these on first run).
 let clearChatSearchStateRef = () => {}
 let cancelScheduledChatSearchRefreshRef = () => {}
+let clearMessageActionsForSessionChange = () => {}
 let measurementSessionId = ''
 let handledCommittedSessionId: string | null = null
 type HistoryLayoutAnchor = {
@@ -868,13 +884,13 @@ watch(
     }
     measurementSessionId = id
     listGestures.resetIntentForSessionChange()
-    pendingDeleteMessageId.value = null
+    clearMessageActionsForSessionChange()
     clearChatSearchStateRef()
     resetDisplayMessagesForSessionChange()
     beginSessionChange()
     chatScrollSessionEpoch = chatScrollController.beginSession(id)
-    markChatSessionPerformance('selected', id, chatScrollSessionEpoch)
-    markChatSessionPerformance('preparation-started', id, chatScrollSessionEpoch)
+    recordChatSessionPerformance('selected', id, chatScrollSessionEpoch)
+    recordChatSessionPerformance('preparation-started', id, chatScrollSessionEpoch)
     clearMessageWindowMeasurements()
     const activatedFromCache = id ? (messageStore.activateRecentSessionView?.(id) ?? false) : false
     const cachedMeasurements = activatedFromCache ? recentMessageMeasurementCache.get(id) : null
@@ -883,7 +899,7 @@ watch(
     }
     messageStore.clearStreamingStateForOtherSession(id)
     if (activatedFromCache) {
-      markChatSessionPerformance('cache-committed', id, chatScrollSessionEpoch)
+      recordChatSessionPerformance('cache-committed', id, chatScrollSessionEpoch)
     }
     pendingInputStore.clear()
     if (id) {
@@ -902,8 +918,8 @@ watch(
     }
 
     handledCommittedSessionId = id
-    markChatSessionPerformance('messages-prepared', id, chatScrollSessionEpoch)
-    markChatSessionPerformance('messages-committed', id, chatScrollSessionEpoch)
+    recordChatSessionPerformance('messages-prepared', id, chatScrollSessionEpoch)
+    recordChatSessionPerformance('messages-committed', id, chatScrollSessionEpoch)
     if (messageStore.committedSession?.id === id) {
       applyRestoredSessionSummary(messageStore.committedSession)
     }
@@ -923,7 +939,7 @@ watch(
         messageStore.currentSessionId === id &&
         messageStore.committedSessionId === id
       ) {
-        markChatSessionPerformance('first-message-paint', id, chatScrollSessionEpoch)
+        recordChatSessionPerformance('first-message-paint', id, chatScrollSessionEpoch)
       }
     })
     if (spotlightStore.pendingMessageJump?.sessionId === id) {
@@ -985,243 +1001,20 @@ const chatInputRef = ref<{
   consumePendingSkills?: () => string[]
   clearPendingSkills?: () => void
 } | null>(null)
-const isVoiceInputEnabled = ref(false)
-const isHandlingInteraction = ref(false)
 
-const handleVoiceInputError = (code: string) => {
-  if (code === 'aborted') {
-    return
-  }
-
-  if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'audio-capture') {
-    toast({
-      title: t('chat.input.voiceRecognitionPermissionDeniedTitle'),
-      description: t('chat.input.voiceRecognitionPermissionDeniedDescription'),
-      variant: 'destructive'
-    })
-    return
-  }
-
-  toast({
-    title: t('chat.input.voiceRecognitionErrorTitle'),
-    description: t('chat.input.voiceRecognitionErrorDescription'),
-    variant: 'destructive'
-  })
-}
-
-const voiceInput = useSpeechRecognition({
-  onTranscript: (text) => {
-    chatInputRef.value?.insertRecognizedText?.(text)
-  },
-  transcribe: async ({ audioBase64, mimeType, filename }) => {
-    const selection = getActiveModelSelection()
-    if (!selection) {
-      throw new Error('transcription-target-unavailable')
-    }
-
-    return await modelClient.transcribeAudio(
-      selection.providerId,
-      selection.modelId,
-      audioBase64,
-      mimeType,
-      filename
-    )
-  },
-  onUnsupported: () => {
-    toast({
-      title: t('chat.input.voiceRecognitionUnsupportedTitle'),
-      description: t('chat.input.voiceRecognitionUnsupportedDescription'),
-      variant: 'destructive'
-    })
-  },
-  onError: handleVoiceInputError
+const {
+  pendingInteractions,
+  activePendingInteraction,
+  isHandlingInteraction,
+  onToolInteractionRespond
+} = useToolInteraction({
+  sessionId: () => props.sessionId,
+  messageStore,
+  isReadOnlySession,
+  chatClient,
+  loadMessagesForSession,
+  applyRestoredSessionSummary
 })
-const isVoiceInputListening = computed(() => voiceInput.isListening.value)
-const isVoiceInputTranscribing = computed(() => voiceInput.isTranscribing.value)
-let voiceInputConfigToken = 0
-
-async function refreshVoiceInputAvailability() {
-  const selection = getActiveModelSelection()
-  const token = ++voiceInputConfigToken
-
-  if (!selection) {
-    isVoiceInputEnabled.value = false
-    voiceInput.stop()
-    return
-  }
-
-  try {
-    const modelConfig = await modelClient.getModelConfig(selection.modelId, selection.providerId)
-    if (token !== voiceInputConfigToken) {
-      return
-    }
-
-    isVoiceInputEnabled.value = modelConfig.speechRecognition === true
-    if (!isVoiceInputEnabled.value) {
-      voiceInput.stop()
-    }
-  } catch (error) {
-    if (token !== voiceInputConfigToken) {
-      return
-    }
-
-    console.warn('[ChatPage] Failed to resolve voice input setting:', error)
-    isVoiceInputEnabled.value = false
-    voiceInput.stop()
-  }
-}
-
-watch(
-  () => [sessionStore.activeSession?.providerId, sessionStore.activeSession?.modelId],
-  () => {
-    void refreshVoiceInputAvailability()
-  },
-  { immediate: true }
-)
-
-const removeModelConfigChangedListener = modelClient.onModelConfigChanged((payload) => {
-  const selection = getActiveModelSelection()
-  if (!selection) {
-    return
-  }
-
-  if (payload.providerId !== selection.providerId || payload.modelId !== selection.modelId) {
-    return
-  }
-
-  void refreshVoiceInputAvailability()
-})
-
-const handleContextMenuAskAI = (event: Event) => {
-  if (isReadOnlySession.value) {
-    return
-  }
-
-  const detail = (event as CustomEvent<string>).detail
-  const text = typeof detail === 'string' ? detail.trim() : ''
-  if (!text) {
-    return
-  }
-  message.value = text
-}
-
-const handleWorkspaceInsertReferenceRequested = (event: Event) => {
-  if (isReadOnlySession.value) {
-    return
-  }
-
-  const detail = (event as CustomEvent<{ sessionId?: unknown; filePath?: unknown }>).detail
-  const sessionId = typeof detail?.sessionId === 'string' ? detail.sessionId.trim() : ''
-  const filePath = typeof detail?.filePath === 'string' ? detail.filePath.trim() : ''
-  if (sessionId !== props.sessionId || !filePath) {
-    return
-  }
-
-  chatInputRef.value?.insertWorkspaceReference?.(filePath)
-}
-
-type PendingInteractionView = {
-  sessionId: string
-  messageId: string
-  toolCallId: string
-  actionType: 'question_request' | 'tool_call_permission'
-  toolName: string
-  toolArgs: string
-  block: DisplayAssistantMessageBlock
-}
-
-type SubagentProgressPayload = {
-  tasks?: Array<{
-    sessionId?: string | null
-    waitingInteraction?: {
-      type: 'permission' | 'question'
-      messageId: string
-      toolCallId: string
-      actionBlock: DisplayAssistantMessageBlock
-    } | null
-  }>
-}
-
-function parseSubagentProgress(value: unknown): SubagentProgressPayload | null {
-  if (typeof value !== 'string' || !value.trim()) {
-    return null
-  }
-
-  try {
-    const parsed = JSON.parse(value) as SubagentProgressPayload
-    return Array.isArray(parsed?.tasks) ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-const pendingInteractions = computed<PendingInteractionView[]>(() => {
-  const list: PendingInteractionView[] = []
-
-  for (const message of messageStore.messages) {
-    if (message.role !== 'assistant') continue
-    const blocks = messageStore.getAssistantMessageBlocks(message)
-
-    for (const block of blocks) {
-      if (
-        block.type !== 'action' ||
-        (block.action_type !== 'question_request' &&
-          block.action_type !== 'tool_call_permission') ||
-        block.status !== 'pending' ||
-        block.extra?.needsUserAction === false
-      ) {
-        continue
-      }
-
-      const toolCallId = block.tool_call?.id
-      if (!toolCallId) {
-        continue
-      }
-
-      list.push({
-        sessionId: props.sessionId,
-        messageId: message.id,
-        toolCallId,
-        actionType: block.action_type,
-        toolName: block.tool_call?.name || '',
-        toolArgs: block.tool_call?.params || '',
-        block
-      })
-    }
-
-    for (const block of blocks) {
-      if (block.type !== 'tool_call' || block.tool_call?.name !== 'subagent_orchestrator') {
-        continue
-      }
-
-      const progress = parseSubagentProgress(block.extra?.subagentProgress)
-      if (!progress?.tasks?.length) {
-        continue
-      }
-
-      for (const task of progress.tasks) {
-        const waiting = task.waitingInteraction
-        if (!waiting?.actionBlock || !task.sessionId) {
-          continue
-        }
-
-        list.push({
-          sessionId: task.sessionId,
-          messageId: waiting.messageId,
-          toolCallId: waiting.toolCallId,
-          actionType: waiting.type === 'question' ? 'question_request' : 'tool_call_permission',
-          toolName: waiting.actionBlock.tool_call?.name || block.tool_call?.name || '',
-          toolArgs: waiting.actionBlock.tool_call?.params || '',
-          block: waiting.actionBlock
-        })
-      }
-    }
-  }
-
-  return list
-})
-
-const activePendingInteraction = computed(() => pendingInteractions.value[0] ?? null)
 
 const {
   latestPlanSnapshot,
@@ -1250,6 +1043,20 @@ function getActiveModelSelection(): { providerId: string; modelId: string } | nu
     modelId: activeSession.modelId
   }
 }
+
+const {
+  isVoiceInputEnabled,
+  isVoiceInputListening,
+  isVoiceInputTranscribing,
+  toggleVoiceInput,
+  cleanup: cleanupVoiceInput
+} = useVoiceInput({
+  chatInputRef,
+  getActiveModelSelection,
+  modelClient,
+  toast,
+  t
+})
 
 const {
   message,
@@ -1293,6 +1100,63 @@ const {
   t
 })
 
+const {
+  showDeleteMessageDialog,
+  onMessageRetry,
+  onMessageDelete,
+  confirmMessageDelete,
+  cancelMessageDelete,
+  onDeleteMessageDialogOpenChange,
+  onMessageEditSave,
+  onMessageFork,
+  onMessageContinue,
+  clearForSessionChange
+} = useMessageActions({
+  sessionId: () => props.sessionId,
+  isReadOnlySession,
+  hasBlockingInteraction: () =>
+    Boolean(activePendingInteraction.value) || isHandlingInteraction.value,
+  messageStore,
+  sessionStore,
+  sessionClient,
+  beginPlanTurn,
+  clearPlanSnapshotForDeletedMessage,
+  loadMessagesForSession,
+  applyRestoredSessionSummary,
+  isCurrentSession: (sessionId) => props.sessionId === sessionId
+})
+clearMessageActionsForSessionChange = clearForSessionChange
+
+const { onPendingInputUpdate, onPendingInputMove, onPendingInputDelete, onPendingInputSteer } =
+  usePendingInputActions({
+    sessionId: () => props.sessionId,
+    isReadOnlySession,
+    isGenerating,
+    isAcpWorkdirMissing,
+    hasBlockingInteraction: () =>
+      Boolean(activePendingInteraction.value) || isHandlingInteraction.value,
+    pendingInputStore,
+    beginPlanTurn,
+    toast,
+    t
+  })
+
+const { start: startChatPageEventBridge, stop: stopChatPageEventBridge } = useChatPageEventBridge({
+  sessionId: () => props.sessionId,
+  isReadOnlySession,
+  chatInputRef,
+  setMessage: (text) => {
+    message.value = text
+  },
+  onWindowKeydown: handleWindowKeydown,
+  onPlanUpdated: (payload) => {
+    agentPlanStore.applySnapshot(payload)
+    scheduleInactivePlanSnapshotClear(payload.sessionId)
+  },
+  chatClient,
+  workspaceInsertReferenceEvent: WORKSPACE_EVENTS.INSERT_REFERENCE_REQUESTED
+})
+
 function onAttach() {
   chatInputRef.value?.triggerAttach()
 }
@@ -1302,36 +1166,7 @@ function onToggleVoiceInput() {
     return
   }
 
-  void voiceInput.toggle()
-}
-
-async function onToolInteractionRespond(response: ToolInteractionResponse) {
-  if (isReadOnlySession.value) {
-    return
-  }
-
-  const interaction = activePendingInteraction.value
-  if (!interaction || isHandlingInteraction.value) {
-    return
-  }
-
-  isHandlingInteraction.value = true
-  try {
-    const result = await chatClient.respondToolInteraction({
-      sessionId: interaction.sessionId,
-      messageId: interaction.messageId,
-      toolCallId: interaction.toolCallId,
-      response
-    })
-    applyRestoredSessionSummary(await loadMessagesForSession(props.sessionId))
-    if (result.handledInline) {
-      return
-    }
-  } catch (error) {
-    console.error('[ChatPage] respond tool interaction failed:', error)
-  } finally {
-    isHandlingInteraction.value = false
-  }
+  void toggleVoiceInput()
 }
 
 async function onStop() {
@@ -1345,149 +1180,12 @@ async function onStop() {
   }
 }
 
-async function onMessageRetry(messageId: string) {
-  if (isReadOnlySession.value) return
-  if (!messageId) return
-  if (activePendingInteraction.value || isHandlingInteraction.value) return
-  try {
-    beginPlanTurn(props.sessionId)
-    messageStore.clearStreamingState()
-    await sessionClient.retryMessage(props.sessionId, messageId)
-  } catch (error) {
-    console.error('[ChatPage] retry message failed:', error)
-    applyRestoredSessionSummary(await loadMessagesForSession(props.sessionId))
-  }
-}
-
-async function onMessageDelete(messageId: string) {
-  if (isReadOnlySession.value) return
-  if (!messageId) return
-  pendingDeleteMessageId.value = messageId
-}
-
-async function confirmMessageDelete() {
-  const messageId = pendingDeleteMessageId.value
-  if (!messageId) return
-  if (isReadOnlySession.value) return
-  const sessionId = props.sessionId
-  pendingDeleteMessageId.value = null
-  try {
-    messageStore.clearStreamingState()
-    await sessionClient.deleteMessage(sessionId, messageId)
-    clearPlanSnapshotForDeletedMessage(sessionId, messageId)
-    if (props.sessionId === sessionId) {
-      applyRestoredSessionSummary(await loadMessagesForSession(sessionId))
-    }
-  } catch (error) {
-    console.error('[ChatPage] delete message failed:', error)
-  }
-}
-
-function cancelMessageDelete() {
-  pendingDeleteMessageId.value = null
-}
-
-function onDeleteMessageDialogOpenChange(open: boolean) {
-  if (!open) {
-    cancelMessageDelete()
-  }
-}
-
-async function onMessageEditSave(payload: { messageId: string; text: string }) {
-  if (isReadOnlySession.value) return
-  const messageId = payload?.messageId
-  const text = payload?.text?.trim()
-  if (!messageId || !text) return
-
-  try {
-    await sessionClient.editUserMessage(props.sessionId, messageId, text)
-    await onMessageRetry(messageId)
-  } catch (error) {
-    console.error('[ChatPage] edit message failed:', error)
-  }
-}
-
-async function onMessageFork(messageId: string) {
-  if (isReadOnlySession.value) return
-  if (!messageId) return
-  try {
-    const forked = await sessionClient.forkSession(props.sessionId, messageId)
-    await sessionStore.fetchSessions()
-    await sessionStore.selectSession(forked.id)
-  } catch (error) {
-    console.error('[ChatPage] fork session failed:', error)
-  }
-}
-
-async function onMessageContinue(_conversationId: string, messageId: string) {
-  if (isReadOnlySession.value) return
-  if (!messageId) return
-  try {
-    beginPlanTurn(props.sessionId)
-    messageStore.clearStreamingState()
-    await sessionClient.retryMessage(props.sessionId, messageId)
-  } catch (error) {
-    console.error('[ChatPage] continue message failed:', error)
-    applyRestoredSessionSummary(await loadMessagesForSession(props.sessionId))
-  }
-}
-
 function onMessageTrace(messageId: string) {
   traceMessageId.value = messageId
 }
 
-async function onPendingInputUpdate(payload: { itemId: string; text: string }) {
-  if (isReadOnlySession.value) return
-  const target = pendingInputStore.queueItems.find((item) => item.id === payload.itemId)
-  if (!target) {
-    return
-  }
-
-  await pendingInputStore.updateQueueInput(props.sessionId, payload.itemId, {
-    text: payload.text,
-    files: target.payload.files ?? [],
-    activeSkills: target.payload.activeSkills ?? []
-  })
-}
-
-async function onPendingInputMove(payload: { itemId: string; toIndex: number }) {
-  if (isReadOnlySession.value) return
-  await pendingInputStore.moveQueueInput(props.sessionId, payload.itemId, payload.toIndex)
-}
-
-async function onPendingInputDelete(itemId: string) {
-  if (isReadOnlySession.value) return
-  await pendingInputStore.deleteInput(props.sessionId, itemId)
-}
-
-async function onPendingInputSteer(itemId: string) {
-  if (isReadOnlySession.value) return
-  if (!isGenerating.value) return
-  if (isAcpWorkdirMissing.value) return
-  if (activePendingInteraction.value || isHandlingInteraction.value) return
-  try {
-    await pendingInputStore.steerPendingInput(props.sessionId, itemId)
-    beginPlanTurn(props.sessionId)
-  } catch (error) {
-    console.error('[ChatPage] steer queued input failed:', error)
-    toast({
-      title: t('chat.pendingInput.steerFailed'),
-      variant: 'destructive'
-    })
-  }
-}
-
 onMounted(() => {
-  window.addEventListener('context-menu-ask-ai', handleContextMenuAskAI)
-  window.addEventListener(
-    WORKSPACE_EVENTS.INSERT_REFERENCE_REQUESTED,
-    handleWorkspaceInsertReferenceRequested
-  )
-  window.addEventListener('keydown', handleWindowKeydown)
-  cancelPlanUpdatedListener = chatClient.onPlanUpdated((payload) => {
-    agentPlanStore.applySnapshot(payload)
-    scheduleInactivePlanSnapshotClear(payload.sessionId)
-  })
+  startChatPageEventBridge()
   // 初始化滚动状态
   const el = scrollContainer.value
   if (el) {
@@ -1496,7 +1194,7 @@ onMounted(() => {
   }
   connectChatGeometryObserver()
   void nextTick(async () => {
-    markChatSessionPerformance('input-ready', props.sessionId, chatScrollSessionEpoch)
+    recordChatSessionPerformance('input-ready', props.sessionId, chatScrollSessionEpoch)
     await playChatInputHeroFlight(resolveChatInputBoxElement())
   })
 })
@@ -1505,17 +1203,9 @@ onUnmounted(() => {
   deactivateSessionRestore()
   invalidatePendingAttachmentFilter()
   cacheCurrentMessageMeasurements()
-  removeModelConfigChangedListener()
+  cleanupVoiceInput()
   cancelAllPlanSnapshotClearTimers()
-  cancelPlanUpdatedListener?.()
-  cancelPlanUpdatedListener = null
-  voiceInput.cleanup()
-  window.removeEventListener('context-menu-ask-ai', handleContextMenuAskAI)
-  window.removeEventListener(
-    WORKSPACE_EVENTS.INSERT_REFERENCE_REQUESTED,
-    handleWorkspaceInsertReferenceRequested
-  )
-  window.removeEventListener('keydown', handleWindowKeydown)
+  stopChatPageEventBridge()
   clearChatSearchHighlights(messageSearchRoot.value)
   if (spotlightJumpTimer) {
     window.clearTimeout(spotlightJumpTimer)
