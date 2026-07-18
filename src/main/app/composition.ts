@@ -386,7 +386,8 @@ export async function createMainProcessControl(dependencies: {
     appDatabase,
     sessionData.database,
     projectDatabase,
-    memoryDatabase
+    memoryDatabase,
+    sessionData.tapeStore
   )
   usageStatsService = new UsageStatsService(
     sessionData.database,
@@ -986,7 +987,8 @@ export async function createMainProcessControl(dependencies: {
     transcript: sessionData.transcript,
     settings: sessionData.settings,
     pendingInputs: sessionData.pendingInputs,
-    runtime: deepChatRuntimeCoordinator
+    runtime: deepChatRuntimeCoordinator,
+    runInTransaction: (operation) => sessionData.database.getDatabase().transaction(operation)()
   })
   memoryIngestionObserver = deepChatRuntimeCoordinator.memoryIngestionObserver
   acpAgentRuntime = new AcpAgentRuntime(
@@ -1611,7 +1613,7 @@ export async function createMainProcessControl(dependencies: {
     const memoryRoutes = createMemoryRoutes({
       memoryService,
       getAgentType: (agentId) => agentSettings.getAgentType(agentId),
-      getTapeEntries: () => sessionData.database.deepchatTapeEntriesTable,
+      getTapeInspection: () => sessionData.tapeStore,
       getAuditEntries: () => memoryDatabase.agentMemoryAuditTable
     })
     const desktopRoutes = createDesktopRoutes({
