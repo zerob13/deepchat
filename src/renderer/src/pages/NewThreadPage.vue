@@ -105,7 +105,7 @@
             :session-id="acpDraftSessionId"
             :workspace-path="projectStore.selectedProject?.path ?? null"
             :is-acp-session="isAcpSelectedAgent"
-            :submit-disabled="isAcpWorkdirUnavailable"
+            :submit-disabled="isAcpWorkdirUnavailable || isSubmitting"
             @update:files="onFilesChange"
             @pending-skills-change="onPendingSkillsChange"
             @command-submit="onCommandSubmit"
@@ -117,7 +117,7 @@
                 :show-voice-input="isVoiceInputEnabled"
                 :is-voice-input-listening="isVoiceInputListening"
                 :is-voice-input-transcribing="isVoiceInputTranscribing"
-                :send-disabled="isAcpWorkdirUnavailable || !message.trim()"
+                :send-disabled="isAcpWorkdirUnavailable || isSubmitting || !message.trim()"
                 @attach="onAttach"
                 @voice-input="onToggleVoiceInput"
                 @send="onSubmit"
@@ -231,6 +231,7 @@ const modelGuideTargetRef = ref<HTMLElement | null>(null)
 const firstChatGuideHostRef = ref<HTMLElement | null>(null)
 const firstChatGuideTargetRef = ref<HTMLElement | null>(null)
 const isVoiceInputEnabled = ref(false)
+const isSubmitting = ref(false)
 const chatInputRef = ref<{
   triggerAttach: () => void
   insertRecognizedText?: (text: string) => void
@@ -773,55 +774,63 @@ const resolveStartModelSelection = (
     : null
 }
 
+const isCurrentStartDeeplink = (token: number): boolean =>
+  draftStore.pendingStartDeeplink?.token === token
+
 const applyStartDeeplink = async (payload: StartDeeplinkPayload) => {
   const draftDefaultsTask = currentDraftDefaultsTask
   if (draftDefaultsTask) {
     await draftDefaultsTask
+    if (!isCurrentStartDeeplink(payload.token)) return
   }
 
   await nextTick()
+  if (!isCurrentStartDeeplink(payload.token)) return
+
   message.value = buildStartMessage(payload)
   draftStore.systemPrompt = payload.systemPrompt
 
   const modelsReady = await ensureEnabledModelsReady()
+  if (!isCurrentStartDeeplink(payload.token)) return
+
   const matchedModel = modelsReady ? resolveStartModelSelection(payload.modelId) : null
   if (matchedModel) {
     draftStore.providerId = matchedModel.providerId
     draftStore.modelId = matchedModel.modelId
   }
 
-  draftStore.clearPendingStartDeeplink()
+  if (isCurrentStartDeeplink(payload.token)) {
+    draftStore.clearPendingStartDeeplink()
+  }
+}
+
+async function submitDraft(text: string, clearMessage: boolean) {
+  if (isSubmitting.value || isAcpWorkdirUnavailable.value) return
+  if (!text || shouldIgnoreManualCompactionDraft(text)) return
+
+  isSubmitting.value = true
+  try {
+    const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((file) =>
+      toRaw(file)
+    )
+    await submitText(text, files)
+    if (clearMessage) {
+      message.value = ''
+    }
+    attachedFiles.value = []
+  } catch (error) {
+    console.error('[NewThreadPage] submit failed:', error)
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
 async function onSubmit() {
-  if (isAcpWorkdirUnavailable.value) return
-
-  const text = message.value.trim()
-  if (!text) return
-  if (shouldIgnoreManualCompactionDraft(text)) return
-  const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
-
-  try {
-    await submitText(text, files)
-    message.value = ''
-    attachedFiles.value = []
-  } catch (e) {
-    console.error('[NewThreadPage] submit failed:', e)
-  }
+  await submitDraft(message.value.trim(), true)
 }
 
 async function onCommandSubmit(command: string) {
-  if (isAcpWorkdirUnavailable.value) return
-  const text = command.trim()
-  if (!text) return
-  if (shouldIgnoreManualCompactionDraft(text)) return
-  const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
-  try {
-    await submitText(text, files)
-    attachedFiles.value = []
-  } catch (e) {
-    console.error('[NewThreadPage] submit failed:', e)
-  }
+  await submitDraft(command.trim(), false)
 }
 
 function shouldIgnoreManualCompactionDraft(text: string): boolean {
@@ -928,6 +937,7 @@ const applyDraftDefaultsForSelectedAgent = async (requestSeq: number): Promise<v
   const agentId = selectedAgent.value.id
   const globalDefaultProjectPath = normalizeProjectPath(projectStore.defaultProjectPath)
   const currentProjectPath = normalizeProjectPath(projectStore.selectedProject?.path)
+  const selectedProjectSource = projectStore.selectionSource
   const pendingProjectDirIntent = sessionStore.newConversationProjectDirIntent
   const projectDirIntent =
     pendingProjectDirIntent && !pendingProjectDirIntent.consumed
@@ -980,17 +990,23 @@ const applyDraftDefaultsForSelectedAgent = async (requestSeq: number): Promise<v
     return
   }
   const agentDefaultProjectPath = normalizeProjectPath(config.defaultProjectPath)
+  const currentSelectedProjectPath = normalizeProjectPath(projectStore.selectedProject?.path)
+  const canApplyProjectDefault =
+    currentSelectedProjectPath === currentProjectPath &&
+    projectStore.selectionSource === selectedProjectSource
   const resolvedProjectPath = projectDirIntent
     ? projectDirIntent.projectDir
-    : (agentDefaultProjectPath ?? currentProjectPath ?? globalDefaultProjectPath)
+    : canApplyProjectDefault
+      ? (agentDefaultProjectPath ?? currentProjectPath ?? globalDefaultProjectPath)
+      : currentSelectedProjectPath
   if (projectDirIntent) {
     projectStore.selectProject(projectDirIntent.projectDir, 'manual')
-  } else if (agentDefaultProjectPath) {
+  } else if (canApplyProjectDefault && agentDefaultProjectPath) {
     projectStore.selectProject(
       agentDefaultProjectPath,
       agentDefaultProjectPath === globalDefaultProjectPath ? 'default' : 'manual'
     )
-  } else if (!currentProjectPath && globalDefaultProjectPath) {
+  } else if (canApplyProjectDefault && !currentProjectPath && globalDefaultProjectPath) {
     projectStore.selectProject(globalDefaultProjectPath, 'default')
   }
   draftStore.projectDir = resolvedProjectPath ?? undefined
