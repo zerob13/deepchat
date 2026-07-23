@@ -43,8 +43,8 @@ unbundled, and unverified for that target.
 
 | Target | Runner | Application package | CUA | Feishu |
 | --- | --- | --- | --- | --- |
-| `linux/x64` | `ubuntu-22.04` | Required | Bundle and verify | Bundle and verify |
-| `linux/arm64` | `ubuntu-22.04-arm` | Required | Skip | Bundle and verify |
+| `linux/x64` | `ubuntu-24.04` | Required | Bundle and verify | Bundle and verify |
+| `linux/arm64` | `ubuntu-24.04-arm` | Required | Skip | Bundle and verify |
 
 ## Acceptance Criteria
 

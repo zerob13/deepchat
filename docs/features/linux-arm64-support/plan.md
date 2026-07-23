@@ -8,7 +8,7 @@ changes to CI orchestration, release artifact collection, and regression coverag
 ## Workflow Changes
 
 1. Convert each Linux matrix from an x64-only entry to explicit x64 and ARM64 entries.
-2. Keep x64 on `ubuntu-22.04` and run ARM64 natively on `ubuntu-22.04-arm`.
+2. Keep x64 on `ubuntu-24.04` and run ARM64 natively on `ubuntu-24.04-arm`.
 3. Add the unpacked directory name to matrix metadata and use it for smoke checks and plugin
    verification.
 4. Run `installRuntime:linux:<arch>` before packaging.

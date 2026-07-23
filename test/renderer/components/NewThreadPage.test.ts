@@ -25,6 +25,7 @@ const createChatInputBoxStub = () =>
       sessionId: { type: String, default: null },
       workspacePath: { type: String, default: null },
       isAcpSession: { type: Boolean, default: false },
+      editable: { type: Boolean, default: true },
       submitDisabled: { type: Boolean, default: false }
     },
     emits: [
@@ -44,6 +45,7 @@ const createChatInputBoxStub = () =>
         h('div', {
           'data-testid': 'chat-input-box',
           'data-submit-disabled': String(props.submitDisabled),
+          'data-editable': String(props.editable),
           'data-workspace-path': props.workspacePath ?? '',
           'data-is-acp-session': String(props.isAcpSession)
         })
@@ -229,6 +231,9 @@ const setup = async (options?: {
         })
     )
   }
+  const chatClient = {
+    cancelSubmission: vi.fn().mockResolvedValue({ cancelled: true })
+  }
   const modelClient = {
     getCapabilities: vi.fn((providerId: string, modelId: string) => {
       const capabilities = options?.modelCapabilities?.[`${providerId}:${modelId}`]
@@ -266,6 +271,9 @@ const setup = async (options?: {
   }))
   vi.doMock('@api/SessionClient', () => ({
     createSessionClient: vi.fn(() => sessionClient)
+  }))
+  vi.doMock('@api/ChatClient', () => ({
+    createChatClient: vi.fn(() => chatClient)
   }))
   vi.doMock('@api/ModelClient', () => ({
     createModelClient: vi.fn(() => modelClient)
@@ -335,6 +343,7 @@ const setup = async (options?: {
     draftStore,
     modelClient,
     sessionClient,
+    chatClient,
     isDirectoryMock,
     flushStartupDeferredTasks: async () => {
       while (startupDeferredTasks.length > 0) {
@@ -548,6 +557,138 @@ describe('NewThreadPage ACP draft session bootstrap', () => {
       files: [{ name: 'a.txt', path: '/tmp/a.txt', mimeType: 'text/plain' }]
     })
     expect(sessionStore.createSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps ACP image attachments on the non-cancellable send path', async () => {
+    const { wrapper, sessionStore } = await setup()
+    const image = { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
+    ;(wrapper.vm as any).message = 'ACP image prompt'
+    ;(wrapper.vm as any).attachedFiles = [image]
+
+    await (wrapper.vm as any).onSubmit()
+    await flushPromises()
+
+    expect(sessionStore.sendMessage).toHaveBeenCalledWith('draft-1', {
+      text: 'ACP image prompt',
+      files: [image]
+    })
+  })
+
+  it('allows a DeepChat image-only initial turn', async () => {
+    const { wrapper, sessionStore, modelStore, draftStore } = await setup({
+      selectedAgentId: 'deepchat',
+      selectedAgentType: 'deepchat'
+    })
+    modelStore.enabledModels = [
+      {
+        providerId: 'openai',
+        models: [{ id: 'gpt-4', name: 'GPT-4' }]
+      }
+    ]
+    draftStore.providerId = 'openai'
+    draftStore.modelId = 'gpt-4'
+    const image = { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
+    ;(wrapper.vm as any).attachedFiles = [image]
+
+    await (wrapper.vm as any).onSubmit()
+    await flushPromises()
+
+    expect(sessionStore.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '',
+        files: [image],
+        agentId: 'deepchat'
+      }),
+      expect.objectContaining({
+        submissionId: expect.any(String),
+        isCancellationRequested: expect.any(Function)
+      })
+    )
+  })
+
+  it('locks the new-thread editor while initial attachment preflight is in flight', async () => {
+    const { wrapper, sessionStore, modelStore, draftStore } = await setup({
+      selectedAgentId: 'deepchat',
+      selectedAgentType: 'deepchat'
+    })
+    modelStore.enabledModels = [
+      {
+        providerId: 'openai',
+        models: [{ id: 'gpt-4', name: 'GPT-4' }]
+      }
+    ]
+    draftStore.providerId = 'openai'
+    draftStore.modelId = 'gpt-4'
+    let resolveCreate!: () => void
+    sessionStore.createSession.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveCreate = resolve))
+    )
+    ;(wrapper.vm as any).attachedFiles = [
+      { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
+    ]
+
+    const submit = (wrapper.vm as any).onSubmit()
+    await vi.waitFor(() => expect(sessionStore.createSession).toHaveBeenCalledTimes(1))
+    expect(wrapper.get('[data-testid="chat-input-box"]').attributes('data-editable')).toBe('false')
+
+    resolveCreate()
+    await submit
+    await flushPromises()
+  })
+
+  it('cancels initial image preparation without clearing the new-thread draft', async () => {
+    const { wrapper, sessionStore, modelStore, draftStore, chatClient } = await setup({
+      selectedAgentId: 'deepchat',
+      selectedAgentType: 'deepchat'
+    })
+    modelStore.enabledModels = [
+      {
+        providerId: 'openai',
+        models: [{ id: 'gpt-4', name: 'GPT-4' }]
+      }
+    ]
+    draftStore.providerId = 'openai'
+    draftStore.modelId = 'gpt-4'
+    const image = { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
+    let rejectCreate!: (error: Error) => void
+    sessionStore.createSession.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCreate = reject
+        })
+    )
+    chatClient.cancelSubmission.mockImplementationOnce(async () => {
+      const error = new Error('Aborted')
+      error.name = 'AbortError'
+      rejectCreate(error)
+      return { cancelled: true }
+    })
+    ;(wrapper.vm as any).message = 'keep this'
+    ;(wrapper.vm as any).attachedFiles = [image]
+
+    const submit = (wrapper.vm as any).onSubmit()
+    await vi.waitFor(() => expect(sessionStore.createSession).toHaveBeenCalledOnce())
+    const submissionOptions = sessionStore.createSession.mock.calls[0]?.[1]
+    ;(wrapper.vm as any).cancelSubmissionPreparation()
+    await submit
+    await flushPromises()
+
+    expect(chatClient.cancelSubmission).toHaveBeenCalledWith(submissionOptions?.submissionId)
+    expect((wrapper.vm as any).message).toBe('keep this')
+    expect((wrapper.vm as any).attachedFiles).toEqual([image])
+  })
+
+  it('preserves the ACP text requirement for attachment-only drafts', async () => {
+    const { wrapper, sessionStore } = await setup()
+    const image = { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
+    ;(wrapper.vm as any).attachedFiles = [image]
+
+    await (wrapper.vm as any).onSubmit()
+    await flushPromises()
+
+    expect(sessionStore.sendMessage).not.toHaveBeenCalled()
+    expect(sessionStore.createSession).not.toHaveBeenCalled()
+    expect((wrapper.vm as any).attachedFiles).toEqual([image])
   })
 
   it('filters ACP draft attachments using the ensured draft model target', async () => {
