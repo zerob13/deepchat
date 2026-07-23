@@ -223,6 +223,14 @@ function createHarness(initialSessions: SessionRecord[] = []) {
   }
   const deletion = { deleteSessionTree: vi.fn().mockResolvedValue([]) }
   const permissions = { cloneSessionPermissions: vi.fn() }
+  const agentLifecycle = {
+    runWithAgentOperation: vi.fn(
+      async (_agentId: string, operation: () => Promise<unknown>) => await operation()
+    ),
+    runWithAgentDeletion: vi.fn(
+      async (_agentId: string, deletion: () => Promise<unknown>) => await deletion()
+    )
+  }
   const dependencies = {
     sessions,
     runtime,
@@ -234,7 +242,8 @@ function createHarness(initialSessions: SessionRecord[] = []) {
     projection,
     desktop,
     deletion,
-    permissions
+    permissions,
+    agentLifecycle
   } as unknown as SessionLifecycleDependencies
 
   return {
@@ -242,6 +251,7 @@ function createHarness(initialSessions: SessionRecord[] = []) {
     records,
     order,
     getRuntime,
+    agentLifecycle,
     sessions,
     runtime,
     transcript,
