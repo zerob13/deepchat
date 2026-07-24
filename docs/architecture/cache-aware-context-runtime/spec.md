@@ -131,6 +131,14 @@ independent fail-open writes cannot cause an idempotency collision. Its first ne
 records the supplied chat or resume selection provenance; absolute request-sequence values do not
 reclassify it as a tool loop. Tape append failure is fail-open for generation.
 
+Within one logical round, a transient retry reuses the exact payload and ViewManifest, keeps the
+request sequence, and advances only the physical attempt. Context recovery changes the payload,
+therefore writes a new manifest and resets the physical attempt without consuming the shared
+two-retry budget. Transparent replay is forbidden after the first projected semantic event. Failed
+attempt usage and final-attempt usage are checked and aggregated into message metadata, while each
+Tape outcome remains attempt-local. ACP, image, video, and TTS requests do not participate in this
+transparent replay policy.
+
 Message traces add nullable logical-round and physical-attempt identity. Existing rows and ACP
 traces remain valid. Replay chooses the greatest physical attempt for a requested sequence and uses
 creation time plus trace ID as a stable tie-breaker.
@@ -154,6 +162,8 @@ creation time plus trace ID as a stable tie-breaker.
     semantics.
 11. The additive trace migration preserves old rows; no renderer feature, public provider setting,
     GitHub issue, push, or pull request is created.
+12. Transient retries reuse a manifest only before semantic output is committed; context recovery
+    writes a new manifest, and non-chat provider modes are never transparently replayed.
 
 ## Constraints
 

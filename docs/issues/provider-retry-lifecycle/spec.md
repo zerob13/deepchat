@@ -166,14 +166,14 @@ the retry decision is final.
 - [x] Model logical-round and physical-attempt identity in the loop and persistence contracts.
 - [x] Add Tape v2 provenance and backward-compatible readers.
 - [x] Add migration v45 and immutable trace identity, ordering, and replay selection.
-- [ ] Propagate Run cancellation and safe failure metadata through all provider stream ports.
-- [ ] Disable hidden chat-stream retries while preserving explicit one-shot policies.
-- [ ] Implement failure classification, replay boundary, retry policy, usage aggregation, and
+- [x] Propagate Run cancellation and safe failure metadata through all provider stream ports.
+- [x] Disable hidden chat-stream retries while preserving explicit one-shot policies.
+- [x] Implement failure classification, replay boundary, retry policy, usage aggregation, and
   diagnostic observer.
-- [ ] Add focused coverage for retry policy, stream settlement, context recovery, limits, resume,
+- [x] Add focused coverage for retry policy, stream settlement, context recovery, limits, resume,
   provider boundaries, Tape compatibility, and trace migration/replay.
-- [ ] Run targeted tests, main tests, agent evals, formatting, i18n, lint, and type checking.
-- [ ] Review each staged commit for side effects, compatibility, boundaries, performance, security,
+- [x] Run targeted tests, main tests, agent evals, formatting, i18n, lint, and type checking.
+- [x] Review each staged commit for side effects, compatibility, boundaries, performance, security,
   naming, coverage, and maintenance cost.
 
 ## Validation
@@ -191,3 +191,13 @@ pnpm run typecheck
 The read-only baseline on 2026-07-24 passed five test files and 96 tests. Another 22 tests were
 skipped because the local SQLite native module was unavailable, including the message-trace table
 suite. Final validation must report whether that environment limitation remains.
+
+Final validation on 2026-07-24:
+
+- targeted retry, runtime, provider, Tape, and trace suites: 22 files passed, 1 skipped; 790 tests
+  passed, 24 skipped;
+- main-process suite: 413 files passed, 19 skipped; 4,802 tests passed, 239 skipped;
+- native-agent evaluations: 15 tests passed;
+- formatting, i18n validation, lint, and node/web type checking passed;
+- the local SQLite native module remained unavailable, so the native message-trace suites were
+  still skipped.

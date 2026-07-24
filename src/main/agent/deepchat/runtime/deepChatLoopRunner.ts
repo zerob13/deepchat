@@ -539,6 +539,8 @@ export class DeepChatLoopRunner {
           )
           const isTtsRequest = isTtsModelConfig(requestModelConfig) || isTtsModelId(requestModelId)
           const effectiveRequestTools: MCPToolDefinition[] = isTtsRequest ? [] : requestTools
+          // ACP and non-chat media routes are not safe to replay before their first visible event.
+          const allowTransientRetry = !requestBypassesContextBudget && !isTtsRequest
           let queuedForRateLimit = false
           yield* ports.contextCoordinator.streamProviderAttempts({
             run: loopRun,
@@ -548,6 +550,7 @@ export class DeepChatLoopRunner {
             temperature: requestTemperature,
             maxTokens: requestMaxTokens,
             tools: effectiveRequestTools,
+            allowTransientRetry,
             bypassContextBudget: requestBypassesContextBudget,
             fallbackContextLength: contextBudgetLength,
             supportsVision,
@@ -705,11 +708,17 @@ export class DeepChatLoopRunner {
                   }`
                 )
             },
+            retryObserver: (event) => {
+              logger.info('[DeepChatAgent] Provider retry lifecycle', {
+                sessionId,
+                messageId,
+                providerId: state.providerId,
+                modelId: requestModelId,
+                ...event
+              })
+            },
             isContextOverflowEvent: isFirstProviderContextOverflowEvent,
             isContextOverflowError: isContextWindowErrorLike,
-            isAbortError: (error) =>
-              error instanceof Error &&
-              (error.name === 'AbortError' || error.name === 'CanceledError'),
             createAbortError
           })
         },

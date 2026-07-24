@@ -1064,6 +1064,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       provider.coreStream.mockImplementationOnce(async function* () {
         providerStarted.resolve(undefined)
         await providerDone.promise
+        yield { type: 'stop', stop_reason: 'complete' }
       })
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
         for await (const _event of params.coreStream(
@@ -7228,14 +7229,24 @@ describe('DeepChatRuntimeCoordinator', () => {
       const providerCoreStream = llmProvider.providerInstance.coreStream
       providerCoreStream.mockReset()
       providerCoreStream.mockImplementationOnce(async function* () {
-        yield { type: 'error', error_message: 'input exceeds the context window' }
+        yield {
+          type: 'error',
+          error_message: 'input exceeds the context window',
+          failure: { statusCode: 503, retryable: true }
+        }
       })
       llmProvider.generateText.mockClear()
 
       const events = await collectProviderEvents(callArgs, [{ role: 'user', content: 'Hello' }])
 
       expect(providerCoreStream).toHaveBeenCalledTimes(1)
-      expect(events).toEqual([{ type: 'error', error_message: 'input exceeds the context window' }])
+      expect(events).toEqual([
+        {
+          type: 'error',
+          error_message: 'input exceeds the context window',
+          failure: { statusCode: 503, retryable: true }
+        }
+      ])
       expect(llmProvider.generateText).not.toHaveBeenCalled()
     })
 
@@ -7376,13 +7387,23 @@ describe('DeepChatRuntimeCoordinator', () => {
 
       providerCoreStream.mockReset()
       providerCoreStream.mockImplementationOnce(async function* () {
-        yield { type: 'error', error_message: 'input exceeds the context window' }
+        yield {
+          type: 'error',
+          error_message: 'input exceeds the context window',
+          failure: { statusCode: 503, retryable: true }
+        }
       })
 
       const events = await collectProviderEvents(callArgs, [{ role: 'user', content: 'draw' }])
 
       expect(providerCoreStream).toHaveBeenCalledTimes(1)
-      expect(events).toEqual([{ type: 'error', error_message: 'input exceeds the context window' }])
+      expect(events).toEqual([
+        {
+          type: 'error',
+          error_message: 'input exceeds the context window',
+          failure: { statusCode: 503, retryable: true }
+        }
+      ])
       expect(llmProvider.generateText).not.toHaveBeenCalled()
     })
 
@@ -7453,14 +7474,86 @@ describe('DeepChatRuntimeCoordinator', () => {
 
       providerCoreStream.mockReset()
       providerCoreStream.mockImplementationOnce(async function* () {
-        yield { type: 'error', error_message: 'input exceeds the context window' }
+        yield {
+          type: 'error',
+          error_message: 'input exceeds the context window',
+          failure: { statusCode: 503, retryable: true }
+        }
       })
 
       const events = await collectProviderEvents(callArgs, [{ role: 'user', content: 'video' }])
 
       expect(providerCoreStream).toHaveBeenCalledTimes(1)
-      expect(events).toEqual([{ type: 'error', error_message: 'input exceeds the context window' }])
+      expect(events).toEqual([
+        {
+          type: 'error',
+          error_message: 'input exceeds the context window',
+          failure: { statusCode: 503, retryable: true }
+        }
+      ])
       expect(llmProvider.generateText).not.toHaveBeenCalled()
+    })
+
+    it('does not transparently replay transient TTS failures', async () => {
+      const ttsModelConfig = {
+        temperature: 0.7,
+        maxTokens: 4096,
+        contextLength: 8192,
+        thinkingBudget: 512,
+        reasoningEffort: 'medium',
+        verbosity: 'medium',
+        vision: false,
+        functionCall: false,
+        reasoning: false,
+        type: ModelType.TTS,
+        apiEndpoint: ApiEndpointType.AudioSpeech
+      }
+      providerSettings.getModelConfig.mockImplementation((modelId: string) =>
+        modelId === 'tts-1'
+          ? ttsModelConfig
+          : {
+              temperature: 0.7,
+              maxTokens: 4096,
+              contextLength: 128000,
+              thinkingBudget: 512,
+              reasoningEffort: 'medium',
+              verbosity: 'medium',
+              vision: false
+            }
+      )
+
+      await agent.initSession('s1', {
+        providerId: 'openai',
+        modelId: 'tts-1',
+        generationSettings: {
+          contextLength: 8192,
+          maxTokens: 4096
+        }
+      })
+      await agent.processMessage('s1', 'read this aloud')
+
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      providerCoreStream.mockReset()
+      providerCoreStream.mockImplementationOnce(async function* () {
+        yield {
+          type: 'error',
+          error_message: 'temporarily unavailable',
+          failure: { statusCode: 503, retryable: true }
+        }
+      })
+
+      const events = await collectProviderEvents(callArgs, [{ role: 'user', content: 'speak' }])
+
+      expect(providerCoreStream).toHaveBeenCalledTimes(1)
+      expect(providerCoreStream.mock.calls[0][5]).toEqual([])
+      expect(events).toEqual([
+        {
+          type: 'error',
+          error_message: 'temporarily unavailable',
+          failure: { statusCode: 503, retryable: true }
+        }
+      ])
     })
 
     it('recovers when the first provider event is context overflow with memory disabled', async () => {
@@ -7538,6 +7631,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         })
         .mockImplementationOnce(async function* () {
           yield { type: 'text', content: 'Recovered after throw' }
+          yield { type: 'stop', stop_reason: 'complete' }
         })
       llmProvider.generateText.mockClear()
 
@@ -7547,7 +7641,10 @@ describe('DeepChatRuntimeCoordinator', () => {
       ])
 
       expect(providerCoreStream).toHaveBeenCalledTimes(2)
-      expect(events).toEqual([{ type: 'text', content: 'Recovered after throw' }])
+      expect(events).toEqual([
+        { type: 'text', content: 'Recovered after throw' },
+        { type: 'stop', stop_reason: 'complete' }
+      ])
       expect(llmProvider.generateText).toHaveBeenCalled()
     })
 
@@ -7603,6 +7700,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         })
         .mockImplementationOnce(async function* () {
           yield { type: 'text', content: 'Trimmed retry' }
+          yield { type: 'stop', stop_reason: 'complete' }
         })
       llmProvider.generateText.mockClear()
       sqlitePresenter.deepchatMessagesTable.delete.mockClear()
@@ -7622,7 +7720,10 @@ describe('DeepChatRuntimeCoordinator', () => {
       const secondProviderMaxTokens = providerCoreStream.mock.calls[1][4]
 
       expect(providerCoreStream).toHaveBeenCalledTimes(2)
-      expect(events).toEqual([{ type: 'text', content: 'Trimmed retry' }])
+      expect(events).toEqual([
+        { type: 'text', content: 'Trimmed retry' },
+        { type: 'stop', stop_reason: 'complete' }
+      ])
       expect(llmProvider.generateText).not.toHaveBeenCalled()
       expect(secondProviderMessages).not.toContainEqual({ role: 'user', content: oldHistoryText })
       expect(secondProviderMaxTokens).toBeLessThan(firstProviderMaxTokens)
@@ -7797,7 +7898,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       )
     })
 
-    it('does not recover quota or rate-limit token errors as context overflow', async () => {
+    it('retries rate-limit token errors without treating them as context overflow', async () => {
       await agent.initSession('s1', {
         providerId: 'openai',
         modelId: 'gpt-4',
@@ -7811,10 +7912,14 @@ describe('DeepChatRuntimeCoordinator', () => {
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       const providerCoreStream = llmProvider.providerInstance.coreStream
       providerCoreStream.mockReset()
-      providerCoreStream.mockImplementationOnce(async function* () {
+      providerCoreStream.mockImplementation(async function* () {
         yield {
           type: 'error',
-          error_message: 'rate limit exceeded: too many tokens per minute (TPM)'
+          error_message: 'rate limit exceeded: too many tokens per minute (TPM)',
+          failure: {
+            statusCode: 429,
+            retryHeaders: { 'retry-after-ms': '0' }
+          }
         }
       })
       llmProvider.generateText.mockClear()
@@ -7825,11 +7930,15 @@ describe('DeepChatRuntimeCoordinator', () => {
         ([input]: any[]) => input.name
       )
 
-      expect(providerCoreStream).toHaveBeenCalledTimes(1)
+      expect(providerCoreStream).toHaveBeenCalledTimes(3)
       expect(events).toEqual([
         {
           type: 'error',
-          error_message: 'rate limit exceeded: too many tokens per minute (TPM)'
+          error_message: 'rate limit exceeded: too many tokens per minute (TPM)',
+          failure: {
+            statusCode: 429,
+            retryHeaders: { 'retry-after-ms': '0' }
+          }
         }
       ])
       expect(llmProvider.generateText).not.toHaveBeenCalled()
@@ -8076,6 +8185,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         })
         .mockImplementationOnce(async function* () {
           yield { type: 'text', content: 'Recovered by strict trim' }
+          yield { type: 'stop', stop_reason: 'complete' }
         })
 
       const events = await collectProviderEvents(callArgs, [
@@ -8089,7 +8199,10 @@ describe('DeepChatRuntimeCoordinator', () => {
       const strictRetryMaxTokens = Math.floor(requestedMaxTokens / 2)
       const strictRetryExtraReserve = Math.max(256, Math.min(Math.floor(contextLength * 0.1), 8192))
 
-      expect(events).toEqual([{ type: 'text', content: 'Recovered by strict trim' }])
+      expect(events).toEqual([
+        { type: 'text', content: 'Recovered by strict trim' },
+        { type: 'stop', stop_reason: 'complete' }
+      ])
       expect(callArgs.maxProviderRounds).toBe(1)
       expect(providerCoreStream).toHaveBeenCalledTimes(2)
       expect(llmProvider.generateText).toHaveBeenCalledTimes(1)

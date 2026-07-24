@@ -117,6 +117,12 @@ failure classification、retry decision、受限错误标识、终态、stop rea
 snapshot、cache read/write token 与合法的命中比率；schema version 1 保持可读。它不保存 prompt、
 header、secret、raw response 或 error stack。Tape append 失败不能反向把已启动的生成改成失败。
 
+`DeepChatContextCoordinator.streamProviderAttempts` 在 retry 决策完成后写 attempt outcome。可重试的
+error control event 在决定不重放前不得进入 message projection；首个语义输出提交后，即使后续出现
+transient failure 也只能保留 partial output 并结束。message metadata 汇总该 logical round 所有
+physical attempt 的最终 usage snapshot，Tape outcome 则始终保留 attempt-local usage，不能用 message
+aggregate 反推单次请求。retry lifecycle observer 只写诊断日志，不写 Tape。
+
 DeepChat message trace 通过 nullable identity 列兼容旧行和 ACP trace。同一 requestSeq 的 replay 选择
 physicalAttempt 最大的 trace，再按 createdAt 和 ID 稳定排序；attempt-local trace callback 必须捕获
 不可变 identity。

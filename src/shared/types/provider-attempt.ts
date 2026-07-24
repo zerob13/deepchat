@@ -1,7 +1,7 @@
 export interface DeepChatProviderAttemptIdentity {
-  logicalRound: number
-  requestSeq: number
-  physicalAttempt: number
+  readonly logicalRound: number
+  readonly requestSeq: number
+  readonly physicalAttempt: number
 }
 
 export type DeepChatProviderRequestOrigin = 'chat' | 'resume' | 'tool_loop' | 'context_recovery'

@@ -921,6 +921,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
 
           for await (const event of stream) {
             eventCount++
+            if (event.type === 'usage') {
+              accumulate(state, event)
+            }
             if (io.abortSignal.aborted) {
               logger.info(`[ProcessStream] aborted after ${eventCount} events`)
               echo.stop()
@@ -959,7 +962,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               continue
             }
 
-            accumulate(state, event)
+            if (event.type !== 'usage') {
+              accumulate(state, event)
+            }
             if (event.type === 'plan' && state.latestAgentPlanSnapshot) {
               state.latestAgentPlanSnapshot = {
                 ...state.latestAgentPlanSnapshot,

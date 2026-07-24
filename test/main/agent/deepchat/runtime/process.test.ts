@@ -1619,6 +1619,43 @@ describe('processStream', () => {
     })
   })
 
+  it('accounts for usage delivered while the run cancellation is settling', async () => {
+    const abortController = new AbortController()
+    const usageEvent = {
+      type: 'usage',
+      usage: {
+        prompt_tokens: 13,
+        completion_tokens: 2,
+        total_tokens: 15,
+        cached_tokens: 5
+      }
+    } as const
+    const coreStream = vi.fn(async function* () {
+      abortController.abort()
+      yield usageEvent
+    }) as unknown as ProcessParams['coreStream']
+
+    const result = await processStream(createParams({ abortController, coreStream }))
+
+    expect(result).toMatchObject({
+      status: 'aborted',
+      usage: {
+        inputTokens: 13,
+        outputTokens: 2,
+        totalTokens: 15,
+        cachedInputTokens: 5
+      }
+    })
+    const metadata = JSON.parse(messageStore.setMessageError.mock.calls.at(-1)?.[2])
+    expect(metadata).toMatchObject({
+      inputTokens: 13,
+      outputTokens: 2,
+      totalTokens: 15,
+      cachedInputTokens: 5,
+      runOutcome: 'aborted'
+    })
+  })
+
   it('accounts for a tool that started before result normalization was aborted', async () => {
     const abortController = new AbortController()
     const coreStream = vi.fn(async function* () {
