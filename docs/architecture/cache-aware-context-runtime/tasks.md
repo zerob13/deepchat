@@ -10,12 +10,12 @@
 
 ## Provider Cache Transport
 
-- [ ] Add conversation and isolated cache intent at the AI SDK runtime boundary.
-- [ ] Preserve structured system instructions when provider metadata is present.
-- [ ] Correct official OpenAI, Anthropic, and Bedrock cache metadata.
-- [ ] Add OpenRouter and Zenmux final-body cache transforms with marker stripping.
-- [ ] Add real-adapter wire-capture and one-shot isolation tests.
-- [ ] Review and commit the provider slice.
+- [x] Add conversation and isolated cache intent at the AI SDK runtime boundary.
+- [x] Preserve structured system instructions when provider metadata is present.
+- [x] Correct official OpenAI, Anthropic, and Bedrock cache metadata.
+- [x] Add OpenRouter and Zenmux final-body cache transforms with marker stripping.
+- [x] Add real-adapter wire-capture and one-shot isolation tests.
+- [x] Review and commit the provider slice.
 
 ## Context Trust and Prefix Stability
 

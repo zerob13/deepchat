@@ -3,7 +3,17 @@ import type { MCPToolDefinition } from '@shared/types/mcp'
 import { resolvePromptCacheMode, type PromptCacheMode } from './promptCacheCapabilities'
 
 export type PromptCacheApiType = 'openai_chat' | 'openai_responses' | 'anthropic'
+export type PromptCacheIntent = 'conversation' | 'isolated'
 export type PromptCacheTtl = '5m'
+
+export const OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER = '__deepchat_prompt_cache'
+
+export interface OpenAICompatiblePromptCacheMarker {
+  version: 1
+  providerId: string
+  modelId: string
+  cacheKey?: string
+}
 
 export interface PromptCacheBreakpointPlan {
   messageIndex: number
@@ -20,6 +30,7 @@ export interface PromptCachePlan {
 export interface ResolvePromptCachePlanParams {
   providerId: string
   apiType: PromptCacheApiType
+  intent: PromptCacheIntent
   modelId: string
   messages: unknown[]
   tools?: MCPToolDefinition[]
@@ -54,7 +65,7 @@ function normalizeId(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? ''
 }
 
-function buildPromptCacheKey(
+export function buildPromptCacheKey(
   providerId: string,
   modelId: string,
   conversationId?: string
@@ -159,6 +170,10 @@ function findAnthropicBreakpoint(
 }
 
 export function resolvePromptCachePlan(params: ResolvePromptCachePlanParams): PromptCachePlan {
+  if (params.intent === 'isolated') {
+    return { mode: 'disabled', ttl: null }
+  }
+
   const mode = resolvePromptCacheMode(params.providerId, params.modelId)
 
   if (mode === 'disabled') {
@@ -184,10 +199,12 @@ export function resolvePromptCachePlan(params: ResolvePromptCachePlanParams): Pr
     params.apiType === 'anthropic'
       ? findAnthropicBreakpoint(params.messages as PromptCacheAnthropicMessage[])
       : findOpenAIChatBreakpoint(params.messages as PromptCacheOpenAIMessage[])
+  const cacheKey = buildPromptCacheKey(params.providerId, params.modelId, params.conversationId)
 
   return {
     mode,
     ttl: '5m',
+    ...(cacheKey ? { cacheKey } : {}),
     breakpointPlan
   }
 }
