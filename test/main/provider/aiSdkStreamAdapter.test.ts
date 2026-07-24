@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { adaptAiSdkStream } from '@/provider/aiSdk/streamAdapter'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
+import { APICallError } from '@ai-sdk/provider'
 
 async function collectEvents(parts: any[], options: Parameters<typeof adaptAiSdkStream>[1]) {
   async function* stream() {
@@ -381,27 +382,42 @@ describe('AI SDK stream adapter', () => {
   })
 
   it.each([
-    ['content-filter', 'Provider stopped the response because of content filtering.'],
-    ['error', 'Provider stopped the response because of an error.'],
-    ['other', 'Provider stopped the response for an unspecified reason: provider-specific']
-  ] as const)('surfaces the %s finish reason as an error', async (finishReason, message) => {
-    const events = await collectEvents(
-      [
-        {
-          type: 'finish',
-          finishReason,
-          rawFinishReason: finishReason === 'other' ? 'provider-specific' : finishReason,
-          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
-        }
-      ],
-      { supportsNativeTools: true }
-    )
+    [
+      'content-filter',
+      'Provider stopped the response because of content filtering.',
+      { code: 'content_filter', retryable: false }
+    ],
+    [
+      'error',
+      'Provider stopped the response because of an error.',
+      { code: 'provider_finish_error' }
+    ],
+    [
+      'other',
+      'Provider stopped the response for an unspecified reason: provider-specific',
+      { code: 'provider_finish_other' }
+    ]
+  ] as const)(
+    'surfaces the %s finish reason as an error',
+    async (finishReason, message, failure) => {
+      const events = await collectEvents(
+        [
+          {
+            type: 'finish',
+            finishReason,
+            rawFinishReason: finishReason === 'other' ? 'provider-specific' : finishReason,
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+          }
+        ],
+        { supportsNativeTools: true }
+      )
 
-    expect(events.slice(-2)).toEqual([
-      { type: 'error', error_message: message },
-      { type: 'stop', stop_reason: 'error' }
-    ])
-  })
+      expect(events.slice(-2)).toEqual([
+        { type: 'error', error_message: message, failure },
+        { type: 'stop', stop_reason: 'error' }
+      ])
+    }
+  )
 
   it('surfaces an SDK abort part as a provider error', async () => {
     const events = await collectEvents([{ type: 'abort', reason: 'upstream aborted' }], {
@@ -409,7 +425,43 @@ describe('AI SDK stream adapter', () => {
     })
 
     expect(events).toEqual([
-      { type: 'error', error_message: 'upstream aborted' },
+      {
+        type: 'error',
+        error_message: 'upstream aborted',
+        failure: { code: 'provider_stream_aborted' }
+      },
+      { type: 'stop', stop_reason: 'error' }
+    ])
+  })
+
+  it('preserves safe retry metadata from an AI SDK error part', async () => {
+    const error = new APICallError({
+      message: 'temporarily unavailable',
+      url: 'https://provider.example.com/chat',
+      requestBodyValues: { secret: 'request' },
+      statusCode: 503,
+      responseHeaders: {
+        'retry-after': '3',
+        authorization: 'Bearer secret'
+      },
+      responseBody: 'sensitive response',
+      isRetryable: true
+    })
+
+    const events = await collectEvents([{ type: 'error', error }], {
+      supportsNativeTools: true
+    })
+
+    expect(events).toEqual([
+      {
+        type: 'error',
+        error_message: 'temporarily unavailable',
+        failure: {
+          statusCode: 503,
+          retryable: true,
+          retryHeaders: { 'retry-after': '3' }
+        }
+      },
       { type: 'stop', stop_reason: 'error' }
     ])
   })

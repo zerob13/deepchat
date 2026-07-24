@@ -215,6 +215,30 @@ describe('AcpProvider runDebugAction error handling', () => {
     expect(prompt).not.toHaveBeenCalled()
   })
 
+  it('rethrows caller cancellation from the provider stream', async () => {
+    const { provider, prompt, cancel, resolveFirstPrompt } = createStandaloneProvider()
+    const controller = new AbortController()
+    const reason = new DOMException('Run aborted', 'AbortError')
+
+    const next = provider
+      .coreStream(
+        [{ role: 'user', content: 'prompt' }],
+        'agent1',
+        { conversationId: 'conversation-1' },
+        0.6,
+        1024,
+        [],
+        { signal: controller.signal }
+      )
+      .next()
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledOnce())
+    controller.abort(reason)
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce())
+    resolveFirstPrompt({ stopReason: 'cancelled' })
+
+    await expect(next).rejects.toBe(reason)
+  })
+
   it('returns error result when process manager is shutting down', async () => {
     const provider = Object.create(AcpProvider.prototype) as any
     provider.publishEvent = publishDeepchatEventMock
@@ -1110,7 +1134,8 @@ describe('AcpProvider runDebugAction error handling', () => {
       expect(cancel).toHaveBeenCalledWith({ sessionId: 'session-timeout' })
       expect(queue.push).toHaveBeenCalledWith({
         type: 'error',
-        error_message: 'ACP: Request timed out after 25ms'
+        error_message: 'ACP: Request timed out after 25ms',
+        failure: { code: 'provider_request_timeout' }
       })
       expect(queue.done).toHaveBeenCalledTimes(1)
     } finally {

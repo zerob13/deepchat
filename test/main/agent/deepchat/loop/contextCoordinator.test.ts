@@ -176,7 +176,8 @@ function createAttemptInput(options?: {
       provider: {
         stream: async function* (request: any) {
           order.push('provider')
-          providerRequests.push(structuredClone(request))
+          const { signal, ...serializableRequest } = request
+          providerRequests.push({ ...structuredClone(serializableRequest), signal })
           for (const event of providerEvents[providerAttempt++] ?? []) {
             yield event
           }
@@ -326,7 +327,8 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.providerRequests[0]).toMatchObject({
       identity: { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
       requestOrigin: 'chat',
-      attemptOrigin: 'initial'
+      attemptOrigin: 'initial',
+      signal: fixture.run.abortController.signal
     })
     expect(fixture.manifests[0]).toMatchObject({
       requestSeq: 1,

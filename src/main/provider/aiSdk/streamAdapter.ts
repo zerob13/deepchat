@@ -2,6 +2,7 @@ import { createStreamEvent, type LLMCoreStreamEvent } from '@shared/types/core/l
 import type { ChatMessageProviderOptions } from '@shared/types/core/chat-message'
 import type { ToolSet, TextStreamPart } from 'ai'
 import { parseLegacyFunctionCalls } from './toolProtocol'
+import { extractProviderFailureMetadata } from '../providerFailure'
 
 const FUNCTION_CALL_TAG = '<function_call>'
 const FUNCTION_CALL_CLOSE_TAG = '</function_call>'
@@ -233,17 +234,21 @@ export async function* adaptAiSdkStream(
             break
           case 'content-filter':
             yield createStreamEvent.error(
-              'Provider stopped the response because of content filtering.'
+              'Provider stopped the response because of content filtering.',
+              { code: 'content_filter', retryable: false }
             )
             yield createStreamEvent.stop('error')
             break
           case 'error':
-            yield createStreamEvent.error('Provider stopped the response because of an error.')
+            yield createStreamEvent.error('Provider stopped the response because of an error.', {
+              code: 'provider_finish_error'
+            })
             yield createStreamEvent.stop('error')
             break
           case 'other':
             yield createStreamEvent.error(
-              `Provider stopped the response for an unspecified reason${part.rawFinishReason ? `: ${part.rawFinishReason}` : '.'}`
+              `Provider stopped the response for an unspecified reason${part.rawFinishReason ? `: ${part.rawFinishReason}` : '.'}`,
+              { code: 'provider_finish_other' }
             )
             yield createStreamEvent.stop('error')
             break
@@ -252,13 +257,16 @@ export async function* adaptAiSdkStream(
       }
 
       case 'abort':
-        yield createStreamEvent.error(part.reason?.trim() || 'Provider stream aborted.')
+        yield createStreamEvent.error(part.reason?.trim() || 'Provider stream aborted.', {
+          code: 'provider_stream_aborted'
+        })
         yield createStreamEvent.stop('error')
         break
 
       case 'error':
         yield createStreamEvent.error(
-          part.error instanceof Error ? part.error.message : String(part.error)
+          part.error instanceof Error ? part.error.message : String(part.error),
+          extractProviderFailureMetadata(part.error)
         )
         yield createStreamEvent.stop('error')
         break

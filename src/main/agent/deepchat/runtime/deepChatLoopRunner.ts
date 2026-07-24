@@ -652,7 +652,8 @@ export class DeepChatLoopRunner {
                 modelConfig,
                 temperature,
                 maxTokens,
-                tools
+                tools,
+                signal
               }) => {
                 const attemptModelConfig = traceEnabled
                   ? (Object.assign({}, modelConfig, {
@@ -680,7 +681,8 @@ export class DeepChatLoopRunner {
                   attemptModelConfig,
                   temperature,
                   maxTokens,
-                  tools
+                  tools,
+                  { signal }
                 )
               },
               beforeStream: () => {

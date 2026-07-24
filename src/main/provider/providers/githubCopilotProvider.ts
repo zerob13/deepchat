@@ -4,7 +4,12 @@ import type { LLMResponse } from '@shared/types/provider'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/mcp'
-import type { LLM_PROVIDER, MODEL_META, ModelConfig } from '@shared/types/provider'
+import type {
+  LLM_PROVIDER,
+  MODEL_META,
+  ModelConfig,
+  ProviderStreamOptions
+} from '@shared/types/provider'
 import {
   BaseLLMProvider,
   SUMMARY_TITLES_PROMPT,
@@ -16,6 +21,7 @@ import {
   getGlobalGitHubCopilotDeviceFlow,
   GitHubCopilotDeviceFlow
 } from '../../provider/auth/githubCopilotDeviceFlow'
+import { createProviderHttpErrorFromResponse, ProviderHttpError } from '../providerFailure'
 
 // 扩展RequestInit类型以支持agent属性
 interface RequestInitWithAgent extends RequestInit {
@@ -86,6 +92,32 @@ export class GithubCopilotProvider extends BaseLLMProvider {
     this.deviceFlow = newDeviceFlow
   }
 
+  private createChatHttpError(response: Response): ProviderHttpError {
+    const code = 'github_copilot_chat_http_error'
+    if (response.status !== 403) {
+      return createProviderHttpErrorFromResponse(
+        `GitHub Copilot API error: ${response.status} ${response.statusText}`,
+        response,
+        code
+      )
+    }
+
+    return createProviderHttpErrorFromResponse(
+      `GitHub Copilot 访问被拒绝 (403)。\n\n可能的原因：\n` +
+        `1. GitHub Copilot 订阅已过期或未激活\n` +
+        `2. 需要重新认证以获取正确的访问权限\n` +
+        `3. API访问策略已更新，需要使用最新的认证方式\n` +
+        `4. 您的账户可能没有访问此API的权限\n\n` +
+        `建议解决方案：\n` +
+        `- 访问 https://github.com/settings/copilot 检查订阅状态\n` +
+        `- 在DeepChat设置中重新进行 GitHub Copilot 登录\n` +
+        `- 确保您的 GitHub 账户有有效的 Copilot 订阅\n` +
+        `- 如果是企业账户，请联系管理员确认访问权限`,
+      response,
+      code
+    )
+  }
+
   private async getCopilotToken(signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted()
     // 优先使用设备流获取 token
@@ -153,7 +185,11 @@ export class GithubCopilotProvider extends BaseLLMProvider {
 4. 如果是组织账户，请确保组织已启用 Copilot 并且您有访问权限`
         }
 
-        throw new Error(errorMessage)
+        throw createProviderHttpErrorFromResponse(
+          errorMessage,
+          response,
+          'github_copilot_token_http_error'
+        )
       }
 
       const data: CopilotTokenResponse = await response.json()
@@ -421,10 +457,11 @@ export class GithubCopilotProvider extends BaseLLMProvider {
     modelConfig: ModelConfig,
     temperature: number,
     _maxTokens: number,
-    tools: MCPToolDefinition[]
+    tools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent, void, unknown> {
     if (!modelId) throw new Error('Model ID is required')
-    const { signal, dispose } = this.createModelRequestSignal(modelConfig)
+    const { signal, dispose } = this.createModelRequestSignal(modelConfig, options?.signal)
     try {
       const token = await this.getCopilotToken(signal)
       const formattedMessages = this.formatMessages(messages)
@@ -485,32 +522,7 @@ export class GithubCopilotProvider extends BaseLLMProvider {
       logger.info(`   OK: ${response.ok}`)
 
       if (!response.ok) {
-        let errorBody = ''
-        try {
-          errorBody = await response.text()
-        } catch {
-          // ignore
-        }
-
-        // 特殊处理403错误
-        if (response.status === 403) {
-          throw new Error(
-            `GitHub Copilot 访问被拒绝 (403)。\n\n可能的原因：\n` +
-              `1. GitHub Copilot 订阅已过期或未激活\n` +
-              `2. 需要重新认证以获取正确的访问权限\n` +
-              `3. API访问策略已更新，需要使用最新的认证方式\n` +
-              `4. 您的账户可能没有访问此API的权限\n\n` +
-              `建议解决方案：\n` +
-              `- 访问 https://github.com/settings/copilot 检查订阅状态\n` +
-              `- 在DeepChat设置中重新进行 GitHub Copilot 登录\n` +
-              `- 确保您的 GitHub 账户有有效的 Copilot 订阅\n` +
-              `- 如果是企业账户，请联系管理员确认访问权限`
-          )
-        }
-
-        throw new Error(
-          `GitHub Copilot API error: ${response.status} ${response.statusText} - ${errorBody}`
-        )
+        throw this.createChatHttpError(response)
       }
 
       if (!response.body) {
@@ -535,7 +547,10 @@ export class GithubCopilotProvider extends BaseLLMProvider {
             if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue
 
             const data = trimmedLine.slice(6)
-            if (data === '[DONE]') return
+            if (data === '[DONE]') {
+              yield { type: 'stop', stop_reason: 'complete' }
+              return
+            }
 
             try {
               const parsed = JSON.parse(data)
@@ -657,32 +672,7 @@ export class GithubCopilotProvider extends BaseLLMProvider {
       logger.info(`   OK: ${response.ok}`)
 
       if (!response.ok) {
-        let errorBody = ''
-        try {
-          errorBody = await response.text()
-        } catch {
-          // ignore
-        }
-
-        // 特殊处理403错误
-        if (response.status === 403) {
-          throw new Error(
-            `GitHub Copilot 访问被拒绝 (403)。\n\n可能的原因：\n` +
-              `1. GitHub Copilot 订阅已过期或未激活\n` +
-              `2. 需要重新认证以获取正确的访问权限\n` +
-              `3. API访问策略已更新，需要使用最新的认证方式\n` +
-              `4. 您的账户可能没有访问此API的权限\n\n` +
-              `建议解决方案：\n` +
-              `- 访问 https://github.com/settings/copilot 检查订阅状态\n` +
-              `- 在DeepChat设置中重新进行 GitHub Copilot 登录\n` +
-              `- 确保您的 GitHub 账户有有效的 Copilot 订阅\n` +
-              `- 如果是企业账户，请联系管理员确认访问权限`
-          )
-        }
-
-        throw new Error(
-          `GitHub Copilot API error: ${response.status} ${response.statusText} - ${errorBody}`
-        )
+        throw this.createChatHttpError(response)
       }
 
       const data = await response.json()

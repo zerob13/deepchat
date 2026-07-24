@@ -223,6 +223,10 @@ export type RateLimitQueueSnapshot = {
   estimatedWaitTime: number
 }
 
+export interface ProviderStreamOptions {
+  signal?: AbortSignal
+}
+
 export interface ProviderRuntimePort {
   getProviders(): LLM_PROVIDER[]
   getProviderById(id: string): LLM_PROVIDER
@@ -233,7 +237,8 @@ export interface ProviderRuntimePort {
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
-    tools: MCPToolDefinition[]
+    tools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent>
   getModelList(providerId: string): Promise<MODEL_META[]>
   updateModelStatus(providerId: string, modelId: string, enabled: boolean): Promise<void>

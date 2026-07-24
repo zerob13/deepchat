@@ -154,6 +154,7 @@ describe('AI SDK runtime', () => {
     expect(mockEmbedMany).toHaveBeenCalledWith(
       expect.objectContaining({
         values: texts,
+        maxRetries: 2,
         maxParallelCalls: 2,
         abortSignal: controller.signal,
         model: expect.objectContaining({ maxEmbeddingsPerCall: 10 })
@@ -348,7 +349,7 @@ describe('AI SDK runtime', () => {
     )
 
     expect(mockGenerateText).toHaveBeenCalledWith(
-      expect.objectContaining({ abortSignal: controller.signal })
+      expect.objectContaining({ abortSignal: controller.signal, maxRetries: 2 })
     )
   })
 
@@ -446,6 +447,7 @@ describe('AI SDK runtime', () => {
 
     const request = mockStreamText.mock.calls[0]?.[0] as Record<string, unknown>
     expect(request).toMatchObject({
+      maxRetries: 0,
       instructions: 'First instruction\n\nSecond instruction',
       allowSystemInMessages: false,
       messages: [
@@ -696,6 +698,7 @@ describe('AI SDK runtime', () => {
 
     expect(mockGenerateImage).toHaveBeenCalledWith(
       expect.objectContaining({
+        maxRetries: 0,
         prompt: 'draw a cat\nwith neon lights\nin the rain\n\ncinematic'
       })
     )

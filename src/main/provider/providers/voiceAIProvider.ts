@@ -3,10 +3,19 @@ import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMResponse } from '@shared/types/provider'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/mcp'
-import type { LLM_PROVIDER, MODEL_META, ModelConfig } from '@shared/types/provider'
+import type {
+  LLM_PROVIDER,
+  MODEL_META,
+  ModelConfig,
+  ProviderStreamOptions
+} from '@shared/types/provider'
 import { DEFAULT_MODEL_CONTEXT_LENGTH, DEFAULT_MODEL_MAX_TOKENS } from '@shared/modelConfigDefaults'
 import { createStreamEvent } from '@shared/types/core/llm-events'
 import { BaseLLMProvider, type ProviderGenerateTextOptions } from '../baseProvider'
+import {
+  createProviderHttpErrorFromResponse,
+  extractProviderFailureMetadata
+} from '../providerFailure'
 import type { ProviderLocalePort } from '../ports'
 import { proxyConfig } from '../../platform/proxy'
 import { ProxyAgent } from 'undici'
@@ -171,8 +180,10 @@ export class VoiceAIProvider extends BaseLLMProvider {
     modelConfig: ModelConfig,
     temperature: number,
     _maxTokens: number,
-    _mcpTools: MCPToolDefinition[]
+    _mcpTools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent> {
+    options?.signal?.throwIfAborted()
     const text = this.extractLatestUserText(messages)
     if (!text) {
       yield createStreamEvent.error('No user text provided for Voice.ai TTS')
@@ -185,7 +196,8 @@ export class VoiceAIProvider extends BaseLLMProvider {
         text,
         modelId,
         temperature,
-        modelConfig
+        modelConfig,
+        options?.signal
       )
 
       yield createStreamEvent.imageData({
@@ -195,8 +207,9 @@ export class VoiceAIProvider extends BaseLLMProvider {
 
       yield createStreamEvent.stop('complete')
     } catch (error: unknown) {
+      options?.signal?.throwIfAborted()
       const message = error instanceof Error ? error.message : String(error)
-      yield createStreamEvent.error(message)
+      yield createStreamEvent.error(message, extractProviderFailureMetadata(error))
       yield createStreamEvent.stop('error')
     }
   }
@@ -338,8 +351,11 @@ export class VoiceAIProvider extends BaseLLMProvider {
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Voice.ai audio fetch failed: ${response.status} ${errorText}`)
+      throw createProviderHttpErrorFromResponse(
+        `Voice.ai audio fetch failed: ${response.status} ${response.statusText}`,
+        response,
+        'voiceai_audio_http_error'
+      )
     }
 
     const contentType = response.headers.get('content-type')?.split(';')[0]?.trim()
@@ -410,8 +426,11 @@ export class VoiceAIProvider extends BaseLLMProvider {
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Voice.ai list voices failed: ${response.status} ${errorText}`)
+      throw createProviderHttpErrorFromResponse(
+        `Voice.ai list voices failed: ${response.status} ${response.statusText}`,
+        response,
+        'voiceai_voices_http_error'
+      )
     }
 
     const data = await response.json()
@@ -469,8 +488,11 @@ export class VoiceAIProvider extends BaseLLMProvider {
       })
 
       if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(`Voice.ai generate speech failed: ${response.status} ${errorText}`)
+        throw createProviderHttpErrorFromResponse(
+          `Voice.ai generate speech failed: ${response.status} ${response.statusText}`,
+          response,
+          'voiceai_speech_http_error'
+        )
       }
 
       const contentType = response.headers.get('content-type')?.split(';')[0]?.trim()

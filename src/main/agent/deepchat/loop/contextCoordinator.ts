@@ -156,6 +156,7 @@ export interface ProviderAttemptStreamPort {
     temperature: number
     maxTokens: number
     tools: MCPToolDefinition[]
+    signal: AbortSignal
   }): AsyncGenerator<LLMCoreStreamEvent>
   beforeStream(): void
 }
@@ -523,7 +524,8 @@ export class DeepChatContextCoordinator {
             modelConfig: input.modelConfig,
             temperature: input.temperature,
             maxTokens: providerMaxTokens,
-            tools: input.tools
+            tools: input.tools,
+            signal: input.run.abortController.signal
           })) {
             if (event.type === 'usage') {
               usage = {

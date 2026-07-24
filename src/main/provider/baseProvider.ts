@@ -1,5 +1,5 @@
 import type { ProviderSettingsPort } from '@/provider/settings'
-import type { LLMResponse } from '@shared/types/provider'
+import type { LLMResponse, ProviderStreamOptions } from '@shared/types/provider'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/mcp'
@@ -97,18 +97,13 @@ export abstract class BaseLLMProvider {
     return Math.round(timeout)
   }
 
-  protected createRequestAbortError(message: string): Error {
-    if (typeof DOMException !== 'undefined') {
-      return new DOMException(message, 'AbortError')
-    }
-
-    const error = new Error(message)
-    error.name = 'AbortError'
-    return error
-  }
-
   protected createModelRequestTimeoutError(timeoutMs: number): Error {
-    return this.createRequestAbortError(`Request timed out after ${timeoutMs}ms`)
+    const error = new Error(`Request timed out after ${timeoutMs}ms`) as Error & {
+      code: string
+    }
+    error.name = 'AbortError'
+    error.code = 'provider_request_timeout'
+    return error
   }
 
   protected createAudioTranscriptionNotSupportedError(): Error {
@@ -747,7 +742,8 @@ ${this.convertToolsToXml(tools)}
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
-    tools: MCPToolDefinition[]
+    tools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent>
 
   /**

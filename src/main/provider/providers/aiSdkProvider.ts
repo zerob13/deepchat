@@ -33,6 +33,7 @@ import type {
   LLM_PROVIDER,
   MODEL_META,
   ModelConfig,
+  ProviderStreamOptions,
   VERTEX_PROVIDER
 } from '@shared/types/provider'
 import { BedrockClient, ListFoundationModelsCommand } from '@aws-sdk/client-bedrock'
@@ -2766,9 +2767,18 @@ export class AiSdkProvider extends BaseLLMProvider {
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
-    tools: MCPToolDefinition[]
+    tools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent> {
-    yield* this.streamText(messages, modelId, modelConfig, temperature, maxTokens, tools)
+    yield* this.streamText(
+      messages,
+      modelId,
+      modelConfig,
+      temperature,
+      maxTokens,
+      tools,
+      options?.signal
+    )
   }
 
   private getEmbeddingStrategy(): AiSdkEmbeddingStrategy {

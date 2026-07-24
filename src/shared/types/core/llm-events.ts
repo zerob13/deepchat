@@ -60,9 +60,19 @@ export interface PermissionRequestEvent {
   permission: PermissionRequestPayload
 }
 
+export type ProviderRetryHeaderName = 'retry-after' | 'retry-after-ms' | 'x-should-retry'
+
+export interface ProviderFailureMetadata {
+  statusCode?: number
+  code?: string
+  retryable?: boolean
+  retryHeaders?: Partial<Record<ProviderRetryHeaderName, string>>
+}
+
 export interface ErrorStreamEvent {
   type: 'error'
   error_message: string
+  failure?: ProviderFailureMetadata
 }
 
 export interface UsageStreamEvent {
@@ -207,7 +217,11 @@ export const createStreamEvent = {
     type: 'permission',
     permission
   }),
-  error: (error_message: string): ErrorStreamEvent => ({ type: 'error', error_message }),
+  error: (error_message: string, failure?: ProviderFailureMetadata): ErrorStreamEvent => ({
+    type: 'error',
+    error_message,
+    ...(failure ? { failure } : {})
+  }),
   usage: (usage: {
     prompt_tokens: number
     completion_tokens: number

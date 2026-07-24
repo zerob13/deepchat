@@ -52,10 +52,21 @@ describe('LLMCoreStreamEvent Factory Functions', () => {
 
     it('should create error events correctly', () => {
       const errorMessage = 'Something went wrong'
-      const event = createStreamEvent.error(errorMessage)
+      const event = createStreamEvent.error(errorMessage, {
+        statusCode: 429,
+        code: 'rate_limit_exceeded',
+        retryable: true,
+        retryHeaders: { 'retry-after': '2' }
+      })
 
       expect(event.type).toBe('error')
       expect(event.error_message).toBe(errorMessage)
+      expect(event.failure).toEqual({
+        statusCode: 429,
+        code: 'rate_limit_exceeded',
+        retryable: true,
+        retryHeaders: { 'retry-after': '2' }
+      })
       expect(isErrorEvent(event)).toBe(true)
     })
 

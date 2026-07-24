@@ -12,7 +12,12 @@ import type { AgentSettingsPort } from '@/agent/settings'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMResponse } from '@shared/types/provider'
 import type { MCPToolDefinition } from '@shared/types/mcp'
-import type { MODEL_META, ModelConfig, LLM_PROVIDER } from '@shared/types/provider'
+import type {
+  MODEL_META,
+  ModelConfig,
+  LLM_PROVIDER,
+  ProviderStreamOptions
+} from '@shared/types/provider'
 import type {
   AcpAgentConfig,
   AcpConfigState,
@@ -44,6 +49,7 @@ import { nanoid } from 'nanoid'
 import { resolveAcpAgentAlias } from '@shared/utils/acpAgentAlias'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
+import { extractProviderFailureMetadata } from '../providerFailure'
 
 type EventQueue = {
   push: (event: LLMCoreStreamEvent | null) => void
@@ -361,8 +367,9 @@ export class AcpProvider extends BaseLLMProvider {
     _temperature: number,
     _maxTokens: number,
     _tools: MCPToolDefinition[],
-    signal?: AbortSignal
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent> {
+    const signal = options?.signal
     signal?.throwIfAborted()
     const queue = this.createEventQueue()
     let session: AcpSessionRecord | null = null
@@ -416,9 +423,10 @@ export class AcpProvider extends BaseLLMProvider {
         }
       }
     } catch (error) {
+      signal?.throwIfAborted()
       const message =
         error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unknown error'
-      queue.push(createStreamEvent.error(`ACP: ${message}`))
+      queue.push(createStreamEvent.error(`ACP: ${message}`, extractProviderFailureMetadata(error)))
       queue.done()
     }
 
@@ -428,6 +436,7 @@ export class AcpProvider extends BaseLLMProvider {
         if (event === null) break
         yield event
       }
+      signal?.throwIfAborted()
     } finally {
       if (session) {
         if (this.promptController.getActiveTurn(session.sessionId)) {
@@ -1264,7 +1273,7 @@ export class AcpProvider extends BaseLLMProvider {
         message,
         payload: error instanceof Error ? { name: error.name, stack: error.stack } : error
       })
-      queue.push(createStreamEvent.error(`ACP: ${message}`))
+      queue.push(createStreamEvent.error(`ACP: ${message}`, extractProviderFailureMetadata(error)))
     } finally {
       disposeRequestSignal()
       queue.done()
@@ -1502,7 +1511,7 @@ export class AcpProvider extends BaseLLMProvider {
         temperature,
         maxTokens,
         [],
-        signal
+        { signal }
       )) {
         logger.info('[ACP] collectFromStream: chunk:', chunk)
         if (chunk.type === 'text' && chunk.content) {

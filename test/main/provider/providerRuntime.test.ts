@@ -239,6 +239,7 @@ describe('ProviderRuntime Integration Tests', () => {
       const stream = (async function* () {})()
       const coreStream = vi.spyOn(provider, 'coreStream').mockReturnValue(stream)
       const messages: ChatMessage[] = [{ role: 'user', content: 'hello' }]
+      const signal = new AbortController().signal
       const modelConfig = mockProviderSettings.getModelConfig(
         'mock-gpt-thinking',
         'mock-openai-api'
@@ -252,7 +253,8 @@ describe('ProviderRuntime Integration Tests', () => {
           modelConfig,
           0.7,
           100,
-          []
+          [],
+          { signal }
         )
       ).toBe(stream)
       expect(coreStream).toHaveBeenCalledWith(
@@ -261,7 +263,8 @@ describe('ProviderRuntime Integration Tests', () => {
         modelConfig,
         0.7,
         100,
-        []
+        [],
+        { signal }
       )
     })
 
@@ -470,6 +473,7 @@ describe('ProviderRuntime Integration Tests', () => {
           { signal: abortController.signal }
         )
         await vi.waitFor(() => expect(coreStreamSpy).toHaveBeenCalledOnce())
+        expect(coreStreamSpy.mock.calls[0]?.[6]).toEqual({ signal: abortController.signal })
         abortController.abort()
 
         await expect(generating).rejects.toMatchObject({ name: 'AbortError' })

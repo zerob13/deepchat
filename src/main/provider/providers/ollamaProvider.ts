@@ -9,6 +9,7 @@ import type {
   MODEL_META,
   ModelConfig,
   OllamaModel,
+  ProviderStreamOptions,
   ProgressResponse
 } from '@shared/types/provider'
 import { ModelType } from '@shared/model'
@@ -729,7 +730,8 @@ export class OllamaProvider extends BaseLLMProvider {
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
-    mcpTools: MCPToolDefinition[]
+    mcpTools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent> {
     yield* runAiSdkCoreStream(
       this.getAiSdkRuntimeContext(),
@@ -738,7 +740,8 @@ export class OllamaProvider extends BaseLLMProvider {
       modelConfig,
       temperature,
       maxTokens,
-      mcpTools
+      mcpTools,
+      options?.signal
     )
   }
 
