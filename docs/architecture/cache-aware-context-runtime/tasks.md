@@ -48,8 +48,23 @@
 
 ## Final Validation
 
-- [ ] Run `pnpm run format`, `pnpm run i18n`, and `pnpm run lint`.
-- [ ] Run `pnpm run typecheck`, `pnpm test`, and `pnpm run build`.
-- [ ] Review any expected generated registry refresh.
-- [ ] Review the complete `dev...HEAD` diff by severity and fix every finding.
-- [ ] Confirm the working tree contains no unexpected files and no push occurred.
+- [x] Run `pnpm run format`, `pnpm run i18n`, and `pnpm run lint`.
+- [x] Run `pnpm run typecheck`, `pnpm test`, and `pnpm run build`.
+- [x] Review any expected generated registry refresh.
+- [x] Review the complete `dev...HEAD` diff by severity and fix every finding.
+- [x] Confirm the working tree contains no unexpected files and no push occurred.
+
+## Validation Result
+
+- `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, `pnpm run typecheck`, and
+  `pnpm run build` completed successfully.
+- The final focused context/runtime suite completed with 319 passing tests.
+- The full `pnpm test` run completed with 6,505 passing and 2 skipped tests. Its nine failures
+  exactly match the clean `dev` baseline: six in `test/main/data/mainDatabase.test.ts`, two in
+  `test/main/app/startupMigrations/sessionDataMigrations.sqlite.test.ts`, and one in
+  `test/main/scheduler/schedulerService.test.ts`.
+- The generated provider and ACP registries were reviewed semantically and reproduced without a
+  working-tree diff during the final build.
+- The final P0-P3 branch review has no remaining findings. Review findings were fixed and
+  revalidated before their commits.
+- The final branch is clean, has no configured upstream, and was not pushed.
