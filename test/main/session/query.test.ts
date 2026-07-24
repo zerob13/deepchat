@@ -232,6 +232,8 @@ describe('SessionQuery', () => {
         provider_id: 'openai',
         model_id: 'gpt-4',
         request_seq: 2,
+        logical_round: 1,
+        physical_attempt: 2,
         endpoint: '/responses',
         headers_json: '{}',
         body_json: '{}',

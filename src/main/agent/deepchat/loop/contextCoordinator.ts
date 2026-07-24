@@ -1,9 +1,16 @@
 import type { LoopRun } from './loopRun'
-import { advanceRequestSequence } from './loopRun'
+import { advanceRequestSequence, enterPhysicalAttempt } from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent, ProviderRoundStopReason } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
+import type {
+  DeepChatProviderAttemptIdentity,
+  DeepChatProviderAttemptOrigin,
+  DeepChatProviderFailureClassification,
+  DeepChatProviderRequestOrigin,
+  DeepChatProviderRetryDecision
+} from '@shared/types/provider-attempt'
 import type {
   DeepChatTapeViewPolicy,
   DeepChatTapeViewSyntheticContribution,
@@ -140,6 +147,9 @@ export interface ProviderRateGatePort {
 
 export interface ProviderAttemptStreamPort {
   stream(input: {
+    identity: DeepChatProviderAttemptIdentity
+    requestOrigin: DeepChatProviderRequestOrigin
+    attemptOrigin: DeepChatProviderAttemptOrigin
     messages: ChatMessage[]
     modelId: string
     modelConfig: ModelConfig
@@ -147,14 +157,22 @@ export interface ProviderAttemptStreamPort {
     maxTokens: number
     tools: MCPToolDefinition[]
   }): AsyncGenerator<LLMCoreStreamEvent>
-  assertAvailable?(): void
   beforeStream(): void
 }
 
 export interface ProviderAttemptOutcomeInput {
+  logicalRound: number
   requestSeq: number
+  physicalAttempt: number
+  requestOrigin: DeepChatProviderRequestOrigin
+  attemptOrigin: DeepChatProviderAttemptOrigin
   status: 'completed' | 'context_overflow' | 'aborted' | 'error'
   stopReason: ProviderRoundStopReason | null
+  failureClassification: DeepChatProviderFailureClassification | null
+  retryDecision: DeepChatProviderRetryDecision
+  httpStatus: number | null
+  errorCode: string | null
+  retryDelayMs: number | null
   usage: {
     inputTokens: number
     outputTokens: number
@@ -162,6 +180,15 @@ export interface ProviderAttemptOutcomeInput {
     cacheReadTokens?: number
     cacheWriteTokens?: number
   } | null
+}
+
+function resolveProviderFailureClassification(input: {
+  status: ProviderAttemptOutcomeInput['status']
+}): DeepChatProviderFailureClassification | null {
+  if (input.status === 'completed') return null
+  if (input.status === 'context_overflow') return 'context_overflow'
+  if (input.status === 'aborted') return 'aborted'
+  return 'unknown'
 }
 
 export interface ProviderAttemptOutcomePort {
@@ -271,11 +298,16 @@ export class DeepChatContextCoordinator {
     let providerOverflowRecoveryAttempted = false
     let providerContextOverflowRecoveryApplied = false
     let strictProviderOverflowRetryPending = false
+    let nextRequestOrigin: DeepChatProviderRequestOrigin =
+      input.run.requestSeq === input.run.initialRequestSeq
+        ? (input.viewContext?.taskType ?? 'tool_loop')
+        : 'tool_loop'
     let manifestSummaryCursorOrderSeq = input.viewContext?.summaryCursorOrderSeq ?? 1
     let manifestSyntheticContributions = input.viewContext?.syntheticContributions
     const effectiveRequestToolReserveTokens = input.budget.estimateToolReserveTokens(input.tools)
 
-    const prepareProviderAttempt = async (options?: {
+    const prepareProviderRequest = async (options: {
+      requestOrigin: DeepChatProviderRequestOrigin
       strictProviderOverflowRetry?: boolean
     }): Promise<{
       providerMessages: ChatMessage[]
@@ -288,11 +320,11 @@ export class DeepChatContextCoordinator {
       let manifestReserveTokens = input.maxTokens
       let strictExtraReserveTokens = 0
       let recoveredFromContextPressure =
-        providerContextOverflowRecoveryApplied || options?.strictProviderOverflowRetry === true
+        providerContextOverflowRecoveryApplied || options.strictProviderOverflowRetry === true
 
       if (!input.bypassContextBudget) {
         let requestedMaxTokens = input.maxTokens
-        if (options?.strictProviderOverflowRetry) {
+        if (options.strictProviderOverflowRetry) {
           input.run.providerRecovery.strictProviderOverflowRetryUsed = true
           requestedMaxTokens = input.budget.getStrictRetryMaxTokens(input.maxTokens)
           strictExtraReserveTokens = input.budget.getStrictRetryExtraReserve()
@@ -313,7 +345,7 @@ export class DeepChatContextCoordinator {
           requestedMaxTokens
         })
         if (
-          !options?.strictProviderOverflowRetry &&
+          !options.strictProviderOverflowRetry &&
           (requestPreflight.requiresContextPressureRecovery || !requestPreflight.fitsWithinContext)
         ) {
           preflightContextRecoveryAttempted = true
@@ -358,7 +390,9 @@ export class DeepChatContextCoordinator {
 
       const requestSeq = advanceRequestSequence(input.run)
       const isInitialViewRequest =
-        requestSeq === input.run.initialRequestSeq + 1 && Boolean(input.viewContext)
+        (options.requestOrigin === 'chat' || options.requestOrigin === 'resume') &&
+        requestSeq === input.run.initialRequestSeq + 1 &&
+        Boolean(input.viewContext)
       const manifestPolicy = input.manifest.resolvePolicy({
         recoveredFromContextPressure,
         isInitialViewRequest,
@@ -447,10 +481,11 @@ export class DeepChatContextCoordinator {
 
     try {
       providerAttemptLoop: for (;;) {
-        input.provider.assertAvailable?.()
         const strictProviderOverflowRetry = strictProviderOverflowRetryPending
         strictProviderOverflowRetryPending = false
-        const { providerMessages, providerMaxTokens, requestSeq } = await prepareProviderAttempt({
+        const requestOrigin = nextRequestOrigin
+        const { providerMessages, providerMaxTokens, requestSeq } = await prepareProviderRequest({
+          requestOrigin,
           strictProviderOverflowRetry
         })
 
@@ -462,6 +497,14 @@ export class DeepChatContextCoordinator {
         }
 
         input.provider.beforeStream()
+        const physicalAttempt = enterPhysicalAttempt(input.run)
+        const attemptOrigin: DeepChatProviderAttemptOrigin =
+          physicalAttempt === 1 ? 'initial' : 'transient_retry'
+        const identity: DeepChatProviderAttemptIdentity = {
+          logicalRound: input.run.logicalRound,
+          requestSeq,
+          physicalAttempt
+        }
         let yieldedProviderEvent = false
         let contextOverflowObserved = false
         let providerThrew = false
@@ -469,8 +512,12 @@ export class DeepChatContextCoordinator {
         let sawErrorEvent = false
         let stopReason: ProviderRoundStopReason | null = null
         let usage: ProviderAttemptOutcomeInput['usage'] = null
+        let retryDecision: DeepChatProviderRetryDecision = 'none'
         try {
           for await (const event of input.provider.stream({
+            identity,
+            requestOrigin,
+            attemptOrigin,
             messages: providerMessages,
             modelId: input.modelId,
             modelConfig: input.modelConfig,
@@ -508,20 +555,24 @@ export class DeepChatContextCoordinator {
                 input.run.providerRecovery.strictProviderOverflowRetryUsed ||
                 providerOverflowRecoveryAttempted
               ) {
+                retryDecision = 'context_recovery_exhausted'
                 throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
               }
               if (
                 preflightContextRecoveryAttempted ||
                 input.run.providerRecovery.contextOverflowHandoffAttempted
               ) {
-                input.provider.assertAvailable?.()
                 if (!scheduleStrictProviderOverflowRetry()) {
+                  retryDecision = 'context_recovery_exhausted'
                   throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
                 }
+                retryDecision = 'context_recovery_scheduled'
+                nextRequestOrigin = 'context_recovery'
                 continue providerAttemptLoop
               }
-              input.provider.assertAvailable?.()
               await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
+              retryDecision = 'context_recovery_scheduled'
+              nextRequestOrigin = 'context_recovery'
               continue providerAttemptLoop
             }
             yieldedProviderEvent = true
@@ -541,22 +592,27 @@ export class DeepChatContextCoordinator {
               input.run.providerRecovery.strictProviderOverflowRetryUsed ||
               providerOverflowRecoveryAttempted
             ) {
+              retryDecision = 'context_recovery_exhausted'
               throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
             }
             if (
               preflightContextRecoveryAttempted ||
               input.run.providerRecovery.contextOverflowHandoffAttempted
             ) {
-              input.provider.assertAvailable?.()
               if (!scheduleStrictProviderOverflowRetry()) {
+                retryDecision = 'context_recovery_exhausted'
                 throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
               }
+              retryDecision = 'context_recovery_scheduled'
+              nextRequestOrigin = 'context_recovery'
               continue providerAttemptLoop
             }
-            input.provider.assertAvailable?.()
             await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
+            retryDecision = 'context_recovery_scheduled'
+            nextRequestOrigin = 'context_recovery'
             continue providerAttemptLoop
           }
+          retryDecision = 'not_retryable'
           throw error
         } finally {
           const status = resolveProviderAttemptStatus({
@@ -568,11 +624,24 @@ export class DeepChatContextCoordinator {
             signalAborted: input.run.abortController.signal.aborted,
             isAbortError: input.isAbortError
           })
+          const failureClassification = resolveProviderFailureClassification({ status })
           try {
             input.outcome.append({
+              logicalRound: identity.logicalRound,
               requestSeq,
+              physicalAttempt,
+              requestOrigin,
+              attemptOrigin,
               status,
               stopReason,
+              failureClassification,
+              retryDecision:
+                failureClassification !== null && retryDecision === 'none'
+                  ? 'not_retryable'
+                  : retryDecision,
+              httpStatus: null,
+              errorCode: null,
+              retryDelayMs: null,
               usage
             })
           } catch (error) {

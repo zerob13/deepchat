@@ -2137,8 +2137,9 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(callArgs.run).toMatchObject({
         sessionId: 's1',
         messageId: 'mock-msg-id',
+        logicalRound: 0,
         requestSeq: 0,
-        providerRoundCount: 0
+        physicalAttempt: 0
       })
       expect(
         sqlitePresenter.deepchatMessagesTable.insert.mock.calls.some(
@@ -3146,6 +3147,8 @@ describe('DeepChatRuntimeCoordinator', () => {
       await agent.processMessage('s1', 'Hello')
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      callArgs.run.logicalRound = 1
 
       for await (const _event of callArgs.coreStream(
         callArgs.run.messages,
@@ -3164,13 +3167,14 @@ describe('DeepChatRuntimeCoordinator', () => {
         .map((row: any) => JSON.parse(row.payload_json).data.manifest)
       expect(manifests.at(-1).requestSeq).toBe(2)
 
-      await callArgs.modelConfig.requestTraceContext.persist({
+      const attemptModelConfig = providerCoreStream.mock.calls.at(-1)?.[2]
+      await attemptModelConfig.requestTraceContext.persist({
         endpoint: 'https://api.openai.com/v1/responses',
         headers: {},
         body: {}
       })
       const inserted = sqlitePresenter.deepchatMessageTracesTable.insert.mock.calls.at(-1)?.[0]
-      expect(inserted.requestSeq).toBe(2)
+      expect(inserted).toMatchObject({ requestSeq: 2, logicalRound: 1, physicalAttempt: 1 })
     })
 
     it('recovers requestSeq from an outcome when prior manifest and trace writes were lost', async () => {
@@ -4731,7 +4735,22 @@ describe('DeepChatRuntimeCoordinator', () => {
       await agent.processMessage('s1', 'Hello')
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
-      const traceContext = callArgs.modelConfig.requestTraceContext
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      callArgs.run.logicalRound = 1
+
+      for await (const _event of callArgs.coreStream(
+        callArgs.run.messages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+        void _event
+      }
+
+      const attemptModelConfig = providerCoreStream.mock.calls.at(-1)?.[2]
+      const traceContext = attemptModelConfig.requestTraceContext
 
       expect(traceContext).toBeDefined()
       expect(traceContext.enabled).toBe(true)
@@ -4761,6 +4780,9 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(inserted.messageId).toBe('mock-msg-id')
       expect(inserted.providerId).toBe('openai')
       expect(inserted.modelId).toBe('gpt-4')
+      expect(inserted.requestSeq).toBe(1)
+      expect(inserted.logicalRound).toBe(1)
+      expect(inserted.physicalAttempt).toBe(1)
       expect(inserted.endpoint).toBe('https://api.openai.com/v1/responses')
       expect(inserted.truncated).toBe(false)
       expect(headers.authorization).toMatch(/^Bearer \*+oken$/)
@@ -4777,7 +4799,21 @@ describe('DeepChatRuntimeCoordinator', () => {
       await agent.processMessage('s1', 'Hello')
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
-      expect(callArgs.modelConfig.requestTraceContext).toBeUndefined()
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      callArgs.run.logicalRound = 1
+
+      for await (const _event of callArgs.coreStream(
+        callArgs.run.messages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+        void _event
+      }
+
+      expect(providerCoreStream.mock.calls.at(-1)?.[2].requestTraceContext).toBeUndefined()
       expect(sqlitePresenter.deepchatMessageTracesTable.insert).not.toHaveBeenCalled()
     })
 
@@ -4820,7 +4856,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       })
     })
 
-    it('binds request trace requestSeq to the incremented runtime sequence', async () => {
+    it('binds request traces to immutable physical-attempt identities', async () => {
       providerSettings.getSetting.mockImplementation((key: string) =>
         key === 'traceDebugEnabled' ? true : undefined
       )
@@ -4829,6 +4865,8 @@ describe('DeepChatRuntimeCoordinator', () => {
       await agent.processMessage('s1', 'Hello')
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      callArgs.run.logicalRound = 1
 
       for await (const _event of callArgs.coreStream(
         callArgs.run.messages,
@@ -4840,15 +4878,44 @@ describe('DeepChatRuntimeCoordinator', () => {
       )) {
         void _event
       }
+      const firstAttemptTraceContext =
+        providerCoreStream.mock.calls.at(-1)?.[2].requestTraceContext
 
-      await callArgs.modelConfig.requestTraceContext.persist({
+      callArgs.run.logicalRound = 2
+      for await (const _event of callArgs.coreStream(
+        callArgs.run.messages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+        void _event
+      }
+      const secondAttemptTraceContext =
+        providerCoreStream.mock.calls.at(-1)?.[2].requestTraceContext
+
+      await firstAttemptTraceContext.persist({
+        endpoint: 'https://api.openai.com/v1/responses',
+        headers: {},
+        body: {}
+      })
+      await secondAttemptTraceContext.persist({
         endpoint: 'https://api.openai.com/v1/responses',
         headers: {},
         body: {}
       })
 
-      const inserted = sqlitePresenter.deepchatMessageTracesTable.insert.mock.calls.at(-1)?.[0]
-      expect(inserted.requestSeq).toBe(1)
+      expect(
+        sqlitePresenter.deepchatMessageTracesTable.insert.mock.calls.map(([inserted]) => ({
+          requestSeq: inserted.requestSeq,
+          logicalRound: inserted.logicalRound,
+          physicalAttempt: inserted.physicalAttempt
+        }))
+      ).toEqual([
+        { requestSeq: 1, logicalRound: 1, physicalAttempt: 1 },
+        { requestSeq: 2, logicalRound: 2, physicalAttempt: 1 }
+      ])
     })
   })
 

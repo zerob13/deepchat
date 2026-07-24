@@ -87,7 +87,10 @@ import type {
   ToolPermissionReviewResult
 } from '@/agent/deepchat/runtime/types'
 import { createState } from '@/agent/deepchat/runtime/types'
-import type { ProviderRequestTracePayload } from '@/provider/requestTrace'
+import type {
+  ProviderRequestTraceContext,
+  ProviderRequestTracePayload
+} from '@/provider/requestTrace'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import { createLoopRun, type LoopRun } from '@/agent/deepchat/loop/loopRun'
@@ -473,27 +476,6 @@ export class DeepChatLoopRunner {
       resourceInstance
     )
     onRunRegistered?.(activeGeneration.runId)
-    if (traceEnabled) {
-      const traceAwareConfig = modelConfig as ModelConfig & {
-        requestTraceContext?: {
-          enabled: boolean
-          persist: (payload: ProviderRequestTracePayload) => Promise<void>
-        }
-      }
-      traceAwareConfig.requestTraceContext = {
-        enabled: true,
-        persist: async (payload) => {
-          this.persistMessageTrace({
-            sessionId,
-            messageId,
-            providerId: state.providerId,
-            modelId: state.modelId,
-            payload,
-            requestSeq: loopRun.requestSeq
-          })
-        }
-      }
-    }
     const rateLimitMessageId = `${RATE_LIMIT_STREAM_MESSAGE_PREFIX}${activeGeneration.runId}`
     let crossedPreStreamBoundary = false
     const crossPreStreamBoundary = () => {
@@ -504,6 +486,7 @@ export class DeepChatLoopRunner {
     const ports = this.ports
     const recoverRequestContextPressure = this.recoverRequestContextPressure.bind(this)
     const appendTapeViewManifest = this.appendTapeViewManifest.bind(this)
+    const persistMessageTrace = this.persistMessageTrace.bind(this)
     const emitRateLimitWaitingMessage = this.emitRateLimitWaitingMessage.bind(this)
     const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
 
@@ -547,9 +530,7 @@ export class DeepChatLoopRunner {
           requestModelConfig,
           requestTemperature,
           requestMaxTokens,
-          requestTools,
-          onProviderRequestStart,
-          assertProviderRequestAvailable
+          requestTools
         ) {
           const requestBypassesContextBudget = ports.shouldBypassDeepChatContextBudget(
             state.providerId,
@@ -664,19 +645,45 @@ export class DeepChatLoopRunner {
               }
             },
             provider: {
-              assertAvailable: assertProviderRequestAvailable,
-              stream: ({ messages, modelId, modelConfig, temperature, maxTokens, tools }) =>
-                ports.providerRuntime.streamChat(
+              stream: ({
+                identity,
+                messages,
+                modelId,
+                modelConfig,
+                temperature,
+                maxTokens,
+                tools
+              }) => {
+                const attemptModelConfig = traceEnabled
+                  ? (Object.assign({}, modelConfig, {
+                      requestTraceContext: {
+                        enabled: true,
+                        persist: async (payload: ProviderRequestTracePayload) => {
+                          persistMessageTrace({
+                            sessionId,
+                            messageId,
+                            providerId: state.providerId,
+                            modelId: state.modelId,
+                            payload,
+                            requestSeq: identity.requestSeq,
+                            logicalRound: identity.logicalRound,
+                            physicalAttempt: identity.physicalAttempt
+                          })
+                        }
+                      } satisfies ProviderRequestTraceContext
+                    }) as ModelConfig)
+                  : modelConfig
+                return ports.providerRuntime.streamChat(
                   state.providerId,
                   messages,
                   modelId,
-                  modelConfig,
+                  attemptModelConfig,
                   temperature,
                   maxTokens,
                   tools
-                ),
+                )
+              },
               beforeStream: () => {
-                onProviderRequestStart?.()
                 crossPreStreamBoundary()
               }
             },
@@ -704,7 +711,6 @@ export class DeepChatLoopRunner {
             createAbortError
           })
         },
-        coreStreamReportsProviderStart: true,
         providerId: state.providerId,
         modelId: state.modelId,
         modelConfig,
@@ -914,6 +920,8 @@ export class DeepChatLoopRunner {
     modelId: string
     payload: ProviderRequestTracePayload
     requestSeq?: number
+    logicalRound?: number | null
+    physicalAttempt?: number | null
   }): void {
     const persistable = buildPersistableMessageTracePayload(args.payload)
     this.ports.messageStore.insertMessageTrace({
@@ -926,7 +934,9 @@ export class DeepChatLoopRunner {
       headersJson: persistable.headersJson,
       bodyJson: persistable.bodyJson,
       truncated: persistable.truncated,
-      requestSeq: args.requestSeq
+      requestSeq: args.requestSeq,
+      logicalRound: args.logicalRound,
+      physicalAttempt: args.physicalAttempt
     })
   }
 

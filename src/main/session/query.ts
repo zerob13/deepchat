@@ -267,6 +267,8 @@ export class SessionQuery implements SessionProjectionReadPort, SessionProjectio
       providerId: row.provider_id,
       modelId: row.model_id,
       requestSeq: row.request_seq,
+      logicalRound: row.logical_round,
+      physicalAttempt: row.physical_attempt,
       endpoint: row.endpoint,
       headersJson: row.headers_json,
       bodyJson: row.body_json,

@@ -72,7 +72,6 @@ export interface StreamState {
     cachedInputTokens?: number
     cacheWriteInputTokens?: number
   } | null
-  providerRoundCount: number
   toolCallCount: number
   dirty: boolean
 }
@@ -227,11 +226,8 @@ export interface ProcessParams {
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
-    tools: MCPToolDefinition[],
-    onProviderRequestStart?: () => void,
-    assertProviderRequestAvailable?: () => void
+    tools: MCPToolDefinition[]
   ) => AsyncGenerator<LLMCoreStreamEvent>
-  coreStreamReportsProviderStart?: boolean
   providerId: string
   modelId: string
   modelConfig: ModelConfig
@@ -261,7 +257,6 @@ export function createState(): StreamState {
     completedToolCalls: [],
     stopReason: null,
     roundUsage: null,
-    providerRoundCount: 0,
     toolCallCount: 0,
     dirty: false
   }

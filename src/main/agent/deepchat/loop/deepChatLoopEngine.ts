@@ -1,8 +1,8 @@
-import { enterProviderRound, type LoopRun } from './loopRun'
+import { enterLogicalRound, type LoopRun } from './loopRun'
 
 export const MAX_TOOL_CALLS = 128
 
-export type ProviderRoundOutcome<TToolBatch, THalted> =
+export type LogicalRoundOutcome<TToolBatch, THalted> =
   | { type: 'terminal' }
   | { type: 'tool_batch'; batch: TToolBatch; requestedToolExecutionCount: number }
   | { type: 'halted'; result: THalted }
@@ -22,13 +22,13 @@ export type DeepChatLoopOutcome<THalted> =
 export interface DeepChatLoopDependencies<TStreamState, TToolBatch, THalted> {
   maxProviderRounds?: number
   initialExecutedToolCount?: number
-  consumeProviderRound(input: {
+  consumeLogicalRound(input: {
     run: LoopRun<TStreamState>
-    providerRound: number
-  }): Promise<ProviderRoundOutcome<TToolBatch, THalted>>
+    logicalRound: number
+  }): Promise<LogicalRoundOutcome<TToolBatch, THalted>>
   settleToolBatch(input: {
     run: LoopRun<TStreamState>
-    providerRound: number
+    logicalRound: number
     batch: TToolBatch
   }): Promise<LoopToolBatchOutcome<THalted>>
 }
@@ -36,12 +36,12 @@ export interface DeepChatLoopDependencies<TStreamState, TToolBatch, THalted> {
 export interface DeepChatLoopCommitCallbacks<TStreamState, THalted, TResult> {
   updateOutput(input: {
     run: LoopRun<TStreamState>
-    providerRound: number
-    outcome: ProviderRoundOutcome<unknown, unknown>['type']
+    logicalRound: number
+    outcome: LogicalRoundOutcome<unknown, unknown>['type']
   }): Promise<void> | void
   afterRoundPersisted(input: {
     run: LoopRun<TStreamState>
-    providerRound: number
+    logicalRound: number
     outcome: LoopToolBatchOutcome<unknown>['type']
   }): Promise<void> | void
   settleTurn(input: {
@@ -73,25 +73,25 @@ export class DeepChatLoopEngine {
     commits: DeepChatLoopCommitCallbacks<TStreamState, THalted, TResult>
   ): Promise<DeepChatLoopOutcome<THalted>> {
     const maxProviderRounds =
-      Number.isInteger(dependencies.maxProviderRounds) && dependencies.maxProviderRounds! > 0
+      Number.isSafeInteger(dependencies.maxProviderRounds) && dependencies.maxProviderRounds! > 0
         ? dependencies.maxProviderRounds!
         : Number.POSITIVE_INFINITY
     let executedToolCount =
-      Number.isInteger(dependencies.initialExecutedToolCount) &&
+      Number.isSafeInteger(dependencies.initialExecutedToolCount) &&
       dependencies.initialExecutedToolCount! > 0
         ? dependencies.initialExecutedToolCount!
         : 0
 
     while (true) {
-      const providerRound = enterProviderRound(run)
-      if (providerRound > maxProviderRounds) {
+      if (run.logicalRound >= maxProviderRounds) {
         return { type: 'max_provider_rounds', limit: maxProviderRounds }
       }
+      const logicalRound = enterLogicalRound(run)
 
-      const providerOutcome = await dependencies.consumeProviderRound({ run, providerRound })
+      const providerOutcome = await dependencies.consumeLogicalRound({ run, logicalRound })
       await commits.updateOutput({
         run,
-        providerRound,
+        logicalRound,
         outcome: providerOutcome.type
       })
       if (providerOutcome.type === 'terminal') {
@@ -112,12 +112,12 @@ export class DeepChatLoopEngine {
 
       const toolOutcome = await dependencies.settleToolBatch({
         run,
-        providerRound,
+        logicalRound,
         batch: providerOutcome.batch
       })
       await commits.afterRoundPersisted({
         run,
-        providerRound,
+        logicalRound,
         outcome: toolOutcome.type
       })
       if (toolOutcome.type === 'halted') {

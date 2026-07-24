@@ -14,8 +14,28 @@ function createRun(messages: ChatMessage[] = [{ role: 'user', content: 'hello' }
     abortController: new AbortController(),
     messages,
     streamState: {},
-    resources: { toolDefinitions: [], activeSkillNames: [] }
+    resources: { toolDefinitions: [], activeSkillNames: [] },
+    initialLogicalRound: 1
   })
+}
+
+function expectedAttemptOutcome(overrides: Record<string, unknown> = {}) {
+  return {
+    logicalRound: 1,
+    requestSeq: 1,
+    physicalAttempt: 1,
+    requestOrigin: 'chat',
+    attemptOrigin: 'initial',
+    status: 'completed',
+    stopReason: 'complete',
+    failureClassification: null,
+    retryDecision: 'none',
+    httpStatus: null,
+    errorCode: null,
+    retryDelayMs: null,
+    usage: null,
+    ...overrides
+  }
 }
 
 function createPreflight(
@@ -303,6 +323,11 @@ describe('DeepChatContextCoordinator', () => {
       'outcome:1'
     ])
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
+    expect(fixture.providerRequests[0]).toMatchObject({
+      identity: { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
+      requestOrigin: 'chat',
+      attemptOrigin: 'initial'
+    })
     expect(fixture.manifests[0]).toMatchObject({
       requestSeq: 1,
       taskType: 'chat',
@@ -336,14 +361,7 @@ describe('DeepChatContextCoordinator', () => {
       traceDebugEnabled: true
     })
     expect(fixture.manifests[0].selection).toBeUndefined()
-    expect(fixture.outcomes).toEqual([
-      {
-        requestSeq: 1,
-        status: 'completed',
-        stopReason: 'complete',
-        usage: null
-      }
-    ])
+    expect(fixture.outcomes).toEqual([expectedAttemptOutcome({ requestOrigin: 'tool_loop' })])
   })
 
   it('records only the final cumulative usage snapshot for a completed attempt', async () => {
@@ -377,10 +395,7 @@ describe('DeepChatContextCoordinator', () => {
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
 
     expect(fixture.outcomes).toEqual([
-      {
-        requestSeq: 1,
-        status: 'completed',
-        stopReason: 'complete',
+      expectedAttemptOutcome({
         usage: {
           inputTokens: 140,
           outputTokens: 20,
@@ -388,7 +403,7 @@ describe('DeepChatContextCoordinator', () => {
           cacheReadTokens: 120,
           cacheWriteTokens: 8
         }
-      }
+      })
     ])
   })
 
@@ -421,7 +436,7 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.outcomeErrors).toEqual([persistenceError])
   })
 
-  it('keeps strict overflow retry in one run while advancing requestSeq per attempt', async () => {
+  it('keeps strict overflow recovery in one round while advancing requestSeq per request', async () => {
     const fixture = createAttemptInput({
       providerEvents: [
         [{ type: 'error', error_message: 'context overflow' }],
@@ -444,7 +459,8 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.providerRequests).toHaveLength(2)
     expect(fixture.manifests.map((manifest) => manifest.requestSeq)).toEqual([1, 2])
     expect(fixture.run.requestSeq).toBe(2)
-    expect(fixture.run.providerRoundCount).toBe(0)
+    expect(fixture.run.logicalRound).toBe(1)
+    expect(fixture.run.physicalAttempt).toBe(1)
     expect(fixture.run.providerRecovery).toEqual({
       contextOverflowHandoffAttempted: true,
       strictProviderOverflowRetryUsed: true
@@ -454,52 +470,22 @@ describe('DeepChatContextCoordinator', () => {
       reserveTokens: 75
     })
     expect(fixture.outcomes).toEqual([
-      {
-        requestSeq: 1,
+      expectedAttemptOutcome({
         status: 'context_overflow',
         stopReason: 'error',
-        usage: null
-      },
-      {
+        failureClassification: 'context_overflow',
+        retryDecision: 'context_recovery_scheduled'
+      }),
+      expectedAttemptOutcome({
         requestSeq: 2,
-        status: 'completed',
-        stopReason: 'complete',
-        usage: null
-      }
+        requestOrigin: 'context_recovery'
+      })
+    ])
+    expect(fixture.providerRequests.map((request) => request.identity)).toEqual([
+      { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
+      { logicalRound: 1, requestSeq: 2, physicalAttempt: 1 }
     ])
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
-  })
-
-  it('checks retry availability before context recovery or another manifest', async () => {
-    const fixture = createAttemptInput({
-      providerEvents: [[{ type: 'error', error_message: 'context overflow' }]]
-    })
-    const limitError = new Error('provider attempt limit reached')
-    fixture.input.provider.assertAvailable = vi
-      .fn()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw limitError
-      })
-
-    await expect(
-      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
-    ).rejects.toBe(limitError)
-
-    expect(fixture.input.provider.assertAvailable).toHaveBeenCalledTimes(2)
-    expect(fixture.input.recovery.recover).not.toHaveBeenCalled()
-    expect(fixture.providerRequests).toHaveLength(1)
-    expect(fixture.manifests).toHaveLength(1)
-    expect(fixture.order.filter((entry) => entry === 'rate')).toHaveLength(1)
-    expect(fixture.run.requestSeq).toBe(1)
-    expect(fixture.outcomes).toEqual([
-      {
-        requestSeq: 1,
-        status: 'context_overflow',
-        stopReason: 'error',
-        usage: null
-      }
-    ])
   })
 
   it('runs pressure recovery before manifesting the provider request', async () => {
@@ -563,12 +549,12 @@ describe('DeepChatContextCoordinator', () => {
       collect(new DeepChatContextCoordinator().streamProviderAttempts(aborted.input))
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(aborted.outcomes).toEqual([
-      {
-        requestSeq: 1,
+      expectedAttemptOutcome({
         status: 'aborted',
         stopReason: null,
-        usage: null
-      }
+        failureClassification: 'aborted',
+        retryDecision: 'not_retryable'
+      })
     ])
 
     const failed = createAttemptInput()
@@ -580,12 +566,12 @@ describe('DeepChatContextCoordinator', () => {
       collect(new DeepChatContextCoordinator().streamProviderAttempts(failed.input))
     ).rejects.toThrow('provider unavailable')
     expect(failed.outcomes).toEqual([
-      {
-        requestSeq: 1,
+      expectedAttemptOutcome({
         status: 'error',
         stopReason: null,
-        usage: null
-      }
+        failureClassification: 'unknown',
+        retryDecision: 'not_retryable'
+      })
     ])
   })
 
@@ -611,17 +597,18 @@ describe('DeepChatContextCoordinator', () => {
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
 
     expect(fixture.outcomes).toEqual([
-      {
-        requestSeq: 1,
+      expectedAttemptOutcome({
         status: 'error',
         stopReason: 'error',
+        failureClassification: 'unknown',
+        retryDecision: 'not_retryable',
         usage: {
           inputTokens: 80,
           outputTokens: 5,
           totalTokens: 85,
           cacheReadTokens: 60
         }
-      }
+      })
     ])
   })
 })

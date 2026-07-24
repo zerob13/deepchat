@@ -163,9 +163,9 @@ the retry decision is final.
 
 ## Tasks
 
-- [ ] Model logical-round and physical-attempt identity in the loop and persistence contracts.
-- [ ] Add Tape v2 provenance and backward-compatible readers.
-- [ ] Add migration v45 and immutable trace identity, ordering, and replay selection.
+- [x] Model logical-round and physical-attempt identity in the loop and persistence contracts.
+- [x] Add Tape v2 provenance and backward-compatible readers.
+- [x] Add migration v45 and immutable trace identity, ordering, and replay selection.
 - [ ] Propagate Run cancellation and safe failure metadata through all provider stream ports.
 - [ ] Disable hidden chat-stream retries while preserving explicit one-shot policies.
 - [ ] Implement failure classification, replay boundary, retry policy, usage aggregation, and

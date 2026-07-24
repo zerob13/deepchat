@@ -309,7 +309,7 @@ export class TapeViewReplayService {
       const manifestRecord = selectedManifestRows
         .map((row) => this.toViewManifestRecord(row))
         .find((record) => record?.messageId === messageId && record.requestSeq === requestSeq)
-      const trace = traces.find((row) => row.request_seq === requestSeq) ?? null
+      const trace = this.selectLatestTrace(traces, sessionId, requestSeq)
 
       if (manifestRecord) {
         request = {
@@ -471,10 +471,23 @@ export class TapeViewReplayService {
     requestSeq: number
   ): DeepChatMessageTraceRow | null {
     const traceTable = this.providers.getMessageTraceReader()
+    return this.selectLatestTrace(traceTable.listByMessageId(messageId), sessionId, requestSeq)
+  }
+
+  private selectLatestTrace(
+    rows: DeepChatMessageTraceRow[],
+    sessionId: string,
+    requestSeq: number
+  ): DeepChatMessageTraceRow | null {
     return (
-      traceTable
-        .listByMessageId(messageId)
-        .find((row) => row.session_id === sessionId && row.request_seq === requestSeq) ?? null
+      rows
+        .filter((row) => row.session_id === sessionId && row.request_seq === requestSeq)
+        .toSorted(
+          (left, right) =>
+            (right.physical_attempt ?? 0) - (left.physical_attempt ?? 0) ||
+            right.created_at - left.created_at ||
+            right.id.localeCompare(left.id)
+        )[0] ?? null
     )
   }
 
@@ -510,6 +523,8 @@ export class TapeViewReplayService {
     const snapshot: DeepChatTapeReplayTraceSnapshot = {
       id: row.id,
       requestSeq: row.request_seq,
+      logicalRound: row.logical_round,
+      physicalAttempt: row.physical_attempt,
       providerId: row.provider_id,
       modelId: row.model_id,
       endpoint: row.endpoint,
