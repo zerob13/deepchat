@@ -13,6 +13,7 @@ import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import logger from '@shared/logger'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { MemoryService } from '@/memory'
+import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '@/tape/domain/entry'
 import {
   createFakeRepository,
   FakeAuditRepository,
@@ -64,6 +65,22 @@ function toTapeRow(record: ChatMessageRecord) {
   }
 }
 
+function toTapeAnchorRow(input: TapeAnchorAppendInput): DeepChatTapeEntryRow {
+  return {
+    session_id: input.sessionId,
+    entry_id: 99,
+    kind: 'anchor',
+    name: input.name,
+    source_type: input.source?.type ?? null,
+    source_id: input.source?.id ?? null,
+    source_seq: input.source?.seq ?? null,
+    provenance_key: input.provenanceKey ?? null,
+    payload_json: JSON.stringify({ name: input.name, state: input.state }),
+    meta_json: JSON.stringify(input.meta ?? {}),
+    created_at: input.createdAt ?? 99
+  }
+}
+
 function createHarness() {
   let cursor = 0
   let rows = [createRecord('u1', 1, 'Remember Redis.')]
@@ -96,7 +113,7 @@ function createHarness() {
     invalidateSession: vi.fn()
   }
   const getTapeRows = vi.fn(() => tapeRows)
-  const appendTapeAnchor = vi.fn(() => ({ entry_id: 99 }))
+  const appendTapeAnchor = vi.fn(toTapeAnchorRow)
   const deps = {
     memoryPort: port as any,
     getSessionAgentId: vi.fn(() => 'agent-a'),
