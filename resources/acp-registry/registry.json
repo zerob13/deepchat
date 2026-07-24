@@ -1081,7 +1081,7 @@
     {
       "id": "pi-acp",
       "name": "pi ACP",
-      "version": "0.0.31",
+      "version": "0.0.32",
       "description": "ACP adapter for pi coding agent",
       "repository": "https://github.com/svkozak/pi-acp",
       "authors": [
@@ -1090,7 +1090,7 @@
       "license": "MIT",
       "distribution": {
         "npx": {
-          "package": "pi-acp@0.0.31"
+          "package": "pi-acp@0.0.32"
         }
       },
       "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/pi-acp.svg"
