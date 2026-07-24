@@ -6,6 +6,7 @@ import {
   buildContextWithMetadata,
   buildResumeContext,
   buildResumeContextWithMetadata,
+  estimateMessagesTokens,
   fitCacheAwareMessagesToContextWindow,
   fitMessagesToContextWindow,
   truncateContext
@@ -1761,6 +1762,46 @@ describe('cache-aware context assembly', () => {
     expect(result.metadata.syntheticContributions).toEqual([])
   })
 
+  it('omits normal-turn memory before dropping history when only the combined view exceeds budget', () => {
+    const records = [
+      makeUserRecord(1, 'old user context'),
+      makeAssistantRecord(2, 'old assistant context')
+    ]
+    const withoutMemory = buildCacheAwareContextWithMetadata(
+      's1',
+      { text: 'latest instruction', files: [] },
+      'System',
+      10_000,
+      20,
+      createMockMessageStore(records),
+      false,
+      {
+        historyRecords: records,
+        contextContributions: createCacheAwareContributions()
+      }
+    )
+    const inputBudget = estimateMessagesTokens(withoutMemory.messages)
+    const contextContributions = createCacheAwareContributions({
+      memory: `MEMORY_${'x'.repeat(80)}`
+    })
+
+    const result = buildCacheAwareContextWithMetadata(
+      's1',
+      { text: 'latest instruction', files: [] },
+      'System',
+      inputBudget + 20,
+      20,
+      createMockMessageStore(records),
+      false,
+      { historyRecords: records, contextContributions }
+    )
+
+    expect(contextContributions.memoryIncluded).toBe(false)
+    expect(result.messages.some((message) => String(message.content).includes('MEMORY_'))).toBe(false)
+    expect(result.messages.some((message) => message.content === 'old user context')).toBe(true)
+    expect(result.messages.some((message) => message.content === 'old assistant context')).toBe(true)
+  })
+
   it('injects resume memory into the owner user without adding a user after partial assistant', () => {
     const records = [
       makeUserRecord(1, 'resume owner'),
@@ -1795,6 +1836,54 @@ describe('cache-aware context assembly', () => {
       'Remember the user preference.\n\nresume owner'
     )
     expect(result.messages.at(-1)?.content).toBe('partial answer')
+  })
+
+  it('omits resume memory before dropping preceding complete turns', () => {
+    const records = [
+      makeUserRecord(1, `old user ${'u'.repeat(200)}`),
+      makeAssistantRecord(2, `old assistant ${'a'.repeat(200)}`),
+      makeUserRecord(3, 'resume owner'),
+      {
+        ...makeAssistantRecord(4, 'partial answer'),
+        id: 'resume-target',
+        status: 'pending' as const
+      }
+    ]
+    const withoutMemory = buildCacheAwareResumeContextWithMetadata(
+      's1',
+      'resume-target',
+      'System',
+      10_000,
+      20,
+      createMockMessageStore(records),
+      false,
+      {
+        historyRecords: records,
+        contextContributions: createCacheAwareContributions()
+      }
+    )
+    const inputBudget = estimateMessagesTokens(withoutMemory.messages)
+    const contextContributions = createCacheAwareContributions({
+      memory: `MEMORY_${'x'.repeat(80)}`
+    })
+
+    const result = buildCacheAwareResumeContextWithMetadata(
+      's1',
+      'resume-target',
+      'System',
+      inputBudget + 20,
+      20,
+      createMockMessageStore(records),
+      false,
+      { historyRecords: records, contextContributions }
+    )
+
+    expect(contextContributions.memoryIncluded).toBe(false)
+    expect(result.messages.some((message) => String(message.content).includes('MEMORY_'))).toBe(false)
+    expect(result.messages.some((message) => String(message.content).includes('old user'))).toBe(true)
+    expect(result.messages.some((message) => String(message.content).includes('old assistant'))).toBe(
+      true
+    )
   })
 
   it('does not report a selected pre-cursor resume turn as summarized history', () => {

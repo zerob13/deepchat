@@ -1332,8 +1332,13 @@ export function buildCacheAwareContextWithMetadata(
     ...(hasPromptMessageContent(newUserMessage) ? [newUserMessage] : [])
   ]
   let fixedTokens = estimateMessagesTokens(fixedMessages)
+  const historyTokens = historyTurns.reduce((total, turn) => total + turn.tokens, 0)
 
-  if (fixedTokens > inputBudget && context.memoryIncluded && context.memory.content) {
+  if (
+    fixedTokens + historyTokens > inputBudget &&
+    context.memoryIncluded &&
+    context.memory.content
+  ) {
     context.memoryIncluded = false
     newUserMessage = createUserChatMessage(newUserContent, supportsVision, supportsAudioInput)
     fixedMessages = [
@@ -1440,8 +1445,14 @@ export function buildCacheAwareResumeContextWithMetadata(
   )
   let fixedMessages = [...leadingMessages, ...(activeTurn?.messages ?? [])]
   let fixedTokens = estimateMessagesTokens(fixedMessages)
+  const historyPrefixTokens = historyPrefix.reduce((total, turn) => total + turn.tokens, 0)
 
-  if (fixedTokens > inputBudget && activeTurn && context.memoryIncluded && context.memory.content) {
+  if (
+    fixedTokens + historyPrefixTokens > inputBudget &&
+    activeTurn &&
+    context.memoryIncluded &&
+    context.memory.content
+  ) {
     const messages = omitMemoryFromActiveTurn(activeTurn.messages, context)
     activeTurn = {
       ...activeTurn,
