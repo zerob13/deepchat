@@ -18,6 +18,8 @@ export interface DeepChatCausalObservationReadOptions extends DeepChatTapeReplay
 export interface DeepChatTapeReplayTraceSnapshot {
   id: string
   requestSeq: number
+  logicalRound: number | null
+  physicalAttempt: number | null
   providerId: string
   modelId: string
   endpoint: string

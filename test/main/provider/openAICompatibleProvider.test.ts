@@ -146,6 +146,7 @@ describe('AiSdkProvider openai-compatible', () => {
       type: 'chat'
     }
 
+    const signal = new AbortController().signal
     const events = []
     for await (const event of provider.coreStream(
       [{ role: 'user', content: 'hello' }],
@@ -153,7 +154,8 @@ describe('AiSdkProvider openai-compatible', () => {
       modelConfig,
       0.7,
       512,
-      []
+      [],
+      { signal }
     )) {
       events.push(event)
     }
@@ -171,7 +173,8 @@ describe('AiSdkProvider openai-compatible', () => {
       modelConfig,
       0.7,
       512,
-      []
+      [],
+      signal
     )
   })
 

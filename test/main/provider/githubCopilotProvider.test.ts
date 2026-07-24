@@ -1,6 +1,7 @@
 import type { ProviderSettingsPort } from '@/provider/settings'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GithubCopilotProvider } from '../../../src/main/provider/providers/githubCopilotProvider'
+import { extractProviderFailureMetadata } from '@/provider/providerFailure'
 
 import { getGlobalGitHubCopilotDeviceFlow } from '../../../src/main/provider/auth/githubCopilotDeviceFlow'
 
@@ -181,6 +182,107 @@ describe('GithubCopilotProvider request timeout', () => {
         signal: expect.any(AbortSignal)
       })
     )
+  })
+
+  it('forwards caller cancellation to streamed requests', async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, options?: RequestInit) => {
+      return new Promise((_, reject) => {
+        const signal = options?.signal as AbortSignal | undefined
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const provider = Object.create(GithubCopilotProvider.prototype) as any
+    provider.provider = { id: 'github-copilot', name: 'GitHub Copilot' }
+    provider.baseApiUrl = 'https://api.githubcopilot.com'
+    provider.getCopilotToken = vi.fn().mockResolvedValue('token')
+    const controller = new AbortController()
+    const reason = new DOMException('Run aborted', 'AbortError')
+
+    const next = provider
+      .coreStream([{ role: 'user', content: 'hello' }], 'gpt-5', {}, 0.7, 1024, [], {
+        signal: controller.signal
+      })
+      .next()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    controller.abort(reason)
+
+    await expect(next).rejects.toBe(reason)
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.githubcopilot.com/chat/completions',
+      expect.objectContaining({ signal: controller.signal })
+    )
+  })
+
+  it('preserves retry headers without exposing a failed response body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"secret":"response-body"}', {
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: {
+          'retry-after': '3',
+          'set-cookie': 'session=secret'
+        }
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const provider = Object.create(GithubCopilotProvider.prototype) as any
+    provider.provider = { id: 'github-copilot', name: 'GitHub Copilot' }
+    provider.baseApiUrl = 'https://api.githubcopilot.com'
+    provider.getCopilotToken = vi.fn().mockResolvedValue('token')
+
+    let failure: unknown
+    try {
+      await provider
+        .coreStream([{ role: 'user', content: 'hello' }], 'gpt-5', {}, 0.7, 1024, [])
+        .next()
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toMatchObject({
+      message: 'GitHub Copilot API error: 503 Service Unavailable'
+    })
+    expect(extractProviderFailureMetadata(failure)).toEqual({
+      statusCode: 503,
+      code: 'github_copilot_chat_http_error',
+      retryHeaders: { 'retry-after': '3' }
+    })
+    expect(String(failure)).not.toContain('response-body')
+  })
+
+  it('emits an explicit completion marker for a successful SSE stream', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n', {
+          status: 200
+        })
+      )
+    )
+    const provider = Object.create(GithubCopilotProvider.prototype) as any
+    provider.provider = { id: 'github-copilot', name: 'GitHub Copilot' }
+    provider.baseApiUrl = 'https://api.githubcopilot.com'
+    provider.getCopilotToken = vi.fn().mockResolvedValue('token')
+
+    const events = []
+    for await (const event of provider.coreStream(
+      [{ role: 'user', content: 'hello' }],
+      'gpt-5',
+      {},
+      0.7,
+      1024,
+      []
+    )) {
+      events.push(event)
+    }
+
+    expect(events).toEqual([
+      { type: 'text', content: 'hello' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
   })
 
   it('refreshes cached auth state when provider config changes', () => {

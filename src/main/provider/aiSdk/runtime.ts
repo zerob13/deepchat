@@ -1323,6 +1323,7 @@ export async function runAiSdkGenerateText(
 
   const result = await generateText({
     model: runtime.providerContext.model,
+    maxRetries: 2,
     ...(runtime.instructions ? { instructions: runtime.instructions } : {}),
     messages: runtime.messages,
     allowSystemInMessages: false,
@@ -1489,6 +1490,7 @@ export async function* runAiSdkCoreStream(
 
     const result = await generateImage({
       model: providerContext.imageModel,
+      maxRetries: 0,
       prompt,
       ...imageGenerationRequestOptions,
       ...(requestSignal ? { abortSignal: requestSignal } : {})
@@ -1549,6 +1551,7 @@ export async function* runAiSdkCoreStream(
 
   const result = streamText({
     model: runtime.providerContext.model,
+    maxRetries: 0,
     ...(runtime.instructions ? { instructions: runtime.instructions } : {}),
     messages: runtime.messages,
     allowSystemInMessages: false,
@@ -1605,6 +1608,7 @@ export async function runAiSdkEmbeddings(
     const result = await embedMany({
       model,
       values,
+      maxRetries: 2,
       maxParallelCalls: 2,
       abortSignal: signal
     })

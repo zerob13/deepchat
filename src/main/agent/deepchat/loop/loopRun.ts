@@ -19,8 +19,9 @@ export interface LoopRun<TStreamState> {
   readonly abortController: AbortController
   readonly startedAt: number
   readonly initialRequestSeq: number
+  logicalRound: number
   requestSeq: number
-  providerRoundCount: number
+  physicalAttempt: number
   messages: ChatMessage[]
   readonly streamState: TStreamState
   resources: LoopRunResources
@@ -39,13 +40,18 @@ export interface CreateLoopRunInput<TStreamState> {
     activeSkillNames: readonly string[]
   }
   initialRequestSeq?: number
+  initialLogicalRound?: number
   startedAt?: number
+}
+
+function normalizeInitialCounter(value: number | undefined): number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
 }
 
 export function createLoopRun<TStreamState>(
   input: CreateLoopRunInput<TStreamState>
 ): LoopRun<TStreamState> {
-  const initialRequestSeq = input.initialRequestSeq ?? 0
+  const initialRequestSeq = normalizeInitialCounter(input.initialRequestSeq)
   return {
     runId: input.runId,
     sessionId: input.sessionId,
@@ -53,8 +59,9 @@ export function createLoopRun<TStreamState>(
     abortController: input.abortController,
     startedAt: input.startedAt ?? Date.now(),
     initialRequestSeq,
+    logicalRound: normalizeInitialCounter(input.initialLogicalRound),
     requestSeq: initialRequestSeq,
-    providerRoundCount: 0,
+    physicalAttempt: 0,
     messages: [...input.messages],
     streamState: input.streamState,
     resources: {
@@ -68,9 +75,13 @@ export function createLoopRun<TStreamState>(
   }
 }
 
-export function enterProviderRound(run: LoopRun<unknown>): number {
-  run.providerRoundCount += 1
-  return run.providerRoundCount
+export function enterLogicalRound(run: LoopRun<unknown>): number {
+  const nextLogicalRound = run.logicalRound + 1
+  if (!Number.isSafeInteger(nextLogicalRound) || nextLogicalRound <= 0) {
+    throw new Error('Provider logical round counter is exhausted.')
+  }
+  run.logicalRound = nextLogicalRound
+  return nextLogicalRound
 }
 
 export function advanceRequestSequence(run: LoopRun<unknown>): number {
@@ -79,5 +90,18 @@ export function advanceRequestSequence(run: LoopRun<unknown>): number {
     throw new Error('Provider request sequence is exhausted.')
   }
   run.requestSeq = nextRequestSeq
+  run.physicalAttempt = 0
   return nextRequestSeq
+}
+
+export function enterPhysicalAttempt(run: LoopRun<unknown>): number {
+  if (!Number.isSafeInteger(run.requestSeq) || run.requestSeq <= 0) {
+    throw new Error('Provider request sequence must be started before a physical attempt.')
+  }
+  const nextPhysicalAttempt = run.physicalAttempt + 1
+  if (!Number.isSafeInteger(nextPhysicalAttempt) || nextPhysicalAttempt <= 0) {
+    throw new Error('Provider physical attempt counter is exhausted.')
+  }
+  run.physicalAttempt = nextPhysicalAttempt
+  return nextPhysicalAttempt
 }

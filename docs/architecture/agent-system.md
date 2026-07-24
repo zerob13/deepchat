@@ -1,6 +1,6 @@
 # Agent 系统
 
-本文描述 `2026-07-22` 的当前合同。历史迁移方案、Presenter 拆分过程和已完成的分阶段
+本文描述 `2026-07-24` 的当前合同。历史迁移方案、Presenter 拆分过程和已完成的分阶段
 SDD 已删除；需要时从 Git 历史查询。
 
 ## 两种 Agent backend
@@ -53,7 +53,7 @@ flowchart TD
 - Session 拥有长期身份、settings、transcript、Tape 和 pending input。
 - DeepChat Agent 拥有自己的配置和物理 Skill root；Session 只保存 Agent assignment 和所选 Skill 名称。
 - 已载入 Session 在一个 backend 中最多有一个 instance。
-- 每次执行创建独立 Run，Run 拥有取消信号、provider round、request sequence 和临时输出。
+- 每次执行创建独立 Run，Run 拥有取消信号、logical round、request sequence、physical attempt 和临时输出。
 - Window、Remote endpoint 和 Cron run 只保存各自 binding，不拥有 Agent instance。
 - 只读 list/query 不 hydrate backend；执行、完整 restore 或明确 backend 设置操作才允许 hydrate。
 
@@ -74,7 +74,27 @@ src/main/agent/deepchat/
 
 - runtime 只通过构造时注入的窄接口访问 Provider、Tool、Memory 和 Session data；不得反向读取 App、
   Desktop、Remote、Scheduler 或 route registry。
-- `providerRoundCount` 统计 outer round；`requestSeq` 统计真实 provider attempt。retry 不伪造新 round。
+- `logicalRound` 统计一次模型响应及其工具结算循环；公共 `metadata.providerRounds` 和
+  `maxProviderRounds` 继续保留原名称，但只映射该 logical-round 计数。上限在进入下一 round 前检查，
+  resume 从已持久化 metadata 恢复计数。
+- `requestSeq` 标识一份确定的 provider payload 和 ViewManifest；`physicalAttempt` 标识该 request 的
+  实际发送次数。context recovery 改变 payload，因此推进 requestSeq 并把 physicalAttempt 重置为 1；
+  同 payload 的 transient retry 保持 requestSeq，只推进 physicalAttempt。
+- `DeepChatContextCoordinator.streamProviderAttempts` 是 transient retry 的唯一 owner。每个 logical
+  round 最多重试两次，使用可取消的指数退避并服从有上限的 `Retry-After`；context recovery 不消耗
+  logical-round 或 transient-retry budget，每次实际 attempt 都重新进入 provider rate gate。
+- 透明重放只允许发生在 `outputCommitted` 之前。首个投影的 text、reasoning、tool lifecycle、
+  permission、image、plan 或 provider rate-limit event 会提交输出；usage、stop 和 error 是控制事件，
+  在 retry 决策完成前缓冲。无 stop 且无语义输出视为可重试的 premature EOF，已有 partial output
+  则保留输出并失败，绝不重放。
+- message usage 对同一 logical round 内所有 physical attempt 的最终 usage snapshot 做 checked
+  aggregation；Tape 仍逐 attempt 保存各自 usage。`retry_scheduled`、`retry_started` 和
+  `retry_finished` observer 只用于结构化诊断，不进入 renderer event bus，也不是持久化事实。
+- provider request trace context 必须按 physical attempt 创建并闭合捕获 identity，不能读取后续可变的
+  Run counter。
+- Run `AbortSignal` 必须贯穿 provider 建流和请求。AI SDK chat stream 显式使用 `maxRetries: 0`，由
+  coordinator 统一重试；one-shot text/embedding 保持显式 SDK policy，ACP、image、video 和 TTS 不做
+  DeepChat 透明重放。
 - send input 在 Session 边界正规化为 canonical request；resume 不重新解释旧 route DTO。
 - permission mode 属于 Session assignment/settings；一次 Run 使用开始时的闭合快照，deferred tool
   execution 仍需重新检查当前安全边界。

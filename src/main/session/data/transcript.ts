@@ -560,6 +560,8 @@ export class SessionTranscript {
     truncated: boolean
     createdAt?: number
     requestSeq?: number
+    logicalRound?: number | null
+    physicalAttempt?: number | null
   }): number {
     return this.database.deepchatMessageTracesTable.insert(row)
   }
@@ -573,6 +575,8 @@ export class SessionTranscript {
       providerId: row.provider_id,
       modelId: row.model_id,
       requestSeq: row.request_seq,
+      logicalRound: row.logical_round,
+      physicalAttempt: row.physical_attempt,
       endpoint: row.endpoint,
       headersJson: row.headers_json,
       bodyJson: row.body_json,

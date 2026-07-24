@@ -17,17 +17,11 @@ function createRun() {
 
 function createCommitCallbacks(order?: string[]) {
   return {
-    updateOutput: ({ providerRound, outcome }: { providerRound: number; outcome: string }) => {
-      order?.push(`output:${providerRound}:${outcome}`)
+    updateOutput: ({ logicalRound, outcome }: { logicalRound: number; outcome: string }) => {
+      order?.push(`output:${logicalRound}:${outcome}`)
     },
-    afterRoundPersisted: ({
-      providerRound,
-      outcome
-    }: {
-      providerRound: number
-      outcome: string
-    }) => {
-      order?.push(`persisted:${providerRound}:${outcome}`)
+    afterRoundPersisted: ({ logicalRound, outcome }: { logicalRound: number; outcome: string }) => {
+      order?.push(`persisted:${logicalRound}:${outcome}`)
     },
     settleTurn: ({ outcome }: { outcome: unknown }) => {
       order?.push('settled')
@@ -39,7 +33,7 @@ function createCommitCallbacks(order?: string[]) {
 describe('DeepChatLoopEngine', () => {
   it('settles a simple provider round without executing tools', async () => {
     const run = createRun()
-    const consumeProviderRound = vi.fn(async () => ({ type: 'terminal' as const }))
+    const consumeLogicalRound = vi.fn(async () => ({ type: 'terminal' as const }))
     const settleToolBatch = vi.fn(async () => ({
       type: 'continue' as const,
       executedToolCount: 0
@@ -48,15 +42,15 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run(
       run,
       {
-        consumeProviderRound,
+        consumeLogicalRound,
         settleToolBatch
       },
       createCommitCallbacks()
     )
 
     expect(outcome).toEqual({ type: 'terminal' })
-    expect(run.providerRoundCount).toBe(1)
-    expect(consumeProviderRound).toHaveBeenCalledTimes(1)
+    expect(run.logicalRound).toBe(1)
+    expect(consumeLogicalRound).toHaveBeenCalledTimes(1)
     expect(settleToolBatch).not.toHaveBeenCalled()
   })
 
@@ -67,12 +61,12 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run<object, { id: number }, never, unknown>(
       run,
       {
-        consumeProviderRound: async ({ providerRound }) => {
-          order.push(`provider:${providerRound}`)
-          return providerRound < 3
+        consumeLogicalRound: async ({ logicalRound }) => {
+          order.push(`provider:${logicalRound}`)
+          return logicalRound < 3
             ? {
                 type: 'tool_batch',
-                batch: { id: providerRound },
+                batch: { id: logicalRound },
                 requestedToolExecutionCount: 1
               }
             : { type: 'terminal' }
@@ -99,14 +93,14 @@ describe('DeepChatLoopEngine', () => {
       'output:3:terminal',
       'settled'
     ])
-    expect(run.providerRoundCount).toBe(3)
+    expect(run.logicalRound).toBe(3)
   })
 
   it('stops before consuming a provider round beyond the configured limit', async () => {
     const run = createRun()
-    const consumeProviderRound = vi.fn(async ({ providerRound }: { providerRound: number }) => ({
+    const consumeLogicalRound = vi.fn(async ({ logicalRound }: { logicalRound: number }) => ({
       type: 'tool_batch' as const,
-      batch: providerRound,
+      batch: logicalRound,
       requestedToolExecutionCount: 1
     }))
     const settleToolBatch = vi.fn(async () => ({
@@ -118,15 +112,15 @@ describe('DeepChatLoopEngine', () => {
       run,
       {
         maxProviderRounds: 2,
-        consumeProviderRound,
+        consumeLogicalRound,
         settleToolBatch
       },
       createCommitCallbacks()
     )
 
     expect(outcome).toEqual({ type: 'max_provider_rounds', limit: 2 })
-    expect(run.providerRoundCount).toBe(3)
-    expect(consumeProviderRound).toHaveBeenCalledTimes(2)
+    expect(run.logicalRound).toBe(2)
+    expect(consumeLogicalRound).toHaveBeenCalledTimes(2)
     expect(settleToolBatch).toHaveBeenCalledTimes(2)
   })
 
@@ -140,7 +134,7 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run(
       run,
       {
-        consumeProviderRound: async () => ({
+        consumeLogicalRound: async () => ({
           type: 'tool_batch' as const,
           batch: 'oversized',
           requestedToolExecutionCount: 129
@@ -169,7 +163,7 @@ describe('DeepChatLoopEngine', () => {
       run,
       {
         initialExecutedToolCount: 128,
-        consumeProviderRound: async () => ({
+        consumeLogicalRound: async () => ({
           type: 'tool_batch' as const,
           batch: 'resumed-overflow',
           requestedToolExecutionCount: 1
@@ -189,8 +183,8 @@ describe('DeepChatLoopEngine', () => {
 
   it('settles a zero-request batch without consuming the tool-call budget', async () => {
     const run = createRun()
-    const consumeProviderRound = vi.fn(async ({ providerRound }: { providerRound: number }) =>
-      providerRound === 1
+    const consumeLogicalRound = vi.fn(async ({ logicalRound }: { logicalRound: number }) =>
+      logicalRound === 1
         ? {
             type: 'tool_batch' as const,
             batch: 'rejected',
@@ -207,21 +201,21 @@ describe('DeepChatLoopEngine', () => {
       run,
       {
         initialExecutedToolCount: 128,
-        consumeProviderRound,
+        consumeLogicalRound,
         settleToolBatch
       },
       createCommitCallbacks()
     )
 
     expect(outcome).toEqual({ type: 'terminal' })
-    expect(consumeProviderRound).toHaveBeenCalledTimes(2)
+    expect(consumeLogicalRound).toHaveBeenCalledTimes(2)
     expect(settleToolBatch).toHaveBeenCalledTimes(1)
   })
 
   it('terminates normally after persisting a terminal tool settlement', async () => {
     const run = createRun()
     const order: string[] = []
-    const consumeProviderRound = vi.fn(async () => ({
+    const consumeLogicalRound = vi.fn(async () => ({
       type: 'tool_batch' as const,
       batch: 'terminal-batch',
       requestedToolExecutionCount: 0
@@ -230,7 +224,7 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run(
       run,
       {
-        consumeProviderRound,
+        consumeLogicalRound,
         settleToolBatch: async () => ({
           type: 'terminal' as const,
           executedToolCount: 0
@@ -241,13 +235,13 @@ describe('DeepChatLoopEngine', () => {
 
     expect(outcome).toEqual({ type: 'terminal' })
     expect(order).toEqual(['output:1:tool_batch', 'persisted:1:terminal', 'settled'])
-    expect(consumeProviderRound).toHaveBeenCalledTimes(1)
+    expect(consumeLogicalRound).toHaveBeenCalledTimes(1)
   })
 
   it('propagates a paused tool batch without entering another provider round', async () => {
     const run = createRun()
     const order: string[] = []
-    const consumeProviderRound = vi.fn(async () => ({
+    const consumeLogicalRound = vi.fn(async () => ({
       type: 'tool_batch' as const,
       batch: 'permission',
       requestedToolExecutionCount: 1
@@ -256,7 +250,7 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run(
       run,
       {
-        consumeProviderRound,
+        consumeLogicalRound,
         settleToolBatch: async () => ({
           type: 'halted' as const,
           result: { status: 'paused' as const }
@@ -267,8 +261,8 @@ describe('DeepChatLoopEngine', () => {
 
     expect(outcome).toEqual({ type: 'halted', result: { status: 'paused' } })
     expect(order).toEqual(['output:1:tool_batch', 'persisted:1:halted', 'settled'])
-    expect(run.providerRoundCount).toBe(1)
-    expect(consumeProviderRound).toHaveBeenCalledTimes(1)
+    expect(run.logicalRound).toBe(1)
+    expect(consumeLogicalRound).toHaveBeenCalledTimes(1)
   })
 
   it('settles a thrown round error through the same terminal callback', async () => {
@@ -279,7 +273,7 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run(
       run,
       {
-        consumeProviderRound: async () => {
+        consumeLogicalRound: async () => {
           throw error
         },
         settleToolBatch: async () => ({
@@ -305,7 +299,7 @@ describe('DeepChatLoopEngine', () => {
       new DeepChatLoopEngine().run(
         run,
         {
-          consumeProviderRound: async () => ({ type: 'terminal' as const }),
+          consumeLogicalRound: async () => ({ type: 'terminal' as const }),
           settleToolBatch: async () => ({
             type: 'continue' as const,
             executedToolCount: 0
@@ -333,7 +327,7 @@ describe('DeepChatLoopEngine', () => {
       new DeepChatLoopEngine().run(
         run,
         {
-          consumeProviderRound: async () => {
+          consumeLogicalRound: async () => {
             throw providerError
           },
           settleToolBatch: async () => ({
@@ -363,7 +357,7 @@ describe('DeepChatLoopEngine', () => {
       const outcome = await new DeepChatLoopEngine().run(
         run,
         {
-          consumeProviderRound: async () => ({
+          consumeLogicalRound: async () => ({
             type: 'halted' as const,
             result: { status }
           }),
@@ -384,9 +378,9 @@ describe('DeepChatLoopEngine', () => {
     const outcome = await new DeepChatLoopEngine().run<object, string, never, unknown>(
       run,
       {
-        consumeProviderRound: async ({ providerRound, run: currentRun }) => {
+        consumeLogicalRound: async ({ logicalRound, run: currentRun }) => {
           observedSkills.push([...currentRun.resources.activeSkillNames])
-          return providerRound === 1
+          return logicalRound === 1
             ? { type: 'tool_batch', batch: 'skill_view', requestedToolExecutionCount: 1 }
             : { type: 'terminal' }
         },

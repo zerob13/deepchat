@@ -16,7 +16,8 @@ import type {
   StandaloneVideoGenerationResult,
   ModelScopeMcpSyncOptions,
   ModelScopeMcpSyncResult,
-  RateLimitQueueSnapshot
+  RateLimitQueueSnapshot,
+  ProviderStreamOptions
 } from '@shared/types/provider'
 import type { AcpConfigState, AcpDebugRequest, AcpDebugRunResult } from '@shared/types/acp'
 import { ApiEndpointType, ModelType } from '@shared/model'
@@ -318,7 +319,8 @@ export class ProviderRuntime
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
-    tools: MCPToolDefinition[]
+    tools: MCPToolDefinition[],
+    options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent> {
     return this.getProviderInstance(providerId).coreStream(
       messages,
@@ -326,7 +328,8 @@ export class ProviderRuntime
       modelConfig,
       temperature,
       maxTokens,
-      tools
+      tools,
+      options
     )
   }
 
@@ -631,7 +634,8 @@ export class ProviderRuntime
       resolvedModelConfig,
       modelConfig.temperature ?? 0.7,
       modelConfig.maxTokens ?? 1024,
-      []
+      [],
+      { signal }
     )
     const images: StandaloneImageGenerationResult['images'] = []
     const abort = createAbortPromise(signal, () => {
@@ -711,7 +715,8 @@ export class ProviderRuntime
       resolvedModelConfig,
       modelConfig.temperature ?? 0.7,
       modelConfig.maxTokens ?? 1024,
-      []
+      [],
+      { signal }
     )
     const videos: StandaloneVideoGenerationResult['videos'] = []
     const abort = createAbortPromise(signal, () => {

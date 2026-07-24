@@ -21,6 +21,21 @@ import {
   createTapeService
 } from './tapeTestHarness'
 
+function providerAttemptProvenance(overrides: Record<string, unknown> = {}) {
+  return {
+    logicalRound: 1,
+    physicalAttempt: 1,
+    requestOrigin: 'chat' as const,
+    attemptOrigin: 'initial' as const,
+    failureClassification: null,
+    retryDecision: 'none' as const,
+    httpStatus: null,
+    errorCode: null,
+    retryDelayMs: null,
+    ...overrides
+  }
+}
+
 describe('SessionTape recall', () => {
   it('invalidates projections written before atomic generation transitions', () => {
     expect(DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION).toBeGreaterThan(2)
@@ -208,6 +223,7 @@ describe('SessionTape recall', () => {
     const firstAttempt = {
       sessionId: 's1',
       messageId: 'a1',
+      ...providerAttemptProvenance(),
       requestSeq: 1,
       providerId: 'anthropic',
       modelId: 'claude-test',
@@ -239,18 +255,27 @@ describe('SessionTape recall', () => {
       source_type: 'runtime_event',
       source_id: 'a1',
       source_seq: 1,
-      provenance_key: 'provider-attempt:s1:a1:1'
+      provenance_key: 'provider-attempt:s1:a1:1:1'
     })
     expect(JSON.parse(storedAttempt.payload_json)).toEqual({
       name: 'provider/attempt_completed',
       data: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         messageId: 'a1',
+        logicalRound: 1,
         requestSeq: 1,
+        physicalAttempt: 1,
+        requestOrigin: 'chat',
+        attemptOrigin: 'initial',
         providerId: 'anthropic',
         modelId: 'claude-test',
         status: 'completed',
         stopReason: 'complete',
+        failureClassification: null,
+        retryDecision: 'none',
+        httpStatus: null,
+        errorCode: null,
+        retryDelayMs: null,
         usage: {
           inputTokens: 100,
           outputTokens: 10,
@@ -305,6 +330,10 @@ describe('SessionTape recall', () => {
 
     service.appendProviderAttempt({
       ...firstAttempt,
+      ...providerAttemptProvenance({
+        failureClassification: 'unknown',
+        retryDecision: 'not_retryable'
+      }),
       requestSeq: 4,
       status: 'error',
       stopReason: null,
@@ -329,6 +358,7 @@ describe('SessionTape recall', () => {
     service.appendProviderAttempt({
       sessionId: 's1',
       messageId: 'a1',
+      ...providerAttemptProvenance(),
       requestSeq: 1,
       providerId: 'openai',
       modelId: 'gpt-test',
@@ -346,6 +376,56 @@ describe('SessionTape recall', () => {
       name: 'provider/attempt_completed',
       data: { schemaVersion: 1, messageId: 'malformed' }
     })
+    table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'a1', seq: 2 },
+      data: {
+        schemaVersion: 2,
+        messageId: 'a1',
+        logicalRound: 1,
+        requestSeq: 2,
+        physicalAttempt: 1,
+        requestOrigin: 'chat',
+        attemptOrigin: 'transient_retry',
+        providerId: 'openai',
+        modelId: 'gpt-test',
+        status: 'completed',
+        stopReason: 'complete',
+        failureClassification: null,
+        retryDecision: 'none',
+        httpStatus: null,
+        errorCode: null,
+        retryDelayMs: null,
+        usage: null,
+        cacheHitRate: null
+      }
+    })
+    table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'a1', seq: 3 },
+      data: {
+        schemaVersion: 2,
+        messageId: 'a1',
+        logicalRound: 1,
+        requestSeq: 3,
+        physicalAttempt: 1,
+        requestOrigin: 'chat',
+        attemptOrigin: 'initial',
+        providerId: 'openai',
+        modelId: 'gpt-test',
+        status: 'completed',
+        stopReason: 'complete',
+        failureClassification: 'transient',
+        retryDecision: 'not_retryable',
+        httpStatus: 503,
+        errorCode: 'service_unavailable',
+        retryDelayMs: null,
+        usage: null,
+        cacheHitRate: null
+      }
+    })
 
     expect(service.info('s1')).toMatchObject({
       lastTokenCacheHitRate: 0.75,
@@ -356,6 +436,10 @@ describe('SessionTape recall', () => {
     service.appendProviderAttempt({
       sessionId: 's1',
       messageId: 'a1',
+      ...providerAttemptProvenance({
+        failureClassification: 'aborted',
+        retryDecision: 'not_retryable'
+      }),
       requestSeq: 2,
       providerId: 'openai',
       modelId: 'gpt-test',
@@ -371,6 +455,75 @@ describe('SessionTape recall', () => {
     })
   })
 
+  it('reads valid legacy provider-attempt events without v2 provenance', () => {
+    const { table } = createTapeTableMock()
+    const service = new SessionTape({
+      deepchatTapeEntriesTable: table,
+      deepchatSessionsTable: { getSummaryState: vi.fn().mockReturnValue(null) }
+    } as any)
+
+    table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'a1', seq: 1 },
+      data: {
+        schemaVersion: 1,
+        messageId: 'a1',
+        requestSeq: 1,
+        providerId: 'anthropic',
+        modelId: 'claude-test',
+        status: 'completed',
+        stopReason: 'complete',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          cacheReadTokens: 80,
+          cacheWriteTokens: null
+        },
+        cacheHitRate: 0.8
+      }
+    })
+
+    expect(service.info('s1')).toMatchObject({
+      lastTokenCacheHitRate: 0.8,
+      lastCacheReadTokens: 80,
+      lastCacheWriteTokens: null
+    })
+  })
+
+  it('stores separate physical attempts for one request sequence', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = new SessionTape({
+      deepchatTapeEntriesTable: table,
+      deepchatSessionsTable: { getSummaryState: vi.fn().mockReturnValue(null) }
+    } as any)
+    const attempt = {
+      sessionId: 's1',
+      messageId: 'a1',
+      ...providerAttemptProvenance(),
+      requestSeq: 1,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+      status: 'completed' as const,
+      stopReason: 'complete' as const,
+      usage: null
+    }
+
+    service.appendProviderAttempt(attempt)
+    service.appendProviderAttempt({
+      ...attempt,
+      physicalAttempt: 2,
+      attemptOrigin: 'transient_retry'
+    })
+
+    expect(
+      entries
+        .filter((entry) => entry.name === 'provider/attempt_completed')
+        .map((entry) => entry.provenance_key)
+    ).toEqual(['provider-attempt:s1:a1:1:1', 'provider-attempt:s1:a1:1:2'])
+  })
+
   it('reserves persisted provider-attempt sequences even when their payload is malformed', () => {
     const { table } = createTapeTableMock()
     const service = new SessionTape({
@@ -381,6 +534,7 @@ describe('SessionTape recall', () => {
     service.appendProviderAttempt({
       sessionId: 's1',
       messageId: 'a1',
+      ...providerAttemptProvenance(),
       requestSeq: 2,
       providerId: 'openai',
       modelId: 'gpt-test',

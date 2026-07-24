@@ -524,6 +524,8 @@ export interface MessageTraceRecord {
   providerId: string
   modelId: string
   requestSeq: number
+  logicalRound: number | null
+  physicalAttempt: number | null
   endpoint: string
   headersJson: string
   bodyJson: string

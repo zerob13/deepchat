@@ -31,7 +31,7 @@ export class TapeProviderAttemptService
         id: input.messageId,
         seq: input.requestSeq
       },
-      provenanceKey: `provider-attempt:${input.sessionId}:${input.messageId}:${input.requestSeq}`,
+      provenanceKey: `provider-attempt:${input.sessionId}:${input.messageId}:${input.requestSeq}:${input.physicalAttempt}`,
       data: { ...buildTapeProviderAttemptEvent(input) },
       idempotent: true
     })

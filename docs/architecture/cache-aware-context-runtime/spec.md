@@ -29,12 +29,12 @@ summarization calls.
    reconstruction into explicitly untrusted user-role contributions.
 3. Preserve complete recent turns according to both the existing configured minimum and a
    model-aware token target.
-4. Persist one compact provider-attempt outcome per actual request so the last cache-read ratio is
-   observable independently from turn-wide usage aggregation.
+4. Persist one compact provider-attempt outcome per physical attempt so the last cache-read ratio
+   is observable independently from turn-wide usage aggregation.
 5. Advance ViewManifest provenance without invalidating schema versions 1 and 2 or legacy policy
    identifiers.
 6. Preserve existing fail-open Memory behavior, Tape append-only semantics, public provider
-   configuration, and database schema.
+   configuration, and backward-compatible database reads.
 
 ## Required Invariants
 
@@ -121,14 +121,27 @@ New context writes use policy `cache_aware_context_v1`, policy version 1, builde
 reasons, source entry identifiers, and content hashes without copying source text.
 
 Each provider stream that actually starts appends one idempotent `provider/attempt_completed`
-event keyed by Session, message, and request sequence. It records terminal classification, the
-last cumulative usage snapshot, and a cache-read ratio only when the provider supplied valid
-input and cache-read counts. An attempt canceled during rate-gate waiting is not recorded because
-the provider was never called. A resumed run initializes its request sequence from the maximum
-persisted manifest, request trace, and provider-attempt event so independent fail-open writes
-cannot cause an idempotency collision. Its first new attempt still records the supplied chat or
-resume selection provenance; absolute request-sequence values do not reclassify it as a tool loop.
-Tape append failure is fail-open for generation.
+event keyed by Session, message, request sequence, and physical attempt. Schema version 2 records
+logical-round identity, request/attempt origin, terminal and retry classification, the last
+cumulative usage snapshot, and a cache-read ratio only when the provider supplied valid input and
+cache-read counts; schema version 1 remains readable. An attempt canceled during rate-gate waiting
+is not recorded because the provider was never called. A resumed run initializes its request
+sequence from the maximum persisted manifest, request trace, and provider-attempt event so
+independent fail-open writes cannot cause an idempotency collision. Its first new request still
+records the supplied chat or resume selection provenance; absolute request-sequence values do not
+reclassify it as a tool loop. Tape append failure is fail-open for generation.
+
+Within one logical round, a transient retry reuses the exact payload and ViewManifest, keeps the
+request sequence, and advances only the physical attempt. Context recovery changes the payload,
+therefore writes a new manifest and resets the physical attempt without consuming the shared
+two-retry budget. Transparent replay is forbidden after the first projected semantic event. Failed
+attempt usage and final-attempt usage are checked and aggregated into message metadata, while each
+Tape outcome remains attempt-local. ACP, image, video, and TTS requests do not participate in this
+transparent replay policy.
+
+Message traces add nullable logical-round and physical-attempt identity. Existing rows and ACP
+traces remain valid. Replay chooses the greatest physical attempt for a requested sequence and uses
+creation time plus trace ID as a stable tie-breaker.
 
 ## Acceptance Criteria
 
@@ -143,12 +156,14 @@ Tape append failure is fail-open for generation.
 7. Compaction obeys the configured turn floor, the 25-percent token target, the 20,000-token cap,
    and complete-turn/tool-group boundaries.
 8. ViewManifest schemas 1, 2, and 3 remain readable; legacy manifests are not rewritten.
-9. Provider overflow retry, abort, error, and cumulative usage produce at most one outcome per
-   actual request sequence.
+9. Provider overflow recovery, abort, error, and cumulative usage produce at most one outcome per
+   physical attempt; multiple physical attempts may share one request sequence.
 10. Tape info exposes the latest attempt cache metrics without changing existing aggregate usage
     semantics.
-11. No database migration, renderer feature, public provider setting, GitHub issue, push, or pull
-    request is created.
+11. The additive trace migration preserves old rows; no renderer feature, public provider setting,
+    GitHub issue, push, or pull request is created.
+12. Transient retries reuse a manifest only before semantic output is committed; context recovery
+    writes a new manifest, and non-chat provider modes are never transparently replayed.
 
 ## Constraints
 

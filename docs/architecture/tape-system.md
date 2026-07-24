@@ -38,7 +38,7 @@ owner，也不能通过 canonical module 的新增导出隐式扩大旧路径合
 
 | 消费方 | 允许依赖的 Tape 能力 |
 | --- | --- |
-| DeepChat loop runner | `TapeReconciliationPort`、`TapeViewManifestReader`、`TapeViewManifestWriter`、`TapeToolFactWriter` |
+| DeepChat loop runner | `TapeReconciliationPort`、`TapeViewManifestReader`、`TapeViewManifestWriter`、`TapeProviderAttemptWriter`、`TapeToolFactWriter` |
 | Turn coordinator / ACP compatibility | `TapeReconciliationPort` |
 | Transcript | `TapeMessageFactWriter` |
 | Memory runtime | `TapeRawEntryReader`、`TapeAnchorWriter` |
@@ -107,10 +107,25 @@ reconstruction 和 Memory 生成的 synthetic user contribution 只记录 source
 不得原地重写。tool loop 和 context pressure 必须继承初始 projection 的 synthetic provenance，不能
 退化为仅按 message role 猜测来源。
 
-每个真正启动的 provider request 另 append 一个幂等 `provider/attempt_completed` event，以
-message ID 和 request sequence 关联同次 `view/assembled`。该 event 只保存终态、stop reason、最后一个
-cumulative usage snapshot、cache read/write token 与合法的命中比率；不保存 prompt、header、secret、
-raw response 或 error stack。Tape append 失败不能反向把已启动的生成改成失败。
+每份确定的 provider payload 只写一个 `view/assembled`，以 request sequence 标识；context recovery
+改变 payload 并写新 manifest，transient retry 复用原 manifest。每个真正启动的 physical attempt 另
+append 一个幂等 `provider/attempt_completed` event，provenance key 由 Session、message、requestSeq 和
+physicalAttempt 组成，`source.seq` 继续等于 requestSeq。
+
+新 attempt event 使用 schema version 2，记录 logicalRound、physicalAttempt、request/attempt origin、
+failure classification、retry decision、受限错误标识、终态、stop reason、最后一个 cumulative usage
+snapshot、cache read/write token 与合法的命中比率；schema version 1 保持可读。它不保存 prompt、
+header、secret、raw response 或 error stack。Tape append 失败不能反向把已启动的生成改成失败。
+
+`DeepChatContextCoordinator.streamProviderAttempts` 在 retry 决策完成后写 attempt outcome。可重试的
+error control event 在决定不重放前不得进入 message projection；首个语义输出提交后，即使后续出现
+transient failure 也只能保留 partial output 并结束。message metadata 汇总该 logical round 所有
+physical attempt 的最终 usage snapshot，Tape outcome 则始终保留 attempt-local usage，不能用 message
+aggregate 反推单次请求。retry lifecycle observer 只写诊断日志，不写 Tape。
+
+DeepChat message trace 通过 nullable identity 列兼容旧行和 ACP trace。同一 requestSeq 的 replay 选择
+physicalAttempt 最大的 trace，再按 createdAt 和 ID 稳定排序；attempt-local trace callback 必须捕获
+不可变 identity。
 
 ## Message projection 与 tool facts
 

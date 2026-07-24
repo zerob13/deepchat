@@ -53,13 +53,6 @@ type ToolRoundBatch = {
   nextAction: 'continue' | 'terminal'
 }
 
-class MaxProviderRoundsError extends Error {
-  constructor(limit: number) {
-    super(`Maximum agent turns exceeded (${limit}).`)
-    this.name = 'MaxProviderRoundsError'
-  }
-}
-
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
 }
@@ -84,8 +77,8 @@ function stripTrailingErrorBlock(state: StreamState, message: string): void {
 export const MAX_TOOL_CALLS_SKIPPED_ERROR =
   'Tool call was not executed because the maximum tool-call limit was reached.'
 
-function stampRunAccounting(state: StreamState): void {
-  state.metadata.providerRounds = state.providerRoundCount
+function stampRunAccounting(state: StreamState, run: ProcessParams['run']): void {
+  state.metadata.providerRounds = run.logicalRound
   state.metadata.toolCalls = state.toolCallCount
 }
 
@@ -103,7 +96,13 @@ function toNonNegativeNumber(value: number | undefined): number | undefined {
 }
 
 function toPositiveInteger(value: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+function toNonNegativeSafeInteger(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined
+  const normalized = Math.floor(value)
+  return Number.isSafeInteger(normalized) ? normalized : undefined
 }
 
 function markUnexecutedToolCallsForLimit(state: StreamState): void {
@@ -570,7 +569,7 @@ function settleLoopOutcome(
   run: ProcessParams['run'],
   outputSink: OutputSink
 ): ProcessResult {
-  stampRunAccounting(state)
+  stampRunAccounting(state, run)
   if (outcome.type === 'thrown') {
     commitRoundUsage(state)
     if (io.abortSignal.aborted || isAbortError(outcome.error)) {
@@ -581,24 +580,6 @@ function settleLoopOutcome(
         status: 'aborted',
         stopReason: 'user_stop',
         errorMessage: USER_CANCELED_GENERATION_ERROR,
-        usage: buildUsageSnapshot(state)
-      }
-    }
-
-    if (outcome.error instanceof MaxProviderRoundsError) {
-      logger.info(`[ProcessStream] ${outcome.error.message}`)
-      stampRunOutcome(state, 'error', 'max_turns')
-      outputSink.fail({
-        runId: run.runId,
-        sessionId: run.sessionId,
-        messageId: run.messageId,
-        error: outcome.error
-      })
-      return {
-        status: 'error',
-        terminalError: outcome.error.message,
-        stopReason: 'max_turns',
-        errorMessage: outcome.error.message,
         usage: buildUsageSnapshot(state)
       }
     }
@@ -794,9 +775,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
     state.metadata.reasoningStartTime = toNonNegativeNumber(initialAccounting.reasoningStartTime)
     state.metadata.reasoningEndTime = toNonNegativeNumber(initialAccounting.reasoningEndTime)
     state.metadata.noProgressToolLoop = initialAccounting.noProgressToolLoop
-    state.providerRoundCount = Math.floor(
-      toNonNegativeNumber(initialAccounting.providerRounds) ?? 0
-    )
+    run.logicalRound = toNonNegativeSafeInteger(initialAccounting.providerRounds) ?? 0
     state.toolCallCount = Math.floor(toNonNegativeNumber(initialAccounting.toolCalls) ?? 0)
     if (initialGenerationTime !== undefined) {
       state.startTime -= initialGenerationTime
@@ -923,34 +902,16 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
       {
         maxProviderRounds,
         initialExecutedToolCount: state.toolCallCount,
-        consumeProviderRound: async () => {
+        consumeLogicalRound: async ({ logicalRound }) => {
           const prevBlockCount = state.blocks.length
-          const assertProviderRequestAvailable = (): void => {
-            if (maxProviderRounds !== undefined && state.providerRoundCount >= maxProviderRounds) {
-              throw new MaxProviderRoundsError(maxProviderRounds)
-            }
-          }
-          const markProviderRequestStarted = (): void => {
-            assertProviderRequestAvailable()
-            state.providerRoundCount += 1
-            state.metadata.providerRounds = state.providerRoundCount
-          }
-          if (params.coreStreamReportsProviderStart !== true) {
-            markProviderRequestStarted()
-          } else {
-            assertProviderRequestAvailable()
-          }
+          state.metadata.providerRounds = logicalRound
           const stream = coreStream(
             conversationMessages,
             modelId,
             modelConfig,
             temperature,
             maxTokens,
-            currentTools,
-            params.coreStreamReportsProviderStart === true ? markProviderRequestStarted : undefined,
-            params.coreStreamReportsProviderStart === true
-              ? assertProviderRequestAvailable
-              : undefined
+            currentTools
           )
 
           // Reset per-iteration accumulator state
@@ -960,6 +921,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
 
           for await (const event of stream) {
             eventCount++
+            if (event.type === 'usage') {
+              accumulate(state, event)
+            }
             if (io.abortSignal.aborted) {
               logger.info(`[ProcessStream] aborted after ${eventCount} events`)
               echo.stop()
@@ -998,7 +962,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               continue
             }
 
-            accumulate(state, event)
+            if (event.type !== 'usage') {
+              accumulate(state, event)
+            }
             if (event.type === 'plan' && state.latestAgentPlanSnapshot) {
               state.latestAgentPlanSnapshot = {
                 ...state.latestAgentPlanSnapshot,

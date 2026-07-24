@@ -372,6 +372,8 @@ function createTraceRow(overrides: Record<string, unknown> = {}) {
     provider_id: 'openai',
     model_id: 'gpt-4o',
     request_seq: 1,
+    logical_round: null,
+    physical_attempt: null,
     endpoint: 'https://api.openai.test/v1/chat/completions',
     headers_json: '{"authorization":"[redacted]"}',
     body_json: '{"messages":[{"role":"user","content":"hello"}]}',

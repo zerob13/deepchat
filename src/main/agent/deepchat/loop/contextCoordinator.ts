@@ -1,9 +1,22 @@
 import type { LoopRun } from './loopRun'
-import { advanceRequestSequence } from './loopRun'
+import { advanceRequestSequence, enterPhysicalAttempt } from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
-import type { LLMCoreStreamEvent, ProviderRoundStopReason } from '@shared/types/core/llm-events'
+import {
+  createStreamEvent,
+  type ErrorStreamEvent,
+  type LLMCoreStreamEvent,
+  type ProviderRoundStopReason,
+  type UsageStreamEvent
+} from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
+import type {
+  DeepChatProviderAttemptIdentity,
+  DeepChatProviderAttemptOrigin,
+  DeepChatProviderFailureClassification,
+  DeepChatProviderRequestOrigin,
+  DeepChatProviderRetryDecision
+} from '@shared/types/provider-attempt'
 import type {
   DeepChatTapeViewPolicy,
   DeepChatTapeViewSyntheticContribution,
@@ -15,6 +28,15 @@ import {
   type ContextCheckpoint,
   type ContextRuntimeContributions
 } from '@/agent/deepchat/runtime/contextContributions'
+import {
+  classifyProviderFailure,
+  emitProviderRetryLifecycleEvent,
+  MAX_TRANSIENT_RETRIES_PER_LOGICAL_ROUND,
+  resolveProviderRetryDelay,
+  waitForProviderRetry,
+  type ProviderFailureAssessment,
+  type ProviderRetryObserver
+} from './providerRetryPolicy'
 
 export interface ContextAssembly<TContributions, TView> {
   assembleContributions(): Promise<TContributions>
@@ -138,30 +160,46 @@ export interface ProviderRateGatePort {
   clearWaiting(): void
 }
 
+export interface ProviderAttemptStreamInput {
+  identity: DeepChatProviderAttemptIdentity
+  requestOrigin: DeepChatProviderRequestOrigin
+  attemptOrigin: DeepChatProviderAttemptOrigin
+  messages: ChatMessage[]
+  modelId: string
+  modelConfig: ModelConfig
+  temperature: number
+  maxTokens: number
+  tools: MCPToolDefinition[]
+  signal: AbortSignal
+}
+
 export interface ProviderAttemptStreamPort {
-  stream(input: {
-    messages: ChatMessage[]
-    modelId: string
-    modelConfig: ModelConfig
-    temperature: number
-    maxTokens: number
-    tools: MCPToolDefinition[]
-  }): AsyncGenerator<LLMCoreStreamEvent>
-  assertAvailable?(): void
+  stream(input: ProviderAttemptStreamInput): AsyncGenerator<LLMCoreStreamEvent>
   beforeStream(): void
 }
 
+export interface ProviderAttemptUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
 export interface ProviderAttemptOutcomeInput {
+  logicalRound: number
   requestSeq: number
+  physicalAttempt: number
+  requestOrigin: DeepChatProviderRequestOrigin
+  attemptOrigin: DeepChatProviderAttemptOrigin
   status: 'completed' | 'context_overflow' | 'aborted' | 'error'
   stopReason: ProviderRoundStopReason | null
-  usage: {
-    inputTokens: number
-    outputTokens: number
-    totalTokens: number
-    cacheReadTokens?: number
-    cacheWriteTokens?: number
-  } | null
+  failureClassification: DeepChatProviderFailureClassification | null
+  retryDecision: DeepChatProviderRetryDecision
+  httpStatus: number | null
+  errorCode: string | null
+  retryDelayMs: number | null
+  usage: ProviderAttemptUsage | null
 }
 
 export interface ProviderAttemptOutcomePort {
@@ -169,29 +207,211 @@ export interface ProviderAttemptOutcomePort {
   onAppendError(error: unknown): void
 }
 
-function resolveProviderAttemptStatus(input: {
+function checkedTokenCount(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`Provider usage ${field} must be a non-negative safe integer.`)
+  }
+  return value
+}
+
+function checkedTokenSum(left: number, right: number, field: string): number {
+  const total = checkedTokenCount(left, field) + checkedTokenCount(right, field)
+  if (!Number.isSafeInteger(total)) {
+    throw new RangeError(`Provider usage ${field} exceeds the safe integer range.`)
+  }
+  return total
+}
+
+function providerAttemptUsageFromEvent(event: UsageStreamEvent): ProviderAttemptUsage {
+  return {
+    inputTokens: checkedTokenCount(event.usage.prompt_tokens, 'prompt_tokens'),
+    outputTokens: checkedTokenCount(event.usage.completion_tokens, 'completion_tokens'),
+    totalTokens: checkedTokenCount(event.usage.total_tokens, 'total_tokens'),
+    ...(event.usage.cached_tokens !== undefined
+      ? { cacheReadTokens: checkedTokenCount(event.usage.cached_tokens, 'cached_tokens') }
+      : {}),
+    ...(event.usage.cache_write_tokens !== undefined
+      ? {
+          cacheWriteTokens: checkedTokenCount(event.usage.cache_write_tokens, 'cache_write_tokens')
+        }
+      : {})
+  }
+}
+
+function aggregateProviderAttemptUsage(
+  aggregate: ProviderAttemptUsage | null,
+  attempt: ProviderAttemptUsage | null
+): ProviderAttemptUsage | null {
+  if (!attempt) return aggregate
+  if (!aggregate) return { ...attempt }
+
+  const cacheReadTokens =
+    aggregate.cacheReadTokens === undefined && attempt.cacheReadTokens === undefined
+      ? undefined
+      : checkedTokenSum(
+          aggregate.cacheReadTokens ?? 0,
+          attempt.cacheReadTokens ?? 0,
+          'cached_tokens'
+        )
+  const cacheWriteTokens =
+    aggregate.cacheWriteTokens === undefined && attempt.cacheWriteTokens === undefined
+      ? undefined
+      : checkedTokenSum(
+          aggregate.cacheWriteTokens ?? 0,
+          attempt.cacheWriteTokens ?? 0,
+          'cache_write_tokens'
+        )
+  return {
+    inputTokens: checkedTokenSum(aggregate.inputTokens, attempt.inputTokens, 'prompt_tokens'),
+    outputTokens: checkedTokenSum(
+      aggregate.outputTokens,
+      attempt.outputTokens,
+      'completion_tokens'
+    ),
+    totalTokens: checkedTokenSum(aggregate.totalTokens, attempt.totalTokens, 'total_tokens'),
+    ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {})
+  }
+}
+
+function createAggregatedUsageEvent(usage: ProviderAttemptUsage): UsageStreamEvent {
+  return createStreamEvent.usage({
+    prompt_tokens: usage.inputTokens,
+    completion_tokens: usage.outputTokens,
+    total_tokens: usage.totalTokens,
+    ...(usage.cacheReadTokens !== undefined ? { cached_tokens: usage.cacheReadTokens } : {}),
+    ...(usage.cacheWriteTokens !== undefined ? { cache_write_tokens: usage.cacheWriteTokens } : {})
+  })
+}
+
+function isProviderControlEvent(
+  event: LLMCoreStreamEvent
+): event is ErrorStreamEvent | UsageStreamEvent | Extract<LLMCoreStreamEvent, { type: 'stop' }> {
+  return event.type === 'error' || event.type === 'usage' || event.type === 'stop'
+}
+
+const PREMATURE_PROVIDER_STREAM_ERROR = 'Provider stream ended without a terminal stop event.'
+
+interface ProviderAttemptObservation {
+  outputCommitted: boolean
   contextOverflowObserved: boolean
   providerThrew: boolean
   providerError: unknown
-  sawErrorEvent: boolean
+  errorEvent: ErrorStreamEvent | null
+  stopEvent: Extract<LLMCoreStreamEvent, { type: 'stop' }> | null
   stopReason: ProviderRoundStopReason | null
+  prematureEof: boolean
+  usage: ProviderAttemptUsage | null
+}
+
+function createProviderAttemptObservation(): ProviderAttemptObservation {
+  return {
+    outputCommitted: false,
+    contextOverflowObserved: false,
+    providerThrew: false,
+    providerError: undefined,
+    errorEvent: null,
+    stopEvent: null,
+    stopReason: null,
+    prematureEof: false,
+    usage: null
+  }
+}
+
+interface ProviderAttemptAssessment {
+  failureAssessment: ProviderFailureAssessment | null
+  failureClassification: DeepChatProviderFailureClassification | null
+  status: ProviderAttemptOutcomeInput['status']
+  stopReason: ProviderRoundStopReason | null
+}
+
+function assessProviderAttemptObservation(input: {
+  observation: ProviderAttemptObservation
   signalAborted: boolean
-  isAbortError(error: unknown): boolean
-}): ProviderAttemptOutcomeInput['status'] {
-  if (input.contextOverflowObserved) return 'context_overflow'
-  if (input.providerThrew) {
-    return input.isAbortError(input.providerError) ? 'aborted' : 'error'
+  forceFailure?: boolean
+}): ProviderAttemptAssessment {
+  const { observation } = input
+  const hasFailure =
+    input.forceFailure === true ||
+    input.signalAborted ||
+    observation.providerThrew ||
+    observation.errorEvent !== null ||
+    observation.stopReason === 'error'
+  const failureAssessment = hasFailure
+    ? classifyProviderFailure({
+        signalAborted: input.signalAborted,
+        contextOverflow: observation.contextOverflowObserved,
+        ...(observation.providerThrew ? { error: observation.providerError } : {}),
+        ...(observation.errorEvent ? { errorEvent: observation.errorEvent } : {}),
+        prematureEof: observation.prematureEof
+      })
+    : null
+  const failureClassification = failureAssessment?.classification ?? null
+  const status: ProviderAttemptOutcomeInput['status'] =
+    failureClassification === 'aborted'
+      ? 'aborted'
+      : failureClassification === 'context_overflow'
+        ? 'context_overflow'
+        : hasFailure
+          ? 'error'
+          : 'completed'
+  const stopReason =
+    (failureClassification === 'aborted' || observation.providerThrew) &&
+    observation.stopReason !== 'error'
+      ? null
+      : observation.stopReason
+
+  return { failureAssessment, failureClassification, status, stopReason }
+}
+
+async function* observeProviderAttempt(input: {
+  provider: ProviderAttemptStreamPort
+  streamInput: ProviderAttemptStreamInput
+  observation: ProviderAttemptObservation
+  bypassContextBudget: boolean
+  isContextOverflowEvent(event: LLMCoreStreamEvent): boolean
+  isContextOverflowError(error: unknown): boolean
+}): AsyncGenerator<LLMCoreStreamEvent, void, void> {
+  const { observation } = input
+  try {
+    for await (const event of input.provider.stream(input.streamInput)) {
+      if (!input.bypassContextBudget && input.isContextOverflowEvent(event)) {
+        observation.contextOverflowObserved = true
+      }
+      if (event.type === 'usage') {
+        observation.usage = providerAttemptUsageFromEvent(event)
+      } else if (event.type === 'error') {
+        observation.errorEvent = event
+        observation.stopReason = 'error'
+      } else if (event.type === 'stop') {
+        observation.stopEvent = event
+        if (observation.stopReason !== 'error') {
+          observation.stopReason = event.stop_reason
+        }
+      }
+
+      if (!isProviderControlEvent(event)) {
+        observation.outputCommitted = true
+        yield event
+      }
+    }
+  } catch (error) {
+    observation.providerThrew = true
+    observation.providerError = error
+    if (!input.bypassContextBudget && input.isContextOverflowError(error)) {
+      observation.contextOverflowObserved = true
+    }
   }
-  if (
-    input.signalAborted &&
-    (input.stopReason === null || input.stopReason === 'error' || input.sawErrorEvent)
-  ) {
-    return 'aborted'
+
+  observation.prematureEof =
+    !observation.providerThrew && observation.errorEvent === null && observation.stopEvent === null
+  if (observation.prematureEof) {
+    observation.errorEvent = createStreamEvent.error(PREMATURE_PROVIDER_STREAM_ERROR, {
+      code: 'premature_eof',
+      retryable: true
+    })
+    observation.stopReason = 'error'
   }
-  if (input.sawErrorEvent || input.stopReason === 'error' || input.stopReason === null) {
-    return 'error'
-  }
-  return 'completed'
 }
 
 export interface ProviderAttemptInput<TSelection> {
@@ -202,6 +422,7 @@ export interface ProviderAttemptInput<TSelection> {
   temperature: number
   maxTokens: number
   tools: MCPToolDefinition[]
+  allowTransientRetry: boolean
   bypassContextBudget: boolean
   fallbackContextLength: number
   supportsVision: boolean
@@ -214,9 +435,9 @@ export interface ProviderAttemptInput<TSelection> {
   rateGate: ProviderRateGatePort
   provider: ProviderAttemptStreamPort
   outcome: ProviderAttemptOutcomePort
+  retryObserver?: ProviderRetryObserver
   isContextOverflowEvent(event: LLMCoreStreamEvent): boolean
   isContextOverflowError(error: unknown): boolean
-  isAbortError(error: unknown): boolean
   createAbortError(): Error
 }
 
@@ -271,11 +492,16 @@ export class DeepChatContextCoordinator {
     let providerOverflowRecoveryAttempted = false
     let providerContextOverflowRecoveryApplied = false
     let strictProviderOverflowRetryPending = false
+    let nextRequestOrigin: DeepChatProviderRequestOrigin =
+      input.run.requestSeq === input.run.initialRequestSeq
+        ? (input.viewContext?.taskType ?? 'tool_loop')
+        : 'tool_loop'
     let manifestSummaryCursorOrderSeq = input.viewContext?.summaryCursorOrderSeq ?? 1
     let manifestSyntheticContributions = input.viewContext?.syntheticContributions
     const effectiveRequestToolReserveTokens = input.budget.estimateToolReserveTokens(input.tools)
 
-    const prepareProviderAttempt = async (options?: {
+    const prepareProviderRequest = async (options: {
+      requestOrigin: DeepChatProviderRequestOrigin
       strictProviderOverflowRetry?: boolean
     }): Promise<{
       providerMessages: ChatMessage[]
@@ -288,11 +514,11 @@ export class DeepChatContextCoordinator {
       let manifestReserveTokens = input.maxTokens
       let strictExtraReserveTokens = 0
       let recoveredFromContextPressure =
-        providerContextOverflowRecoveryApplied || options?.strictProviderOverflowRetry === true
+        providerContextOverflowRecoveryApplied || options.strictProviderOverflowRetry === true
 
       if (!input.bypassContextBudget) {
         let requestedMaxTokens = input.maxTokens
-        if (options?.strictProviderOverflowRetry) {
+        if (options.strictProviderOverflowRetry) {
           input.run.providerRecovery.strictProviderOverflowRetryUsed = true
           requestedMaxTokens = input.budget.getStrictRetryMaxTokens(input.maxTokens)
           strictExtraReserveTokens = input.budget.getStrictRetryExtraReserve()
@@ -313,7 +539,7 @@ export class DeepChatContextCoordinator {
           requestedMaxTokens
         })
         if (
-          !options?.strictProviderOverflowRetry &&
+          !options.strictProviderOverflowRetry &&
           (requestPreflight.requiresContextPressureRecovery || !requestPreflight.fitsWithinContext)
         ) {
           preflightContextRecoveryAttempted = true
@@ -358,7 +584,9 @@ export class DeepChatContextCoordinator {
 
       const requestSeq = advanceRequestSequence(input.run)
       const isInitialViewRequest =
-        requestSeq === input.run.initialRequestSeq + 1 && Boolean(input.viewContext)
+        (options.requestOrigin === 'chat' || options.requestOrigin === 'resume') &&
+        requestSeq === input.run.initialRequestSeq + 1 &&
+        Boolean(input.viewContext)
       const manifestPolicy = input.manifest.resolvePolicy({
         recoveredFromContextPressure,
         isInitialViewRequest,
@@ -434,154 +662,270 @@ export class DeepChatContextCoordinator {
         : input.budget.buildOverflowError(retryPreflight)
     }
 
-    const scheduleStrictProviderOverflowRetry = (): boolean => {
-      if (
-        input.run.providerRecovery.strictProviderOverflowRetryUsed ||
-        strictProviderOverflowRetryPending
-      ) {
-        return false
+    let aggregateUsage: ProviderAttemptUsage | null = null
+    let usageProjected = false
+    let transientRetriesUsed = 0
+
+    const appendOutcome = (outcome: ProviderAttemptOutcomeInput): void => {
+      try {
+        input.outcome.append(outcome)
+      } catch (error) {
+        try {
+          input.outcome.onAppendError(error)
+        } catch {}
       }
-      strictProviderOverflowRetryPending = true
-      return true
     }
 
     try {
-      providerAttemptLoop: for (;;) {
-        input.provider.assertAvailable?.()
+      providerRequestLoop: for (;;) {
         const strictProviderOverflowRetry = strictProviderOverflowRetryPending
         strictProviderOverflowRetryPending = false
-        const { providerMessages, providerMaxTokens, requestSeq } = await prepareProviderAttempt({
+        const requestOrigin = nextRequestOrigin
+        const { providerMessages, providerMaxTokens, requestSeq } = await prepareProviderRequest({
+          requestOrigin,
           strictProviderOverflowRetry
         })
+        let pendingRetry: { retryNumber: number; delayMs: number } | null = null
 
-        input.rateGate.beforeWait()
-        await input.rateGate.wait(input.run.abortController.signal)
-        input.rateGate.clearWaiting()
-        if (input.run.abortController.signal.aborted) {
-          throw input.createAbortError()
-        }
+        for (;;) {
+          if (pendingRetry) {
+            await waitForProviderRetry(pendingRetry.delayMs, input.run.abortController.signal)
+          }
 
-        input.provider.beforeStream()
-        let yieldedProviderEvent = false
-        let contextOverflowObserved = false
-        let providerThrew = false
-        let providerError: unknown
-        let sawErrorEvent = false
-        let stopReason: ProviderRoundStopReason | null = null
-        let usage: ProviderAttemptOutcomeInput['usage'] = null
-        try {
-          for await (const event of input.provider.stream({
-            messages: providerMessages,
-            modelId: input.modelId,
-            modelConfig: input.modelConfig,
-            temperature: input.temperature,
-            maxTokens: providerMaxTokens,
-            tools: input.tools
-          })) {
-            if (event.type === 'usage') {
-              usage = {
-                inputTokens: event.usage.prompt_tokens,
-                outputTokens: event.usage.completion_tokens,
-                totalTokens: event.usage.total_tokens,
-                ...(event.usage.cached_tokens !== undefined
-                  ? { cacheReadTokens: event.usage.cached_tokens }
-                  : {}),
-                ...(event.usage.cache_write_tokens !== undefined
-                  ? { cacheWriteTokens: event.usage.cache_write_tokens }
-                  : {})
-              }
-            } else if (event.type === 'error') {
-              sawErrorEvent = true
-              stopReason = 'error'
-            } else if (event.type === 'stop') {
-              if (stopReason !== 'error') {
-                stopReason = event.stop_reason
-              }
-            }
-            if (
-              !yieldedProviderEvent &&
-              !input.bypassContextBudget &&
-              input.isContextOverflowEvent(event)
-            ) {
-              contextOverflowObserved = true
-              if (
+          input.rateGate.beforeWait()
+          try {
+            await input.rateGate.wait(input.run.abortController.signal)
+          } finally {
+            input.rateGate.clearWaiting()
+          }
+          if (input.run.abortController.signal.aborted) {
+            throw input.createAbortError()
+          }
+
+          input.provider.beforeStream()
+          const physicalAttempt = enterPhysicalAttempt(input.run)
+          const attemptOrigin: DeepChatProviderAttemptOrigin =
+            physicalAttempt === 1 ? 'initial' : 'transient_retry'
+          const identity: DeepChatProviderAttemptIdentity = {
+            logicalRound: input.run.logicalRound,
+            requestSeq,
+            physicalAttempt
+          }
+          const startedRetryNumber = pendingRetry?.retryNumber ?? null
+          pendingRetry = null
+          if (startedRetryNumber !== null) {
+            emitProviderRetryLifecycleEvent(input.retryObserver, {
+              type: 'retry_started',
+              attempt: { ...identity },
+              retryNumber: startedRetryNumber
+            })
+          }
+
+          const observation = createProviderAttemptObservation()
+          let outcomeAppended = false
+          try {
+            yield* observeProviderAttempt({
+              provider: input.provider,
+              streamInput: {
+                identity: { ...identity },
+                requestOrigin,
+                attemptOrigin,
+                messages: providerMessages,
+                modelId: input.modelId,
+                modelConfig: input.modelConfig,
+                temperature: input.temperature,
+                maxTokens: providerMaxTokens,
+                tools: input.tools,
+                signal: input.run.abortController.signal
+              },
+              observation,
+              bypassContextBudget: input.bypassContextBudget,
+              isContextOverflowEvent: input.isContextOverflowEvent,
+              isContextOverflowError: input.isContextOverflowError
+            })
+
+            const assessment = assessProviderAttemptObservation({
+              observation,
+              signalAborted: input.run.abortController.signal.aborted
+            })
+            const { failureAssessment, failureClassification, status } = assessment
+            let retryDecision: DeepChatProviderRetryDecision = 'none'
+            let retryPlan: { delayMs: number } | null = null
+            let contextRecoveryAction: 'recover' | 'strict_retry' | 'fail' | null = null
+
+            if (failureClassification === 'context_overflow') {
+              if (observation.outputCommitted) {
+                retryDecision = 'output_committed'
+              } else if (
                 input.run.providerRecovery.strictProviderOverflowRetryUsed ||
                 providerOverflowRecoveryAttempted
               ) {
-                throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
-              }
-              if (
+                retryDecision = 'context_recovery_exhausted'
+                contextRecoveryAction = 'fail'
+              } else if (
                 preflightContextRecoveryAttempted ||
                 input.run.providerRecovery.contextOverflowHandoffAttempted
               ) {
-                input.provider.assertAvailable?.()
-                if (!scheduleStrictProviderOverflowRetry()) {
-                  throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
+                if (strictProviderOverflowRetryPending) {
+                  retryDecision = 'context_recovery_exhausted'
+                  contextRecoveryAction = 'fail'
+                } else {
+                  retryDecision = 'context_recovery_scheduled'
+                  contextRecoveryAction = 'strict_retry'
                 }
-                continue providerAttemptLoop
+              } else {
+                retryDecision = 'context_recovery_scheduled'
+                contextRecoveryAction = 'recover'
               }
-              input.provider.assertAvailable?.()
-              await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
-              continue providerAttemptLoop
+            } else if (failureClassification === 'transient') {
+              if (!input.allowTransientRetry) {
+                retryDecision = 'not_retryable'
+              } else if (observation.outputCommitted) {
+                retryDecision = 'output_committed'
+              } else if (transientRetriesUsed >= MAX_TRANSIENT_RETRIES_PER_LOGICAL_ROUND) {
+                retryDecision = 'retry_budget_exhausted'
+              } else {
+                const delay = resolveProviderRetryDelay({
+                  metadata: failureAssessment?.metadata,
+                  retryIndex: transientRetriesUsed
+                })
+                if (delay.kind === 'reject') {
+                  retryDecision = 'retry_after_exceeds_limit'
+                } else {
+                  retryDecision = 'retry_scheduled'
+                  retryPlan = { delayMs: delay.delayMs }
+                }
+              }
+            } else if (failureClassification !== null) {
+              retryDecision =
+                observation.outputCommitted && failureClassification === 'aborted'
+                  ? 'output_committed'
+                  : 'not_retryable'
             }
-            yieldedProviderEvent = true
-            yield event
-          }
-          break
-        } catch (error) {
-          providerThrew = true
-          providerError = error
-          if (
-            !yieldedProviderEvent &&
-            !input.bypassContextBudget &&
-            input.isContextOverflowError(error)
-          ) {
-            contextOverflowObserved = true
-            if (
-              input.run.providerRecovery.strictProviderOverflowRetryUsed ||
-              providerOverflowRecoveryAttempted
-            ) {
-              throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
+
+            appendOutcome({
+              logicalRound: identity.logicalRound,
+              requestSeq,
+              physicalAttempt,
+              requestOrigin,
+              attemptOrigin,
+              status,
+              stopReason: assessment.stopReason,
+              failureClassification,
+              retryDecision,
+              httpStatus: failureAssessment?.metadata?.statusCode ?? null,
+              errorCode: failureAssessment?.metadata?.code ?? null,
+              retryDelayMs: retryPlan?.delayMs ?? null,
+              usage: observation.usage
+            })
+            outcomeAppended = true
+            if (startedRetryNumber !== null) {
+              emitProviderRetryLifecycleEvent(input.retryObserver, {
+                type: 'retry_finished',
+                attempt: { ...identity },
+                retryNumber: startedRetryNumber,
+                status,
+                failureClassification,
+                retryDecision
+              })
             }
-            if (
-              preflightContextRecoveryAttempted ||
-              input.run.providerRecovery.contextOverflowHandoffAttempted
-            ) {
-              input.provider.assertAvailable?.()
-              if (!scheduleStrictProviderOverflowRetry()) {
+            aggregateUsage = aggregateProviderAttemptUsage(aggregateUsage, observation.usage)
+
+            if (retryPlan) {
+              transientRetriesUsed += 1
+              const nextAttempt: DeepChatProviderAttemptIdentity = {
+                logicalRound: identity.logicalRound,
+                requestSeq,
+                physicalAttempt: physicalAttempt + 1
+              }
+              emitProviderRetryLifecycleEvent(input.retryObserver, {
+                type: 'retry_scheduled',
+                failedAttempt: { ...identity },
+                nextAttempt: { ...nextAttempt },
+                retryNumber: transientRetriesUsed,
+                delayMs: retryPlan.delayMs
+              })
+              pendingRetry = { retryNumber: transientRetriesUsed, delayMs: retryPlan.delayMs }
+              continue
+            }
+
+            if (contextRecoveryAction) {
+              if (contextRecoveryAction === 'fail') {
                 throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
               }
-              continue providerAttemptLoop
+              if (contextRecoveryAction === 'strict_retry') {
+                strictProviderOverflowRetryPending = true
+              } else {
+                await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
+              }
+              nextRequestOrigin = 'context_recovery'
+              continue providerRequestLoop
             }
-            input.provider.assertAvailable?.()
-            await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
-            continue providerAttemptLoop
-          }
-          throw error
-        } finally {
-          const status = resolveProviderAttemptStatus({
-            contextOverflowObserved,
-            providerThrew,
-            providerError,
-            sawErrorEvent,
-            stopReason,
-            signalAborted: input.run.abortController.signal.aborted,
-            isAbortError: input.isAbortError
-          })
-          try {
-            input.outcome.append({
-              requestSeq,
-              status,
-              stopReason,
-              usage
-            })
-          } catch (error) {
-            try {
-              input.outcome.onAppendError(error)
-            } catch {}
+
+            if (failureClassification === 'aborted') {
+              throw input.run.abortController.signal.reason ?? input.createAbortError()
+            }
+
+            if (aggregateUsage) {
+              usageProjected = true
+              yield createAggregatedUsageEvent(aggregateUsage)
+            }
+            if (observation.errorEvent) {
+              yield observation.errorEvent
+            }
+            if (observation.stopEvent) {
+              yield observation.stopEvent
+            }
+            if (observation.providerThrew) {
+              throw observation.providerError
+            }
+            return
+          } finally {
+            // Closing the async iterator at a semantic yield bypasses normal attempt settlement.
+            if (!outcomeAppended) {
+              const assessment = assessProviderAttemptObservation({
+                observation,
+                signalAborted: input.run.abortController.signal.aborted,
+                forceFailure: true
+              })
+              const retryDecision: DeepChatProviderRetryDecision = observation.outputCommitted
+                ? 'output_committed'
+                : 'not_retryable'
+              appendOutcome({
+                logicalRound: identity.logicalRound,
+                requestSeq,
+                physicalAttempt,
+                requestOrigin,
+                attemptOrigin,
+                status: assessment.status,
+                stopReason: assessment.stopReason,
+                failureClassification: assessment.failureClassification,
+                retryDecision,
+                httpStatus: assessment.failureAssessment?.metadata?.statusCode ?? null,
+                errorCode: assessment.failureAssessment?.metadata?.code ?? null,
+                retryDelayMs: null,
+                usage: observation.usage
+              })
+              if (startedRetryNumber !== null) {
+                emitProviderRetryLifecycleEvent(input.retryObserver, {
+                  type: 'retry_finished',
+                  attempt: { ...identity },
+                  retryNumber: startedRetryNumber,
+                  status: assessment.status,
+                  failureClassification: assessment.failureClassification,
+                  retryDecision
+                })
+              }
+            }
           }
         }
       }
+    } catch (error) {
+      if (aggregateUsage && !usageProjected) {
+        usageProjected = true
+        yield createAggregatedUsageEvent(aggregateUsage)
+      }
+      throw error
     } finally {
       input.rateGate.clearWaiting()
     }

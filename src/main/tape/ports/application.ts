@@ -116,6 +116,8 @@ export interface TapeMessageTraceRow {
   provider_id: string
   model_id: string
   request_seq: number
+  logical_round: number | null
+  physical_attempt: number | null
   endpoint: string
   headers_json: string
   body_json: string

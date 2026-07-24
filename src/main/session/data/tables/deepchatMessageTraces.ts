@@ -8,6 +8,8 @@ export interface DeepChatMessageTraceRow {
   provider_id: string
   model_id: string
   request_seq: number
+  logical_round: number | null
+  physical_attempt: number | null
   endpoint: string
   headers_json: string
   body_json: string
@@ -21,6 +23,19 @@ export class DeepChatMessageTracesTable extends BaseTable {
   }
 
   getCreateTableSQL(): string {
+    return this.getCreateTableSQLForVersion(this.getLatestVersion())
+  }
+
+  private getCreateTableSQLForVersion(version: number): string {
+    const attemptIdentityColumns =
+      version >= 45 ? 'logical_round INTEGER,\n        physical_attempt INTEGER,\n        ' : ''
+    const messageIndexColumns =
+      version >= 45
+        ? `message_id,
+          request_seq DESC,
+          physical_attempt DESC,
+          created_at DESC`
+        : 'message_id, request_seq DESC'
     return `
       CREATE TABLE IF NOT EXISTS deepchat_message_traces (
         id TEXT PRIMARY KEY,
@@ -29,14 +44,14 @@ export class DeepChatMessageTracesTable extends BaseTable {
         provider_id TEXT NOT NULL,
         model_id TEXT NOT NULL,
         request_seq INTEGER NOT NULL,
-        endpoint TEXT NOT NULL,
+        ${attemptIdentityColumns}endpoint TEXT NOT NULL,
         headers_json TEXT NOT NULL,
         body_json TEXT NOT NULL,
         truncated INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_trace_message_seq
-        ON deepchat_message_traces(message_id, request_seq DESC);
+        ON deepchat_message_traces(${messageIndexColumns});
       CREATE INDEX IF NOT EXISTS idx_trace_session_time
         ON deepchat_message_traces(session_id, created_at DESC);
     `
@@ -44,13 +59,27 @@ export class DeepChatMessageTracesTable extends BaseTable {
 
   getMigrationSQL(version: number): string | null {
     if (version === 13) {
-      return this.getCreateTableSQL()
+      return this.getCreateTableSQLForVersion(version)
+    }
+    if (version === 45) {
+      return `
+        ALTER TABLE deepchat_message_traces ADD COLUMN logical_round INTEGER;
+        ALTER TABLE deepchat_message_traces ADD COLUMN physical_attempt INTEGER;
+        DROP INDEX IF EXISTS idx_trace_message_seq;
+        CREATE INDEX idx_trace_message_seq
+          ON deepchat_message_traces(
+            message_id,
+            request_seq DESC,
+            physical_attempt DESC,
+            created_at DESC
+          );
+      `
     }
     return null
   }
 
   getLatestVersion(): number {
-    return 13
+    return 45
   }
 
   insert(row: {
@@ -65,6 +94,8 @@ export class DeepChatMessageTracesTable extends BaseTable {
     truncated: boolean
     createdAt?: number
     requestSeq?: number
+    logicalRound?: number | null
+    physicalAttempt?: number | null
   }): number {
     const tx = this.db.transaction((insertRow: typeof row) => {
       let requestSeq = insertRow.requestSeq
@@ -85,13 +116,15 @@ export class DeepChatMessageTracesTable extends BaseTable {
              provider_id,
              model_id,
              request_seq,
+             logical_round,
+             physical_attempt,
              endpoint,
              headers_json,
              body_json,
              truncated,
              created_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           insertRow.id,
@@ -100,6 +133,8 @@ export class DeepChatMessageTracesTable extends BaseTable {
           insertRow.providerId,
           insertRow.modelId,
           requestSeq,
+          insertRow.logicalRound ?? null,
+          insertRow.physicalAttempt ?? null,
           insertRow.endpoint,
           insertRow.headersJson,
           insertRow.bodyJson,
@@ -116,7 +151,9 @@ export class DeepChatMessageTracesTable extends BaseTable {
   listByMessageId(messageId: string): DeepChatMessageTraceRow[] {
     return this.db
       .prepare(
-        'SELECT * FROM deepchat_message_traces WHERE message_id = ? ORDER BY request_seq DESC'
+        `SELECT * FROM deepchat_message_traces
+         WHERE message_id = ?
+         ORDER BY request_seq DESC, physical_attempt DESC, created_at DESC, id DESC`
       )
       .all(messageId) as DeepChatMessageTraceRow[]
   }

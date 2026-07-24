@@ -386,7 +386,7 @@ describe('processStream', () => {
 
       expect(result.status).toBe('completed')
       expect(coreStream).toHaveBeenCalledTimes(1)
-      expect(params.run.providerRoundCount).toBe(1)
+      expect(params.run.logicalRound).toBe(1)
       expect(params.run.requestSeq).toBe(0)
       expect(order).toEqual([
         'renderer:update',
@@ -1619,6 +1619,43 @@ describe('processStream', () => {
     })
   })
 
+  it('accounts for usage delivered while the run cancellation is settling', async () => {
+    const abortController = new AbortController()
+    const usageEvent = {
+      type: 'usage',
+      usage: {
+        prompt_tokens: 13,
+        completion_tokens: 2,
+        total_tokens: 15,
+        cached_tokens: 5
+      }
+    } as const
+    const coreStream = vi.fn(async function* () {
+      abortController.abort()
+      yield usageEvent
+    }) as unknown as ProcessParams['coreStream']
+
+    const result = await processStream(createParams({ abortController, coreStream }))
+
+    expect(result).toMatchObject({
+      status: 'aborted',
+      usage: {
+        inputTokens: 13,
+        outputTokens: 2,
+        totalTokens: 15,
+        cachedInputTokens: 5
+      }
+    })
+    const metadata = JSON.parse(messageStore.setMessageError.mock.calls.at(-1)?.[2])
+    expect(metadata).toMatchObject({
+      inputTokens: 13,
+      outputTokens: 2,
+      totalTokens: 15,
+      cachedInputTokens: 5,
+      runOutcome: 'aborted'
+    })
+  })
+
   it('accounts for a tool that started before result normalization was aborted', async () => {
     const abortController = new AbortController()
     const coreStream = vi.fn(async function* () {
@@ -1757,40 +1794,34 @@ describe('processStream', () => {
     })
   })
 
-  it('caps provider attempts reported by coreStream before starting another request', async () => {
-    const providerAttempts = vi.fn()
-    const coreStream = vi.fn(function (...args: Parameters<ProcessParams['coreStream']>) {
-      const onProviderRequestStart = args[6]
-      onProviderRequestStart?.()
-      providerAttempts()
-      onProviderRequestStart?.()
-      providerAttempts()
-      return (async function* () {
-        yield { type: 'stop', stop_reason: 'complete' } as LLMCoreStreamEvent
-      })()
+  it('counts one logical round regardless of internal provider attempt handling', async () => {
+    const internalProviderWork = vi.fn()
+    const coreStream = vi.fn(async function* () {
+      internalProviderWork()
+      internalProviderWork()
+      yield { type: 'text', content: 'done' } as LLMCoreStreamEvent
+      yield { type: 'stop', stop_reason: 'complete' } as LLMCoreStreamEvent
     }) as unknown as ProcessParams['coreStream']
 
     const result = await processStream(
       createParams({
         coreStream,
-        coreStreamReportsProviderStart: true,
         maxProviderRounds: 1
       })
     )
 
     expect(result).toMatchObject({
-      status: 'error',
-      stopReason: 'max_turns',
-      errorMessage: 'Maximum agent turns exceeded (1).'
+      status: 'completed',
+      stopReason: 'complete'
     })
     expect(coreStream).toHaveBeenCalledOnce()
-    expect(providerAttempts).toHaveBeenCalledOnce()
-    const metadata = JSON.parse(messageStore.setMessageError.mock.calls.at(-1)?.[2])
+    expect(internalProviderWork).toHaveBeenCalledTimes(2)
+    const metadata = JSON.parse(messageStore.finalizeAssistantMessage.mock.calls.at(-1)?.[2])
     expect(metadata).toMatchObject({
       providerRounds: 1,
       toolCalls: 0,
-      runOutcome: 'error',
-      runStopReason: 'max_turns'
+      runOutcome: 'completed',
+      runStopReason: 'complete'
     })
   })
 
@@ -1802,7 +1833,6 @@ describe('processStream', () => {
     const result = await processStream(
       createParams({
         coreStream,
-        coreStreamReportsProviderStart: true,
         initialAccounting: { providerRounds: 1, toolCalls: 0 },
         maxProviderRounds: 1
       })
@@ -1867,7 +1897,6 @@ describe('processStream', () => {
     const resumedResult = await processStream(
       createParams({
         coreStream: resumedCoreStream,
-        coreStreamReportsProviderStart: true,
         initialAccounting: pausedMetadata
       })
     )
@@ -1928,7 +1957,7 @@ describe('processStream', () => {
     await promise
 
     expect(coreStream).toHaveBeenCalledTimes(2)
-    expect(params.run.providerRoundCount).toBe(2)
+    expect(params.run.logicalRound).toBe(2)
     expect(toolService.callTool).toHaveBeenCalledTimes(1)
     expect(messageStore.finalizeAssistantMessage).toHaveBeenCalled()
 

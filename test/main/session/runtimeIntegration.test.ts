@@ -1270,8 +1270,9 @@ describe('Integration: multi-turn context', () => {
     expect(observedRuns).toHaveLength(2)
     expect(observedRuns[0]).toBe(observedRuns[1])
     expect(observedRuns[1]).toMatchObject({
-      providerRoundCount: 1,
+      logicalRound: 1,
       requestSeq: 2,
+      physicalAttempt: 1,
       providerRecovery: {
         strictProviderOverflowRetryUsed: true
       }

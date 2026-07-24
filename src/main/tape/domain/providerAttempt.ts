@@ -1,9 +1,16 @@
 import type { ProviderRoundStopReason } from '@shared/types/core/llm-events'
+import type {
+  DeepChatProviderAttemptOrigin,
+  DeepChatProviderFailureClassification,
+  DeepChatProviderRequestOrigin,
+  DeepChatProviderRetryDecision
+} from '@shared/types/provider-attempt'
 import type { DeepChatTapeEntryRow } from './entry'
 import { parseTapeJsonObject } from './effectiveSemantics'
 
 export const TAPE_PROVIDER_ATTEMPT_EVENT_NAME = 'provider/attempt_completed'
-export const TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION = 1
+export const TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION = 2
+const TAPE_PROVIDER_ATTEMPT_LEGACY_SCHEMA_VERSION = 1
 
 export type TapeProviderAttemptStatus = 'completed' | 'context_overflow' | 'aborted' | 'error'
 
@@ -18,11 +25,20 @@ export interface TapeProviderAttemptUsage {
 export interface TapeProviderAttemptInput {
   sessionId: string
   messageId: string
+  logicalRound: number
   requestSeq: number
+  physicalAttempt: number
+  requestOrigin: DeepChatProviderRequestOrigin
+  attemptOrigin: DeepChatProviderAttemptOrigin
   providerId: string
   modelId: string
   status: TapeProviderAttemptStatus
   stopReason: ProviderRoundStopReason | null
+  failureClassification: DeepChatProviderFailureClassification | null
+  retryDecision: DeepChatProviderRetryDecision
+  httpStatus: number | null
+  errorCode: string | null
+  retryDelayMs: number | null
   usage: {
     inputTokens: number
     outputTokens: number
@@ -32,8 +48,7 @@ export interface TapeProviderAttemptInput {
   } | null
 }
 
-export interface TapeProviderAttemptEvent {
-  schemaVersion: typeof TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION
+interface TapeProviderAttemptEventBase {
   messageId: string
   requestSeq: number
   providerId: string
@@ -43,6 +58,25 @@ export interface TapeProviderAttemptEvent {
   usage: TapeProviderAttemptUsage | null
   cacheHitRate: number | null
 }
+
+export interface TapeProviderAttemptEventV1 extends TapeProviderAttemptEventBase {
+  schemaVersion: typeof TAPE_PROVIDER_ATTEMPT_LEGACY_SCHEMA_VERSION
+}
+
+export interface TapeProviderAttemptEvent extends TapeProviderAttemptEventBase {
+  schemaVersion: typeof TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION
+  logicalRound: number
+  physicalAttempt: number
+  requestOrigin: DeepChatProviderRequestOrigin
+  attemptOrigin: DeepChatProviderAttemptOrigin
+  failureClassification: DeepChatProviderFailureClassification | null
+  retryDecision: DeepChatProviderRetryDecision
+  httpStatus: number | null
+  errorCode: string | null
+  retryDelayMs: number | null
+}
+
+export type TapeProviderAttemptReadEvent = TapeProviderAttemptEventV1 | TapeProviderAttemptEvent
 
 export interface TapeProviderAttemptCacheMetrics {
   lastTokenCacheHitRate: number | null
@@ -62,6 +96,33 @@ const PROVIDER_STOP_REASONS = new Set<ProviderRoundStopReason>([
   'max_turn_requests',
   'error',
   'complete'
+])
+const PROVIDER_REQUEST_ORIGINS = new Set<DeepChatProviderRequestOrigin>([
+  'chat',
+  'resume',
+  'tool_loop',
+  'context_recovery'
+])
+const PROVIDER_ATTEMPT_ORIGINS = new Set<DeepChatProviderAttemptOrigin>([
+  'initial',
+  'transient_retry'
+])
+const PROVIDER_FAILURE_CLASSIFICATIONS = new Set<DeepChatProviderFailureClassification>([
+  'aborted',
+  'context_overflow',
+  'permanent',
+  'transient',
+  'unknown'
+])
+const PROVIDER_RETRY_DECISIONS = new Set<DeepChatProviderRetryDecision>([
+  'none',
+  'retry_scheduled',
+  'context_recovery_scheduled',
+  'context_recovery_exhausted',
+  'not_retryable',
+  'retry_budget_exhausted',
+  'output_committed',
+  'retry_after_exceeds_limit'
 ])
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
@@ -110,11 +171,20 @@ export function buildTapeProviderAttemptEvent(
   return {
     schemaVersion: TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION,
     messageId: input.messageId,
+    logicalRound: input.logicalRound,
     requestSeq: input.requestSeq,
+    physicalAttempt: input.physicalAttempt,
+    requestOrigin: input.requestOrigin,
+    attemptOrigin: input.attemptOrigin,
     providerId: input.providerId,
     modelId: input.modelId,
     status: input.status,
     stopReason: input.stopReason,
+    failureClassification: input.failureClassification,
+    retryDecision: input.retryDecision,
+    httpStatus: input.httpStatus,
+    errorCode: input.errorCode,
+    retryDelayMs: input.retryDelayMs,
     usage,
     cacheHitRate: calculateCacheHitRate(usage)
   }
@@ -151,9 +221,56 @@ function parseUsage(value: unknown): TapeProviderAttemptUsage | null | undefined
   }
 }
 
+function isValidAttemptOrigin(
+  physicalAttempt: number,
+  attemptOrigin: DeepChatProviderAttemptOrigin
+): boolean {
+  return physicalAttempt === 1 ? attemptOrigin === 'initial' : attemptOrigin === 'transient_retry'
+}
+
+function isValidAttemptOutcome(input: {
+  status: TapeProviderAttemptStatus
+  failureClassification: DeepChatProviderFailureClassification | null
+  retryDecision: DeepChatProviderRetryDecision
+}): boolean {
+  if (input.status === 'completed') {
+    return input.failureClassification === null && input.retryDecision === 'none'
+  }
+  if (input.status === 'context_overflow') {
+    return (
+      input.failureClassification === 'context_overflow' &&
+      (input.retryDecision === 'context_recovery_scheduled' ||
+        input.retryDecision === 'context_recovery_exhausted' ||
+        input.retryDecision === 'not_retryable' ||
+        input.retryDecision === 'output_committed')
+    )
+  }
+  if (input.status === 'aborted') {
+    return (
+      input.failureClassification === 'aborted' &&
+      (input.retryDecision === 'not_retryable' || input.retryDecision === 'output_committed')
+    )
+  }
+  if (
+    input.failureClassification === null ||
+    input.failureClassification === 'aborted' ||
+    input.failureClassification === 'context_overflow'
+  ) {
+    return false
+  }
+  if (
+    input.retryDecision === 'retry_scheduled' ||
+    input.retryDecision === 'retry_budget_exhausted' ||
+    input.retryDecision === 'retry_after_exceeds_limit'
+  ) {
+    return input.failureClassification === 'transient'
+  }
+  return input.retryDecision === 'not_retryable' || input.retryDecision === 'output_committed'
+}
+
 export function parseTapeProviderAttemptEvent(
   row: DeepChatTapeEntryRow
-): TapeProviderAttemptEvent | null {
+): TapeProviderAttemptReadEvent | null {
   if (row.kind !== 'event' || row.name !== TAPE_PROVIDER_ATTEMPT_EVENT_NAME) return null
 
   const payload = parseTapeJsonObject(row.payload_json)
@@ -161,7 +278,13 @@ export function parseTapeProviderAttemptEvent(
     payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
       ? (payload.data as Record<string, unknown>)
       : null
-  if (!data || data.schemaVersion !== TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION) return null
+  if (
+    !data ||
+    (data.schemaVersion !== TAPE_PROVIDER_ATTEMPT_LEGACY_SCHEMA_VERSION &&
+      data.schemaVersion !== TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION)
+  ) {
+    return null
+  }
 
   const usage = parseUsage(data.usage)
   const cacheHitRate = data.cacheHitRate
@@ -192,8 +315,7 @@ export function parseTapeProviderAttemptEvent(
     return null
   }
 
-  return {
-    schemaVersion: TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION,
+  const base: TapeProviderAttemptEventBase = {
     messageId: data.messageId,
     requestSeq: data.requestSeq as number,
     providerId: data.providerId,
@@ -203,10 +325,79 @@ export function parseTapeProviderAttemptEvent(
     usage,
     cacheHitRate
   }
+
+  if (data.schemaVersion === TAPE_PROVIDER_ATTEMPT_LEGACY_SCHEMA_VERSION) {
+    return {
+      schemaVersion: TAPE_PROVIDER_ATTEMPT_LEGACY_SCHEMA_VERSION,
+      ...base
+    }
+  }
+
+  const failureClassification = data.failureClassification
+  const httpStatus = data.httpStatus
+  const errorCode = data.errorCode
+  const retryDelayMs = data.retryDelayMs
+  const physicalAttempt = data.physicalAttempt
+  const attemptOrigin = data.attemptOrigin
+  const retryDecision = data.retryDecision
+  if (
+    !Number.isSafeInteger(data.logicalRound) ||
+    (data.logicalRound as number) <= 0 ||
+    !Number.isSafeInteger(physicalAttempt) ||
+    (physicalAttempt as number) <= 0 ||
+    typeof data.requestOrigin !== 'string' ||
+    !PROVIDER_REQUEST_ORIGINS.has(data.requestOrigin as DeepChatProviderRequestOrigin) ||
+    typeof attemptOrigin !== 'string' ||
+    !PROVIDER_ATTEMPT_ORIGINS.has(attemptOrigin as DeepChatProviderAttemptOrigin) ||
+    (failureClassification !== null &&
+      (typeof failureClassification !== 'string' ||
+        !PROVIDER_FAILURE_CLASSIFICATIONS.has(
+          failureClassification as DeepChatProviderFailureClassification
+        ))) ||
+    typeof retryDecision !== 'string' ||
+    !PROVIDER_RETRY_DECISIONS.has(retryDecision as DeepChatProviderRetryDecision) ||
+    (httpStatus !== null &&
+      (!Number.isSafeInteger(httpStatus) ||
+        (httpStatus as number) < 100 ||
+        (httpStatus as number) > 599)) ||
+    (errorCode !== null && (typeof errorCode !== 'string' || errorCode.length === 0)) ||
+    (retryDelayMs !== null && !isNonNegativeSafeInteger(retryDelayMs))
+  ) {
+    return null
+  }
+
+  const typedAttemptOrigin = attemptOrigin as DeepChatProviderAttemptOrigin
+  const typedFailureClassification =
+    failureClassification as DeepChatProviderFailureClassification | null
+  const typedRetryDecision = retryDecision as DeepChatProviderRetryDecision
+  if (
+    !isValidAttemptOrigin(physicalAttempt as number, typedAttemptOrigin) ||
+    !isValidAttemptOutcome({
+      status: base.status,
+      failureClassification: typedFailureClassification,
+      retryDecision: typedRetryDecision
+    })
+  ) {
+    return null
+  }
+
+  return {
+    schemaVersion: TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION,
+    ...base,
+    logicalRound: data.logicalRound as number,
+    physicalAttempt: physicalAttempt as number,
+    requestOrigin: data.requestOrigin as DeepChatProviderRequestOrigin,
+    attemptOrigin: typedAttemptOrigin,
+    failureClassification: typedFailureClassification,
+    retryDecision: typedRetryDecision,
+    httpStatus: httpStatus as number | null,
+    errorCode: errorCode as string | null,
+    retryDelayMs: retryDelayMs as number | null
+  }
 }
 
 export function toTapeProviderAttemptCacheMetrics(
-  attempt: TapeProviderAttemptEvent
+  attempt: TapeProviderAttemptReadEvent
 ): TapeProviderAttemptCacheMetrics {
   return {
     lastTokenCacheHitRate: attempt.usage ? attempt.cacheHitRate : null,
