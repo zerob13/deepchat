@@ -65,6 +65,17 @@ function normalizeId(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? ''
 }
 
+function findActiveTurnStart(messages: Array<{ role: string }>): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      return index
+    }
+  }
+
+  const firstConversationIndex = messages.findIndex((message) => message.role !== 'system')
+  return firstConversationIndex >= 0 ? firstConversationIndex : messages.length
+}
+
 export function buildPromptCacheKey(
   providerId: string,
   modelId: string,
@@ -86,16 +97,7 @@ export function buildPromptCacheKey(
 function findOpenAIChatBreakpoint(
   messages: PromptCacheOpenAIMessage[]
 ): PromptCacheBreakpointPlan | undefined {
-  let prefixEnd = messages.length
-
-  while (prefixEnd > 0) {
-    const role = messages[prefixEnd - 1]?.role
-    if (role === 'user' || role === 'tool') {
-      prefixEnd -= 1
-      continue
-    }
-    break
-  }
+  const prefixEnd = findActiveTurnStart(messages)
 
   for (let messageIndex = prefixEnd - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
@@ -129,16 +131,7 @@ function findOpenAIChatBreakpoint(
 function findAnthropicBreakpoint(
   messages: PromptCacheAnthropicMessage[]
 ): PromptCacheBreakpointPlan | undefined {
-  let prefixEnd = messages.length
-
-  while (prefixEnd > 0) {
-    const role = messages[prefixEnd - 1]?.role
-    if (role === 'user') {
-      prefixEnd -= 1
-      continue
-    }
-    break
-  }
+  const prefixEnd = findActiveTurnStart(messages)
 
   for (let messageIndex = prefixEnd - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = messages[messageIndex]
@@ -279,9 +272,9 @@ export function applyOpenAIChatExplicitCacheBreakpoint(
         return part
       }
 
+      const textPart = part as PromptCacheTextPart & Record<string, unknown>
       return {
-        type: 'text',
-        text: part.text,
+        ...textPart,
         cache_control: EPHEMERAL_CACHE_CONTROL
       } satisfies PromptCacheTextPart
     }) as PromptCacheOpenAIMessage['content']
@@ -340,9 +333,9 @@ export function applyAnthropicExplicitCacheBreakpoint(
         return block
       }
 
+      const textBlock = block as AnthropicTextBlockWithCache & Record<string, unknown>
       return {
-        type: 'text',
-        text: block.text,
+        ...textBlock,
         cache_control: EPHEMERAL_CACHE_CONTROL
       } satisfies AnthropicTextBlockWithCache
     })

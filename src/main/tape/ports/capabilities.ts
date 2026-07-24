@@ -53,6 +53,10 @@ export interface TapeProviderAttemptWriter {
   appendProviderAttempt(input: TapeProviderAttemptInput): void
 }
 
+export interface TapeProviderAttemptReader {
+  getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number
+}
+
 export interface TapeMessageFactWriter {
   appendMessageRecord(record: ChatMessageRecord): number
   appendMessageReplacement(record: ChatMessageRecord, reason: string): number

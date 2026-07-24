@@ -81,9 +81,11 @@ Conversation requests use these transports:
 | Zenmux fixed Claude models | Explicit content-block `cache_control` |
 
 OpenAI-compatible explicit breakpoints are applied in `transformRequestBody` after the AI SDK has
-created its final messages. Any DeepChat-only transport marker is removed before the HTTP body is
-sent. Raw Session identifiers, prompts, credentials, headers, responses, and exception stacks are
-never persisted in cache telemetry.
+created its final messages. The breakpoint precedes the last user-owned active turn, keeping
+partial assistant continuations, tool calls, and tool results in the dynamic suffix. Any
+DeepChat-only transport marker is removed before the HTTP body is sent. Raw Session identifiers,
+prompts, credentials, headers, responses, and exception stacks are never persisted in cache
+telemetry.
 
 ### Context fitting and compaction
 
@@ -91,6 +93,9 @@ The base system, checkpoint, and active turn are protected. Optional Memory is r
 historical turns. History is removed from the oldest complete turn and tool call/result groups are
 not split. If protected content still does not fit, the runtime follows its explicit overflow
 failure path rather than silently dropping trusted instructions or current user input.
+Initial chat and resume selection use the same usable context length, including the provider
+safety margin, as request preflight so manifest record provenance cannot describe history removed
+only at the final provider boundary.
 
 Automatic and context-pressure compaction calculate:
 
@@ -119,7 +124,11 @@ Each provider stream that actually starts appends one idempotent `provider/attem
 event keyed by Session, message, and request sequence. It records terminal classification, the
 last cumulative usage snapshot, and a cache-read ratio only when the provider supplied valid
 input and cache-read counts. An attempt canceled during rate-gate waiting is not recorded because
-the provider was never called. Tape append failure is fail-open for generation.
+the provider was never called. A resumed run initializes its request sequence from the maximum
+persisted manifest, request trace, and provider-attempt event so independent fail-open writes
+cannot cause an idempotency collision. Its first new attempt still records the supplied chat or
+resume selection provenance; absolute request-sequence values do not reclassify it as a tool loop.
+Tape append failure is fail-open for generation.
 
 ## Acceptance Criteria
 

@@ -357,7 +357,8 @@ export class DeepChatContextCoordinator {
       }
 
       const requestSeq = advanceRequestSequence(input.run)
-      const isInitialViewRequest = requestSeq === 1 && Boolean(input.viewContext)
+      const isInitialViewRequest =
+        requestSeq === input.run.initialRequestSeq + 1 && Boolean(input.viewContext)
       const manifestPolicy = input.manifest.resolvePolicy({
         recoveredFromContextPressure,
         isInitialViewRequest,

@@ -66,8 +66,7 @@ function readPackageJsonManifest(workdir: string): PackageJsonManifest | null {
   }
 }
 
-function getVerificationScriptNames(workdir: string): string[] {
-  const manifest = readPackageJsonManifest(workdir);
+function getVerificationScriptNames(manifest: PackageJsonManifest | null): string[] {
   const scripts = manifest?.scripts;
   if (!scripts || typeof scripts !== "object") {
     return [];
@@ -315,8 +314,8 @@ function buildVerificationPolicyPrompt(workdir: string | null): string {
     return lines.join("\n");
   }
 
-  const verificationScripts = getVerificationScriptNames(normalizedWorkdir);
   const manifest = readPackageJsonManifest(normalizedWorkdir);
+  const verificationScripts = getVerificationScriptNames(manifest);
   const isDeepChatWorkspace =
     String(manifest?.name ?? "").toLowerCase() === "deepchat" ||
     ["format", "i18n", "lint"].every((scriptName) => verificationScripts.includes(scriptName));

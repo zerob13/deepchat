@@ -28,6 +28,7 @@ import type {
   TapeInspectionReader,
   TapeLifecycleAdmin,
   TapeMessageFactWriter,
+  TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
   TapeRawEntryReader,
   TapeReconciliationPort,
@@ -81,6 +82,7 @@ export class SessionTape
   implements
     TapeToolFactWriter,
     TapeMessageFactWriter,
+    TapeProviderAttemptReader,
     TapeProviderAttemptWriter,
     TapeRawEntryReader,
     TapeReconciliationPort,
@@ -136,6 +138,10 @@ export class SessionTape
 
   appendProviderAttempt(input: TapeProviderAttemptInput): void {
     this.providerAttempts.appendProviderAttempt(input)
+  }
+
+  getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number {
+    return this.providerAttempts.getMaxProviderAttemptRequestSeq(sessionId, messageId)
   }
 
   getMessageRecords(sessionId: string): ChatMessageRecord[] {

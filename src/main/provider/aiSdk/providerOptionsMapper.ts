@@ -65,43 +65,37 @@ function hasReusableMessageContent(message: ModelMessage): boolean {
   return Array.isArray(message.content) && message.content.length > 0
 }
 
-function applyBedrockCachePoint(messages: ModelMessage[]): ModelMessage[] {
-  let prefixEnd = messages.length
-
-  while (prefixEnd > 0) {
-    const role = messages[prefixEnd - 1]?.role
-    if (role !== 'user' && role !== 'tool') {
-      break
-    }
-    prefixEnd -= 1
+function applyBedrockCachePoint(
+  messages: ModelMessage[],
+  plan: ReturnType<typeof resolvePromptCachePlan>
+): ModelMessage[] {
+  if (plan.mode !== 'anthropic_explicit' || !plan.breakpointPlan) {
+    return messages
   }
 
-  for (let messageIndex = prefixEnd - 1; messageIndex >= 0; messageIndex -= 1) {
-    const message = messages[messageIndex]
-    if (!hasReusableMessageContent(message)) {
-      continue
-    }
+  const messageIndex = plan.breakpointPlan.messageIndex
+  const message = messages[messageIndex]
+  if (!message || !hasReusableMessageContent(message)) {
+    return messages
+  }
 
-    const providerOptions = (message.providerOptions ?? {}) as ProviderOptionsRecord
-    return messages.map((candidate, index) =>
-      index === messageIndex
-        ? ({
-            ...candidate,
-            providerOptions: {
-              ...providerOptions,
-              bedrock: {
-                ...providerOptions.bedrock,
-                cachePoint: {
-                  type: 'default'
-                }
+  const providerOptions = (message.providerOptions ?? {}) as ProviderOptionsRecord
+  return messages.map((candidate, index) =>
+    index === messageIndex
+      ? ({
+          ...candidate,
+          providerOptions: {
+            ...providerOptions,
+            bedrock: {
+              ...providerOptions.bedrock,
+              cachePoint: {
+                type: 'default'
               }
             }
-          } as ModelMessage)
-        : candidate
-    )
-  }
-
-  return messages
+          }
+        } as ModelMessage)
+      : candidate
+  )
 }
 
 export interface BuildProviderOptionsParams {
@@ -376,7 +370,7 @@ export function buildProviderOptions(
         providerOptions.bedrock = config
       }
       if (promptCachePlan.mode === 'anthropic_explicit') {
-        messages = applyBedrockCachePoint(messages)
+        messages = applyBedrockCachePoint(messages, promptCachePlan)
       }
       break
     }

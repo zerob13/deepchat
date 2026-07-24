@@ -284,4 +284,40 @@ describe('AI SDK prompt cache wire payloads', () => {
     expect(transformed).not.toHaveProperty('session_id')
     expect(transformed).not.toHaveProperty(OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER)
   })
+
+  it('keeps the active OpenRouter tool loop outside the final wire breakpoint', () => {
+    const modelId = 'anthropic/claude-sonnet-4-5'
+    const transformed = transformOpenAICompatiblePromptCacheRequestBody(
+      {
+        model: modelId,
+        messages: [
+          { role: 'system', content: 'Stable system' },
+          { role: 'user', content: 'Earlier question' },
+          { role: 'assistant', content: 'Stable reply' },
+          { role: 'user', content: 'Active question' },
+          { role: 'assistant', content: 'Active tool call' },
+          { role: 'tool', content: 'Active tool result' }
+        ],
+        [OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER]: {
+          version: 1,
+          providerId: 'openrouter',
+          modelId,
+          cacheKey: `deepchat:openrouter:${modelId}:0123456789abcdef0123`
+        }
+      },
+      'openrouter'
+    )
+
+    expect(transformed.messages[2].content).toEqual([
+      {
+        type: 'text',
+        text: 'Stable reply',
+        cache_control: {
+          type: 'ephemeral'
+        }
+      }
+    ])
+    expect(JSON.stringify(transformed.messages.slice(3))).not.toContain('cache_control')
+    expect(transformed).not.toHaveProperty(OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER)
+  })
 })

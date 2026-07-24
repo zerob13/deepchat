@@ -138,6 +138,28 @@ describe('promptCacheStrategy', () => {
     })
   })
 
+  it('keeps resume and tool-loop messages outside the reusable prefix', () => {
+    const plan = resolvePromptCachePlan({
+      providerId: 'openrouter',
+      apiType: 'openai_chat',
+      intent: 'conversation',
+      modelId: 'anthropic/claude-sonnet-4',
+      messages: [
+        { role: 'system', content: 'stable system' },
+        { role: 'user', content: 'earlier question' },
+        { role: 'assistant', content: 'stable reply' },
+        { role: 'user', content: 'active question' },
+        { role: 'assistant', content: 'active tool call' },
+        { role: 'tool', content: 'active tool result' }
+      ]
+    })
+
+    expect(plan.breakpointPlan).toEqual({
+      messageIndex: 2,
+      contentIndex: 0
+    })
+  })
+
   it('keeps non-Claude OpenRouter models disabled for explicit request mutation', () => {
     const plan = resolvePromptCachePlan({
       providerId: 'openrouter',
@@ -238,7 +260,11 @@ describe('promptCacheStrategy', () => {
         content: [
           { type: 'text', text: 'first block' },
           { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
-          { type: 'text', text: 'stable tail' }
+          {
+            type: 'text',
+            text: 'stable tail',
+            provider_options: { vendor: { existing: true } }
+          }
         ]
       },
       { role: 'user', content: 'latest question' }
@@ -259,6 +285,7 @@ describe('promptCacheStrategy', () => {
       {
         type: 'text',
         text: 'stable tail',
+        provider_options: { vendor: { existing: true } },
         cache_control: {
           type: 'ephemeral'
         }

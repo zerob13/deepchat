@@ -31,7 +31,11 @@ import type {
 } from '@/agent/deepchat/loop/ports'
 import { resolveEffectiveActiveSkillNames } from '@/agent/deepchat/resources/systemPromptBuilder'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
-import { capAgentRequestMaxTokens, estimateToolReserveTokens } from './contextBudget'
+import {
+  capAgentRequestMaxTokens,
+  estimateToolReserveTokens,
+  getUsableContextLength
+} from './contextBudget'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
 import type { CompactionService } from './compactionService'
 import { isContextWindowErrorLike } from './contextWindowError'
@@ -641,7 +645,7 @@ export class TurnCoordinator {
             sessionId,
             newUserContent: content,
             systemPrompt: baseSystemPrompt,
-            contextLength: contextBudgetLength,
+            contextLength: getUsableContextLength(contextBudgetLength),
             reserveTokens: maxTokens,
             messageStore: this.ports.messageStore,
             supportsVision,
@@ -1140,7 +1144,7 @@ export class TurnCoordinator {
             sessionId,
             assistantMessageId: messageId,
             systemPrompt: baseSystemPrompt,
-            contextLength: contextBudgetLength,
+            contextLength: getUsableContextLength(contextBudgetLength),
             reserveTokens: maxTokens,
             messageStore: this.ports.messageStore,
             supportsVision,

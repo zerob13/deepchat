@@ -391,6 +391,23 @@ function createMockSqlitePresenter() {
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
       ),
+      getMaxEventSourceSeq: vi.fn(
+        (sessionId: string, name: string, sourceType: string, sourceId: string) =>
+          Math.max(
+            0,
+            ...tapeEntries
+              .filter(
+                (entry) =>
+                  entry.session_id === sessionId &&
+                  entry.kind === 'event' &&
+                  entry.name === name &&
+                  entry.source_type === sourceType &&
+                  entry.source_id === sourceId &&
+                  Number.isSafeInteger(entry.source_seq)
+              )
+              .map((entry) => entry.source_seq)
+          )
+      ),
       getMaxEntryId: vi.fn((sessionId: string) =>
         Math.max(
           0,
@@ -3154,6 +3171,66 @@ describe('DeepChatRuntimeCoordinator', () => {
       })
       const inserted = sqlitePresenter.deepchatMessageTracesTable.insert.mock.calls.at(-1)?.[0]
       expect(inserted.requestSeq).toBe(2)
+    })
+
+    it('recovers requestSeq from an outcome when prior manifest and trace writes were lost', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      sqlitePresenter.deepchatTapeEntriesTable.appendEvent({
+        sessionId: 's1',
+        name: 'provider/attempt_completed',
+        source: { type: 'runtime_event', id: 'mock-msg-id', seq: 3 },
+        provenanceKey: 'provider-attempt:s1:mock-msg-id:3',
+        data: {
+          schemaVersion: 1,
+          messageId: 'mock-msg-id',
+          requestSeq: 3,
+          providerId: 'openai',
+          modelId: 'gpt-4',
+          status: 'completed',
+          stopReason: 'complete',
+          usage: null,
+          cacheHitRate: null
+        },
+        idempotent: true
+      })
+
+      await agent.processMessage('s1', 'Hello')
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+
+      for await (const _event of callArgs.coreStream(
+        callArgs.run.messages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+        void _event
+      }
+
+      const requestSequences = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter(
+          (row: any) =>
+            row.kind === 'event' &&
+            (row.name === 'view/assembled' || row.name === 'provider/attempt_completed')
+        )
+        .map((row: any) => [row.name, row.source_seq])
+      expect(requestSequences).toEqual([
+        ['provider/attempt_completed', 3],
+        ['view/assembled', 4],
+        ['provider/attempt_completed', 4]
+      ])
+      const recoveredManifestRow = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .find((row: any) => row.name === 'view/assembled' && row.source_seq === 4)
+      expect(JSON.parse(recoveredManifestRow.payload_json).data.manifest).toMatchObject({
+        requestSeq: 4,
+        taskType: 'chat',
+        policy: 'cache_aware_context_v1',
+        policyVersion: 1,
+        contextBuilderVersion: 'cache-aware-v1'
+      })
     })
 
     it('emits and clears an ephemeral rate-limit message while waiting for the provider gate', async () => {
@@ -7751,6 +7828,66 @@ describe('DeepChatRuntimeCoordinator', () => {
       ).toBe(true)
       expect(providerMaxTokens).toBeLessThan(4096)
       expect(totalRequestTokens).toBeLessThanOrEqual(getUsableContextLength(8192))
+    })
+
+    it('uses the provider safety margin when selecting initial manifest history', async () => {
+      providerSettings.resolveDeepChatAgentConfig.mockResolvedValue({
+        autoCompactionEnabled: false
+      })
+      const boundaryRows = Array.from({ length: 48 }, (_, index) => {
+        const orderSeq = index * 2 + 1
+        return [
+          makeDeepchatUserRow(
+            orderSeq,
+            `boundary-user-${index}-${'u'.repeat(400)}`,
+            `boundary-u${index}`
+          ),
+          makeDeepchatAssistantRow(
+            orderSeq + 1,
+            `boundary-assistant-${index}-${'a'.repeat(400)}`,
+            `boundary-a${index}`
+          )
+        ]
+      }).flat()
+      installSessionRows(boundaryRows)
+
+      await agent.initSession('s1', {
+        providerId: 'openai',
+        modelId: 'gpt-4',
+        generationSettings: {
+          contextLength: 8192,
+          maxTokens: 4096
+        }
+      })
+      await agent.processMessage('s1', 'current request')
+
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const runMessages = callArgs.run.messages
+      expect(runMessages.length).toBeGreaterThan(2)
+      expect(estimateMessagesTokens(runMessages) + callArgs.maxTokens).toBeLessThanOrEqual(
+        getUsableContextLength(8192)
+      )
+      expect(llmProvider.generateText).not.toHaveBeenCalled()
+
+      for await (const _event of callArgs.coreStream(
+        runMessages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+      }
+
+      const providerMessages = llmProvider.providerInstance.coreStream.mock.calls[0][0]
+      const manifest = getViewManifests()[0]
+      const selectedHistoryRefs = manifest.included.filter(
+        (ref: any) => ref.reason === 'selected_history'
+      )
+
+      expect(providerMessages).toEqual(runMessages)
+      expect(selectedHistoryRefs).toHaveLength(providerMessages.length - 2)
+      expect(manifest.excluded.some((ref: any) => ref.reason === 'out_of_budget')).toBe(true)
     })
 
     it('keeps reconstruction and omits Memory before the active turn under pressure', async () => {

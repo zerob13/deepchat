@@ -184,5 +184,6 @@ describe('DeepChat system prompt builder', () => {
     expect(second).toContain('`check`')
     expect(second).not.toContain('TOOL PROMPT ONE')
     expect(second).not.toContain('`verify`')
+    expect(fs.readFileSync).toHaveBeenCalledTimes(2)
   })
 })

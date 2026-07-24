@@ -1857,4 +1857,32 @@ describe('cache-aware context assembly', () => {
       )
     ).toThrow(/context window/)
   })
+
+  it('restores attachment fallback text when pressure removes memory-only text', () => {
+    const memory = 'M'.repeat(240)
+    const contextContributions = createCacheAwareContributions({ memory })
+    const imagePart = {
+      type: 'image_url' as const,
+      image_url: { url: 'data:image/png;base64,abc', detail: 'auto' as const }
+    }
+
+    const fitted = fitCacheAwareMessagesToContextWindow(
+      [
+        { role: 'system', content: 'Stable system' },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: memory }, imagePart]
+        }
+      ],
+      800,
+      700,
+      contextContributions
+    )
+
+    expect(contextContributions.memoryIncluded).toBe(false)
+    expect(fitted.at(-1)?.content).toEqual([
+      { type: 'text', text: 'User attached images for analysis.' },
+      imagePart
+    ])
+  })
 })

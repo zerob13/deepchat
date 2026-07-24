@@ -371,6 +371,42 @@ describe('SessionTape recall', () => {
     })
   })
 
+  it('reserves persisted provider-attempt sequences even when their payload is malformed', () => {
+    const { table } = createTapeTableMock()
+    const service = new SessionTape({
+      deepchatTapeEntriesTable: table,
+      deepchatSessionsTable: { getSummaryState: vi.fn().mockReturnValue(null) }
+    } as any)
+
+    service.appendProviderAttempt({
+      sessionId: 's1',
+      messageId: 'a1',
+      requestSeq: 2,
+      providerId: 'openai',
+      modelId: 'gpt-test',
+      status: 'completed',
+      stopReason: 'complete',
+      usage: null
+    })
+    table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'a1', seq: 7 },
+      data: { schemaVersion: 1, messageId: 'malformed' }
+    })
+    table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'a2', seq: 9 },
+      data: { schemaVersion: 1, messageId: 'a2' }
+    })
+
+    expect(service.getMaxProviderAttemptRequestSeq('s1', 'a1')).toBe(7)
+    expect(service.getMaxProviderAttemptRequestSeq('s1', 'a2')).toBe(9)
+    expect(service.getMaxProviderAttemptRequestSeq('s1', 'missing')).toBe(0)
+    expect(service.getMaxProviderAttemptRequestSeq('missing', 'a1')).toBe(0)
+  })
+
   it('returns only effective message DTOs for a requested source span', () => {
     const { table } = createTapeTableMock()
     const first = table.append({

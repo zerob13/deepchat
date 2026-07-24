@@ -1133,7 +1133,7 @@ function buildCacheAwareOverflowError(input: {
   return new Error(
     [
       'Request was not sent because it cannot fit within the model context window without dropping the base system prompt, conversation checkpoint, or active turn.',
-      `Budget: context ${Math.floor(input.contextLength)} tokens, fixed prompt ${input.fixedTokens} tokens, output reserve ${Math.max(0, input.reserveTokens)} tokens, extra reserve ${Math.max(0, input.extraReserveTokens)} tokens.`,
+      `Budget: usable context ${Math.floor(input.contextLength)} tokens, fixed prompt ${input.fixedTokens} tokens, output reserve ${Math.max(0, input.reserveTokens)} tokens, extra reserve ${Math.max(0, input.extraReserveTokens)} tokens.`,
       'Shorten the current input or attachments, reduce active tools or system instructions, lower max output tokens, or increase the model context length.'
     ].join(' ')
   )
@@ -1168,13 +1168,22 @@ function stripLeadingUserContext(
     return { message, removed: false }
   }
 
+  const imageCount = message.content.filter((part) => part.type === 'image_url').length
+  const audioCount = message.content.filter((part) => part.type === 'input_audio').length
   let removed = false
   const content = message.content.map((part) => {
     if (removed || part.type !== 'text') return part
     const stripped = stripText(part.text)
     if (!stripped.removed) return part
     removed = true
-    return { ...part, text: stripped.text }
+    return {
+      ...part,
+      text:
+        stripped.text ||
+        (imageCount > 0 || audioCount > 0
+          ? buildStructuredAttachmentText(imageCount, audioCount)
+          : '')
+    }
   })
   return removed ? { message: { ...message, content }, removed: true } : { message, removed: false }
 }

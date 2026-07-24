@@ -68,6 +68,7 @@ import {
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
 import type {
+  TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
   TapeReconciliationPort,
   TapeToolFactWriter,
@@ -198,6 +199,7 @@ export interface DeepChatLoopRunnerPorts {
   tapeReconciliation: TapeReconciliationPort
   tapeViewManifestReader: TapeViewManifestReader
   tapeViewManifestWriter: TapeViewManifestWriter
+  tapeProviderAttemptReader: TapeProviderAttemptReader
   tapeProviderAttemptWriter: TapeProviderAttemptWriter
   tapeToolFactWriter: TapeToolFactWriter
   pendingInputCoordinator: SessionPendingInputs
@@ -418,7 +420,8 @@ export class DeepChatLoopRunner {
     const initialRequestSeq = Math.max(
       this.ports.tapeViewManifestReader.listViewManifestsByMessage(sessionId, messageId)[0]
         ?.requestSeq ?? 0,
-      this.ports.messageStore.getMaxMessageTraceRequestSeq(messageId)
+      this.ports.messageStore.getMaxMessageTraceRequestSeq(messageId),
+      this.ports.tapeProviderAttemptReader.getMaxProviderAttemptRequestSeq(sessionId, messageId)
     )
     const temperature = generationSettings.temperature
     const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)

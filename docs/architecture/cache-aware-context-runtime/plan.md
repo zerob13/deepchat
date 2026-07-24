@@ -15,9 +15,10 @@ messages.
 For OpenRouter and Zenmux, place a private cache directive in the adapter-specific top-level
 provider options only when explicit caching is supported. Configure the OpenAI-compatible
 provider's `transformRequestBody` to consume and remove that directive, find the last reusable
-text block in the final wire messages, and apply `cache_control`. The OpenRouter transform also
-emits the hashed conversation key as `session_id` for fixed Claude models. Wire-capture tests use
-the real installed adapters and a local fetch stub.
+text block before the final user-owned active turn, and apply `cache_control`. Partial assistant
+continuations and tool-loop messages therefore remain outside the reusable prefix. The OpenRouter
+transform also emits the hashed conversation key as `session_id` for fixed Claude models.
+Wire-capture tests use the real installed adapters and a local fetch stub.
 
 ## Context Projection
 
@@ -31,7 +32,8 @@ The context builder owns role placement and token accounting. It emits one synth
 checkpoint before history. For a new turn it prefixes the Memory section inside the current user
 message and leaves the original request last. For resume it prefixes the owner user message of the
 target assistant. The projection returns parallel synthetic-contribution provenance for
-ViewManifest assembly.
+ViewManifest assembly. Initial selection applies the same provider safety margin as final request
+preflight so the selection and transmitted history remain identical.
 
 The loop carries that provenance through provider attempts. System refresh changes only the first
 system message. Context-pressure recovery rebuilds the checkpoint from the new summary while
@@ -68,7 +70,9 @@ Add a narrow `TapeProviderAttemptWriter` capability. The context coordinator cap
 usage and stop event inside each request-sequence attempt, classifies completion, overflow, abort,
 or error, and writes once after a provider call started. The application implementation appends
 `provider/attempt_completed` with an idempotent provenance key. Failure is logged and ignored by
-the generation path.
+the generation path. Request-sequence recovery reads the maximum persisted manifest, trace, and
+provider-attempt sequence so a successful outcome write cannot collide after an independent
+manifest or trace write failure.
 
 Tape recall parses the latest well-formed outcome event and exposes nullable cache-read,
 cache-write, and hit-rate fields. A latest event without usage produces nulls rather than falling
@@ -80,8 +84,9 @@ back to an older attempt. Existing assistant-derived `lastTokenUsage` remains un
 - Old policy IDs, manifest schema versions, hashes, traces, and Tape entries remain readable.
 - Shared `AgentTapeInfo` additions are optional; internal `TapeInfo` always materializes them.
 - New outcome events are ignored by Memory's message/tool ingestion projection.
-- Removing the new default policy selection restores legacy context construction without deleting
-  any Tape facts.
+- Legacy manifests remain replayable. A runtime rollback must revert the structured contribution
+  projection and default policy together; changing only the default policy would intentionally
+  omit cache-aware checkpoint and Memory placement.
 - Disabling provider cache planning removes new wire controls without affecting context storage.
 
 ## Validation

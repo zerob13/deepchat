@@ -220,6 +220,40 @@ describe('AI SDK provider options', () => {
     expect(result.providerOptions?.anthropic).toBeUndefined()
   })
 
+  it('keeps resumed Bedrock assistant content outside the cache point', () => {
+    const messages = [
+      { role: 'system', content: 'stable system' },
+      { role: 'user', content: [{ type: 'text', text: 'earlier question' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'stable reply' }] },
+      { role: 'user', content: [{ type: 'text', text: 'active question' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'partial reply' }] }
+    ] as any
+
+    const result = buildProviderOptions({
+      providerId: 'aws-bedrock',
+      capabilityProviderId: 'anthropic',
+      providerOptionsKey: 'bedrock',
+      apiType: 'bedrock',
+      modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+      modelConfig: {},
+      tools: [],
+      messages,
+      cacheIntent: 'conversation'
+    })
+
+    expect(result.messages[2]).toMatchObject({
+      role: 'assistant',
+      providerOptions: {
+        bedrock: {
+          cachePoint: {
+            type: 'default'
+          }
+        }
+      }
+    })
+    expect(result.messages[4]).not.toHaveProperty('providerOptions')
+  })
+
   it('uses the leading Bedrock system message as the first-turn cache point', () => {
     const result = buildProviderOptions({
       providerId: 'aws-bedrock',
