@@ -19,14 +19,14 @@
 
 ## Context Trust and Prefix Stability
 
-- [ ] Return structured summary, reconstruction, and Memory contributions.
-- [ ] Project checkpoint data as synthetic user context.
-- [ ] Inject Memory into the current or resume-owner user message.
-- [ ] Preserve contributions across system refresh and context-pressure recovery.
-- [ ] Remove the composed system-prompt memo and obsolete invalidation paths.
-- [ ] Register the cache-aware default policy and ViewManifest schema 3 provenance.
-- [ ] Add trust-boundary, prefix-stability, resume, refresh, recovery, and compatibility tests.
-- [ ] Review and commit the context slice.
+- [x] Return structured summary, reconstruction, and Memory contributions.
+- [x] Project checkpoint data as synthetic user context.
+- [x] Inject Memory into the current or resume-owner user message.
+- [x] Preserve contributions across system refresh and context-pressure recovery.
+- [x] Remove the composed system-prompt memo and obsolete invalidation paths.
+- [x] Register the cache-aware default policy and ViewManifest schema 3 provenance.
+- [x] Add trust-boundary, prefix-stability, resume, refresh, recovery, and compatibility tests.
+- [x] Review and commit the context slice.
 
 ## Model-Aware Compaction
 

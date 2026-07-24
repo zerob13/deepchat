@@ -172,26 +172,26 @@ describe('DeepChatContextCoordinator', () => {
   it('assembles post-compaction prompt before building the effective view', async () => {
     const order: string[] = []
     const prepared = await new DeepChatContextCoordinator().assemble({
-      assemblePostCompactionPrompt: async () => {
+      assembleContributions: async () => {
         order.push('post')
-        return 'system prompt'
+        return { checkpoint: 'checkpoint' }
       },
-      buildView: (systemPrompt) => {
-        order.push(`view:${systemPrompt}`)
-        return { messages: [{ role: 'system', content: systemPrompt }] }
+      buildView: (contributions) => {
+        order.push(`view:${contributions.checkpoint}`)
+        return { messages: [{ role: 'user', content: contributions.checkpoint }] }
       },
       assertCurrent: () => order.push('check')
     })
 
-    expect(order).toEqual(['post', 'check', 'view:system prompt'])
+    expect(order).toEqual(['post', 'check', 'view:checkpoint'])
     expect(prepared).toEqual({
-      systemPrompt: 'system prompt',
-      view: { messages: [{ role: 'system', content: 'system prompt' }] }
+      contributions: { checkpoint: 'checkpoint' },
+      view: { messages: [{ role: 'user', content: 'checkpoint' }] }
     })
   })
 
   it('does not rebuild or fit pressure context when there is no compaction intent', async () => {
-    const assemblePostCompactionPrompt = vi.fn()
+    const assembleCheckpoint = vi.fn()
     const fit = vi.fn()
     const messages: ChatMessage[] = [{ role: 'user', content: 'unchanged' }]
 
@@ -200,35 +200,51 @@ describe('DeepChatContextCoordinator', () => {
       requestedMaxTokens: 100,
       toolReserveTokens: 20,
       minimumProtectedTailCount: 0,
+      contextContributions: {
+        checkpoint: { message: null, contributions: [] },
+        memory: { content: null, manifest: null, anchorEntryId: null },
+        memoryIncluded: false
+      },
       prepareCompaction: async () => ({ applied: false as const }),
-      assemblePostCompactionPrompt,
+      assembleCheckpoint,
       getSummaryCursorOrderSeq: () => 1,
       fit,
       assertCurrent: vi.fn()
     })
 
     expect(recovered).toEqual({ messages })
-    expect(assemblePostCompactionPrompt).not.toHaveBeenCalled()
+    expect(assembleCheckpoint).not.toHaveBeenCalled()
     expect(fit).not.toHaveBeenCalled()
   })
 
   it('rebuilds and fits pressure context only after compaction normally returns', async () => {
     const order: string[] = []
+    const oldCheckpoint = { role: 'user' as const, content: 'old checkpoint' }
+    const contextContributions = {
+      checkpoint: { message: oldCheckpoint, contributions: [] },
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      memoryIncluded: false
+    }
     const recovered = await new DeepChatContextCoordinator().recoverFromPressure({
       requestMessages: [
         { role: 'system', content: 'old system' },
+        oldCheckpoint,
         { role: 'user', content: 'latest' }
       ],
       requestedMaxTokens: 100,
       toolReserveTokens: 20,
       minimumProtectedTailCount: 1,
+      contextContributions,
       prepareCompaction: async (systemPrompt) => {
         order.push(`compact:${systemPrompt}`)
         return { applied: true as const, summary: { cursor: 9 } }
       },
-      assemblePostCompactionPrompt: async (_summary, systemPrompt) => {
-        order.push(`post:${systemPrompt}`)
-        return 'new system'
+      assembleCheckpoint: async () => {
+        order.push('checkpoint')
+        return {
+          message: { role: 'user', content: 'new checkpoint' },
+          contributions: []
+        }
       },
       getSummaryCursorOrderSeq: (summary) => summary.cursor,
       fit: ({ messages, reserveTokens, minimumProtectedTailCount }) => {
@@ -242,17 +258,18 @@ describe('DeepChatContextCoordinator', () => {
       'check',
       'compact:old system',
       'check',
-      'post:old system',
+      'checkpoint',
       'check',
       'fit:120:1'
     ])
     expect(recovered).toEqual({
       messages: [
-        { role: 'system', content: 'new system' },
+        { role: 'system', content: 'old system' },
+        { role: 'user', content: 'new checkpoint' },
         { role: 'user', content: 'latest' }
       ],
-      systemPrompt: 'new system',
-      summaryCursorOrderSeq: 9
+      summaryCursorOrderSeq: 9,
+      syntheticContributions: []
     })
   })
 

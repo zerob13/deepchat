@@ -6,18 +6,24 @@ import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import type {
   DeepChatTapeViewPolicy,
+  DeepChatTapeViewSyntheticContribution,
   DeepChatTapeViewTaskType,
   DeepChatTapeViewTokenBudget
 } from '@shared/types/tape-view-manifest'
+import {
+  getContextSyntheticContributions,
+  type ContextCheckpoint,
+  type ContextRuntimeContributions
+} from '@/agent/deepchat/runtime/contextContributions'
 
-export interface ContextAssembly<TView> {
-  assemblePostCompactionPrompt(): Promise<string>
-  buildView(systemPrompt: string): TView
+export interface ContextAssembly<TContributions, TView> {
+  assembleContributions(): Promise<TContributions>
+  buildView(contributions: TContributions): TView
   assertCurrent(): void
 }
 
-export interface PreparedContext<TView> {
-  systemPrompt: string
+export interface PreparedContext<TContributions, TView> {
+  contributions: TContributions
   view: TView
 }
 
@@ -31,8 +37,9 @@ export interface ContextPressureRecovery<TSummary> {
   requestedMaxTokens: number
   toolReserveTokens: number
   minimumProtectedTailCount: number
+  contextContributions: ContextRuntimeContributions
   prepareCompaction(systemPrompt: string): Promise<OptionalCompactionResult<TSummary>>
-  assemblePostCompactionPrompt(summary: TSummary, systemPrompt: string): Promise<string>
+  assembleCheckpoint(summary: TSummary): Promise<ContextCheckpoint>
   getSummaryCursorOrderSeq(summary: TSummary): number
   fit(input: {
     messages: ChatMessage[]
@@ -44,8 +51,8 @@ export interface ContextPressureRecovery<TSummary> {
 
 export interface ContextPressureRecoveryResult {
   messages: ChatMessage[]
-  systemPrompt?: string
   summaryCursorOrderSeq?: number
+  syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
 }
 
 export interface RequestContextPreflight {
@@ -93,6 +100,8 @@ export interface ProviderAttemptManifestContext<TSelection> {
   supportsVision: boolean
   supportsAudioInput: boolean
   traceDebugEnabled: boolean
+  contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
+  syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
 }
 
 export interface ProviderAttemptManifestInput<TSelection> {
@@ -108,6 +117,8 @@ export interface ProviderAttemptManifestInput<TSelection> {
   supportsVision: boolean
   supportsAudioInput: boolean
   traceDebugEnabled: boolean
+  contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
+  syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
 }
 
 export interface ProviderAttemptManifestPort<TSelection> {
@@ -165,12 +176,14 @@ export interface ProviderAttemptInput<TSelection> {
 }
 
 export class DeepChatContextCoordinator {
-  async assemble<TView>(input: ContextAssembly<TView>): Promise<PreparedContext<TView>> {
-    const systemPrompt = await input.assemblePostCompactionPrompt()
+  async assemble<TContributions, TView>(
+    input: ContextAssembly<TContributions, TView>
+  ): Promise<PreparedContext<TContributions, TView>> {
+    const contributions = await input.assembleContributions()
     input.assertCurrent()
     return {
-      systemPrompt,
-      view: input.buildView(systemPrompt)
+      contributions,
+      view: input.buildView(contributions)
     }
   }
 
@@ -186,12 +199,14 @@ export class DeepChatContextCoordinator {
       return { messages: input.requestMessages }
     }
 
-    const systemPrompt = await input.assemblePostCompactionPrompt(
-      compaction.summary,
-      systemPromptBase
-    )
+    const checkpoint = await input.assembleCheckpoint(compaction.summary)
     input.assertCurrent()
-    const messages = this.replaceLeadingSystemPrompt(input.requestMessages, systemPrompt)
+    const messages = this.replaceCheckpointMessage(
+      input.requestMessages,
+      input.contextContributions.checkpoint.message,
+      checkpoint.message
+    )
+    input.contextContributions.checkpoint = checkpoint
 
     return {
       messages: input.fit({
@@ -199,8 +214,8 @@ export class DeepChatContextCoordinator {
         reserveTokens: input.requestedMaxTokens + input.toolReserveTokens,
         minimumProtectedTailCount: input.minimumProtectedTailCount
       }),
-      systemPrompt,
-      summaryCursorOrderSeq: input.getSummaryCursorOrderSeq(compaction.summary)
+      summaryCursorOrderSeq: input.getSummaryCursorOrderSeq(compaction.summary),
+      syntheticContributions: getContextSyntheticContributions(input.contextContributions)
     }
   }
 
@@ -212,6 +227,7 @@ export class DeepChatContextCoordinator {
     let providerContextOverflowRecoveryApplied = false
     let strictProviderOverflowRetryPending = false
     let manifestSummaryCursorOrderSeq = input.viewContext?.summaryCursorOrderSeq ?? 1
+    let manifestSyntheticContributions = input.viewContext?.syntheticContributions
     const effectiveRequestToolReserveTokens = input.budget.estimateToolReserveTokens(input.tools)
 
     const prepareProviderAttempt = async (options?: {
@@ -263,10 +279,10 @@ export class DeepChatContextCoordinator {
             if (recovered.summaryCursorOrderSeq !== undefined) {
               manifestSummaryCursorOrderSeq = recovered.summaryCursorOrderSeq
             }
-            input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
-            if (recovered.systemPrompt) {
-              this.replaceLeadingSystemPromptInPlace(input.requestMessages, recovered.systemPrompt)
+            if (recovered.syntheticContributions) {
+              manifestSyntheticContributions = recovered.syntheticContributions
             }
+            input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
             requestPreflight = input.budget.preflight({
               messages: input.requestMessages,
               tools: input.tools,
@@ -321,7 +337,9 @@ export class DeepChatContextCoordinator {
           summaryCursorOrderSeq: manifestSummaryCursorOrderSeq,
           supportsVision: input.viewContext?.supportsVision ?? input.supportsVision,
           supportsAudioInput: input.viewContext?.supportsAudioInput ?? input.supportsAudioInput,
-          traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled
+          traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled,
+          contextBuilderVersion: input.viewContext?.contextBuilderVersion ?? 'legacy-v1',
+          syntheticContributions: manifestSyntheticContributions
         })
       } catch (error) {
         input.manifest.onAppendError(error)
@@ -344,12 +362,12 @@ export class DeepChatContextCoordinator {
       if (recovered.summaryCursorOrderSeq !== undefined) {
         manifestSummaryCursorOrderSeq = recovered.summaryCursorOrderSeq
       }
+      if (recovered.syntheticContributions) {
+        manifestSyntheticContributions = recovered.syntheticContributions
+      }
       providerContextOverflowRecoveryApplied = true
       strictProviderOverflowRetryPending = recovered.summaryCursorOrderSeq === undefined
       input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
-      if (recovered.systemPrompt) {
-        this.replaceLeadingSystemPromptInPlace(input.requestMessages, recovered.systemPrompt)
-      }
     }
 
     const buildProviderOverflowRetryFailure = (
@@ -472,17 +490,25 @@ export class DeepChatContextCoordinator {
     return first?.role === 'system' && typeof first.content === 'string' ? first.content : null
   }
 
-  private replaceLeadingSystemPrompt(messages: ChatMessage[], systemPrompt: string): ChatMessage[] {
-    if (!systemPrompt) {
-      return messages[0]?.role === 'system' ? messages.slice(1) : messages
-    }
-    if (messages[0]?.role === 'system') {
-      return [{ ...messages[0], content: systemPrompt }, ...messages.slice(1)]
-    }
-    return [{ role: 'system', content: systemPrompt }, ...messages]
-  }
+  private replaceCheckpointMessage(
+    messages: ChatMessage[],
+    previous: ChatMessage | null,
+    next: ChatMessage | null
+  ): ChatMessage[] {
+    const result = [...messages]
+    const searchOffset = result[0]?.role === 'system' ? 1 : 0
+    const hasPrevious =
+      Boolean(previous) &&
+      result[searchOffset]?.role === 'user' &&
+      result[searchOffset]?.content === previous?.content
 
-  private replaceLeadingSystemPromptInPlace(messages: ChatMessage[], systemPrompt: string): void {
-    messages.splice(0, messages.length, ...this.replaceLeadingSystemPrompt(messages, systemPrompt))
+    if (hasPrevious && next) {
+      result[searchOffset] = next
+    } else if (hasPrevious) {
+      result.splice(searchOffset, 1)
+    } else if (next) {
+      result.splice(searchOffset, 0, next)
+    }
+    return result
   }
 }

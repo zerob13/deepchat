@@ -407,6 +407,7 @@ export class TurnCoordinator {
     let pendingInputFailedBeforeUserFact = false
     let userMessageId: string | null = null
     let assistantMessageId: string | null = null
+    let assistantCreationAttempted = false
     let streamRunId: string | undefined
     let attachmentPreparation: AttachmentPreparationSummary | undefined
 
@@ -612,7 +613,7 @@ export class TurnCoordinator {
       })
 
       const preparedContext = await this.ports.contextCoordinator.assemble({
-        assemblePostCompactionPrompt: async () => {
+        assembleContributions: async () => {
           return await this.ports.runPreStreamStep(
             {
               sessionId,
@@ -624,7 +625,6 @@ export class TurnCoordinator {
               awaitWithAbort(
                 this.ports.postCompactionPromptAssembler.assemble({
                   memorySession: instance.getMemorySessionHandle(),
-                  basePrompt: baseSystemPrompt,
                   summaryText: summaryState.summaryText,
                   reconstructionAnchor:
                     this.ports.sessionStore.getReconstructionAnchorPromptState(sessionId),
@@ -635,17 +635,18 @@ export class TurnCoordinator {
               )
           )
         },
-        buildView: (systemPrompt) => {
+        buildView: (contextContributions) => {
           const contextBuildStartedAt = Date.now()
           const contextBuild = buildTapeChatView({
             sessionId,
             newUserContent: content,
-            systemPrompt,
+            systemPrompt: baseSystemPrompt,
             contextLength: contextBudgetLength,
             reserveTokens: maxTokens,
             messageStore: this.ports.messageStore,
             supportsVision,
             historyRecords,
+            contextContributions,
             options: {
               summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
               supportsAudioInput,
@@ -661,10 +662,12 @@ export class TurnCoordinator {
         assertCurrent: () => this.ports.throwIfStaleDeepChatInstance(sessionId, instance)
       })
       const contextBuild = preparedContext.view
+      const contextContributions = preparedContext.contributions
       const messages = contextBuild.messages
 
       const assistantOrderSeq = this.ports.messageStore.getNextOrderSeq(sessionId)
       this.ports.throwIfStaleDeepChatInstance(sessionId, instance)
+      assistantCreationAttempted = true
       assistantMessageId = this.ports.runSynchronousPreStreamStep(
         sessionId,
         'assistant-message-create',
@@ -702,6 +705,7 @@ export class TurnCoordinator {
           promptPreview: content.text,
           tools,
           baseSystemPrompt,
+          contextContributions,
           resourceInstance: instance,
           abortController: preStreamAbortController,
           maxProviderRounds: context?.maxProviderRounds,
@@ -712,17 +716,9 @@ export class TurnCoordinator {
               toolDefinitions: refreshedTools,
               activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
             })
-            return await this.ports.postCompactionPromptAssembler.assemble({
-              memorySession: instance.getMemorySessionHandle(),
-              basePrompt: shouldGuardOcrAttachmentText
-                ? appendOcrAttachmentSafetyRule(refreshedBasePrompt)
-                : refreshedBasePrompt,
-              summaryText: summaryState.summaryText,
-              reconstructionAnchor:
-                this.ports.sessionStore.getReconstructionAnchorPromptState(sessionId),
-              memoryQuery: content.text,
-              memoryMessageId: userMessageId
-            })
+            return shouldGuardOcrAttachmentText
+              ? appendOcrAttachmentSafetyRule(refreshedBasePrompt)
+              : refreshedBasePrompt
           },
           interleavedReasoning,
           viewContext: {
@@ -733,7 +729,9 @@ export class TurnCoordinator {
             summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
             supportsVision,
             supportsAudioInput,
-            traceDebugEnabled: this.ports.traceSettings.isEnabled()
+            traceDebugEnabled: this.ports.traceSettings.isEnabled(),
+            contextBuilderVersion: contextBuild.assemblerVersion,
+            syntheticContributions: contextBuild.metadata.syntheticContributions
           },
           onBeforeProviderStream: providerBoundary.complete,
           onRunRegistered: (runId) => {
@@ -903,6 +901,25 @@ export class TurnCoordinator {
       }
       const errorMessage = err instanceof Error ? err.message : String(err)
       const stopReason = isContextWindowErrorLike(err) ? 'context_window' : 'pre_stream_error'
+      if (
+        !assistantMessageId &&
+        !assistantCreationAttempted &&
+        userMessageId &&
+        !context?.pendingQueueItemId
+      ) {
+        try {
+          assistantCreationAttempted = true
+          assistantMessageId = this.ports.messageStore.createAssistantMessage(
+            sessionId,
+            this.ports.messageStore.getNextOrderSeq(sessionId)
+          )
+        } catch (assistantCreationError) {
+          console.warn(
+            '[DeepChatAgent] failed to create terminal assistant message:',
+            assistantCreationError
+          )
+        }
+      }
       const terminalMetadata = stampTerminalMetadata(
         {
           ...(streamRunId ? { runId: streamRunId } : {}),
@@ -998,8 +1015,10 @@ export class TurnCoordinator {
         interleavedReasoning,
         contextBudgetLength,
         maxTokens,
+        activeSkillNames: effectiveActiveSkillNames,
         tools,
         toolReserveTokens,
+        basePromptAssembler,
         baseSystemPrompt: unguardedBaseSystemPrompt
       } = await this.prepareTurnResources({
         sessionId,
@@ -1009,6 +1028,7 @@ export class TurnCoordinator {
         projectDir
       })
       let baseSystemPrompt = unguardedBaseSystemPrompt
+      let shouldGuardOcrAttachmentText = false
       let resumeTargetOrderSeq: number | undefined
       const preparedInput = await this.ports.inputPreparationCoordinator.prepareExisting({
         ensureHistory: () =>
@@ -1035,6 +1055,7 @@ export class TurnCoordinator {
           ),
         prepareIntent: async (historyRecords) => {
           if (historyContainsOcrAttachmentText(historyRecords)) {
+            shouldGuardOcrAttachmentText = true
             baseSystemPrompt = appendOcrAttachmentSafetyRule(unguardedBaseSystemPrompt)
           }
           resumeTargetOrderSeq =
@@ -1097,14 +1118,13 @@ export class TurnCoordinator {
       const summaryState = preparedInput.summary
       this.ports.throwIfAbortRequested(preStreamAbortSignal)
       const preparedContext = await this.ports.contextCoordinator.assemble({
-        assemblePostCompactionPrompt: async () =>
+        assembleContributions: async () =>
           await this.ports.runPreStreamStep(
             { sessionId, messageId, step: 'memory-injection', signal: preStreamAbortSignal },
             () =>
               awaitWithAbort(
                 this.ports.postCompactionPromptAssembler.assemble({
                   memorySession: instance.getMemorySessionHandle(),
-                  basePrompt: baseSystemPrompt,
                   summaryText: summaryState.summaryText,
                   reconstructionAnchor:
                     this.ports.sessionStore.getReconstructionAnchorPromptState(sessionId),
@@ -1114,17 +1134,18 @@ export class TurnCoordinator {
                 preStreamAbortSignal
               )
           ),
-        buildView: (systemPrompt) => {
+        buildView: (contextContributions) => {
           const contextBuildStartedAt = Date.now()
           const contextBuild = buildTapeResumeView({
             sessionId,
             assistantMessageId: messageId,
-            systemPrompt,
+            systemPrompt: baseSystemPrompt,
             contextLength: contextBudgetLength,
             reserveTokens: maxTokens,
             messageStore: this.ports.messageStore,
             supportsVision,
             historyRecords: preparedInput.history,
+            contextContributions,
             options: {
               summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
               fallbackProtectedTurnCount: 1,
@@ -1141,6 +1162,7 @@ export class TurnCoordinator {
         assertCurrent: () => this.ports.throwIfStaleDeepChatInstance(sessionId, instance)
       })
       const resumeContextBuild = preparedContext.view
+      const contextContributions = preparedContext.contributions
       let resumeContext = resumeContextBuild.messages
       if (budgetToolCall?.id && budgetToolCall.name && useContextBudget) {
         const resumeBudget = this.fitResumeBudgetForToolCall({
@@ -1229,9 +1251,21 @@ export class TurnCoordinator {
           abortController: preStreamAbortController,
           tools,
           baseSystemPrompt,
+          contextContributions,
           initialBlocks,
           initialAccounting: resumeAccounting,
           maxProviderRounds: resumeAccounting.maxProviderRounds,
+          refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
+            const refreshedBasePrompt = await basePromptAssembler.assemble({
+              sessionId: toAppSessionId(sessionId),
+              configuredPrompt: generationSettings.systemPrompt,
+              toolDefinitions: refreshedTools,
+              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
+            })
+            return shouldGuardOcrAttachmentText
+              ? appendOcrAttachmentSafetyRule(refreshedBasePrompt)
+              : refreshedBasePrompt
+          },
           interleavedReasoning,
           viewContext: {
             taskType: 'resume',
@@ -1241,7 +1275,9 @@ export class TurnCoordinator {
             summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
             supportsVision,
             supportsAudioInput,
-            traceDebugEnabled: this.ports.traceSettings.isEnabled()
+            traceDebugEnabled: this.ports.traceSettings.isEnabled(),
+            contextBuilderVersion: resumeContextBuild.assemblerVersion,
+            syntheticContributions: resumeContextBuild.metadata.syntheticContributions
           },
           onBeforeProviderStream: providerBoundary.complete,
           onRunRegistered: (runId) => {

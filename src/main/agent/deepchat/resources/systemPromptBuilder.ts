@@ -99,7 +99,6 @@ export async function buildSystemPromptWithSkills(
     ? resourceInstance.getProjectDir()
     : dependencies.resolveProjectDir(sessionId, undefined, resourceInstance);
   const now = new Date();
-  const dayKey = buildLocalDayKey(now);
 
   const skillsEnabled = dependencies.skillSettings.isEnabled();
   const skillService = dependencies.skillService;
@@ -179,25 +178,6 @@ export async function buildSystemPromptWithSkills(
     activeSkillNames.filter((skillName) => availableSkillNames.has(skillName)),
   );
   const agentToolNames = getAgentToolNames(toolDefinitions);
-  const fingerprint = buildSystemPromptFingerprint({
-    providerId,
-    modelId,
-    workdir,
-    basePrompt: normalizedBase,
-    skillsEnabled,
-    availableSkillNames: normalizedAvailableSkills.map((skill) => skill.name),
-    activeSkillNames: normalizedActiveSkills,
-    toolSignature: buildToolSignature(toolDefinitions),
-    skillDraftSuggestionsEnabled,
-  });
-  dependencies.logSlowStep(sessionId, "system-prompt.fingerprint", stepStartedAt);
-
-  dependencies.assertCurrent(sessionId, resourceInstance);
-  const cachedPrompt = resourceInstance.getSystemPromptCache();
-  if (cachedPrompt && cachedPrompt.dayKey === dayKey && cachedPrompt.fingerprint === fingerprint) {
-    return cachedPrompt.prompt;
-  }
-
   const runtimePrompt = buildRuntimeCapabilitiesPrompt({
     hasYoBrowser: toolDefinitions.some(
       (tool) => tool.source === "agent" && tool.server.name === "yobrowser",
@@ -283,12 +263,6 @@ export async function buildSystemPromptWithSkills(
   dependencies.logSlowStep(sessionId, "system-prompt.compose", stepStartedAt);
 
   dependencies.assertCurrent(sessionId, resourceInstance);
-  resourceInstance.setSystemPromptCache({
-    prompt: composedPrompt,
-    dayKey,
-    fingerprint,
-  });
-
   return composedPrompt;
 }
 
@@ -504,46 +478,8 @@ function normalizeSkillMetadata(
   });
 }
 
-function buildSystemPromptFingerprint(params: {
-  providerId: string;
-  modelId: string;
-  workdir: string | null;
-  basePrompt: string;
-  skillsEnabled: boolean;
-  availableSkillNames: string[];
-  activeSkillNames: string[];
-  toolSignature: string[];
-  skillDraftSuggestionsEnabled: boolean;
-}): string {
-  return JSON.stringify({
-    providerId: params.providerId,
-    modelId: params.modelId,
-    workdir: params.workdir ?? "",
-    basePrompt: params.basePrompt,
-    skillsEnabled: params.skillsEnabled,
-    availableSkillNames: params.availableSkillNames,
-    activeSkillNames: params.activeSkillNames,
-    toolSignature: params.toolSignature,
-    skillDraftSuggestionsEnabled: params.skillDraftSuggestionsEnabled,
-  });
-}
-
 function getAgentToolNames(toolDefinitions: MCPToolDefinition[]): Set<string> {
   return new Set(
     toolDefinitions.filter((tool) => tool.source === "agent").map((tool) => tool.function.name),
   );
-}
-
-function buildToolSignature(toolDefinitions: MCPToolDefinition[]): string[] {
-  return toolDefinitions
-    .filter((tool) => tool.source === "agent")
-    .map((tool) => `${tool.server.name}:${tool.function.name}`)
-    .sort((left, right) => left.localeCompare(right));
-}
-
-function buildLocalDayKey(now: Date): string {
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
