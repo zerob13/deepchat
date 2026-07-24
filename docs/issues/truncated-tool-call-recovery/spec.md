@@ -76,12 +76,12 @@ the active run nor a rebuilt history reliably tells the model why the calls were
 
 ## Tasks
 
-- [ ] Refactor the loop and dispatch APIs around tool batch settlement.
-- [ ] Add per-call execution ownership to adapters and accumulation.
-- [ ] Implement atomic truncated-batch rejection and one-round recovery.
-- [ ] Add unit, context-rebuild, and deterministic eval coverage.
-- [ ] Run formatting, i18n, lint, type checking, targeted tests, and agent evals.
-- [ ] Review every staged commit for correctness, compatibility, side effects, and maintenance risk.
+- [x] Refactor the loop and dispatch APIs around tool batch settlement.
+- [x] Add per-call execution ownership to adapters and accumulation.
+- [x] Implement atomic truncated-batch rejection and one-round recovery.
+- [x] Add unit, context-rebuild, and deterministic eval coverage.
+- [x] Run formatting, i18n, lint, type checking, targeted tests, and agent evals.
+- [x] Review every staged commit for correctness, compatibility, side effects, and maintenance risk.
 
 ## Validation
 
@@ -101,3 +101,7 @@ pnpm run lint
 pnpm run typecheck
 pnpm run test:agent:eval
 ```
+
+Validated on 2026-07-24: all eight targeted test files passed (273 tests), formatting and i18n
+checks completed cleanly, lint and full type checking passed, and all 15 deterministic native Agent
+eval scenarios passed.

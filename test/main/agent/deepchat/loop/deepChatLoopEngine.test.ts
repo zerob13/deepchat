@@ -187,6 +187,63 @@ describe('DeepChatLoopEngine', () => {
     expect(settleToolBatch).not.toHaveBeenCalled()
   })
 
+  it('settles a zero-request batch without consuming the tool-call budget', async () => {
+    const run = createRun()
+    const consumeProviderRound = vi.fn(async ({ providerRound }: { providerRound: number }) =>
+      providerRound === 1
+        ? {
+            type: 'tool_batch' as const,
+            batch: 'rejected',
+            requestedToolExecutionCount: 0
+          }
+        : { type: 'terminal' as const }
+    )
+    const settleToolBatch = vi.fn(async () => ({
+      type: 'continue' as const,
+      executedToolCount: 0
+    }))
+
+    const outcome = await new DeepChatLoopEngine().run(
+      run,
+      {
+        initialExecutedToolCount: 128,
+        consumeProviderRound,
+        settleToolBatch
+      },
+      createCommitCallbacks()
+    )
+
+    expect(outcome).toEqual({ type: 'terminal' })
+    expect(consumeProviderRound).toHaveBeenCalledTimes(2)
+    expect(settleToolBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('terminates normally after persisting a terminal tool settlement', async () => {
+    const run = createRun()
+    const order: string[] = []
+    const consumeProviderRound = vi.fn(async () => ({
+      type: 'tool_batch' as const,
+      batch: 'terminal-batch',
+      requestedToolExecutionCount: 0
+    }))
+
+    const outcome = await new DeepChatLoopEngine().run(
+      run,
+      {
+        consumeProviderRound,
+        settleToolBatch: async () => ({
+          type: 'terminal' as const,
+          executedToolCount: 0
+        })
+      },
+      createCommitCallbacks(order)
+    )
+
+    expect(outcome).toEqual({ type: 'terminal' })
+    expect(order).toEqual(['output:1:tool_batch', 'persisted:1:terminal', 'settled'])
+    expect(consumeProviderRound).toHaveBeenCalledTimes(1)
+  })
+
   it('propagates a paused tool batch without entering another provider round', async () => {
     const run = createRun()
     const order: string[] = []

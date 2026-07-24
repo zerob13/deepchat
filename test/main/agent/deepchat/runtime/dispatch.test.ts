@@ -14,7 +14,7 @@ import { createState } from '@/agent/deepchat/runtime/types'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
 import type { MCPToolDefinition } from '@shared/types/mcp'
 import type { ToolServicePort } from '@shared/types/tool'
-import type { PermissionMode } from '@shared/types/agent-interface'
+import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import { ToolOutputGuard } from '@/agent/deepchat/runtime/toolOutputGuard'
 import {
   createToolExecutionPort,
@@ -50,7 +50,9 @@ import {
   finalize,
   finalizeError,
   persistAbortExceptionPlanState,
-  settleToolBatch as settleToolBatchInternal
+  settleToolBatch as settleToolBatchInternal,
+  TRUNCATED_TOOL_CALL_ERROR,
+  type ToolBatchDisposition
 } from '@/agent/deepchat/runtime/dispatch'
 import type { EchoHandle } from '@/agent/deepchat/runtime/echo'
 import { accumulate } from '@/agent/deepchat/runtime/accumulator'
@@ -166,7 +168,8 @@ async function settleToolBatch(
   hooks?: TestHooks,
   providerId?: string,
   interleavedReasoning: InterleavedReasoningConfig = DEFAULT_INTERLEAVED_REASONING,
-  rendererFlushHandle?: Pick<EchoHandle, 'flush' | 'schedule' | 'rescheduleRenderer'>
+  rendererFlushHandle?: Pick<EchoHandle, 'flush' | 'schedule' | 'rescheduleRenderer'>,
+  disposition: ToolBatchDisposition = { kind: 'execute' }
 ) {
   const toolExecution = createToolExecutionPort(toolService)!
   const toolResults = createToolResultPort({
@@ -216,6 +219,7 @@ async function settleToolBatch(
     conversation,
     prevBlockCount,
     toolCalls: state.completedToolCalls,
+    disposition,
     tools,
     toolExecution,
     modelId,
@@ -332,6 +336,252 @@ describe('dispatch', () => {
       const toolBlock = state.blocks.find((b) => b.type === 'tool_call')
       expect(toolBlock!.tool_call!.response).toBe('Sunny, 72F')
       expect(toolBlock!.status).toBe('success')
+    })
+
+    it('rejects an output-truncated batch atomically without tool side effects', async () => {
+      const calls = [
+        {
+          id: 'tc-question',
+          name: QUESTION_TOOL_NAME,
+          arguments: '{"question":"',
+          providerOptions: { openai: { itemId: 'item-question' } }
+        },
+        { id: 'tc-skill', name: 'skill_view', arguments: '{"skill":"draft"}' }
+      ]
+      const tools = calls.map((call) => makeAgentTool(call.name))
+      const toolService = createMockToolService()
+      const conversation: any[] = [{ role: 'user', content: 'Continue' }]
+      const hooks = {
+        autoGrantPermission: vi.fn(),
+        reviewToolPermission: vi.fn(),
+        activateSkill: vi.fn(),
+        onPreToolUse: vi.fn(),
+        onPostToolUse: vi.fn(),
+        onPostToolUseFailure: vi.fn(),
+        onPermissionRequest: vi.fn()
+      }
+      state.completedToolCalls = calls
+      state.blocks.push(
+        ...calls.map((call) => ({
+          type: 'tool_call' as const,
+          content: '',
+          status: 'pending' as const,
+          timestamp: Date.now(),
+          tool_call: {
+            id: call.id,
+            name: call.name,
+            params: call.arguments,
+            response: ''
+          },
+          ...(call.providerOptions
+            ? { extra: { providerOptionsJson: JSON.stringify(call.providerOptions) } }
+            : {})
+        }))
+      )
+
+      const result = await settleToolBatch(
+        state,
+        conversation,
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'auto_approve',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        hooks,
+        'openai',
+        DEFAULT_INTERLEAVED_REASONING,
+        undefined,
+        { kind: 'reject', reason: 'output_truncated' }
+      )
+
+      expect(result).toMatchObject({
+        type: 'completed',
+        executed: 0,
+        toolsChanged: false,
+        executionState: {
+          callOrder: ['tc-question', 'tc-skill'],
+          invokedCallIds: [],
+          committedResultCallIds: ['tc-question', 'tc-skill'],
+          pendingInteractionCallIds: []
+        }
+      })
+      expect(conversation).toEqual([
+        { role: 'user', content: 'Continue' },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'tc-question',
+              type: 'function',
+              function: { name: QUESTION_TOOL_NAME, arguments: '{"question":"' },
+              provider_options: { openai: { itemId: 'item-question' } }
+            },
+            {
+              id: 'tc-skill',
+              type: 'function',
+              function: { name: 'skill_view', arguments: '{"skill":"draft"}' }
+            }
+          ]
+        },
+        { role: 'tool', tool_call_id: 'tc-question', content: TRUNCATED_TOOL_CALL_ERROR },
+        { role: 'tool', tool_call_id: 'tc-skill', content: TRUNCATED_TOOL_CALL_ERROR }
+      ])
+      expect(state.blocks).toEqual(
+        calls.map((call) =>
+          expect.objectContaining({
+            type: 'tool_call',
+            status: 'error',
+            extra: expect.objectContaining({ toolCallSkippedReason: 'max_tokens' }),
+            tool_call: expect.objectContaining({
+              id: call.id,
+              name: call.name,
+              params: call.arguments,
+              response: TRUNCATED_TOOL_CALL_ERROR
+            })
+          })
+        )
+      )
+      expect(toolService.preCheckToolPermission).not.toHaveBeenCalled()
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(hooks.autoGrantPermission).not.toHaveBeenCalled()
+      expect(hooks.reviewToolPermission).not.toHaveBeenCalled()
+      expect(hooks.activateSkill).not.toHaveBeenCalled()
+      expect(hooks.onPreToolUse).not.toHaveBeenCalled()
+      expect(hooks.onPostToolUse).not.toHaveBeenCalled()
+      expect(hooks.onPermissionRequest).not.toHaveBeenCalled()
+      expect(hooks.onPostToolUseFailure.mock.calls.map(([tool]) => tool.callId)).toEqual([
+        'tc-question',
+        'tc-skill'
+      ])
+    })
+
+    it('surfaces a terminal fitting error after rejecting a truncated batch', async () => {
+      const toolService = createMockToolService()
+      const hooks = {
+        onPreToolUse: vi.fn(),
+        onPostToolUseFailure: vi.fn()
+      }
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: { id: 'tc1', name: 'read', params: '{"path":"', response: '' }
+      })
+      state.completedToolCalls = [{ id: 'tc1', name: 'read', arguments: '{"path":"' }]
+
+      const result = await settleToolBatch(
+        state,
+        [],
+        0,
+        [makeAgentTool('read')],
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        1,
+        1,
+        hooks,
+        'openai',
+        DEFAULT_INTERLEAVED_REASONING,
+        undefined,
+        { kind: 'reject', reason: 'output_truncated' }
+      )
+
+      expect(result.terminalError).toContain('remaining context window is too small')
+      expect(result.executionState).toEqual({
+        callOrder: ['tc1'],
+        invokedCallIds: [],
+        committedResultCallIds: ['tc1'],
+        pendingInteractionCallIds: []
+      })
+      expect(toolService.preCheckToolPermission).not.toHaveBeenCalled()
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(hooks.onPreToolUse).not.toHaveBeenCalled()
+      expect(hooks.onPostToolUseFailure).toHaveBeenCalledTimes(1)
+      expect(state.blocks[0]).toMatchObject({
+        status: 'error',
+        extra: { toolCallSkippedReason: 'max_tokens' },
+        tool_call: { response: expect.stringContaining('remaining context window is too small') }
+      })
+    })
+
+    it('settles a reused call id against the current provider round', async () => {
+      const previousRoundBlock: AssistantMessageBlock = {
+        type: 'tool_call',
+        content: '',
+        status: 'success',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'reused-call-id',
+          name: 'read',
+          params: '{"path":"complete.txt"}',
+          response: 'previous result',
+          server_name: 'previous-server'
+        }
+      }
+      state.blocks.push(previousRoundBlock)
+      const prevBlockCount = state.blocks.length
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'reused-call-id',
+          name: 'read',
+          params: '{"path":"',
+          response: ''
+        }
+      })
+      state.completedToolCalls = [
+        { id: 'reused-call-id', name: 'read', arguments: '{"path":"' }
+      ]
+
+      await settleToolBatch(
+        state,
+        [],
+        prevBlockCount,
+        [makeAgentTool('read')],
+        createMockToolService(),
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        undefined,
+        'openai',
+        DEFAULT_INTERLEAVED_REASONING,
+        undefined,
+        { kind: 'reject', reason: 'output_truncated' }
+      )
+
+      expect(state.blocks[0]).toMatchObject({
+        status: 'success',
+        tool_call: {
+          id: 'reused-call-id',
+          params: '{"path":"complete.txt"}',
+          response: 'previous result',
+          server_name: 'previous-server'
+        }
+      })
+      expect(state.blocks[0].extra).toBeUndefined()
+      expect(state.blocks[1]).toMatchObject({
+        status: 'error',
+        extra: { toolCallSkippedReason: 'max_tokens' },
+        tool_call: {
+          id: 'reused-call-id',
+          params: '{"path":"',
+          response: TRUNCATED_TOOL_CALL_ERROR
+        }
+      })
     })
 
     it('rejects calls missing from the current session tool definitions', async () => {
@@ -2626,7 +2876,7 @@ describe('dispatch', () => {
       expect(io.messageStore.updateAssistantContent).toHaveBeenCalled()
     })
 
-    it('promotes image previews from structured tool output into assistant image blocks', async () => {
+    it('promotes image previews after the current-round block when call ids repeat', async () => {
       const tools = [makeTool('tool_image')]
       const toolService = {
         getAllToolDefinitions: vi.fn().mockResolvedValue([]),
@@ -2658,6 +2908,19 @@ describe('dispatch', () => {
       state.blocks.push({
         type: 'tool_call',
         content: '',
+        status: 'success',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc1',
+          name: 'tool_image',
+          params: '{"previous":true}',
+          response: 'previous result'
+        }
+      })
+      const prevBlockCount = state.blocks.length
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
         status: 'pending',
         timestamp: Date.now(),
         tool_call: { id: 'tc1', name: 'tool_image', params: '{}', response: '' }
@@ -2667,7 +2930,7 @@ describe('dispatch', () => {
       await settleToolBatch(
         state,
         [],
-        0,
+        prevBlockCount,
         tools,
         toolService,
         'gpt-4',
@@ -2678,15 +2941,23 @@ describe('dispatch', () => {
         1024
       )
 
-      expect(state.blocks[0].tool_call?.imagePreviews).toEqual([
+      expect(state.blocks[0]).toMatchObject({
+        status: 'success',
+        tool_call: {
+          params: '{"previous":true}',
+          response: 'previous result'
+        }
+      })
+      expect(state.blocks[0].tool_call?.imagePreviews).toBeUndefined()
+      expect(state.blocks[1].tool_call?.imagePreviews).toEqual([
         {
           id: 'metadata-only',
           mimeType: 'image/png',
           source: 'mcp_image'
         }
       ])
-      expect(state.blocks).toHaveLength(2)
-      expect(state.blocks[1]).toEqual(
+      expect(state.blocks).toHaveLength(3)
+      expect(state.blocks[2]).toEqual(
         expect.objectContaining({
           type: 'image',
           status: 'success',

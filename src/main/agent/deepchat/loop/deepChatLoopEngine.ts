@@ -9,6 +9,7 @@ export type ProviderRoundOutcome<TToolBatch, THalted> =
 
 export type LoopToolBatchOutcome<THalted> =
   | { type: 'continue'; executedToolCount: number }
+  | { type: 'terminal'; executedToolCount: number }
   | { type: 'halted'; result: THalted }
 
 export type DeepChatLoopOutcome<THalted> =
@@ -123,6 +124,9 @@ export class DeepChatLoopEngine {
         return toolOutcome
       }
       executedToolCount += toolOutcome.executedToolCount
+      if (toolOutcome.type === 'terminal') {
+        return { type: 'terminal' }
+      }
     }
   }
 }
