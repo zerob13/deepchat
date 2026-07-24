@@ -12,11 +12,11 @@ import type {
 import { accumulate, commitRoundUsage, finalizeTrailingPendingNarrativeBlocks } from './accumulator'
 import { startEcho } from './echo'
 import {
-  executeTools,
   finalize,
   finalizeError,
   finalizePaused,
-  publishPlanUpdated
+  publishPlanUpdated,
+  settleToolBatch
 } from './dispatch'
 import { isContextWindowErrorLike } from './contextWindowError'
 import {
@@ -917,35 +917,37 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           return {
             type: 'tool_batch',
             batch: { prevBlockCount },
-            toolCallCount: state.completedToolCalls.length
+            requestedToolExecutionCount: state.completedToolCalls.length
           }
         },
-        executeToolBatch: async ({ batch }) => {
+        settleToolBatch: async ({ batch }) => {
           // A completed tool call implies that the tool presenter and definitions were available.
           const completedToolBatch = state.completedToolCalls.map((toolCall) => ({ ...toolCall }))
           const toolBatchMessageStart = conversationMessages.length
           let startedToolCallCount = 0
-          let executed: Awaited<ReturnType<typeof executeTools>>
+          let executed: Awaited<ReturnType<typeof settleToolBatch>>
           try {
-            executed = await executeTools(
+            executed = await settleToolBatch({
               state,
-              conversationMessages,
-              batch.prevBlockCount,
-              currentTools,
+              conversation: conversationMessages,
+              prevBlockCount: batch.prevBlockCount,
+              toolCalls: state.completedToolCalls,
+              tools: currentTools,
               toolExecution,
               modelId,
               interleavedReasoning,
               io,
               permissionMode,
               toolResults,
-              providerId === 'acp'
-                ? Number.MAX_SAFE_INTEGER
-                : modelConfig.contextLength > 0
-                  ? modelConfig.contextLength
-                  : UNKNOWN_CONTEXT_LIMIT,
+              contextLength:
+                providerId === 'acp'
+                  ? Number.MAX_SAFE_INTEGER
+                  : modelConfig.contextLength > 0
+                    ? modelConfig.contextLength
+                    : UNKNOWN_CONTEXT_LIMIT,
               maxTokens,
-              echo,
-              {
+              rendererFlushHandle: echo,
+              collaborators: {
                 notificationObserver,
                 controls,
                 diagnostics,
@@ -954,7 +956,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 }
               },
               providerId
-            )
+            })
           } finally {
             state.toolCallCount += startedToolCallCount
             state.metadata.toolCalls = state.toolCallCount

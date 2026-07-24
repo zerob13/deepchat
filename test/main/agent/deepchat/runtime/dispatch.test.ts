@@ -47,10 +47,10 @@ vi.mock('@/events', () => ({
 }))
 
 import {
-  executeTools as executeToolsInternal,
   finalize,
   finalizeError,
-  persistAbortExceptionPlanState
+  persistAbortExceptionPlanState,
+  settleToolBatch as settleToolBatchInternal
 } from '@/agent/deepchat/runtime/dispatch'
 import type { EchoHandle } from '@/agent/deepchat/runtime/echo'
 import { accumulate } from '@/agent/deepchat/runtime/accumulator'
@@ -151,7 +151,7 @@ function expectDeepchatEvent(eventName: string, payload: Record<string, unknown>
   expect(publishDeepchatEventMock).toHaveBeenCalledWith(eventName, expect.objectContaining(payload))
 }
 
-async function executeTools(
+async function settleToolBatch(
   state: StreamState,
   conversation: any[],
   prevBlockCount: number,
@@ -211,10 +211,11 @@ async function executeTools(
       })
     } satisfies Pick<EchoHandle, 'flush' | 'schedule' | 'rescheduleRenderer'>)
 
-  return executeToolsInternal(
+  return settleToolBatchInternal({
     state,
     conversation,
     prevBlockCount,
+    toolCalls: state.completedToolCalls,
     tools,
     toolExecution,
     modelId,
@@ -224,8 +225,8 @@ async function executeTools(
     toolResults,
     contextLength,
     maxTokens,
-    flushHandle,
-    {
+    rendererFlushHandle: flushHandle,
+    collaborators: {
       notificationObserver: hooks
         ? {
             notify: (notification) => {
@@ -245,7 +246,7 @@ async function executeTools(
       diagnostics: hooks
     },
     providerId
-  )
+  })
 }
 
 describe('dispatch', () => {
@@ -269,7 +270,7 @@ describe('dispatch', () => {
     }
   })
 
-  describe('executeTools', () => {
+  describe('settleToolBatch', () => {
     it('builds assistant message, calls tools, updates blocks', async () => {
       const tools = [makeTool('get_weather')]
       const toolService = createMockToolService({ get_weather: 'Sunny, 72F' })
@@ -291,7 +292,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'get_weather', arguments: '{}' }]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -346,7 +347,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'exec', arguments: '{}' }]
 
-      const outcome = await executeTools(
+      const outcome = await settleToolBatch(
         state,
         conversation,
         0,
@@ -410,7 +411,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc-plan', name: 'update_plan', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -506,7 +507,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc-plan', name: 'update_plan', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -584,7 +585,7 @@ describe('dispatch', () => {
         { id: 'tc-read-b', name: 'read', arguments: '{}' }
       ]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -665,7 +666,7 @@ describe('dispatch', () => {
         { id: 'tc-read-b', name: 'read', arguments: '{"path":"b.txt"}' }
       ]
 
-      const execution = executeTools(
+      const execution = settleToolBatch(
         state,
         conversation,
         0,
@@ -731,7 +732,7 @@ describe('dispatch', () => {
         { id: 'tc-read-b', name: 'read', arguments: '{"path":"b.txt"}' }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         [],
         0,
@@ -808,7 +809,7 @@ describe('dispatch', () => {
         { id: 'tc-read', name: 'read', arguments: '{}' }
       ]
 
-      const execution = executeTools(
+      const execution = settleToolBatch(
         state,
         [],
         0,
@@ -866,7 +867,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'subagent_orchestrator', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -944,7 +945,7 @@ describe('dispatch', () => {
         }
       })
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -1010,7 +1011,7 @@ describe('dispatch', () => {
         { id: 'tc1', name: 'skill_manage', arguments: '{"action":"create"}' }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         conversation,
         0,
@@ -1135,7 +1136,7 @@ describe('dispatch', () => {
         }))
       )
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1209,7 +1210,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1268,7 +1269,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'write_file', arguments: '{"path":"a.txt"}' }]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1324,7 +1325,7 @@ describe('dispatch', () => {
         { id: 'tc-read', name: 'read', arguments: '{"path":"/tmp/outside.txt"}' }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1400,7 +1401,7 @@ describe('dispatch', () => {
         { id: 'tc-write', name: 'write', arguments: '{"path":"/tmp/secret.txt"}' }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1457,7 +1458,7 @@ describe('dispatch', () => {
         { id: 'tc-exec', name: 'exec', arguments: '{"command":"rm -rf /tmp/project"}' }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1519,7 +1520,7 @@ describe('dispatch', () => {
         { id: 'tc-read', name: 'read', arguments: '{"path":"/tmp/outside.txt"}' }
       ]
 
-      const executePromise = executeTools(
+      const executePromise = settleToolBatch(
         state,
         [],
         0,
@@ -1582,7 +1583,7 @@ describe('dispatch', () => {
         { id: 'tc-read', name: 'read', arguments: '{"path":"/tmp/outside.txt"}' }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1641,7 +1642,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1717,7 +1718,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1771,7 +1772,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1834,7 +1835,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1889,7 +1890,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'get_weather', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -1945,7 +1946,7 @@ describe('dispatch', () => {
         { id: 'tc1', name: 'skill_view', arguments: '{"name":"deepchat-settings"}' }
       ]
 
-      const result = await executeTools(
+      const result = await settleToolBatch(
         state,
         [],
         0,
@@ -1982,7 +1983,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'search', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2021,7 +2022,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'search', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2062,7 +2063,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'search', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2126,7 +2127,7 @@ describe('dispatch', () => {
         }
       ]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2175,7 +2176,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'search', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2216,7 +2217,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'search', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2265,7 +2266,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'bad_tool', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2309,7 +2310,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'bad_tool', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2383,7 +2384,7 @@ describe('dispatch', () => {
         { id: 'tc1', name: 'cdp_send', arguments: '{"method":"Page.captureScreenshot"}' }
       ]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -2437,7 +2438,7 @@ describe('dispatch', () => {
       ]
 
       const conversation: any[] = []
-      const executing = executeTools(
+      const executing = settleToolBatch(
         state,
         conversation,
         0,
@@ -2503,7 +2504,7 @@ describe('dispatch', () => {
       const conversation: any[] = []
 
       await expect(
-        executeTools(
+        settleToolBatch(
           state,
           conversation,
           0,
@@ -2558,7 +2559,7 @@ describe('dispatch', () => {
       state.completedToolCalls = [{ id: 'tc1', name: 'tool_a', arguments: '{}' }]
 
       await expect(
-        executeTools(
+        settleToolBatch(
           state,
           conversation,
           0,
@@ -2598,7 +2599,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'tool_a', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -2663,7 +2664,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: 'tool_image', arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -2737,7 +2738,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: IMAGE_GENERATE_TOOL_NAME, arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -2811,7 +2812,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: IMAGE_GENERATE_TOOL_NAME, arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -2884,7 +2885,7 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: 'tc1', name: IMAGE_GENERATE_TOOL_NAME, arguments: '{}' }]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         [],
         0,
@@ -2939,7 +2940,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -2993,7 +2994,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -3056,7 +3057,7 @@ describe('dispatch', () => {
         }
       ]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -3117,7 +3118,7 @@ describe('dispatch', () => {
         { id: 'tc2', name: 'read', arguments: '{"path":"b.txt"}' }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -3211,7 +3212,7 @@ describe('dispatch', () => {
       )
       const contextLength = estimateMessagesTokens(fittingPrefixMessages) + toolDefinitionTokens + 1
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -3274,7 +3275,7 @@ describe('dispatch', () => {
         { id: 'tc2', name: 'exec', arguments: '{"command":"ls"}' }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -3356,7 +3357,7 @@ describe('dispatch', () => {
         { id: 'tc2', name: 'search_docs', arguments: '{"q":"x"}' }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
@@ -3405,7 +3406,7 @@ describe('dispatch', () => {
         }
       ]
 
-      await executeTools(
+      await settleToolBatch(
         state,
         conversation,
         0,
@@ -3460,7 +3461,7 @@ describe('dispatch', () => {
         }
       ]
 
-      const executed = await executeTools(
+      const executed = await settleToolBatch(
         state,
         conversation,
         0,
