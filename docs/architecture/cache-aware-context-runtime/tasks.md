@@ -39,12 +39,12 @@
 
 ## Provider Attempt Telemetry
 
-- [ ] Add the narrow Tape provider-attempt writer capability.
-- [ ] Record one idempotent outcome per actual provider request sequence.
-- [ ] Handle cumulative usage, overflow retry, abort, error, and no-usage outcomes.
-- [ ] Expose the latest nullable cache metrics through Tape info.
-- [ ] Verify new events do not enter Memory ingestion projection.
-- [ ] Review and commit the telemetry slice.
+- [x] Add the narrow Tape provider-attempt writer capability.
+- [x] Record one idempotent outcome per actual provider request sequence.
+- [x] Handle cumulative usage, overflow retry, abort, error, and no-usage outcomes.
+- [x] Expose the latest nullable cache metrics through Tape info.
+- [x] Verify new events do not enter Memory ingestion projection.
+- [x] Review and commit the telemetry slice.
 
 ## Final Validation
 

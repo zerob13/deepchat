@@ -20,6 +20,7 @@ import type {
 } from '@shared/types/tape-replay'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entry'
 import type { TapeEntryRef, TapeToolFactInput } from '../domain/facts'
+import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
 import type {
   TapeAnchorReader,
   TapeAnchorWriter,
@@ -27,6 +28,7 @@ import type {
   TapeInspectionReader,
   TapeLifecycleAdmin,
   TapeMessageFactWriter,
+  TapeProviderAttemptWriter,
   TapeRawEntryReader,
   TapeReconciliationPort,
   TapeToolFactWriter,
@@ -58,6 +60,7 @@ import {
   TapeLineageService,
   type AgentTapeViewErrorCode
 } from './lineageService'
+import { TapeProviderAttemptService } from './providerAttemptService'
 import { TapeRecallService } from './recallService'
 import { TapeReconcilerService } from './reconcilerService'
 import { TapeViewReplayService } from './viewReplayService'
@@ -78,6 +81,7 @@ export class SessionTape
   implements
     TapeToolFactWriter,
     TapeMessageFactWriter,
+    TapeProviderAttemptWriter,
     TapeRawEntryReader,
     TapeReconciliationPort,
     TapeViewManifestReader,
@@ -92,6 +96,7 @@ export class SessionTape
   private readonly reconciler: TapeReconcilerService
   private readonly recall: TapeRecallService
   private readonly lineage: TapeLineageService
+  private readonly providerAttempts: TapeProviderAttemptService
   private readonly viewReplay: TapeViewReplayService
   private readonly forks: TapeForkService
 
@@ -99,6 +104,7 @@ export class SessionTape
     this.providers = createTapeApplicationProviders(database)
     this.facts = new TapeFactService(this.providers)
     this.lineage = new TapeLineageService(this.providers)
+    this.providerAttempts = new TapeProviderAttemptService(this.providers)
     this.reconciler = new TapeReconcilerService(this.providers, this.facts)
     this.recall = new TapeRecallService(this.providers, this.lineage)
     this.viewReplay = new TapeViewReplayService(this.providers)
@@ -126,6 +132,10 @@ export class SessionTape
 
   appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef> {
     return this.facts.appendToolFact(input)
+  }
+
+  appendProviderAttempt(input: TapeProviderAttemptInput): void {
+    this.providerAttempts.appendProviderAttempt(input)
   }
 
   getMessageRecords(sessionId: string): ChatMessageRecord[] {

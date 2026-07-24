@@ -1,7 +1,7 @@
 import type { LoopRun } from './loopRun'
 import { advanceRequestSequence } from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
-import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
+import type { LLMCoreStreamEvent, ProviderRoundStopReason } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import type {
@@ -151,6 +151,49 @@ export interface ProviderAttemptStreamPort {
   beforeStream(): void
 }
 
+export interface ProviderAttemptOutcomeInput {
+  requestSeq: number
+  status: 'completed' | 'context_overflow' | 'aborted' | 'error'
+  stopReason: ProviderRoundStopReason | null
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+  } | null
+}
+
+export interface ProviderAttemptOutcomePort {
+  append(input: ProviderAttemptOutcomeInput): void
+  onAppendError(error: unknown): void
+}
+
+function resolveProviderAttemptStatus(input: {
+  contextOverflowObserved: boolean
+  providerThrew: boolean
+  providerError: unknown
+  sawErrorEvent: boolean
+  stopReason: ProviderRoundStopReason | null
+  signalAborted: boolean
+  isAbortError(error: unknown): boolean
+}): ProviderAttemptOutcomeInput['status'] {
+  if (input.contextOverflowObserved) return 'context_overflow'
+  if (input.providerThrew) {
+    return input.isAbortError(input.providerError) ? 'aborted' : 'error'
+  }
+  if (
+    input.signalAborted &&
+    (input.stopReason === null || input.stopReason === 'error' || input.sawErrorEvent)
+  ) {
+    return 'aborted'
+  }
+  if (input.sawErrorEvent || input.stopReason === 'error' || input.stopReason === null) {
+    return 'error'
+  }
+  return 'completed'
+}
+
 export interface ProviderAttemptInput<TSelection> {
   run: LoopRun<unknown>
   requestMessages: ChatMessage[]
@@ -170,8 +213,10 @@ export interface ProviderAttemptInput<TSelection> {
   manifest: ProviderAttemptManifestPort<TSelection>
   rateGate: ProviderRateGatePort
   provider: ProviderAttemptStreamPort
+  outcome: ProviderAttemptOutcomePort
   isContextOverflowEvent(event: LLMCoreStreamEvent): boolean
   isContextOverflowError(error: unknown): boolean
+  isAbortError(error: unknown): boolean
   createAbortError(): Error
 }
 
@@ -232,7 +277,11 @@ export class DeepChatContextCoordinator {
 
     const prepareProviderAttempt = async (options?: {
       strictProviderOverflowRetry?: boolean
-    }): Promise<{ providerMessages: ChatMessage[]; providerMaxTokens: number }> => {
+    }): Promise<{
+      providerMessages: ChatMessage[]
+      providerMaxTokens: number
+      requestSeq: number
+    }> => {
       let providerMessages = input.requestMessages
       let providerMaxTokens = input.maxTokens
       let manifestRequestedMaxTokens = input.maxTokens
@@ -345,7 +394,7 @@ export class DeepChatContextCoordinator {
         input.manifest.onAppendError(error)
       }
 
-      return { providerMessages, providerMaxTokens }
+      return { providerMessages, providerMaxTokens, requestSeq }
     }
 
     const recoverProviderContextOverflow = async (
@@ -400,7 +449,7 @@ export class DeepChatContextCoordinator {
         input.provider.assertAvailable?.()
         const strictProviderOverflowRetry = strictProviderOverflowRetryPending
         strictProviderOverflowRetryPending = false
-        const { providerMessages, providerMaxTokens } = await prepareProviderAttempt({
+        const { providerMessages, providerMaxTokens, requestSeq } = await prepareProviderAttempt({
           strictProviderOverflowRetry
         })
 
@@ -413,6 +462,12 @@ export class DeepChatContextCoordinator {
 
         input.provider.beforeStream()
         let yieldedProviderEvent = false
+        let contextOverflowObserved = false
+        let providerThrew = false
+        let providerError: unknown
+        let sawErrorEvent = false
+        let stopReason: ProviderRoundStopReason | null = null
+        let usage: ProviderAttemptOutcomeInput['usage'] = null
         try {
           for await (const event of input.provider.stream({
             messages: providerMessages,
@@ -422,11 +477,32 @@ export class DeepChatContextCoordinator {
             maxTokens: providerMaxTokens,
             tools: input.tools
           })) {
+            if (event.type === 'usage') {
+              usage = {
+                inputTokens: event.usage.prompt_tokens,
+                outputTokens: event.usage.completion_tokens,
+                totalTokens: event.usage.total_tokens,
+                ...(event.usage.cached_tokens !== undefined
+                  ? { cacheReadTokens: event.usage.cached_tokens }
+                  : {}),
+                ...(event.usage.cache_write_tokens !== undefined
+                  ? { cacheWriteTokens: event.usage.cache_write_tokens }
+                  : {})
+              }
+            } else if (event.type === 'error') {
+              sawErrorEvent = true
+              stopReason = 'error'
+            } else if (event.type === 'stop') {
+              if (stopReason !== 'error') {
+                stopReason = event.stop_reason
+              }
+            }
             if (
               !yieldedProviderEvent &&
               !input.bypassContextBudget &&
               input.isContextOverflowEvent(event)
             ) {
+              contextOverflowObserved = true
               if (
                 input.run.providerRecovery.strictProviderOverflowRetryUsed ||
                 providerOverflowRecoveryAttempted
@@ -452,11 +528,14 @@ export class DeepChatContextCoordinator {
           }
           break
         } catch (error) {
+          providerThrew = true
+          providerError = error
           if (
             !yieldedProviderEvent &&
             !input.bypassContextBudget &&
             input.isContextOverflowError(error)
           ) {
+            contextOverflowObserved = true
             if (
               input.run.providerRecovery.strictProviderOverflowRetryUsed ||
               providerOverflowRecoveryAttempted
@@ -478,6 +557,28 @@ export class DeepChatContextCoordinator {
             continue providerAttemptLoop
           }
           throw error
+        } finally {
+          const status = resolveProviderAttemptStatus({
+            contextOverflowObserved,
+            providerThrew,
+            providerError,
+            sawErrorEvent,
+            stopReason,
+            signalAborted: input.run.abortController.signal.aborted,
+            isAbortError: input.isAbortError
+          })
+          try {
+            input.outcome.append({
+              requestSeq,
+              status,
+              stopReason,
+              usage
+            })
+          } catch (error) {
+            try {
+              input.outcome.onAppendError(error)
+            } catch {}
+          }
         }
       }
     } finally {

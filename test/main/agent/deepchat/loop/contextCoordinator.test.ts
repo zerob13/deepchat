@@ -60,6 +60,8 @@ function createAttemptInput(options?: {
   const manifests: any[] = []
   const providerRequests: any[] = []
   const manifestErrors: unknown[] = []
+  const outcomes: any[] = []
+  const outcomeErrors: unknown[] = []
   const providerEvents = options?.providerEvents ?? [[{ type: 'text', content: 'ok' }]]
   let providerAttempt = 0
   let waiting = false
@@ -71,6 +73,8 @@ function createAttemptInput(options?: {
     manifests,
     providerRequests,
     manifestErrors,
+    outcomes,
+    outcomeErrors,
     actualRateClears,
     input: {
       run,
@@ -159,10 +163,19 @@ function createAttemptInput(options?: {
         },
         beforeStream: () => order.push('before-provider')
       },
+      outcome: {
+        append: (outcome: any) => {
+          order.push(`outcome:${outcome.requestSeq}`)
+          outcomes.push(structuredClone(outcome))
+        },
+        onAppendError: (error: unknown) => outcomeErrors.push(error)
+      },
       isContextOverflowEvent: (event: LLMCoreStreamEvent) =>
         event.type === 'error' && event.error_message === 'context overflow',
       isContextOverflowError: (error: unknown) =>
         error instanceof Error && error.message === 'context overflow',
+      isAbortError: (error: unknown) =>
+        error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError'),
       createAbortError: () => Object.assign(new Error('aborted'), { name: 'AbortError' })
     }
   }
@@ -286,7 +299,8 @@ describe('DeepChatContextCoordinator', () => {
       'rate',
       'rate-clear',
       'before-provider',
-      'provider'
+      'provider',
+      'outcome:1'
     ])
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
     expect(fixture.manifests[0]).toMatchObject({
@@ -303,7 +317,15 @@ describe('DeepChatContextCoordinator', () => {
   })
 
   it('uses fallback capabilities without a ViewManifest context', async () => {
-    const fixture = createAttemptInput({ viewContext: false })
+    const fixture = createAttemptInput({
+      viewContext: false,
+      providerEvents: [
+        [
+          { type: 'text', content: 'ok' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
 
     expect(fixture.manifests[0]).toMatchObject({
@@ -314,6 +336,60 @@ describe('DeepChatContextCoordinator', () => {
       traceDebugEnabled: true
     })
     expect(fixture.manifests[0].selection).toBeUndefined()
+    expect(fixture.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'completed',
+        stopReason: 'complete',
+        usage: null
+      }
+    ])
+  })
+
+  it('records only the final cumulative usage snapshot for a completed attempt', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [
+        [
+          {
+            type: 'usage',
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 10,
+              total_tokens: 110,
+              cached_tokens: 40
+            }
+          },
+          {
+            type: 'usage',
+            usage: {
+              prompt_tokens: 140,
+              completion_tokens: 20,
+              total_tokens: 160,
+              cached_tokens: 120,
+              cache_write_tokens: 8
+            }
+          },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'completed',
+        stopReason: 'complete',
+        usage: {
+          inputTokens: 140,
+          outputTokens: 20,
+          totalTokens: 160,
+          cacheReadTokens: 120,
+          cacheWriteTokens: 8
+        }
+      }
+    ])
   })
 
   it('keeps an actual provider attempt fail-open when ViewManifest persistence throws', async () => {
@@ -332,11 +408,27 @@ describe('DeepChatContextCoordinator', () => {
     ])
   })
 
+  it('keeps generation fail-open when provider outcome persistence throws', async () => {
+    const fixture = createAttemptInput()
+    const persistenceError = new Error('outcome unavailable')
+    fixture.input.outcome.append = () => {
+      throw persistenceError
+    }
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).resolves.toEqual([{ type: 'text', content: 'ok' }])
+    expect(fixture.outcomeErrors).toEqual([persistenceError])
+  })
+
   it('keeps strict overflow retry in one run while advancing requestSeq per attempt', async () => {
     const fixture = createAttemptInput({
       providerEvents: [
         [{ type: 'error', error_message: 'context overflow' }],
-        [{ type: 'text', content: 'recovered' }]
+        [
+          { type: 'text', content: 'recovered' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
       ]
     })
 
@@ -344,7 +436,10 @@ describe('DeepChatContextCoordinator', () => {
       new DeepChatContextCoordinator().streamProviderAttempts(fixture.input)
     )
 
-    expect(events).toEqual([{ type: 'text', content: 'recovered' }])
+    expect(events).toEqual([
+      { type: 'text', content: 'recovered' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
     expect(fixture.input.recovery.recover).toHaveBeenCalledOnce()
     expect(fixture.providerRequests).toHaveLength(2)
     expect(fixture.manifests.map((manifest) => manifest.requestSeq)).toEqual([1, 2])
@@ -358,6 +453,21 @@ describe('DeepChatContextCoordinator', () => {
       requestedMaxTokens: 50,
       reserveTokens: 75
     })
+    expect(fixture.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'context_overflow',
+        stopReason: 'error',
+        usage: null
+      },
+      {
+        requestSeq: 2,
+        status: 'completed',
+        stopReason: 'complete',
+        usage: null
+      }
+    ])
+    expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
   it('checks retry availability before context recovery or another manifest', async () => {
@@ -382,6 +492,14 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifests).toHaveLength(1)
     expect(fixture.order.filter((entry) => entry === 'rate')).toHaveLength(1)
     expect(fixture.run.requestSeq).toBe(1)
+    expect(fixture.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'context_overflow',
+        stopReason: 'error',
+        usage: null
+      }
+    ])
   })
 
   it('runs pressure recovery before manifesting the provider request', async () => {
@@ -432,5 +550,78 @@ describe('DeepChatContextCoordinator', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(fixture.manifests).toHaveLength(1)
     expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.outcomes).toHaveLength(0)
+  })
+
+  it('records abort and error attempts without inventing usage', async () => {
+    const aborted = createAttemptInput()
+    aborted.input.provider.stream = async function* () {
+      throw Object.assign(new Error('canceled'), { name: 'AbortError' })
+    }
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(aborted.input))
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(aborted.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'aborted',
+        stopReason: null,
+        usage: null
+      }
+    ])
+
+    const failed = createAttemptInput()
+    failed.input.provider.stream = async function* () {
+      throw new Error('provider unavailable')
+    }
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(failed.input))
+    ).rejects.toThrow('provider unavailable')
+    expect(failed.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'error',
+        stopReason: null,
+        usage: null
+      }
+    ])
+  })
+
+  it('keeps usage returned before a provider error terminal event', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [
+        [
+          {
+            type: 'usage',
+            usage: {
+              prompt_tokens: 80,
+              completion_tokens: 5,
+              total_tokens: 85,
+              cached_tokens: 60
+            }
+          },
+          { type: 'error', error_message: 'provider failed' },
+          { type: 'stop', stop_reason: 'error' }
+        ]
+      ]
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.outcomes).toEqual([
+      {
+        requestSeq: 1,
+        status: 'error',
+        stopReason: 'error',
+        usage: {
+          inputTokens: 80,
+          outputTokens: 5,
+          totalTokens: 85,
+          cacheReadTokens: 60
+        }
+      }
+    ])
   })
 })

@@ -423,6 +423,7 @@ export class DeepChatRuntimeCoordinator {
       tapeReconciliation: this.tapeService,
       tapeViewManifestReader: this.tapeService,
       tapeViewManifestWriter: this.tapeService,
+      tapeProviderAttemptWriter: this.tapeService,
       tapeToolFactWriter: this.tapeService,
       pendingInputCoordinator: this.pendingInputCoordinator,
       toolResolver: this.toolResolver,

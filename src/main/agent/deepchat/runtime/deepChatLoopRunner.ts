@@ -68,6 +68,7 @@ import {
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
 import type {
+  TapeProviderAttemptWriter,
   TapeReconciliationPort,
   TapeToolFactWriter,
   TapeViewManifestReader,
@@ -197,6 +198,7 @@ export interface DeepChatLoopRunnerPorts {
   tapeReconciliation: TapeReconciliationPort
   tapeViewManifestReader: TapeViewManifestReader
   tapeViewManifestWriter: TapeViewManifestWriter
+  tapeProviderAttemptWriter: TapeProviderAttemptWriter
   tapeToolFactWriter: TapeToolFactWriter
   pendingInputCoordinator: SessionPendingInputs
   toolResolver: DeepChatToolResolver
@@ -675,8 +677,27 @@ export class DeepChatLoopRunner {
                 crossPreStreamBoundary()
               }
             },
+            outcome: {
+              append: (outcome) =>
+                ports.tapeProviderAttemptWriter.appendProviderAttempt({
+                  sessionId,
+                  messageId,
+                  providerId: state.providerId,
+                  modelId: requestModelId,
+                  ...outcome
+                }),
+              onAppendError: (error) =>
+                logger.warn(
+                  `[DeepChatAgent] Failed to persist provider attempt outcome: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                )
+            },
             isContextOverflowEvent: isFirstProviderContextOverflowEvent,
             isContextOverflowError: isContextWindowErrorLike,
+            isAbortError: (error) =>
+              error instanceof Error &&
+              (error.name === 'AbortError' || error.name === 'CanceledError'),
             createAbortError
           })
         },
