@@ -8635,13 +8635,14 @@ describe('DeepChatRuntimeCoordinator', () => {
           maxTokens: 4096
         }
       })
+      vi.spyOn((agent as any).compactionService, 'prepareForResumeTurn').mockResolvedValueOnce(null)
       installSessionRows([
-        makeDeepchatUserRow(1, 'A'.repeat(100)),
-        makeDeepchatAssistantRow(2, 'B'.repeat(100)),
-        makeDeepchatUserRow(3, 'C'.repeat(100)),
-        makeDeepchatAssistantRow(4, 'D'.repeat(100)),
-        makeDeepchatUserRow(5, 'E'.repeat(100)),
-        makeDeepchatAssistantRow(6, 'F'.repeat(100)),
+        makeDeepchatUserRow(1, 'A'.repeat(2400)),
+        makeDeepchatAssistantRow(2, 'B'.repeat(2400)),
+        makeDeepchatUserRow(3, 'C'.repeat(2400)),
+        makeDeepchatAssistantRow(4, 'D'.repeat(2400)),
+        makeDeepchatUserRow(5, 'E'.repeat(2400)),
+        makeDeepchatAssistantRow(6, 'F'.repeat(2400)),
         makeDeepchatUserRow(7, 'retry target', 'retry-user'),
         makeDeepchatAssistantRow(8, 'failed answer', 'retry-assistant', 'error')
       ])

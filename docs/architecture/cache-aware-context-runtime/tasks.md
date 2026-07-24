@@ -30,12 +30,12 @@
 
 ## Model-Aware Compaction
 
-- [ ] Select complete retained turns using the configured floor and model-aware token target.
-- [ ] Preserve the resume target and preceding configured turns.
-- [ ] Keep manual compaction behavior and avoid persisted retained-tail copies.
-- [ ] Persist retained-tail diagnostic counts in summary anchors.
-- [ ] Add token target, cap, oversized turn, tool-group, and manual/resume tests.
-- [ ] Review and commit the compaction slice.
+- [x] Select complete retained turns using the configured floor and model-aware token target.
+- [x] Preserve the resume target and preceding configured turns.
+- [x] Keep manual compaction behavior and avoid persisted retained-tail copies.
+- [x] Persist retained-tail diagnostic counts in summary anchors.
+- [x] Add token target, cap, oversized turn, tool-group, and manual/resume tests.
+- [x] Review and commit the compaction slice.
 
 ## Provider Attempt Telemetry
 
