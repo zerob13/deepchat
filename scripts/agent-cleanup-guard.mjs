@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
+import ts from 'typescript'
 
 const ROOT = process.cwd()
 
@@ -46,7 +48,60 @@ const DEEPCHAT_RUNTIME_COORDINATOR_FILE = path.join(
   ROOT,
   'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts'
 )
-const DEEPCHAT_RUNTIME_COORDINATOR_MAX_LINES = 3_200
+const DEEPCHAT_AGENT_DIR = path.join(ROOT, 'src/main/agent/deepchat')
+const DEEPCHAT_RUNTIME_COORDINATOR_MAX_LINES = 1_300
+const DEEPCHAT_PENDING_INPUTS_FILE = path.join(ROOT, 'src/main/session/data/pendingInputs.ts')
+const DEEPCHAT_AGENT_INSTANCE_FILE = path.join(
+  ROOT,
+  'src/main/agent/deepchat/instance/deepChatAgentInstance.ts'
+)
+const DEEPCHAT_RUN_LIFECYCLE_FILE = path.join(
+  ROOT,
+  'src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts'
+)
+const DEEPCHAT_COMPACTION_SERVICE_FILE = path.join(
+  ROOT,
+  'src/main/agent/deepchat/runtime/compactionService.ts'
+)
+const DEEPCHAT_ROOT_OWNERSHIP_RULES = [
+  {
+    kind: 'manual-compaction-lifecycle',
+    calls: [
+      { name: 'prepareForManualCompaction', ownerFile: DEEPCHAT_COMPACTION_SERVICE_FILE }
+    ]
+  },
+  {
+    kind: 'pending-input-claim-lifecycle',
+    calls: [
+      'claimQueuedInput',
+      'claimSteerInput',
+      'consumeQueuedInput',
+      'consumeSteerInput',
+      'releaseClaimedInput'
+    ].map((name) => ({ name, ownerFile: DEEPCHAT_PENDING_INPUTS_FILE }))
+  },
+  {
+    kind: 'pending-input-drain-selection',
+    calls: [
+      ...['getNextQueuedInput', 'getNextSteerInput'].map((name) => ({
+        name,
+        ownerFile: DEEPCHAT_PENDING_INPUTS_FILE
+      })),
+      ...['tryAcquirePendingQueueDrain', 'releasePendingQueueDrain'].map((name) => ({
+        name,
+        ownerFile: DEEPCHAT_AGENT_INSTANCE_FILE
+      }))
+    ]
+  },
+  {
+    kind: 'operation-controller-lifecycle',
+    calls: [
+      { name: 'ensureOperationController', ownerFile: DEEPCHAT_RUN_LIFECYCLE_FILE },
+      { name: 'setAbortController', ownerFile: DEEPCHAT_AGENT_INSTANCE_FILE },
+      { name: 'clearAbortController', ownerFile: DEEPCHAT_AGENT_INSTANCE_FILE }
+    ]
+  }
+]
 
 const LEGACY_AGENT_RUNTIME_GLOBALS = [
   'sessionManager',
@@ -109,6 +164,110 @@ function extractModuleSpecifiers(source) {
   return specifiers
 }
 
+function createTypeScriptSourceFile(filePath, source) {
+  return ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+}
+
+function calledSymbolName(expression) {
+  if (ts.isIdentifier(expression)) {
+    return expression.text
+  }
+  if (ts.isPropertyAccessExpression(expression)) {
+    return expression.name.text
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.argumentExpression &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    return expression.argumentExpression.text
+  }
+  return null
+}
+
+function collectRootOwnershipUsage(source) {
+  const sourceFile = createTypeScriptSourceFile(DEEPCHAT_RUNTIME_COORDINATOR_FILE, source)
+  const calls = new Set()
+  const identifiers = new Set()
+
+  const visit = (node) => {
+    if (ts.isCallExpression(node)) {
+      const name = calledSymbolName(node.expression)
+      if (name) {
+        calls.add(name)
+      }
+    }
+    if (ts.isIdentifier(node)) {
+      identifiers.add(node.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return { calls, identifiers }
+}
+
+function collectDeclaredSymbols(filePath, source) {
+  const sourceFile = createTypeScriptSourceFile(filePath, source)
+  const declarations = new Set()
+  const visit = (node) => {
+    if (
+      (ts.isMethodDeclaration(node) ||
+        ts.isPropertyDeclaration(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isMethodSignature(node) ||
+        ts.isPropertySignature(node)) &&
+      node.name &&
+      ts.isIdentifier(node.name)
+    ) {
+      declarations.add(node.name.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return declarations
+}
+
+export function findDeepChatRootOwnershipViolations(source) {
+  const usage = collectRootOwnershipUsage(source)
+  const violations = []
+  for (const rule of DEEPCHAT_ROOT_OWNERSHIP_RULES) {
+    for (const symbol of rule.calls ?? []) {
+      if (usage.calls.has(symbol.name)) {
+        violations.push({ kind: rule.kind, detail: `${symbol.name}()` })
+      }
+    }
+    for (const symbol of rule.identifiers ?? []) {
+      if (usage.identifiers.has(symbol.name)) {
+        violations.push({ kind: rule.kind, detail: symbol.name })
+      }
+    }
+  }
+  return violations
+}
+
+export async function findMissingDeepChatOwnershipSymbols() {
+  const symbolsByOwner = new Map()
+  for (const rule of DEEPCHAT_ROOT_OWNERSHIP_RULES) {
+    for (const symbol of [...(rule.calls ?? []), ...(rule.identifiers ?? [])]) {
+      const names = symbolsByOwner.get(symbol.ownerFile) ?? new Set()
+      names.add(symbol.name)
+      symbolsByOwner.set(symbol.ownerFile, names)
+    }
+  }
+
+  const missing = []
+  for (const [ownerFile, protectedSymbols] of symbolsByOwner) {
+    const source = await fs.readFile(ownerFile, 'utf8')
+    const declarations = collectDeclaredSymbols(ownerFile, source)
+    for (const symbol of protectedSymbols) {
+      if (!declarations.has(symbol)) {
+        missing.push({ ownerFile, symbol })
+      }
+    }
+  }
+  return missing
+}
+
 async function collectFiles(entryPath) {
   const stats = await fs.stat(entryPath)
   if (stats.isFile()) {
@@ -148,11 +307,36 @@ function isLegacyMainImport(filePath, specifier) {
   )
 }
 
-function buildViolation(kind, filePath, specifier) {
+function withoutSourceExtension(value) {
+  return value.replace(/\.(?:[cm]?[jt]sx?)$/, '')
+}
+
+export function isDeepChatRuntimeCoordinatorImport(filePath, specifier) {
+  if (
+    filePath === DEEPCHAT_RUNTIME_COORDINATOR_FILE ||
+    !isUnder(filePath, DEEPCHAT_AGENT_DIR)
+  ) {
+    return false
+  }
+
+  if (specifier.startsWith('.')) {
+    return (
+      withoutSourceExtension(path.resolve(path.dirname(filePath), specifier)) ===
+      withoutSourceExtension(DEEPCHAT_RUNTIME_COORDINATOR_FILE)
+    )
+  }
+
+  return (
+    withoutSourceExtension(specifier) ===
+    '@/agent/deepchat/runtime/deepChatRuntimeCoordinator'
+  )
+}
+
+function buildViolation(kind, filePath, detail) {
   return {
     kind,
     file: relativePath(filePath),
-    specifier
+    detail
   }
 }
 
@@ -187,6 +371,15 @@ async function findViolations() {
   }
 
   const violations = []
+  for (const missing of await findMissingDeepChatOwnershipSymbols()) {
+    violations.push(
+      buildViolation(
+        'deepchat-ownership-symbol-missing',
+        missing.ownerFile,
+        missing.symbol
+      )
+    )
+  }
   for (const filePath of [...fileSet].sort()) {
     const source = await fs.readFile(filePath, 'utf8')
 
@@ -201,11 +394,20 @@ async function findViolations() {
           )
         )
       }
+      for (const violation of findDeepChatRootOwnershipViolations(source)) {
+        violations.push(buildViolation(violation.kind, filePath, violation.detail))
+      }
     }
 
     for (const specifier of extractModuleSpecifiers(source)) {
       if (isLegacyMainImport(filePath, specifier)) {
         violations.push(buildViolation('legacy-main-import', filePath, specifier))
+      }
+
+      if (isDeepChatRuntimeCoordinatorImport(filePath, specifier)) {
+        violations.push(
+          buildViolation('deepchat-runtime-owner-imports-root', filePath, specifier)
+        )
       }
 
       if (
@@ -261,7 +463,7 @@ async function main() {
   if (violations.length > 0) {
     console.error('Agent cleanup guard failed.')
     for (const violation of violations) {
-      console.error(`- [${violation.kind}] ${violation.file} -> ${violation.specifier}`)
+      console.error(`- [${violation.kind}] ${violation.file} -> ${violation.detail}`)
     }
     process.exit(1)
   }
@@ -269,7 +471,12 @@ async function main() {
   console.log('Agent cleanup guard passed. Baseline violations tracked: 0.')
 }
 
-main().catch((error) => {
-  console.error('Agent cleanup guard failed to run:', error)
-  process.exit(1)
-})
+const isMainModule =
+  process.argv[1] !== undefined && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+
+if (isMainModule) {
+  main().catch((error) => {
+    console.error('Agent cleanup guard failed to run:', error)
+    process.exit(1)
+  })
+}

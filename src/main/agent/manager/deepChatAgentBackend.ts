@@ -4,7 +4,6 @@ import type { SessionTapePort, SessionTranscriptReadPort } from '@/session/data/
 import type {
   DeepChatSessionState,
   MessageStartResult,
-  PendingInputEnqueueSource,
   PendingSessionInputRecord,
   PermissionMode,
   QueuePendingInputOptions,
@@ -40,8 +39,6 @@ export interface DeepChatAgentBackendPort {
     context?: {
       projectDir?: string | null
       emitRefreshBeforeStream?: boolean
-      pendingQueueItemId?: string
-      pendingQueueItemSource?: PendingInputEnqueueSource
       maxProviderRounds?: number
       preserveResolvedRepresentations?: boolean
       beforeHistoryPreparation?: () => void

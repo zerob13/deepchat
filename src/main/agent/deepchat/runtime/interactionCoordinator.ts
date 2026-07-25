@@ -6,7 +6,6 @@ import type {
   ToolInteractionResult
 } from '@shared/types/agent-interface'
 import type { SkillServicePort } from '@shared/types/skill'
-import logger from '@shared/logger'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { SessionPermissionPort } from '@/session/contracts'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
@@ -32,7 +31,6 @@ import {
   updateSkillDraftToolCallResponse,
   updateToolCallResponse
 } from './interactionProjection'
-import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
 import type { SessionTranscript } from '@/session/data/transcript'
 import type { ProviderPermissionCoordinator } from './providerPermissionCoordinator'
 import { MAX_TOOL_CALLS_SKIPPED_ERROR } from './process'
@@ -42,9 +40,25 @@ import {
   stampTerminalMetadata
 } from './runtimeMetadata'
 import type { DeferredToolExecutionResult } from './deferredToolExecutor'
-import type { DeepChatEventPublisher, PendingToolInteraction, ProcessResult } from './types'
+import type { DeepChatEventPublisher, PendingToolInteraction } from './types'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { MAX_TOOL_CALLS } from '@/agent/deepchat/loop/deepChatLoopEngine'
+import { isAbortError, throwIfAbortRequested } from './abortErrors'
+import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { RuntimeHookSink } from './runtimeHookSink'
+
+type InteractionRunLifecyclePort = Pick<
+  RunLifecycleCoordinator,
+  | 'clearOperationController'
+  | 'ensureOperationController'
+  | 'isMessageAssociatedWithRun'
+  | 'observeTerminal'
+  | 'resolveStreamRequestId'
+  | 'schedulePendingInputDrain'
+  | 'scopeFor'
+  | 'settleAbortedTurn'
+  | 'transitionStatus'
+>
 
 export type ResumeBudgetToolCall = {
   id: string
@@ -57,44 +71,13 @@ type SkillDraftPresenter = Pick<
   'viewDraftSkill' | 'installDraftSkill' | 'discardDraftSkill'
 >
 
-type RuntimeHookEvent =
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'PermissionRequest'
-  | 'Stop'
-  | 'SessionEnd'
-
-type RuntimeHookContext = {
-  sessionId: string
-  messageId?: string
-  providerId?: string
-  modelId?: string
-  projectDir?: string | null
-  tool?: {
-    callId?: string
-    name?: string
-    params?: string
-    response?: string
-    error?: string
-  }
-  permission?: Record<string, unknown> | null
-  stop?: { reason?: string; userStop?: boolean } | null
-  usage?: Record<string, number> | null
-  error?: { message?: string; stack?: string } | null
-}
-
 export interface InteractionCoordinatorPorts {
   messageStore: SessionTranscript
   providerPermissionCoordinator: ProviderPermissionCoordinator
   skillService: SkillDraftPresenter
+  runLifecycle: InteractionRunLifecyclePort
   getDeepChatInstance(sessionId: string): DeepChatAgentInstance
   getRuntimeState(sessionId: string): DeepChatSessionState | undefined
-  ensureSessionAbortController(sessionId: string): AbortController
-  clearSessionAbortController(sessionId: string, controller?: AbortController): void
-  throwIfAbortRequested(signal?: AbortSignal): void
-  isAbortError(error: unknown): boolean
-  isCurrentInstance(sessionId: string, expectedInstance: DeepChatAgentInstance): boolean
   resolveProjectDir(sessionId: string): string | null
   sessionPermissionPort: SessionPermissionPort
   executeDeferredToolCall(
@@ -104,21 +87,7 @@ export interface InteractionCoordinatorPorts {
     onToolCallStarted?: () => void
   ): Promise<DeferredToolExecutionResult>
   emitMessageRefresh(sessionId: string, messageId: string): void
-  resolveStreamRequestId(sessionId: string, messageId: string): string
-  setSessionStatus(sessionId: string, status: DeepChatSessionState['status']): void
-  dispatchHook(event: RuntimeHookEvent, context: RuntimeHookContext): void
-  dispatchTerminalHooks(
-    sessionId: string,
-    state: DeepChatSessionState | undefined,
-    result: ProcessResult
-  ): void
-  settleAbortedTurn(
-    sessionId: string,
-    messageId: string | null,
-    runId?: string,
-    metadata?: string
-  ): void
-  drainPendingQueueIfPossible(sessionId: string, reason: 'enqueue' | 'completed'): Promise<boolean>
+  hookSink: Pick<RuntimeHookSink, 'dispatch'>
   resumeAssistantMessage(
     sessionId: string,
     messageId: string,
@@ -139,12 +108,16 @@ export class InteractionCoordinator {
     response: ToolInteractionResponse
   ): Promise<ToolInteractionResult> {
     const instance = this.ports.getDeepChatInstance(sessionId)
+    const scope = this.ports.runLifecycle.scopeFor(sessionId, instance)
     if (!instance.tryLockInteraction(messageId, toolCallId)) {
       return { resumed: false }
     }
 
     const interactionOwnerRun = instance.getActiveGeneration()
-    const interactionOwnedByActiveRun = interactionOwnerRun?.messageId === messageId
+    const interactionOwnedByActiveRun = this.ports.runLifecycle.isMessageAssociatedWithRun(
+      interactionOwnerRun,
+      messageId
+    )
     let interactionAbortController: AbortController | null = null
     let interactionAbortSignal: AbortSignal | undefined
     try {
@@ -154,10 +127,10 @@ export class InteractionCoordinator {
         }
         interactionAbortSignal = interactionOwnerRun.abortController.signal
       } else {
-        interactionAbortController = this.ports.ensureSessionAbortController(sessionId)
+        interactionAbortController = this.ports.runLifecycle.ensureOperationController(scope)
         interactionAbortSignal = interactionAbortController.signal
       }
-      this.ports.throwIfAbortRequested(interactionAbortSignal)
+      throwIfAbortRequested(interactionAbortSignal)
       const message = await this.ports.messageStore.getMessage(messageId)
       if (!message || message.role !== 'assistant') {
         throw new Error(`Assistant message not found: ${messageId}`)
@@ -166,7 +139,7 @@ export class InteractionCoordinator {
         throw new Error(`Message ${messageId} does not belong to session ${sessionId}`)
       }
 
-      const blocks = parseAssistantBlocks(message.content)
+      let blocks = parseAssistantBlocks(message.content)
       const pendingEntries = reconcilePendingInteractionEntries(
         instance,
         collectPendingInteractionEntries(messageId, blocks)
@@ -190,7 +163,7 @@ export class InteractionCoordinator {
       let emitResolvedToolHook: (() => void) | null = null
       let resumeAccounting = parseMessageMetadata(message.metadata)
       let accountingChanged = false
-      const actionBlock = blocks[currentEntry.blockIndex]
+      let actionBlock = blocks[currentEntry.blockIndex]
       const toolCall = actionBlock.tool_call
       if (!toolCall?.id) {
         throw new Error('Invalid action block without tool call id.')
@@ -213,7 +186,7 @@ export class InteractionCoordinator {
             ),
             interactionAbortSignal
           )
-          if (!this.ports.isCurrentInstance(sessionId, instance)) {
+          if (!scope.isCurrent()) {
             return { resumed: false }
           }
           waitingForUserMessage = result.waitingForUserMessage
@@ -221,7 +194,7 @@ export class InteractionCoordinator {
             this.ports.messageStore.updateAssistantContent(messageId, blocks)
             this.ports.emitMessageRefresh(sessionId, messageId)
             this.ports.messageStore.updateMessageStatus(messageId, 'pending')
-            this.ports.setSessionStatus(sessionId, 'generating')
+            this.ports.runLifecycle.transitionStatus(scope, 'generating')
             return { resumed: false, handledInline: result.handledInline === true }
           }
           instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
@@ -271,7 +244,6 @@ export class InteractionCoordinator {
         let shouldDispatchResolvedToolHook = false
 
         if (response.granted) {
-          markPermissionResolved(actionBlock, true, permissionType)
           await awaitWithAbort(
             this.grantPermissionForPayload(sessionId, permissionPayload, toolCall),
             interactionAbortSignal
@@ -297,7 +269,7 @@ export class InteractionCoordinator {
               isError: true
             }
           } else {
-            this.ports.dispatchHook('PreToolUse', {
+            this.ports.hookSink.dispatch('PreToolUse', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -315,17 +287,28 @@ export class InteractionCoordinator {
               toolCall,
               markDeferredToolCallStarted
             )
+            const refreshedInteraction = this.readLatestPendingInteraction(
+              sessionId,
+              messageId,
+              toolCall.id
+            )
+            if (!refreshedInteraction) {
+              return { resumed: false }
+            }
+            blocks = refreshedInteraction.blocks
+            actionBlock = refreshedInteraction.actionBlock
             if ((execution.invoked || execution.terminalError) && !deferredToolCallCounted) {
               markDeferredToolCallStarted()
             }
           }
+          markPermissionResolved(actionBlock, true, permissionType)
           if (execution.invoked) {
             instance.advancePendingToolBatch({ invokedCallId: toolCall.id })
           }
           if (execution.terminalError) {
             const terminalMetadata = stampTerminalMetadata(resumeAccounting, 'error', 'tool_error')
             instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
-            this.ports.dispatchHook('PostToolUseFailure', {
+            this.ports.hookSink.dispatch('PostToolUseFailure', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -346,13 +329,13 @@ export class InteractionCoordinator {
             )
             this.ports.emitMessageRefresh(sessionId, messageId)
             this.ports.publishEvent('chat.stream.failed', {
-              requestId: this.ports.resolveStreamRequestId(sessionId, messageId),
+              requestId: this.ports.runLifecycle.resolveStreamRequestId(sessionId, messageId),
               sessionId,
               messageId,
               failedAt: Date.now(),
               error: execution.terminalError
             })
-            this.ports.dispatchHook('Stop', {
+            this.ports.hookSink.dispatch('Stop', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -360,7 +343,7 @@ export class InteractionCoordinator {
               projectDir,
               stop: { reason: 'tool_error', userStop: false }
             })
-            this.ports.dispatchHook('SessionEnd', {
+            this.ports.hookSink.dispatch('SessionEnd', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -369,7 +352,7 @@ export class InteractionCoordinator {
               usage: buildUsageFromMetadata(terminalMetadata) ?? null,
               error: { message: execution.terminalError }
             })
-            this.ports.setSessionStatus(sessionId, 'error')
+            this.ports.runLifecycle.transitionStatus(scope, 'error')
             replacePendingInteractions(
               instance,
               reconcilePendingInteractionEntries(
@@ -407,7 +390,7 @@ export class InteractionCoordinator {
               toolCall.id,
               'post-call-permission'
             )
-            this.ports.dispatchHook('PermissionRequest', {
+            this.ports.hookSink.dispatch('PermissionRequest', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -476,23 +459,26 @@ export class InteractionCoordinator {
       if (remainingPending.length > 0) {
         emitResolvedToolHook?.()
         this.ports.messageStore.updateMessageStatus(messageId, 'pending')
-        this.ports.setSessionStatus(sessionId, 'generating')
+        this.ports.runLifecycle.transitionStatus(scope, 'generating')
         return { resumed: false }
       }
 
       if (awaitsUserFollowUp) {
         emitResolvedToolHook?.()
         this.ports.messageStore.updateMessageStatus(messageId, 'sent')
-        this.ports.dispatchTerminalHooks(sessionId, this.ports.getRuntimeState(sessionId), {
+        this.ports.runLifecycle.observeTerminal(sessionId, {
           status: 'completed',
           stopReason: 'user_follow_up',
           usage: buildUsageFromMetadata(persistedMetadata)
         })
-        this.ports.setSessionStatus(sessionId, 'idle')
+        this.ports.runLifecycle.transitionStatus(scope, 'idle')
         return { resumed: false, waitingForUserMessage: true }
       }
 
-      this.ports.clearSessionAbortController(sessionId, interactionAbortController ?? undefined)
+      this.ports.runLifecycle.clearOperationController(
+        scope,
+        interactionAbortController ?? undefined
+      )
       const resumed = await this.ports.resumeAssistantMessage(
         sessionId,
         messageId,
@@ -503,7 +489,7 @@ export class InteractionCoordinator {
       emitResolvedToolHook?.()
       return { resumed }
     } catch (error) {
-      if (this.ports.isAbortError(error) || interactionAbortSignal?.aborted) {
+      if (isAbortError(error) || interactionAbortSignal?.aborted) {
         if (interactionOwnedByActiveRun) {
           return { resumed: false }
         }
@@ -511,30 +497,52 @@ export class InteractionCoordinator {
           this.ports.messageStore.getMessage(messageId)?.metadata ?? '{}'
         )
         if (interactionAbortController) {
-          this.ports.clearSessionAbortController(sessionId, interactionAbortController)
+          this.ports.runLifecycle.clearOperationController(scope, interactionAbortController)
         }
         instance.replacePendingInteractions([])
-        this.ports.settleAbortedTurn(
+        this.ports.runLifecycle.settleAbortedTurn(
           sessionId,
           messageId,
           undefined,
           JSON.stringify(stampTerminalMetadata(accounting, 'aborted', 'user_stop'))
         )
-        void this.ports.drainPendingQueueIfPossible(sessionId, 'completed').catch((drainError) => {
-          logger.error(
-            `[DeepChatAgent] drainPendingQueueIfPossible error session=${sessionId} reason=completed`,
-            redactRuntimeErrorForLog(drainError)
-          )
-        })
+        this.ports.runLifecycle.schedulePendingInputDrain(sessionId, 'completed')
         return { resumed: false }
       }
       throw error
     } finally {
       if (interactionAbortController) {
-        this.ports.clearSessionAbortController(sessionId, interactionAbortController)
+        this.ports.runLifecycle.clearOperationController(scope, interactionAbortController)
       }
       instance.unlockInteraction(messageId, toolCallId)
     }
+  }
+
+  private readLatestPendingInteraction(
+    sessionId: string,
+    messageId: string,
+    toolCallId: string
+  ): { blocks: AssistantMessageBlock[]; actionBlock: AssistantMessageBlock } | null {
+    const message = this.ports.messageStore.getMessage(messageId)
+    if (!message) {
+      return null
+    }
+    if (message.sessionId !== sessionId) {
+      throw new Error(`Message ${messageId} does not belong to session ${sessionId}`)
+    }
+    if (message.role !== 'assistant') {
+      return null
+    }
+
+    const blocks = parseAssistantBlocks(message.content)
+    const entry = collectPendingInteractionEntries(messageId, blocks).find(
+      ({ interaction }) => interaction.toolCallId === toolCallId
+    )
+    if (!entry) {
+      return null
+    }
+
+    return { blocks, actionBlock: blocks[entry.blockIndex] }
   }
 
   private async handleSkillDraftInteraction(
@@ -648,7 +656,7 @@ export class InteractionCoordinator {
     const responseText = resolvedBlock?.tool_call?.response ?? ''
     const isError = resolvedBlock?.status === 'error'
 
-    this.ports.dispatchHook(isError ? 'PostToolUseFailure' : 'PostToolUse', {
+    this.ports.hookSink.dispatch(isError ? 'PostToolUseFailure' : 'PostToolUse', {
       sessionId: params.sessionId,
       messageId: params.messageId,
       providerId: params.providerId,

@@ -18,6 +18,17 @@ export class SessionPendingInputs {
     return this.store.listPendingInputs(sessionId)
   }
 
+  getInput(sessionId: string, itemId: string): PendingSessionInputRecord | null {
+    const record = this.store.getInput(itemId)
+    if (!record) {
+      return null
+    }
+    if (record.sessionId !== sessionId) {
+      throw new Error(`Pending input ${itemId} does not belong to session ${sessionId}`)
+    }
+    return record
+  }
+
   queuePendingInput(
     sessionId: string,
     input: SendMessageInput,

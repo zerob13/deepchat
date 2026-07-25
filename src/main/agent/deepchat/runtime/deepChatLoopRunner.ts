@@ -76,6 +76,7 @@ import type {
   TapeViewManifestWriter
 } from '@/tape/ports/capabilities'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
+import type { RuntimeHookSink } from './runtimeHookSink'
 import type { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
 import type {
   DeepChatEventPublisher,
@@ -93,7 +94,7 @@ import type {
 } from '@/provider/requestTrace'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
-import { createLoopRun, type LoopRun } from '@/agent/deepchat/loop/loopRun'
+import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
 import type {
   BasePromptAssembler,
   ToolExecutionPort,
@@ -105,33 +106,26 @@ import {
   getContextSyntheticContributions,
   type ContextRuntimeContributions
 } from './contextContributions'
+import {
+  resolveDeepChatContextBudgetLength,
+  shouldBypassDeepChatContextBudget
+} from './contextBudgetPolicy'
+import { resolveProviderInputCapabilities } from './providerInputCapabilities'
+import { throwIfAbortRequested } from './abortErrors'
+import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+
+type LoopRunLifecyclePort = Pick<
+  RunLifecycleCoordinator,
+  | 'assertCurrentInstance'
+  | 'clearRun'
+  | 'ensureOperationController'
+  | 'markFirstTurnReady'
+  | 'registerRun'
+  | 'scopeFor'
+>
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
-
-type HookEvent =
-  | 'SessionStart'
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'PermissionRequest'
-
-type HookContext = {
-  sessionId: string
-  messageId?: string
-  promptPreview?: string
-  providerId?: string
-  modelId?: string
-  projectDir?: string | null
-  tool?: {
-    callId?: string
-    name?: string
-    params?: string
-    response?: string
-    error?: string
-  }
-  permission?: Record<string, unknown> | null
-}
 
 export type PendingTapeViewContext = {
   taskType: DeepChatTapeViewTaskType
@@ -221,30 +215,7 @@ export interface DeepChatLoopRunnerPorts {
     expectedInstance: DeepChatAgentInstance
   ): Promise<SessionGenerationSettings>
   createBasePromptAssembler(expectedInstance: DeepChatAgentInstance): BasePromptAssembler
-  ensureSessionAbortController(sessionId: string): AbortController
-  throwIfStaleDeepChatInstance(sessionId: string, expectedInstance: DeepChatAgentInstance): void
-  throwIfAbortRequested(signal: AbortSignal): void
-  resolveDeepChatContextBudgetLength(
-    providerId: string | null | undefined,
-    contextLength: number,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): number
-  shouldBypassDeepChatContextBudget(
-    providerId?: string | null,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): boolean
-  supportsVision(providerId: string, modelId: string): boolean
-  supportsAudioInput(providerId: string, modelId: string): boolean
-  registerActiveGeneration(
-    sessionId: string,
-    run: LoopRun<StreamState>,
-    expectedInstance: DeepChatAgentInstance
-  ): LoopRun<StreamState>
-  clearActiveGeneration(sessionId: string, runId: string): void
-  isActiveRun(sessionId: string, runId: string): boolean
-  markFirstTurnReady(sessionId: string): void
+  runLifecycle: LoopRunLifecyclePort
   getSessionAgentId(sessionId: string): string | undefined
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission(
@@ -256,7 +227,7 @@ export interface DeepChatLoopRunnerPorts {
       signal: AbortSignal
     }
   ): Promise<ToolPermissionReviewResult>
-  dispatchHook(event: HookEvent, context: HookContext): void
+  hookSink: Pick<RuntimeHookSink, 'dispatch'>
   applyCompactionIntent(
     sessionId: string,
     intent: CompactionIntent | null,
@@ -354,11 +325,12 @@ export class DeepChatLoopRunner {
       return activeContextContributions
     }
     const resourceInstance = providedResourceInstance ?? this.ports.getDeepChatInstance(sessionId)
-    this.ports.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    const resourceScope = this.ports.runLifecycle.scopeFor(sessionId, resourceInstance)
+    resourceScope.assertCurrent()
     const abortController =
-      providedAbortController ?? this.ports.ensureSessionAbortController(sessionId)
+      providedAbortController ?? this.ports.runLifecycle.ensureOperationController(resourceScope)
     const abortSignal = abortController.signal
-    this.ports.throwIfAbortRequested(abortSignal)
+    throwIfAbortRequested(abortSignal)
     const state = resourceInstance.getRuntimeState()
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
@@ -383,7 +355,7 @@ export class DeepChatLoopRunner {
         state.modelId,
         generationSettings
       )
-    const contextBudgetLength = this.ports.resolveDeepChatContextBudgetLength(
+    const contextBudgetLength = resolveDeepChatContextBudgetLength(
       state.providerId,
       generationSettings.contextLength,
       baseModelConfig,
@@ -433,12 +405,12 @@ export class DeepChatLoopRunner {
       this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
       abortSignal
     )
-    this.ports.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    resourceScope.assertCurrent()
     const streamExtensionPolicy = await awaitWithAbort(
       this.ports.toolResolver.resolveAgentExtensionPolicy(sessionId, resourceInstance),
       abortSignal
     )
-    this.ports.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
+    resourceScope.assertCurrent()
     const getEffectiveRuntimeSkillNames = (baseSkillNames = streamSessionActiveSkillNames) =>
       resolveEffectiveActiveSkillNames(baseSkillNames, resourceInstance)
     const toolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
@@ -452,9 +424,12 @@ export class DeepChatLoopRunner {
         toolCatalog.resolve({ activeSkillNames: getEffectiveRuntimeSkillNames() }),
         abortSignal
       ))
-    this.ports.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
-    const supportsVision = this.ports.supportsVision(state.providerId, state.modelId)
-    const supportsAudioInput = this.ports.supportsAudioInput(state.providerId, state.modelId)
+    resourceScope.assertCurrent()
+    const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+      this.ports.providerSettings,
+      state.providerId,
+      state.modelId
+    )
 
     abortController.signal.throwIfAborted()
     const loopRun = createLoopRun<StreamState>({
@@ -470,11 +445,7 @@ export class DeepChatLoopRunner {
       },
       initialRequestSeq
     })
-    const activeGeneration = this.ports.registerActiveGeneration(
-      sessionId,
-      loopRun,
-      resourceInstance
-    )
+    const activeGeneration = this.ports.runLifecycle.registerRun(resourceScope, loopRun)
     onRunRegistered?.(activeGeneration.runId)
     const rateLimitMessageId = `${RATE_LIMIT_STREAM_MESSAGE_PREFIX}${activeGeneration.runId}`
     let crossedPreStreamBoundary = false
@@ -491,7 +462,7 @@ export class DeepChatLoopRunner {
     const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
 
     try {
-      this.ports.dispatchHook('SessionStart', {
+      this.ports.hookSink.dispatch('SessionStart', {
         sessionId,
         messageId,
         promptPreview,
@@ -532,7 +503,7 @@ export class DeepChatLoopRunner {
           requestMaxTokens,
           requestTools
         ) {
-          const requestBypassesContextBudget = ports.shouldBypassDeepChatContextBudget(
+          const requestBypassesContextBudget = shouldBypassDeepChatContextBudget(
             state.providerId,
             requestModelConfig,
             requestModelId
@@ -732,18 +703,13 @@ export class DeepChatLoopRunner {
         initialBlocks,
         initialAccounting,
         onFirstProviderRoundReady: () => {
-          if (
-            !abortController.signal.aborted &&
-            this.ports.isActiveRun(sessionId, activeGeneration.runId)
-          ) {
-            this.ports.markFirstTurnReady(sessionId)
-          }
+          this.ports.runLifecycle.markFirstTurnReady(resourceScope, activeGeneration.runId)
         },
         shouldYieldForPendingInput: () =>
           Boolean(this.ports.pendingInputCoordinator.getNextSteerInput(sessionId)),
         notificationObserver: {
           notify: (notification) => {
-            this.ports.dispatchHook(notification.event, {
+            this.ports.hookSink.dispatch(notification.event, {
               sessionId,
               messageId,
               providerId: state.providerId,
@@ -832,7 +798,7 @@ export class DeepChatLoopRunner {
         result
       }
     } catch (error) {
-      this.ports.clearActiveGeneration(sessionId, activeGeneration.runId)
+      this.ports.runLifecycle.clearRun(resourceScope, activeGeneration.runId)
       throw error
     }
   }
@@ -1025,7 +991,10 @@ export class DeepChatLoopRunner {
             }),
           checkpoints: {
             assertCurrent: () =>
-              this.ports.throwIfStaleDeepChatInstance(params.sessionId, params.expectedInstance)
+              this.ports.runLifecycle.assertCurrentInstance(
+                params.sessionId,
+                params.expectedInstance
+              )
           }
         })
         return prepared.intent ? { applied: true, summary: prepared.summary } : { applied: false }
@@ -1045,7 +1014,7 @@ export class DeepChatLoopRunner {
           contextContributions: params.contextContributions
         }),
       assertCurrent: () =>
-        this.ports.throwIfStaleDeepChatInstance(params.sessionId, params.expectedInstance)
+        this.ports.runLifecycle.assertCurrentInstance(params.sessionId, params.expectedInstance)
     })
   }
 

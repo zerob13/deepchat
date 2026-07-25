@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import {
+  DeepChatAgentRuntime,
+  isStaleDeepChatInstanceError
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
@@ -53,6 +56,58 @@ describe('DeepChatAgentRuntime', () => {
     expect(first).toBe(second)
     expect(other).not.toBe(first)
     expect(hydrate).toHaveBeenCalledTimes(2)
+  })
+
+  it('creates a minimal current scope over the registered instance state', () => {
+    const hydrate = vi.fn(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime(hydrate)
+    const sessionId = toAppSessionId('session')
+
+    expect(runtime.getHydratedScope(sessionId)).toBeUndefined()
+    expect(hydrate).not.toHaveBeenCalled()
+
+    const scope = runtime.getOrHydrateScope(sessionId)
+    scope.instance.setRuntimeState({
+      status: 'idle',
+      providerId: 'openai',
+      modelId: 'gpt-5',
+      permissionMode: 'full_access'
+    })
+
+    expect(Object.isFrozen(scope)).toBe(false)
+    expect(scope.sessionId).toBe(sessionId)
+    expect(scope.instance).toBe(runtime.getHydrated(sessionId))
+    expect(scope.state()).toBe(scope.instance.getRuntimeState())
+    expect(scope.isCurrent()).toBe(true)
+    expect(() => scope.assertCurrent()).not.toThrow()
+    expect(runtime.getHydratedScope(sessionId)).toBe(scope)
+    expect(runtime.scopeFor(sessionId, scope.instance)).toBe(scope)
+  })
+
+  it('fences evicted and mismatched scopes with the stable stale-instance identity', () => {
+    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const sessionId = toAppSessionId('session')
+    const otherSessionId = toAppSessionId('other')
+    const instance = runtime.getOrHydrate(sessionId)
+    const currentScope = runtime.scopeFor(sessionId, instance)
+    const mismatchedScope = runtime.scopeFor(otherSessionId, instance)
+
+    expect(mismatchedScope.isCurrent()).toBe(false)
+    expect(() => mismatchedScope.assertCurrent()).toThrowError(
+      expect.objectContaining({ name: 'StaleDeepChatAgentInstanceError' })
+    )
+
+    runtime.evict(sessionId)
+    const replacementScope = runtime.getOrHydrateScope(sessionId)
+
+    expect(currentScope.isCurrent()).toBe(false)
+    expect(replacementScope.isCurrent()).toBe(true)
+    try {
+      currentScope.assertCurrent()
+      expect.unreachable('stale scope should throw')
+    } catch (error) {
+      expect(isStaleDeepChatInstanceError(error)).toBe(true)
+    }
   })
 
   it('delegates the legacy façade and rehydrates only after close', async () => {
@@ -249,14 +304,18 @@ describe('DeepChatAgentRuntime', () => {
     const second = runtime.getOrHydrate(toAppSessionId('second'))
 
     first.setActiveSteerPendingInputId('steer-1')
-    first.markPendingQueueDrainStarted()
+    const drainLease = first.tryAcquirePendingQueueDrain()
 
     expect(first.getActiveSteerPendingInputId()).toBe('steer-1')
+    expect(drainLease).not.toBeNull()
+    expect(first.tryAcquirePendingQueueDrain()).toBeNull()
     expect(first.isPendingQueueDraining()).toBe(true)
     expect(second.getActiveSteerPendingInputId()).toBeUndefined()
     expect(second.isPendingQueueDraining()).toBe(false)
     expect(first.clearActiveSteerPendingInputId('stale-steer')).toBe(false)
     expect(first.clearActiveSteerPendingInputId('steer-1')).toBe(true)
+    expect(first.releasePendingQueueDrain(Symbol('not-owner'))).toBe(false)
+    expect(first.isPendingQueueDraining()).toBe(true)
 
     first.clearOwnedState()
     expect(first.isPendingQueueDraining()).toBe(false)
@@ -445,13 +504,16 @@ describe('DeepChatAgentRuntime', () => {
     const runtime = new DeepChatAgentRuntime(() => createDelegate())
     const sessionId = toAppSessionId('session')
     const staleInstance = runtime.getOrHydrate(sessionId)
-    staleInstance.markPendingQueueDrainStarted()
+    const staleLease = staleInstance.tryAcquirePendingQueueDrain()
+    if (!staleLease) throw new Error('Expected stale instance to acquire the drain')
 
     runtime.evict(sessionId)
     const currentInstance = runtime.getOrHydrate(sessionId)
-    currentInstance.markPendingQueueDrainStarted()
-    staleInstance.markPendingQueueDrainFinished()
+    const currentLease = currentInstance.tryAcquirePendingQueueDrain()
+    if (!currentLease) throw new Error('Expected current instance to acquire the drain')
+    staleInstance.releasePendingQueueDrain(staleLease)
 
     expect(currentInstance.isPendingQueueDraining()).toBe(true)
+    expect(currentInstance.releasePendingQueueDrain(currentLease)).toBe(true)
   })
 })

@@ -1,19 +1,85 @@
-import type { SessionCompactionState } from '@shared/types/agent-interface'
+import type { ProviderModelResolutionPort } from '@/provider/settings'
+import type {
+  DeepChatSessionState,
+  SessionCompactionState
+} from '@shared/types/agent-interface'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { CompactionIntent, CompactionService } from './compactionService'
 import type { DeepChatEventPublisher } from './types'
 import type { SessionTranscript } from '@/session/data/transcript'
 import type { SessionSettingsStore, SessionSummaryState } from '@/session/data/settings'
+import { isAbortError, throwIfAbortRequested } from './abortErrors'
+import type { DeepChatToolResolver } from './toolResolver'
+import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { TapeReconciliationPort } from '@/tape/ports/capabilities'
+import type { TapeTranscriptReader } from '@/tape/ports/capabilities'
+import type { BasePromptAssembler } from '@/agent/deepchat/loop/ports'
+import { awaitWithAbort } from '@/lib/awaitWithAbort'
+import { capAgentRequestMaxTokens, estimateToolReserveTokens } from './contextBudget'
+import {
+  resolveDeepChatContextBudgetLength,
+  shouldBypassDeepChatContextBudget
+} from './contextBudgetPolicy'
+import { resolveInterleavedReasoningConfig } from './generationSettings'
+import { resolveProviderInputCapabilities } from './providerInputCapabilities'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 
-interface CompactionRuntimeCoordinatorDependencies {
-  compactionService: CompactionService
-  sessionStore: SessionSettingsStore
-  messageStore: SessionTranscript
+type ManualCompactionLifecycle = Pick<
+  RunLifecycleCoordinator,
+  | 'canSettleOperation'
+  | 'clearOperationController'
+  | 'ensureOperationController'
+  | 'hasPendingInteractions'
+  | 'scopeFor'
+  | 'transitionStatus'
+>
+
+type ManualCompactionToolResolver = Pick<
+  DeepChatToolResolver,
+  'loadToolDefinitionsForSession' | 'resolveActiveSkillNamesForToolProfile'
+>
+
+type ManualCompactionSessionSettings = Pick<
+  SessionSettingsCoordinator,
+  'getEffectiveGenerationSettings' | 'resolveProjectDir'
+>
+
+type CompactionServicePort = Pick<
+  CompactionService,
+  'applyCompaction' | 'prepareForManualCompaction'
+>
+
+type CompactionSessionStore = Pick<
+  SessionSettingsStore,
+  'get' | 'getSummaryState' | 'resetSummaryState'
+>
+
+type CompactionTranscript = TapeTranscriptReader &
+  Pick<
+    SessionTranscript,
+    | 'createCompactionMessage'
+    | 'createCompactionMessageAtOrderSeq'
+    | 'deleteMessage'
+    | 'getNextOrderSeq'
+    | 'updateCompactionMessage'
+  >
+
+export interface CompactionRuntimeCoordinatorDependencies {
+  compactionService: CompactionServicePort
+  sessionStore: CompactionSessionStore
+  messageStore: CompactionTranscript
+  providerSettings: ProviderModelResolutionPort
+  toolResolver: ManualCompactionToolResolver
+  runLifecycle: ManualCompactionLifecycle
+  sessionSettings: ManualCompactionSessionSettings
+  tapeReconciliation: TapeReconciliationPort
   getInstance(sessionId: string): DeepChatAgentInstance
+  getHydratedInstance(sessionId: string): DeepChatAgentInstance | undefined
+  getSessionListState(sessionId: string): Promise<DeepChatSessionState | null>
   assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
+  createBasePromptAssembler(instance: DeepChatAgentInstance): BasePromptAssembler
   emitMessageRefresh(sessionId: string, messageId: string): void
-  isAbortError(error: unknown): boolean
-  throwIfAbortRequested(signal?: AbortSignal): void
   publishEvent: DeepChatEventPublisher
 }
 
@@ -27,6 +93,173 @@ interface ApplyCompactionOptions {
 
 export class CompactionRuntimeCoordinator {
   constructor(private readonly deps: CompactionRuntimeCoordinatorDependencies) {}
+
+  async getState(
+    sessionId: string,
+    expectedInstance?: DeepChatAgentInstance
+  ): Promise<SessionCompactionState> {
+    const hydratedInstance = expectedInstance ?? this.deps.getHydratedInstance(sessionId)
+    const runtimeState = hydratedInstance?.getRuntimeState()
+    const session = this.deps.sessionStore.get(sessionId)
+    if (!runtimeState && !session) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+    const instance = hydratedInstance ?? this.deps.getInstance(sessionId)
+    this.deps.assertCurrent(sessionId, instance)
+
+    const persistedState = this.fromSummary(this.deps.sessionStore.getSummaryState(sessionId))
+    const currentCompactionState = instance.getCompactionState()
+    if (currentCompactionState?.status === 'compacting') {
+      return currentCompactionState
+    }
+
+    if (currentCompactionState && this.isSame(currentCompactionState, persistedState)) {
+      return currentCompactionState
+    }
+
+    instance.setCompactionState(persistedState)
+    return { ...persistedState }
+  }
+
+  async compact(
+    sessionId: string
+  ): Promise<{ compacted: boolean; state: SessionCompactionState }> {
+    const instance = this.deps.getInstance(sessionId)
+    const scope = this.deps.runLifecycle.scopeFor(sessionId, instance)
+    const state = instance.getRuntimeState() ?? (await this.deps.getSessionListState(sessionId))
+    if (!state) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+    this.deps.assertCurrent(sessionId, instance)
+    const modelConfig = this.deps.providerSettings.getModelConfig(
+      state.modelId,
+      state.providerId
+    )
+    if (shouldBypassDeepChatContextBudget(state.providerId, modelConfig, state.modelId)) {
+      throw new Error('Manual compaction is only available for DeepChat agent sessions.')
+    }
+    if (state.status !== 'idle') {
+      throw new Error('Manual compaction is only available when the session is idle.')
+    }
+    if (this.deps.runLifecycle.hasPendingInteractions(sessionId)) {
+      throw new Error('Pending tool interactions must be resolved before compacting.')
+    }
+
+    this.deps.runLifecycle.transitionStatus(scope, 'generating')
+    const compactionAbortController = this.deps.runLifecycle.ensureOperationController(scope)
+    const compactionAbortSignal = compactionAbortController.signal
+    try {
+      throwIfAbortRequested(compactionAbortSignal)
+      const generationSettings = await awaitWithAbort(
+        this.deps.sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
+        compactionAbortSignal
+      )
+      const interleavedReasoning = resolveInterleavedReasoningConfig(
+        this.deps.providerSettings,
+        state.providerId,
+        state.modelId,
+        generationSettings
+      )
+      const contextBudgetLength = resolveDeepChatContextBudgetLength(
+        state.providerId,
+        generationSettings.contextLength,
+        modelConfig,
+        state.modelId
+      )
+      const maxTokens = capAgentRequestMaxTokens(
+        generationSettings.maxTokens,
+        contextBudgetLength
+      )
+      const activeSkillNames = await awaitWithAbort(
+        this.deps.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
+        compactionAbortSignal
+      )
+      this.deps.assertCurrent(sessionId, instance)
+      const projectDir = this.deps.sessionSettings.resolveProjectDir(
+        sessionId,
+        undefined,
+        instance
+      )
+      const tools = await awaitWithAbort(
+        this.deps.toolResolver.loadToolDefinitionsForSession(
+          sessionId,
+          projectDir,
+          activeSkillNames,
+          instance
+        ),
+        compactionAbortSignal
+      )
+      const toolReserveTokens = estimateToolReserveTokens(tools)
+      const baseSystemPrompt = await awaitWithAbort(
+        this.deps.createBasePromptAssembler(instance).assemble({
+          sessionId: toAppSessionId(sessionId),
+          configuredPrompt: generationSettings.systemPrompt,
+          toolDefinitions: tools,
+          activeSkillNames
+        }),
+        compactionAbortSignal
+      )
+      throwIfAbortRequested(compactionAbortSignal)
+      const tapeReady = this.deps.tapeReconciliation.ensureSessionTapeReady(
+        sessionId,
+        this.deps.messageStore
+      )
+      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+        this.deps.providerSettings,
+        state.providerId,
+        state.modelId
+      )
+
+      const intent = await this.deps.compactionService.prepareForManualCompaction({
+        sessionId,
+        providerId: state.providerId,
+        modelId: state.modelId,
+        systemPrompt: baseSystemPrompt,
+        contextLength: generationSettings.contextLength,
+        reserveTokens: maxTokens,
+        extraReserveTokens: toolReserveTokens,
+        supportsVision,
+        supportsAudioInput,
+        preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+        preserveEmptyInterleavedReasoning:
+          interleavedReasoning.preserveEmptyReasoningContent === true,
+        historyRecords: tapeReady.historyRecords,
+        signal: compactionAbortSignal
+      })
+      throwIfAbortRequested(compactionAbortSignal)
+      this.deps.assertCurrent(sessionId, instance)
+
+      if (!intent) {
+        return {
+          compacted: false,
+          state: await this.getState(sessionId, instance)
+        }
+      }
+
+      const summaryState = await this.apply(
+        sessionId,
+        intent,
+        { signal: compactionAbortSignal },
+        instance
+      )
+      throwIfAbortRequested(compactionAbortSignal)
+      this.deps.assertCurrent(sessionId, instance)
+      const compacted = summaryState.summaryUpdatedAt !== intent.previousState.summaryUpdatedAt
+      return {
+        compacted,
+        state: await this.getState(sessionId, instance)
+      }
+    } finally {
+      const stillOwnsLifecycle = this.deps.runLifecycle.canSettleOperation(
+        scope,
+        compactionAbortController
+      )
+      this.deps.runLifecycle.clearOperationController(scope, compactionAbortController)
+      if (stillOwnsLifecycle) {
+        this.deps.runLifecycle.transitionStatus(scope, 'idle')
+      }
+    }
+  }
 
   async apply(
     sessionId: string,
@@ -77,8 +310,8 @@ export class CompactionRuntimeCoordinator {
       this.deps.messageStore.deleteMessage(compactionMessageId)
       this.deps.emitMessageRefresh(sessionId, compactionMessageId)
       this.emit(sessionId, this.fromSummary(intent.previousState), expectedInstance)
-      if (this.deps.isAbortError(error) || options?.signal?.aborted) {
-        this.deps.throwIfAbortRequested(options?.signal)
+      if (isAbortError(error) || options?.signal?.aborted) {
+        throwIfAbortRequested(options?.signal)
       }
       throw error
     }
