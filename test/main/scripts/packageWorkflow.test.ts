@@ -459,13 +459,17 @@ describe('Release caller and publication boundary', () => {
       fail_on_unmatched_files: true,
       overwrite_files: true
     })
-    expect(
-      publishSteps.find((step) => step.name === 'Reject unknown assets in an existing draft')
-        ?.run
-    ).toContain('--allow-partial-assets')
-    expect(
-      publishSteps.find((step) => step.name === 'Verify published draft assets')?.run
-    ).toContain('scripts/ci/verify-release-assets.mjs remote')
+    const rejectExisting = publishSteps.find(
+      (step) => step.name === 'Reject unknown assets in an existing draft'
+    )
+    expect(rejectExisting?.run).toContain('/releases?per_page=100')
+    expect(rejectExisting?.run).toContain('--allow-partial-assets')
+    const verifyPublished = publishSteps.find(
+      (step) => step.name === 'Verify published draft assets'
+    )
+    expect(verifyPublished?.run).toContain('releases/${RELEASE_ID}')
+    expect(verifyPublished?.run).toContain('scripts/ci/verify-release-assets.mjs remote')
+    expect(source).not.toContain('releases/tags/${RELEASE_TAG}')
   })
 
   it('pins every external action and removes tolerant legacy assembly', () => {

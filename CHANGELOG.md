@@ -12,6 +12,9 @@
 - Recovered truncated tool calls and stabilized cache provenance
 - Prioritized history over memory and recovered session revisions
 - Unified native packaging and added a branded macOS dmg layout
+- Reworked agent runtime ownership across pending inputs, lifecycle, compaction, and permissions
+- Strengthened tool execution contracts across MCP, browser, and agent tools
+- Fixed verification of draft GitHub releases that are not discoverable through the tag endpoint
 - 重试瞬时 provider 失败并稳定 provider 重试生命周期
 - 保留流式失败状态并在 agent runtime 中建模 provider 尝试身份
 - 集成 Light-OCR 并恢复 OCR 兼容性
@@ -23,6 +26,9 @@
 - 恢复截断的工具调用并稳定缓存溯源
 - 优先使用 history 而非 memory，并恢复 session 修订
 - 统一原生打包并新增 macOS 品牌 dmg 布局
+- 重构 pending input、生命周期、compaction 与权限相关的 agent runtime ownership
+- 强化 MCP、browser 与 agent tools 的工具执行契约
+- 修复无法通过 tag endpoint 查询 GitHub draft release 时的验证流程
 
 ## v1.1.0-beta.4 (2026-07-19)
 - Added browser session import and an agent picture-in-picture view
