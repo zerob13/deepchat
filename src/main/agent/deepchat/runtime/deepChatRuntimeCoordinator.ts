@@ -2419,12 +2419,7 @@ export class DeepChatRuntimeCoordinator {
         return
       }
 
-      const latestMessage = this.messageStore.getMessage(messageId)
-      if (!latestMessage || latestMessage.role !== 'assistant') {
-        return
-      }
-
-      const blocks = JSON.parse(latestMessage.content) as AssistantMessageBlock[]
+      const blocks = JSON.parse(message.content) as AssistantMessageBlock[]
       const toolBlock = blocks.find(
         (block) => block.type === 'tool_call' && block.tool_call?.id === toolCallId
       )

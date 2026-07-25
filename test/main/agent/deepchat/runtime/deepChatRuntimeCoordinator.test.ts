@@ -12222,7 +12222,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       })
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      installPendingPermission({
+      const row = installPendingPermission({
         toolCallId: 'tc-final',
         toolName: 'subagent_orchestrator'
       })
@@ -12235,6 +12235,11 @@ describe('DeepChatRuntimeCoordinator', () => {
         .map(([, content]) => JSON.parse(content) as AssistantMessageBlock[])
         .find((blocks) => blocks[0]?.extra?.subagentFinal === subagentFinal)
       expect(progressUpdate?.[0]).toMatchObject({
+        tool_call: { response: 'Final summary' },
+        status: 'success',
+        extra: { subagentFinal }
+      })
+      expect((JSON.parse(row.content) as AssistantMessageBlock[])[0]).toMatchObject({
         tool_call: { response: 'Final summary' },
         status: 'success',
         extra: { subagentFinal }
@@ -12294,6 +12299,11 @@ describe('DeepChatRuntimeCoordinator', () => {
         messageReads += 1
         return messageReads === 1 ? staleRow : latestRow
       })
+      sqlitePresenter.deepchatMessagesTable.updateContent.mockImplementation(
+        (id: string, content: string) => {
+          if (id === 'm1') latestRow.content = content
+        }
+      )
 
       const result = await approvePendingTool()
 
@@ -12312,6 +12322,16 @@ describe('DeepChatRuntimeCoordinator', () => {
         extra: { subagentProgress: '{"tasks":[]}' }
       })
       expect(updatedBlocks?.[2]).toMatchObject({
+        type: 'content',
+        content: 'Locally appended block'
+      })
+      const persistedBlocks = JSON.parse(latestRow.content) as AssistantMessageBlock[]
+      expect(persistedBlocks).toHaveLength(3)
+      expect(persistedBlocks[0]).toMatchObject({
+        tool_call: { response: 'Updated summary' },
+        extra: { subagentProgress: '{"tasks":[]}' }
+      })
+      expect(persistedBlocks[2]).toMatchObject({
         type: 'content',
         content: 'Locally appended block'
       })

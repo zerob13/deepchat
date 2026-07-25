@@ -166,7 +166,7 @@ export class InteractionCoordinator {
         throw new Error(`Message ${messageId} does not belong to session ${sessionId}`)
       }
 
-      const blocks = parseAssistantBlocks(message.content)
+      let blocks = parseAssistantBlocks(message.content)
       const pendingEntries = reconcilePendingInteractionEntries(
         instance,
         collectPendingInteractionEntries(messageId, blocks)
@@ -190,7 +190,7 @@ export class InteractionCoordinator {
       let emitResolvedToolHook: (() => void) | null = null
       let resumeAccounting = parseMessageMetadata(message.metadata)
       let accountingChanged = false
-      const actionBlock = blocks[currentEntry.blockIndex]
+      let actionBlock = blocks[currentEntry.blockIndex]
       const toolCall = actionBlock.tool_call
       if (!toolCall?.id) {
         throw new Error('Invalid action block without tool call id.')
@@ -271,7 +271,6 @@ export class InteractionCoordinator {
         let shouldDispatchResolvedToolHook = false
 
         if (response.granted) {
-          markPermissionResolved(actionBlock, true, permissionType)
           await awaitWithAbort(
             this.grantPermissionForPayload(sessionId, permissionPayload, toolCall),
             interactionAbortSignal
@@ -315,10 +314,18 @@ export class InteractionCoordinator {
               toolCall,
               markDeferredToolCallStarted
             )
+            const refreshedInteraction = this.readLatestPendingInteraction(
+              sessionId,
+              messageId,
+              toolCall.id
+            )
+            blocks = refreshedInteraction.blocks
+            actionBlock = refreshedInteraction.actionBlock
             if ((execution.invoked || execution.terminalError) && !deferredToolCallCounted) {
               markDeferredToolCallStarted()
             }
           }
+          markPermissionResolved(actionBlock, true, permissionType)
           if (execution.invoked) {
             instance.advancePendingToolBatch({ invokedCallId: toolCall.id })
           }
@@ -535,6 +542,30 @@ export class InteractionCoordinator {
       }
       instance.unlockInteraction(messageId, toolCallId)
     }
+  }
+
+  private readLatestPendingInteraction(
+    sessionId: string,
+    messageId: string,
+    toolCallId: string
+  ): { blocks: AssistantMessageBlock[]; actionBlock: AssistantMessageBlock } {
+    const message = this.ports.messageStore.getMessage(messageId)
+    if (!message || message.role !== 'assistant') {
+      throw new Error(`Assistant message not found after deferred tool execution: ${messageId}`)
+    }
+    if (message.sessionId !== sessionId) {
+      throw new Error(`Message ${messageId} does not belong to session ${sessionId}`)
+    }
+
+    const blocks = parseAssistantBlocks(message.content)
+    const entry = collectPendingInteractionEntries(messageId, blocks).find(
+      ({ interaction }) => interaction.toolCallId === toolCallId
+    )
+    if (!entry) {
+      throw new Error(`Pending interaction changed during deferred tool execution: ${toolCallId}`)
+    }
+
+    return { blocks, actionBlock: blocks[entry.blockIndex] }
   }
 
   private async handleSkillDraftInteraction(
