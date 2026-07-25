@@ -30,11 +30,22 @@
 - [x] Extend the existing compaction owner and reduce the root to composition and compatibility.
 - [x] Split owner tests while retaining focused full-runtime integration coverage.
 - [x] Update architecture guards and regenerate the layered-runtime baseline.
+- [x] Correct the SDD to enumerate the three explicit fixes and five ownership behavior changes.
+- [x] Pin the follow-up/drain overlap and verify the four existing ownership regression tests.
+- [x] Treat concurrent terminal interaction settlement as clean ownership loss.
+- [x] Tighten claim settlement typing and preserve primary settlement errors.
+- [x] Cache runtime scopes and share transcript parsing across pending-input gates.
+- [x] Replace regex ownership checks with fail-closed TypeScript AST checks.
+- [x] Correct claim diagnostics and stale-instance error classification.
 - [x] Run focused and full validation, review the complete diff, and fix every finding.
 - [x] Commit every reviewed stage without pushing.
 
 ## Future Pull Requests
 
+- [ ] Reduce the remaining composition callback graph (currently approximately 43 callbacks).
+- [ ] Narrow `DeepChatLoopRunnerPorts` (currently 32 members) around stable runtime services.
+- [ ] Move remaining session hydration, Agent identity, and message-refresh compatibility adapters
+      out of the root as part of the facade boundary.
 - [ ] Add a thin Harness facade over the stabilized internal services.
 - [ ] Add typed deterministic hook/event reduction over the facade event model.
 - [ ] Design same-run steering separately if the product semantics are approved.

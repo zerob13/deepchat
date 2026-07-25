@@ -207,6 +207,13 @@ export class RunLifecycleCoordinator {
         )
       )
     }
+    return this.reconcilePendingInteractions(sessionId, pendingEntries)
+  }
+
+  reconcilePendingInteractions(
+    sessionId: string,
+    pendingEntries: PendingInteractionEntry[]
+  ): boolean {
     const scope = this.getHydratedScope(sessionId)
     if (!scope) {
       return pendingEntries.length > 0

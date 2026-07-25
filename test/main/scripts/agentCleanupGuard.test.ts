@@ -1,6 +1,10 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isDeepChatRuntimeCoordinatorImport } from '../../../scripts/agent-cleanup-guard.mjs'
+import {
+  findDeepChatRootOwnershipViolations,
+  findMissingDeepChatOwnershipSymbols,
+  isDeepChatRuntimeCoordinatorImport
+} from '../../../scripts/agent-cleanup-guard.mjs'
 
 const repositoryRoot = process.cwd()
 const coordinatorFile = path.join(
@@ -57,5 +61,33 @@ describe('agent cleanup guard', () => {
         '@/agent/deepchat/runtime/deepChatRuntimeCoordinator'
       )
     ).toBe(false)
+  })
+
+  it('detects protected ownership calls through syntax rather than source text', () => {
+    expect(
+      findDeepChatRootOwnershipViolations(`
+        class Coordinator {
+          run() {
+            this.pendingInputs.claimQueuedInput('session', 'item')
+          }
+        }
+      `)
+    ).toContainEqual({
+      kind: 'pending-input-claim-lifecycle',
+      detail: 'claimQueuedInput()'
+    })
+  })
+
+  it('ignores protected symbol names that appear only in comments or strings', () => {
+    expect(
+      findDeepChatRootOwnershipViolations(`
+        // this.pendingInputs.claimQueuedInput('session', 'item')
+        const diagnostic = 'pendingQueueDraining'
+      `)
+    ).toEqual([])
+  })
+
+  it('keeps every configured ownership symbol anchored to a real owner declaration', async () => {
+    await expect(findMissingDeepChatOwnershipSymbols()).resolves.toEqual([])
   })
 })

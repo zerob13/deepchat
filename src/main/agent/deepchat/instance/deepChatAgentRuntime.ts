@@ -29,6 +29,7 @@ export type DeepChatAgentInstanceHydrator = (
 
 export class DeepChatAgentRuntime {
   private readonly instances = new Map<AppSessionId, DeepChatAgentInstance>()
+  private readonly scopes = new WeakMap<DeepChatAgentInstance, SessionRuntimeScope>()
   private toolRegistryRevision = 0
 
   constructor(private readonly hydrateInstance: DeepChatAgentInstanceHydrator) {}
@@ -64,7 +65,14 @@ export class DeepChatAgentRuntime {
   }
 
   scopeFor(sessionId: AppSessionId, instance: DeepChatAgentInstance): SessionRuntimeScope {
-    return Object.freeze({
+    if (instance.sessionId === sessionId) {
+      const current = this.scopes.get(instance)
+      if (current) {
+        return current
+      }
+    }
+
+    const scope: SessionRuntimeScope = {
       sessionId,
       instance,
       state: () => instance.getRuntimeState(),
@@ -74,7 +82,11 @@ export class DeepChatAgentRuntime {
           throw createStaleDeepChatInstanceError(sessionId)
         }
       }
-    })
+    }
+    if (instance.sessionId === sessionId) {
+      this.scopes.set(instance, scope)
+    }
+    return scope
   }
 
   evict(sessionId: AppSessionId): boolean {

@@ -12454,6 +12454,94 @@ describe('DeepChatRuntimeCoordinator', () => {
       ).toBe(false)
     })
 
+    it.each([
+      ['the assistant message is removed', 'missing-message'],
+      ['the pending interaction is settled', 'settled-interaction']
+    ] as const)(
+      'stops a deferred resume cleanly when %s during execution',
+      async (_description, terminalMutation) => {
+        const toolResult = deferred<{
+          content: string
+          rawData: { content: string; isError: false }
+        }>()
+        toolService.getAllToolDefinitions.mockResolvedValueOnce([
+          {
+            type: 'function',
+            function: {
+              name: 'echo',
+              description: 'Echo tool',
+              parameters: { type: 'object', properties: {} }
+            },
+            server: { name: 'test-server', icons: '', description: '' }
+          }
+        ])
+        toolService.callTool.mockImplementationOnce(async () => await toolResult.promise)
+
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        const row = installPendingPermission({ toolName: 'echo' })
+        let currentRow: typeof row | undefined = row
+        sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
+          id === 'm1' ? currentRow : undefined
+        )
+
+        const resume = approvePendingTool()
+        await vi.waitFor(() => expect(toolService.callTool).toHaveBeenCalledOnce())
+
+        if (terminalMutation === 'missing-message') {
+          currentRow = undefined
+        } else {
+          row.content = JSON.stringify(
+            (JSON.parse(row.content) as AssistantMessageBlock[]).map((block) => ({
+              ...block,
+              status: 'error'
+            }))
+          )
+        }
+        agent.deepChatRuntime
+          .getHydrated(toAppSessionId('s1'))
+          ?.replacePendingInteractions([])
+        toolResult.resolve({
+          content: 'done',
+          rawData: { content: 'done', isError: false }
+        })
+
+        await expect(resume).resolves.toEqual({ resumed: false })
+        expect(processStream).not.toHaveBeenCalled()
+      }
+    )
+
+    it('still rejects a deferred interaction that resolves to another session', async () => {
+      const toolResult = deferred<{
+        content: string
+        rawData: { content: string; isError: false }
+      }>()
+      toolService.getAllToolDefinitions.mockResolvedValueOnce([
+        {
+          type: 'function',
+          function: {
+            name: 'echo',
+            description: 'Echo tool',
+            parameters: { type: 'object', properties: {} }
+          },
+          server: { name: 'test-server', icons: '', description: '' }
+        }
+      ])
+      toolService.callTool.mockImplementationOnce(async () => await toolResult.promise)
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({ toolName: 'echo' })
+      const resume = approvePendingTool()
+      await vi.waitFor(() => expect(toolService.callTool).toHaveBeenCalledOnce())
+      row.session_id = 'other-session'
+      toolResult.resolve({
+        content: 'done',
+        rawData: { content: 'done', isError: false }
+      })
+
+      await expect(resume).rejects.toThrow('Message m1 does not belong to session s1')
+      expect(processStream).not.toHaveBeenCalled()
+    })
+
     it('persists final-only deferred subagent snapshots', async () => {
       const subagentFinal = JSON.stringify({
         runId: 'run-final',

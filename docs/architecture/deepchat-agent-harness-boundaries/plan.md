@@ -2,8 +2,10 @@
 
 ## Current Slice
 
-Extract coordinator ownership boundaries as an independently reviewable, behavior-preserving
-refactor. The typed tool execution contract below is complete and remains a retained record.
+Extract coordinator ownership boundaries as an independently reviewable refactor. Preserve runtime
+behavior except for the eight corrections enumerated in `spec.md`, each of which must have focused
+regression coverage. The typed tool execution contract below is complete and remains a retained
+record.
 
 ## Coordinator Ownership Plan
 
@@ -75,6 +77,19 @@ Replace the line-count-only signal with ownership checks that prevent owner modu
 the concrete coordinator and prevent lifecycle, pending-input drain, and manual compaction logic
 from returning to the root. Keep an appropriate coordinator size ceiling as a secondary guard.
 Regenerate the layered-runtime architecture baseline after the final source layout stabilizes.
+
+### Stage 7: Review Corrections
+
+Audit the complete branch diff against `dev`. Document the three explicit fixes and five ownership
+corrections in the specification, then pin each changed invariant with focused coverage. Treat loss
+of a pending interaction during concurrent terminal settlement as ownership loss rather than a new
+resume failure, preserve the original claim-settlement error when durable verification also fails,
+and keep diagnostic stages aligned with their actual owner.
+
+Cache the minimal runtime scope by instance and share one parsed transcript snapshot between
+question-follow-up and pending-interaction admission checks. Replace regex ownership checks with
+TypeScript AST checks whose protected symbols are verified against their owner files, so comments
+do not trigger false positives and symbol renames fail closed.
 
 ## Coordinator Ownership Validation
 
@@ -201,8 +216,14 @@ Before each commit, inspect both staged and unstaged changes for hidden side eff
 edge cases, performance, security, misleading names, missing tests, and future maintenance cost.
 Fix all findings and repeat the relevant validation before committing. Do not push these commits.
 
+The final build may refresh `resources/acp-registry/registry.json`; this is the repository's expected
+build preflight maintenance and must be identified as such in pull-request handoff rather than
+silently reverted.
+
 ## Later Slices
 
 After coordinator ownership lands in `dev`, later branches may extend this architecture record for
 a thin Harness facade and typed hook reduction. Those changes must not be implemented or coupled to
-the current branch. Same-run steering remains a separate feature design.
+the current branch. The facade slice also owns the remaining composition callbacks, the still-wide
+`DeepChatLoopRunnerPorts`, and root compatibility adapters for session hydration, Agent identity,
+and message refresh. Same-run steering remains a separate feature design.

@@ -74,13 +74,14 @@ describe('DeepChatAgentRuntime', () => {
       permissionMode: 'full_access'
     })
 
-    expect(Object.isFrozen(scope)).toBe(true)
+    expect(Object.isFrozen(scope)).toBe(false)
     expect(scope.sessionId).toBe(sessionId)
     expect(scope.instance).toBe(runtime.getHydrated(sessionId))
     expect(scope.state()).toBe(scope.instance.getRuntimeState())
     expect(scope.isCurrent()).toBe(true)
     expect(() => scope.assertCurrent()).not.toThrow()
-    expect(runtime.getHydratedScope(sessionId)?.instance).toBe(scope.instance)
+    expect(runtime.getHydratedScope(sessionId)).toBe(scope)
+    expect(runtime.scopeFor(sessionId, scope.instance)).toBe(scope)
   })
 
   it('fences evicted and mismatched scopes with the stable stale-instance identity', () => {

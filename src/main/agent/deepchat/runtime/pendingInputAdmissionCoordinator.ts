@@ -1,4 +1,5 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
+import logger from '@shared/logger'
 import type {
   DeepChatSessionState,
   MessageStartResult,
@@ -8,6 +9,7 @@ import type {
   SendMessageInput
 } from '@shared/types/agent-interface'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { createStaleDeepChatInstanceError } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import type {
   AttachmentCapabilityRouter,
@@ -18,6 +20,7 @@ import { createAbortError } from './abortErrors'
 import { supportsProviderVision } from './providerInputCapabilities'
 import type { ClaimedPendingInputHandle } from './pendingInputContracts'
 import type { PendingInputWakeReason, RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
 
 export type PendingInputAdmissionStorePort = Pick<
   SessionPendingInputs,
@@ -59,7 +62,7 @@ export interface PendingInputAdmissionPumpPort {
     projectDir: string | null
   ): void
   schedule(sessionId: string, reason: PendingInputWakeReason): void
-  isAwaitingToolQuestionFollowUp(sessionId: string): boolean
+  hasInteractionBlocker(sessionId: string): boolean
   canDrain(
     sessionId: string,
     status: DeepChatSessionState['status'],
@@ -74,7 +77,7 @@ export interface PendingInputAdmissionPumpPort {
 
 type PendingInputAdmissionLifecyclePort = Pick<
   RunLifecycleCoordinator,
-  'cancel' | 'hasPendingInteractions'
+  'cancel'
 >
 
 export interface PendingInputAdmissionCoordinatorPorts {
@@ -201,10 +204,7 @@ export class PendingInputAdmissionCoordinator {
       if (!state) {
         throw new Error(`Session ${sessionId} not found`)
       }
-      if (
-        this.ports.pump.isAwaitingToolQuestionFollowUp(sessionId) ||
-        this.ports.runLifecycle.hasPendingInteractions(sessionId)
-      ) {
+      if (this.ports.pump.hasInteractionBlocker(sessionId)) {
         throw new Error('Please resolve pending tool interactions before steering.')
       }
       if (!input.text.trim() && (input.files?.length ?? 0) === 0) {
@@ -319,10 +319,7 @@ export class PendingInputAdmissionCoordinator {
     const releaseAcceptanceLane = await this.acquireAttachmentAcceptanceLane(sessionId, 'steer')
     try {
       await this.ensureSessionReady(sessionId)
-      if (
-        this.ports.pump.isAwaitingToolQuestionFollowUp(sessionId) ||
-        this.ports.runLifecycle.hasPendingInteractions(sessionId)
-      ) {
+      if (this.ports.pump.hasInteractionBlocker(sessionId)) {
         throw new Error('Please resolve pending tool interactions before steering.')
       }
 
@@ -344,23 +341,17 @@ export class PendingInputAdmissionCoordinator {
       try {
         prepared = await this.prepareMessageInputNow(sessionId, pendingInput.payload)
       } catch (error) {
-        claim.settle({ kind: 'release-before-user-fact' })
+        this.releaseClaimAfterFailure(claim)
         throw error
       }
       if (prepared.summary.status === 'needs_user_action') {
         try {
-          const blocked = claim.settle({
+          return claim.settle({
             kind: 'block',
             attachmentPreparation: prepared.summary
           })
-          if (!blocked) {
-            throw new Error(`Failed to block pending input ${itemId}`)
-          }
-          return blocked
         } catch (error) {
-          if (!claim.disposition) {
-            claim.settle({ kind: 'release-before-user-fact' })
-          }
+          this.releaseClaimAfterFailure(claim)
           throw error
         }
       }
@@ -523,7 +514,7 @@ export class PendingInputAdmissionCoordinator {
   ): PendingSessionInputRecord {
     const instance = this.ports.getHydratedInstance(sessionId)
     if (!instance) {
-      throw new Error(`Session ${sessionId} not found`)
+      throw createStaleDeepChatInstanceError(sessionId)
     }
     const mergeItemId = instance.getActiveSteerPendingInputId() ?? null
     try {
@@ -540,6 +531,20 @@ export class PendingInputAdmissionCoordinator {
       const record = this.ports.pendingInputs.queueSteerInput(sessionId, input)
       instance.setActiveSteerPendingInputId(record.id)
       return record
+    }
+  }
+
+  private releaseClaimAfterFailure(claim: ClaimedPendingInputHandle): void {
+    if (claim.disposition) {
+      return
+    }
+    try {
+      claim.settle({ kind: 'release-before-user-fact' })
+    } catch (releaseError) {
+      logger.error(
+        `[DeepChatAgent] failed to release pending input after admission failure item=${claim.id}`,
+        redactRuntimeErrorForLog(releaseError)
+      )
     }
   }
 }

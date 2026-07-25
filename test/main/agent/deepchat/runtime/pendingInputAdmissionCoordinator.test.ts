@@ -3,6 +3,7 @@ import type {
   PendingSessionInputRecord,
   SendMessageInput
 } from '@shared/types/agent-interface'
+import logger from '@shared/logger'
 import { describe, expect, it, vi } from 'vitest'
 import {
   PendingInputAdmissionCoordinator,
@@ -133,7 +134,7 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
     shouldClaimImmediately: vi.fn(() => false),
     startAcceptedInput: vi.fn(),
     schedule: vi.fn(),
-    isAwaitingToolQuestionFollowUp: vi.fn(() => false),
+    hasInteractionBlocker: vi.fn(() => false),
     canDrain: vi.fn(() => true),
     drain: vi.fn(async () => {
       onDrain?.(harness)
@@ -152,8 +153,7 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
     pendingInputs,
     pump,
     runLifecycle: {
-      cancel: vi.fn(async () => undefined),
-      hasPendingInteractions: vi.fn(() => false)
+      cancel: vi.fn(async () => undefined)
     },
     attachmentRouter: {
       prepare: vi.fn(async ({ content }) => ({
@@ -188,6 +188,7 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
     coordinator: new PendingInputAdmissionCoordinator(ports),
     harness,
     pendingInputs,
+    ports,
     pump
   }
 }
@@ -264,5 +265,62 @@ describe('PendingInputAdmissionCoordinator', () => {
 
     expect(test.pendingInputs.restoreSteerInputToQueue).toHaveBeenCalledWith(SESSION_ID, 'input')
     expect(test.harness.input).toMatchObject({ mode: 'queue', state: 'pending' })
+  })
+
+  it('classifies a missing hydrated steer owner as a stale runtime instance', async () => {
+    const test = createHarness()
+    vi.mocked(test.ports.getHydratedInstance).mockReturnValue(undefined)
+
+    await expect(test.coordinator.steerActiveTurn(SESSION_ID, 'Steer now')).rejects.toMatchObject({
+      name: 'StaleDeepChatAgentInstanceError'
+    })
+
+    expect(test.pendingInputs.queueSteerInput).not.toHaveBeenCalled()
+  })
+
+  it('returns the durable blocked record without a nullable settlement branch', async () => {
+    const test = createHarness()
+    vi.mocked(test.ports.attachmentRouter.prepare).mockResolvedValueOnce({
+      content: { text: 'Promote me', files: [] },
+      summary: {
+        status: 'needs_user_action',
+        issues: [{ attachmentIndex: 0, reason: 'ocr_failed' }],
+        suggestedActions: ['retry']
+      }
+    })
+
+    await expect(test.coordinator.steerPendingInput(SESSION_ID, 'input')).resolves.toMatchObject({
+      id: 'input',
+      state: 'blocked',
+      blocking: { status: 'needs_user_action' }
+    })
+
+    expect(test.harness.input?.state).toBe('blocked')
+  })
+
+  it('does not mask an attachment preparation error when claim release also fails', async () => {
+    const test = createHarness()
+    const preparationError = new Error('preparation failed')
+    const releaseError = new Error('release failed')
+    const claim: ClaimedPendingInputHandle = {
+      id: 'input',
+      source: 'queue',
+      disposition: null,
+      settle: vi.fn(() => {
+        throw releaseError
+      })
+    }
+    vi.mocked(test.pump.claimQueuedInputForPreparation).mockReturnValueOnce(claim)
+    vi.mocked(test.ports.attachmentRouter.prepare).mockRejectedValueOnce(preparationError)
+    const logError = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+
+    await expect(test.coordinator.steerPendingInput(SESSION_ID, 'input')).rejects.toBe(
+      preparationError
+    )
+
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining('failed to release pending input after admission failure'),
+      { name: 'Error' }
+    )
   })
 })

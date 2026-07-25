@@ -13,12 +13,17 @@ export type ClaimedInputDisposition =
   | { kind: 'release-before-user-fact' }
   | { kind: 'release-after-rollback' }
 
+export type ClaimedInputSettlementResult<TDisposition extends ClaimedInputDisposition> =
+  TDisposition extends { kind: 'consume' } ? null : PendingSessionInputRecord
+
 export interface ClaimedPendingInputHandle {
   readonly id: string
   readonly source: PendingInputTurnSource
   readonly disposition: ClaimedInputDisposition | null
 
-  settle(disposition: ClaimedInputDisposition): PendingSessionInputRecord | null
+  settle<TDisposition extends ClaimedInputDisposition>(
+    disposition: TDisposition
+  ): ClaimedInputSettlementResult<TDisposition>
 }
 
 export interface TurnCompletion {

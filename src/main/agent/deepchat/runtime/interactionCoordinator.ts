@@ -292,6 +292,9 @@ export class InteractionCoordinator {
               messageId,
               toolCall.id
             )
+            if (!refreshedInteraction) {
+              return { resumed: false }
+            }
             blocks = refreshedInteraction.blocks
             actionBlock = refreshedInteraction.actionBlock
             if ((execution.invoked || execution.terminalError) && !deferredToolCallCounted) {
@@ -519,13 +522,16 @@ export class InteractionCoordinator {
     sessionId: string,
     messageId: string,
     toolCallId: string
-  ): { blocks: AssistantMessageBlock[]; actionBlock: AssistantMessageBlock } {
+  ): { blocks: AssistantMessageBlock[]; actionBlock: AssistantMessageBlock } | null {
     const message = this.ports.messageStore.getMessage(messageId)
-    if (!message || message.role !== 'assistant') {
-      throw new Error(`Assistant message not found after deferred tool execution: ${messageId}`)
+    if (!message) {
+      return null
     }
     if (message.sessionId !== sessionId) {
       throw new Error(`Message ${messageId} does not belong to session ${sessionId}`)
+    }
+    if (message.role !== 'assistant') {
+      return null
     }
 
     const blocks = parseAssistantBlocks(message.content)
@@ -533,7 +539,7 @@ export class InteractionCoordinator {
       ({ interaction }) => interaction.toolCallId === toolCallId
     )
     if (!entry) {
-      throw new Error(`Pending interaction changed during deferred tool execution: ${toolCallId}`)
+      return null
     }
 
     return { blocks, actionBlock: blocks[entry.blockIndex] }

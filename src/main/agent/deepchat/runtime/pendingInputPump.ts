@@ -8,12 +8,17 @@ import type {
 import type { SessionRuntimeScope } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import type { SessionTranscript } from '@/session/data/transcript'
-import { parseAssistantBlocks } from './interactionProjection'
+import {
+  collectPendingInteractionEntries,
+  parseAssistantBlocks,
+  type PendingInteractionEntry
+} from './interactionProjection'
 import type { PendingInputWakeReason } from './runLifecycleCoordinator'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
 import type {
   ClaimedInputDisposition,
+  ClaimedInputSettlementResult,
   ClaimedPendingInputHandle,
   PendingInputTurnSource,
   TurnCompletion
@@ -39,8 +44,13 @@ export type PendingInputPumpStorePort = Pick<
 
 type PendingInputPumpLifecyclePort = Pick<
   RunLifecycleCoordinator,
-  'getHydratedScope' | 'hasPendingInteractions'
+  'getHydratedScope' | 'reconcilePendingInteractions'
 >
+
+interface PendingInputGateSnapshot {
+  awaitingQuestionFollowUp: boolean
+  pendingInteractions: PendingInteractionEntry[]
+}
 
 export interface PendingInputTurnStarter {
   start(
@@ -65,7 +75,7 @@ export interface PendingInputPumpPorts {
 }
 
 class DurablePendingInputClaim implements ClaimedPendingInputHandle {
-  private settledDisposition: ClaimedInputDisposition | null = null
+  private fencedDisposition: ClaimedInputDisposition | null = null
 
   constructor(
     private readonly pendingInputs: PendingInputPumpStorePort,
@@ -75,26 +85,40 @@ class DurablePendingInputClaim implements ClaimedPendingInputHandle {
   ) {}
 
   get disposition(): ClaimedInputDisposition | null {
-    return this.settledDisposition
+    return this.fencedDisposition
   }
 
-  settle(disposition: ClaimedInputDisposition): PendingSessionInputRecord | null {
-    if (this.settledDisposition) {
+  settle<TDisposition extends ClaimedInputDisposition>(
+    disposition: TDisposition
+  ): ClaimedInputSettlementResult<TDisposition> {
+    if (this.fencedDisposition) {
       throw new Error(
-        `Pending input ${this.id} is already settled as ${this.settledDisposition.kind}`
+        `Pending input ${this.id} is already fenced as ${this.fencedDisposition.kind}`
       )
     }
 
     this.assertClaimed()
     try {
       const result = this.apply(disposition)
-      this.settledDisposition = disposition
-      return result
+      this.fencedDisposition = disposition
+      return result as ClaimedInputSettlementResult<TDisposition>
     } catch (error) {
       // SessionPendingInputs persists before publishing. If publication throws, remember the
       // durable outcome so Turn/Pump finalization never applies a second transition.
-      if (this.wasApplied(disposition)) {
-        this.settledDisposition = disposition
+      let wasApplied = false
+      try {
+        wasApplied = this.wasApplied(disposition)
+      } catch (verificationError) {
+        // The persistence boundary was crossed but its outcome cannot be observed. Fence the claim
+        // conservatively so no caller can apply a second, potentially conflicting transition.
+        this.fencedDisposition = disposition
+        logger.warn(
+          `[DeepChatAgent] failed to verify pending input settlement session=${this.sessionId} item=${this.id}`,
+          redactRuntimeErrorForLog(verificationError)
+        )
+      }
+      if (wasApplied) {
+        this.fencedDisposition = disposition
       }
       throw error
     }
@@ -157,31 +181,15 @@ class DurablePendingInputClaim implements ClaimedPendingInputHandle {
 export class PendingInputPump {
   constructor(private readonly ports: PendingInputPumpPorts) {}
 
-  isAwaitingToolQuestionFollowUp(sessionId: string): boolean {
-    const messages = this.ports.transcript.getMessages(sessionId)
-    let latestUserOrderSeq = 0
-
-    for (const message of messages) {
-      if (message.role === 'user') {
-        latestUserOrderSeq = Math.max(latestUserOrderSeq, message.orderSeq)
-      }
-    }
-
-    return messages.some((message) => {
-      if (message.role !== 'assistant' || message.orderSeq <= latestUserOrderSeq) {
-        return false
-      }
-
-      return parseAssistantBlocks(message.content).some(
-        (block) =>
-          block.type === 'action' &&
-          block.action_type === 'question_request' &&
-          block.status === 'success' &&
-          block.extra?.needsUserAction === false &&
-          block.extra?.questionResolution === 'replied' &&
-          block.extra?.questionFollowUpPending === true
+  hasInteractionBlocker(sessionId: string): boolean {
+    const snapshot = this.readGateSnapshot(sessionId)
+    return (
+      snapshot.awaitingQuestionFollowUp ||
+      this.ports.runLifecycle.reconcilePendingInteractions(
+        sessionId,
+        snapshot.pendingInteractions
       )
-    })
+    )
   }
 
   shouldClaimImmediately(
@@ -189,10 +197,14 @@ export class PendingInputPump {
     status: DeepChatSessionState['status'],
     source: PendingInputEnqueueSource
   ): boolean {
+    if (source !== 'send' && !this.canDrainFromStatus(status, 'enqueue')) {
+      return false
+    }
     const instance = this.ports.runLifecycle.getHydratedScope(sessionId)?.instance
+    const snapshot = this.readGateSnapshot(sessionId)
     const isUnclaimedQuestionFollowUp =
       source === 'send' &&
-      this.isAwaitingToolQuestionFollowUp(sessionId) &&
+      snapshot.awaitingQuestionFollowUp &&
       !this.ports.pendingInputs.hasBlockingInput(sessionId) &&
       !this.ports.pendingInputs.hasClaimedInput(sessionId) &&
       !instance?.isPendingQueueDraining()
@@ -200,7 +212,7 @@ export class PendingInputPump {
     if (isUnclaimedQuestionFollowUp) {
       return true
     }
-    if (!this.canDrain(sessionId, status, 'enqueue')) {
+    if (!this.canDrainWithSnapshot(sessionId, status, 'enqueue', snapshot)) {
       return false
     }
     return (
@@ -218,10 +230,32 @@ export class PendingInputPump {
     if (!this.canDrainFromStatus(status, reason)) {
       return false
     }
-    if (this.isAwaitingToolQuestionFollowUp(sessionId)) {
+    return this.canDrainWithSnapshot(
+      sessionId,
+      status,
+      reason,
+      this.readGateSnapshot(sessionId)
+    )
+  }
+
+  private canDrainWithSnapshot(
+    sessionId: string,
+    status: DeepChatSessionState['status'],
+    reason: PendingInputWakeReason,
+    snapshot: PendingInputGateSnapshot
+  ): boolean {
+    if (!this.canDrainFromStatus(status, reason)) {
       return false
     }
-    if (this.ports.runLifecycle.hasPendingInteractions(sessionId)) {
+    if (snapshot.awaitingQuestionFollowUp) {
+      return false
+    }
+    if (
+      this.ports.runLifecycle.reconcilePendingInteractions(
+        sessionId,
+        snapshot.pendingInteractions
+      )
+    ) {
       return false
     }
     return !this.ports.runLifecycle
@@ -356,10 +390,22 @@ export class PendingInputPump {
         projectDir,
         claimedInput: claim
       })
-      .then((completion) => this.assertCompletionMatchesClaim(claimedInput.id, claim, completion))
-      .catch((error) => {
-        this.logDrainError(claimedInput.sessionId, reason, 'process-message', error)
-      })
+      .then(
+        (completion) => {
+          const mismatch = this.getCompletionMismatch(claimedInput.id, claim, completion)
+          if (mismatch && claim.disposition) {
+            this.logDrainError(
+              claimedInput.sessionId,
+              reason,
+              'claim-consistency',
+              mismatch
+            )
+          }
+        },
+        (error) => {
+          this.logDrainError(claimedInput.sessionId, reason, 'process-message', error)
+        }
+      )
       .finally(async () => {
         if (!claim.disposition) {
           this.logDrainError(
@@ -390,7 +436,7 @@ export class PendingInputPump {
         !releasedInputIsWaitingForRetry &&
         this.ports.pendingInputs.hasPendingTurnInput(sessionId) &&
         (await this.ports.getSessionState(sessionId))?.status === 'idle' &&
-        !this.ports.runLifecycle.hasPendingInteractions(sessionId)
+        !this.hasInteractionBlocker(sessionId)
       ) {
         this.schedule(sessionId, 'completed')
       }
@@ -420,16 +466,55 @@ export class PendingInputPump {
     }
   }
 
-  private assertCompletionMatchesClaim(
+  private getCompletionMismatch(
     itemId: string,
     claim: ClaimedPendingInputHandle,
     completion: TurnCompletion
-  ): void {
+  ): Error | null {
     const settled = claim.disposition
     const reported = completion.claimedInputDisposition
     if (!settled || !reported || settled.kind !== reported.kind) {
-      throw new Error(`Turn completed without settling pending input ${itemId} consistently.`)
+      return new Error(`Turn completed without settling pending input ${itemId} consistently.`)
     }
+    return null
+  }
+
+  private readGateSnapshot(sessionId: string): PendingInputGateSnapshot {
+    const messages = this.ports.transcript.getMessages(sessionId)
+    let latestUserOrderSeq = 0
+    for (const message of messages) {
+      if (message.role === 'user') {
+        latestUserOrderSeq = Math.max(latestUserOrderSeq, message.orderSeq)
+      }
+    }
+
+    let awaitingQuestionFollowUp = false
+    const pendingInteractions: PendingInteractionEntry[] = []
+    for (const message of messages) {
+      if (message.role !== 'assistant') {
+        continue
+      }
+      const blocks = parseAssistantBlocks(message.content)
+      pendingInteractions.push(
+        ...collectPendingInteractionEntries(message.id, blocks, pendingInteractions.length)
+      )
+      if (
+        message.orderSeq > latestUserOrderSeq &&
+        blocks.some(
+          (block) =>
+            block.type === 'action' &&
+            block.action_type === 'question_request' &&
+            block.status === 'success' &&
+            block.extra?.needsUserAction === false &&
+            block.extra?.questionResolution === 'replied' &&
+            block.extra?.questionFollowUpPending === true
+        )
+      ) {
+        awaitingQuestionFollowUp = true
+      }
+    }
+
+    return { awaitingQuestionFollowUp, pendingInteractions }
   }
 
   private canDrainFromStatus(

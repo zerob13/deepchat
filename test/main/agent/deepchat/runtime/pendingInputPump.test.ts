@@ -1,5 +1,7 @@
 import logger from '@shared/logger'
 import type {
+  AssistantMessageBlock,
+  ChatMessageRecord,
   AttachmentPreparationSummary,
   DeepChatSessionState,
   PendingSessionInputRecord
@@ -210,6 +212,7 @@ function createHarness(
   scope.instance.setRuntimeState(createState())
   const pendingInputs = createPendingInputStore(inputs)
   const hasPendingInteractions = vi.fn(() => false)
+  const messages: ChatMessageRecord[] = []
   const turnStarter: PendingInputPumpPorts['turnStarter'] = {
     start:
       start ??
@@ -219,11 +222,11 @@ function createHarness(
   }
   const ports: PendingInputPumpPorts = {
     pendingInputs: pendingInputs.store,
-    transcript: { getMessages: vi.fn(() => []) },
+    transcript: { getMessages: vi.fn(() => messages) },
     runLifecycle: {
       getHydratedScope: (sessionId: string) =>
         runtime.getHydratedScope(toAppSessionId(sessionId)),
-      hasPendingInteractions
+      reconcilePendingInteractions: hasPendingInteractions
     },
     turnStarter,
     getSessionState: vi.fn(async (sessionId: string) =>
@@ -234,6 +237,7 @@ function createHarness(
 
   return {
     hasPendingInteractions,
+    messages,
     pendingInputs,
     ports,
     pump: new PendingInputPump(ports),
@@ -318,6 +322,82 @@ describe('PendingInputPump', () => {
     })
     await flushPromises()
     expect(harness.scope.instance.isPendingQueueDraining()).toBe(false)
+  })
+
+  it('starts a send deferred behind a draining question follow-up', async () => {
+    const harness = createHarness([createInput('follow-up', 'queue')])
+    const followUpBlock: AssistantMessageBlock = {
+      type: 'action',
+      action_type: 'question_request',
+      status: 'success',
+      timestamp: 2,
+      content: 'Answer in chat',
+      extra: {
+        needsUserAction: false,
+        questionResolution: 'replied',
+        questionFollowUpPending: true
+      }
+    }
+    harness.messages.push(
+      {
+        id: 'user-before-question',
+        sessionId: SESSION_ID,
+        orderSeq: 1,
+        role: 'user',
+        content: 'Ask me',
+        status: 'sent',
+        isContextEdge: 0,
+        metadata: '{}',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'question',
+        sessionId: SESSION_ID,
+        orderSeq: 2,
+        role: 'assistant',
+        content: JSON.stringify([followUpBlock]),
+        status: 'sent',
+        isContextEdge: 0,
+        metadata: '{}',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    )
+    harness.scope.instance.markPendingQueueDrainStarted()
+
+    expect(harness.pump.shouldClaimImmediately(SESSION_ID, 'idle', 'send')).toBe(false)
+    expect(harness.turnStarter.start).not.toHaveBeenCalled()
+    expect(harness.ports.transcript.getMessages).toHaveBeenCalledOnce()
+
+    harness.messages.push({
+      id: 'accepted-follow-up',
+      sessionId: SESSION_ID,
+      orderSeq: 3,
+      role: 'user',
+      content: 'My answer',
+      status: 'sent',
+      isContextEdge: 0,
+      metadata: '{}',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    harness.scope.instance.markPendingQueueDrainFinished()
+
+    await expect(harness.pump.drain(SESSION_ID, 'completed')).resolves.toBe(true)
+    await flushPromises()
+
+    expect(harness.turnStarter.start).toHaveBeenCalledOnce()
+    expect(harness.pendingInputs.records.has('follow-up')).toBe(false)
+  })
+
+  it('does not scan the transcript when a queue-origin input cannot drain from status', () => {
+    const harness = createHarness([createInput('queue', 'queue')])
+
+    expect(harness.pump.shouldClaimImmediately(SESSION_ID, 'generating', 'queue')).toBe(false)
+
+    expect(harness.ports.transcript.getMessages).not.toHaveBeenCalled()
+    expect(harness.hasPendingInteractions).not.toHaveBeenCalled()
   })
 
   it('releases a durable claim when claim publication throws', async () => {
@@ -523,8 +603,12 @@ describe('PendingInputPump', () => {
     expect(harness.pendingInputs.records.has('queue')).toBe(false)
     expect(harness.pendingInputs.store.releaseClaimedQueueInput).not.toHaveBeenCalled()
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('stage=process-message'),
+      expect.stringContaining('stage=claim-consistency'),
       { name: 'Error' }
+    )
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining('stage=process-message'),
+      expect.anything()
     )
   })
 
@@ -564,5 +648,55 @@ describe('PendingInputPump', () => {
     expect(harness.pendingInputs.records.has('queue')).toBe(false)
     expect(harness.pendingInputs.store.consumeQueuedInput).toHaveBeenCalledOnce()
     expect(harness.pendingInputs.store.releaseClaimedQueueInput).not.toHaveBeenCalled()
+  })
+
+  it('preserves the primary settlement error when durable verification also fails', () => {
+    const harness = createHarness([createInput('queue', 'queue')])
+    const claim = harness.pump.claimQueuedInputForPreparation(SESSION_ID, 'queue')
+    const primaryError = new Error('publication failed')
+    const verificationError = new Error('verification failed')
+    const getInput = vi.mocked(harness.pendingInputs.store.getInput).getMockImplementation()
+    const blockInput = vi
+      .mocked(harness.pendingInputs.store.blockClaimedInput)
+      .getMockImplementation()
+    if (!getInput || !blockInput) {
+      throw new Error('Pending input test store is missing an implementation')
+    }
+    vi.mocked(harness.pendingInputs.store.getInput)
+      .mockImplementationOnce(getInput)
+      .mockImplementationOnce(() => {
+        throw verificationError
+      })
+    vi.mocked(harness.pendingInputs.store.blockClaimedInput).mockImplementationOnce(
+      (sessionId, itemId, attachmentPreparation) => {
+        blockInput(sessionId, itemId, attachmentPreparation)
+        throw primaryError
+      }
+    )
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+
+    expect(() =>
+      claim.settle({
+        kind: 'block',
+        attachmentPreparation: {
+          status: 'needs_user_action',
+          issues: [],
+          suggestedActions: ['retry']
+        }
+      })
+    ).toThrow(primaryError)
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('failed to verify pending input settlement'),
+      { name: 'Error' }
+    )
+    expect(claim.disposition).toEqual({
+      kind: 'block',
+      attachmentPreparation: {
+        status: 'needs_user_action',
+        issues: [],
+        suggestedActions: ['retry']
+      }
+    })
   })
 })

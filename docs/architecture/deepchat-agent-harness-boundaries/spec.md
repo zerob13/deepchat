@@ -9,8 +9,9 @@ or new read-only tool therefore requires runtime knowledge that does not belong 
 
 This architecture goal establishes stable contracts around the DeepChat Agent harness over
 multiple short-lived pull requests. The typed tool execution contract is complete. The current
-slice defines coordinator ownership boundaries without changing runtime behavior. A Harness
-facade, typed hooks, and same-run steering remain separate changes.
+slice defines coordinator ownership boundaries and includes the eight explicitly enumerated
+runtime corrections below. All other runtime behavior remains compatible. A Harness facade, typed
+hooks, and same-run steering remain separate changes.
 
 ## Comparative Evidence
 
@@ -131,10 +132,34 @@ Before production extraction, tests stop reflecting private coordinator members.
 must assert public behavior or construct the new owner through typed test ports. This test-only
 stage changes no production source and must pass the complete main-process suite.
 
-Production extraction preserves all observable assertions. Tests may move to owner-specific suites
-or replace structural mocks with typed ports, but expected status, event order, queue disposition,
-terminal persistence, hooks, Tape, Memory, permissions, and public return values must not change.
-If extraction exposes an existing behavioral defect, its fix belongs in a separate bug change.
+Production extraction preserves all observable assertions except for the eight corrections listed
+in the next section. Tests may move to owner-specific suites or replace structural mocks with typed
+ports, but expected status, event order, queue disposition, terminal persistence, hooks, Tape,
+Memory, permissions, and public return values outside those corrections must not change. Each
+correction requires a regression test that distinguishes its old and new behavior.
+
+### Included Runtime Corrections
+
+This ownership slice contains three explicit bug fixes and five corrections exposed while moving
+the owning code. They remain in this pull request because later extraction rewrote or relocated the
+same control flow, so separating them now would require replaying and resolving the complete
+ownership refactor without restoring an independently reversible change.
+
+| Correction | Previous behavior | Required behavior and rationale |
+| --- | --- | --- |
+| Deferred tool progress | A deferred tool resumed from the interaction's pre-execution block snapshot and could overwrite progress or terminal data written while the tool ran. | Re-read the assistant message after deferred execution and continue only while the same pending interaction still exists. This preserves concurrent progress and refuses stale ownership. |
+| Follow-up admission | Concurrent direct sends answering a completed tool question could both pass admission before the first turn established its durable claim. | Serialize send acceptance and permit only one immediate follow-up claim; later sends observe the first claim and remain pending. |
+| Rejected live-send rollback | Releasing a claimed live send after its user fact was persisted left a visible user message and derived compaction or Memory facts for a turn that never started. | Roll back transcript, compaction, and Memory facts before releasing the claim, so retry never duplicates a visible turn. |
+| Steer marker ownership | Adopting any steer claim unconditionally cleared the instance's active steer marker, including a newer marker installed concurrently. | Clear the marker only when its id matches the adopted claim, preserving a newer merge target. |
+| Direct-steer ownership | A false drain result caused deletion unless the narrow draining/generating checks happened to be visible at that instant. | Retain the steer whenever its durable state or an active generation, controller, drain, or generating projection proves another owner accepted it. |
+| Promoted-steer ownership | A false drain result restored a promoted steer even when another drain had already claimed or consumed it. | Restore only when no durable or runtime owner accepted the promoted steer. |
+| Operation-controller ownership | Cleanup without an exact controller reference could clear a replacement operation's controller. | Treat an absent expected controller as a no-op; only the exact current controller may be cleared. |
+| Follow-up/drain overlap | A direct follow-up could attempt a second immediate start while another pending-input turn owned the single-flight pump. | Keep the new input pending while `pendingQueueDraining` is true. At every normal asynchronous yield point the draining turn already owns a claimed row, so the claimed-input gate also prevents a second start. The explicit drain check protects defensive or re-entrant observations; once the in-flight turn persists its user fact, transcript ordering removes the old follow-up marker and normal completion wakeup admits the pending input. A regression test constructs that conservative overlap and verifies admission after the transition. |
+
+The last rule deliberately does not let ordinary queue-origin inputs bypass the tool-follow-up gate.
+`PendingInputEnqueueSource` remains the admission distinction. The production invariant is the
+durable claimed row plus the instance's single-flight drain marker, so no additional persisted fact
+or second source of truth is introduced.
 
 ## Coordinator Ownership Goals
 
@@ -254,10 +279,12 @@ execution continues to settle independently and commit results in provider call 
 - Do not rewrite tool dispatch or change durable queue and Tape semantics.
 - Do not add the Harness facade or typed hook reducer in the coordinator-ownership slice.
 - Do not change provider retry, tool scheduling, dispatch internals, public IPC/API contracts,
-  persisted formats, Tape semantics, or Memory semantics while extracting runtime owners.
+  persisted formats, Tape semantics, or Memory semantics beyond the corrections explicitly listed
+  above while extracting runtime owners.
 - Do not move durable pending inputs into `DeepChatAgentInstance` or add another source of truth.
 - Do not make `SessionRuntimeScope` a dependency container or introduce a generic runtime kernel.
-- Do not change same-run steering, visible-turn behavior, abort semantics, or queue ordering.
+- Do not add same-run steering or change abort semantics, queue ordering, or visible-turn behavior
+  beyond rollback of a rejected claimed live send described above.
 - Do not create or synchronize a GitHub issue for this architecture work.
 
 ## Typed Tool Execution Acceptance Criteria (Completed)
@@ -288,7 +315,8 @@ execution continues to settle independently and commit results in provider call 
 5. One owner performs terminal settlement and active-run cleanup for initial, resume, interaction,
    cancel, and provider-return paths without duplicate queue wakeups.
 6. `PendingInputPump` is the only queue-drain and claim-state owner. Steer priority, blocked-input
-   gates, retry rollback, restart recovery, and per-session single flight remain unchanged.
+   gates, restart recovery, and per-session single flight remain compatible; retry rollback and the
+   eight enumerated corrections follow their explicitly tested semantics.
 7. Internal turn completion maps losslessly to the existing `MessageStartResult`, including OCR and
    attachment-preparation outcomes.
 8. Manual and automatic compaction retain current abort, stale-instance, status, transcript, Tape,
