@@ -271,6 +271,12 @@ delegates to exactly one owner. Multi-owner sequences belong to `SessionLifecycl
 `TranscriptMutationCoordinator`. The ACP compatibility dependency factory is bound at composition
 and reaches the facade as one pre-bound function rather than as raw infrastructure fields.
 
+The harness barrel exports only `createDeepChatAgentHarness`, the facade type, and its dependency
+types. The composed owner graph, its factory, and the pending-input wakeup binding stay
+package-private, because exporting them would let a caller reach an owner around the facade and
+would let a second graph run the restart-recovery side effects the factory performs. Deep imports
+into the harness directory from outside it are rejected for the same reason.
+
 ### Zero-Behavior-Change Constraint
 
 This slice changes no runtime behavior. Any defect found while moving code is recorded and deferred
@@ -293,6 +299,13 @@ Four sequences are load-bearing and must move verbatim:
 
 The durable pending-input queue, Tape, Memory, and permission recovery keep their existing single
 sources of truth. No fact is duplicated onto the facade or onto a new service.
+
+One documented exception applies to source behavior only. The repository's build preflight rewrites
+`resources/model-db/providers.json` and `resources/acp-registry/registry.json`, which changes model
+availability, capability and price metadata, and executable ACP package versions. The refresh is
+required maintenance and is kept, but it lands in its own commit so it is reviewable and revertible
+independently, and ACP version bumps deserve the same supply-chain attention as any dependency
+change.
 
 ### Deferred Findings
 
@@ -511,7 +524,11 @@ execution continues to settle independently and commit results in provider call 
    deferred with its reason recorded in the test boundary.
 8. The four load-bearing sequences in the zero-behavior-change constraint are pinned by tests that
    fail if their order changes.
-9. No behavior, public contract, persisted format, event payload, or event ordering changes.
-   Executed test count does not drop.
-10. Focused owner suites, the full main-process suite, type checks, formatting, i18n validation,
+9. No source behavior, public contract, persisted format, event payload, or event ordering changes,
+   apart from the build preflight resource refresh recorded above. Executed test count does not drop.
+10. The harness barrel exports only the factory entry point and its types, deep imports into the
+    harness directory are rejected from outside it, and both rules fail closed in the guard.
+11. The runtime source graph is acyclic across the owners this slice touched: no owner pair and no
+    harness module pair import each other, including type-only imports.
+12. Focused owner suites, the full main-process suite, type checks, formatting, i18n validation,
     lint, the agent cleanup guard, and a regenerated layered-runtime baseline pass before handoff.

@@ -68,6 +68,11 @@
 - [x] Pin state hydration, message refresh, status publication, and destroy ordering with tests that
       fail if their order changes.
 - [x] Add focused owner suites for every extracted owner without reducing executed test count.
+- [x] Keep the harness barrel package-private around the owner graph, its factory, and the wakeup
+      binding, and guard the export surface plus deep imports.
+- [x] Break the interaction/turn and facade/factory source cycles through neutral contract modules.
+- [x] Record the build preflight resource refresh as the one exception to the zero-behavior-change
+      constraint.
 - [ ] Make the retained full-runtime suite compact by moving its owner-specific describe blocks into
       the owner suites. Deferred: the suite declares four module-scope `vi.mock` factories that
       cannot be shared across files without restructuring the mock wiring.
