@@ -2,11 +2,104 @@
 
 ## Current Slice
 
-Implement the typed tool execution contract as an independently reviewable refactor. Keep the
-observable scheduler behavior unchanged while replacing the runtime tool-name allowlist with
-catalog-owned capability metadata.
+Extract coordinator ownership boundaries as an independently reviewable, behavior-preserving
+refactor. The typed tool execution contract below is complete and remains a retained record.
 
-## Type Model
+## Coordinator Ownership Plan
+
+### Stage 0: Remove Private Test Reflection
+
+Inventory every `as any` or `as unknown as` access to a private coordinator member. Replace tests
+with one of these seams, in priority order:
+
+1. existing public runtime behavior;
+2. observable event, persisted fact, or Session state;
+3. a focused production owner constructed through typed ports once that owner exists;
+4. a typed test dependency supplied through an existing constructor port.
+
+Do not add public production methods solely for tests. This stage changes no production source and
+must pass the full main-process suite before runtime extraction begins.
+
+### Stage 1: Freeze Behavior
+
+Add characterization coverage for:
+
+- the exact four-sink status publication sequence;
+- initial and resume returned/thrown/aborted settlement;
+- stale instance, stale run, and replacement-controller fencing;
+- steer-before-queue selection and every claim disposition;
+- blocked attachments and OCR `attachmentPreparation` return mapping;
+- pending interaction resume and cancellation;
+- Memory callback ordering and exactly-once settlement.
+
+### Stage 2: Scope And Stateless Policies
+
+Add minimal scope creation to `DeepChatAgentRuntime`. Extract status publication, pre-stream
+watchdog behavior, and pure provider context-budget decisions. Keep project resolution, effective
+generation settings, Agent identity, hooks, and storage access as explicit ports.
+
+### Stage 3: Run Lifecycle
+
+Introduce `RunLifecycleCoordinator` as the only public owner for operation controllers, active runs,
+cancellation, status/terminal projection, and queue wakeup. Preserve separate named predicates for
+instance, run, controller, and message ownership. Route initial, resume, interaction, provider
+permission, loop-ready, and manual-compaction fences through the matching predicate without
+changing their conditions.
+
+This is the highest-risk stage and remains its own commit and rollback point.
+
+### Stage 4: Admission And Pump
+
+Move input acceptance and mutation commands into `PendingInputAdmissionCoordinator`. Move queue
+selection, single-flight, claim operations, failure recovery, and turn starting into
+`PendingInputPump`.
+
+Define an internal discriminated `TurnCompletion` / claimed-input disposition contract. Apply
+transcript, compaction, and Memory rollback before releasing a retryable claim. Wire the real
+turn/pump feedback loop through narrow synchronous interfaces rather than concrete imports or an
+event bus. Delete both existing copies of claim release and drain scheduling helpers.
+
+### Stage 5: Compaction And Composition
+
+Extend `CompactionRuntimeCoordinator` with manual state and lifecycle entry points. Reduce
+`DeepChatRuntimeCoordinator` to the existing public compatibility surface and composition. Extract
+factory wiring only when it passes concrete owners or narrow ports rather than recreating the old
+parent callback graph.
+
+Split owner-specific tests out of the monolithic coordinator suite while retaining a compact
+full-runtime integration suite.
+
+### Stage 6: Architecture Enforcement
+
+Replace the line-count-only signal with ownership checks that prevent owner modules from importing
+the concrete coordinator and prevent lifecycle, pending-input drain, and manual compaction logic
+from returning to the root. Keep an appropriate coordinator size ceiling as a secondary guard.
+Regenerate the layered-runtime architecture baseline after the final source layout stabilizes.
+
+## Coordinator Ownership Validation
+
+Run validation in increasing scope after every stage:
+
+```bash
+pnpm exec vitest run --config vitest.config.ts \
+  test/main/agent/deepchat/instance/deepChatAgentRuntime.test.ts \
+  test/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.test.ts \
+  test/main/session/runtimeIntegration.test.ts
+pnpm run typecheck:node
+pnpm run test:main
+pnpm run format
+pnpm run i18n
+pnpm run lint
+pnpm run build
+```
+
+Focused owner suites replace or supplement the first command as they are introduced. Run the
+architecture guard and regenerate its baseline in the final stage. If an environment-gated failure
+occurs, reproduce it on `dev` before classifying it as unrelated.
+
+## Completed Typed Tool Execution Contract
+
+### Type Model
 
 1. Add `ToolEffect`, `ToolExecutionMode`, and the discriminated `ToolExecutionContract` union to the
    canonical core MCP types.
@@ -19,7 +112,7 @@ catalog-owned capability metadata.
 
 This keeps one source of truth while preserving both existing import paths.
 
-## Catalog Classification
+### Catalog Classification
 
 Add an explicit contract at every production definition boundary:
 
@@ -33,7 +126,7 @@ Use a tool's maximum capability when its effect depends on arguments. Keep these
 close to definition construction rather than introducing a second name-to-policy registry.
 Prompt-only fallback descriptors remain base definitions and do not fabricate execution metadata.
 
-## Runtime Policy
+### Runtime Policy
 
 Create a small pure module in the DeepChat runtime that selects a batch execution mode from:
 
@@ -46,7 +139,7 @@ Return `parallel` only for a multi-call, `full_access`, all-parallel-read batch.
 selector at the existing parallel branch in `dispatch.ts` without changing execution or commit
 mechanics.
 
-## Provider And Context Boundaries
+### Provider And Context Boundaries
 
 Keep provider mapping explicit: AI SDK and legacy prompt paths consume function metadata only.
 Change the DeepChat token estimator to measure the historical definition projection without
@@ -54,7 +147,7 @@ the complete `execution` object. Use the same projection for Tape ViewManifest t
 so execution policy does not redefine provider-view identity. Add regression coverage proving
 execution metadata neither reaches the AI SDK tool schema nor changes the existing reserve or hash.
 
-## Tests
+### Tests
 
 Add a focused pure-policy suite for:
 
@@ -69,7 +162,7 @@ changing result order or failure isolation. Extend MCP catalog coverage to prove
 does not grant concurrency. Update production and test definition fixtures to satisfy the canonical
 type.
 
-## Validation
+### Validation
 
 Run in increasing scope:
 
@@ -94,17 +187,22 @@ the distinction rather than weakening coverage.
 
 ## Commit And Review Strategy
 
-Use two local commits:
+Use independently reviewable local commits for the ownership slice:
 
-1. `docs(agent): specify tool execution contract`
-2. `refactor(agent): type tool execution policy`
+1. `docs(agent): specify runtime ownership`
+2. `test(agent): remove runtime private coupling`
+3. `test(agent): freeze runtime ownership behavior`
+4. `refactor(agent): scope runtime identity`
+5. `refactor(agent): own run lifecycle`
+6. `refactor(agent): own pending input flow`
+7. `refactor(agent): complete runtime ownership`
 
 Before each commit, inspect both staged and unstaged changes for hidden side effects, compatibility,
 edge cases, performance, security, misleading names, missing tests, and future maintenance cost.
-Fix all findings and repeat the relevant validation before committing. Do not push either commit.
+Fix all findings and repeat the relevant validation before committing. Do not push these commits.
 
 ## Later Slices
 
-After this contract lands in `dev`, later branches may extend this architecture record for
-coordinator boundaries, a thin Harness facade, and typed hook reduction. Those changes must not be
-implemented or coupled to the current branch. Same-run steering remains a separate feature design.
+After coordinator ownership lands in `dev`, later branches may extend this architecture record for
+a thin Harness facade and typed hook reduction. Those changes must not be implemented or coupled to
+the current branch. Same-run steering remains a separate feature design.

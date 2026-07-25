@@ -16,9 +16,25 @@
 - [x] Review the complete implementation diff and fix every finding.
 - [x] Commit the implementation without pushing.
 
+## Coordinator Ownership
+
+- [x] Compare Pi and Bub orchestration boundaries with DeepChat's durable runtime semantics.
+- [x] Define minimal Session scope and the four distinct lifecycle fence semantics.
+- [x] Define owner responsibilities, typed claim disposition, feedback-loop wiring, compatibility,
+      and non-goals.
+- [ ] Remove private coordinator reflection from runtime tests without changing production source.
+- [ ] Add status-order, settlement, fencing, queue-disposition, return-mapping, and Memory baselines.
+- [ ] Add minimal runtime scopes and extract status/pre-stream/context-budget policies.
+- [ ] Make one coordinator own run lifecycle, cancellation, settlement, and queue wakeup.
+- [ ] Extract pending-input admission and the single queue pump; delete duplicate claim/drain logic.
+- [ ] Extend the existing compaction owner and reduce the root to composition and compatibility.
+- [ ] Split owner tests while retaining focused full-runtime integration coverage.
+- [ ] Update architecture guards and regenerate the layered-runtime baseline.
+- [ ] Run focused and full validation, review the complete diff, and fix every finding.
+- [ ] Commit every reviewed stage without pushing.
+
 ## Future Pull Requests
 
-- [ ] Define and implement coordinator ownership boundaries without behavior changes.
 - [ ] Add a thin Harness facade over the stabilized internal services.
 - [ ] Add typed deterministic hook/event reduction over the facade event model.
 - [ ] Design same-run steering separately if the product semantics are approved.
