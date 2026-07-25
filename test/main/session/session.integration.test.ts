@@ -10,7 +10,7 @@ import type { SubagentTapeLinkInput } from '@shared/types/agent-interface'
 import { AgentRepository } from '@/agent/repository'
 import { resolveAcpAgentAlias } from '@shared/utils/acpAgentAlias'
 import { createDeepChatAgentBackendFixture } from '../agent/manager/deepChatAgentBackendFixture'
-import type { AgentSessionSendInput } from '@/agent/shared/agentSessionHandle'
+import type { DeepChatAgentBackendPort } from '@/agent/manager/deepChatAgentBackend'
 import { createSessionQueryFixture } from './queryFixture'
 import { createSessionFixture } from './sessionFixture'
 
@@ -921,13 +921,14 @@ describe('Session application coordinators', () => {
         .mockResolvedValue({ requestId: 'deepchat-request', messageId: 'deepchat-message' }),
       cleanupSession: vi.fn().mockResolvedValue(undefined)
     } as any
-    deepchatImplementation.send = vi.fn(async (sessionId: string, input: AgentSessionSendInput) => {
+    const deepchatSend: DeepChatAgentBackendPort['send'] = vi.fn(async (sessionId, input) => {
       if (input.queue) {
         await deepchatImplementation.queuePendingInput(sessionId, input.content, input.queue)
         return { requestId: null, messageId: null }
       }
       return await deepchatImplementation.processMessage(sessionId, input.content, input.context)
     })
+    deepchatImplementation.send = deepchatSend
     const appSessionService = new AppSessionService(sqliteWithAgents, sqliteWithAgents as never)
     const directAcpInstance = {
       snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),

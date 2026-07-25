@@ -1,0 +1,121 @@
+import { describe, expect, it, vi } from 'vitest'
+import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import {
+  PromptAssemblyService,
+  type PromptAssemblyServiceDependencies
+} from '@/agent/deepchat/runtime/promptAssemblyService'
+
+const SESSION_ID = 'session'
+
+const buildSystemPromptWithSkills = vi.hoisted(() =>
+  vi.fn(async () => 'assembled system prompt')
+)
+
+vi.mock('@/agent/deepchat/resources/systemPromptBuilder', () => ({
+  buildSystemPromptWithSkills
+}))
+
+function createHarness(memoryContent: string | null = 'recalled memory') {
+  const runtime = new DeepChatAgentRuntime()
+  const contribute = vi.fn(async () => ({
+    content: memoryContent,
+    manifest: null,
+    anchorEntryId: null
+  }))
+  const deps = {
+    registry: runtime,
+    providerSettings: {},
+    skillSettings: {},
+    skillService: {},
+    providerCatalogPort: {},
+    toolService: {},
+    identity: { isAcpBackedSubagentSession: vi.fn(() => false) },
+    projectDir: { resolveProjectDir: vi.fn(() => '/workspace') },
+    memoryPromptContributor: { contribute }
+  } as unknown as PromptAssemblyServiceDependencies
+
+  return { contribute, deps, runtime, service: new PromptAssemblyService(deps) }
+}
+
+describe('PromptAssemblyService', () => {
+  it('defaults the resource instance to the hydrated session instance', async () => {
+    const { runtime, service } = createHarness()
+    buildSystemPromptWithSkills.mockClear()
+
+    await service.build(SESSION_ID, 'base', [])
+
+    expect(buildSystemPromptWithSkills.mock.calls[0][1]).toMatchObject({
+      sessionId: SESSION_ID,
+      basePrompt: 'base',
+      resourceInstance: runtime.getHydrated(toAppSessionId(SESSION_ID))
+    })
+  })
+
+  it('fences the bound assembler against a replaced runtime instance', async () => {
+    const { runtime, service } = createHarness()
+    buildSystemPromptWithSkills.mockClear()
+    const stale = runtime.getOrHydrate(toAppSessionId(SESSION_ID))
+    runtime.evict(toAppSessionId(SESSION_ID))
+    runtime.getOrHydrate(toAppSessionId(SESSION_ID))
+    buildSystemPromptWithSkills.mockImplementationOnce(async (dependencies: any, input: any) => {
+      dependencies.assertCurrent(input.sessionId, input.resourceInstance)
+      return 'assembled system prompt'
+    })
+
+    await expect(
+      service
+        .createBasePromptAssembler(stale)
+        .assemble({
+          sessionId: SESSION_ID,
+          configuredPrompt: 'base',
+          toolDefinitions: [],
+          activeSkillNames: []
+        })
+    ).rejects.toMatchObject({ name: 'StaleDeepChatAgentInstanceError' })
+  })
+
+  it('binds the base assembler to the expected instance and copies its inputs', async () => {
+    const { runtime, service } = createHarness()
+    buildSystemPromptWithSkills.mockClear()
+    const instance = runtime.getOrHydrate(toAppSessionId('other'))
+    const toolDefinitions = [] as never[]
+    const activeSkillNames = ['skill-a']
+
+    const assembled = await service.createBasePromptAssembler(instance).assemble({
+      sessionId: SESSION_ID,
+      configuredPrompt: 'base',
+      toolDefinitions,
+      activeSkillNames
+    })
+
+    expect(assembled).toBe('assembled system prompt')
+    const input = buildSystemPromptWithSkills.mock.calls[0][1] as any
+    expect(input.resourceInstance).toBe(instance)
+    expect(input.activeSkillNamesOverride).toEqual(activeSkillNames)
+    expect(input.activeSkillNamesOverride).not.toBe(activeSkillNames)
+    expect(input.toolDefinitions).not.toBe(toolDefinitions)
+  })
+
+  it('reports memory inclusion from the contributed content', async () => {
+    const withMemory = createHarness('recalled memory')
+    await expect(
+      withMemory.service.createPostCompactionPromptAssembler().assemble({
+        memorySession: { sessionId: toAppSessionId(SESSION_ID) },
+        summaryText: 'summary',
+        reconstructionAnchor: null,
+        memoryQuery: 'query'
+      })
+    ).resolves.toMatchObject({ memoryIncluded: true })
+
+    const withoutMemory = createHarness(null)
+    await expect(
+      withoutMemory.service.createPostCompactionPromptAssembler().assemble({
+        memorySession: { sessionId: toAppSessionId(SESSION_ID) },
+        summaryText: 'summary',
+        reconstructionAnchor: null,
+        memoryQuery: 'query'
+      })
+    ).resolves.toMatchObject({ memoryIncluded: false })
+  })
+})
