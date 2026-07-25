@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "goal": "agent-system-layered-runtime",
-  "headCommit": "2e0bcfb8d216812c80b1b797b6bce7e8c271bab9",
+  "headCommit": "fb9d8f440812b5b4a667a46130771bc799bd2676",
   "relevantWorkingTree": {
     "dirty": false,
     "files": []
@@ -61,6 +61,7 @@
     "src/main/agent/deepchat/harness/deepChatAgentHarness.ts",
     "src/main/agent/deepchat/harness/index.ts",
     "src/main/agent/deepchat/harness/pendingInputWakeupBinding.ts",
+    "src/main/agent/deepchat/harness/runtimeServices.ts",
     "src/main/agent/deepchat/instance/deepChatAgentInstance.ts",
     "src/main/agent/deepchat/instance/deepChatAgentRuntime.ts",
     "src/main/agent/deepchat/loop/contextCoordinator.ts",
@@ -126,6 +127,7 @@
     "src/main/agent/deepchat/runtime/toolRuntimeBindings.ts",
     "src/main/agent/deepchat/runtime/transcriptMutationCoordinator.ts",
     "src/main/agent/deepchat/runtime/turnCoordinator.ts",
+    "src/main/agent/deepchat/runtime/turnResumeContract.ts",
     "src/main/agent/deepchat/runtime/types.ts",
     "src/main/agent/manager/agentManager.ts",
     "src/main/agent/manager/deepChatAgentBackend.ts",

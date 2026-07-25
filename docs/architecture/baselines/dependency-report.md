@@ -4,18 +4,19 @@ Generated on 2026-07-25.
 
 ## main
 
-- Total files: 681
-- Internal dependency edges: 2169
-- Cycles detected: 12
+- Total files: 683
+- Internal dependency edges: 2182
+- Cycles detected: 10
 
 ### Top outgoing dependencies
 
 - `app/composition.ts`: 144
-- `agent/deepchat/harness/createDeepChatAgentHarness.ts`: 46
 - `agent/deepchat/runtime/deepChatLoopRunner.ts`: 42
 - `agent/deepchat/runtime/turnCoordinator.ts`: 41
 - `data/schemaCatalog.ts`: 41
+- `agent/deepchat/harness/createDeepChatAgentHarness.ts`: 33
 - `tool/agentTools/agentToolManager.ts`: 27
+- `agent/deepchat/harness/runtimeServices.ts`: 26
 - `session/data/database.ts`: 23
 - `agent/deepchat/runtime/compactionRuntimeCoordinator.ts`: 21
 - `agent/deepchat/runtime/interactionCoordinator.ts`: 21
@@ -24,7 +25,6 @@ Generated on 2026-07-25.
 - `mcp/inMemoryServers/builder.ts`: 18
 - `agent/acp/compatibility/dependencies.ts`: 17
 - `provider/index.ts`: 16
-- `agent/acp/runtime/index.ts`: 15
 
 ### Top incoming dependencies
 
@@ -37,8 +37,8 @@ Generated on 2026-07-25.
 - `agent/deepchat/runtime/types.ts`: 26
 - `memory/types.ts`: 24
 - `routes/routeRegistry.ts`: 23
+- `agent/deepchat/instance/deepChatAgentRuntime.ts`: 22
 - `remote/binding/store.ts`: 22
-- `agent/deepchat/instance/deepChatAgentRuntime.ts`: 21
 - `session/data/transcript.ts`: 21
 - `tape/domain/entry.ts`: 21
 - `memory/ports.ts`: 20
@@ -50,8 +50,6 @@ Generated on 2026-07-25.
 - `agent/acp/runtime/index.ts -> agent/acp/runtime/acpCompatibilityPromptBuilder.ts -> agent/acp/instance/ports.ts -> agent/acp/runtime/index.ts`
 - `agent/acp/client/acpRuntimeOwner.ts -> agent/acp/client/index.ts -> agent/acp/client/acpRuntimeOwner.ts`
 - `hook/observer.ts -> hook/index.ts -> hook/observer.ts`
-- `agent/deepchat/runtime/interactionCoordinator.ts -> agent/deepchat/runtime/turnCoordinator.ts -> agent/deepchat/runtime/interactionCoordinator.ts`
-- `agent/deepchat/harness/createDeepChatAgentHarness.ts -> agent/deepchat/harness/deepChatAgentHarness.ts -> agent/deepchat/harness/createDeepChatAgentHarness.ts`
 - `desktop/browser/YoBrowserPresenter.ts -> desktop/browser/YoBrowserToolHandler.ts -> desktop/browser/YoBrowserPresenter.ts`
 - `tool/agentTools/agentToolManager.ts -> tool/agentTools/subagentOrchestratorTool.ts -> tool/agentTools/agentToolManager.ts`
 - `tool/agentTools/agentToolManager.ts -> tool/agentTools/agentTapeTools.ts -> tool/agentTools/agentToolManager.ts`
