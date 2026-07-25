@@ -169,6 +169,51 @@ function getResourcesDir(context) {
   return path.join(appOutDir, 'resources')
 }
 
+function getNativeKitPrebuilds(platform, arch) {
+  const archName = getArchName(arch)
+
+  if (platform === 'darwin' && archName === 'universal') {
+    return ['darwin-x64', 'darwin-arm64']
+  }
+
+  switch (`${platform}:${archName}`) {
+    case 'darwin:x64':
+    case 'darwin:arm64':
+    case 'win32:x64':
+    case 'linux:x64':
+    case 'linux:arm64':
+      return [`${platform}-${archName}`]
+    default:
+      return []
+  }
+}
+
+async function validateNativeKitPrebuilds(context) {
+  const prebuilds = getNativeKitPrebuilds(context.electronPlatformName, context.arch)
+  if (prebuilds.length === 0) {
+    return
+  }
+
+  const nativeKitDir = path.join(
+    getResourcesDir(context),
+    'app.asar.unpacked',
+    'node_modules',
+    '@zerob13',
+    'nativekit'
+  )
+  for (const prebuild of prebuilds) {
+    const binaryName = prebuild.endsWith('-arm64')
+      ? 'node.napi.armv8.node'
+      : 'node.napi.node'
+    const binaryPath = path.join(nativeKitDir, 'prebuilds', prebuild, binaryName)
+    if (!(await pathExists(binaryPath))) {
+      throw new Error(
+        `Missing NativeKit prebuild at ${binaryPath}. Check electron-builder asarUnpack configuration.`
+      )
+    }
+  }
+}
+
 async function copyFffNativePackages(context) {
   const { arch, electronPlatformName, packager } = context
   const packageNames = getFffBinaryPackages(electronPlatformName, arch)
@@ -642,6 +687,7 @@ async function afterPack(context) {
   await copyParcelWatcherNativePackages(context)
   await copyOpendalNativePackages(context)
   await packageLightOcrAssets(context)
+  await validateNativeKitPrebuilds(context)
   await encodeMacVssExtension(context)
 
   if (isLinux(targets)) {

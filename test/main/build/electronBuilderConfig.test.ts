@@ -75,10 +75,17 @@ describe('electron-builder config', () => {
         '**/node_modules/@ff-labs/fff-bin-*/**/*',
         '**/node_modules/opendal/**/*',
         '**/node_modules/@opendal/**/*',
+        '**/node_modules/@zerob13/nativekit/prebuilds/**/*',
         '**/node_modules/ffi-rs/**/*',
         '**/node_modules/@yuuang/ffi-rs-*/**/*'
       ])
     )
+  })
+
+  it('pins NativeKit to the reviewed native overlay release', async () => {
+    const packageJson = await readPackageJson()
+
+    expect(packageJson.dependencies?.['@zerob13/nativekit']).toBe('0.6.2')
   })
 
   it('pins the OpenDAL facade and native packages to the same release', async () => {
