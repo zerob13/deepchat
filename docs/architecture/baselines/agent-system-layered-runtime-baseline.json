@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "goal": "agent-system-layered-runtime",
-  "headCommit": "df1cd3ae5b19d78e6c3cab79cdc9e4c5938fb2d4",
+  "headCommit": "fbc4241842ebfe01680590a5b72d1383aedbd8c1",
   "relevantWorkingTree": {
     "dirty": false,
     "files": []
@@ -65,17 +65,21 @@
     "src/main/agent/deepchat/loop/loopRun.ts",
     "src/main/agent/deepchat/loop/notificationObserver.ts",
     "src/main/agent/deepchat/loop/ports.ts",
+    "src/main/agent/deepchat/loop/providerRetryPolicy.ts",
     "src/main/agent/deepchat/memory/memoryExtractionChunks.ts",
     "src/main/agent/deepchat/memory/memoryIngestionObserver.ts",
     "src/main/agent/deepchat/memory/memoryPromptContributor.ts",
     "src/main/agent/deepchat/memory/memoryRuntimeCoordinator.ts",
     "src/main/agent/deepchat/resources/systemEnvPromptBuilder.ts",
     "src/main/agent/deepchat/resources/systemPromptBuilder.ts",
+    "src/main/agent/deepchat/runtime/abortErrors.ts",
     "src/main/agent/deepchat/runtime/accumulator.ts",
     "src/main/agent/deepchat/runtime/compactionRuntimeCoordinator.ts",
     "src/main/agent/deepchat/runtime/compactionService.ts",
     "src/main/agent/deepchat/runtime/contextBudget.ts",
+    "src/main/agent/deepchat/runtime/contextBudgetPolicy.ts",
     "src/main/agent/deepchat/runtime/contextBuilder.ts",
+    "src/main/agent/deepchat/runtime/contextContributions.ts",
     "src/main/agent/deepchat/runtime/contextWindowError.ts",
     "src/main/agent/deepchat/runtime/deepChatLoopRunner.ts",
     "src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts",
@@ -88,14 +92,25 @@
     "src/main/agent/deepchat/runtime/interactionProjection.ts",
     "src/main/agent/deepchat/runtime/messageTracePayload.ts",
     "src/main/agent/deepchat/runtime/noProgressToolLoopGuard.ts",
+    "src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts",
+    "src/main/agent/deepchat/runtime/pendingInputContracts.ts",
+    "src/main/agent/deepchat/runtime/pendingInputPump.ts",
+    "src/main/agent/deepchat/runtime/preStreamWatchdog.ts",
     "src/main/agent/deepchat/runtime/process.ts",
+    "src/main/agent/deepchat/runtime/providerInputCapabilities.ts",
     "src/main/agent/deepchat/runtime/providerPermissionCoordinator.ts",
+    "src/main/agent/deepchat/runtime/providerPermissionResolution.ts",
+    "src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts",
+    "src/main/agent/deepchat/runtime/runtimeErrorLogging.ts",
+    "src/main/agent/deepchat/runtime/runtimeHookSink.ts",
     "src/main/agent/deepchat/runtime/runtimeMetadata.ts",
     "src/main/agent/deepchat/runtime/sessionSettingsCoordinator.ts",
+    "src/main/agent/deepchat/runtime/sessionStatusPublisher.ts",
     "src/main/agent/deepchat/runtime/sessionUpdates.ts",
     "src/main/agent/deepchat/runtime/tapeViewAssembler.ts",
     "src/main/agent/deepchat/runtime/tapeViewPolicy.ts",
     "src/main/agent/deepchat/runtime/toolAdapters.ts",
+    "src/main/agent/deepchat/runtime/toolExecutionPolicy.ts",
     "src/main/agent/deepchat/runtime/toolOutputGuard.ts",
     "src/main/agent/deepchat/runtime/toolPermissionReviewer.ts",
     "src/main/agent/deepchat/runtime/toolResolver.ts",
@@ -144,9 +159,17 @@
     "src/main/agent/deepchat/memory/memoryIngestionObserver.ts": true,
     "src/main/agent/deepchat/memory/memoryPromptContributor.ts": true,
     "src/main/agent/deepchat/memory/memoryRuntimeCoordinator.ts": true,
+    "src/main/agent/deepchat/runtime/compactionRuntimeCoordinator.ts": true,
     "src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts": true,
     "src/main/agent/deepchat/runtime/dispatch.ts": true,
+    "src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts": true,
+    "src/main/agent/deepchat/runtime/pendingInputPump.ts": true,
     "src/main/agent/deepchat/runtime/process.ts": true,
+    "src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts": true,
+    "src/main/agent/deepchat/runtime/runtimeHookSink.ts": true,
+    "src/main/agent/deepchat/runtime/sessionSettingsCoordinator.ts": true,
+    "src/main/agent/deepchat/runtime/sessionStatusPublisher.ts": true,
+    "src/main/agent/deepchat/runtime/turnCoordinator.ts": true,
     "src/main/agent/manager/agentManager.ts": true,
     "src/main/agent/manager/deepChatAgentBackend.ts": true,
     "src/main/agent/manager/directAcpAgentBackend.ts": true,
@@ -248,6 +271,46 @@
       "file": "src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts",
       "exists": true,
       "declarationCount": 1
+    },
+    "runLifecycleCoordinator": {
+      "file": "src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "sessionStatusPublisher": {
+      "file": "src/main/agent/deepchat/runtime/sessionStatusPublisher.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "pendingInputAdmissionCoordinator": {
+      "file": "src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "pendingInputPump": {
+      "file": "src/main/agent/deepchat/runtime/pendingInputPump.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "turnCoordinator": {
+      "file": "src/main/agent/deepchat/runtime/turnCoordinator.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "compactionRuntimeCoordinator": {
+      "file": "src/main/agent/deepchat/runtime/compactionRuntimeCoordinator.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "sessionSettingsCoordinator": {
+      "file": "src/main/agent/deepchat/runtime/sessionSettingsCoordinator.ts",
+      "exists": true,
+      "declarationCount": 1
+    },
+    "runtimeHookSink": {
+      "file": "src/main/agent/deepchat/runtime/runtimeHookSink.ts",
+      "exists": true,
+      "declarationCount": 1
     }
   },
   "retiredSurfaces": {
@@ -294,9 +357,17 @@
       "ingestionObserver": "src/main/agent/deepchat/memory/memoryIngestionObserver.ts"
     },
     "runtimeBoundaries": [
+      "src/main/agent/deepchat/runtime/compactionRuntimeCoordinator.ts",
       "src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts",
       "src/main/agent/deepchat/runtime/dispatch.ts",
+      "src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts",
+      "src/main/agent/deepchat/runtime/pendingInputPump.ts",
       "src/main/agent/deepchat/runtime/process.ts",
+      "src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts",
+      "src/main/agent/deepchat/runtime/runtimeHookSink.ts",
+      "src/main/agent/deepchat/runtime/sessionSettingsCoordinator.ts",
+      "src/main/agent/deepchat/runtime/sessionStatusPublisher.ts",
+      "src/main/agent/deepchat/runtime/turnCoordinator.ts",
       "src/main/provider/providers/acpProvider.ts",
       "src/main/session/assignment.ts",
       "src/main/session/data/transcript.ts",
@@ -350,7 +421,9 @@
       "src/shared/contracts/routes/models.routes.ts",
       "src/shared/contracts/routes/nowledgeMem.routes.ts",
       "src/shared/contracts/routes/oauth.routes.ts",
+      "src/shared/contracts/routes/ocr.routes.ts",
       "src/shared/contracts/routes/onboarding.routes.ts",
+      "src/shared/contracts/routes/performance.routes.ts",
       "src/shared/contracts/routes/plugins.routes.ts",
       "src/shared/contracts/routes/project.routes.ts",
       "src/shared/contracts/routes/providers.routes.ts",
@@ -369,7 +442,7 @@
       "src/shared/contracts/routes/window.routes.ts",
       "src/shared/contracts/routes/workspace.routes.ts"
     ],
-    "sha256": "e624008521f11befaa0497a325cb65b4bf38f36e575dd4285622ad3705955b9e"
+    "sha256": "041108ed713034847324a65c1cce0c373e02e564a4fef972ea1641cdf4cd91a0"
   },
   "storage": {
     "sqlite": {
@@ -379,7 +452,7 @@
         "src/main/data/schemaTypes.ts"
       ],
       "tableIdentifiers": [],
-      "sha256": "3465d92dff615489b7037de640077ce95bda7a7abbb0144ce84bb144dcd85a9e"
+      "sha256": "7259151a85e31fffe128d7f70339645b2bca8ed339a2ded955fbf0dcf827e016"
     },
     "memoryDuckDbSidecar": {
       "files": [
@@ -399,7 +472,7 @@
       "src/main/app/mainProcess.ts",
       "src/main/appMain.ts"
     ],
-    "sha256": "394cd861f9fe06a29159d06f87f83b7ba1866287f129fae2a42a382e7e2e6c95"
+    "sha256": "99a4d3d9e419c296a6c97b43cbfa4aad107f3ced112d0a817ae5d0d522f8929a"
   },
   "dependencyMetrics": {
     "loopFiles": [
@@ -408,7 +481,8 @@
       "src/main/agent/deepchat/loop/inputPreparationCoordinator.ts",
       "src/main/agent/deepchat/loop/loopRun.ts",
       "src/main/agent/deepchat/loop/notificationObserver.ts",
-      "src/main/agent/deepchat/loop/ports.ts"
+      "src/main/agent/deepchat/loop/ports.ts",
+      "src/main/agent/deepchat/loop/providerRetryPolicy.ts"
     ],
     "loopToPresenter": 0,
     "loopToSqlite": 0,

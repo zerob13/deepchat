@@ -27,11 +27,11 @@
 - [x] Add minimal runtime scopes and extract status/pre-stream/context-budget policies.
 - [x] Make one coordinator own run lifecycle, cancellation, settlement, and queue wakeup.
 - [x] Extract pending-input admission and the single queue pump; delete duplicate claim/drain logic.
-- [ ] Extend the existing compaction owner and reduce the root to composition and compatibility.
-- [ ] Split owner tests while retaining focused full-runtime integration coverage.
-- [ ] Update architecture guards and regenerate the layered-runtime baseline.
-- [ ] Run focused and full validation, review the complete diff, and fix every finding.
-- [ ] Commit every reviewed stage without pushing.
+- [x] Extend the existing compaction owner and reduce the root to composition and compatibility.
+- [x] Split owner tests while retaining focused full-runtime integration coverage.
+- [x] Update architecture guards and regenerate the layered-runtime baseline.
+- [x] Run focused and full validation, review the complete diff, and fix every finding.
+- [x] Commit every reviewed stage without pushing.
 
 ## Future Pull Requests
 
