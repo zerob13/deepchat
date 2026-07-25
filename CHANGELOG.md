@@ -3,10 +3,6 @@
 ## v1.1.0-beta.6 (2026-07-25)
 - Retried transient provider failures and stabilized the provider retry lifecycle
 - Preserved streaming failure state and modeled provider attempt identity across the agent runtime
-- 重试瞬时 provider 失败并稳定 provider 重试生命周期
-- 保留流式失败状态并在 agent runtime 中建模 provider 尝试身份
-
-## v1.1.0-beta.5 (2026-07-24)
 - Integrated Light-OCR and restored OCR compatibility
 - Added Linux ARM64 build support
 - Isolated agent skill roots for safer scope boundaries
@@ -16,6 +12,8 @@
 - Recovered truncated tool calls and stabilized cache provenance
 - Prioritized history over memory and recovered session revisions
 - Unified native packaging and added a branded macOS dmg layout
+- 重试瞬时 provider 失败并稳定 provider 重试生命周期
+- 保留流式失败状态并在 agent runtime 中建模 provider 尝试身份
 - 集成 Light-OCR 并恢复 OCR 兼容性
 - 新增 Linux ARM64 构建支持
 - 隔离 agent skill roots，提升作用域边界安全性
