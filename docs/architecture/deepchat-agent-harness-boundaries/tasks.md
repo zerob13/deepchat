@@ -61,7 +61,7 @@
 - [x] Introduce the named pending-input wakeup binding and remove every other deferred wiring.
 - [x] Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `dispose()`; route manager
       backend send, cancel, snapshot, and close through the harness port.
-- [ ] Add the composition factory and the facade implementing the existing manager and session
+- [x] Add the composition factory and the facade implementing the existing manager and session
       contracts.
 - [ ] Delete `deepChatRuntimeCoordinator.ts` and migrate app composition, ACP compatibility, session
       deletion, and transcript mutation wiring.
