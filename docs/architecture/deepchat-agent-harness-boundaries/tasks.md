@@ -43,7 +43,7 @@
 - [x] Standardize recovery logging and remove duplicated lane/project-directory mutation paths.
 - [x] Add focused admission, drain-race, cancellation, and rollback regression coverage.
 - [x] Run pull-request review validation and inspect the complete follow-up diff.
-- [ ] Commit the reviewed pull-request follow-up without pushing.
+- [x] Commit the reviewed pull-request follow-up without pushing.
 - [x] Run focused and full validation, review the complete diff, and fix every finding.
 - [x] Commit every reviewed stage without pushing.
 
