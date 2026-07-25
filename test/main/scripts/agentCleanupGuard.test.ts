@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  findDeepChatHarnessBarrelViolations,
   findDeepChatRootOwnershipViolations,
   findMissingDeepChatOwnershipSymbols,
   isDeepChatHarnessImport
@@ -62,6 +63,44 @@ describe('agent cleanup guard', () => {
         '@/agent/deepchat/harness'
       )
     ).toBe(false)
+  })
+
+  it('accepts only allowlisted harness barrel exports', () => {
+    expect(
+      findDeepChatHarnessBarrelViolations(`
+        export { createDeepChatAgentHarness } from './createDeepChatAgentHarness'
+        export type { DeepChatAgentHarness } from './deepChatAgentHarness'
+        declare const createDeepChatAgentHarness: unknown
+        export default createDeepChatAgentHarness
+      `)
+    ).toEqual([])
+  })
+
+  it('rejects every declaration and default-export escape from the harness barrel', () => {
+    const violations = [
+      `
+        export enum InternalMode { Default }
+        export namespace RuntimeOwners {}
+        export import InternalHarness = RuntimeOwners
+        const internalOwner = {}
+        export default internalOwner
+        const owners = { hiddenOwner: {} }
+        export const { hiddenOwner } = owners
+      `,
+      'export default {}',
+      'export default function () {}'
+    ].flatMap(findDeepChatHarnessBarrelViolations)
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        { kind: 'deepchat-harness-export-surface', detail: 'InternalMode' },
+        { kind: 'deepchat-harness-export-surface', detail: 'RuntimeOwners' },
+        { kind: 'deepchat-harness-export-surface', detail: 'InternalHarness' },
+        { kind: 'deepchat-harness-export-surface', detail: 'internalOwner' },
+        { kind: 'deepchat-harness-export-surface', detail: 'default export' },
+        { kind: 'deepchat-harness-export-surface', detail: 'hiddenOwner' }
+      ])
+    )
   })
 
   it('detects protected ownership calls through syntax rather than source text', () => {

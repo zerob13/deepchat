@@ -78,8 +78,11 @@
       cannot be shared across files without restructuring the mock wiring.
 - [x] Replace root guard rules with harness boundary rules and a smaller facade size ceiling.
 - [x] Regenerate the layered-runtime baseline and update affected architecture records.
-- [ ] Run focused and full validation, review the complete diff, and fix every finding.
-- [ ] Commit every reviewed stage without pushing.
+- [x] Fence asynchronous Session settings updates to one runtime scope and add replacement-race
+      coverage.
+- [x] Close harness barrel export escapes and require explicit pending-input rollback ownership.
+- [x] Run focused and full validation, review the complete diff, and disposition every finding.
+- [x] Commit every reviewed stage without pushing.
 
 ## Future Pull Requests
 

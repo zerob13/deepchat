@@ -1320,7 +1320,7 @@ export class TurnCoordinator {
   rollbackPendingInputTurn(
     sessionId: string,
     userMessageId: string | null,
-    expectedInstance = this.ports.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
+    expectedInstance: DeepChatAgentInstance
   ): void {
     this.ports.runLifecycle.assertCurrentInstance(sessionId, expectedInstance)
     const userMessage = userMessageId ? this.ports.messageStore.getMessage(userMessageId) : null

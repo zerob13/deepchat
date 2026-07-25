@@ -269467,8 +269467,8 @@
             ]
           },
           "limit": {
-            "context": 262144,
-            "output": 262144
+            "context": 128000,
+            "output": 32000
           },
           "tool_call": true,
           "reasoning": {

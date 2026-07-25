@@ -307,6 +307,27 @@ required maintenance and is kept, but it lands in its own commit so it is review
 independently, and ACP version bumps deserve the same supply-chain attention as any dependency
 change.
 
+### Final Review Corrections
+
+The final review admits three narrow hardening changes without broadening the facade design:
+
+| Finding | Disposition |
+| --- | --- |
+| Async Session settings ownership | `setModel`, `setAgentContext`, and `updateGenerationSettings` bind one `SessionRuntimeScope` across every await, recheck status/model identity before persistence, and never mutate a replacement instance. Focused tests cover replacement during provider-default resolution, Memory reassignment fencing, generation-setting sanitization, and skill revalidation. |
+| Harness barrel AST completeness | The export-surface guard handles export assignments, enums, modules/namespaces, import-equals declarations, anonymous default declarations, and destructured variable exports. Unsupported names fail closed under the existing allowlist. |
+| Pending-input rollback fence | `rollbackPendingInputTurn` requires the caller's already-held instance instead of silently hydrating a current instance through a default parameter. Both callers already provide that ownership token. |
+
+Other review observations do not belong in this correction:
+
+- The steer merge race remains deferred below because closing it changes queue/cancel product
+  semantics.
+- Compaction cleanup ordering predates this slice and is covered by the explicit requirement to
+  retain stale-instance and transcript ordering. Changing it requires a separate complex-bug spec.
+- Provider and ACP catalogs are external generated snapshots. Their current upstream sources still
+  contain the reported model metadata, so local edits would be overwritten by the next build.
+- `uvx` resolves package `requires-python` metadata with managed Python downloads; the ACP package's
+  Python range is not constrained by DeepChat's host interpreter range.
+
 ### Deferred Findings
 
 Defects observed while moving code are recorded here and fixed on a separate branch.
@@ -454,8 +475,8 @@ execution continues to settle independently and commit results in provider call 
   the facade implements the existing manager and session contracts only.
 - Do not pass the composed service graph to hooks as a container. A later typed hook slice designs
   its own restricted context facades.
-- Do not fix defects discovered while moving code in the harness facade slice; record them and open
-  a separate branch.
+- Do not fix defects discovered while moving code beyond the narrow final-review corrections listed
+  above; record them and open a separate branch.
 - Do not move durable pending inputs into `DeepChatAgentInstance` or add another source of truth.
 - Do not make `SessionRuntimeScope` a dependency container or introduce a generic runtime kernel.
 - Do not add same-run steering or change abort semantics, queue ordering, or visible-turn behavior
@@ -525,7 +546,8 @@ execution continues to settle independently and commit results in provider call 
 8. The four load-bearing sequences in the zero-behavior-change constraint are pinned by tests that
    fail if their order changes.
 9. No source behavior, public contract, persisted format, event payload, or event ordering changes,
-   apart from the build preflight resource refresh recorded above. Executed test count does not drop.
+   apart from the build preflight resource refresh and final-review corrections recorded above.
+   Executed test count does not drop.
 10. The harness barrel exports only the factory entry point and its types, deep imports into the
     harness directory are rejected from outside it, and both rules fail closed in the guard.
 11. The runtime source graph is acyclic across the owners this slice touched: no owner pair and no

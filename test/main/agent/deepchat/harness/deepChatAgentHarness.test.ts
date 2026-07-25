@@ -6029,7 +6029,7 @@ describe('DeepChatAgentHarness', () => {
       expect(invalidateToolProfileCache).not.toHaveBeenCalled()
     })
 
-    it('invalidates the current instance cache after asynchronous agent revalidation', async () => {
+    it('does not invalidate a replacement instance after asynchronous agent revalidation', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const revalidation = deferred<void>()
       const skillService = getSkillServiceMock()
@@ -6059,9 +6059,42 @@ describe('DeepChatAgentHarness', () => {
       })
 
       revalidation.resolve(undefined)
+      await expect(update).resolves.toBeUndefined()
+
+      expect(replacement.getToolProfileCache()?.fingerprint).toBe('stale-after-revalidation')
+    })
+
+    it('clears a current-instance cache filled during asynchronous agent revalidation', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const revalidation = deferred<void>()
+      const skillService = getSkillServiceMock()
+      skillService.revalidateActiveSkillsForAgent.mockReturnValueOnce(revalidation.promise)
+
+      const update = agent.setSessionAgentContext('s1', {
+        agentId: 'other-agent',
+        providerId: 'anthropic',
+        modelId: 'claude-3-5-sonnet',
+        projectDir: '/private/project',
+        permissionMode: 'full_access'
+      })
+      await vi.waitFor(() =>
+        expect(skillService.revalidateActiveSkillsForAgent).toHaveBeenCalledWith(
+          's1',
+          'other-agent'
+        )
+      )
+
+      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
+      instance.setToolProfileCache({
+        profile: 'general',
+        fingerprint: 'filled-during-revalidation',
+        tools: []
+      })
+
+      revalidation.resolve(undefined)
       await update
 
-      expect(replacement.getToolProfileCache()).toBeUndefined()
+      expect(instance.getToolProfileCache()).toBeUndefined()
     })
 
     it('waits for old-Agent memory persistence before publishing a new Agent identity', async () => {

@@ -392,6 +392,15 @@ export function findDeepChatHarnessBarrelViolations(source) {
       violations.push({ kind: 'deepchat-harness-export-surface', detail: name })
     }
   }
+  const flagBindingName = (name) => {
+    if (ts.isIdentifier(name)) {
+      flag(name.text)
+      return
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) flagBindingName(element.name)
+    }
+  }
 
   for (const statement of sourceFile.statements) {
     if (ts.isExportDeclaration(statement)) {
@@ -404,10 +413,21 @@ export function findDeepChatHarnessBarrelViolations(source) {
       }
       continue
     }
+    if (ts.isExportAssignment(statement)) {
+      if (ts.isIdentifier(statement.expression)) {
+        flag(statement.expression.text)
+      } else {
+        violations.push({ kind: 'deepchat-harness-export-surface', detail: 'default export' })
+      }
+      continue
+    }
     const isDeclaration =
       ts.isClassDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
       ts.isFunctionDeclaration(statement) ||
+      ts.isImportEqualsDeclaration(statement) ||
       ts.isInterfaceDeclaration(statement) ||
+      ts.isModuleDeclaration(statement) ||
       ts.isTypeAliasDeclaration(statement) ||
       ts.isVariableStatement(statement)
     if (!isDeclaration) continue
@@ -415,12 +435,14 @@ export function findDeepChatHarnessBarrelViolations(source) {
 
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name)) flag(declaration.name.text)
+        flagBindingName(declaration.name)
       }
       continue
     }
     if (statement.name) {
       flag(statement.name.text)
+    } else {
+      violations.push({ kind: 'deepchat-harness-export-surface', detail: 'default export' })
     }
   }
 
