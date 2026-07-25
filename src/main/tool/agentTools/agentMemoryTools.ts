@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { toDeepChatJsonSchema } from '@shared/lib/zodJsonSchema'
-import type { MCPToolDefinition } from '@shared/types/mcp'
+import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/mcp'
 import { createAgentToolSuccessResult } from '@shared/lib/agentToolResultEnvelope'
 import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 import {
@@ -67,6 +67,7 @@ function buildToolDefinition(
   schema: z.ZodTypeAny
 ): MCPToolDefinition {
   return {
+    execution: TOOL_EXECUTION.write,
     type: 'function',
     function: {
       name,

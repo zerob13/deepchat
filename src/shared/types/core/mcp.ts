@@ -25,7 +25,33 @@ export interface McpServerStatusChangedPayload {
   version: number
 }
 
-export interface MCPToolDefinition {
+export type ToolExecutionMode = 'sequential' | 'parallel'
+
+export type ToolEffect = 'read' | 'write'
+
+export type ToolExecutionContract =
+  | { readonly effect: 'read'; readonly mode: ToolExecutionMode }
+  | { readonly effect: 'write'; readonly mode: 'sequential' }
+
+type ToolExecutionPresetCatalog = {
+  readonly read: {
+    readonly [Mode in ToolExecutionMode]: {
+      readonly effect: 'read'
+      readonly mode: Mode
+    }
+  }
+  readonly write: Extract<ToolExecutionContract, { effect: 'write' }>
+}
+
+export const TOOL_EXECUTION = Object.freeze({
+  read: Object.freeze({
+    sequential: Object.freeze({ effect: 'read', mode: 'sequential' }),
+    parallel: Object.freeze({ effect: 'read', mode: 'parallel' })
+  }),
+  write: Object.freeze({ effect: 'write', mode: 'sequential' })
+}) satisfies ToolExecutionPresetCatalog
+
+export interface MCPToolDefinitionBase {
   type: string
   source?: 'mcp' | 'agent'
   function: {
@@ -42,6 +68,17 @@ export interface MCPToolDefinition {
     icons: string
     description: string
   }
+}
+
+export type MCPToolDefinition = MCPToolDefinitionBase & {
+  readonly execution: ToolExecutionContract
+}
+
+export function stripToolExecutionContract({
+  execution: _execution,
+  ...baseDefinition
+}: MCPToolDefinition): MCPToolDefinitionBase {
+  return baseDefinition
 }
 
 export interface MCPToolCall {

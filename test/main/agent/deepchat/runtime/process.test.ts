@@ -3,7 +3,10 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
-import type { MCPToolDefinition } from '@shared/types/mcp'
+import {
+  TOOL_EXECUTION,
+  type MCPToolDefinition
+} from '@shared/types/mcp'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ToolServicePort } from '@shared/types/tool'
 import type { ProcessParams } from '@/agent/deepchat/runtime/types'
@@ -106,6 +109,7 @@ function createMockMessageStore() {
 
 function makeTool(name: string): MCPToolDefinition {
   return {
+    execution: TOOL_EXECUTION.write,
     type: 'function',
     function: {
       name,
