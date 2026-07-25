@@ -4423,7 +4423,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -4593,7 +4593,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -4758,7 +4758,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -14739,6 +14739,50 @@
           "type": "chat"
         },
         {
+          "id": "zai-org/GLM-5.2-Fast",
+          "name": "GLM 5.2 Fast",
+          "display_name": "GLM 5.2 Fast",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 524288,
+            "output": 524288
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2026-06-13",
+          "last_updated": "2026-06-13",
+          "cost": {
+            "input": 2.1,
+            "output": 6.6,
+            "cache_read": 0.21
+          },
+          "type": "chat"
+        },
+        {
           "id": "zai-org/GLM-5.2",
           "name": "GLM 5.2",
           "display_name": "GLM 5.2",
@@ -20253,8 +20297,8 @@
       "models": [
         {
           "id": "gemini-2.5-computer-use-preview-10-2025",
-          "name": "Gemini 2.5 Computer Use Preview",
-          "display_name": "Gemini 2.5 Computer Use Preview",
+          "name": "Gemini 2.5 Computer Use Preview 10-2025",
+          "display_name": "Gemini 2.5 Computer Use Preview 10-2025",
           "modalities": {
             "input": [
               "text",
@@ -20265,8 +20309,8 @@
             ]
           },
           "limit": {
-            "context": 128000,
-            "output": 64000
+            "context": 131072,
+            "output": 65536
           },
           "temperature": true,
           "tool_call": true,
@@ -20301,8 +20345,8 @@
         },
         {
           "id": "deep-research-preview-04-2026",
-          "name": "Gemini Deep Research Preview",
-          "display_name": "Gemini Deep Research Preview",
+          "name": "Deep Research Preview (Apr-21-2026)",
+          "display_name": "Deep Research Preview (Apr-21-2026)",
           "modalities": {
             "input": [
               "text",
@@ -20317,10 +20361,10 @@
             ]
           },
           "limit": {
-            "context": 1048576,
+            "context": 131072,
             "output": 65536
           },
-          "temperature": false,
+          "temperature": true,
           "tool_call": true,
           "reasoning": {
             "supported": true,
@@ -20373,7 +20417,8 @@
           "temperature": true,
           "tool_call": false,
           "reasoning": {
-            "supported": false
+            "supported": true,
+            "default": true
           },
           "attachment": false,
           "open_weights": false,
@@ -20443,7 +20488,7 @@
           },
           "limit": {
             "context": 8192,
-            "output": 3072
+            "output": 1
           },
           "temperature": false,
           "tool_call": false,
@@ -20477,8 +20522,8 @@
             ]
           },
           "limit": {
-            "context": 131072,
-            "output": 8192
+            "context": 1048576,
+            "output": 65536
           },
           "temperature": true,
           "tool_call": false,
@@ -20676,7 +20721,7 @@
             ]
           },
           "limit": {
-            "context": 131072,
+            "context": 1048576,
             "output": 65536
           },
           "temperature": true,
@@ -20730,8 +20775,8 @@
         },
         {
           "id": "veo-3.1-generate-preview",
-          "name": "Veo 3.1 Preview",
-          "display_name": "Veo 3.1 Preview",
+          "name": "Veo 3.1",
+          "display_name": "Veo 3.1",
           "modalities": {
             "input": [
               "text",
@@ -20742,8 +20787,8 @@
             ]
           },
           "limit": {
-            "context": 1024,
-            "output": 1
+            "context": 480,
+            "output": 8192
           },
           "temperature": false,
           "tool_call": false,
@@ -20758,8 +20803,8 @@
         },
         {
           "id": "deep-research-max-preview-04-2026",
-          "name": "Deep Research Max Preview",
-          "display_name": "Deep Research Max Preview",
+          "name": "Deep Research Max Preview (Apr-21-2026)",
+          "display_name": "Deep Research Max Preview (Apr-21-2026)",
           "modalities": {
             "input": [
               "text",
@@ -20774,10 +20819,10 @@
             ]
           },
           "limit": {
-            "context": 1048576,
+            "context": 131072,
             "output": 65536
           },
-          "temperature": false,
+          "temperature": true,
           "tool_call": true,
           "reasoning": {
             "supported": true,
@@ -20921,10 +20966,10 @@
             ]
           },
           "limit": {
-            "context": 131072,
-            "output": 65536
+            "context": 16384,
+            "output": 32768
           },
-          "temperature": false,
+          "temperature": true,
           "tool_call": false,
           "reasoning": {
             "supported": false
@@ -21087,7 +21132,7 @@
           },
           "limit": {
             "context": 65536,
-            "output": 4096
+            "output": 65536
           },
           "temperature": true,
           "tool_call": true,
@@ -21257,8 +21302,8 @@
         },
         {
           "id": "veo-3.1-lite-generate-preview",
-          "name": "Veo 3.1 Lite Preview",
-          "display_name": "Veo 3.1 Lite Preview",
+          "name": "Veo 3.1 lite",
+          "display_name": "Veo 3.1 lite",
           "modalities": {
             "input": [
               "text",
@@ -21269,7 +21314,7 @@
             ]
           },
           "limit": {
-            "context": 1024,
+            "context": 480,
             "output": 8192
           },
           "temperature": false,
@@ -21382,8 +21427,8 @@
         },
         {
           "id": "veo-3.1-fast-generate-preview",
-          "name": "Veo 3.1 Fast Preview",
-          "display_name": "Veo 3.1 Fast Preview",
+          "name": "Veo 3.1 fast",
+          "display_name": "Veo 3.1 fast",
           "modalities": {
             "input": [
               "text",
@@ -21395,7 +21440,7 @@
             ]
           },
           "limit": {
-            "context": 1024,
+            "context": 480,
             "output": 8192
           },
           "temperature": false,
@@ -21504,8 +21549,8 @@
             ]
           },
           "limit": {
-            "context": 131072,
-            "output": 32768
+            "context": 65536,
+            "output": 65536
           },
           "temperature": true,
           "tool_call": false,
@@ -21611,7 +21656,7 @@
             ]
           },
           "limit": {
-            "context": 65536,
+            "context": 131072,
             "output": 32768
           },
           "temperature": true,
@@ -49175,7 +49220,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -49736,7 +49781,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -50610,7 +50655,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -50631,7 +50677,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -51339,7 +51385,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -51360,7 +51407,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -52974,7 +53021,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -58418,6 +58465,48 @@
           "type": "chat"
         },
         {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "qwen3-coder-next",
           "name": "Qwen3 Coder Next",
           "display_name": "Qwen3 Coder Next",
@@ -58549,7 +58638,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -59794,7 +59883,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -59810,7 +59900,7 @@
             "supported": true,
             "default": true
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -64689,6 +64779,48 @@
           "type": "chat"
         },
         {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "gpt-5.1-codex-max",
           "name": "GPT-5.1 Codex Max",
           "display_name": "GPT-5.1 Codex Max",
@@ -67587,6 +67719,48 @@
             "input": 2,
             "output": 8,
             "cache_read": 0.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 64000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -75579,7 +75753,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -75600,7 +75775,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -78461,9 +78636,9 @@
           "release_date": "2026-04-24",
           "last_updated": "2026-04-24",
           "cost": {
-            "input": 0.5,
-            "output": 0.8,
-            "cache_read": 0.2,
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.028,
             "cache_write": 0
           },
           "type": "chat"
@@ -78627,9 +78802,9 @@
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
           "cost": {
-            "input": 0.85,
-            "output": 3.8,
-            "cache_read": 0.17,
+            "input": 0.82,
+            "output": 3.75,
+            "cache_read": 0.15,
             "cache_write": 0
           },
           "type": "chat"
@@ -78760,6 +78935,49 @@
           "open_weights": true,
           "release_date": "2026-04-07",
           "last_updated": "2026-04-07",
+          "cost": {
+            "input": 1.25,
+            "output": 3.89
+          },
+          "type": "chat"
+        },
+        {
+          "id": "glm-5.2",
+          "name": "GLM-5.2",
+          "display_name": "GLM-5.2",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2026-06-13",
+          "last_updated": "2026-06-13",
           "cost": {
             "input": 1.25,
             "output": 3.89
@@ -83451,7 +83669,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -83472,7 +83691,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -84365,6 +84584,377 @@
         }
       ]
     },
+    "aiand": {
+      "id": "aiand",
+      "name": "ai&",
+      "display_name": "ai&",
+      "api": "https://api.aiand.com/v1",
+      "doc": "https://docs.aiand.com/",
+      "models": [
+        {
+          "id": "google/gemma-4-31b-it",
+          "name": "Gemma 4 31B IT",
+          "display_name": "Gemma 4 31B IT",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 32768
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "release_date": "2026-04-02",
+          "last_updated": "2026-04-02",
+          "cost": {
+            "input": 0.2,
+            "output": 0.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "zai-org/glm-5.1",
+          "name": "GLM-5.1",
+          "display_name": "GLM-5.1",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 131072
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2026-04-07",
+          "last_updated": "2026-04-07",
+          "cost": {
+            "input": 1.4,
+            "output": 4.4
+          },
+          "type": "chat"
+        },
+        {
+          "id": "zai-org/glm-5.2",
+          "name": "GLM-5.2",
+          "display_name": "GLM-5.2",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 131072
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2026-06-13",
+          "last_updated": "2026-06-13",
+          "cost": {
+            "input": 1,
+            "output": 4
+          },
+          "type": "chat"
+        },
+        {
+          "id": "qwen/qwen3.6-27b",
+          "name": "Qwen3.6 27B",
+          "display_name": "Qwen3.6 27B",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 65536
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2026-04-22",
+          "last_updated": "2026-04-22",
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "deepseek-ai/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "display_name": "DeepSeek V4 Flash",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 384000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "knowledge": "2025-05",
+          "release_date": "2026-04-24",
+          "last_updated": "2026-04-24",
+          "cost": {
+            "input": 0.15,
+            "output": 0.25
+          },
+          "type": "chat"
+        },
+        {
+          "id": "deepseek-ai/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "display_name": "DeepSeek V4 Pro",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 384000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "knowledge": "2025-05",
+          "release_date": "2026-04-24",
+          "last_updated": "2026-04-24",
+          "cost": {
+            "input": 1,
+            "output": 2.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "moonshotai/kimi-k2.6",
+          "name": "Kimi K2.6",
+          "display_name": "Kimi K2.6",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "knowledge": "2025-01",
+          "release_date": "2026-04-21",
+          "last_updated": "2026-04-21",
+          "cost": {
+            "input": 0.85,
+            "output": 3.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "moonshotai/kimi-k2.7-code",
+          "name": "Kimi K2.7 Code",
+          "display_name": "Kimi K2.7 Code",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "knowledge": "2025-01",
+          "release_date": "2026-06-12",
+          "last_updated": "2026-06-12",
+          "cost": {
+            "input": 0.75,
+            "output": 3.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "openai/gpt-oss-120b",
+          "name": "GPT OSS 120B",
+          "display_name": "GPT OSS 120B",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 131072,
+            "output": 32768
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2025-08-05",
+          "last_updated": "2025-08-05",
+          "cost": {
+            "input": 0.15,
+            "output": 0.6
+          },
+          "type": "chat"
+        }
+      ]
+    },
     "pioneer": {
       "id": "pioneer",
       "name": "Pioneer",
@@ -84379,7 +84969,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -84406,7 +84997,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -86048,7 +86639,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -95819,56 +96410,6 @@
           "type": "chat"
         },
         {
-          "id": "fugu-ultra",
-          "name": "Fugu Ultra",
-          "display_name": "Fugu Ultra",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 1000000,
-            "output": 131072
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": true,
-          "open_weights": false,
-          "release_date": "2026-06-15",
-          "last_updated": "2026-06-15",
-          "cost": {
-            "input": 7.5,
-            "output": 45,
-            "cache_read": 1.5,
-            "tiers": [
-              {
-                "input": 15,
-                "output": 67.5,
-                "cache_read": 1.5,
-                "tier": {
-                  "type": "context",
-                  "size": 272000
-                }
-              }
-            ],
-            "context_over_200k": {
-              "input": 15,
-              "output": 67.5,
-              "cache_read": 1.5
-            }
-          },
-          "type": "chat"
-        },
-        {
           "id": "qwen3-5-122b-a10b",
           "name": "Qwen3.5 122B-A10B",
           "display_name": "Qwen3.5 122B-A10B",
@@ -96253,7 +96794,7 @@
               {
                 "input": 0.45,
                 "output": 1.8,
-                "cache_read": 0.045,
+                "cache_read": 0.09,
                 "tier": {
                   "type": "context",
                   "size": 512000
@@ -96263,7 +96804,7 @@
             "context_over_200k": {
               "input": 0.45,
               "output": 1.8,
-              "cache_read": 0.045
+              "cache_read": 0.09
             }
           },
           "type": "chat"
@@ -96911,7 +97452,7 @@
               {
                 "input": 1.1,
                 "output": 3.851,
-                "cache_read": 0.165,
+                "cache_read": 0.22,
                 "tier": {
                   "type": "context",
                   "size": 32000
@@ -97149,7 +97690,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -97157,7 +97699,7 @@
           },
           "limit": {
             "context": 1000000,
-            "output": 64000
+            "output": 65536
           },
           "temperature": true,
           "tool_call": true,
@@ -97167,10 +97709,16 @@
           },
           "extra_capabilities": {
             "reasoning": {
-              "supported": true
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -97361,7 +97909,8 @@
           "cost": {
             "input": 0,
             "output": 0,
-            "cache_read": 0
+            "cache_read": 0,
+            "cache_write": 0
           },
           "type": "chat"
         },
@@ -97381,7 +97930,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 32768
+            "output": 98304
           },
           "temperature": true,
           "tool_call": true,
@@ -97503,7 +98052,7 @@
           },
           "limit": {
             "context": 1000000,
-            "output": 65536
+            "output": 131072
           },
           "temperature": true,
           "tool_call": true,
@@ -97513,7 +98062,13 @@
           },
           "extra_capabilities": {
             "reasoning": {
-              "supported": true
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
             }
           },
           "attachment": false,
@@ -97575,7 +98130,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 16384
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -97648,7 +98203,40 @@
           "cost": {
             "input": 0,
             "output": 0,
-            "cache_read": 0
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "happyhorse-1.1-i2v",
+          "name": "HappyHorse 1.1 Image-to-Video",
+          "display_name": "HappyHorse 1.1 Image-to-Video",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "temperature": true,
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "open_weights": false,
+          "release_date": "2026-07-17",
+          "last_updated": "2026-07-17",
+          "cost": {
+            "input": 0,
+            "output": 0
           },
           "type": "chat"
         },
@@ -97684,6 +98272,38 @@
           "knowledge": "2025-01",
           "release_date": "2025-12-03",
           "last_updated": "2025-12-05",
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "happyhorse-1.1-r2v",
+          "name": "HappyHorse 1.1 Reference-to-Video",
+          "display_name": "HappyHorse 1.1 Reference-to-Video",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "temperature": true,
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "open_weights": false,
+          "release_date": "2026-07-17",
+          "last_updated": "2026-07-17",
           "cost": {
             "input": 0,
             "output": 0
@@ -97735,7 +98355,7 @@
           },
           "limit": {
             "context": 196608,
-            "output": 24576
+            "output": 32768
           },
           "temperature": true,
           "tool_call": true,
@@ -97862,6 +98482,37 @@
           "type": "chat"
         },
         {
+          "id": "happyhorse-1.1-t2v",
+          "name": "HappyHorse 1.1 Text-to-Video",
+          "display_name": "HappyHorse 1.1 Text-to-Video",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "temperature": true,
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": false,
+          "open_weights": false,
+          "release_date": "2026-07-17",
+          "last_updated": "2026-07-17",
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "type": "chat"
+        },
+        {
           "id": "qwen-image-2.0",
           "name": "Qwen Image 2.0",
           "display_name": "Qwen Image 2.0",
@@ -97927,7 +98578,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -98357,7 +99008,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -99001,6 +99652,48 @@
           "knowledge": "2025-03-31",
           "release_date": "2025-11-24",
           "last_updated": "2025-08-01",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
           "cost": {
             "input": 5,
             "output": 25,
@@ -106168,9 +106861,9 @@
           "type": "chat"
         },
         {
-          "id": "claude-opus-4-7-fast",
-          "name": "Claude Opus 4.7 Fast",
-          "display_name": "Claude Opus 4.7 Fast",
+          "id": "claude-opus-5-fast",
+          "name": "Claude Opus 5 Fast",
+          "display_name": "Claude Opus 5 Fast",
           "modalities": {
             "input": [
               "text",
@@ -106188,44 +106881,18 @@
           "tool_call": true,
           "reasoning": {
             "supported": true,
-            "default": false
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": false,
-              "mode": "effort",
-              "effort": "high",
-              "effort_options": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ],
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "omitted",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Claude Opus 4.7 and newer Opus models require thinking.type = \"adaptive\" to enable thinking explicitly.",
-                "Manual budget_tokens requests return 400 on Claude Opus 4.7 and newer adaptive-only Opus models.",
-                "task_budget is separate from thinking control and should not be treated as a thinking budget."
-              ]
-            }
+            "default": true
           },
           "attachment": true,
           "open_weights": false,
-          "knowledge": "2026-01-31",
-          "release_date": "2026-05-14",
-          "last_updated": "2026-06-11",
+          "knowledge": "2026-05",
+          "release_date": "2026-07-23",
+          "last_updated": "2026-07-24",
           "cost": {
-            "input": 36,
-            "output": 180,
-            "cache_read": 3.6,
-            "cache_write": 45
+            "input": 12,
+            "output": 60,
+            "cache_read": 1.2,
+            "cache_write": 15
           },
           "type": "chat"
         },
@@ -106532,6 +107199,40 @@
             "input": 2.19,
             "output": 17.5,
             "cache_read": 0.219
+          },
+          "type": "chat"
+        },
+        {
+          "id": "seed-2-1-turbo",
+          "name": "Seed 2.1 Turbo",
+          "display_name": "Seed 2.1 Turbo",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "release_date": "2026-06-28",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 0.625,
+            "output": 3.125,
+            "cache_read": 0.125
           },
           "type": "chat"
         },
@@ -107328,6 +108029,47 @@
           "cost": {
             "input": 0.07,
             "output": 0.3
+          },
+          "type": "chat"
+        },
+        {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-23",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 6,
+            "output": 30,
+            "cache_read": 0.6,
+            "cache_write": 7.5
           },
           "type": "chat"
         },
@@ -114982,7 +115724,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -115198,7 +115940,7 @@
             "supported": true,
             "default": true
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -119896,6 +120638,48 @@
           "type": "chat"
         },
         {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "gpt-5.1-codex-max",
           "name": "GPT-5.1 Codex Max",
           "display_name": "GPT-5.1 Codex Max",
@@ -123377,9 +124161,8 @@
           "display_name": "Grok Imagine Video 1.5",
           "modalities": {
             "input": [
-              "text",
               "image",
-              "video"
+              "pdf"
             ],
             "output": [
               "video"
@@ -123872,6 +124655,60 @@
             "supported": false
           },
           "attachment": false,
+          "type": "chat"
+        }
+      ]
+    },
+    "hetzner": {
+      "id": "hetzner",
+      "name": "Hetzner",
+      "display_name": "Hetzner",
+      "api": "https://inference.hetzner.com/api/v1",
+      "doc": "https://experiments.hetzner.com/docs/inference",
+      "models": [
+        {
+          "id": "Qwen/Qwen3.6-35B-A3B-FP8",
+          "name": "Qwen3.6 35B A3B FP8",
+          "display_name": "Qwen3.6 35B A3B FP8",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "release_date": "2026-04-17",
+          "last_updated": "2026-04-17",
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
           "type": "chat"
         }
       ]
@@ -127190,7 +128027,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -130141,7 +130978,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -136561,6 +137398,43 @@
           "type": "chat"
         },
         {
+          "id": "jp.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (JP)",
+          "display_name": "Claude Opus 5 (JP)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
           "name": "Claude Haiku 4.5 (Global)",
           "display_name": "Claude Haiku 4.5 (Global)",
@@ -138083,6 +138957,43 @@
           "type": "chat"
         },
         {
+          "id": "us.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (US)",
+          "display_name": "Claude Opus 5 (US)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "anthropic.claude-opus-4-5-20251101-v1:0",
           "name": "Claude Opus 4.5",
           "display_name": "Claude Opus 4.5",
@@ -138282,6 +139193,43 @@
           "type": "chat"
         },
         {
+          "id": "global.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (Global)",
+          "display_name": "Claude Opus 5 (Global)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "minimax.minimax-m2.5",
           "name": "MiniMax M2.5",
           "display_name": "MiniMax M2.5",
@@ -138405,6 +139353,43 @@
             "output": 25,
             "cache_read": 0.5,
             "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
+          "id": "eu.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (EU)",
+          "display_name": "Claude Opus 5 (EU)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5.5,
+            "output": 27.5,
+            "cache_read": 0.55,
+            "cache_write": 6.875
           },
           "type": "chat"
         },
@@ -138565,6 +139550,43 @@
           "cost": {
             "input": 0.12,
             "output": 0.2
+          },
+          "type": "chat"
+        },
+        {
+          "id": "anthropic.claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -139398,6 +140420,43 @@
           "cost": {
             "input": 0.24,
             "output": 0.97
+          },
+          "type": "chat"
+        },
+        {
+          "id": "au.anthropic.claude-opus-5",
+          "name": "Claude Opus 5 (AU)",
+          "display_name": "Claude Opus 5 (AU)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -141040,6 +142099,41 @@
           "knowledge": "2025-01",
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "k3-256k",
+          "name": "Kimi K3-256K",
+          "display_name": "Kimi K3-256K",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 131072
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": false,
+          "open_weights": true,
+          "release_date": "2026-07-16",
+          "last_updated": "2026-07-16",
           "cost": {
             "input": 0,
             "output": 0,
@@ -158145,7 +159239,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -158799,7 +159893,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": true,
           "knowledge": "2025-01",
           "release_date": "2026-01",
@@ -166605,8 +167699,9 @@
           },
           "attachment": false,
           "open_weights": false,
+          "knowledge": "2025-11",
           "release_date": "2026-03-10",
-          "last_updated": "2026-03-23",
+          "last_updated": "2026-04-22",
           "type": "embedding"
         },
         {
@@ -167001,6 +168096,7 @@
           },
           "attachment": true,
           "open_weights": false,
+          "knowledge": "2025-01",
           "release_date": "2026-06-30",
           "last_updated": "2026-06-30",
           "cost": {
@@ -169815,7 +170911,7 @@
           "attachment": false,
           "open_weights": false,
           "release_date": "2026-06-22",
-          "last_updated": "2026-06-22",
+          "last_updated": "2026-05-30",
           "type": "chat"
         },
         {
@@ -171773,10 +172869,10 @@
           "release_date": "2026-05-21",
           "last_updated": "2026-05-21",
           "cost": {
-            "input": 1.25,
-            "output": 3.75,
-            "cache_read": 0.25,
-            "cache_write": 1.5625
+            "input": 2.5,
+            "output": 7.5,
+            "cache_read": 0.5,
+            "cache_write": 3.125
           },
           "type": "chat"
         },
@@ -173396,6 +174492,43 @@
           "type": "chat"
         },
         {
+          "id": "anthropic/claude-opus-5-fast",
+          "name": "Claude Opus 5 (Fast)",
+          "display_name": "Claude Opus 5 (Fast)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 10,
+            "output": 50,
+            "cache_read": 1,
+            "cache_write": 12.5
+          },
+          "type": "chat"
+        },
+        {
           "id": "anthropic/claude-sonnet-4",
           "name": "Claude Sonnet 4",
           "display_name": "Claude Sonnet 4",
@@ -173671,6 +174804,48 @@
             "output": 10,
             "cache_read": 0.2,
             "cache_write": 2.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "anthropic/claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -175132,6 +176307,63 @@
           "type": "chat"
         },
         {
+          "id": "openai/gpt-5-codex",
+          "name": "GPT-5-Codex",
+          "display_name": "GPT-5-Codex",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "medium",
+              "effort_options": [
+                "minimal",
+                "low",
+                "medium",
+                "high"
+              ],
+              "verbosity": "medium",
+              "verbosity_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2024-09-30",
+          "release_date": "2025-09-15",
+          "last_updated": "2025-09-15",
+          "cost": {
+            "input": 1.25,
+            "output": 10,
+            "cache_read": 0.125
+          },
+          "type": "chat"
+        },
+        {
           "id": "openai/tts-1-hd",
           "name": "TTS-1 HD",
           "display_name": "TTS-1 HD",
@@ -176584,62 +177816,6 @@
           "type": "chat"
         },
         {
-          "id": "openai/gpt-5-codex",
-          "name": "GPT-5-Codex",
-          "display_name": "GPT-5-Codex",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": true,
-              "mode": "effort",
-              "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
-              "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": false,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-09-15",
-          "last_updated": "2025-09-15",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
-          },
-          "type": "chat"
-        },
-        {
           "id": "openai/gpt-5",
           "name": "GPT-5",
           "display_name": "GPT-5",
@@ -177239,7 +178415,7 @@
           "attachment": false,
           "open_weights": false,
           "release_date": "2026-06-23",
-          "last_updated": "2026-06-16",
+          "last_updated": "2026-06-13",
           "cost": {
             "input": 2.1,
             "output": 6.6,
@@ -177655,7 +178831,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -177676,7 +178853,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -195429,6 +196606,48 @@
           "type": "chat"
         },
         {
+          "id": "claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "type": "chat"
+        },
+        {
           "id": "claude-opus-4-1-20250805",
           "name": "Claude Opus 4.1",
           "display_name": "Claude Opus 4.1",
@@ -197612,7 +198831,8 @@
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ],
             "output": [
               "text"
@@ -197620,7 +198840,7 @@
           },
           "limit": {
             "context": 1000000,
-            "output": 64000
+            "output": 65536
           },
           "temperature": true,
           "tool_call": true,
@@ -197630,10 +198850,16 @@
           },
           "extra_capabilities": {
             "reasoning": {
-              "supported": true
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
@@ -197824,7 +199050,8 @@
           "cost": {
             "input": 0,
             "output": 0,
-            "cache_read": 0
+            "cache_read": 0,
+            "cache_write": 0
           },
           "type": "chat"
         },
@@ -197844,7 +199071,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 32768
+            "output": 98304
           },
           "temperature": true,
           "tool_call": true,
@@ -197966,7 +199193,7 @@
           },
           "limit": {
             "context": 1000000,
-            "output": 65536
+            "output": 131072
           },
           "temperature": true,
           "tool_call": true,
@@ -197976,7 +199203,13 @@
           },
           "extra_capabilities": {
             "reasoning": {
-              "supported": true
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
             }
           },
           "attachment": false,
@@ -198038,7 +199271,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 16384
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -198111,7 +199344,40 @@
           "cost": {
             "input": 0,
             "output": 0,
-            "cache_read": 0
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "happyhorse-1.1-i2v",
+          "name": "HappyHorse 1.1 Image-to-Video",
+          "display_name": "HappyHorse 1.1 Image-to-Video",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "temperature": true,
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "open_weights": false,
+          "release_date": "2026-07-17",
+          "last_updated": "2026-07-17",
+          "cost": {
+            "input": 0,
+            "output": 0
           },
           "type": "chat"
         },
@@ -198147,6 +199413,38 @@
           "knowledge": "2025-01",
           "release_date": "2025-12-03",
           "last_updated": "2025-12-05",
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "happyhorse-1.1-r2v",
+          "name": "HappyHorse 1.1 Reference-to-Video",
+          "display_name": "HappyHorse 1.1 Reference-to-Video",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "temperature": true,
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "open_weights": false,
+          "release_date": "2026-07-17",
+          "last_updated": "2026-07-17",
           "cost": {
             "input": 0,
             "output": 0
@@ -198198,7 +199496,7 @@
           },
           "limit": {
             "context": 196608,
-            "output": 24576
+            "output": 32768
           },
           "temperature": true,
           "tool_call": true,
@@ -198325,6 +199623,37 @@
           "type": "chat"
         },
         {
+          "id": "happyhorse-1.1-t2v",
+          "name": "HappyHorse 1.1 Text-to-Video",
+          "display_name": "HappyHorse 1.1 Text-to-Video",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "temperature": true,
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": false,
+          "open_weights": false,
+          "release_date": "2026-07-17",
+          "last_updated": "2026-07-17",
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "type": "chat"
+        },
+        {
           "id": "qwen-image-2.0",
           "name": "Qwen Image 2.0",
           "display_name": "Qwen Image 2.0",
@@ -198390,7 +199719,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -198897,9 +200226,9 @@
           "release_date": "2026-06-13",
           "last_updated": "2026-06-13",
           "cost": {
-            "input": 1.4,
-            "output": 4.4,
-            "cache_read": 0.7
+            "input": 1.25,
+            "output": 3.95,
+            "cache_read": 0.625
           },
           "type": "chat"
         },
@@ -204104,62 +205433,6 @@
       "doc": "https://platform.openai.com/docs/models",
       "models": [
         {
-          "id": "gpt-5.1-codex-mini",
-          "name": "GPT-5.1 Codex mini",
-          "display_name": "GPT-5.1 Codex mini",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": false
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": false,
-              "mode": "effort",
-              "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
-              "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-11-13",
-          "last_updated": "2025-11-13",
-          "cost": {
-            "input": 0.25,
-            "output": 2,
-            "cache_read": 0.025
-          },
-          "type": "chat"
-        },
-        {
           "id": "gpt-image-2",
           "name": "gpt-image-2",
           "display_name": "gpt-image-2",
@@ -204993,55 +206266,6 @@
           "type": "chat"
         },
         {
-          "id": "o4-mini-deep-research",
-          "name": "o4-mini-deep-research",
-          "display_name": "o4-mini-deep-research",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 100000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": true,
-              "mode": "effort",
-              "effort": "medium",
-              "effort_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-05",
-          "release_date": "2024-06-26",
-          "last_updated": "2024-06-26",
-          "cost": {
-            "input": 2,
-            "output": 8,
-            "cache_read": 0.5
-          },
-          "type": "chat"
-        },
-        {
           "id": "gpt-realtime-2.1",
           "name": "GPT-Realtime-2.1",
           "display_name": "GPT-Realtime-2.1",
@@ -205077,111 +206301,6 @@
             "cache_read": 0.4,
             "input_audio": 32,
             "output_audio": 64
-          },
-          "type": "chat"
-        },
-        {
-          "id": "o3-deep-research",
-          "name": "o3-deep-research",
-          "display_name": "o3-deep-research",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 100000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": true,
-              "mode": "effort",
-              "effort": "medium",
-              "effort_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-05",
-          "release_date": "2024-06-26",
-          "last_updated": "2024-06-26",
-          "cost": {
-            "input": 10,
-            "output": 40,
-            "cache_read": 2.5
-          },
-          "type": "chat"
-        },
-        {
-          "id": "gpt-5-codex",
-          "name": "GPT-5-Codex",
-          "display_name": "GPT-5-Codex",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": true,
-              "mode": "effort",
-              "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
-              "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": false,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-09-15",
-          "last_updated": "2025-09-15",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
           },
           "type": "chat"
         },
@@ -205248,41 +206367,6 @@
           "cost": {
             "input": 5,
             "output": 15
-          },
-          "type": "chat"
-        },
-        {
-          "id": "gpt-5-chat-latest",
-          "name": "GPT-5 Chat (latest)",
-          "display_name": "GPT-5 Chat (latest)",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": true,
-          "tool_call": false,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-08-07",
-          "last_updated": "2025-08-07",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
           },
           "type": "chat"
         },
@@ -205456,63 +206540,6 @@
           "release_date": "2025-11-25",
           "last_updated": "2025-11-25",
           "type": "imageGeneration"
-        },
-        {
-          "id": "gpt-5.2-codex",
-          "name": "GPT-5.2 Codex",
-          "display_name": "GPT-5.2 Codex",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": true,
-              "mode": "effort",
-              "effort": "medium",
-              "effort_options": [
-                "low",
-                "medium",
-                "high",
-                "xhigh"
-              ],
-              "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2025-08-31",
-          "release_date": "2025-12-11",
-          "last_updated": "2025-12-11",
-          "cost": {
-            "input": 1.75,
-            "output": 14,
-            "cache_read": 0.175
-          },
-          "type": "chat"
         },
         {
           "id": "gpt-5.4-nano",
@@ -206225,62 +207252,6 @@
           "type": "chat"
         },
         {
-          "id": "gpt-5.1-codex",
-          "name": "GPT-5.1 Codex",
-          "display_name": "GPT-5.1 Codex",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": false
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": false,
-              "mode": "effort",
-              "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
-              "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-11-13",
-          "last_updated": "2025-11-13",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
-          },
-          "type": "chat"
-        },
-        {
           "id": "gpt-5-nano",
           "name": "GPT-5 Nano",
           "display_name": "GPT-5 Nano",
@@ -206577,62 +207548,6 @@
           "type": "chat"
         },
         {
-          "id": "gpt-5.1-codex-max",
-          "name": "GPT-5.1 Codex Max",
-          "display_name": "GPT-5.1 Codex Max",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 400000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": false
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": false,
-              "mode": "effort",
-              "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
-              "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
-              "visibility": "hidden"
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-11-13",
-          "last_updated": "2025-11-13",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
-          },
-          "type": "chat"
-        },
-        {
           "id": "gpt-4",
           "name": "GPT-4",
           "display_name": "GPT-4",
@@ -206695,41 +207610,6 @@
             "output": 0
           },
           "type": "embedding"
-        },
-        {
-          "id": "gpt-5.1-chat-latest",
-          "name": "GPT-5.1 Chat",
-          "display_name": "GPT-5.1 Chat",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 128000,
-            "output": 16384
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-09-30",
-          "release_date": "2025-11-13",
-          "last_updated": "2025-11-13",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
-          },
-          "type": "chat"
         },
         {
           "id": "text-embedding-3-small",
@@ -239592,6 +240472,37 @@
           "type": "chat"
         },
         {
+          "id": "claude-opus-5",
+          "name": "claude-opus-5",
+          "display_name": "claude-opus-5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 1000000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5
+          },
+          "type": "chat"
+        },
+        {
           "id": "gemini-3.6-flash",
           "name": "gemini-3.6-flash",
           "display_name": "gemini-3.6-flash",
@@ -239639,18 +240550,19 @@
           "type": "chat"
         },
         {
-          "id": "claude-sonnet-5",
-          "name": "claude-sonnet-5",
-          "display_name": "claude-sonnet-5",
+          "id": "kimi-k3",
+          "name": "kimi-k3",
+          "display_name": "kimi-k3",
           "modalities": {
             "input": [
               "text",
-              "image"
+              "image",
+              "video"
             ]
           },
           "limit": {
-            "context": 1000000,
-            "output": 1000000
+            "context": 1048576,
+            "output": 1048576
           },
           "tool_call": true,
           "reasoning": {
@@ -239663,9 +240575,9 @@
             }
           },
           "cost": {
-            "input": 2,
-            "output": 10,
-            "cache_read": 0.2
+            "input": 3,
+            "output": 15,
+            "cache_read": 0.3
           },
           "type": "chat"
         },
@@ -239701,19 +240613,18 @@
           "type": "chat"
         },
         {
-          "id": "kimi-k3",
-          "name": "kimi-k3",
-          "display_name": "kimi-k3",
+          "id": "claude-sonnet-5",
+          "name": "claude-sonnet-5",
+          "display_name": "claude-sonnet-5",
           "modalities": {
             "input": [
               "text",
-              "image",
-              "video"
+              "image"
             ]
           },
           "limit": {
-            "context": 1048576,
-            "output": 1048576
+            "context": 1000000,
+            "output": 1000000
           },
           "tool_call": true,
           "reasoning": {
@@ -239726,9 +240637,9 @@
             }
           },
           "cost": {
-            "input": 3,
-            "output": 15,
-            "cache_read": 0.3
+            "input": 2,
+            "output": 10,
+            "cache_read": 0.2
           },
           "type": "chat"
         },
@@ -239763,6 +240674,50 @@
             "output": 4.675
           },
           "type": "chat"
+        },
+        {
+          "id": "qwen-audio-3.0-tts-flash",
+          "name": "qwen-audio-3.0-tts-flash",
+          "display_name": "qwen-audio-3.0-tts-flash",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 14.2,
+            "output": 14.2
+          }
+        },
+        {
+          "id": "qwen-audio-3.0-tts-plus",
+          "name": "qwen-audio-3.0-tts-plus",
+          "display_name": "qwen-audio-3.0-tts-plus",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 15,
+            "output": 15
+          }
         },
         {
           "id": "gemini-3.1-flash-lite-image",
@@ -243454,6 +244409,120 @@
           "type": "chat"
         },
         {
+          "id": "qwen3.5-27b",
+          "name": "qwen3.5-27b",
+          "display_name": "qwen3.5-27b",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 991000,
+            "output": 991000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "cost": {
+            "input": 0.0846,
+            "output": 0.6768,
+            "cache_read": 0.0846
+          },
+          "type": "chat"
+        },
+        {
+          "id": "qwen3.5-35b-a3b",
+          "name": "qwen3.5-35b-a3b",
+          "display_name": "qwen3.5-35b-a3b",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 991000,
+            "output": 991000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "cost": {
+            "input": 0.0564,
+            "output": 0.4512,
+            "cache_read": 0.0564
+          },
+          "type": "chat"
+        },
+        {
+          "id": "qwen3.5-397b-a17b",
+          "name": "qwen3.5-397b-a17b",
+          "display_name": "qwen3.5-397b-a17b",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 991000,
+            "output": 991000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "cost": {
+            "input": 0.1644,
+            "output": 0.9864,
+            "cache_read": 0.1644
+          },
+          "type": "chat"
+        },
+        {
           "id": "qwen3.5-flash",
           "name": "qwen3.5-flash",
           "display_name": "qwen3.5-flash",
@@ -243737,120 +244806,6 @@
             "input": 0.1126,
             "output": 0.9008,
             "cache_read": 0.1126
-          },
-          "type": "chat"
-        },
-        {
-          "id": "qwen3.5-27b",
-          "name": "qwen3.5-27b",
-          "display_name": "qwen3.5-27b",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ]
-          },
-          "limit": {
-            "context": 991000,
-            "output": 991000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
-            }
-          },
-          "cost": {
-            "input": 0.0846,
-            "output": 0.6768,
-            "cache_read": 0.0846
-          },
-          "type": "chat"
-        },
-        {
-          "id": "qwen3.5-35b-a3b",
-          "name": "qwen3.5-35b-a3b",
-          "display_name": "qwen3.5-35b-a3b",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ]
-          },
-          "limit": {
-            "context": 991000,
-            "output": 991000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
-            }
-          },
-          "cost": {
-            "input": 0.0564,
-            "output": 0.4512,
-            "cache_read": 0.0564
-          },
-          "type": "chat"
-        },
-        {
-          "id": "qwen3.5-397b-a17b",
-          "name": "qwen3.5-397b-a17b",
-          "display_name": "qwen3.5-397b-a17b",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ]
-          },
-          "limit": {
-            "context": 991000,
-            "output": 991000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
-            }
-          },
-          "cost": {
-            "input": 0.1644,
-            "output": 0.9864,
-            "cache_read": 0.1644
           },
           "type": "chat"
         },
@@ -246374,6 +247329,31 @@
           "type": "chat"
         },
         {
+          "id": "grok-4-1-fast-non-reasoning",
+          "name": "grok-4-1-fast-non-reasoning",
+          "display_name": "grok-4-1-fast-non-reasoning",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "context": 2000000,
+            "output": 2000000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0.2,
+            "output": 0.5,
+            "cache_read": 0.05
+          },
+          "type": "chat"
+        },
+        {
           "id": "grok-4-1-fast-reasoning",
           "name": "grok-4-1-fast-reasoning",
           "display_name": "grok-4-1-fast-reasoning",
@@ -246609,31 +247589,6 @@
             "cache_read": 0.3
           },
           "type": "imageGeneration"
-        },
-        {
-          "id": "grok-4-1-fast-non-reasoning",
-          "name": "grok-4-1-fast-non-reasoning",
-          "display_name": "grok-4-1-fast-non-reasoning",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
-          },
-          "limit": {
-            "context": 2000000,
-            "output": 2000000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0.2,
-            "output": 0.5,
-            "cache_read": 0.05
-          },
-          "type": "chat"
         },
         {
           "id": "zai-glm-5-turbo",
@@ -254930,6 +255885,24 @@
           "type": "chat"
         },
         {
+          "id": "deepseek-ai/Janus-Pro-7B",
+          "name": "deepseek-ai/Janus-Pro-7B",
+          "display_name": "deepseek-ai/Janus-Pro-7B",
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 2,
+            "output": 2
+          },
+          "type": "chat"
+        },
+        {
           "id": "glm-zero-preview",
           "name": "glm-zero-preview",
           "display_name": "glm-zero-preview",
@@ -254962,106 +255935,6 @@
           "cost": {
             "input": 0.28,
             "output": 1.4
-          },
-          "type": "chat"
-        },
-        {
-          "id": "deepseek-ai/Janus-Pro-7B",
-          "name": "deepseek-ai/Janus-Pro-7B",
-          "display_name": "deepseek-ai/Janus-Pro-7B",
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 2,
-            "output": 2
-          },
-          "type": "chat"
-        },
-        {
-          "id": "coding-glm-4.5-air",
-          "name": "coding-glm-4.5-air",
-          "display_name": "coding-glm-4.5-air",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0.014,
-            "output": 0.084
-          },
-          "type": "chat"
-        },
-        {
-          "id": "deepinfra-nvidia-nemotron-3-nano-30b-a3b2",
-          "name": "deepinfra-nvidia-nemotron-3-nano-30b-a3b2",
-          "display_name": "deepinfra-nvidia-nemotron-3-nano-30b-a3b2",
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0.066,
-            "output": 0.264
-          },
-          "type": "chat"
-        },
-        {
-          "id": "glm-4.5-air",
-          "name": "glm-4.5-air",
-          "display_name": "glm-4.5-air",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 131072,
-            "output": 131072
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0.14,
-            "output": 0.84
-          },
-          "type": "chat"
-        },
-        {
-          "id": "gpt-4-32k",
-          "name": "gpt-4-32k",
-          "display_name": "gpt-4-32k",
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 60,
-            "output": 120
           },
           "type": "chat"
         },
@@ -255186,6 +256059,88 @@
             "input": 15,
             "output": 60,
             "cache_read": 7.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "glm-4.5-air",
+          "name": "glm-4.5-air",
+          "display_name": "glm-4.5-air",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 131072,
+            "output": 131072
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0.14,
+            "output": 0.84
+          },
+          "type": "chat"
+        },
+        {
+          "id": "gpt-4-32k",
+          "name": "gpt-4-32k",
+          "display_name": "gpt-4-32k",
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 60,
+            "output": 120
+          },
+          "type": "chat"
+        },
+        {
+          "id": "coding-glm-4.5-air",
+          "name": "coding-glm-4.5-air",
+          "display_name": "coding-glm-4.5-air",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0.014,
+            "output": 0.084
+          },
+          "type": "chat"
+        },
+        {
+          "id": "deepinfra-nvidia-nemotron-3-nano-30b-a3b2",
+          "name": "deepinfra-nvidia-nemotron-3-nano-30b-a3b2",
+          "display_name": "deepinfra-nvidia-nemotron-3-nano-30b-a3b2",
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0.066,
+            "output": 0.264
           },
           "type": "chat"
         },
@@ -255953,9 +256908,14 @@
           }
         },
         {
-          "id": "text-curie-001",
-          "name": "text-curie-001",
-          "display_name": "text-curie-001",
+          "id": "tts-1",
+          "name": "tts-1",
+          "display_name": "tts-1",
+          "modalities": {
+            "input": [
+              "audio"
+            ]
+          },
           "limit": {
             "context": 8192,
             "output": 8192
@@ -255965,10 +256925,9 @@
             "supported": false
           },
           "cost": {
-            "input": 2,
-            "output": 2
-          },
-          "type": "chat"
+            "input": 15,
+            "output": 15
+          }
         },
         {
           "id": "text-ada-001",
@@ -255989,9 +256948,9 @@
           "type": "chat"
         },
         {
-          "id": "text-search-ada-doc-001",
-          "name": "text-search-ada-doc-001",
-          "display_name": "text-search-ada-doc-001",
+          "id": "text-curie-001",
+          "name": "text-curie-001",
+          "display_name": "text-curie-001",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -256001,8 +256960,8 @@
             "supported": false
           },
           "cost": {
-            "input": 20,
-            "output": 20
+            "input": 2,
+            "output": 2
           },
           "type": "chat"
         },
@@ -256384,14 +257343,9 @@
           "type": "chat"
         },
         {
-          "id": "tts-1",
-          "name": "tts-1",
-          "display_name": "tts-1",
-          "modalities": {
-            "input": [
-              "audio"
-            ]
-          },
+          "id": "text-search-ada-doc-001",
+          "name": "text-search-ada-doc-001",
+          "display_name": "text-search-ada-doc-001",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -256401,9 +257355,10 @@
             "supported": false
           },
           "cost": {
-            "input": 15,
-            "output": 15
-          }
+            "input": 20,
+            "output": 20
+          },
+          "type": "chat"
         },
         {
           "id": "deepseek-ai/deepseek-llm-67b-chat",
@@ -261588,6 +262543,61 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "anthropic/claude-opus-5-fast",
+          "name": "Claude Opus 5 (Fast)",
+          "display_name": "Claude Opus 5 (Fast)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-sonnet-4",
           "name": "Anthropic: Claude Sonnet 4",
           "display_name": "Anthropic: Claude Sonnet 4",
@@ -261777,7 +262787,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 80000
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -263356,7 +264366,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 8192
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -265196,7 +266206,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 262144
+            "output": 16384
           },
           "temperature": true,
           "tool_call": true,
@@ -265248,8 +266258,8 @@
             ]
           },
           "limit": {
-            "context": 262144,
-            "output": 16384
+            "context": 512288,
+            "output": 512288
           },
           "temperature": true,
           "tool_call": true,
@@ -269315,8 +270325,8 @@
             ]
           },
           "limit": {
-            "context": 262144,
-            "output": 262144
+            "context": 131072,
+            "output": 131072
           },
           "tool_call": true,
           "reasoning": {
@@ -275120,6 +276130,35 @@
           "type": "chat"
         },
         {
+          "id": "claude-opus-5",
+          "name": "claude-opus-5",
+          "display_name": "claude-opus-5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "type": "chat"
+        },
+        {
           "id": "gemini-3.6-flash",
           "name": "gemini-3.6-flash",
           "display_name": "gemini-3.6-flash",
@@ -276371,6 +277410,48 @@
           "cost": {
             "input": 4.2929,
             "output": 21.4646
+          },
+          "type": "chat"
+        },
+        {
+          "id": "anthropic/claude-opus-5",
+          "name": "Anthropic: Claude Opus 5",
+          "display_name": "Anthropic: Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -277698,8 +278779,9 @@
           },
           "attachment": false,
           "open_weights": false,
+          "knowledge": "2025-11",
           "release_date": "2026-03-10",
-          "last_updated": "2026-03-23",
+          "last_updated": "2026-04-22",
           "type": "embedding"
         },
         {
@@ -280752,7 +281834,7 @@
               ]
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-04-02",
@@ -280833,7 +281915,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "knowledge": "2025-04",
           "release_date": "2026-06-02",
