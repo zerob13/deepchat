@@ -4624,6 +4624,134 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(statusPayloads[1]).toMatchObject({ sessionId: 's1', status: 'idle' })
     })
 
+    it('publishes each status transition through the four projection sinks in order', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      publishDeepchatEvent.mockClear()
+      vi.mocked(runtimeDependencies.publishSessionUpdate).mockClear()
+      vi.mocked(runtimeDependencies.sessionUiPort.refreshSessionUi).mockClear()
+
+      await agent.processMessage('s1', 'Hello')
+
+      const projectionOrder = [
+        ...publishDeepchatEvent.mock.calls.flatMap(([event, payload], index) => {
+          if (event === 'sessions.status.changed') {
+            return [
+              {
+                order: publishDeepchatEvent.mock.invocationCallOrder[index],
+                label: `status:${payload.status}`
+              }
+            ]
+          }
+          if (event === 'sessions.updated') {
+            return [
+              {
+                order: publishDeepchatEvent.mock.invocationCallOrder[index],
+                label: 'sessions.updated'
+              }
+            ]
+          }
+          return []
+        }),
+        ...vi.mocked(runtimeDependencies.publishSessionUpdate).mock.calls.map(([update], index) => ({
+          order: vi.mocked(runtimeDependencies.publishSessionUpdate).mock.invocationCallOrder[index],
+          label: `session-update:${update.status}`
+        })),
+        ...vi.mocked(runtimeDependencies.sessionUiPort.refreshSessionUi).mock.calls.map(
+          (_call, index) => ({
+            order: vi.mocked(runtimeDependencies.sessionUiPort.refreshSessionUi).mock
+              .invocationCallOrder[index],
+            label: 'refresh-ui'
+          })
+        )
+      ]
+        .sort((left, right) => left.order - right.order)
+        .map(({ label }) => label)
+
+      expect(projectionOrder).toEqual([
+        'status:generating',
+        'sessions.updated',
+        'session-update:generating',
+        'refresh-ui',
+        'status:idle',
+        'sessions.updated',
+        'session-update:idle',
+        'refresh-ui'
+      ])
+    })
+
+    it.each([
+      { resultStatus: 'completed', stopReason: 'complete', expectedStatus: 'idle' },
+      { resultStatus: 'error', stopReason: 'error', expectedStatus: 'error' },
+      { resultStatus: 'aborted', stopReason: 'user_stop', expectedStatus: 'idle' },
+      { resultStatus: 'paused', stopReason: 'interaction', expectedStatus: 'generating' }
+    ] as const)(
+      'observes a returned $resultStatus initial turn exactly once after status projection',
+      async ({ resultStatus, stopReason, expectedStatus }) => {
+        ;(processStream as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          status: resultStatus,
+          stopReason
+        })
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        const afterTurnSettled = vi.spyOn(agent.memoryIngestionObserver, 'afterTurnSettled')
+        publishDeepchatEvent.mockClear()
+
+        await agent.processMessage('s1', `Return ${resultStatus}`)
+
+        expect(afterTurnSettled).toHaveBeenCalledOnce()
+        expect(afterTurnSettled).toHaveBeenCalledWith({
+          session: expect.anything(),
+          origin: 'initial',
+          outcome: { kind: 'returned', status: resultStatus }
+        })
+        expect((await agent.getSessionState('s1'))?.status).toBe(expectedStatus)
+        const lastStatusProjectionOrder = Math.max(
+          ...publishDeepchatEvent.mock.calls.flatMap(([event], index) =>
+            event === 'sessions.status.changed'
+              ? [publishDeepchatEvent.mock.invocationCallOrder[index]]
+              : []
+          )
+        )
+        expect(lastStatusProjectionOrder).toBeLessThan(
+          afterTurnSettled.mock.invocationCallOrder[0]
+        )
+      }
+    )
+
+    it.each([
+      { errorName: 'Error', expectedStatus: 'error' },
+      { errorName: 'AbortError', expectedStatus: 'idle' }
+    ] as const)(
+      'observes a thrown $errorName initial turn exactly once before terminal projection',
+      async ({ errorName, expectedStatus }) => {
+        const failure = new Error(`initial ${errorName}`)
+        failure.name = errorName
+        ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure)
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        const afterTurnSettled = vi.spyOn(agent.memoryIngestionObserver, 'afterTurnSettled')
+        publishDeepchatEvent.mockClear()
+
+        await agent.processMessage('s1', `Throw ${errorName}`)
+
+        expect(afterTurnSettled).toHaveBeenCalledOnce()
+        expect(afterTurnSettled).toHaveBeenCalledWith({
+          session: expect.anything(),
+          origin: 'initial',
+          outcome: { kind: 'thrown', error: failure }
+        })
+        expect((await agent.getSessionState('s1'))?.status).toBe(expectedStatus)
+        const terminalProjectionOrder = publishDeepchatEvent.mock.calls.reduce(
+          (latest, [event, payload], index) =>
+            event === 'sessions.status.changed' && payload.status === expectedStatus
+              ? publishDeepchatEvent.mock.invocationCallOrder[index]
+              : latest,
+          0
+        )
+        expect(afterTurnSettled.mock.invocationCallOrder[0]).toBeLessThan(
+          terminalProjectionOrder
+        )
+      }
+    )
+
     it('transitions to error status on exception', async () => {
       ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('LLM failed'))
 
@@ -7333,25 +7461,52 @@ describe('DeepChatRuntimeCoordinator', () => {
       )
     })
 
-    it('rewinds the memory cursor when rolling back a claimed pending input turn', () => {
-      sqlitePresenter.deepchatSessionsTable.updateMemoryCursorOrderSeq('s1', 8)
-      sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mockClear()
-      sqlitePresenter.deepchatMessagesTable.get.mockReturnValue(
-        makeDeepchatUserRow(5, 'pending text', 'pending-user')
-      )
-      const releaseSpy = vi
-        .spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
-        .mockImplementation(() => ({}) as any)
+    it.each(['queue', 'steer'] as const)(
+      'rolls back transcript and Memory before releasing a claimed $source input',
+      (source) => {
+        sqlitePresenter.deepchatSessionsTable.updateMemoryCursorOrderSeq('s1', 8)
+        sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mockClear()
+        sqlitePresenter.deepchatMessagesTable.get.mockReturnValue(
+          makeDeepchatUserRow(5, 'pending text', 'pending-user')
+        )
+        const payload = { text: 'pending text', files: [] }
+        const pending =
+          source === 'queue'
+            ? sessionData.pendingInputs.queuePendingInput('s1', payload)
+            : sessionData.pendingInputs.queueSteerInput('s1', payload)
+        const claimed =
+          source === 'queue'
+            ? sessionData.pendingInputs.claimQueuedInput('s1', pending.id)
+            : sessionData.pendingInputs.claimSteerInput('s1', pending.id)
+        const releaseSpy =
+          source === 'queue'
+            ? vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
+            : vi.spyOn(sessionData.pendingInputs, 'releaseClaimedInput')
 
-      agent.rollbackClaimedPendingInputTurn('s1', 'pending-1', 'queue', 'pending-user')
+        agent.rollbackClaimedPendingInputTurn('s1', claimed.id, source, 'pending-user')
 
-      expect(sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq).toHaveBeenCalledWith(
-        's1',
-        4
-      )
-      expect(sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq).toHaveBeenCalledWith('s1', 5)
-      expect(releaseSpy).toHaveBeenCalledWith('s1', 'pending-1')
-    })
+        expect(
+          sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq
+        ).toHaveBeenCalledWith('s1', 4)
+        expect(sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq).toHaveBeenCalledWith(
+          's1',
+          5
+        )
+        expect(releaseSpy).toHaveBeenCalledWith('s1', claimed.id)
+        expect(sessionData.pendingInputs.listPendingInputs('s1')).toEqual([
+          expect.objectContaining({ id: claimed.id, mode: source, state: 'pending' })
+        ])
+        expect(
+          sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mock
+            .invocationCallOrder[0]
+        ).toBeLessThan(
+          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
+        )
+        expect(
+          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
+        ).toBeLessThan(releaseSpy.mock.invocationCallOrder[0])
+      }
+    )
   })
 
   describe('session compaction state', () => {
@@ -9374,6 +9529,86 @@ describe('DeepChatRuntimeCoordinator', () => {
       setRuntimeStatus(agent, 's1', 'generating')
       return { instance, run, abortController, streamState }
     }
+
+    it.each([
+      { resultStatus: 'completed', stopReason: 'complete', expectedStatus: 'idle' },
+      { resultStatus: 'error', stopReason: 'error', expectedStatus: 'error' },
+      { resultStatus: 'aborted', stopReason: 'user_stop', expectedStatus: 'idle' },
+      { resultStatus: 'paused', stopReason: 'interaction', expectedStatus: 'generating' }
+    ] as const)(
+      'observes a returned $resultStatus resume exactly once after status projection',
+      async ({ resultStatus, stopReason, expectedStatus }) => {
+        ;(processStream as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+          status: resultStatus,
+          stopReason
+        })
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        installPendingQuestion()
+        const afterTurnSettled = vi.spyOn(agent.memoryIngestionObserver, 'afterTurnSettled')
+        publishDeepchatEvent.mockClear()
+
+        await expect(answerPendingQuestion()).resolves.toEqual({ resumed: true })
+
+        expect(afterTurnSettled).toHaveBeenCalledOnce()
+        expect(afterTurnSettled).toHaveBeenCalledWith({
+          session: expect.anything(),
+          origin: 'resume',
+          outcome: { kind: 'returned', status: resultStatus }
+        })
+        expect((await agent.getSessionState('s1'))?.status).toBe(expectedStatus)
+        const lastStatusProjectionOrder = Math.max(
+          ...publishDeepchatEvent.mock.calls.flatMap(([event], index) =>
+            event === 'sessions.status.changed'
+              ? [publishDeepchatEvent.mock.invocationCallOrder[index]]
+              : []
+          )
+        )
+        expect(lastStatusProjectionOrder).toBeLessThan(
+          afterTurnSettled.mock.invocationCallOrder[0]
+        )
+      }
+    )
+
+    it.each([
+      { errorName: 'Error', expectedStatus: 'error', expectsCancellationResult: false },
+      { errorName: 'AbortError', expectedStatus: 'idle', expectsCancellationResult: true }
+    ] as const)(
+      'observes a thrown $errorName resume exactly once before terminal projection',
+      async ({ errorName, expectedStatus, expectsCancellationResult }) => {
+        const failure = new Error(`resume ${errorName}`)
+        failure.name = errorName
+        ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure)
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        installPendingQuestion()
+        const afterTurnSettled = vi.spyOn(agent.memoryIngestionObserver, 'afterTurnSettled')
+        publishDeepchatEvent.mockClear()
+
+        const response = answerPendingQuestion()
+        if (expectsCancellationResult) {
+          await expect(response).resolves.toEqual({ resumed: false })
+        } else {
+          await expect(response).rejects.toBe(failure)
+        }
+
+        expect(afterTurnSettled).toHaveBeenCalledOnce()
+        expect(afterTurnSettled).toHaveBeenCalledWith({
+          session: expect.anything(),
+          origin: 'resume',
+          outcome: { kind: 'thrown', error: failure }
+        })
+        expect((await agent.getSessionState('s1'))?.status).toBe(expectedStatus)
+        const terminalProjectionOrder = publishDeepchatEvent.mock.calls.reduce(
+          (latest, [event, payload], index) =>
+            event === 'sessions.status.changed' && payload.status === expectedStatus
+              ? publishDeepchatEvent.mock.invocationCallOrder[index]
+              : latest,
+          0
+        )
+        expect(afterTurnSettled.mock.invocationCallOrder[0]).toBeLessThan(
+          terminalProjectionOrder
+        )
+      }
+    )
 
     it('assembles resume context after compaction and preserves base-only round refresh', async () => {
       const order: string[] = []
