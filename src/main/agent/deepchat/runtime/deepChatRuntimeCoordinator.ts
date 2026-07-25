@@ -29,10 +29,8 @@ import {
   type MemoryIngestionProjection
 } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
-import type {
-  DeepChatAgentInstance,
-  DeepChatAgentInstanceDelegate
-} from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type { AgentSessionSendInput } from '@/agent/shared/agentSessionHandle'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { CompactionService } from './compactionService'
 import type { SessionData } from '@/session/data'
@@ -162,9 +160,7 @@ export class DeepChatRuntimeCoordinator {
     this.messageStore = sessionData.transcript
     this.tapeService = sessionData.tapeStore
     const pendingInputCoordinator = sessionData.pendingInputs
-    this.deepChatRuntime = new DeepChatAgentRuntime((sessionId) =>
-      this.createDeepChatInstanceDelegate(sessionId)
-    )
+    this.deepChatRuntime = new DeepChatAgentRuntime()
     this.sessionIdentity = new SessionIdentityService({
       registry: this.deepChatRuntime,
       database: sqlitePresenter
@@ -502,26 +498,20 @@ export class DeepChatRuntimeCoordinator {
     return this.deepChatRuntime.getOrHydrate(toAppSessionId(sessionId))
   }
 
-  private createDeepChatInstanceDelegate(sessionId: string): DeepChatAgentInstanceDelegate {
-    return {
-      send: async (input) => {
-        if (input.queue) {
-          return await this.pendingInputAdmission.sendQueuedMessage(
-            sessionId,
-            input.content,
-            input.queue,
-            input.context
-          )
-        }
-        return await this.processMessage(sessionId, input.content, input.context)
-      },
-      cancel: async () => await this.cancelGeneration(sessionId),
-      snapshot: async (options) =>
-        options?.lightweight
-          ? await this.getSessionListState(sessionId)
-          : await this.getSessionState(sessionId),
-      close: async () => await this.destroySession(sessionId)
+  async send(sessionId: string, input: AgentSessionSendInput): Promise<MessageStartResult> {
+    if (input.queue) {
+      return await this.pendingInputAdmission.sendQueuedMessage(
+        sessionId,
+        input.content,
+        input.queue,
+        input.context
+      )
     }
+    return await this.processMessage(sessionId, input.content, input.context)
+  }
+
+  cleanupSession(sessionId: string): Promise<void> {
+    return this.sessionLifecycle.cleanup(sessionId)
   }
 
   initSession(

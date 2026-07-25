@@ -19,13 +19,6 @@ import {
 
 const SESSION_ID = 'session'
 
-const createDelegate = () => ({
-  send: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  cancel: vi.fn().mockResolvedValue(undefined),
-  snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),
-  close: vi.fn().mockResolvedValue(undefined)
-})
-
 function createState(status: DeepChatSessionState['status'] = 'idle'): DeepChatSessionState {
   return {
     status,
@@ -84,7 +77,7 @@ function createMessage(
 }
 
 function createHarness(initialMessages: ChatMessageRecord[] = []) {
-  const runtime = new DeepChatAgentRuntime(() => createDelegate())
+  const runtime = new DeepChatAgentRuntime()
   const messages = [...initialMessages]
   const statusPorts: SessionStatusPublisherPorts = {
     publishEvent: vi.fn(),

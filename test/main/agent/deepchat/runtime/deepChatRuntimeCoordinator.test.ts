@@ -2669,7 +2669,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       await firstProcess
       await new Promise((resolve) => setTimeout(resolve, 0))
 
-      await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      await agent.send('s1', {
         content: { text: 'Must remain second', files: [] },
         queue: { source: 'send' }
       })
@@ -6650,7 +6650,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       }))
       runtimeDependencies.attachmentRouter.prepare = prepare
 
-      const result = await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      const result = await agent.send('s1', {
         content: {
           text: '',
           files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
@@ -6679,7 +6679,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       const prepare = vi.fn(async ({ content }) => ({ content, summary }))
       runtimeDependencies.attachmentRouter.prepare = prepare
 
-      const result = await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      const result = await agent.send('s1', {
         content: {
           text: '',
           files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
@@ -6715,8 +6715,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       ;(nanoid as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce('send-first')
         .mockReturnValueOnce('send-second')
-      const runtime = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
-      const first = runtime.send({
+      const first = agent.send('s1', {
         content: {
           text: 'first',
           files: [{ name: 'slow.png', path: '/tmp/slow.png', mimeType: 'image/png' }]
@@ -6724,7 +6723,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         queue: { source: 'send' }
       })
       await firstStarted.promise
-      const second = runtime.send({
+      const second = agent.send('s1', {
         content: {
           text: 'second',
           files: [{ name: 'fast.png', path: '/tmp/fast.png', mimeType: 'image/png' }]
@@ -6762,22 +6761,21 @@ describe('DeepChatRuntimeCoordinator', () => {
       ;(nanoid as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce('send-first')
         .mockReturnValueOnce('send-third')
-      const runtime = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
       const imageFile = { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
-      const first = runtime.send({
+      const first = agent.send('s1', {
         content: { text: 'first', files: [imageFile] },
         queue: { source: 'send' }
       })
       await firstStarted.promise
       const cancelledController = new AbortController()
-      const cancelled = runtime.send({
+      const cancelled = agent.send('s1', {
         content: { text: 'cancelled', files: [imageFile] },
         context: { signal: cancelledController.signal },
         queue: { source: 'send' }
       })
       cancelledController.abort()
       await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
-      const third = runtime.send({
+      const third = agent.send('s1', {
         content: { text: 'third', files: [imageFile] },
         queue: { source: 'send' }
       })
@@ -6853,7 +6851,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         )
       runtimeDependencies.attachmentRouter.prepare = prepare
 
-      const accepted = await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      const accepted = await agent.send('s1', {
         content: {
           text: '',
           files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]

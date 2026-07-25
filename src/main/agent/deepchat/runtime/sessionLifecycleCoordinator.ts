@@ -49,7 +49,7 @@ export interface SessionLifecycleCoordinatorDependencies {
   >
   runLifecycle: Pick<
     RunLifecycleCoordinator,
-    'clearFirstTurnReady' | 'cancelScopeOperations' | 'scopeFor'
+    'cancel' | 'clearFirstTurnReady' | 'cancelScopeOperations' | 'scopeFor'
   >
 }
 
@@ -92,6 +92,25 @@ export class SessionLifecycleCoordinator {
     this.deps.memory.initializeSession(sessionId)
     this.deps.runLifecycle.clearFirstTurnReady(sessionId)
     instance.invalidateToolProfileCache()
+  }
+
+  /**
+   * Releases runtime state without deleting durable session facts. Used when the app suspends or a
+   * backend hands the session off, so the next access rehydrates from persisted data.
+   */
+  async cleanup(sessionId: string): Promise<void> {
+    const instance = this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
+    if (!instance) {
+      return
+    }
+    try {
+      await this.deps.runLifecycle.cancel(sessionId)
+    } finally {
+      instance.clearOwnedState()
+      if (this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance === instance) {
+        this.deps.registry.evict(toAppSessionId(sessionId))
+      }
+    }
   }
 
   async destroy(sessionId: string): Promise<void> {

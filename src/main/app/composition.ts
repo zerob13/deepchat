@@ -2212,7 +2212,7 @@ export async function createMainProcessControl(dependencies: {
       appSessionService.list({ includeSubagents: true }).map(async (session) => {
         const sessionId = toAppSessionId(session.id)
         await Promise.all([
-          deepChatRuntimeCoordinator.deepChatRuntime.cleanupSession(sessionId),
+          deepChatRuntimeCoordinator.cleanupSession(sessionId),
           acpAgentRuntime.cleanupSession(sessionId)
         ])
       })

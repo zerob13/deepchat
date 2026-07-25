@@ -22,13 +22,6 @@ import type {
 
 const SESSION_ID = 'session'
 
-const createDelegate = () => ({
-  send: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  cancel: vi.fn().mockResolvedValue(undefined),
-  snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),
-  close: vi.fn().mockResolvedValue(undefined)
-})
-
 function createState(status: DeepChatSessionState['status'] = 'idle'): DeepChatSessionState {
   return {
     status,
@@ -207,7 +200,7 @@ function createHarness(
   inputs: PendingSessionInputRecord[],
   start?: PendingInputPumpPorts['turnStarter']['start']
 ) {
-  const runtime = new DeepChatAgentRuntime(() => createDelegate())
+  const runtime = new DeepChatAgentRuntime()
   const scope = runtime.getOrHydrateScope(toAppSessionId(SESSION_ID))
   scope.instance.setRuntimeState(createState())
   const pendingInputs = createPendingInputStore(inputs)

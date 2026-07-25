@@ -16,13 +16,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const SESSION_ID = 'session'
 
-const createDelegate = () => ({
-  send: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  cancel: vi.fn().mockResolvedValue(undefined),
-  snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),
-  close: vi.fn().mockResolvedValue(undefined)
-})
-
 function createRuntimeState(
   status: DeepChatSessionState['status'] = 'idle'
 ): DeepChatSessionState {
@@ -99,7 +92,7 @@ function createHarness(options?: {
   sessionExists?: boolean
   state?: DeepChatSessionState
 }) {
-  const runtime = new DeepChatAgentRuntime(() => createDelegate())
+  const runtime = new DeepChatAgentRuntime()
   const shouldHydrate = options?.hydrate !== false
   const initialInstance = shouldHydrate
     ? runtime.getOrHydrate(toAppSessionId(SESSION_ID))

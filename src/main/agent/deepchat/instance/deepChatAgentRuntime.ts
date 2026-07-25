@@ -1,6 +1,6 @@
 import type { AppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatSessionState } from '@shared/types/agent-interface'
-import { DeepChatAgentInstance, type DeepChatAgentInstanceDelegate } from './deepChatAgentInstance'
+import { DeepChatAgentInstance } from './deepChatAgentInstance'
 
 export const STALE_DEEPCHAT_INSTANCE_ERROR_NAME = 'StaleDeepChatAgentInstanceError'
 
@@ -23,10 +23,6 @@ export interface SessionRuntimeScope {
   assertCurrent(): void
 }
 
-export type DeepChatAgentInstanceHydrator = (
-  sessionId: AppSessionId
-) => DeepChatAgentInstanceDelegate
-
 /**
  * Instance access and staleness fencing are registry reads. Owners that only need them take this
  * narrow view instead of routing four separate callbacks through the composition root.
@@ -41,21 +37,11 @@ export class DeepChatAgentRuntime {
   private readonly scopes = new WeakMap<DeepChatAgentInstance, SessionRuntimeScope>()
   private toolRegistryRevision = 0
 
-  constructor(private readonly hydrateInstance: DeepChatAgentInstanceHydrator) {}
-
   getOrHydrate(sessionId: AppSessionId): DeepChatAgentInstance {
     const current = this.instances.get(sessionId)
     if (current) return current
 
-    const instance = new DeepChatAgentInstance(
-      sessionId,
-      this.hydrateInstance(sessionId),
-      (closedInstance) => {
-        if (this.instances.get(sessionId) === closedInstance) {
-          this.instances.delete(sessionId)
-        }
-      }
-    )
+    const instance = new DeepChatAgentInstance(sessionId)
     this.instances.set(sessionId, instance)
     return instance
   }
@@ -100,21 +86,6 @@ export class DeepChatAgentRuntime {
 
   evict(sessionId: AppSessionId): boolean {
     return this.instances.delete(sessionId)
-  }
-
-  async dispose(sessionId: AppSessionId): Promise<void> {
-    await this.instances.get(sessionId)?.close()
-  }
-
-  async cleanupSession(sessionId: AppSessionId): Promise<void> {
-    const instance = this.instances.get(sessionId)
-    if (!instance) return
-    try {
-      await instance.cancel()
-    } finally {
-      instance.clearOwnedState()
-      if (this.instances.get(sessionId) === instance) this.instances.delete(sessionId)
-    }
   }
 
   getToolRegistryRevision(): number {

@@ -59,7 +59,7 @@
 - [x] Replace remaining owner callbacks with concrete collaborators and compose the six Tape
       capabilities into one domain port.
 - [x] Introduce the named pending-input wakeup binding and remove every other deferred wiring.
-- [ ] Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `dispose()`; route manager
+- [x] Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `dispose()`; route manager
       backend send, cancel, snapshot, and close through the harness port.
 - [ ] Add the composition factory and the facade implementing the existing manager and session
       contracts.

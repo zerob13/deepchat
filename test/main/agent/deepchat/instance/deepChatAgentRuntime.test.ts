@@ -19,13 +19,6 @@ const TOOL_DEFINITION: MCPToolDefinition = {
   server: { name: 'agent-filesystem', icons: '', description: '' }
 }
 
-const createDelegate = () => ({
-  send: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  cancel: vi.fn().mockResolvedValue(undefined),
-  snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),
-  close: vi.fn().mockResolvedValue(undefined)
-})
-
 function createRun(
   sessionId: string,
   runId: string,
@@ -45,8 +38,7 @@ function createRun(
 
 describe('DeepChatAgentRuntime', () => {
   it('hydrates one stable instance per app session', () => {
-    const hydrate = vi.fn(() => createDelegate())
-    const runtime = new DeepChatAgentRuntime(hydrate)
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
 
     const first = runtime.getOrHydrate(sessionId)
@@ -55,16 +47,15 @@ describe('DeepChatAgentRuntime', () => {
 
     expect(first).toBe(second)
     expect(other).not.toBe(first)
-    expect(hydrate).toHaveBeenCalledTimes(2)
+    expect(first.sessionId).toBe(sessionId)
+    expect(other.sessionId).toBe(toAppSessionId('other'))
   })
 
   it('creates a minimal current scope over the registered instance state', () => {
-    const hydrate = vi.fn(() => createDelegate())
-    const runtime = new DeepChatAgentRuntime(hydrate)
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
 
     expect(runtime.getHydratedScope(sessionId)).toBeUndefined()
-    expect(hydrate).not.toHaveBeenCalled()
 
     const scope = runtime.getOrHydrateScope(sessionId)
     scope.instance.setRuntimeState({
@@ -85,7 +76,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('fences evicted and mismatched scopes with the stable stale-instance identity', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
     const otherSessionId = toAppSessionId('other')
     const instance = runtime.getOrHydrate(sessionId)
@@ -110,72 +101,27 @@ describe('DeepChatAgentRuntime', () => {
     }
   })
 
-  it('delegates the legacy façade and rehydrates only after close', async () => {
-    const delegates: ReturnType<typeof createDelegate>[] = []
-    const runtime = new DeepChatAgentRuntime(() => {
-      const delegate = createDelegate()
-      delegates.push(delegate)
-      return delegate
-    })
+  it('exposes runtime state only, with no orchestration surface on the instance', () => {
+    const runtime = new DeepChatAgentRuntime()
+    const instance = runtime.getOrHydrate(toAppSessionId('session'))
+
+    for (const orchestration of ['send', 'cancel', 'snapshot', 'close']) {
+      expect(instance).not.toHaveProperty(orchestration)
+    }
+  })
+
+  it('replaces an evicted instance on the next hydration', () => {
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
     const instance = runtime.getOrHydrate(sessionId)
 
-    await expect(instance.send({ content: 'hello' })).resolves.toEqual({
-      requestId: 'request',
-      messageId: 'message'
-    })
-    await instance.cancel()
-    await expect(instance.snapshot({ lightweight: true })).resolves.toEqual({ status: 'idle' })
-    await instance.close()
-
-    expect(delegates[0].send).toHaveBeenCalledWith({ content: 'hello' })
-    expect(delegates[0].cancel).toHaveBeenCalledTimes(1)
-    expect(delegates[0].snapshot).toHaveBeenCalledWith({ lightweight: true })
-    expect(delegates[0].close).toHaveBeenCalledTimes(1)
-    expect(runtime.getOrHydrate(sessionId)).not.toBe(instance)
-    expect(delegates).toHaveLength(2)
-  })
-
-  it('supports explicit eviction and disposal without creating an instance', async () => {
-    const delegate = createDelegate()
-    const hydrate = vi.fn(() => delegate)
-    const runtime = new DeepChatAgentRuntime(hydrate)
-    const sessionId = toAppSessionId('session')
-
-    await runtime.dispose(sessionId)
-    expect(hydrate).not.toHaveBeenCalled()
-
-    runtime.getOrHydrate(sessionId)
     expect(runtime.evict(sessionId)).toBe(true)
-    expect(delegate.close).not.toHaveBeenCalled()
-  })
-
-  it('cleans only an already hydrated instance without invoking its shared-state close', async () => {
-    const delegate = createDelegate()
-    const hydrate = vi.fn(() => delegate)
-    const runtime = new DeepChatAgentRuntime(hydrate)
-    const sessionId = toAppSessionId('session')
-
-    await runtime.cleanupSession(sessionId)
-    expect(hydrate).not.toHaveBeenCalled()
-
-    const instance = runtime.getOrHydrate(sessionId)
-    instance.setRuntimeState({
-      status: 'idle',
-      providerId: 'openai',
-      modelId: 'gpt-5',
-      permissionMode: 'full_access'
-    })
-    await runtime.cleanupSession(sessionId)
-
-    expect(delegate.cancel).toHaveBeenCalledOnce()
-    expect(delegate.close).not.toHaveBeenCalled()
-    expect(instance.getRuntimeState()).toBeUndefined()
-    expect(runtime.getHydrated(sessionId)).toBeUndefined()
+    expect(runtime.evict(sessionId)).toBe(false)
+    expect(runtime.getOrHydrate(sessionId)).not.toBe(instance)
   })
 
   it('reads only already hydrated instances without creating a shell', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
 
     expect(runtime.getHydrated(sessionId)).toBeUndefined()
@@ -186,7 +132,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('isolates identity, settings, status, project and readiness by session', async () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const first = runtime.getOrHydrate(toAppSessionId('first'))
     const second = runtime.getOrHydrate(toAppSessionId('second'))
 
@@ -224,7 +170,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('reuses an owned preparation controller for the active generation', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const instance = runtime.getOrHydrate(toAppSessionId('session'))
     const controller = new AbortController()
 
@@ -244,7 +190,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('aborts the previous active generation before replacing it', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const instance = runtime.getOrHydrate(toAppSessionId('session'))
     const firstController = new AbortController()
     const replacementController = new AbortController()
@@ -260,7 +206,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('aborts an owned preparation controller when a different active run replaces it', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const instance = runtime.getOrHydrate(toAppSessionId('session'))
     const preparationController = new AbortController()
     const activeController = new AbortController()
@@ -276,7 +222,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('aborts pre-stream work immediately but retains an active run until settlement', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const first = runtime.getOrHydrate(toAppSessionId('first'))
     const second = runtime.getOrHydrate(toAppSessionId('second'))
     const preStreamController = new AbortController()
@@ -299,7 +245,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('isolates pending drain and steer merge state by instance', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const first = runtime.getOrHydrate(toAppSessionId('first'))
     const second = runtime.getOrHydrate(toAppSessionId('second'))
 
@@ -322,7 +268,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('owns ordered interactions and per-session response guards', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const first = runtime.getOrHydrate(toAppSessionId('first'))
     const second = runtime.getOrHydrate(toAppSessionId('second'))
 
@@ -386,7 +332,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('owns deferred tool cancellation and live provider permissions', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const first = runtime.getOrHydrate(toAppSessionId('first'))
     const second = runtime.getOrHydrate(toAppSessionId('second'))
     const staleController = first.registerDeferredToolAbortController('tool')
@@ -419,7 +365,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('owns isolated runtime skill selections and tool caches', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const first = runtime.getOrHydrate(toAppSessionId('first'))
     const second = runtime.getOrHydrate(toAppSessionId('second'))
 
@@ -440,7 +386,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('owns isolated compaction projections and stable legacy memory handles', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('first')
     const first = runtime.getOrHydrate(sessionId)
     const second = runtime.getOrHydrate(toAppSessionId('second'))
@@ -472,7 +418,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('invalidates tool revisions and clears only the owning instance lifecycle', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
     const staleInstance = runtime.getOrHydrate(sessionId)
     const other = runtime.getOrHydrate(toAppSessionId('other'))
@@ -501,7 +447,7 @@ describe('DeepChatAgentRuntime', () => {
   })
 
   it('does not let a stale drain completion clear a rehydrated instance', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
     const staleInstance = runtime.getOrHydrate(sessionId)
     const staleLease = staleInstance.tryAcquirePendingQueueDrain()

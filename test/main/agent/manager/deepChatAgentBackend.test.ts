@@ -1,42 +1,54 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DeepChatAgentBackendPort } from '@/agent/manager/deepChatAgentBackend'
+import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { createDeepChatAgentBackendFixture } from './deepChatAgentBackendFixture'
 
-const createPort = (): DeepChatAgentBackendPort => ({
-  initSession: vi.fn().mockResolvedValue(undefined),
-  processMessage: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  queuePendingInput: vi.fn().mockResolvedValue({}),
-  cancelGeneration: vi.fn().mockResolvedValue(undefined),
-  destroySession: vi.fn().mockResolvedValue(undefined),
-  getSessionState: vi
-    .fn()
-    .mockResolvedValue({ status: 'idle', providerId: 'openai', modelId: 'model' }),
-  getSessionListState: vi
-    .fn()
-    .mockResolvedValue({ status: 'generating', providerId: 'openai', modelId: 'model' }),
-  waitForFirstTurnReady: vi.fn().mockResolvedValue(true),
-  listPendingInputs: vi.fn().mockResolvedValue([]),
-  steerActiveTurn: vi.fn().mockResolvedValue({ requestId: null, messageId: null }),
-  updateQueuedInput: vi.fn().mockResolvedValue({}),
-  moveQueuedInput: vi.fn().mockResolvedValue([]),
-  convertPendingInputToSteer: vi.fn().mockResolvedValue({}),
-  steerPendingInput: vi.fn().mockResolvedValue({}),
-  resolveBlockedPendingInput: vi.fn().mockResolvedValue({}),
-  deletePendingInput: vi.fn().mockResolvedValue(undefined),
-  getPermissionMode: vi.fn().mockResolvedValue('full_access'),
-  setPermissionMode: vi.fn().mockResolvedValue(undefined),
-  getGenerationSettings: vi.fn().mockResolvedValue(null),
-  updateGenerationSettings: vi.fn().mockResolvedValue({}),
-  setSessionProjectDir: vi.fn().mockResolvedValue(undefined),
-  respondToolInteraction: vi.fn().mockResolvedValue({ resumed: false }),
-  setSessionAgentContext: vi.fn().mockResolvedValue(undefined),
-  setSessionModel: vi.fn().mockResolvedValue(undefined),
-  getSessionCompactionState: vi.fn().mockResolvedValue({}),
-  compactSession: vi.fn().mockResolvedValue({ compacted: false, state: {} }),
-  getActiveGeneration: vi.fn().mockReturnValue({ eventId: 'message', runId: 'run' }),
-  cancelGenerationByEventId: vi.fn().mockResolvedValue(true)
-})
+const createPort = (): DeepChatAgentBackendPort => {
+  const port: DeepChatAgentBackendPort = {
+    initSession: vi.fn().mockResolvedValue(undefined),
+    processMessage: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
+    queuePendingInput: vi.fn().mockResolvedValue({}),
+    cancelGeneration: vi.fn().mockResolvedValue(undefined),
+    destroySession: vi.fn().mockResolvedValue(undefined),
+    getSessionState: vi
+      .fn()
+      .mockResolvedValue({ status: 'idle', providerId: 'openai', modelId: 'model' }),
+    getSessionListState: vi
+      .fn()
+      .mockResolvedValue({ status: 'generating', providerId: 'openai', modelId: 'model' }),
+    waitForFirstTurnReady: vi.fn().mockResolvedValue(true),
+    listPendingInputs: vi.fn().mockResolvedValue([]),
+    steerActiveTurn: vi.fn().mockResolvedValue({ requestId: null, messageId: null }),
+    updateQueuedInput: vi.fn().mockResolvedValue({}),
+    moveQueuedInput: vi.fn().mockResolvedValue([]),
+    convertPendingInputToSteer: vi.fn().mockResolvedValue({}),
+    steerPendingInput: vi.fn().mockResolvedValue({}),
+    resolveBlockedPendingInput: vi.fn().mockResolvedValue({}),
+    deletePendingInput: vi.fn().mockResolvedValue(undefined),
+    getPermissionMode: vi.fn().mockResolvedValue('full_access'),
+    setPermissionMode: vi.fn().mockResolvedValue(undefined),
+    getGenerationSettings: vi.fn().mockResolvedValue(null),
+    updateGenerationSettings: vi.fn().mockResolvedValue({}),
+    setSessionProjectDir: vi.fn().mockResolvedValue(undefined),
+    respondToolInteraction: vi.fn().mockResolvedValue({ resumed: false }),
+    setSessionAgentContext: vi.fn().mockResolvedValue(undefined),
+    setSessionModel: vi.fn().mockResolvedValue(undefined),
+    getSessionCompactionState: vi.fn().mockResolvedValue({}),
+    compactSession: vi.fn().mockResolvedValue({ compacted: false, state: {} }),
+    getActiveGeneration: vi.fn().mockReturnValue({ eventId: 'message', runId: 'run' }),
+    cancelGenerationByEventId: vi.fn().mockResolvedValue(true),
+    cleanupSession: vi.fn().mockResolvedValue(undefined),
+    send: vi.fn(async (sessionId, input) => {
+      if (input.queue) {
+        await port.queuePendingInput(sessionId, input.content, input.queue)
+        return { requestId: null, messageId: null }
+      }
+      return await port.processMessage(sessionId, input.content, input.context)
+    })
+  }
+  return port
+}
 
 describe('DeepChatAgentBackend', () => {
   it('routes opens through one lazy instance runtime', () => {
@@ -93,6 +105,37 @@ describe('DeepChatAgentBackend', () => {
     expect(port.getSessionState).toHaveBeenCalledWith('session')
     expect(port.cancelGeneration).toHaveBeenCalledTimes(1)
     expect(port.destroySession).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases its own runtime instance when durable teardown fails', async () => {
+    const port = createPort()
+    const runtime = new DeepChatAgentRuntime()
+    const backend = createDeepChatAgentBackendFixture(port, runtime)
+    const sessionId = toAppSessionId('session')
+    const handle = backend.open(sessionId)
+    const instance = runtime.getHydrated(sessionId)
+    vi.mocked(port.destroySession).mockRejectedValueOnce(new Error('teardown failed'))
+
+    await expect(handle.close()).rejects.toThrow('teardown failed')
+
+    expect(instance).toBeDefined()
+    expect(runtime.getHydrated(sessionId)).toBeUndefined()
+  })
+
+  it('leaves a replacement runtime instance alone when a stale handle closes', async () => {
+    const port = createPort()
+    const runtime = new DeepChatAgentRuntime()
+    const backend = createDeepChatAgentBackendFixture(port, runtime)
+    const sessionId = toAppSessionId('session')
+    const handle = backend.open(sessionId)
+    vi.mocked(port.destroySession).mockImplementationOnce(async () => {
+      runtime.evict(sessionId)
+      runtime.getOrHydrate(sessionId)
+    })
+
+    await handle.close()
+
+    expect(runtime.getHydrated(sessionId)).toBeDefined()
   })
 
   it('exposes required transfer, subagent, and generation facets', async () => {
