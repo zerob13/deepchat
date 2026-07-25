@@ -105,6 +105,11 @@ import {
   getContextSyntheticContributions,
   type ContextRuntimeContributions
 } from './contextContributions'
+import {
+  resolveDeepChatContextBudgetLength,
+  shouldBypassDeepChatContextBudget
+} from './contextBudgetPolicy'
+import { resolveProviderInputCapabilities } from './providerInputCapabilities'
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
@@ -224,19 +229,6 @@ export interface DeepChatLoopRunnerPorts {
   ensureSessionAbortController(sessionId: string): AbortController
   throwIfStaleDeepChatInstance(sessionId: string, expectedInstance: DeepChatAgentInstance): void
   throwIfAbortRequested(signal: AbortSignal): void
-  resolveDeepChatContextBudgetLength(
-    providerId: string | null | undefined,
-    contextLength: number,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): number
-  shouldBypassDeepChatContextBudget(
-    providerId?: string | null,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): boolean
-  supportsVision(providerId: string, modelId: string): boolean
-  supportsAudioInput(providerId: string, modelId: string): boolean
   registerActiveGeneration(
     sessionId: string,
     run: LoopRun<StreamState>,
@@ -383,7 +375,7 @@ export class DeepChatLoopRunner {
         state.modelId,
         generationSettings
       )
-    const contextBudgetLength = this.ports.resolveDeepChatContextBudgetLength(
+    const contextBudgetLength = resolveDeepChatContextBudgetLength(
       state.providerId,
       generationSettings.contextLength,
       baseModelConfig,
@@ -453,8 +445,11 @@ export class DeepChatLoopRunner {
         abortSignal
       ))
     this.ports.throwIfStaleDeepChatInstance(sessionId, resourceInstance)
-    const supportsVision = this.ports.supportsVision(state.providerId, state.modelId)
-    const supportsAudioInput = this.ports.supportsAudioInput(state.providerId, state.modelId)
+    const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+      this.ports.providerSettings,
+      state.providerId,
+      state.modelId
+    )
 
     abortController.signal.throwIfAborted()
     const loopRun = createLoopRun<StreamState>({
@@ -532,7 +527,7 @@ export class DeepChatLoopRunner {
           requestMaxTokens,
           requestTools
         ) {
-          const requestBypassesContextBudget = ports.shouldBypassDeepChatContextBudget(
+          const requestBypassesContextBudget = shouldBypassDeepChatContextBudget(
             state.providerId,
             requestModelConfig,
             requestModelId

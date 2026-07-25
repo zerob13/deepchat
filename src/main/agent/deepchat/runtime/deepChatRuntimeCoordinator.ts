@@ -19,11 +19,9 @@ import type {
 import type { MCPToolResponse } from '@shared/types/core/mcp'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { SkillServicePort } from '@shared/types/skill'
-import type { ProviderExecutionPort, ModelConfig } from '@shared/types/provider'
+import type { ProviderExecutionPort } from '@shared/types/provider'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ToolServicePort } from '@shared/types/tool'
-import { ApiEndpointType, ModelType } from '@shared/model'
-import { isVideoGenerationModelConfig } from '@shared/videoGenerationSettings'
 import type { SessionDatabase } from '@/session/data/database'
 import type { PromptSettings } from '@/agent/promptSettings'
 import type { AgentSettingsPort } from '@/agent/settings'
@@ -38,7 +36,11 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
-import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import {
+  createStaleDeepChatInstanceError,
+  DeepChatAgentRuntime,
+  isStaleDeepChatInstanceError
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import {
   MemoryRuntimeCoordinator,
   type MemoryIngestionProjection
@@ -51,6 +53,10 @@ import type {
 } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { capAgentRequestMaxTokens, estimateToolReserveTokens } from './contextBudget'
+import {
+  resolveDeepChatContextBudgetLength,
+  shouldBypassDeepChatContextBudget
+} from './contextBudgetPolicy'
 import {
   mapPersistedGenerationPatch,
   resolveInterleavedReasoningConfig,
@@ -111,6 +117,12 @@ import type { AcpAgentInstanceDependencyFactory } from '@/agent/acp/instance'
 import { createAcpCompatibilityDependencies } from '@/agent/acp/compatibility/dependencies'
 import type { SkillSettingsPort } from '@/skill/settings'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
+import { logSlowPreStreamStep } from './preStreamWatchdog'
+import {
+  resolveProviderInputCapabilities,
+  supportsProviderVision
+} from './providerInputCapabilities'
+import { SessionStatusPublisher } from './sessionStatusPublisher'
 import {
   collectPendingInteractionEntries,
   parseAssistantBlocks,
@@ -123,22 +135,10 @@ import type {
   AttachmentPreparationResult
 } from '@/ocr/attachmentCapabilityRouter'
 
-const PRE_STREAM_SLOW_STEP_MS = 500
-export const PRE_STREAM_STUCK_WARN_MS = 5_000
-export const PRE_STREAM_STUCK_ESCALATION_MS = 30_000
-const STALE_DEEPCHAT_INSTANCE_ERROR_NAME = 'StaleDeepChatAgentInstanceError'
-
-interface PreStreamStepWatchdog {
-  complete(): void
-  cancel(): void
-}
-
-interface PreStreamStepInput {
-  sessionId: string
-  messageId?: string | null
-  step: string
-  signal?: AbortSignal
-}
+export {
+  PRE_STREAM_STUCK_ESCALATION_MS,
+  PRE_STREAM_STUCK_WARN_MS
+} from './preStreamWatchdog'
 
 const createAbortError = (): Error => {
   if (typeof DOMException !== 'undefined') {
@@ -147,12 +147,6 @@ const createAbortError = (): Error => {
 
   const error = new Error('Aborted')
   error.name = 'AbortError'
-  return error
-}
-
-const createStaleDeepChatInstanceError = (sessionId: string): Error => {
-  const error = new Error(`DeepChat agent instance was replaced: ${sessionId}`)
-  error.name = STALE_DEEPCHAT_INSTANCE_ERROR_NAME
   return error
 }
 
@@ -219,7 +213,7 @@ export class DeepChatRuntimeCoordinator {
   >
   private readonly sessionPermissionPort: SessionPermissionPort
   private readonly acpAsLlmProviderPermission: AcpAsLlmProviderPermissionPort
-  private readonly sessionUiPort: SessionUiPort
+  private readonly sessionStatusPublisher: SessionStatusPublisher
   private readonly memoryCoordinator: MemoryRuntimeCoordinator
   private readonly memoryPromptContributor: MemoryPromptContributor
   readonly memoryIngestionObserver: MemoryIngestionObserver
@@ -254,7 +248,6 @@ export class DeepChatRuntimeCoordinator {
     this.providerCatalogPort = runtimePorts.providerCatalogPort
     this.sessionPermissionPort = runtimePorts.sessionPermissionPort
     this.acpAsLlmProviderPermission = runtimePorts.acpAsLlmProviderPermission
-    this.sessionUiPort = runtimePorts.sessionUiPort
     this.cacheImage = runtimePorts.cacheImage
     this.skillService = runtimePorts.skillService
     this.skillSettings = runtimePorts.skillSettings
@@ -270,6 +263,11 @@ export class DeepChatRuntimeCoordinator {
     this.deepChatRuntime = new DeepChatAgentRuntime((sessionId) =>
       this.createDeepChatInstanceDelegate(sessionId)
     )
+    this.sessionStatusPublisher = new SessionStatusPublisher({
+      publishEvent: this.publishEvent,
+      publishSessionUpdate: this.publishSessionUpdate,
+      sessionUiPort: runtimePorts.sessionUiPort
+    })
     this.toolResolver = new DeepChatToolResolver({
       agentSettings: this.agentSettings,
       skillSettings: this.skillSettings,
@@ -444,12 +442,6 @@ export class DeepChatRuntimeCoordinator {
       throwIfStaleDeepChatInstance: (sessionId, instance) =>
         this.throwIfStaleDeepChatInstance(sessionId, instance),
       throwIfAbortRequested: (signal) => this.throwIfAbortRequested(signal),
-      resolveDeepChatContextBudgetLength: (...args) =>
-        this.resolveDeepChatContextBudgetLength(...args),
-      shouldBypassDeepChatContextBudget: (...args) =>
-        this.shouldBypassDeepChatContextBudget(...args),
-      supportsVision: (providerId, modelId) => this.supportsVision(providerId, modelId),
-      supportsAudioInput: (providerId, modelId) => this.supportsAudioInput(providerId, modelId),
       registerActiveGeneration: (sessionId, run, instance) =>
         this.registerActiveGeneration(sessionId, run, instance),
       clearActiveGeneration: (sessionId, runId) => this.clearActiveGeneration(sessionId, runId),
@@ -485,8 +477,6 @@ export class DeepChatRuntimeCoordinator {
       getHydratedDeepChatInstance: (sessionId) => this.getHydratedDeepChatInstance(sessionId),
       getRuntimeState: (sessionId) => this.getDeepChatRuntimeState(sessionId),
       hasPendingInteractions: (sessionId) => this.hasPendingInteractions(sessionId),
-      supportsVision: (providerId, modelId) => this.supportsVision(providerId, modelId),
-      supportsAudioInput: (providerId, modelId) => this.supportsAudioInput(providerId, modelId),
       prepareAttachments: async (input) => await this.attachmentRouter.prepare(input),
       resolveProjectDir: (sessionId, projectDir, instance) =>
         this.resolveProjectDir(sessionId, projectDir, instance),
@@ -503,17 +493,7 @@ export class DeepChatRuntimeCoordinator {
       isAbortError: (error) => this.isAbortError(error),
       getEffectiveSessionGenerationSettings: async (sessionId, instance) =>
         await this.getEffectiveSessionGenerationSettings(sessionId, instance),
-      shouldUseDeepChatContextBudget: (...args) => this.shouldUseDeepChatContextBudget(...args),
-      resolveDeepChatContextBudgetLength: (...args) =>
-        this.resolveDeepChatContextBudgetLength(...args),
       createBasePromptAssembler: (instance) => this.createBasePromptAssembler(instance),
-      runPreStreamStep: async (input, operation) => await this.runPreStreamStep(input, operation),
-      runSynchronousPreStreamStep: (sessionId, step, operation) =>
-        this.runSynchronousPreStreamStep(sessionId, step, operation),
-      logSlowPreStreamStep: (sessionId, step, startedAt) =>
-        this.logSlowPreStreamStep(sessionId, step, startedAt),
-      startPreStreamProviderBoundaryWatchdog: (input, preStreamStartedAt) =>
-        this.startPreStreamProviderBoundaryWatchdog(input, preStreamStartedAt),
       runStreamForMessage: async (args) => await this.runStreamForMessage(args),
       emitMessageRefresh: (sessionId, messageId) => this.emitMessageRefresh(sessionId, messageId),
       resolveStreamRequestId: (sessionId, messageId) =>
@@ -663,20 +643,18 @@ export class DeepChatRuntimeCoordinator {
     sessionId: string,
     expectedInstance: DeepChatAgentInstance
   ): boolean {
-    return this.getHydratedDeepChatInstance(sessionId) === expectedInstance
+    return this.deepChatRuntime.scopeFor(toAppSessionId(sessionId), expectedInstance).isCurrent()
   }
 
   private throwIfStaleDeepChatInstance(
     sessionId: string,
     expectedInstance: DeepChatAgentInstance
   ): void {
-    if (!this.isCurrentDeepChatInstance(sessionId, expectedInstance)) {
-      throw createStaleDeepChatInstanceError(sessionId)
-    }
+    this.deepChatRuntime.scopeFor(toAppSessionId(sessionId), expectedInstance).assertCurrent()
   }
 
   private isStaleDeepChatInstanceError(error: unknown): boolean {
-    return error instanceof Error && error.name === STALE_DEEPCHAT_INSTANCE_ERROR_NAME
+    return isStaleDeepChatInstanceError(error)
   }
 
   private createDeepChatInstanceDelegate(sessionId: string): DeepChatAgentInstanceDelegate {
@@ -991,7 +969,11 @@ export class DeepChatRuntimeCoordinator {
     if (!state) throw new Error(`Session ${sessionId} not found`)
     return await this.attachmentRouter.prepare({
       content,
-      supportsVision: this.supportsVision(state.providerId, state.modelId),
+      supportsVision: supportsProviderVision(
+        this.providerSettings,
+        state.providerId,
+        state.modelId
+      ),
       signal: options?.signal,
       preserveResolvedRepresentations: options?.preserveResolvedRepresentations,
       // This is an acceptance preflight. The dispatch-time pass records the representation that
@@ -1254,110 +1236,6 @@ export class DeepChatRuntimeCoordinator {
   ): Promise<MessageStartResult> {
     const input = typeof content === 'string' ? { text: content, files: [] } : content
     return await this.turnCoordinator.start(sessionId, input, context)
-  }
-  private logSlowPreStreamStep(sessionId: string, step: string, startedAt: number): void {
-    const elapsed = Date.now() - startedAt
-    if (elapsed < PRE_STREAM_SLOW_STEP_MS) {
-      return
-    }
-
-    logger.warn(
-      `[DeepChatAgent] pre-stream step slow session=${sessionId} step=${step} elapsed=${elapsed}ms`
-    )
-  }
-
-  private startPreStreamStepWatchdog(input: PreStreamStepInput): PreStreamStepWatchdog {
-    const { sessionId, messageId, step, signal } = input
-    const startedAt = Date.now()
-    let closed = signal?.aborted === true
-    let warnTimer: ReturnType<typeof setTimeout> | null = null
-    let escalationTimer: ReturnType<typeof setTimeout> | null = null
-
-    const clearTimers = () => {
-      if (warnTimer) clearTimeout(warnTimer)
-      if (escalationTimer) clearTimeout(escalationTimer)
-      warnTimer = null
-      escalationTimer = null
-      signal?.removeEventListener('abort', cancel)
-    }
-    const close = (completed: boolean) => {
-      if (closed) return
-      closed = true
-      clearTimers()
-      if (completed) this.logSlowPreStreamStep(sessionId, step, startedAt)
-    }
-    const cancel = () => close(false)
-    const logStuck = (escalated: boolean) => {
-      if (closed) return
-      logger.warn(
-        `[DeepChatAgent] pre-stream step STUCK${escalated ? ' escalation' : ''} session=${sessionId} message=${messageId ?? '<pending>'} step=${step} elapsedMs=${Date.now() - startedAt}`
-      )
-    }
-
-    if (!closed) {
-      signal?.addEventListener('abort', cancel, { once: true })
-      warnTimer = setTimeout(() => logStuck(false), PRE_STREAM_STUCK_WARN_MS)
-      escalationTimer = setTimeout(() => logStuck(true), PRE_STREAM_STUCK_ESCALATION_MS)
-      if (typeof warnTimer.unref === 'function') warnTimer.unref()
-      if (typeof escalationTimer.unref === 'function') escalationTimer.unref()
-    }
-
-    return {
-      complete: () => close(true),
-      cancel
-    }
-  }
-
-  private async runPreStreamStep<T>(
-    input: PreStreamStepInput,
-    operation: () => Promise<T>
-  ): Promise<T> {
-    this.throwIfAbortRequested(input.signal)
-    const watchdog = this.startPreStreamStepWatchdog(input)
-    try {
-      const result = await operation()
-      watchdog.complete()
-      return result
-    } catch (error) {
-      watchdog.cancel()
-      throw error
-    }
-  }
-
-  private runSynchronousPreStreamStep<T>(sessionId: string, step: string, operation: () => T): T {
-    const startedAt = Date.now()
-    try {
-      return operation()
-    } finally {
-      this.logSlowPreStreamStep(sessionId, step, startedAt)
-    }
-  }
-
-  private startPreStreamProviderBoundaryWatchdog(
-    input: PreStreamStepInput,
-    preStreamStartedAt: number
-  ): PreStreamStepWatchdog {
-    const watchdog = this.startPreStreamStepWatchdog(input)
-    let crossed = false
-    const close = (completed: boolean) => {
-      if (crossed) return false
-      crossed = true
-      if (completed) {
-        watchdog.complete()
-      } else {
-        watchdog.cancel()
-      }
-      return true
-    }
-    return {
-      complete: () => {
-        if (!close(true)) return
-        this.logSlowPreStreamStep(input.sessionId, 'pre-stream-total', preStreamStartedAt)
-      },
-      cancel: () => {
-        close(false)
-      }
-    }
   }
 
   async respondToolInteraction(
@@ -1635,57 +1513,6 @@ export class DeepChatRuntimeCoordinator {
     return resolvedProviderId === 'acp'
   }
 
-  private shouldUseDeepChatContextBudget(
-    providerId?: string | null,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): boolean {
-    if (providerId?.trim() === 'acp') {
-      return false
-    }
-
-    if (!modelConfig) {
-      return true
-    }
-
-    if (modelConfig.type === ModelType.ImageGeneration || modelConfig.type === ModelType.TTS) {
-      return false
-    }
-
-    if (modelConfig.apiEndpoint && modelConfig.apiEndpoint !== ApiEndpointType.Chat) {
-      return false
-    }
-
-    if (modelConfig.endpointType === 'image-generation') {
-      return false
-    }
-
-    if (isVideoGenerationModelConfig(modelConfig, modelId?.trim() || '')) {
-      return false
-    }
-
-    return true
-  }
-
-  private shouldBypassDeepChatContextBudget(
-    providerId?: string | null,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): boolean {
-    return !this.shouldUseDeepChatContextBudget(providerId, modelConfig, modelId)
-  }
-
-  private resolveDeepChatContextBudgetLength(
-    providerId: string | null | undefined,
-    contextLength: number,
-    modelConfig?: Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'type'> | null,
-    modelId?: string | null
-  ): number {
-    return this.shouldBypassDeepChatContextBudget(providerId, modelConfig, modelId)
-      ? Number.MAX_SAFE_INTEGER
-      : contextLength
-  }
-
   private getAbortSignalForSession(sessionId: string): AbortSignal | undefined {
     return this.getHydratedDeepChatInstance(sessionId)?.getAbortSignal()
   }
@@ -1794,7 +1621,7 @@ export class DeepChatRuntimeCoordinator {
     }
     this.throwIfStaleDeepChatInstance(sessionId, instance)
     const modelConfig = this.providerSettings.getModelConfig(state.modelId, state.providerId)
-    if (this.shouldBypassDeepChatContextBudget(state.providerId, modelConfig, state.modelId)) {
+    if (shouldBypassDeepChatContextBudget(state.providerId, modelConfig, state.modelId)) {
       throw new Error('Manual compaction is only available for DeepChat agent sessions.')
     }
     if (state.status !== 'idle') {
@@ -1819,7 +1646,7 @@ export class DeepChatRuntimeCoordinator {
         state.modelId,
         generationSettings
       )
-      const contextBudgetLength = this.resolveDeepChatContextBudgetLength(
+      const contextBudgetLength = resolveDeepChatContextBudgetLength(
         state.providerId,
         generationSettings.contextLength,
         modelConfig,
@@ -1853,6 +1680,11 @@ export class DeepChatRuntimeCoordinator {
       )
       this.throwIfAbortRequested(compactionAbortSignal)
       const tapeReady = this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore)
+      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+        this.providerSettings,
+        state.providerId,
+        state.modelId
+      )
 
       const intent = await this.compactionService.prepareForManualCompaction({
         sessionId,
@@ -1862,8 +1694,8 @@ export class DeepChatRuntimeCoordinator {
         contextLength: generationSettings.contextLength,
         reserveTokens: maxTokens,
         extraReserveTokens: toolReserveTokens,
-        supportsVision: this.supportsVision(state.providerId, state.modelId),
-        supportsAudioInput: this.supportsAudioInput(state.providerId, state.modelId),
+        supportsVision,
+        supportsAudioInput,
         preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
         preserveEmptyInterleavedReasoning:
           interleavedReasoning.preserveEmptyReasoningContent === true,
@@ -2306,7 +2138,7 @@ export class DeepChatRuntimeCoordinator {
           this.isAcpBackedSubagentSession(id, providerId),
         resolveProjectDir: (id, projectDir, instance) =>
           this.resolveProjectDir(id, projectDir, instance),
-        logSlowStep: (id, step, startedAt) => this.logSlowPreStreamStep(id, step, startedAt)
+        logSlowStep: logSlowPreStreamStep
       },
       {
         sessionId,
@@ -2395,14 +2227,6 @@ export class DeepChatRuntimeCoordinator {
       instance.setActiveSteerPendingInputId(record.id)
       return record
     }
-  }
-
-  private supportsVision(providerId: string, modelId: string): boolean {
-    return Boolean(this.providerSettings.getModelConfig(modelId, providerId)?.vision)
-  }
-
-  private supportsAudioInput(providerId: string, modelId: string): boolean {
-    return this.providerSettings.supportsAudioInputCapability(providerId, modelId)
   }
 
   private updateSubagentToolCallProgress(
@@ -2547,43 +2371,13 @@ export class DeepChatRuntimeCoordinator {
     expectedInstance: DeepChatAgentInstance,
     status: DeepChatSessionState['status']
   ): boolean {
-    if (!this.isCurrentDeepChatInstance(sessionId, expectedInstance)) {
-      return false
-    }
-
-    const current = expectedInstance.getRuntimeState()
-    if (!current) {
-      return false
-    }
-    if (current.status === status) {
-      return true
-    }
-    current.status = status
-    this.publishEvent('sessions.status.changed', {
-      sessionId,
-      status,
-      version: Date.now()
-    })
-    this.publishEvent('sessions.updated', {
-      sessionIds: [sessionId],
-      reason: 'updated'
-    })
-    this.publishSessionUpdate({
-      sessionId,
-      kind: 'status',
-      updatedAt: Date.now(),
-      status
-    })
-
-    this.sessionUiPort.refreshSessionUi()
-    return true
+    const scope = this.deepChatRuntime.scopeFor(toAppSessionId(sessionId), expectedInstance)
+    return this.sessionStatusPublisher.transition(scope, status)
   }
 
   private setSessionStatus(sessionId: string, status: DeepChatSessionState['status']): void {
-    const instance = this.getHydratedDeepChatInstance(sessionId)
-    if (instance) {
-      this.setSessionStatusForInstance(sessionId, instance, status)
-    }
+    const scope = this.deepChatRuntime.getHydratedScope(toAppSessionId(sessionId))
+    if (scope) this.sessionStatusPublisher.transition(scope, status)
   }
 
   private emitMessageRefresh(sessionId: string, messageId: string): void {

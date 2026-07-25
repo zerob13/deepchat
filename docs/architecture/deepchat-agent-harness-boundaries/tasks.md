@@ -22,9 +22,9 @@
 - [x] Define minimal Session scope and the four distinct lifecycle fence semantics.
 - [x] Define owner responsibilities, typed claim disposition, feedback-loop wiring, compatibility,
       and non-goals.
-- [ ] Remove private coordinator reflection from runtime tests without changing production source.
-- [ ] Add status-order, settlement, fencing, queue-disposition, return-mapping, and Memory baselines.
-- [ ] Add minimal runtime scopes and extract status/pre-stream/context-budget policies.
+- [x] Remove private coordinator reflection from runtime tests without changing production source.
+- [x] Add status-order, settlement, fencing, queue-disposition, return-mapping, and Memory baselines.
+- [x] Add minimal runtime scopes and extract status/pre-stream/context-budget policies.
 - [ ] Make one coordinator own run lifecycle, cancellation, settlement, and queue wakeup.
 - [ ] Extract pending-input admission and the single queue pump; delete duplicate claim/drain logic.
 - [ ] Extend the existing compaction owner and reduce the root to composition and compatibility.

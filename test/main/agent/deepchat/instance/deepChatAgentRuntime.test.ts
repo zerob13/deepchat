@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import {
+  DeepChatAgentRuntime,
+  isStaleDeepChatInstanceError
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
@@ -53,6 +56,57 @@ describe('DeepChatAgentRuntime', () => {
     expect(first).toBe(second)
     expect(other).not.toBe(first)
     expect(hydrate).toHaveBeenCalledTimes(2)
+  })
+
+  it('creates a minimal current scope over the registered instance state', () => {
+    const hydrate = vi.fn(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime(hydrate)
+    const sessionId = toAppSessionId('session')
+
+    expect(runtime.getHydratedScope(sessionId)).toBeUndefined()
+    expect(hydrate).not.toHaveBeenCalled()
+
+    const scope = runtime.getOrHydrateScope(sessionId)
+    scope.instance.setRuntimeState({
+      status: 'idle',
+      providerId: 'openai',
+      modelId: 'gpt-5',
+      permissionMode: 'full_access'
+    })
+
+    expect(Object.isFrozen(scope)).toBe(true)
+    expect(scope.sessionId).toBe(sessionId)
+    expect(scope.instance).toBe(runtime.getHydrated(sessionId))
+    expect(scope.state()).toBe(scope.instance.getRuntimeState())
+    expect(scope.isCurrent()).toBe(true)
+    expect(() => scope.assertCurrent()).not.toThrow()
+    expect(runtime.getHydratedScope(sessionId)?.instance).toBe(scope.instance)
+  })
+
+  it('fences evicted and mismatched scopes with the stable stale-instance identity', () => {
+    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const sessionId = toAppSessionId('session')
+    const otherSessionId = toAppSessionId('other')
+    const instance = runtime.getOrHydrate(sessionId)
+    const currentScope = runtime.scopeFor(sessionId, instance)
+    const mismatchedScope = runtime.scopeFor(otherSessionId, instance)
+
+    expect(mismatchedScope.isCurrent()).toBe(false)
+    expect(() => mismatchedScope.assertCurrent()).toThrowError(
+      expect.objectContaining({ name: 'StaleDeepChatAgentInstanceError' })
+    )
+
+    runtime.evict(sessionId)
+    const replacementScope = runtime.getOrHydrateScope(sessionId)
+
+    expect(currentScope.isCurrent()).toBe(false)
+    expect(replacementScope.isCurrent()).toBe(true)
+    try {
+      currentScope.assertCurrent()
+      expect.unreachable('stale scope should throw')
+    } catch (error) {
+      expect(isStaleDeepChatInstanceError(error)).toBe(true)
+    }
   })
 
   it('delegates the legacy façade and rehydrates only after close', async () => {
