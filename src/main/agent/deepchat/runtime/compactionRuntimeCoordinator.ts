@@ -4,6 +4,7 @@ import type { CompactionIntent, CompactionService } from './compactionService'
 import type { DeepChatEventPublisher } from './types'
 import type { SessionTranscript } from '@/session/data/transcript'
 import type { SessionSettingsStore, SessionSummaryState } from '@/session/data/settings'
+import { isAbortError, throwIfAbortRequested } from './abortErrors'
 
 interface CompactionRuntimeCoordinatorDependencies {
   compactionService: CompactionService
@@ -12,8 +13,6 @@ interface CompactionRuntimeCoordinatorDependencies {
   getInstance(sessionId: string): DeepChatAgentInstance
   assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
   emitMessageRefresh(sessionId: string, messageId: string): void
-  isAbortError(error: unknown): boolean
-  throwIfAbortRequested(signal?: AbortSignal): void
   publishEvent: DeepChatEventPublisher
 }
 
@@ -77,8 +76,8 @@ export class CompactionRuntimeCoordinator {
       this.deps.messageStore.deleteMessage(compactionMessageId)
       this.deps.emitMessageRefresh(sessionId, compactionMessageId)
       this.emit(sessionId, this.fromSummary(intent.previousState), expectedInstance)
-      if (this.deps.isAbortError(error) || options?.signal?.aborted) {
-        this.deps.throwIfAbortRequested(options?.signal)
+      if (isAbortError(error) || options?.signal?.aborted) {
+        throwIfAbortRequested(options?.signal)
       }
       throw error
     }

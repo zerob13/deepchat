@@ -25,7 +25,7 @@
 - [x] Remove private coordinator reflection from runtime tests without changing production source.
 - [x] Add status-order, settlement, fencing, queue-disposition, return-mapping, and Memory baselines.
 - [x] Add minimal runtime scopes and extract status/pre-stream/context-budget policies.
-- [ ] Make one coordinator own run lifecycle, cancellation, settlement, and queue wakeup.
+- [x] Make one coordinator own run lifecycle, cancellation, settlement, and queue wakeup.
 - [ ] Extract pending-input admission and the single queue pump; delete duplicate claim/drain logic.
 - [ ] Extend the existing compaction owner and reduce the root to composition and compatibility.
 - [ ] Split owner tests while retaining focused full-runtime integration coverage.
