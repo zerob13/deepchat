@@ -47,12 +47,35 @@
 - [x] Run focused and full validation, review the complete diff, and fix every finding.
 - [x] Commit every reviewed stage without pushing.
 
+## Harness Facade
+
+- [ ] Specify the owner map, port narrowing rules, single late binding, and zero-behavior-change
+      invariants in this architecture record.
+- [ ] Extract identity, state resolution, session lifecycle, transcript mutation, and message
+      projection owners; make `resolveStreamRequestId` a pure helper.
+- [ ] Bind the prompt assembler factory, tool result normalization, and permission review through
+      named ports without wrapping domain functions in single-method classes.
+- [ ] Replace registry-shaped callbacks with `SessionScopeRegistry` and `SessionRuntimeScope`.
+- [ ] Replace remaining owner callbacks with concrete collaborators and compose the six Tape
+      capabilities into one domain port.
+- [ ] Introduce the named pending-input wakeup binding and remove every other deferred wiring.
+- [ ] Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `dispose()`; route manager
+      backend send, cancel, snapshot, and close through the harness port.
+- [ ] Add the composition factory and the facade implementing the existing manager and session
+      contracts.
+- [ ] Delete `deepChatRuntimeCoordinator.ts` and migrate app composition, ACP compatibility, session
+      deletion, and transcript mutation wiring.
+- [ ] Pin state hydration, message refresh, status publication, and destroy ordering with tests that
+      fail if their order changes.
+- [ ] Split the root suite into owner suites plus one full-runtime integration suite without
+      reducing executed test count.
+- [ ] Replace root guard rules with harness boundary rules and a smaller facade size ceiling.
+- [ ] Regenerate the layered-runtime baseline and update affected architecture records.
+- [ ] Run focused and full validation, review the complete diff, and fix every finding.
+- [ ] Commit every reviewed stage without pushing.
+
 ## Future Pull Requests
 
-- [ ] Reduce the remaining composition callback graph (currently approximately 43 callbacks).
-- [ ] Narrow `DeepChatLoopRunnerPorts` (currently 32 members) around stable runtime services.
-- [ ] Move remaining session hydration, Agent identity, and message-refresh compatibility adapters
-      out of the root as part of the facade boundary.
-- [ ] Add a thin Harness facade over the stabilized internal services.
-- [ ] Add typed deterministic hook/event reduction over the facade event model.
+- [ ] Add typed deterministic hook/event reduction with restricted hook context facades over the
+      stabilized owner graph.
 - [ ] Design same-run steering separately if the product semantics are approved.
