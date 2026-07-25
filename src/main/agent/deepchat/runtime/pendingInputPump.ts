@@ -6,6 +6,10 @@ import type {
   SendMessageInput
 } from '@shared/types/agent-interface'
 import type { SessionRuntimeScope } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type {
+  DeepChatAgentInstance,
+  PendingQueueDrainLease
+} from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import type { SessionTranscript } from '@/session/data/transcript'
 import {
@@ -50,6 +54,12 @@ type PendingInputPumpLifecyclePort = Pick<
 interface PendingInputGateSnapshot {
   awaitingQuestionFollowUp: boolean
   pendingInteractions: PendingInteractionEntry[]
+}
+
+interface LaunchedPendingInputDrain {
+  readonly instance: DeepChatAgentInstance
+  readonly lease: PendingQueueDrainLease
+  readonly claim: ClaimedPendingInputHandle
 }
 
 export interface PendingInputTurnStarter {
@@ -179,6 +189,9 @@ class DurablePendingInputClaim implements ClaimedPendingInputHandle {
 }
 
 export class PendingInputPump {
+  private readonly launchedDrains = new Map<string, LaunchedPendingInputDrain>()
+  private readonly deferredWakeups = new Map<string, PendingInputWakeReason>()
+
   constructor(private readonly ports: PendingInputPumpPorts) {}
 
   hasInteractionBlocker(sessionId: string): boolean {
@@ -244,18 +257,7 @@ export class PendingInputPump {
     reason: PendingInputWakeReason,
     snapshot: PendingInputGateSnapshot
   ): boolean {
-    if (!this.canDrainFromStatus(status, reason)) {
-      return false
-    }
-    if (snapshot.awaitingQuestionFollowUp) {
-      return false
-    }
-    if (
-      this.ports.runLifecycle.reconcilePendingInteractions(
-        sessionId,
-        snapshot.pendingInteractions
-      )
-    ) {
+    if (!this.meetsDrainPreconditions(sessionId, status, reason, snapshot)) {
       return false
     }
     return !this.ports.runLifecycle
@@ -273,7 +275,8 @@ export class PendingInputPump {
     }
     const scope = this.ports.runLifecycle.getHydratedScope(record.sessionId)
     const claim = this.createClaim(record.sessionId, record.id, source)
-    if (!scope || scope.instance.isPendingQueueDraining()) {
+    const drainLease = scope?.instance.tryAcquirePendingQueueDrain() ?? null
+    if (!scope || !drainLease) {
       const released = this.tryRelease(claim)
       logger.error(
         `[DeepChatAgent] pending input start rejected session=${record.sessionId} stage=adopt-claim`
@@ -284,8 +287,7 @@ export class PendingInputPump {
       return
     }
 
-    scope.instance.markPendingQueueDrainStarted()
-    this.launch(scope, record, claim, projectDir, 'enqueue')
+    this.launch(scope, record, claim, projectDir, 'enqueue', drainLease)
   }
 
   claimQueuedInputForPreparation(
@@ -303,70 +305,88 @@ export class PendingInputPump {
   }
 
   async drain(sessionId: string, reason: PendingInputWakeReason): Promise<boolean> {
-    const state = await this.ports.getSessionState(sessionId)
-    if (!state || !this.canDrain(sessionId, state.status, reason)) {
-      return false
-    }
     const scope = this.ports.runLifecycle.getHydratedScope(sessionId)
     if (!scope) {
       return false
     }
-    if (
-      this.ports.pendingInputs.hasBlockingInput(sessionId) ||
-      this.ports.pendingInputs.hasClaimedInput(sessionId)
-    ) {
-      return false
-    }
-
-    const nextSteerInput = this.ports.pendingInputs.getNextSteerInput(sessionId)
-    const nextQueuedInput = nextSteerInput
-      ? null
-      : this.ports.pendingInputs.getNextQueuedInput(sessionId)
-    const nextPendingInput = nextSteerInput ?? nextQueuedInput
-    if (!nextPendingInput) {
-      return false
-    }
-
-    let projectDir: string | null
-    try {
-      projectDir = this.ports.resolveProjectDir(sessionId)
-    } catch (error) {
-      this.logDrainError(sessionId, reason, 'resolve-project-dir', error)
-      return false
-    }
-
-    const source: PendingInputTurnSource = nextSteerInput ? 'steer' : 'queue'
-    const claim = this.createClaim(sessionId, nextPendingInput.id, source)
-    scope.instance.markPendingQueueDrainStarted()
-
-    let claimedInput: PendingSessionInputRecord
-    try {
-      claimedInput =
-        source === 'steer'
-          ? this.ports.pendingInputs.claimSteerInput(sessionId, nextPendingInput.id)
-          : this.ports.pendingInputs.claimQueuedInput(sessionId, nextPendingInput.id)
-    } catch (error) {
-      // Publication can throw after the durable row changed to claimed.
-      this.tryRelease(claim)
-      scope.instance.markPendingQueueDrainFinished()
-      this.logDrainError(sessionId, reason, 'claim-input', error)
-      return false
-    }
-
-    try {
-      scope.assertCurrent()
-      if (source === 'steer') {
-        scope.instance.clearActiveSteerPendingInputId(claimedInput.id)
+    const drainLease = scope.instance.tryAcquirePendingQueueDrain()
+    if (!drainLease) {
+      if (this.shouldDeferWakeup(scope, reason)) {
+        this.rememberDeferredWakeup(sessionId, reason)
       }
-    } catch (error) {
-      this.tryRelease(claim)
-      scope.instance.markPendingQueueDrainFinished()
-      this.logDrainError(sessionId, reason, 'adopt-claim', error)
       return false
     }
 
-    this.launch(scope, claimedInput, claim, projectDir, reason)
-    return true
+    let launchOwnsLease = false
+    try {
+      const state = await this.ports.getSessionState(sessionId)
+      if (!state || !scope.isCurrent()) {
+        return false
+      }
+      const snapshot = this.readGateSnapshot(sessionId)
+      if (!this.meetsDrainPreconditions(sessionId, state.status, reason, snapshot)) {
+        return false
+      }
+      if (
+        this.ports.pendingInputs.hasBlockingInput(sessionId) ||
+        this.ports.pendingInputs.hasClaimedInput(sessionId)
+      ) {
+        return false
+      }
+
+      const nextSteerInput = this.ports.pendingInputs.getNextSteerInput(sessionId)
+      const nextQueuedInput = nextSteerInput
+        ? null
+        : this.ports.pendingInputs.getNextQueuedInput(sessionId)
+      const nextPendingInput = nextSteerInput ?? nextQueuedInput
+      if (!nextPendingInput) {
+        return false
+      }
+
+      let projectDir: string | null
+      try {
+        projectDir = this.ports.resolveProjectDir(sessionId)
+      } catch (error) {
+        this.logDrainError(sessionId, reason, 'resolve-project-dir', error)
+        return false
+      }
+
+      const source: PendingInputTurnSource = nextSteerInput ? 'steer' : 'queue'
+      const claim = this.createClaim(sessionId, nextPendingInput.id, source)
+
+      let claimedInput: PendingSessionInputRecord
+      try {
+        claimedInput =
+          source === 'steer'
+            ? this.ports.pendingInputs.claimSteerInput(sessionId, nextPendingInput.id)
+            : this.ports.pendingInputs.claimQueuedInput(sessionId, nextPendingInput.id)
+      } catch (error) {
+        // Publication can throw after the durable row changed to claimed.
+        this.tryRelease(claim)
+        this.logDrainError(sessionId, reason, 'claim-input', error)
+        return false
+      }
+
+      try {
+        scope.assertCurrent()
+        if (source === 'steer') {
+          scope.instance.clearActiveSteerPendingInputId(claimedInput.id)
+        }
+      } catch (error) {
+        this.tryRelease(claim)
+        this.logDrainError(sessionId, reason, 'adopt-claim', error)
+        return false
+      }
+
+      this.launch(scope, claimedInput, claim, projectDir, reason, drainLease)
+      launchOwnsLease = true
+      return true
+    } finally {
+      if (!launchOwnsLease) {
+        scope.instance.releasePendingQueueDrain(drainLease)
+        this.flushDeferredWakeup(sessionId)
+      }
+    }
   }
 
   schedule(sessionId: string, reason: PendingInputWakeReason): void {
@@ -383,13 +403,24 @@ export class PendingInputPump {
     claimedInput: PendingSessionInputRecord,
     claim: ClaimedPendingInputHandle,
     projectDir: string | null,
-    reason: PendingInputWakeReason
+    reason: PendingInputWakeReason,
+    drainLease: PendingQueueDrainLease
   ): void {
-    void this.ports.turnStarter
-      .start(claimedInput.sessionId, claimedInput.payload, {
+    this.launchedDrains.set(claimedInput.sessionId, {
+      instance: scope.instance,
+      lease: drainLease,
+      claim
+    })
+    let turn: Promise<TurnCompletion>
+    try {
+      turn = this.ports.turnStarter.start(claimedInput.sessionId, claimedInput.payload, {
         projectDir,
         claimedInput: claim
       })
+    } catch (error) {
+      turn = Promise.reject(error)
+    }
+    void turn
       .then(
         (completion) => {
           const mismatch = this.getCompletionMismatch(claimedInput.id, claim, completion)
@@ -415,12 +446,39 @@ export class PendingInputPump {
             new Error(`Turn left pending input ${claimedInput.id} unsettled.`)
           )
         }
-        scope.instance.markPendingQueueDrainFinished()
+        this.clearLaunchedDrain(claimedInput.sessionId, scope.instance, drainLease)
+        scope.instance.releasePendingQueueDrain(drainLease)
+        this.flushDeferredWakeup(claimedInput.sessionId)
         await this.scheduleNextIfReady(claimedInput.sessionId, claimedInput.id, reason)
       })
       .catch((error) => {
         this.logDrainError(claimedInput.sessionId, reason, 'finalization', error)
       })
+  }
+
+  private shouldDeferWakeup(
+    scope: SessionRuntimeScope,
+    reason: PendingInputWakeReason
+  ): boolean {
+    const launchedDrain = this.launchedDrains.get(scope.sessionId)
+    const status = scope.state()?.status
+    return (
+      launchedDrain?.instance === scope.instance &&
+      launchedDrain.claim.disposition !== null &&
+      status !== undefined &&
+      this.canDrainFromStatus(status, reason)
+    )
+  }
+
+  private clearLaunchedDrain(
+    sessionId: string,
+    instance: DeepChatAgentInstance,
+    lease: PendingQueueDrainLease
+  ): void {
+    const launchedDrain = this.launchedDrains.get(sessionId)
+    if (launchedDrain?.instance === instance && launchedDrain.lease === lease) {
+      this.launchedDrains.delete(sessionId)
+    }
   }
 
   private async scheduleNextIfReady(
@@ -453,6 +511,31 @@ export class PendingInputPump {
     return new DurablePendingInputClaim(this.ports.pendingInputs, sessionId, itemId, source)
   }
 
+  private rememberDeferredWakeup(sessionId: string, reason: PendingInputWakeReason): void {
+    const current = this.deferredWakeups.get(sessionId)
+    this.deferredWakeups.set(
+      sessionId,
+      current === 'enqueue' || reason === 'enqueue' ? 'enqueue' : 'completed'
+    )
+  }
+
+  private flushDeferredWakeup(sessionId: string): void {
+    const reason = this.deferredWakeups.get(sessionId)
+    if (!reason) {
+      return
+    }
+    const scope = this.ports.runLifecycle.getHydratedScope(sessionId)
+    if (!scope) {
+      this.deferredWakeups.delete(sessionId)
+      return
+    }
+    if (scope.instance.isPendingQueueDraining()) {
+      return
+    }
+    this.deferredWakeups.delete(sessionId)
+    this.schedule(sessionId, reason)
+  }
+
   private tryRelease(claim: ClaimedPendingInputHandle): boolean {
     if (claim.disposition) {
       return true
@@ -461,7 +544,10 @@ export class PendingInputPump {
       claim.settle({ kind: 'release-before-user-fact' })
       return true
     } catch (error) {
-      console.warn('[DeepChatAgent] failed to release claimed pending input:', error)
+      logger.warn(
+        `[DeepChatAgent] failed to release claimed pending input item=${claim.id}`,
+        redactRuntimeErrorForLog(error)
+      )
       return claim.disposition !== null
     }
   }
@@ -477,6 +563,21 @@ export class PendingInputPump {
       return new Error(`Turn completed without settling pending input ${itemId} consistently.`)
     }
     return null
+  }
+
+  private meetsDrainPreconditions(
+    sessionId: string,
+    status: DeepChatSessionState['status'],
+    reason: PendingInputWakeReason,
+    snapshot: PendingInputGateSnapshot
+  ): boolean {
+    if (!this.canDrainFromStatus(status, reason) || snapshot.awaitingQuestionFollowUp) {
+      return false
+    }
+    return !this.ports.runLifecycle.reconcilePendingInteractions(
+      sessionId,
+      snapshot.pendingInteractions
+    )
   }
 
   private readGateSnapshot(sessionId: string): PendingInputGateSnapshot {

@@ -22,6 +22,7 @@ export interface DeepChatAgentInstanceDelegate {
 }
 
 export type DeepChatActiveGeneration = LoopRun<unknown>
+export type PendingQueueDrainLease = symbol
 
 export interface DeepChatPendingInteractionRef {
   readonly messageId: string
@@ -58,7 +59,7 @@ export class DeepChatAgentInstance {
   private abortController?: AbortController
   private activeRun?: DeepChatActiveGeneration
   private activeSteerPendingInputId?: string
-  private pendingQueueDraining = false
+  private pendingQueueDrainLease?: PendingQueueDrainLease
   private pendingInteractions: DeepChatPendingInteractionRef[] = []
   private pendingToolBatchState?: PersistedToolBatchState
   private readonly interactionLocks = new Set<string>()
@@ -233,15 +234,24 @@ export class DeepChatAgentInstance {
   }
 
   isPendingQueueDraining(): boolean {
-    return this.pendingQueueDraining
+    return this.pendingQueueDrainLease !== undefined
   }
 
-  markPendingQueueDrainStarted(): void {
-    this.pendingQueueDraining = true
+  tryAcquirePendingQueueDrain(): PendingQueueDrainLease | null {
+    if (this.pendingQueueDrainLease) {
+      return null
+    }
+    const lease = Symbol('pending-queue-drain')
+    this.pendingQueueDrainLease = lease
+    return lease
   }
 
-  markPendingQueueDrainFinished(): void {
-    this.pendingQueueDraining = false
+  releasePendingQueueDrain(lease: PendingQueueDrainLease): boolean {
+    if (this.pendingQueueDrainLease !== lease) {
+      return false
+    }
+    this.pendingQueueDrainLease = undefined
+    return true
   }
 
   replacePendingInteractions(interactions: readonly DeepChatPendingInteractionRef[]): void {
@@ -476,7 +486,7 @@ export class DeepChatAgentInstance {
     this.projectDir = undefined
     this.clearFirstTurnReady()
     this.activeSteerPendingInputId = undefined
-    this.pendingQueueDraining = false
+    this.pendingQueueDrainLease = undefined
     this.pendingInteractions = []
     this.pendingToolBatchState = undefined
     this.interactionLocks.clear()

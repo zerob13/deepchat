@@ -82,7 +82,7 @@ describe('agent cleanup guard', () => {
     expect(
       findDeepChatRootOwnershipViolations(`
         // this.pendingInputs.claimQueuedInput('session', 'item')
-        const diagnostic = 'pendingQueueDraining'
+        const diagnostic = 'tryAcquirePendingQueueDrain()'
       `)
     ).toEqual([])
   })

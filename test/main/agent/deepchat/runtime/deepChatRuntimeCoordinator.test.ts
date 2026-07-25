@@ -7237,10 +7237,11 @@ describe('DeepChatRuntimeCoordinator', () => {
         })
 
         expect(releaseClaim).not.toHaveBeenCalled()
+        const hasClaimedInput = vi.spyOn(sessionData.pendingInputs, 'hasClaimedInput')
         const waiting = await agent.queuePendingInput('s1', 'Wait behind fenced claim', {
           source: 'queue'
         })
-        await Promise.resolve()
+        await vi.waitFor(() => expect(hasClaimedInput.mock.calls.length).toBeGreaterThanOrEqual(2))
         expect(processStream).toHaveBeenCalledOnce()
         expect(await agent.listPendingInputs('s1')).toEqual([
           expect.objectContaining({ id: waiting.id, state: 'pending' })
@@ -7248,6 +7249,93 @@ describe('DeepChatRuntimeCoordinator', () => {
       } finally {
         errorSpy.mockRestore()
         warnSpy.mockRestore()
+      }
+    })
+
+    it('does not persist terminal state for messages removed by pending-input rollback', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      vi.mocked(nanoid)
+        .mockReturnValueOnce('rollback-pending')
+        .mockReturnValueOnce('rollback-user')
+        .mockReturnValueOnce('rollback-assistant')
+      let rows: any[] = []
+      sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
+        rows.push({
+          id: row.id,
+          session_id: row.sessionId,
+          order_seq: row.orderSeq,
+          role: row.role,
+          content: row.content,
+          status: row.status,
+          is_context_edge: 0,
+          metadata: row.metadata ?? '{}',
+          created_at: Date.now(),
+          updated_at: Date.now()
+        })
+      })
+      sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
+        rows.find((row) => row.id === id)
+      )
+      sqlitePresenter.deepchatMessagesTable.getBySession.mockImplementation((sessionId: string) =>
+        rows.filter((row) => row.session_id === sessionId)
+      )
+      sqlitePresenter.deepchatMessagesTable.getLastUserMessageBeforeOrAtOrderSeq.mockImplementation(
+        (sessionId: string, orderSeq: number) =>
+          [...rows]
+            .reverse()
+            .find(
+              (row) =>
+                row.session_id === sessionId && row.role === 'user' && row.order_seq <= orderSeq
+            )
+      )
+      sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq.mockImplementation((sessionId: string) =>
+        rows.reduce(
+          (maxOrderSeq, row) =>
+            row.session_id === sessionId ? Math.max(maxOrderSeq, row.order_seq) : maxOrderSeq,
+          0
+        )
+      )
+      sqlitePresenter.deepchatMessagesTable.getIdsFromOrderSeq.mockImplementation(
+        (sessionId: string, fromOrderSeq: number) =>
+          rows
+            .filter((row) => row.session_id === sessionId && row.order_seq >= fromOrderSeq)
+            .map((row) => row.id)
+      )
+      sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mockImplementation(
+        (sessionId: string, fromOrderSeq: number) => {
+          rows = rows.filter(
+            (row) => row.session_id !== sessionId || row.order_seq < fromOrderSeq
+          )
+        }
+      )
+      ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('provider setup failed')
+      )
+      sqlitePresenter.deepchatMessagesTable.updateContentAndStatus.mockClear()
+      publishDeepchatEvent.mockClear()
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      try {
+        const claimed = await agent.queuePendingInput('s1', 'Retry after provider failure', {
+          source: 'queue'
+        })
+
+        await vi.waitFor(async () => {
+          expect(await agent.listPendingInputs('s1')).toEqual([
+            expect.objectContaining({ id: claimed.id, state: 'pending' })
+          ])
+        })
+
+        expect(processStream).toHaveBeenCalledOnce()
+        expect(rows).toEqual([])
+        expect(
+          sqlitePresenter.deepchatMessagesTable.updateContentAndStatus.mock.calls.some(
+            ([messageId]) => messageId === 'rollback-assistant'
+          )
+        ).toBe(false)
+        expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+      } finally {
+        errorSpy.mockRestore()
       }
     })
 

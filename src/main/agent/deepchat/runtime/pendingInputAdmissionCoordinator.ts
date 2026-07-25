@@ -194,7 +194,9 @@ export class PendingInputAdmissionCoordinator {
     options?: { signal?: AbortSignal }
   ): Promise<MessageStartResult> {
     const input = typeof content === 'string' ? { text: content, files: [] } : content
-    const hasPriorSteerAcceptance = this.attachmentAcceptanceTails.has(`steer:${sessionId}`)
+    const hasPriorSteerAcceptance = this.attachmentAcceptanceTails.has(
+      this.buildAttachmentAcceptanceLaneKey(sessionId, 'steer')
+    )
     const releaseAcceptanceLane =
       input.files?.length || hasPriorSteerAcceptance
         ? await this.acquireAttachmentAcceptanceLane(sessionId, 'steer', options?.signal)
@@ -275,7 +277,10 @@ export class PendingInputAdmissionCoordinator {
         this.ports.pendingInputs.deletePendingInput(sessionId, record.id)
         instance?.clearActiveSteerPendingInputId(record.id)
       } catch (deleteError) {
-        console.error('[AgentRuntime] Failed to delete unstarted steer input:', deleteError)
+        logger.error(
+          `[DeepChatAgent] failed to delete unstarted steer input session=${sessionId} item=${record.id}`,
+          redactRuntimeErrorForLog(deleteError)
+        )
       }
       throw new Error('Unable to start the steered input.')
     } finally {
@@ -383,7 +388,10 @@ export class PendingInputAdmissionCoordinator {
         try {
           this.ports.pendingInputs.restoreSteerInputToQueue(sessionId, itemId)
         } catch (restoreError) {
-          console.error('[AgentRuntime] Failed to restore steered input to queue:', restoreError)
+          logger.error(
+            `[DeepChatAgent] failed to restore steered input session=${sessionId} item=${itemId}`,
+            redactRuntimeErrorForLog(restoreError)
+          )
         }
         throw new Error('Unable to start the steered input.')
       }
@@ -425,7 +433,7 @@ export class PendingInputAdmissionCoordinator {
     lane: 'send' | 'steer',
     signal?: AbortSignal
   ): Promise<() => void> {
-    const key = `${lane}:${sessionId}`
+    const key = this.buildAttachmentAcceptanceLaneKey(sessionId, lane)
     const previous = this.attachmentAcceptanceTails.get(key) ?? Promise.resolve()
     let resolveSlot!: () => void
     const slot = new Promise<void>((resolve) => {
@@ -455,6 +463,13 @@ export class PendingInputAdmissionCoordinator {
       release()
       throw error
     }
+  }
+
+  private buildAttachmentAcceptanceLaneKey(
+    sessionId: string,
+    lane: 'send' | 'steer'
+  ): string {
+    return `${lane}:${sessionId}`
   }
 
   private async prepareMessageInputNow(

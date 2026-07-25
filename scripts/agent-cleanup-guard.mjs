@@ -82,11 +82,16 @@ const DEEPCHAT_ROOT_OWNERSHIP_RULES = [
   },
   {
     kind: 'pending-input-drain-selection',
-    calls: ['getNextQueuedInput', 'getNextSteerInput'].map((name) => ({
-      name,
-      ownerFile: DEEPCHAT_PENDING_INPUTS_FILE
-    })),
-    identifiers: [{ name: 'pendingQueueDraining', ownerFile: DEEPCHAT_AGENT_INSTANCE_FILE }]
+    calls: [
+      ...['getNextQueuedInput', 'getNextSteerInput'].map((name) => ({
+        name,
+        ownerFile: DEEPCHAT_PENDING_INPUTS_FILE
+      })),
+      ...['tryAcquirePendingQueueDrain', 'releasePendingQueueDrain'].map((name) => ({
+        name,
+        ownerFile: DEEPCHAT_AGENT_INSTANCE_FILE
+      }))
+    ]
   },
   {
     kind: 'operation-controller-lifecycle',

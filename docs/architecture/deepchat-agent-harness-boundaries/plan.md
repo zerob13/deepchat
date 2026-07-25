@@ -3,7 +3,7 @@
 ## Current Slice
 
 Extract coordinator ownership boundaries as an independently reviewable refactor. Preserve runtime
-behavior except for the eight corrections enumerated in `spec.md`, each of which must have focused
+behavior except for the twelve corrections enumerated in `spec.md`, each of which must have focused
 regression coverage. The typed tool execution contract below is complete and remains a retained
 record.
 
@@ -90,6 +90,21 @@ Cache the minimal runtime scope by instance and share one parsed transcript snap
 question-follow-up and pending-interaction admission checks. Replace regex ownership checks with
 TypeScript AST checks whose protected symbols are verified against their owner files, so comments
 do not trigger false positives and symbol renames fail closed.
+
+### Stage 8: Pull-Request Review Hardening
+
+Replace the pending-input Boolean single-flight marker with an atomic, token-owned drain lease that
+is acquired before the first asynchronous state read. Coalesce wake reasons that arrive after the
+launched claim has settled and its resulting Session status admits the reason, then replay them
+after exact-owner release without duplicating durable queue state. Continue to leave ordinary
+enqueues pending when the active turn ends in error.
+Keep cleanup non-hydrating, terminalize every assistant message represented by recovered pending
+interactions, and stop terminal persistence from referencing messages removed by retry rollback.
+Pin each path with focused owner or full-runtime coverage.
+
+Standardize recovery logging through the redacting logger, centralize attachment-lane keys and
+project-directory mutation, and replace fixed microtask waits with observable async completion.
+Retain explicit typed Memory test delegation rather than hiding interface drift behind a Proxy.
 
 ## Coordinator Ownership Validation
 

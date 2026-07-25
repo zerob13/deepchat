@@ -175,7 +175,7 @@ export class RunLifecycleCoordinator {
   }
 
   clearFirstTurnReady(sessionId: string): void {
-    this.getOrCreateScope(sessionId).instance.clearFirstTurnReady()
+    this.getHydratedScope(sessionId)?.instance.clearFirstTurnReady()
   }
 
   transitionCurrentStatus(
@@ -281,17 +281,26 @@ export class RunLifecycleCoordinator {
       return
     }
 
-    const messageId = pendingInteractions[0].messageId
-    const metadata = parseMessageMetadata(
-      this.ports.transcript.getMessage(messageId)?.metadata ?? '{}'
-    )
-    const terminalMetadata = stampTerminalMetadata(metadata, 'aborted', 'user_stop')
+    const terminalMessages = Array.from(
+      new Set(pendingInteractions.map(({ messageId }) => messageId))
+    ).map((messageId) => {
+      const metadata = parseMessageMetadata(
+        this.ports.transcript.getMessage(messageId)?.metadata ?? '{}'
+      )
+      return {
+        messageId,
+        terminalMetadata: stampTerminalMetadata(metadata, 'aborted', 'user_stop')
+      }
+    })
+    for (const { messageId, terminalMetadata } of terminalMessages) {
+      this.writeCanceledTerminalBlock(sessionId, messageId, JSON.stringify(terminalMetadata))
+    }
     instance.replacePendingInteractions([])
-    this.settleAbortedTurn(
+    const primaryTerminal = terminalMessages[0]
+    this.observeAbortedTurn(
       sessionId,
-      messageId,
-      terminalMetadata.runId,
-      JSON.stringify(terminalMetadata)
+      primaryTerminal.terminalMetadata.runId,
+      JSON.stringify(primaryTerminal.terminalMetadata)
     )
     this.schedulePendingInputDrain(sessionId, 'completed')
   }
@@ -355,6 +364,10 @@ export class RunLifecycleCoordinator {
     metadata?: string
   ): void {
     this.writeCanceledTerminalBlock(sessionId, messageId, metadata)
+    this.observeAbortedTurn(sessionId, runId, metadata)
+  }
+
+  private observeAbortedTurn(sessionId: string, runId?: string, metadata?: string): void {
     const usage = metadata ? buildUsageFromMetadata(parseMessageMetadata(metadata)) : undefined
     this.observeTerminal(sessionId, {
       status: 'aborted',
@@ -426,9 +439,9 @@ export class RunLifecycleCoordinator {
   private cancelProviderPermissions(instance: DeepChatAgentInstance): void {
     for (const permission of instance.takeActiveProviderPermissions()) {
       void resolveProviderPermissionSafely(() => permission.resolve(false)).catch((error) => {
-        console.warn(
+        logger.warn(
           `[DeepChatAgent] Failed to cancel ACP permission request ${permission.requestId}:`,
-          error
+          redactRuntimeErrorForLog(error)
         )
       })
     }

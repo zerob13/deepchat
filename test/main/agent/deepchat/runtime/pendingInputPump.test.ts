@@ -257,12 +257,6 @@ function createDeferred<T>() {
   return { promise, reject, resolve }
 }
 
-async function flushPromises(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
-}
-
 describe('PendingInputPump', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -296,7 +290,29 @@ describe('PendingInputPump', () => {
       messageStart: { requestId: 'request', messageId: 'message' },
       claimedInputDisposition: disposition
     })
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
+  })
+
+  it('acquires the single-flight lease before the first async state read', async () => {
+    const harness = createHarness([createInput('queue', 'queue')])
+    const stateRead = createDeferred<DeepChatSessionState | null>()
+    vi.mocked(harness.ports.getSessionState).mockImplementation(
+      async () => await stateRead.promise
+    )
+
+    const firstDrain = harness.pump.drain(SESSION_ID, 'enqueue')
+    const concurrentDrain = harness.pump.drain(SESSION_ID, 'enqueue')
+
+    await expect(concurrentDrain).resolves.toBe(false)
+    expect(harness.ports.getSessionState).toHaveBeenCalledOnce()
+    expect(harness.pendingInputs.store.claimQueuedInput).not.toHaveBeenCalled()
+
+    stateRead.resolve(createState())
+    await expect(firstDrain).resolves.toBe(true)
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
+
+    expect(harness.turnStarter.start).toHaveBeenCalledOnce()
+    expect(harness.pendingInputs.store.claimQueuedInput).toHaveBeenCalledOnce()
   })
 
   it('keeps one drain in flight per session', async () => {
@@ -320,8 +336,69 @@ describe('PendingInputPump', () => {
       messageStart: { requestId: 'request', messageId: 'message' },
       claimedInputDisposition: disposition
     })
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
     expect(harness.scope.instance.isPendingQueueDraining()).toBe(false)
+  })
+
+  it('replays a wake deferred behind the active drain lease', async () => {
+    const firstTurn = createDeferred<TurnCompletion>()
+    let firstContext: PendingInputTurnContext | undefined
+    const start: PendingInputPumpPorts['turnStarter']['start'] = vi
+      .fn()
+      .mockImplementationOnce(async (_sessionId, _content, context) => {
+        firstContext = context
+        return await firstTurn.promise
+      })
+      .mockImplementationOnce(async (_sessionId, _content, context) =>
+        completion(context, { kind: 'consume' })
+      )
+    const harness = createHarness([createInput('retry', 'queue')], start)
+
+    await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
+    const disposition = { kind: 'release-after-rollback' } as const
+    firstContext?.claimedInput?.settle(disposition)
+    harness.pump.schedule(SESSION_ID, 'enqueue')
+    expect(start).toHaveBeenCalledOnce()
+
+    firstTurn.resolve({
+      messageStart: { requestId: null, messageId: null },
+      claimedInputDisposition: disposition
+    })
+
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
+    expect(harness.pendingInputs.records.has('retry')).toBe(false)
+  })
+
+  it('does not replay an enqueue accepted while the active turn is still generating', async () => {
+    const firstTurn = createDeferred<TurnCompletion>()
+    let firstContext: PendingInputTurnContext | undefined
+    const start: PendingInputPumpPorts['turnStarter']['start'] = vi.fn(
+      async (_sessionId, _content, context) => {
+        firstContext = context
+        return await firstTurn.promise
+      }
+    )
+    const harness = createHarness([createInput('active', 'queue')], start)
+
+    await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
+    const disposition = { kind: 'consume' } as const
+    firstContext?.claimedInput?.settle(disposition)
+    harness.scope.instance.setRuntimeState(createState('generating'))
+    harness.pendingInputs.records.set('queued', createInput('queued', 'queue', 2))
+
+    harness.pump.schedule(SESSION_ID, 'enqueue')
+    expect(start).toHaveBeenCalledOnce()
+
+    harness.scope.instance.setRuntimeState(createState('error'))
+    firstTurn.resolve({
+      messageStart: { requestId: 'request', messageId: 'message' },
+      claimedInputDisposition: disposition
+    })
+
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
+    expect(start).toHaveBeenCalledOnce()
+    expect(harness.pendingInputs.records.get('queued')?.state).toBe('pending')
   })
 
   it('starts a send deferred behind a draining question follow-up', async () => {
@@ -364,7 +441,8 @@ describe('PendingInputPump', () => {
         updatedAt: 2
       }
     )
-    harness.scope.instance.markPendingQueueDrainStarted()
+    const overlapLease = harness.scope.instance.tryAcquirePendingQueueDrain()
+    if (!overlapLease) throw new Error('Expected the overlap drain lease')
 
     expect(harness.pump.shouldClaimImmediately(SESSION_ID, 'idle', 'send')).toBe(false)
     expect(harness.turnStarter.start).not.toHaveBeenCalled()
@@ -382,10 +460,10 @@ describe('PendingInputPump', () => {
       createdAt: 3,
       updatedAt: 3
     })
-    harness.scope.instance.markPendingQueueDrainFinished()
+    expect(harness.scope.instance.releasePendingQueueDrain(overlapLease)).toBe(true)
 
     await expect(harness.pump.drain(SESSION_ID, 'completed')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(harness.turnStarter.start).toHaveBeenCalledOnce()
     expect(harness.pendingInputs.records.has('follow-up')).toBe(false)
@@ -451,7 +529,7 @@ describe('PendingInputPump', () => {
     harness.scope.instance.setActiveSteerPendingInputId('newer-steer')
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(harness.scope.instance.getActiveSteerPendingInputId()).toBe('newer-steer')
   })
@@ -460,7 +538,7 @@ describe('PendingInputPump', () => {
     const harness = createHarness([createInput(mode, mode)])
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     if (mode === 'queue') {
       expect(harness.pendingInputs.store.consumeQueuedInput).toHaveBeenCalledWith(SESSION_ID, mode)
@@ -479,7 +557,7 @@ describe('PendingInputPump', () => {
     const harness = createHarness([createInput(mode, mode)], start)
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     if (mode === 'queue') {
       expect(harness.pendingInputs.store.releaseClaimedQueueInput).toHaveBeenCalledWith(
@@ -510,7 +588,7 @@ describe('PendingInputPump', () => {
     )
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(start).toHaveBeenCalledOnce()
     expect(harness.pendingInputs.records.get('blocked')).toMatchObject({
@@ -531,7 +609,7 @@ describe('PendingInputPump', () => {
     )
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(start).toHaveBeenCalledOnce()
     expect(harness.pendingInputs.records.get('retry')?.state).toBe('pending')
@@ -546,7 +624,7 @@ describe('PendingInputPump', () => {
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
     await vi.waitFor(() => expect(harness.turnStarter.start).toHaveBeenCalledTimes(2))
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(harness.pendingInputs.records.has('first')).toBe(false)
     expect(harness.pendingInputs.records.has('second')).toBe(false)
@@ -569,7 +647,8 @@ describe('PendingInputPump', () => {
     harness.runtime.evict(toAppSessionId(SESSION_ID))
     const replacement = harness.runtime.getOrHydrateScope(toAppSessionId(SESSION_ID))
     replacement.instance.setRuntimeState(createState())
-    replacement.instance.markPendingQueueDrainStarted()
+    const replacementDrainLease = replacement.instance.tryAcquirePendingQueueDrain()
+    if (!replacementDrainLease) throw new Error('Expected replacement drain lease')
 
     const disposition = { kind: 'consume' } as const
     executionContext?.claimedInput?.settle(disposition)
@@ -577,10 +656,11 @@ describe('PendingInputPump', () => {
       messageStart: { requestId: 'request', messageId: 'message' },
       claimedInputDisposition: disposition
     })
-    await flushPromises()
+    await vi.waitFor(() => expect(staleInstance.isPendingQueueDraining()).toBe(false))
 
     expect(staleInstance.isPendingQueueDraining()).toBe(false)
     expect(replacement.instance.isPendingQueueDraining()).toBe(true)
+    expect(replacement.instance.releasePendingQueueDrain(replacementDrainLease)).toBe(true)
   })
 
   it('reports inconsistent turn completion without applying a second transition', async () => {
@@ -598,7 +678,7 @@ describe('PendingInputPump', () => {
     const error = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(harness.pendingInputs.records.has('queue')).toBe(false)
     expect(harness.pendingInputs.store.releaseClaimedQueueInput).not.toHaveBeenCalled()
@@ -623,7 +703,7 @@ describe('PendingInputPump', () => {
     vi.spyOn(logger, 'error').mockImplementation(() => undefined)
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(harness.pendingInputs.records.get('failed')?.state).toBe('claimed')
     expect(harness.pendingInputs.records.get('later')?.state).toBe('pending')
@@ -643,7 +723,7 @@ describe('PendingInputPump', () => {
     vi.spyOn(logger, 'error').mockImplementation(() => undefined)
 
     await expect(harness.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
-    await flushPromises()
+    await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
 
     expect(harness.pendingInputs.records.has('queue')).toBe(false)
     expect(harness.pendingInputs.store.consumeQueuedInput).toHaveBeenCalledOnce()

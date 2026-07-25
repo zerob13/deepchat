@@ -162,15 +162,7 @@ export class SessionSettingsCoordinator {
   }
 
   setProjectDir(sessionId: string, projectDir: string | null): void {
-    const normalized = this.normalizeProjectDir(projectDir)
-    const instance = this.deps.getInstance(sessionId)
-    const previous = instance.hasProjectDir()
-      ? instance.getProjectDir()
-      : this.resolvePersistedProjectDir(sessionId)
-    instance.setProjectDir(normalized)
-    if (previous !== normalized) {
-      this.invalidateToolProfile(sessionId)
-    }
+    this.applyProjectDir(sessionId, this.deps.getInstance(sessionId), projectDir)
   }
 
   resolveProjectDir(
@@ -180,15 +172,7 @@ export class SessionSettingsCoordinator {
   ): string | null {
     this.deps.assertCurrent(sessionId, expectedInstance)
     if (incoming !== undefined) {
-      const normalized = this.normalizeProjectDir(incoming)
-      const previous = expectedInstance.hasProjectDir()
-        ? expectedInstance.getProjectDir()
-        : this.resolvePersistedProjectDir(sessionId)
-      expectedInstance.setProjectDir(normalized)
-      if (previous !== normalized) {
-        expectedInstance.invalidateToolProfileCache()
-      }
-      return normalized
+      return this.applyProjectDir(sessionId, expectedInstance, incoming)
     }
     if (expectedInstance.hasProjectDir()) {
       return expectedInstance.getProjectDir()
@@ -202,6 +186,22 @@ export class SessionSettingsCoordinator {
   normalizeProjectDir(projectDir?: string | null): string | null {
     const normalized = projectDir?.trim()
     return normalized ? normalized : null
+  }
+
+  private applyProjectDir(
+    sessionId: string,
+    instance: DeepChatAgentInstance,
+    projectDir?: string | null
+  ): string | null {
+    const normalized = this.normalizeProjectDir(projectDir)
+    const previous = instance.hasProjectDir()
+      ? instance.getProjectDir()
+      : this.resolvePersistedProjectDir(sessionId)
+    instance.setProjectDir(normalized)
+    if (previous !== normalized) {
+      instance.invalidateToolProfileCache()
+    }
+    return normalized
   }
 
   getPermissionMode(sessionId: string): PermissionMode {

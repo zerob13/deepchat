@@ -199,7 +199,124 @@ interface HarnessState {
   input: PendingSessionInputRecord | null
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('PendingInputAdmissionCoordinator', () => {
+  it('rejects a send before attachment preparation when the lane is at capacity', async () => {
+    const test = createHarness()
+    vi.mocked(test.pendingInputs.isAtCapacity).mockReturnValueOnce(true)
+
+    await expect(
+      test.coordinator.sendQueuedMessage(
+        SESSION_ID,
+        { text: 'At capacity', files: [] },
+        { source: 'send' }
+      )
+    ).rejects.toThrow('Pending input limit reached for this session.')
+
+    expect(test.ports.attachmentRouter.prepare).not.toHaveBeenCalled()
+    expect(test.pendingInputs.queuePendingInput).not.toHaveBeenCalled()
+  })
+
+  it('returns attachment user action without queueing the send', async () => {
+    const test = createHarness()
+    vi.mocked(test.ports.attachmentRouter.prepare).mockResolvedValueOnce({
+      content: { text: 'Needs OCR', files: [] },
+      summary: {
+        status: 'needs_user_action',
+        issues: [{ attachmentIndex: 0, reason: 'ocr_failed' }],
+        suggestedActions: ['retry']
+      }
+    })
+
+    await expect(
+      test.coordinator.sendQueuedMessage(
+        SESSION_ID,
+        { text: 'Needs OCR', files: [] },
+        { source: 'send' }
+      )
+    ).resolves.toMatchObject({
+      requestId: null,
+      messageId: null,
+      attachmentPreparation: { status: 'needs_user_action' }
+    })
+
+    expect(test.pendingInputs.queuePendingInput).not.toHaveBeenCalled()
+  })
+
+  it('does not queue a send aborted after attachment preparation', async () => {
+    const test = createHarness()
+    const controller = new AbortController()
+    vi.mocked(test.ports.attachmentRouter.prepare).mockImplementationOnce(async ({ content }) => {
+      controller.abort()
+      return {
+        content,
+        summary: { status: 'ready', issues: [], suggestedActions: [] }
+      }
+    })
+
+    await expect(
+      test.coordinator.sendQueuedMessage(
+        SESSION_ID,
+        { text: 'Abort me', files: [] },
+        { source: 'send' },
+        { signal: controller.signal }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(test.pendingInputs.queuePendingInput).not.toHaveBeenCalled()
+  })
+
+  it('serializes overlapping send preparation through durable queue admission', async () => {
+    const test = createHarness()
+    const firstPreparation = createDeferred<{
+      content: SendMessageInput
+      summary: { status: 'ready'; issues: []; suggestedActions: [] }
+    }>()
+    const prepare = vi.mocked(test.ports.attachmentRouter.prepare)
+    prepare
+      .mockImplementationOnce(async () => await firstPreparation.promise)
+      .mockImplementationOnce(async ({ content }) => ({
+        content,
+        summary: { status: 'ready', issues: [], suggestedActions: [] }
+      }))
+
+    const firstSend = test.coordinator.sendQueuedMessage(
+      SESSION_ID,
+      { text: 'First', files: [] },
+      { source: 'send' }
+    )
+    const secondSend = test.coordinator.sendQueuedMessage(
+      SESSION_ID,
+      { text: 'Second', files: [] },
+      { source: 'send' }
+    )
+
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce())
+    expect(test.pendingInputs.queuePendingInput).not.toHaveBeenCalled()
+
+    firstPreparation.resolve({
+      content: { text: 'First', files: [] },
+      summary: { status: 'ready', issues: [], suggestedActions: [] }
+    })
+    await Promise.all([firstSend, secondSend])
+
+    expect(prepare).toHaveBeenCalledTimes(2)
+    expect(test.pendingInputs.queuePendingInput).toHaveBeenCalledTimes(2)
+    expect(prepare.mock.invocationCallOrder[1]).toBeGreaterThan(
+      vi.mocked(test.pendingInputs.queuePendingInput).mock.invocationCallOrder[0]
+    )
+    expect(
+      vi.mocked(test.pendingInputs.queuePendingInput).mock.calls.map(([, input]) => input.text)
+    ).toEqual(['First', 'Second'])
+  })
+
   it('keeps a promoted steer when another drain has already claimed it', async () => {
     const test = createHarness((harness) => {
       if (!harness.input) throw new Error('Pending input not found')

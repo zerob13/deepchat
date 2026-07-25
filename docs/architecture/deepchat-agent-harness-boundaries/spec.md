@@ -9,7 +9,7 @@ or new read-only tool therefore requires runtime knowledge that does not belong 
 
 This architecture goal establishes stable contracts around the DeepChat Agent harness over
 multiple short-lived pull requests. The typed tool execution contract is complete. The current
-slice defines coordinator ownership boundaries and includes the eight explicitly enumerated
+slice defines coordinator ownership boundaries and includes the twelve explicitly enumerated
 runtime corrections below. All other runtime behavior remains compatible. A Harness facade, typed
 hooks, and same-run steering remain separate changes.
 
@@ -132,7 +132,7 @@ Before production extraction, tests stop reflecting private coordinator members.
 must assert public behavior or construct the new owner through typed test ports. This test-only
 stage changes no production source and must pass the complete main-process suite.
 
-Production extraction preserves all observable assertions except for the eight corrections listed
+Production extraction preserves all observable assertions except for the twelve corrections listed
 in the next section. Tests may move to owner-specific suites or replace structural mocks with typed
 ports, but expected status, event order, queue disposition, terminal persistence, hooks, Tape,
 Memory, permissions, and public return values outside those corrections must not change. Each
@@ -140,10 +140,11 @@ correction requires a regression test that distinguishes its old and new behavio
 
 ### Included Runtime Corrections
 
-This ownership slice contains three explicit bug fixes and five corrections exposed while moving
-the owning code. They remain in this pull request because later extraction rewrote or relocated the
-same control flow, so separating them now would require replaying and resolving the complete
-ownership refactor without restoring an independently reversible change.
+This ownership slice contains three explicit bug fixes, five corrections exposed while moving the
+owning code, and four additional ownership defects found during full pull-request review. They
+remain in this pull request because later extraction rewrote or relocated the same control flow, so
+separating them now would require replaying and resolving the complete ownership refactor without
+restoring an independently reversible change.
 
 | Correction | Previous behavior | Required behavior and rationale |
 | --- | --- | --- |
@@ -154,7 +155,11 @@ ownership refactor without restoring an independently reversible change.
 | Direct-steer ownership | A false drain result caused deletion unless the narrow draining/generating checks happened to be visible at that instant. | Retain the steer whenever its durable state or an active generation, controller, drain, or generating projection proves another owner accepted it. |
 | Promoted-steer ownership | A false drain result restored a promoted steer even when another drain had already claimed or consumed it. | Restore only when no durable or runtime owner accepted the promoted steer. |
 | Operation-controller ownership | Cleanup without an exact controller reference could clear a replacement operation's controller. | Treat an absent expected controller as a no-op; only the exact current controller may be cleared. |
-| Follow-up/drain overlap | A direct follow-up could attempt a second immediate start while another pending-input turn owned the single-flight pump. | Keep the new input pending while `pendingQueueDraining` is true. At every normal asynchronous yield point the draining turn already owns a claimed row, so the claimed-input gate also prevents a second start. The explicit drain check protects defensive or re-entrant observations; once the in-flight turn persists its user fact, transcript ordering removes the old follow-up marker and normal completion wakeup admits the pending input. A regression test constructs that conservative overlap and verifies admission after the transition. |
+| Follow-up/drain overlap | A direct follow-up could attempt a second immediate start while another pending-input turn owned the single-flight pump. | Keep the new input pending while another owner holds the instance-scoped drain lease. At every normal asynchronous yield point the draining turn already owns a claimed row, so the claimed-input gate also prevents a second start. The explicit lease check protects defensive or re-entrant observations; once the in-flight turn persists its user fact, transcript ordering removes the old follow-up marker and normal completion wakeup admits the pending input. A regression test constructs that conservative overlap and verifies admission after the transition. |
+| Atomic drain ownership | Concurrent `drain()` calls could both pass the Boolean single-flight check before either call marked the instance as draining, claim different rows, and later clear each other's state. A wake arriving while the owner finalized could also be lost. | Acquire an instance-scoped drain lease synchronously before the first asynchronous state read and release it only with the exact owner token. Non-starting paths release locally; a launched turn transfers release ownership to its finalizer. Coalesce transient wake reasons only after the active claim has settled and the resulting Session status admits that reason, then replay them after lease release. Enqueues accepted while a turn is still generating continue to rely on normal completion wakeup, so an error leaves their backlog pending. The durable queue remains the sole input fact. |
+| Non-hydrating readiness cleanup | Clearing `firstTurnReady` used `getOrCreateScope`, so cleanup after eviction could recreate a runtime instance with no active operation. | Clear readiness only on an already hydrated scope. Cleanup is a no-op after eviction and cannot resurrect Session runtime state. |
+| Multi-message interaction cancel | Canceling recovered pending interactions terminalized only the first assistant message before dropping every interaction reference. | Terminalize every distinct assistant message represented by the pending interaction set, then clear the set and emit one Session terminal projection and queue wakeup. |
+| Rolled-back terminal references | A thrown pending-input turn rolled back its user and assistant messages but retained their IDs, then attempted error persistence and emitted stream failure for deleted records. | Clear both IDs immediately after durable transcript rollback, including returned error results, so no terminal write, event, or public result references a deleted message. |
 
 The last rule deliberately does not let ordinary queue-origin inputs bypass the tool-follow-up gate.
 `PendingInputEnqueueSource` remains the admission distinction. The production invariant is the
@@ -316,7 +321,7 @@ execution continues to settle independently and commit results in provider call 
    cancel, and provider-return paths without duplicate queue wakeups.
 6. `PendingInputPump` is the only queue-drain and claim-state owner. Steer priority, blocked-input
    gates, restart recovery, and per-session single flight remain compatible; retry rollback and the
-   eight enumerated corrections follow their explicitly tested semantics.
+   twelve enumerated corrections follow their explicitly tested semantics.
 7. Internal turn completion maps losslessly to the existing `MessageStartResult`, including OCR and
    attachment-preparation outcomes.
 8. Manual and automatic compaction retain current abort, stale-instance, status, transcript, Tape,

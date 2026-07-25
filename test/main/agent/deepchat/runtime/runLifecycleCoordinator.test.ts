@@ -239,6 +239,17 @@ describe('RunLifecycleCoordinator', () => {
     expect(coordinator.markFirstTurnReady(scope, 'run-1')).toBe(false)
   })
 
+  it('does not hydrate an evicted session while clearing first-turn readiness', () => {
+    const { coordinator, runtime } = createHarness()
+    const sessionId = toAppSessionId(SESSION_ID)
+    coordinator.getOrCreateScope(SESSION_ID)
+    runtime.evict(sessionId)
+
+    coordinator.clearFirstTurnReady(SESSION_ID)
+
+    expect(runtime.getHydrated(sessionId)).toBeUndefined()
+  })
+
   it('observes a stale terminal result without overwriting the current run status', () => {
     const { coordinator, terminalObserver } = createHarness()
     const scope = coordinator.getOrCreateScope(SESSION_ID)
@@ -286,7 +297,12 @@ describe('RunLifecycleCoordinator', () => {
   })
 
   it('settles a paused interaction immediately when no async owner remains', async () => {
-    const message = createMessage('message-paused', [createPendingAction('tool-1')], 1, '{"runId":"run-1"}')
+    const message = createMessage(
+      'message-paused',
+      [createPendingAction('tool-1')],
+      1,
+      '{"runId":"run-1"}'
+    )
     const { coordinator, pendingInputWakeup, terminalObserver, transcript } = createHarness([
       message
     ])
@@ -320,13 +336,48 @@ describe('RunLifecycleCoordinator', () => {
     ])
   })
 
+  it('terminalizes every assistant message represented by pending interactions', async () => {
+    const first = createMessage(
+      'message-1',
+      [createPendingAction('tool-1'), createPendingAction('tool-2')],
+      1,
+      '{"runId":"run-1"}'
+    )
+    const second = createMessage(
+      'message-2',
+      [createPendingAction('tool-3')],
+      2,
+      '{"runId":"run-2"}'
+    )
+    const { coordinator, emitMessageRefresh, pendingInputWakeup, terminalObserver, transcript } =
+      createHarness([first, second])
+    const scope = coordinator.getOrCreateScope(SESSION_ID)
+    scope.instance.setRuntimeState(createState('generating'))
+
+    expect(coordinator.refreshPendingInteractions(SESSION_ID)).toBe(true)
+    await coordinator.cancel(SESSION_ID)
+
+    expect(scope.instance.getPendingInteractions()).toEqual([])
+    expect(vi.mocked(transcript.setMessageError).mock.calls.map(([messageId]) => messageId)).toEqual([
+      'message-1',
+      'message-2'
+    ])
+    expect(emitMessageRefresh.mock.calls.map(([, messageId]) => messageId)).toEqual([
+      'message-1',
+      'message-2'
+    ])
+    expect(terminalObserver.observe).toHaveBeenCalledOnce()
+    expect(scope.state()?.status).toBe('idle')
+    expect(pendingInputWakeup.drain).toHaveBeenCalledWith(SESSION_ID, 'completed')
+  })
+
   it('cancels provider permissions exactly once and ignores already-stale requests', async () => {
     const { coordinator } = createHarness()
     const scope = coordinator.getOrCreateScope(SESSION_ID)
     const resolve = vi
       .fn()
       .mockRejectedValue(new Error('Unknown ACP permission request: permission-1'))
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
     scope.instance.registerActiveProviderPermission({
       requestId: 'permission-1',
       messageId: 'message-1',
@@ -350,7 +401,7 @@ describe('RunLifecycleCoordinator', () => {
     const scope = coordinator.getOrCreateScope(SESSION_ID)
     const failure = new Error('permission bridge failed')
     const resolve = vi.fn().mockRejectedValue(failure)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
     scope.instance.registerActiveProviderPermission({
       requestId: 'permission-1',
       messageId: 'message-1',
@@ -365,7 +416,7 @@ describe('RunLifecycleCoordinator', () => {
 
     expect(warn).toHaveBeenCalledWith(
       '[DeepChatAgent] Failed to cancel ACP permission request permission-1:',
-      failure
+      { name: 'Error' }
     )
   })
 

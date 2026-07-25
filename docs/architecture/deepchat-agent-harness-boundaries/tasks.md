@@ -30,13 +30,20 @@
 - [x] Extend the existing compaction owner and reduce the root to composition and compatibility.
 - [x] Split owner tests while retaining focused full-runtime integration coverage.
 - [x] Update architecture guards and regenerate the layered-runtime baseline.
-- [x] Correct the SDD to enumerate the three explicit fixes and five ownership behavior changes.
+- [x] Correct the SDD to enumerate all twelve intentional ownership behavior changes.
 - [x] Pin the follow-up/drain overlap and verify the four existing ownership regression tests.
 - [x] Treat concurrent terminal interaction settlement as clean ownership loss.
 - [x] Tighten claim settlement typing and preserve primary settlement errors.
 - [x] Cache runtime scopes and share transcript parsing across pending-input gates.
 - [x] Replace regex ownership checks with fail-closed TypeScript AST checks.
 - [x] Correct claim diagnostics and stale-instance error classification.
+- [x] Make pending-input single flight atomic and token-owned before the first asynchronous read.
+- [x] Prevent cleanup hydration and terminalize every canceled interaction message.
+- [x] Stop terminal persistence from referencing messages removed by retry rollback.
+- [x] Standardize recovery logging and remove duplicated lane/project-directory mutation paths.
+- [x] Add focused admission, drain-race, cancellation, and rollback regression coverage.
+- [x] Run pull-request review validation and inspect the complete follow-up diff.
+- [ ] Commit the reviewed pull-request follow-up without pushing.
 - [x] Run focused and full validation, review the complete diff, and fix every finding.
 - [x] Commit every reviewed stage without pushing.
 

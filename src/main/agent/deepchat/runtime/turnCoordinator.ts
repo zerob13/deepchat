@@ -715,6 +715,8 @@ export class TurnCoordinator {
           claimedInput.settle({ kind: 'consume' })
         } else {
           this.rollbackPendingInputTurn(sessionId, userMessageId, instance)
+          userMessageId = null
+          assistantMessageId = null
           claimedInput.settle({ kind: 'release-after-rollback' })
         }
       }
@@ -761,6 +763,8 @@ export class TurnCoordinator {
               claimedInput.settle({ kind: 'consume' })
             } else {
               this.rollbackPendingInputTurn(sessionId, userMessageId, instance)
+              userMessageId = null
+              assistantMessageId = null
               claimedInput.settle({ kind: 'release-after-rollback' })
             }
           } catch (releaseError) {
