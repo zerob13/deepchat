@@ -6949,6 +6949,60 @@ describe('DeepChatRuntimeCoordinator', () => {
       }
     })
 
+    it('serializes tool follow-up sends while the first claimed turn is still pre-stream', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue([
+        {
+          ...makeDeepchatAssistantRow(1, '', 'answered-question'),
+          content: JSON.stringify([
+            {
+              type: 'action',
+              action_type: 'question_request',
+              status: 'success',
+              timestamp: 1,
+              content: 'Answered',
+              tool_call: { id: 'answered-question', name: 'ask_question', params: '{}' },
+              extra: {
+                needsUserAction: false,
+                questionResolution: 'replied',
+                questionFollowUpPending: true
+              }
+            }
+          ])
+        }
+      ])
+      setRuntimeStatus(agent, 's1', 'generating')
+      const firstPreparationStarted = deferred<void>()
+      const releaseFirstPreparation = deferred<void>()
+      runtimeDependencies.attachmentRouter.prepare = vi.fn(async ({ content }) => {
+        if (content.text === 'First follow-up') {
+          firstPreparationStarted.resolve()
+          await releaseFirstPreparation.promise
+        }
+        return {
+          content,
+          summary: { status: 'ready' as const, issues: [], suggestedActions: [] }
+        }
+      })
+      ;(nanoid as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce('follow-up-first')
+        .mockReturnValueOnce('follow-up-second')
+
+      const first = await agent.queuePendingInput('s1', 'First follow-up')
+      await firstPreparationStarted.promise
+      const second = await agent.queuePendingInput('s1', 'Second follow-up')
+
+      expect(first).toMatchObject({ id: 'follow-up-first', state: 'claimed' })
+      expect(second).toMatchObject({ id: 'follow-up-second', state: 'pending' })
+      expect(runtimeDependencies.attachmentRouter.prepare).toHaveBeenCalledOnce()
+      expect(await agent.listPendingInputs('s1')).toEqual([
+        expect.objectContaining({ id: 'follow-up-second', state: 'pending' })
+      ])
+
+      releaseFirstPreparation.resolve()
+      await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+    })
+
     it('keeps a pre-user-fact runtime failure pending until an explicit retry', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const ready = { status: 'ready' as const, issues: [], suggestedActions: [] }

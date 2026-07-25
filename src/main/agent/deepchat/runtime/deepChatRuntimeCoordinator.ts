@@ -780,7 +780,8 @@ export class DeepChatRuntimeCoordinator {
     const shouldClaimImmediately =
       ((options?.source ?? 'send') === 'send' &&
         this.isAwaitingToolQuestionFollowUp(sessionId) &&
-        !this.pendingInputCoordinator.hasBlockingInput(sessionId)) ||
+        !this.pendingInputCoordinator.hasBlockingInput(sessionId) &&
+        !this.pendingInputCoordinator.hasClaimedInput(sessionId)) ||
       this.shouldStartQueuedInputImmediately(sessionId, state.status)
     const record = this.pendingInputCoordinator.queuePendingInput(sessionId, input, {
       state: shouldClaimImmediately ? 'claimed' : 'pending'
