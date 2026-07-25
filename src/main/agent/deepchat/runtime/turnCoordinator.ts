@@ -56,7 +56,7 @@ import {
 } from './tapeViewAssembler'
 import type { DeepChatToolResolver } from './toolResolver'
 import type { ToolOutputGuard } from './toolOutputGuard'
-import type { ResumeBudgetToolCall } from './interactionCoordinator'
+import type { ResumeBudgetToolCall } from './turnResumeContract'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { extractUserMessageInput } from '@/session/data/userMessageContent'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'

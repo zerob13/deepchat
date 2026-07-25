@@ -42,7 +42,7 @@ import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAge
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { MessageProjectionService } from './messageProjectionService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
-import type { TurnCoordinator } from './turnCoordinator'
+import type { ResumeBudgetToolCall, TurnResumePort } from './turnResumeContract'
 import type { DeepChatEventPublisher, PendingToolInteraction } from './types'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { MAX_TOOL_CALLS } from '@/agent/deepchat/loop/deepChatLoopEngine'
@@ -63,12 +63,6 @@ type InteractionRunLifecyclePort = Pick<
   | 'transitionStatus'
 >
 
-export type ResumeBudgetToolCall = {
-  id: string
-  name: string
-  offloadPath?: string
-}
-
 type SkillDraftPresenter = Pick<
   SkillServicePort,
   'viewDraftSkill' | 'installDraftSkill' | 'discardDraftSkill'
@@ -85,7 +79,7 @@ export interface InteractionCoordinatorPorts {
   deferredToolExecutor: Pick<DeferredToolExecutor, 'execute'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
   hookSink: Pick<RuntimeHookSink, 'dispatch'>
-  turnCoordinator: Pick<TurnCoordinator, 'resume'>
+  turnCoordinator: TurnResumePort
   publishEvent: DeepChatEventPublisher
 }
 
