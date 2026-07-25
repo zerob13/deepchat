@@ -1,7 +1,7 @@
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { MemoryPromptContributor } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type {
   BasePromptAssembler,
@@ -14,8 +14,6 @@ import {
 import { buildContextCheckpoint } from './contextContributions'
 import { logSlowPreStreamStep } from './preStreamWatchdog'
 import type { SessionIdentityService } from './sessionIdentityService'
-
-export type PromptAssemblyRegistry = Pick<DeepChatAgentRuntime, 'getOrHydrate' | 'scopeFor'>
 
 export interface PromptAssemblyProjectDirPort {
   resolveProjectDir(
@@ -30,7 +28,7 @@ export interface PromptAssemblyServiceDependencies
     SystemPromptBuilderDependencies,
     'providerSettings' | 'skillSettings' | 'skillService' | 'providerCatalogPort' | 'toolService'
   > {
-  registry: PromptAssemblyRegistry
+  registry: SessionScopeRegistry
   identity: Pick<SessionIdentityService, 'isAcpBackedSubagentSession'>
   projectDir: PromptAssemblyProjectDirPort
   memoryPromptContributor: MemoryPromptContributor
@@ -61,7 +59,7 @@ export class PromptAssemblyService {
     basePrompt: string,
     toolDefinitions: MCPToolDefinition[],
     activeSkillNamesOverride?: string[],
-    resourceInstance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    resourceInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
   ): Promise<string> {
     return await buildSystemPromptWithSkills(this.builderDependencies, {
       sessionId,

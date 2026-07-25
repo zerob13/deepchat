@@ -7,7 +7,10 @@ import type { ToolServicePort } from '@shared/types/tool'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { ProviderModelResolutionPort } from '@/provider/settings'
 import type { PromptSettings } from '@/agent/promptSettings'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type {
+  DeepChatAgentRuntime,
+  SessionScopeRegistry
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { MemoryRuntimeCoordinator } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
 import type { SessionSettingsStore } from '@/session/data/settings'
 import type { SessionTranscript } from '@/session/data/transcript'
@@ -27,10 +30,7 @@ export interface SessionInitConfig {
   generationSettings?: Partial<SessionGenerationSettings>
 }
 
-export type SessionLifecycleRegistry = Pick<
-  DeepChatAgentRuntime,
-  'getOrHydrate' | 'getHydrated' | 'evict'
->
+export type SessionLifecycleRegistry = SessionScopeRegistry & Pick<DeepChatAgentRuntime, 'evict'>
 
 export interface SessionLifecycleCoordinatorDependencies {
   registry: SessionLifecycleRegistry
@@ -76,7 +76,7 @@ export class SessionLifecycleCoordinator {
       permissionMode,
       generationSettings
     )
-    const instance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     instance.setAgentId(
       config.agentId?.trim() || this.deps.identity.getAgentId(sessionId) || 'deepchat'
     )
@@ -95,7 +95,7 @@ export class SessionLifecycleCoordinator {
   }
 
   async destroy(sessionId: string): Promise<void> {
-    const instance = this.deps.registry.getHydrated(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
     this.deps.memory.beginSessionDestroy(sessionId)
     if (instance) {
       this.deps.runLifecycle.cancelScopeOperations(

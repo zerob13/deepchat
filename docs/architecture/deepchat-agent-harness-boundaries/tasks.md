@@ -49,16 +49,16 @@
 
 ## Harness Facade
 
-- [ ] Specify the owner map, port narrowing rules, single late binding, and zero-behavior-change
+- [x] Specify the owner map, port narrowing rules, single late binding, and zero-behavior-change
       invariants in this architecture record.
-- [ ] Extract identity, state resolution, session lifecycle, transcript mutation, and message
+- [x] Extract identity, state resolution, session lifecycle, transcript mutation, and message
       projection owners; make `resolveStreamRequestId` a pure helper.
-- [ ] Bind the prompt assembler factory, tool result normalization, and permission review through
+- [x] Bind the prompt assembler factory, tool result normalization, and permission review through
       named ports without wrapping domain functions in single-method classes.
-- [ ] Replace registry-shaped callbacks with `SessionScopeRegistry` and `SessionRuntimeScope`.
-- [ ] Replace remaining owner callbacks with concrete collaborators and compose the six Tape
+- [x] Replace registry-shaped callbacks with `SessionScopeRegistry` and `SessionRuntimeScope`.
+- [x] Replace remaining owner callbacks with concrete collaborators and compose the six Tape
       capabilities into one domain port.
-- [ ] Introduce the named pending-input wakeup binding and remove every other deferred wiring.
+- [x] Introduce the named pending-input wakeup binding and remove every other deferred wiring.
 - [ ] Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `dispose()`; route manager
       backend send, cancel, snapshot, and close through the harness port.
 - [ ] Add the composition factory and the facade implementing the existing manager and session

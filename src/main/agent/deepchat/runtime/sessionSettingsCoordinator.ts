@@ -8,6 +8,9 @@ import type {
 
 import type { ToolServicePort } from '@shared/types/tool'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import type { SessionIdentityService } from './sessionIdentityService'
 import { BUILTIN_DEEPCHAT_AGENT_ID } from '@/agent/deepchat/deepChatAgentRepository'
 import type { SessionPermissionPort } from '@/session/contracts'
 import {
@@ -28,11 +31,8 @@ interface SessionSettingsCoordinatorDependencies {
   toolResolver: DeepChatToolResolver
   toolService: ToolServicePort
   sessionPermissionPort: SessionPermissionPort
-  getRuntimeState(sessionId: string): DeepChatSessionState | undefined
-  getSessionAgentId(sessionId: string): string | undefined
-  getInstance(sessionId: string): DeepChatAgentInstance
-  getHydratedInstance(sessionId: string): DeepChatAgentInstance | undefined
-  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
+  registry: SessionScopeRegistry
+  identity: Pick<SessionIdentityService, 'getAgentId'>
   beginSessionAgentReassignment(sessionId: string): Promise<void>
   finishSessionAgentReassignment(sessionId: string): void
   readPersistedProjectDir(sessionId: string): string | null | undefined
@@ -41,8 +41,24 @@ interface SessionSettingsCoordinatorDependencies {
 export class SessionSettingsCoordinator {
   constructor(private readonly deps: SessionSettingsCoordinatorDependencies) {}
 
+  private instance(sessionId: string): DeepChatAgentInstance {
+    return this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
+  }
+
+  private hydratedInstance(sessionId: string): DeepChatAgentInstance | undefined {
+    return this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
+  }
+
+  private state(sessionId: string): DeepChatSessionState | undefined {
+    return this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
+  }
+
+  private assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void {
+    this.deps.registry.scopeFor(toAppSessionId(sessionId), instance).assertCurrent()
+  }
+
   async setPermissionMode(sessionId: string, mode: PermissionMode): Promise<void> {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     this.deps.sessionStore.updatePermissionMode(sessionId, mode)
     if (state) {
       state.permissionMode = mode
@@ -56,7 +72,7 @@ export class SessionSettingsCoordinator {
       throw new Error('Session model update requires providerId and modelId.')
     }
 
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     const dbSession = this.deps.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       throw new Error(`Session ${sessionId} not found`)
@@ -84,7 +100,7 @@ export class SessionSettingsCoordinator {
       buildPersistedGenerationSettingsReplacement(sanitized)
     )
 
-    const instance = this.deps.getInstance(sessionId)
+    const instance = this.instance(sessionId)
     if (state) {
       state.providerId = nextProviderId
       state.modelId = nextModelId
@@ -108,7 +124,7 @@ export class SessionSettingsCoordinator {
       throw new Error('Session agent context update requires agentId, providerId and modelId.')
     }
 
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     const dbSession = this.deps.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       throw new Error(`Session ${sessionId} not found`)
@@ -126,7 +142,7 @@ export class SessionSettingsCoordinator {
       config.generationSettings ?? {}
     )
     const isAgentReassignment =
-      (this.deps.getSessionAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID) !== nextAgentId
+      (this.deps.identity.getAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID) !== nextAgentId
     try {
       if (isAgentReassignment) {
         await this.deps.beginSessionAgentReassignment(sessionId)
@@ -139,7 +155,7 @@ export class SessionSettingsCoordinator {
         permissionMode
       )
 
-      const instance = this.deps.getInstance(sessionId)
+      const instance = this.instance(sessionId)
       instance.setRuntimeState({
         status: state?.status ?? 'idle',
         providerId: nextProviderId,
@@ -162,15 +178,15 @@ export class SessionSettingsCoordinator {
   }
 
   setProjectDir(sessionId: string, projectDir: string | null): void {
-    this.applyProjectDir(sessionId, this.deps.getInstance(sessionId), projectDir)
+    this.applyProjectDir(sessionId, this.instance(sessionId), projectDir)
   }
 
   resolveProjectDir(
     sessionId: string,
     incoming?: string | null,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): string | null {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     if (incoming !== undefined) {
       return this.applyProjectDir(sessionId, expectedInstance, incoming)
     }
@@ -205,7 +221,7 @@ export class SessionSettingsCoordinator {
   }
 
   getPermissionMode(sessionId: string): PermissionMode {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     if (state) {
       return state.permissionMode
     }
@@ -213,7 +229,7 @@ export class SessionSettingsCoordinator {
   }
 
   async getGenerationSettings(sessionId: string): Promise<SessionGenerationSettings | null> {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     const dbSession = this.deps.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       return null
@@ -225,7 +241,7 @@ export class SessionSettingsCoordinator {
     sessionId: string,
     settings: Partial<SessionGenerationSettings>
   ): Promise<SessionGenerationSettings> {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     const dbSession = this.deps.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       throw new Error(`Session ${sessionId} not found`)
@@ -249,15 +265,15 @@ export class SessionSettingsCoordinator {
       sessionId,
       buildPersistedGenerationSettingsPatch(settings, sanitized)
     )
-    this.deps.getInstance(sessionId).setGenerationSettings(sanitized)
+    this.instance(sessionId).setGenerationSettings(sanitized)
     return sanitized
   }
 
   async getEffectiveGenerationSettings(
     sessionId: string,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): Promise<SessionGenerationSettings> {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     const cached = expectedInstance.getGenerationSettings()
     if (cached) {
       return { ...cached }
@@ -284,7 +300,7 @@ export class SessionSettingsCoordinator {
       modelId,
       persistedPatch
     )
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     expectedInstance.setGenerationSettings(sanitized)
     return { ...sanitized }
   }
@@ -302,6 +318,6 @@ export class SessionSettingsCoordinator {
   }
 
   private invalidateToolProfile(sessionId: string): void {
-    this.deps.getHydratedInstance(sessionId)?.invalidateToolProfileCache()
+    this.hydratedInstance(sessionId)?.invalidateToolProfileCache()
   }
 }

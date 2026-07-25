@@ -294,6 +294,15 @@ Four sequences are load-bearing and must move verbatim:
 The durable pending-input queue, Tape, Memory, and permission recovery keep their existing single
 sources of truth. No fact is duplicated onto the facade or onto a new service.
 
+### Deferred Findings
+
+Defects observed while moving code are recorded here and fixed on a separate branch.
+
+| Finding | Observation | Current handling |
+| --- | --- | --- |
+| Steer merge race | Merging two rapid steer inputs into one turn depends on an in-flight `steerActiveTurn` reaching the instance steer marker before a settlement-triggered drain adopts the claim. Nothing serializes the two, so the window is defined only by the async depth of the pump's session-state read. | Behavior preserved by keeping that read behind its own async boundary, with the reason recorded at the wiring site. Closing the race requires holding the steer lane across queue and cancel, which is a behavior change. |
+| Duplicated drain logging | `RunLifecycleCoordinator.schedulePendingInputDrain` and `PendingInputPump.schedule` both catch a rejected drain and log the identical `drainPendingQueueIfPossible` message, so one owner is redundant. | Left as is; both paths keep their existing coverage. |
+
 ### Test Boundary
 
 The 12918-line root suite splits into owner suites plus one compact full-runtime integration suite

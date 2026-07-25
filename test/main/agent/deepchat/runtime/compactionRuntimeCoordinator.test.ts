@@ -237,15 +237,14 @@ function createHarness(options?: {
         historyRecords: []
       })
     },
-    getInstance,
-    getHydratedInstance,
-    getSessionListState,
-    assertCurrent: (sessionId, instance) =>
-      runtime.scopeFor(toAppSessionId(sessionId), instance).assertCurrent(),
-    createBasePromptAssembler: () => ({
-      assemble: vi.fn().mockResolvedValue('Assembled system prompt')
-    }),
-    emitMessageRefresh,
+    registry: runtime,
+    sessionState: { getSummary: getSessionListState },
+    promptAssembly: {
+      createBasePromptAssembler: () => ({
+        assemble: vi.fn().mockResolvedValue('Assembled system prompt')
+      })
+    },
+    messageProjection: { refresh: emitMessageRefresh },
     publishEvent: (event, payload) => publishedEvents.push({ event, payload })
   }
   const coordinator = new CompactionRuntimeCoordinator(deps)

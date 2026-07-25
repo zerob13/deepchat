@@ -229,10 +229,12 @@ function createHarness(
       reconcilePendingInteractions: hasPendingInteractions
     },
     turnStarter,
-    getSessionState: vi.fn(async (sessionId: string) =>
-      runtime.getHydratedScope(toAppSessionId(sessionId))?.state() ?? null
-    ),
-    resolveProjectDir: vi.fn(() => '/workspace')
+    sessionState: {
+      get: vi.fn(async (sessionId: string) =>
+        runtime.getHydratedScope(toAppSessionId(sessionId))?.state() ?? null
+      )
+    },
+    sessionSettings: { resolveProjectDir: vi.fn(() => '/workspace') }
   }
 
   return {
@@ -293,10 +295,22 @@ describe('PendingInputPump', () => {
     await vi.waitFor(() => expect(harness.scope.instance.isPendingQueueDraining()).toBe(false))
   })
 
+  it('propagates a rejected session-state read and releases the drain lease', async () => {
+    const harness = createHarness([createInput('queue', 'queue')])
+    const failure = new Error('session state unavailable')
+    vi.mocked(harness.ports.sessionState.get).mockRejectedValueOnce(failure)
+
+    await expect(harness.pump.drain(SESSION_ID, 'completed')).rejects.toBe(failure)
+
+    expect(harness.scope.instance.isPendingQueueDraining()).toBe(false)
+    expect(harness.pendingInputs.store.claimQueuedInput).not.toHaveBeenCalled()
+    expect(harness.turnStarter.start).not.toHaveBeenCalled()
+  })
+
   it('acquires the single-flight lease before the first async state read', async () => {
     const harness = createHarness([createInput('queue', 'queue')])
     const stateRead = createDeferred<DeepChatSessionState | null>()
-    vi.mocked(harness.ports.getSessionState).mockImplementation(
+    vi.mocked(harness.ports.sessionState.get).mockImplementation(
       async () => await stateRead.promise
     )
 
@@ -304,7 +318,7 @@ describe('PendingInputPump', () => {
     const concurrentDrain = harness.pump.drain(SESSION_ID, 'enqueue')
 
     await expect(concurrentDrain).resolves.toBe(false)
-    expect(harness.ports.getSessionState).toHaveBeenCalledOnce()
+    expect(harness.ports.sessionState.get).toHaveBeenCalledOnce()
     expect(harness.pendingInputs.store.claimQueuedInput).not.toHaveBeenCalled()
 
     stateRead.resolve(createState())

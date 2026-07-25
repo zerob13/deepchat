@@ -3,7 +3,7 @@ import type { ProviderExecutionPort } from '@shared/types/provider'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { ProviderModelResolutionPort } from '@/provider/settings'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { ToolResultPort } from '@/agent/deepchat/loop/ports'
 import type { SessionSettingsStore } from '@/session/data/settings'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
@@ -32,7 +32,7 @@ export interface ToolRuntimeBindingDependencies {
     ProviderExecutionPort,
     'executeWithRateLimit' | 'generateCompletionStandalone'
   >
-  registry: Pick<DeepChatAgentRuntime, 'getHydrated'>
+  registry: SessionScopeRegistry
   sessionStore: Pick<SessionSettingsStore, 'get'>
   identity: Pick<SessionIdentityService, 'getAgentId'>
   runLifecycle: Pick<RunLifecycleCoordinator, 'getAbortSignal'>
@@ -49,7 +49,7 @@ export function createToolResultNormalizer(
         providerRuntime: deps.providerRuntime,
         getAbortSignal: (sessionId) => deps.runLifecycle.getAbortSignal(sessionId),
         getSessionModel: (sessionId) => {
-          const state = deps.registry.getHydrated(toAppSessionId(sessionId))?.getRuntimeState()
+          const state = deps.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
           const persisted = deps.sessionStore.get(sessionId)
           return {
             providerId: state?.providerId ?? persisted?.provider_id,

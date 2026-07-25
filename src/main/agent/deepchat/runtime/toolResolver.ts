@@ -4,7 +4,6 @@ import type { ToolServicePort } from '@shared/types/tool'
 import type {
   AgentType,
   DeepChatAgentConfig,
-  DeepChatSessionState,
   DeepChatSubagentCapability
 } from '@shared/types/agent-interface'
 import type { SessionDatabase } from '@/session/data/database'
@@ -12,7 +11,13 @@ import type {
   DeepChatAgentInstance,
   DeepChatToolProfileKind
 } from '@/agent/deepchat/instance/deepChatAgentInstance'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import {
+  isStaleDeepChatInstanceError,
+  type DeepChatAgentRuntime,
+  type SessionScopeRegistry
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import type { SessionIdentityService } from './sessionIdentityService'
 import type { ToolCatalogPort } from '@/agent/deepchat/loop/ports'
 import {
   normalizeStringList,
@@ -34,17 +39,16 @@ export interface DeepChatToolResolverDependencies {
   sqlitePresenter: SessionDatabase
   toolService: ToolServicePort
   skillService: ToolResolverSkillPort
-  deepChatRuntime: DeepChatAgentRuntime
-  getDeepChatInstance(sessionId: string): DeepChatAgentInstance
-  getSessionAgentId(sessionId: string): string | undefined
-  getRuntimeState(sessionId: string): DeepChatSessionState | undefined
-  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
-  isAcpBackedSubagentSession(sessionId: string, providerId?: string): boolean
-  isStaleInstanceError(error: unknown): boolean
+  registry: SessionScopeRegistry & Pick<DeepChatAgentRuntime, 'getToolRegistryRevision'>
+  identity: Pick<SessionIdentityService, 'getAgentId' | 'isAcpBackedSubagentSession'>
 }
 
 export class DeepChatToolResolver {
   constructor(private readonly dependencies: DeepChatToolResolverDependencies) {}
+
+  private assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void {
+    this.dependencies.registry.scopeFor(toAppSessionId(sessionId), instance).assertCurrent()
+  }
 
   async loadToolDefinitionsForSession(
     sessionId: string,
@@ -53,7 +57,8 @@ export class DeepChatToolResolver {
     providedResourceInstance?: DeepChatAgentInstance
   ): Promise<MCPToolDefinition[]> {
     const resourceInstance =
-      providedResourceInstance ?? this.dependencies.getDeepChatInstance(sessionId)
+      providedResourceInstance ??
+      this.dependencies.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     const catalog = this.createSessionToolCatalogPort(sessionId, projectDir, resourceInstance)
     return await catalog.resolve(
       activeSkillNamesOverride === undefined
@@ -70,10 +75,10 @@ export class DeepChatToolResolver {
     const catalog = createToolCatalogPort<DeepChatToolProfileKind>({
       toolService: this.dependencies.toolService,
       resolveContext: async (activeSkillNamesOverride) => {
-        this.dependencies.assertCurrent(sessionId, resourceInstance)
+        this.assertCurrent(sessionId, resourceInstance)
         const scopedAgentId =
           resourceInstance.getAgentId()?.trim() ||
-          this.dependencies.getSessionAgentId(sessionId)?.trim() ||
+          this.dependencies.identity.getAgentId(sessionId)?.trim() ||
           null
         const agentId = scopedAgentId ?? 'deepchat'
         const toolPolicy = await this.resolveAgentToolPolicy(sessionId, resourceInstance)
@@ -90,7 +95,7 @@ export class DeepChatToolResolver {
           toolPolicy.subagentCapability,
           resourceInstance
         )
-        this.dependencies.assertCurrent(sessionId, resourceInstance)
+        this.assertCurrent(sessionId, resourceInstance)
         const enabledMcpServerIds = this.toToolDefinitionMcpServerIds(policy.enabledMcpServerIds)
 
         return {
@@ -110,23 +115,23 @@ export class DeepChatToolResolver {
         }
       },
       commitCache: (entry) => {
-        this.dependencies.assertCurrent(sessionId, resourceInstance)
+        this.assertCurrent(sessionId, resourceInstance)
         resourceInstance.setToolProfileCache(entry)
       }
     })
 
     return {
       resolve: async (request) => {
-        this.dependencies.assertCurrent(sessionId, resourceInstance)
+        this.assertCurrent(sessionId, resourceInstance)
         const providerId = resourceInstance.getRuntimeState()?.providerId?.trim()
-        if (this.dependencies.isAcpBackedSubagentSession(sessionId, providerId)) {
+        if (this.dependencies.identity.isAcpBackedSubagentSession(sessionId, providerId)) {
           return []
         }
 
         try {
           return await catalog.resolve(request)
         } catch (error) {
-          if (this.dependencies.isStaleInstanceError(error)) throw error
+          if (isStaleDeepChatInstanceError(error)) throw error
           console.error('[DeepChatAgent] failed to fetch tool definitions:', error)
           return []
         }
@@ -147,10 +152,10 @@ export class DeepChatToolResolver {
     const activeSkillNames = normalizeStringList(activeSkillNamesOverride)
     const disabledAgentTools = this.getDisabledAgentTools(sessionId)
     const state =
-      resourceInstance?.getRuntimeState() ?? this.dependencies.getRuntimeState(sessionId)
+      resourceInstance?.getRuntimeState() ?? this.dependencies.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
     const agentId =
       resourceInstance?.getAgentId()?.trim() ||
-      this.dependencies.getSessionAgentId(sessionId) ||
+      this.dependencies.identity.getAgentId(sessionId) ||
       'deepchat'
     const kind: DeepChatToolProfileKind = normalizedProjectDir ? 'code' : 'general'
 
@@ -162,7 +167,7 @@ export class DeepChatToolResolver {
         projectDir: normalizedProjectDir ?? '',
         providerId: state?.providerId ?? '',
         modelId: state?.modelId ?? '',
-        toolRegistryRevision: this.dependencies.deepChatRuntime.getToolRegistryRevision(),
+        toolRegistryRevision: this.dependencies.registry.getToolRegistryRevision(),
         disabledAgentTools: [...disabledAgentTools].sort((left, right) =>
           left.localeCompare(right)
         ),
@@ -201,7 +206,7 @@ export class DeepChatToolResolver {
   }> {
     const agentId =
       resourceInstance?.getAgentId()?.trim() ||
-      this.dependencies.getSessionAgentId(sessionId) ||
+      this.dependencies.identity.getAgentId(sessionId) ||
       'deepchat'
     const sessionRow = this.dependencies.sqlitePresenter.newSessionsTable?.get?.(sessionId)
     const resolveCapability = (agentType: AgentType | null, config?: DeepChatAgentConfig | null) =>
@@ -252,7 +257,7 @@ export class DeepChatToolResolver {
   ): Promise<AgentExtensionPolicy> {
     const agentId =
       resourceInstance?.getAgentId()?.trim() ||
-      this.dependencies.getSessionAgentId(sessionId) ||
+      this.dependencies.identity.getAgentId(sessionId) ||
       'deepchat'
     try {
       const config = await this.dependencies.agentSettings.resolveDeepChatAgentConfig(agentId)
@@ -293,7 +298,7 @@ export class DeepChatToolResolver {
   ): Promise<string[]> {
     const agentId =
       resourceInstance?.getAgentId()?.trim() ||
-      this.dependencies.getSessionAgentId(sessionId)?.trim() ||
+      this.dependencies.identity.getAgentId(sessionId)?.trim() ||
       null
     return await this.validateSkillNamesForAgent(agentId, skillNames)
   }

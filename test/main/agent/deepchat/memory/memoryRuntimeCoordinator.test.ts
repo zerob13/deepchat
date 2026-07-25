@@ -116,14 +116,21 @@ function createHarness() {
   const appendTapeAnchor = vi.fn(toTapeAnchorRow)
   const deps = {
     memoryPort: port as any,
-    getSessionAgentId: vi.fn(() => 'agent-a'),
-    getSessionRuntimeState: vi.fn((sessionId: string) => runtimeStates.get(sessionId)),
-    hasSessionRuntimeState: vi.fn((sessionId: string) => runtimeStates.has(sessionId)),
-    assertCurrentSessionHandle: vi.fn((handle: MemorySessionHandle) => {
-      if (handles.get(handle.sessionId) !== handle) {
-        throw new Error(`DeepChat agent instance was replaced: ${handle.sessionId}`)
-      }
-    }),
+    identity: { getAgentId: vi.fn(() => 'agent-a') },
+    registry: {
+      getOrHydrateScope: vi.fn(),
+      getHydratedScope: vi.fn((sessionId: string) => {
+        const handle = handles.get(sessionId)
+        return handle
+          ? {
+              sessionId,
+              instance: { getMemorySessionHandle: () => handle },
+              state: () => runtimeStates.get(sessionId)
+            }
+          : undefined
+      }),
+      scopeFor: vi.fn()
+    },
     getNextMessageOrderSeq: vi.fn(() => Math.max(0, ...rows.map((row) => row.orderSeq)) + 1),
     getMessagesUpToOrderSeq: vi.fn((_sessionId: string, orderSeq: number) =>
       rows.filter((row) => row.orderSeq <= orderSeq)
@@ -548,7 +555,7 @@ describe('MemoryRuntimeCoordinator', () => {
     coordinator.enqueueSessionExtraction('s1', async () => queued())
     await tick()
 
-    deps.getSessionAgentId.mockReturnValue('agent-b')
+    deps.identity.getAgentId.mockReturnValue('agent-b')
     blocker.resolve()
     await coordinator.waitForSession('s1')
 

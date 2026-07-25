@@ -1,11 +1,9 @@
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { SessionDatabase } from '@/session/data/database'
 
-export type SessionIdentityRegistry = Pick<DeepChatAgentRuntime, 'getHydrated'>
-
 export interface SessionIdentityServiceDependencies {
-  registry: SessionIdentityRegistry
+  registry: SessionScopeRegistry
   database: Pick<SessionDatabase, 'newSessionsTable'>
 }
 
@@ -13,7 +11,7 @@ export class SessionIdentityService {
   constructor(private readonly deps: SessionIdentityServiceDependencies) {}
 
   getAgentId(sessionId: string): string | undefined {
-    const instance = this.deps.registry.getHydrated(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
     const cached = instance?.getAgentId()?.trim()
     if (cached) {
       return cached
@@ -36,8 +34,7 @@ export class SessionIdentityService {
 
     const resolvedProviderId =
       providerId?.trim() ||
-      this.deps.registry.getHydrated(toAppSessionId(sessionId))?.getRuntimeState()?.providerId
-        ?.trim() ||
+      this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.state()?.providerId?.trim() ||
       ''
     return resolvedProviderId === 'acp'
   }

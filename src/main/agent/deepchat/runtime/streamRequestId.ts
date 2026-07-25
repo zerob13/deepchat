@@ -1,7 +1,7 @@
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 
-export type StreamRequestIdRegistry = Pick<DeepChatAgentRuntime, 'getHydratedScope'>
+export type StreamRequestIdRegistry = SessionScopeRegistry
 
 // Shared by run lifecycle and message projection so neither has to depend on the other.
 export function resolveStreamRequestId(

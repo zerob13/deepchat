@@ -1,10 +1,15 @@
-import type { AssistantMessageBlock, DeepChatSessionState } from '@shared/types/agent-interface'
+import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import type { MCPToolCall, MCPToolResponse, ToolCallImagePreview } from '@shared/types/core/mcp'
 import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import { extractToolCallImagePreviews } from '@/lib/toolCallImagePreviews'
 import type { PendingToolInteraction } from './types'
 import type { DeepChatToolResolver } from './toolResolver'
+import type { MessageProjectionService } from './messageProjectionService'
+import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { SessionIdentityService } from './sessionIdentityService'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { SessionStateResolver } from './sessionStateResolver'
 import { toolContentToText } from './toolAdapters'
 import { isUserConfigurableAgentTool } from '@shared/agentTools'
 
@@ -29,20 +34,14 @@ export interface DeferredToolExecutorDependencies {
   toolResultPort: ToolResultPort
   toolResolver: DeepChatToolResolver
   cacheImage(data: string): Promise<string>
-  registerAbortController(sessionId: string, toolCallId: string): AbortController
-  clearAbortController(sessionId: string, toolCallId: string, controller?: AbortController): void
-  getAbortSignal(sessionId: string): AbortSignal | undefined
-  resolveProjectDir(sessionId: string): string | null
-  getSessionState(sessionId: string): Promise<DeepChatSessionState | null>
-  getSessionAgentId(sessionId: string): string | undefined
-  updateSubagentProgress(
-    sessionId: string,
-    messageId: string,
-    toolCallId: string,
-    responseMarkdown: string,
-    progressJson?: string,
-    finalJson?: string
-  ): void
+  runLifecycle: Pick<
+    RunLifecycleCoordinator,
+    'registerDeferredToolController' | 'clearDeferredToolController' | 'getAbortSignal'
+  >
+  sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
+  sessionState: Pick<SessionStateResolver, 'get'>
+  identity: Pick<SessionIdentityService, 'getAgentId'>
+  messageProjection: Pick<MessageProjectionService, 'updateSubagentToolCallProgress'>
 }
 
 function throwIfAbortRequested(signal?: AbortSignal): void {
@@ -73,15 +72,15 @@ export class DeferredToolExecutor {
     }
 
     const deferredAbortController = toolCall.id
-      ? this.dependencies.registerAbortController(sessionId, toolCall.id)
+      ? this.dependencies.runLifecycle.registerDeferredToolController(sessionId, toolCall.id)
       : null
     const deferredAbortSignal =
-      deferredAbortController?.signal ?? this.dependencies.getAbortSignal(sessionId)
+      deferredAbortController?.signal ?? this.dependencies.runLifecycle.getAbortSignal(sessionId)
     let invoked = false
 
     try {
       throwIfAbortRequested(deferredAbortSignal)
-      const projectDir = this.dependencies.resolveProjectDir(sessionId)
+      const projectDir = this.dependencies.sessionSettings.resolveProjectDir(sessionId)
       const toolDefinitions = await awaitWithAbort(
         this.dependencies.toolResolver.loadToolDefinitionsForSession(sessionId, projectDir),
         deferredAbortSignal
@@ -120,7 +119,7 @@ export class DeferredToolExecutor {
       )
       throwIfAbortRequested(deferredAbortSignal)
       const sessionState = await awaitWithAbort(
-        this.dependencies.getSessionState(sessionId),
+        this.dependencies.sessionState.get(sessionId),
         deferredAbortSignal
       )
       if (!sessionState) {
@@ -143,7 +142,7 @@ export class DeferredToolExecutor {
       invoked = true
       onToolCallStarted?.()
       const result = await this.dependencies.toolExecutionPort.execute(request, {
-        agentId: this.dependencies.getSessionAgentId(sessionId) ?? 'deepchat',
+        agentId: this.dependencies.identity.getAgentId(sessionId) ?? 'deepchat',
         permissionMode: sessionState.permissionMode,
         activeSkillNames: deferredActiveSkillNames,
         enabledMcpServerIds: this.dependencies.toolResolver.toToolDefinitionMcpServerIds(
@@ -157,7 +156,7 @@ export class DeferredToolExecutor {
             return
           }
 
-          this.dependencies.updateSubagentProgress(
+          this.dependencies.messageProjection.updateSubagentToolCallProgress(
             sessionId,
             messageId,
             toolCall.id || '',
@@ -183,7 +182,7 @@ export class DeferredToolExecutor {
           ? (rawData.toolResult as Record<string, unknown>)
           : null
       if (typeof subagentToolResult?.subagentProgress === 'string') {
-        this.dependencies.updateSubagentProgress(
+        this.dependencies.messageProjection.updateSubagentToolCallProgress(
           sessionId,
           messageId,
           toolCall.id || '',
@@ -194,7 +193,7 @@ export class DeferredToolExecutor {
             : undefined
         )
       } else if (typeof subagentToolResult?.subagentFinal === 'string') {
-        this.dependencies.updateSubagentProgress(
+        this.dependencies.messageProjection.updateSubagentToolCallProgress(
           sessionId,
           messageId,
           toolCall.id || '',
@@ -265,7 +264,7 @@ export class DeferredToolExecutor {
       }
     } finally {
       if (toolCall.id) {
-        this.dependencies.clearAbortController(
+        this.dependencies.runLifecycle.clearDeferredToolController(
           sessionId,
           toolCall.id,
           deferredAbortController ?? undefined

@@ -25,6 +25,7 @@ import { resolveProviderPermissionSafely } from './providerPermissionResolution'
 import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
 import { buildUsageFromMetadata, stampTerminalMetadata } from './runtimeMetadata'
 import type { SessionStatusPublisher } from './sessionStatusPublisher'
+import type { MessageProjectionService } from './messageProjectionService'
 import { resolveStreamRequestId as resolveRegistryStreamRequestId } from './streamRequestId'
 import type { ProcessResult } from './types'
 
@@ -40,7 +41,7 @@ export interface PendingInputWakeup {
 }
 
 export interface RunTerminalObserver {
-  observe(
+  observeTerminal(
     sessionId: string,
     state: DeepChatSessionState | undefined,
     result: ProcessResult
@@ -53,7 +54,7 @@ export interface RunLifecycleCoordinatorPorts {
   transcript: RunLifecycleTranscript
   pendingInputWakeup: PendingInputWakeup
   terminalObserver: RunTerminalObserver
-  emitMessageRefresh(sessionId: string, messageId: string): void
+  messageProjection: Pick<MessageProjectionService, 'refresh'>
 }
 
 export class RunLifecycleCoordinator {
@@ -312,7 +313,7 @@ export class RunLifecycleCoordinator {
   }
 
   observeTerminal(sessionId: string, result: ProcessResult): void {
-    this.ports.terminalObserver.observe(sessionId, this.currentState(sessionId), result)
+    this.ports.terminalObserver.observeTerminal(sessionId, this.currentState(sessionId), result)
   }
 
   applyProcessResultStatus(
@@ -430,7 +431,7 @@ export class RunLifecycleCoordinator {
       'common.error.userCanceledGeneration'
     )
     this.ports.transcript.setMessageError(messageId, blocks, metadata)
-    this.ports.emitMessageRefresh(sessionId, messageId)
+    this.ports.messageProjection.refresh(sessionId, messageId)
   }
 
   private cancelProviderPermissions(instance: DeepChatAgentInstance): void {

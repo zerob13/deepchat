@@ -8,7 +8,6 @@ import type {
   MessageMetadata,
   MessageStartResult,
   SendMessageInput,
-  SessionGenerationSettings,
   UserMessageContent
 } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
@@ -18,17 +17,18 @@ import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import {
   isStaleDeepChatInstanceError,
-  type SessionRuntimeScope
+  type SessionRuntimeScope,
+  type SessionScopeRegistry
 } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
 import type { MemoryRuntimeCoordinator } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
-import { buildTapeViewSelection, type DeepChatLoopRunInput } from './deepChatLoopRunner'
+import { buildTapeViewSelection, type DeepChatLoopRunner } from './deepChatLoopRunner'
+import type { MessageProjectionService } from './messageProjectionService'
+import type { PromptAssemblyService } from './promptAssemblyService'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
-import type {
-  BasePromptAssembler,
-  PostCompactionPromptAssembler
-} from '@/agent/deepchat/loop/ports'
+import type { PostCompactionPromptAssembler } from '@/agent/deepchat/loop/ports'
 import { resolveEffectiveActiveSkillNames } from '@/agent/deepchat/resources/systemPromptBuilder'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
@@ -60,7 +60,7 @@ import type { ResumeBudgetToolCall } from './interactionCoordinator'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { extractUserMessageInput } from '@/session/data/userMessageContent'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
-import type { AttachmentPreparationResult } from '@/ocr/attachmentCapabilityRouter'
+import type { AttachmentCapabilityRouter } from '@/ocr/attachmentCapabilityRouter'
 import {
   resolveDeepChatContextBudgetLength,
   shouldUseDeepChatContextBudget
@@ -131,27 +131,15 @@ export interface TurnCoordinatorPorts {
   postCompactionPromptAssembler: PostCompactionPromptAssembler
   toolOutputGuard: ToolOutputGuard
   runLifecycle: TurnRunLifecyclePort
-  getDeepChatInstance(sessionId: string): DeepChatAgentInstance
-  getHydratedDeepChatInstance(sessionId: string): DeepChatAgentInstance | undefined
-  prepareAttachments(input: {
-    content: SendMessageInput
-    supportsVision: boolean
-    signal?: AbortSignal
-    reusePreparedOcrText?: boolean
-    preserveResolvedRepresentations?: boolean
-  }): Promise<AttachmentPreparationResult>
-  resolveProjectDir(
-    sessionId: string,
-    projectDir?: string | null,
-    expectedInstance?: DeepChatAgentInstance
-  ): string | null
-  getEffectiveSessionGenerationSettings(
-    sessionId: string,
-    expectedInstance: DeepChatAgentInstance
-  ): Promise<SessionGenerationSettings>
-  createBasePromptAssembler(expectedInstance: DeepChatAgentInstance): BasePromptAssembler
-  runStreamForMessage(args: DeepChatLoopRunInput): Promise<{ runId: string; result: ProcessResult }>
-  emitMessageRefresh(sessionId: string, messageId: string): void
+  registry: SessionScopeRegistry
+  attachmentRouter: Pick<AttachmentCapabilityRouter, 'prepare'>
+  sessionSettings: Pick<
+    SessionSettingsCoordinator,
+    'resolveProjectDir' | 'getEffectiveGenerationSettings'
+  >
+  promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
+  loopRunner: Pick<DeepChatLoopRunner, 'run'>
+  messageProjection: Pick<MessageProjectionService, 'refresh'>
   hookSink: Pick<RuntimeHookSink, 'dispatch'>
 }
 
@@ -182,7 +170,7 @@ export class TurnCoordinator {
       { sessionId, messageId, step: 'generation-settings', signal },
       () =>
         awaitWithAbort(
-          this.ports.getEffectiveSessionGenerationSettings(sessionId, instance),
+          this.ports.sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
           signal
         )
     )
@@ -243,7 +231,7 @@ export class TurnCoordinator {
     )
     const toolReserveTokens = estimateToolReserveTokens(tools)
     throwIfAbortRequested(signal)
-    const basePromptAssembler = this.ports.createBasePromptAssembler(instance)
+    const basePromptAssembler = this.ports.promptAssembly.createBasePromptAssembler(instance)
     const baseSystemPrompt = await this.runPreStreamStep(
       { sessionId, messageId, step: 'system-prompt', signal },
       () =>
@@ -288,7 +276,7 @@ export class TurnCoordinator {
     let statusTransitionAttempted = false
     let statusBeforeInitialization: DeepChatSessionState['status'] | undefined
     const initializeTurn = () => {
-      const instance = this.ports.getHydratedDeepChatInstance(sessionId)
+      const instance = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
       if (!instance) throw new Error(`Session ${sessionId} not found`)
       const scope = this.ports.runLifecycle.scopeFor(sessionId, instance)
       initializedScope = scope
@@ -306,7 +294,7 @@ export class TurnCoordinator {
         state.providerId,
         state.modelId
       )
-      const projectDir = this.ports.resolveProjectDir(sessionId, context?.projectDir, instance)
+      const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, context?.projectDir, instance)
       logger.info(
         `[DeepChatAgent] processMessage session=${sessionId} promptLength=${content.text.length} fileCount=${content.files?.length ?? 0} hasProjectDir=${projectDir !== null}`
       )
@@ -389,7 +377,7 @@ export class TurnCoordinator {
           signal: preStreamAbortSignal
         },
         () =>
-          this.ports.prepareAttachments({
+          this.ports.attachmentRouter.prepare({
             content,
             supportsVision,
             signal: preStreamAbortSignal,
@@ -563,7 +551,7 @@ export class TurnCoordinator {
         throw new Error('Failed to create user message.')
       }
       throwIfAbortRequested(preStreamAbortSignal)
-      this.ports.emitMessageRefresh(sessionId, userMessageId)
+      this.ports.messageProjection.refresh(sessionId, userMessageId)
 
       this.ports.hookSink.dispatch('UserPromptSubmit', {
         sessionId,
@@ -643,7 +631,7 @@ export class TurnCoordinator {
       }
 
       if (context?.emitRefreshBeforeStream) {
-        this.ports.emitMessageRefresh(sessionId, assistantMessageId)
+        this.ports.messageProjection.refresh(sessionId, assistantMessageId)
       }
 
       scope.assertCurrent()
@@ -658,7 +646,7 @@ export class TurnCoordinator {
       )
       let streamResult: { runId: string; result: ProcessResult }
       try {
-        streamResult = await this.ports.runStreamForMessage({
+        streamResult = await this.ports.loopRunner.run({
           sessionId,
           messageId: assistantMessageId,
           messages,
@@ -790,7 +778,7 @@ export class TurnCoordinator {
       console.error('[DeepChatAgent] processMessage error:', err)
       if (aborted) {
         if (userMessageId) {
-          this.ports.emitMessageRefresh(sessionId, userMessageId)
+          this.ports.messageProjection.refresh(sessionId, userMessageId)
         }
         this.ports.runLifecycle.clearOperationController(scope, preStreamAbortController)
         const abortMetadata = stampTerminalMetadata(
@@ -863,7 +851,7 @@ export class TurnCoordinator {
           blocks,
           JSON.stringify(terminalMetadata)
         )
-        this.ports.emitMessageRefresh(sessionId, assistantMessageId)
+        this.ports.messageProjection.refresh(sessionId, assistantMessageId)
         this.ports.publishEvent('chat.stream.failed', {
           requestId: this.ports.runLifecycle.resolveStreamRequestId(
             sessionId,
@@ -908,7 +896,7 @@ export class TurnCoordinator {
     budgetToolCall?: ResumeBudgetToolCall | null,
     initialAccounting?: MessageMetadata
   ): Promise<boolean> {
-    const instance = this.ports.getDeepChatInstance(sessionId)
+    const instance = this.ports.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     const scope = this.ports.runLifecycle.scopeFor(sessionId, instance)
     if (!instance.tryBeginResume(messageId)) {
       return false
@@ -936,7 +924,7 @@ export class TurnCoordinator {
         state.providerId,
         state.modelId
       )
-      const projectDir = this.ports.resolveProjectDir(sessionId, undefined, instance)
+      const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, undefined, instance)
       const {
         generationSettings,
         useContextBudget,
@@ -1110,7 +1098,7 @@ export class TurnCoordinator {
           scope.assertCurrent()
           updateToolCallResponse(initialBlocks, budgetToolCall.id, resumeBudget.message, true)
           this.ports.messageStore.updateAssistantContent(messageId, initialBlocks)
-          this.ports.emitMessageRefresh(sessionId, messageId)
+          this.ports.messageProjection.refresh(sessionId, messageId)
           resumeContext = this.ports.toolOutputGuard.replaceToolMessageContent(
             resumeContext,
             budgetToolCall.id,
@@ -1133,7 +1121,7 @@ export class TurnCoordinator {
             initialBlocks,
             JSON.stringify(terminalMetadata)
           )
-          this.ports.emitMessageRefresh(sessionId, messageId)
+          this.ports.messageProjection.refresh(sessionId, messageId)
           this.ports.publishEvent('chat.stream.failed', {
             requestId: this.ports.runLifecycle.resolveStreamRequestId(sessionId, messageId),
             sessionId,
@@ -1170,7 +1158,7 @@ export class TurnCoordinator {
       )
       let streamResult: { runId: string; result: ProcessResult }
       try {
-        streamResult = await this.ports.runStreamForMessage({
+        streamResult = await this.ports.loopRunner.run({
           sessionId,
           messageId,
           messages: resumeContext,
@@ -1270,7 +1258,7 @@ export class TurnCoordinator {
       )
       const blocks = buildTerminalErrorBlocks(initialBlocks, errorMessage)
       this.ports.messageStore.setMessageError(messageId, blocks, JSON.stringify(terminalMetadata))
-      this.ports.emitMessageRefresh(sessionId, messageId)
+      this.ports.messageProjection.refresh(sessionId, messageId)
       this.ports.publishEvent('chat.stream.failed', {
         requestId: this.ports.runLifecycle.resolveStreamRequestId(sessionId, messageId),
         sessionId,
@@ -1332,7 +1320,7 @@ export class TurnCoordinator {
   rollbackPendingInputTurn(
     sessionId: string,
     userMessageId: string | null,
-    expectedInstance = this.ports.getDeepChatInstance(sessionId)
+    expectedInstance = this.ports.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
   ): void {
     this.ports.runLifecycle.assertCurrentInstance(sessionId, expectedInstance)
     const userMessage = userMessageId ? this.ports.messageStore.getMessage(userMessageId) : null

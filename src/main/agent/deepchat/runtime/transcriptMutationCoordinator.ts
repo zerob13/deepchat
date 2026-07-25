@@ -1,5 +1,5 @@
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
-import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { MemoryRuntimeCoordinator } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
 import type { PendingInputAdmissionCoordinator } from './pendingInputAdmissionCoordinator'
@@ -7,10 +7,8 @@ import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { SessionStateResolver } from './sessionStateResolver'
 
-export type TranscriptMutationRegistry = Pick<DeepChatAgentRuntime, 'getOrHydrate'>
-
 export interface TranscriptMutationCoordinatorDependencies {
-  registry: TranscriptMutationRegistry
+  registry: SessionScopeRegistry
   sessionState: Pick<SessionStateResolver, 'get'>
   sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
   admission: Pick<PendingInputAdmissionCoordinator, 'assertNoActiveInputs'>
@@ -36,7 +34,7 @@ export class TranscriptMutationCoordinator {
   constructor(private readonly deps: TranscriptMutationCoordinatorDependencies) {}
 
   async prepareClearMessages(sessionId: string): Promise<void> {
-    const instance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     const state = await this.deps.sessionState.get(sessionId)
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
@@ -51,7 +49,7 @@ export class TranscriptMutationCoordinator {
   }
 
   finishClearMessages(sessionId: string): void {
-    const instance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     instance.replacePendingInteractions([])
     this.deps.compaction.reset(sessionId, instance)
     this.deps.runLifecycle.transitionStatus(
@@ -61,7 +59,7 @@ export class TranscriptMutationCoordinator {
   }
 
   async prepareRetry(sessionId: string): Promise<{ projectDir: string | null }> {
-    const instance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     const state = await this.deps.sessionState.get(sessionId)
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
@@ -81,13 +79,13 @@ export class TranscriptMutationCoordinator {
   }
 
   async cancelForTranscriptMutation(sessionId: string): Promise<void> {
-    const instance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     await this.deps.runLifecycle.cancel(sessionId)
     this.deps.runLifecycle.assertCurrentInstance(sessionId, instance)
   }
 
   invalidateTranscriptFrom(sessionId: string, orderSeq: number): void {
-    const instance = this.deps.registry.getOrHydrate(toAppSessionId(sessionId))
+    const instance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     this.deps.compaction.invalidateIfNeeded(sessionId, orderSeq, instance)
     this.deps.memory.invalidateFromOrderSeq(sessionId, orderSeq)
   }
@@ -98,7 +96,7 @@ export class TranscriptMutationCoordinator {
   }
 
   resetForkTarget(targetSessionId: string): void {
-    const targetInstance = this.deps.registry.getOrHydrate(toAppSessionId(targetSessionId))
+    const targetInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(targetSessionId)).instance
     this.deps.compaction.reset(targetSessionId, targetInstance)
   }
 

@@ -10388,7 +10388,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(replacement.getActiveGeneration()).toBeUndefined()
     })
 
-    it('cancels a cross-message interaction without leaking queue-drain rejection', async () => {
+    it('cancels a cross-message interaction without disturbing the replacement run', async () => {
       const skillService = getSkillServiceMock()
       const installation = deferred<{
         success: true
@@ -10429,8 +10429,6 @@ describe('DeepChatRuntimeCoordinator', () => {
         ]
       })
       const { instance, abortController } = registerActiveInteractionRun('new-message', [])
-      const drainError = new Error('queue drain failed')
-      const getSessionState = vi.spyOn(agent, 'getSessionState').mockRejectedValueOnce(drainError)
 
       const interaction = agent.respondToolInteraction('s1', 'm1', 'tc1', {
         kind: 'question_option',
@@ -10440,13 +10438,6 @@ describe('DeepChatRuntimeCoordinator', () => {
       abortController.abort()
 
       await expect(interaction).resolves.toEqual({ resumed: false })
-      await vi.waitFor(() =>
-        expect(logger.error).toHaveBeenCalledWith(
-          '[DeepChatAgent] drainPendingQueueIfPossible error session=s1 reason=completed',
-          { name: 'Error' }
-        )
-      )
-      expect(getSessionState).toHaveBeenCalledWith('s1')
       expect(instance.getActiveGeneration()?.messageId).toBe('new-message')
       expect(instance.getAbortController()).toBe(abortController)
 

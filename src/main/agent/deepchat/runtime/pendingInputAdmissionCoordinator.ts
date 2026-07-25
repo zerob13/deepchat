@@ -8,8 +8,11 @@ import type {
   QueuePendingInputOptions,
   SendMessageInput
 } from '@shared/types/agent-interface'
-import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
-import { createStaleDeepChatInstanceError } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import {
+  createStaleDeepChatInstanceError,
+  type SessionScopeRegistry
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import type {
   AttachmentCapabilityRouter,
@@ -21,6 +24,8 @@ import { supportsProviderVision } from './providerInputCapabilities'
 import type { ClaimedPendingInputHandle } from './pendingInputContracts'
 import type { PendingInputWakeReason, RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { SessionStateResolver } from './sessionStateResolver'
 
 export type PendingInputAdmissionStorePort = Pick<
   SessionPendingInputs,
@@ -38,16 +43,6 @@ export type PendingInputAdmissionStorePort = Pick<
   | 'restoreSteerInputToQueue'
   | 'retryBlockedInput'
   | 'updateQueuedInput'
->
-
-type PendingInputAdmissionInstancePort = Pick<
-  DeepChatAgentInstance,
-  | 'clearActiveSteerPendingInputId'
-  | 'getAbortController'
-  | 'getActiveGeneration'
-  | 'getActiveSteerPendingInputId'
-  | 'isPendingQueueDraining'
-  | 'setActiveSteerPendingInputId'
 >
 
 export interface PendingInputAdmissionPumpPort {
@@ -86,9 +81,9 @@ export interface PendingInputAdmissionCoordinatorPorts {
   pump: PendingInputAdmissionPumpPort
   runLifecycle: PendingInputAdmissionLifecyclePort
   attachmentRouter: Pick<AttachmentCapabilityRouter, 'prepare'>
-  getSessionState(sessionId: string): Promise<DeepChatSessionState | null>
-  getHydratedInstance(sessionId: string): PendingInputAdmissionInstancePort | undefined
-  resolveProjectDir(sessionId: string, projectDir?: string | null): string | null
+  sessionState: Pick<SessionStateResolver, 'get'>
+  registry: SessionScopeRegistry
+  sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
 }
 
 export class PendingInputAdmissionCoordinator {
@@ -105,14 +100,14 @@ export class PendingInputAdmissionCoordinator {
     content: string | SendMessageInput,
     options?: QueuePendingInputOptions
   ): Promise<PendingSessionInputRecord> {
-    const state = await this.ports.getSessionState(sessionId)
+    const state = await this.ports.sessionState.get(sessionId)
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
     const projectDir =
       options && Object.prototype.hasOwnProperty.call(options, 'projectDir')
-        ? this.ports.resolveProjectDir(sessionId, options.projectDir)
-        : this.ports.resolveProjectDir(sessionId)
+        ? this.ports.sessionSettings.resolveProjectDir(sessionId, options.projectDir)
+        : this.ports.sessionSettings.resolveProjectDir(sessionId)
     const input = typeof content === 'string' ? { text: content, files: [] } : content
     if (options?.signal?.aborted) throw createAbortError()
     if (!input.text.trim() && (input.files?.length ?? 0) === 0) {
@@ -202,7 +197,7 @@ export class PendingInputAdmissionCoordinator {
         ? await this.acquireAttachmentAcceptanceLane(sessionId, 'steer', options?.signal)
         : () => {}
     try {
-      const state = await this.ports.getSessionState(sessionId)
+      const state = await this.ports.sessionState.get(sessionId)
       if (!state) {
         throw new Error(`Session ${sessionId} not found`)
       }
@@ -238,7 +233,7 @@ export class PendingInputAdmissionCoordinator {
         return preparedResult
       }
 
-      const instance = this.ports.getHydratedInstance(sessionId)
+      const instance = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
       const activeGeneration = instance?.getActiveGeneration()
       const preStreamController = instance?.getAbortController()
 
@@ -365,7 +360,7 @@ export class PendingInputAdmissionCoordinator {
       this.ports.pendingInputs.updateQueuedInput(sessionId, itemId, prepared.content)
       const record = this.ports.pendingInputs.convertPendingInputToSteer(sessionId, itemId)
 
-      const instance = this.ports.getHydratedInstance(sessionId)
+      const instance = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
       const activeGeneration = instance?.getActiveGeneration()
       const preStreamController = instance?.getAbortController()
 
@@ -480,7 +475,7 @@ export class PendingInputAdmissionCoordinator {
       signal?: AbortSignal
     }
   ): Promise<AttachmentPreparationResult> {
-    const state = await this.ports.getSessionState(sessionId)
+    const state = await this.ports.sessionState.get(sessionId)
     if (!state) throw new Error(`Session ${sessionId} not found`)
     return await this.ports.attachmentRouter.prepare({
       content,
@@ -496,7 +491,7 @@ export class PendingInputAdmissionCoordinator {
   }
 
   private async ensureSessionReady(sessionId: string): Promise<void> {
-    const state = await this.ports.getSessionState(sessionId)
+    const state = await this.ports.sessionState.get(sessionId)
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
@@ -511,7 +506,7 @@ export class PendingInputAdmissionCoordinator {
       return true
     }
 
-    const instance = this.ports.getHydratedInstance(sessionId)
+    const instance = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
     if (
       instance?.isPendingQueueDraining() ||
       instance?.getActiveGeneration() ||
@@ -520,14 +515,14 @@ export class PendingInputAdmissionCoordinator {
       return true
     }
 
-    return (await this.ports.getSessionState(sessionId))?.status === 'generating'
+    return (await this.ports.sessionState.get(sessionId))?.status === 'generating'
   }
 
   private queueVisibleSteerInput(
     sessionId: string,
     input: SendMessageInput
   ): PendingSessionInputRecord {
-    const instance = this.ports.getHydratedInstance(sessionId)
+    const instance = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
     if (!instance) {
       throw createStaleDeepChatInstanceError(sessionId)
     }

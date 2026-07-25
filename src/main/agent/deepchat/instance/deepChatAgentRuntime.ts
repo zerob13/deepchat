@@ -27,6 +27,15 @@ export type DeepChatAgentInstanceHydrator = (
   sessionId: AppSessionId
 ) => DeepChatAgentInstanceDelegate
 
+/**
+ * Instance access and staleness fencing are registry reads. Owners that only need them take this
+ * narrow view instead of routing four separate callbacks through the composition root.
+ */
+export type SessionScopeRegistry = Pick<
+  DeepChatAgentRuntime,
+  'getOrHydrateScope' | 'getHydratedScope' | 'scopeFor'
+>
+
 export class DeepChatAgentRuntime {
   private readonly instances = new Map<AppSessionId, DeepChatAgentInstance>()
   private readonly scopes = new WeakMap<DeepChatAgentInstance, SessionRuntimeScope>()

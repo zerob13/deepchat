@@ -1,10 +1,6 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
 import logger from '@shared/logger'
-import type {
-  AssistantMessageBlock,
-  MessageMetadata,
-  SessionGenerationSettings
-} from '@shared/types/agent-interface'
+import type { AssistantMessageBlock, MessageMetadata } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
@@ -41,10 +37,7 @@ import {
   preflightRequestContext
 } from '@/agent/deepchat/runtime/contextBudget'
 import type { ContextBuildMetadata } from '@/agent/deepchat/runtime/contextBuilder'
-import type {
-  CompactionIntent,
-  CompactionService
-} from '@/agent/deepchat/runtime/compactionService'
+import type { CompactionService } from '@/agent/deepchat/runtime/compactionService'
 import {
   getReasoningPortrait,
   resolveCapabilityProviderId,
@@ -67,14 +60,7 @@ import {
   resolveTapeViewManifestPolicy,
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
-import type {
-  TapeProviderAttemptReader,
-  TapeProviderAttemptWriter,
-  TapeReconciliationPort,
-  TapeToolFactWriter,
-  TapeViewManifestReader,
-  TapeViewManifestWriter
-} from '@/tape/ports/capabilities'
+import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
 import type { RuntimeHookSink } from './runtimeHookSink'
 import type { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
@@ -83,9 +69,7 @@ import type {
   DeepChatSessionUpdatePublisher,
   InterleavedReasoningConfig,
   ProcessResult,
-  StreamState,
-  ToolPermissionReviewRequest,
-  ToolPermissionReviewResult
+  StreamState
 } from '@/agent/deepchat/runtime/types'
 import { createState } from '@/agent/deepchat/runtime/types'
 import type {
@@ -95,11 +79,7 @@ import type {
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
-import type {
-  BasePromptAssembler,
-  ToolExecutionPort,
-  ToolResultPort
-} from '@/agent/deepchat/loop/ports'
+import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
   createEmptyContextRuntimeContributions,
@@ -113,6 +93,12 @@ import {
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
 import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
+import type { PromptAssemblyService } from './promptAssemblyService'
+import type { SessionIdentityService } from './sessionIdentityService'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { ToolPermissionReviewer } from './toolRuntimeBindings'
 
 type LoopRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -193,12 +179,7 @@ export interface DeepChatLoopRunnerPorts {
   traceSettings: AgentTraceSettingsPort
   sessionStore: SessionSettingsStore
   messageStore: SessionTranscript
-  tapeReconciliation: TapeReconciliationPort
-  tapeViewManifestReader: TapeViewManifestReader
-  tapeViewManifestWriter: TapeViewManifestWriter
-  tapeProviderAttemptReader: TapeProviderAttemptReader
-  tapeProviderAttemptWriter: TapeProviderAttemptWriter
-  tapeToolFactWriter: TapeToolFactWriter
+  tape: DeepChatLoopTapePort
   pendingInputCoordinator: SessionPendingInputs
   toolResolver: DeepChatToolResolver
   providerPermissionCoordinator: ProviderPermissionCoordinator
@@ -209,31 +190,15 @@ export interface DeepChatLoopRunnerPorts {
   toolExecutionPort: ToolExecutionPort
   toolResultPort: ToolResultPort
   cacheImage(data: string): Promise<string>
-  getDeepChatInstance(sessionId: string): DeepChatAgentInstance
-  getEffectiveSessionGenerationSettings(
-    sessionId: string,
-    expectedInstance: DeepChatAgentInstance
-  ): Promise<SessionGenerationSettings>
-  createBasePromptAssembler(expectedInstance: DeepChatAgentInstance): BasePromptAssembler
+  registry: SessionScopeRegistry
+  sessionSettings: Pick<SessionSettingsCoordinator, 'getEffectiveGenerationSettings'>
+  promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
   runLifecycle: LoopRunLifecyclePort
-  getSessionAgentId(sessionId: string): string | undefined
+  identity: Pick<SessionIdentityService, 'getAgentId'>
   sessionPermissionPort: SessionPermissionPort
-  reviewToolPermission(
-    request: ToolPermissionReviewRequest,
-    context: {
-      providerId: string
-      modelId: string
-      messages: ChatMessage[]
-      signal: AbortSignal
-    }
-  ): Promise<ToolPermissionReviewResult>
+  reviewToolPermission: ToolPermissionReviewer
   hookSink: Pick<RuntimeHookSink, 'dispatch'>
-  applyCompactionIntent(
-    sessionId: string,
-    intent: CompactionIntent | null,
-    options: { signal?: AbortSignal },
-    expectedInstance: DeepChatAgentInstance
-  ): Promise<SessionSummaryState>
+  compaction: Pick<CompactionRuntimeCoordinator, 'apply'>
 }
 
 function createAbortError(): Error {
@@ -324,7 +289,7 @@ export class DeepChatLoopRunner {
       activeContextContributions ??= createEmptyContextRuntimeContributions()
       return activeContextContributions
     }
-    const resourceInstance = providedResourceInstance ?? this.ports.getDeepChatInstance(sessionId)
+    const resourceInstance = providedResourceInstance ?? this.ports.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     const resourceScope = this.ports.runLifecycle.scopeFor(sessionId, resourceInstance)
     resourceScope.assertCurrent()
     const abortController =
@@ -340,7 +305,7 @@ export class DeepChatLoopRunner {
     }
 
     const generationSettings = await awaitWithAbort(
-      this.ports.getEffectiveSessionGenerationSettings(sessionId, resourceInstance),
+      this.ports.sessionSettings.getEffectiveGenerationSettings(sessionId, resourceInstance),
       abortSignal
     )
     const baseModelConfig = this.ports.providerSettings.getModelConfig(
@@ -393,10 +358,10 @@ export class DeepChatLoopRunner {
 
     const traceEnabled = this.ports.traceSettings.isEnabled()
     const initialRequestSeq = Math.max(
-      this.ports.tapeViewManifestReader.listViewManifestsByMessage(sessionId, messageId)[0]
+      this.ports.tape.listViewManifestsByMessage(sessionId, messageId)[0]
         ?.requestSeq ?? 0,
       this.ports.messageStore.getMaxMessageTraceRequestSeq(messageId),
-      this.ports.tapeProviderAttemptReader.getMaxProviderAttemptRequestSeq(sessionId, messageId)
+      this.ports.tape.getMaxProviderAttemptRequestSeq(sessionId, messageId)
     )
     const temperature = generationSettings.temperature
     const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
@@ -486,7 +451,7 @@ export class DeepChatLoopRunner {
               refreshedTools
             )
           }
-          return await this.ports.createBasePromptAssembler(resourceInstance).assemble({
+          return await this.ports.promptAssembly.createBasePromptAssembler(resourceInstance).assemble({
             sessionId: toAppSessionId(sessionId),
             configuredPrompt: generationSettings.systemPrompt,
             toolDefinitions: refreshedTools,
@@ -665,7 +630,7 @@ export class DeepChatLoopRunner {
             },
             outcome: {
               append: (outcome) =>
-                ports.tapeProviderAttemptWriter.appendProviderAttempt({
+                ports.tape.appendProviderAttempt({
                   sessionId,
                   messageId,
                   providerId: state.providerId,
@@ -729,7 +694,7 @@ export class DeepChatLoopRunner {
             ),
           getAgentId: () =>
             resourceInstance.getAgentId()?.trim() ||
-            this.ports.getSessionAgentId(sessionId) ||
+            this.ports.identity.getAgentId(sessionId) ||
             'deepchat',
           activateSkill: async (skillName) => {
             const validated = await this.ports.toolResolver.validateSkillNamesForSession(
@@ -788,7 +753,7 @@ export class DeepChatLoopRunner {
         },
         io: {
           messageStore: this.ports.messageStore,
-          tapeToolFactWriter: this.ports.tapeToolFactWriter,
+          tapeToolFactWriter: this.ports.tape,
           publishEvent: this.ports.publishEvent,
           publishSessionUpdate: this.ports.publishSessionUpdate
         }
@@ -804,7 +769,7 @@ export class DeepChatLoopRunner {
   }
 
   appendTapeViewManifest(params: AppendTapeViewManifestInput): void {
-    const sourceMaps = this.ports.tapeViewManifestReader.getViewManifestSourceMaps(
+    const sourceMaps = this.ports.tape.getViewManifestSourceMaps(
       params.sessionId,
       params.messageId
     )
@@ -845,7 +810,7 @@ export class DeepChatLoopRunner {
       supportsAudioInput: params.supportsAudioInput,
       traceDebugEnabled: params.traceDebugEnabled
     })
-    this.ports.tapeViewManifestWriter.appendViewManifest(manifest)
+    this.ports.tape.appendViewManifest(manifest)
   }
 
   emitRateLimitWaitingMessage(
@@ -949,7 +914,7 @@ export class DeepChatLoopRunner {
       prepareCompaction: async (systemPrompt) => {
         const prepared = await this.ports.inputPreparationCoordinator.prepareExisting({
           ensureHistory: () =>
-            this.ports.tapeReconciliation.ensureSessionTapeReady(
+            this.ports.tape.ensureSessionTapeReady(
               params.sessionId,
               this.ports.messageStore
             )
@@ -976,7 +941,7 @@ export class DeepChatLoopRunner {
               signal: params.signal
             }),
           applyCompaction: async (intent) =>
-            await this.ports.applyCompactionIntent(
+            await this.ports.compaction.apply(
               params.sessionId,
               intent,
               { signal: params.signal },

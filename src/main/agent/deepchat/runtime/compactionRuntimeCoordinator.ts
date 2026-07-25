@@ -1,8 +1,5 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
-import type {
-  DeepChatSessionState,
-  SessionCompactionState
-} from '@shared/types/agent-interface'
+import type { SessionCompactionState } from '@shared/types/agent-interface'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { CompactionIntent, CompactionService } from './compactionService'
 import type { DeepChatEventPublisher } from './types'
@@ -14,7 +11,10 @@ import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { TapeReconciliationPort } from '@/tape/ports/capabilities'
 import type { TapeTranscriptReader } from '@/tape/ports/capabilities'
-import type { BasePromptAssembler } from '@/agent/deepchat/loop/ports'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import type { MessageProjectionService } from './messageProjectionService'
+import type { PromptAssemblyService } from './promptAssemblyService'
+import type { SessionStateResolver } from './sessionStateResolver'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import { capAgentRequestMaxTokens, estimateToolReserveTokens } from './contextBudget'
 import {
@@ -74,12 +74,10 @@ export interface CompactionRuntimeCoordinatorDependencies {
   runLifecycle: ManualCompactionLifecycle
   sessionSettings: ManualCompactionSessionSettings
   tapeReconciliation: TapeReconciliationPort
-  getInstance(sessionId: string): DeepChatAgentInstance
-  getHydratedInstance(sessionId: string): DeepChatAgentInstance | undefined
-  getSessionListState(sessionId: string): Promise<DeepChatSessionState | null>
-  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
-  createBasePromptAssembler(instance: DeepChatAgentInstance): BasePromptAssembler
-  emitMessageRefresh(sessionId: string, messageId: string): void
+  registry: SessionScopeRegistry
+  sessionState: Pick<SessionStateResolver, 'getSummary'>
+  promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
+  messageProjection: Pick<MessageProjectionService, 'refresh'>
   publishEvent: DeepChatEventPublisher
 }
 
@@ -94,18 +92,26 @@ interface ApplyCompactionOptions {
 export class CompactionRuntimeCoordinator {
   constructor(private readonly deps: CompactionRuntimeCoordinatorDependencies) {}
 
+  private instance(sessionId: string): DeepChatAgentInstance {
+    return this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
+  }
+
+  private assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void {
+    this.deps.registry.scopeFor(toAppSessionId(sessionId), instance).assertCurrent()
+  }
+
   async getState(
     sessionId: string,
     expectedInstance?: DeepChatAgentInstance
   ): Promise<SessionCompactionState> {
-    const hydratedInstance = expectedInstance ?? this.deps.getHydratedInstance(sessionId)
+    const hydratedInstance = expectedInstance ?? this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
     const runtimeState = hydratedInstance?.getRuntimeState()
     const session = this.deps.sessionStore.get(sessionId)
     if (!runtimeState && !session) {
       throw new Error(`Session ${sessionId} not found`)
     }
-    const instance = hydratedInstance ?? this.deps.getInstance(sessionId)
-    this.deps.assertCurrent(sessionId, instance)
+    const instance = hydratedInstance ?? this.instance(sessionId)
+    this.assertCurrent(sessionId, instance)
 
     const persistedState = this.fromSummary(this.deps.sessionStore.getSummaryState(sessionId))
     const currentCompactionState = instance.getCompactionState()
@@ -124,13 +130,13 @@ export class CompactionRuntimeCoordinator {
   async compact(
     sessionId: string
   ): Promise<{ compacted: boolean; state: SessionCompactionState }> {
-    const instance = this.deps.getInstance(sessionId)
+    const instance = this.instance(sessionId)
     const scope = this.deps.runLifecycle.scopeFor(sessionId, instance)
-    const state = instance.getRuntimeState() ?? (await this.deps.getSessionListState(sessionId))
+    const state = instance.getRuntimeState() ?? (await this.deps.sessionState.getSummary(sessionId))
     if (!state) {
       throw new Error(`Session ${sessionId} not found`)
     }
-    this.deps.assertCurrent(sessionId, instance)
+    this.assertCurrent(sessionId, instance)
     const modelConfig = this.deps.providerSettings.getModelConfig(
       state.modelId,
       state.providerId
@@ -174,7 +180,7 @@ export class CompactionRuntimeCoordinator {
         this.deps.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
         compactionAbortSignal
       )
-      this.deps.assertCurrent(sessionId, instance)
+      this.assertCurrent(sessionId, instance)
       const projectDir = this.deps.sessionSettings.resolveProjectDir(
         sessionId,
         undefined,
@@ -191,7 +197,7 @@ export class CompactionRuntimeCoordinator {
       )
       const toolReserveTokens = estimateToolReserveTokens(tools)
       const baseSystemPrompt = await awaitWithAbort(
-        this.deps.createBasePromptAssembler(instance).assemble({
+        this.deps.promptAssembly.createBasePromptAssembler(instance).assemble({
           sessionId: toAppSessionId(sessionId),
           configuredPrompt: generationSettings.systemPrompt,
           toolDefinitions: tools,
@@ -227,7 +233,7 @@ export class CompactionRuntimeCoordinator {
         signal: compactionAbortSignal
       })
       throwIfAbortRequested(compactionAbortSignal)
-      this.deps.assertCurrent(sessionId, instance)
+      this.assertCurrent(sessionId, instance)
 
       if (!intent) {
         return {
@@ -243,7 +249,7 @@ export class CompactionRuntimeCoordinator {
         instance
       )
       throwIfAbortRequested(compactionAbortSignal)
-      this.deps.assertCurrent(sessionId, instance)
+      this.assertCurrent(sessionId, instance)
       const compacted = summaryState.summaryUpdatedAt !== intent.previousState.summaryUpdatedAt
       return {
         compacted,
@@ -265,9 +271,9 @@ export class CompactionRuntimeCoordinator {
     sessionId: string,
     intent: CompactionIntent | null,
     options?: ApplyCompactionOptions,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): Promise<SessionSummaryState> {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     if (!intent) {
       return this.deps.sessionStore.getSummaryState(sessionId)
     }
@@ -290,7 +296,7 @@ export class CompactionRuntimeCoordinator {
           ))
 
     if (!options?.startedExternally) {
-      this.deps.emitMessageRefresh(sessionId, compactionMessageId)
+      this.deps.messageProjection.refresh(sessionId, compactionMessageId)
       this.emit(
         sessionId,
         {
@@ -306,9 +312,9 @@ export class CompactionRuntimeCoordinator {
     try {
       result = await this.deps.compactionService.applyCompaction(intent, options?.signal)
     } catch (error) {
-      this.deps.assertCurrent(sessionId, expectedInstance)
+      this.assertCurrent(sessionId, expectedInstance)
       this.deps.messageStore.deleteMessage(compactionMessageId)
-      this.deps.emitMessageRefresh(sessionId, compactionMessageId)
+      this.deps.messageProjection.refresh(sessionId, compactionMessageId)
       this.emit(sessionId, this.fromSummary(intent.previousState), expectedInstance)
       if (isAbortError(error) || options?.signal?.aborted) {
         throwIfAbortRequested(options?.signal)
@@ -316,7 +322,7 @@ export class CompactionRuntimeCoordinator {
       throw error
     }
 
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     if (result.succeeded) {
       this.deps.messageStore.updateCompactionMessage(
         compactionMessageId,
@@ -326,7 +332,7 @@ export class CompactionRuntimeCoordinator {
     } else {
       this.deps.messageStore.deleteMessage(compactionMessageId)
     }
-    this.deps.emitMessageRefresh(sessionId, compactionMessageId)
+    this.deps.messageProjection.refresh(sessionId, compactionMessageId)
     this.emit(
       sessionId,
       result.succeeded
@@ -367,9 +373,9 @@ export class CompactionRuntimeCoordinator {
   emit(
     sessionId: string,
     state: SessionCompactionState,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): void {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     expectedInstance.setCompactionState(state)
     this.deps.publishEvent('sessions.compaction.changed', {
       sessionId,
@@ -380,8 +386,8 @@ export class CompactionRuntimeCoordinator {
     })
   }
 
-  reset(sessionId: string, expectedInstance = this.deps.getInstance(sessionId)): void {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+  reset(sessionId: string, expectedInstance = this.instance(sessionId)): void {
+    this.assertCurrent(sessionId, expectedInstance)
     this.deps.sessionStore.resetSummaryState(sessionId)
     this.emit(sessionId, this.idleState(), expectedInstance)
   }
@@ -389,9 +395,9 @@ export class CompactionRuntimeCoordinator {
   invalidateIfNeeded(
     sessionId: string,
     orderSeq: number,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): void {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     if (orderSeq < this.deps.sessionStore.getSummaryState(sessionId).summaryCursorOrderSeq) {
       this.reset(sessionId, expectedInstance)
     }

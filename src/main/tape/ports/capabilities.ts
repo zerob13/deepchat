@@ -57,6 +57,17 @@ export interface TapeProviderAttemptReader {
   getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number
 }
 
+// The DeepChat provider loop needs the whole set as one collaborator; splitting it across six
+// fields describes the capability types rather than the dependency.
+export interface DeepChatLoopTapePort
+  extends
+    TapeReconciliationPort,
+    TapeViewManifestReader,
+    TapeViewManifestWriter,
+    TapeToolFactWriter,
+    TapeProviderAttemptWriter,
+    TapeProviderAttemptReader {}
+
 export interface TapeMessageFactWriter {
   appendMessageRecord(record: ChatMessageRecord): number
   appendMessageReplacement(record: ChatMessageRecord, reason: string): number

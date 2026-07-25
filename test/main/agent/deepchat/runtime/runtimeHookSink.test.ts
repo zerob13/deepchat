@@ -19,8 +19,8 @@ function createHarness() {
   const resolveProjectDir = vi.fn().mockReturnValue('/workspace')
   const sink = new RuntimeHookSink({
     observer,
-    getSessionAgentId,
-    resolveProjectDir
+    identity: { getAgentId: getSessionAgentId },
+    sessionSettings: { resolveProjectDir }
   })
   return { getSessionAgentId, notifications, observer, resolveProjectDir, sink }
 }

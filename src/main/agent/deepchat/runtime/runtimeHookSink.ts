@@ -2,13 +2,15 @@ import type { DeepChatSessionState } from '@shared/types/agent-interface'
 import type { HookEventName } from '@shared/hooksNotifications'
 import type { HookContext, HookObserver } from '@/hook/observer'
 import type { ProcessResult } from './types'
+import type { SessionIdentityService } from './sessionIdentityService'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 
 export type RuntimeHookContext = Omit<HookContext, 'agentId'>
 
 export interface RuntimeHookSinkDependencies {
   observer: HookObserver
-  getSessionAgentId(sessionId: string): string | undefined
-  resolveProjectDir(sessionId: string): string | null
+  identity: Pick<SessionIdentityService, 'getAgentId'>
+  sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
 }
 
 export class RuntimeHookSink {
@@ -20,7 +22,7 @@ export class RuntimeHookSink {
         event,
         context: {
           ...context,
-          agentId: this.deps.getSessionAgentId(context.sessionId) ?? 'deepchat'
+          agentId: this.deps.identity.getAgentId(context.sessionId) ?? 'deepchat'
         }
       })
     } catch (error) {
@@ -41,7 +43,7 @@ export class RuntimeHookSink {
       sessionId,
       providerId: state.providerId,
       modelId: state.modelId,
-      projectDir: this.deps.resolveProjectDir(sessionId),
+      projectDir: this.deps.sessionSettings.resolveProjectDir(sessionId),
       stop: {
         reason:
           result.stopReason ??
@@ -57,7 +59,7 @@ export class RuntimeHookSink {
       sessionId,
       providerId: state.providerId,
       modelId: state.modelId,
-      projectDir: this.deps.resolveProjectDir(sessionId),
+      projectDir: this.deps.sessionSettings.resolveProjectDir(sessionId),
       usage: result.usage ?? null,
       error:
         result.errorMessage || result.terminalError
