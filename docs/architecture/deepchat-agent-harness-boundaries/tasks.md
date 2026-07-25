@@ -65,12 +65,14 @@
       contracts.
 - [x] Delete `deepChatRuntimeCoordinator.ts` and migrate app composition, ACP compatibility, session
       deletion, and transcript mutation wiring.
-- [ ] Pin state hydration, message refresh, status publication, and destroy ordering with tests that
+- [x] Pin state hydration, message refresh, status publication, and destroy ordering with tests that
       fail if their order changes.
-- [ ] Split the root suite into owner suites plus one full-runtime integration suite without
-      reducing executed test count.
-- [ ] Replace root guard rules with harness boundary rules and a smaller facade size ceiling.
-- [ ] Regenerate the layered-runtime baseline and update affected architecture records.
+- [x] Add focused owner suites for every extracted owner without reducing executed test count.
+- [ ] Make the retained full-runtime suite compact by moving its owner-specific describe blocks into
+      the owner suites. Deferred: the suite declares four module-scope `vi.mock` factories that
+      cannot be shared across files without restructuring the mock wiring.
+- [x] Replace root guard rules with harness boundary rules and a smaller facade size ceiling.
+- [x] Regenerate the layered-runtime baseline and update affected architecture records.
 - [ ] Run focused and full validation, review the complete diff, and fix every finding.
 - [ ] Commit every reviewed stage without pushing.
 

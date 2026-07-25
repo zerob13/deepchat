@@ -9,33 +9,42 @@ import {
 const SESSION_ID = 'session'
 
 function createHarness() {
+  const order: string[] = []
+  const record =
+    <TArgs extends unknown[], TResult>(label: string, result?: TResult) =>
+    (..._args: TArgs): TResult => {
+      order.push(label)
+      return result as TResult
+    }
   const runtime = new DeepChatAgentRuntime()
   const cancel = vi.fn(async () => undefined)
   const deps = {
     registry: runtime,
     providerSettings: {} as SessionLifecycleCoordinatorDependencies['providerSettings'],
     promptSettings: { getDefaultSystemPrompt: vi.fn(async () => '') },
-    sessionStore: { create: vi.fn(), delete: vi.fn() },
-    transcript: { deleteBySession: vi.fn() },
-    pendingInputs: { deleteBySession: vi.fn() },
-    toolService: { clearConversationToolMapping: vi.fn() },
+    sessionStore: { create: vi.fn(), delete: vi.fn(record('sessionStore.delete')) },
+    transcript: { deleteBySession: vi.fn(record('transcript.deleteBySession')) },
+    pendingInputs: { deleteBySession: vi.fn(record('pendingInputs.deleteBySession')) },
+    toolService: {
+      clearConversationToolMapping: vi.fn(record('toolService.clearConversationToolMapping'))
+    },
     identity: { getAgentId: vi.fn(() => 'deepchat') },
     sessionSettings: { normalizeProjectDir: vi.fn(() => null) },
     compaction: { idleState: vi.fn(() => ({ state: 'idle' })) },
     memory: {
       initializeSession: vi.fn(),
-      beginSessionDestroy: vi.fn(),
-      finishSessionDestroy: vi.fn()
+      beginSessionDestroy: vi.fn(record('memory.beginSessionDestroy')),
+      finishSessionDestroy: vi.fn(record('memory.finishSessionDestroy'))
     },
     runLifecycle: {
       cancel,
-      clearFirstTurnReady: vi.fn(),
-      cancelScopeOperations: vi.fn(),
+      clearFirstTurnReady: vi.fn(record('runLifecycle.clearFirstTurnReady')),
+      cancelScopeOperations: vi.fn(record('runLifecycle.cancelScopeOperations')),
       scopeFor: vi.fn()
     }
   } as unknown as SessionLifecycleCoordinatorDependencies
 
-  return { cancel, coordinator: new SessionLifecycleCoordinator(deps), deps, runtime }
+  return { cancel, coordinator: new SessionLifecycleCoordinator(deps), deps, order, runtime }
 }
 
 describe('SessionLifecycleCoordinator', () => {
@@ -90,5 +99,42 @@ describe('SessionLifecycleCoordinator', () => {
 
     expect(instance.getAgentId()).toBeUndefined()
     expect(runtime.getHydrated(toAppSessionId(SESSION_ID))).toBeUndefined()
+  })
+
+  it('destroys a hydrated session in the documented owner order', async () => {
+    const { coordinator, order, runtime } = createHarness()
+    const instance = runtime.getOrHydrate(toAppSessionId(SESSION_ID))
+    instance.setAgentId('agent-a')
+
+    await coordinator.destroy(SESSION_ID)
+
+    expect(order).toEqual([
+      'memory.beginSessionDestroy',
+      'runLifecycle.cancelScopeOperations',
+      'runLifecycle.clearFirstTurnReady',
+      'pendingInputs.deleteBySession',
+      'transcript.deleteBySession',
+      'sessionStore.delete',
+      'memory.finishSessionDestroy',
+      'toolService.clearConversationToolMapping'
+    ])
+    expect(instance.getAgentId()).toBeUndefined()
+    expect(runtime.getHydrated(toAppSessionId(SESSION_ID))).toBeUndefined()
+  })
+
+  it('destroys durable session facts even when no runtime instance is hydrated', async () => {
+    const { coordinator, order } = createHarness()
+
+    await coordinator.destroy(SESSION_ID)
+
+    expect(order).toEqual([
+      'memory.beginSessionDestroy',
+      'runLifecycle.clearFirstTurnReady',
+      'pendingInputs.deleteBySession',
+      'transcript.deleteBySession',
+      'sessionStore.delete',
+      'memory.finishSessionDestroy',
+      'toolService.clearConversationToolMapping'
+    ])
   })
 })

@@ -101,8 +101,9 @@ The implementation must account for every current physical-table access:
   `TapeMessageFactWriter` while preserving same-connection transactions.
 - `session/data/settings.ts`: bootstrap, reconstruction-anchor reads, summary/reset anchors, and
   destructive cleanup; migrated to anchor and lifecycle capabilities.
-- `agent/deepchat/runtime/deepChatRuntimeCoordinator.ts`: composition root that distributes
-  reconciliation, fact, manifest, raw-read, and anchor capabilities to narrower consumers.
+- `agent/deepchat/harness/createDeepChatAgentHarness.ts`: composition root that distributes
+  reconciliation, fact, manifest, raw-read, and anchor capabilities to narrower consumers. The
+  DeepChat provider loop receives them as one composed `DeepChatLoopTapePort`.
 - `memory/routes.ts` and app composition: use `TapeInspectionReader`; effective source spans and
   Memory ViewManifest records cross the boundary only as domain DTOs.
 - `memory/data/tables/deepchatMemoryIngestionProjection.ts`: one-statement freshness comparison

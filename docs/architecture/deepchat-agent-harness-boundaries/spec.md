@@ -305,10 +305,15 @@ Defects observed while moving code are recorded here and fixed on a separate bra
 
 ### Test Boundary
 
-The 12918-line root suite splits into owner suites plus one compact full-runtime integration suite
-that retains cross-owner ordering cases. Assertions move rather than change; total executed test
-count must not drop. Owner suites construct their owner directly through typed dependencies instead
-of building the whole runtime.
+Every extracted owner gets a focused suite that constructs it directly through typed dependencies
+instead of building the whole runtime. Assertions move rather than change; total executed test count
+must not drop.
+
+The former root suite is retained as the full-runtime integration suite and renamed with the
+harness. Moving its owner-specific describe blocks into the owner suites is deferred: the file
+declares four module-scope `vi.mock` factories that Vitest hoists per file, so splitting it requires
+restructuring the mock wiring rather than moving text. That restructuring is its own change and must
+not be smuggled into a graph rewrite.
 
 ## Harness Facade Goals
 
@@ -502,7 +507,8 @@ execution continues to settle independently and commit results in provider call 
 6. `DeepChatLoopRunnerPorts`, `TurnCoordinatorPorts`, and `InteractionCoordinatorPorts` shrink, the
    six Tape capabilities are one composed port, and no port member is a closure over the facade.
 7. Every owner introduced or narrowed in this slice is constructible in a test without building the
-   full runtime, and each has a focused suite.
+   full runtime, and each has a focused suite. Compacting the retained full-runtime suite is
+   deferred with its reason recorded in the test boundary.
 8. The four load-bearing sequences in the zero-behavior-change constraint are pinned by tests that
    fail if their order changes.
 9. No behavior, public contract, persisted format, event payload, or event ordering changes.
