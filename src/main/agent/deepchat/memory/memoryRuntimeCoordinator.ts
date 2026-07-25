@@ -1,4 +1,10 @@
 import logger from '@shared/logger'
+import {
+  createStaleDeepChatInstanceError,
+  type SessionScopeRegistry
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import type { SessionIdentityService } from '@/agent/deepchat/runtime/sessionIdentityService'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import { buildMemoryContextWithManifest } from '@/memory/injection'
 import type { MemoryExecutionToken, MemoryRuntimePort } from '@/memory/injection'
@@ -65,10 +71,8 @@ export interface MemoryIngestionProjection {
 
 export interface MemoryRuntimeCoordinatorDependencies {
   memoryPort: MemoryRuntimePort
-  getSessionAgentId(sessionId: string): string | undefined
-  getSessionRuntimeState(sessionId: string): { providerId: string; modelId: string } | undefined
-  hasSessionRuntimeState(sessionId: string): boolean
-  assertCurrentSessionHandle(handle: MemorySessionHandle): void
+  registry: SessionScopeRegistry
+  identity: Pick<SessionIdentityService, 'getAgentId'>
   getNextMessageOrderSeq(sessionId: string): number
   getMessagesUpToOrderSeq(sessionId: string, orderSeq: number): ChatMessageRecord[]
   getMemoryCursorOrderSeq(sessionId: string): number | null
@@ -93,6 +97,17 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
 
   constructor(private readonly deps: MemoryRuntimeCoordinatorDependencies) {
     this.memoryPort = deps.memoryPort
+  }
+
+  private runtimeState(sessionId: string): { providerId: string; modelId: string } | undefined {
+    return this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
+  }
+
+  private assertCurrentSessionHandle(handle: MemorySessionHandle): void {
+    const instance = this.deps.registry.getHydratedScope(handle.sessionId)?.instance
+    if (instance?.getMemorySessionHandle() !== handle) {
+      throw createStaleDeepChatInstanceError(handle.sessionId)
+    }
   }
 
   setPort(memoryPort: MemoryRuntimePort): void {
@@ -157,7 +172,7 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
     readonly messageId?: string | null
   }): Promise<MemoryPromptContribution> {
     try {
-      this.deps.assertCurrentSessionHandle(input.session)
+      this.assertCurrentSessionHandle(input.session)
       const sessionId = input.session.sessionId
       const agentId = this.resolveSessionAgentId(sessionId)
       if (!this.memoryPort.isEnabled(agentId)) return EMPTY_MEMORY_PROMPT_CONTRIBUTION
@@ -267,7 +282,7 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
     if (!shouldExtract) return
 
     try {
-      this.deps.assertCurrentSessionHandle(input.session)
+      this.assertCurrentSessionHandle(input.session)
       this.enqueueFallbackExtraction(input.session.sessionId)
     } catch (error) {
       logger.warn(`[DeepChatAgent] memory turn ingestion skipped: ${String(error)}`)
@@ -279,7 +294,7 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
   ): void {
     if (!this.acceptingIngestion) return
     try {
-      this.deps.assertCurrentSessionHandle(input.session)
+      this.assertCurrentSessionHandle(input.session)
       const sessionId = input.session.sessionId
       if (!this.isMemoryEnabled(sessionId)) return
       const toOrderSeq = Math.max(1, input.targetCursorOrderSeq)
@@ -362,7 +377,7 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
     void next.finally(() => {
       if (this.extractionChains.get(sessionId) === next) {
         this.extractionChains.delete(sessionId)
-        if (!this.deps.hasSessionRuntimeState(sessionId)) {
+        if (!this.runtimeState(sessionId)) {
           this.extractionEpochs.delete(sessionId)
         }
       }
@@ -390,7 +405,7 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
     try {
       const agentId = executionToken.agentId
       if (!this.canContinueExecution(sessionId, executionToken)) return
-      const state = this.deps.getSessionRuntimeState(sessionId)
+      const state = this.runtimeState(sessionId)
       if (!state || !this.isSessionEpochCurrent(sessionId, epoch)) return
 
       const currentTaskChunks = options.chunks.slice(0, MEMORY_EXTRACTION_CHUNKS_PER_QUEUE_TASK)
@@ -587,7 +602,7 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
   }
 
   private resolveSessionAgentId(sessionId: string): string {
-    return this.deps.getSessionAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID
+    return this.deps.identity.getAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID
   }
 
   private injectionAccessKey(sessionId: string, messageId: string): string {

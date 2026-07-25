@@ -47,12 +47,45 @@
 - [x] Run focused and full validation, review the complete diff, and fix every finding.
 - [x] Commit every reviewed stage without pushing.
 
+## Harness Facade
+
+- [x] Specify the owner map, port narrowing rules, single late binding, and zero-behavior-change
+      invariants in this architecture record.
+- [x] Extract identity, state resolution, session lifecycle, transcript mutation, and message
+      projection owners; make `resolveStreamRequestId` a pure helper.
+- [x] Bind the prompt assembler factory, tool result normalization, and permission review through
+      named ports without wrapping domain functions in single-method classes.
+- [x] Replace registry-shaped callbacks with `SessionScopeRegistry` and `SessionRuntimeScope`.
+- [x] Replace remaining owner callbacks with concrete collaborators and compose the six Tape
+      capabilities into one domain port.
+- [x] Introduce the named pending-input wakeup binding and remove every other deferred wiring.
+- [x] Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `dispose()`; route manager
+      backend send, cancel, snapshot, and close through the harness port.
+- [x] Add the composition factory and the facade implementing the existing manager and session
+      contracts.
+- [x] Delete `deepChatRuntimeCoordinator.ts` and migrate app composition, ACP compatibility, session
+      deletion, and transcript mutation wiring.
+- [x] Pin state hydration, message refresh, status publication, and destroy ordering with tests that
+      fail if their order changes.
+- [x] Add focused owner suites for every extracted owner without reducing executed test count.
+- [x] Keep the harness barrel package-private around the owner graph, its factory, and the wakeup
+      binding, and guard the export surface plus deep imports.
+- [x] Break the interaction/turn and facade/factory source cycles through neutral contract modules.
+- [x] Record the build preflight resource refresh as the one exception to the zero-behavior-change
+      constraint.
+- [ ] Make the retained full-runtime suite compact by moving its owner-specific describe blocks into
+      the owner suites. Deferred: the suite declares four module-scope `vi.mock` factories that
+      cannot be shared across files without restructuring the mock wiring.
+- [x] Replace root guard rules with harness boundary rules and a smaller facade size ceiling.
+- [x] Regenerate the layered-runtime baseline and update affected architecture records.
+- [x] Fence asynchronous Session settings updates to one runtime scope and add replacement-race
+      coverage.
+- [x] Close harness barrel export escapes and require explicit pending-input rollback ownership.
+- [x] Run focused and full validation, review the complete diff, and disposition every finding.
+- [x] Commit every reviewed stage without pushing.
+
 ## Future Pull Requests
 
-- [ ] Reduce the remaining composition callback graph (currently approximately 43 callbacks).
-- [ ] Narrow `DeepChatLoopRunnerPorts` (currently 32 members) around stable runtime services.
-- [ ] Move remaining session hydration, Agent identity, and message-refresh compatibility adapters
-      out of the root as part of the facade boundary.
-- [ ] Add a thin Harness facade over the stabilized internal services.
-- [ ] Add typed deterministic hook/event reduction over the facade event model.
+- [ ] Add typed deterministic hook/event reduction with restricted hook context facades over the
+      stabilized owner graph.
 - [ ] Design same-run steering separately if the product semantics are approved.

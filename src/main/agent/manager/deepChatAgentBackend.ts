@@ -1,5 +1,6 @@
 import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { AppSessionId } from '@/agent/shared/agentSessionIds'
+import type { AgentSessionSendInput } from '@/agent/shared/agentSessionHandle'
 import type { SessionTapePort, SessionTranscriptReadPort } from '@/session/data/contracts'
 import type {
   DeepChatSessionState,
@@ -99,6 +100,8 @@ export interface DeepChatAgentBackendPort {
   compactSession(
     sessionId: AppSessionId
   ): Promise<{ compacted: boolean; state: SessionCompactionState }>
+  send(sessionId: AppSessionId, input: AgentSessionSendInput): Promise<MessageStartResult>
+  cleanupSession(sessionId: AppSessionId): Promise<void>
 }
 
 export interface DeepChatAgentBackend {
@@ -142,6 +145,8 @@ export function createDeepChatAgentBackend(
     const current = handles.get(sessionId)
     if (current) return current
 
+    // Opening a handle hydrates the runtime instance so hydration-sensitive reads such as
+    // snapshotIfHydrated observe the session as soon as it has a handle.
     const instance = runtime.getOrHydrate(sessionId)
     const handle: DeepChatSessionHandle = {
       sessionId,
@@ -176,13 +181,22 @@ export function createDeepChatAgentBackend(
         respond: (messageId, toolCallId, response) =>
           port.respondToolInteraction(sessionId, messageId, toolCallId, response)
       },
-      send: (input) => instance.send(input),
-      cancel: () => instance.cancel(),
-      snapshot: (snapshotOptions) => instance.snapshot(snapshotOptions),
+      send: (input) => port.send(sessionId, input),
+      cancel: () => port.cancelGeneration(sessionId),
+      snapshot: (snapshotOptions) =>
+        snapshotOptions?.lightweight
+          ? port.getSessionListState(sessionId)
+          : port.getSessionState(sessionId),
       waitForFirstTurnReady: (waitOptions) => port.waitForFirstTurnReady(sessionId, waitOptions),
       close: async () => {
         handles.delete(sessionId)
-        await instance.close()
+        try {
+          await port.destroySession(sessionId)
+        } finally {
+          // Closing a handle always releases its own runtime instance, even when durable teardown
+          // fails, while leaving any replacement instance alone.
+          if (runtime.getHydrated(sessionId) === instance) runtime.evict(sessionId)
+        }
       },
       deepchat: {
         setSessionAgentContext: (config) => port.setSessionAgentContext(sessionId, config),
@@ -200,11 +214,12 @@ export function createDeepChatAgentBackend(
     runtime,
     open,
     async snapshotIfHydrated(sessionId) {
-      return (await runtime.getHydrated(sessionId)?.snapshot({ lightweight: true })) ?? null
+      if (!runtime.getHydrated(sessionId)) return null
+      return await port.getSessionListState(sessionId)
     },
     async cleanupSession(sessionId) {
       handles.delete(sessionId)
-      await runtime.cleanupSession(sessionId)
+      await port.cleanupSession(sessionId)
     },
     transferSource,
     transferTarget: {

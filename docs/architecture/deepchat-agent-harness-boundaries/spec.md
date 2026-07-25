@@ -8,10 +8,10 @@ string convention instead of the tool catalog that owns tool capabilities. A ren
 or new read-only tool therefore requires runtime knowledge that does not belong in dispatch.
 
 This architecture goal establishes stable contracts around the DeepChat Agent harness over
-multiple short-lived pull requests. The typed tool execution contract is complete. The current
-slice defines coordinator ownership boundaries and includes the twelve explicitly enumerated
-runtime corrections below. All other runtime behavior remains compatible. A Harness facade, typed
-hooks, and same-run steering remain separate changes.
+multiple short-lived pull requests. The typed tool execution contract and the coordinator ownership
+slice are complete. The current slice replaces the orchestration root with a thin Harness facade
+over a one-directional service graph, and is a strict zero-behavior-change refactor. Typed hooks
+and same-run steering remain separate changes.
 
 ## Comparative Evidence
 
@@ -175,6 +175,191 @@ or second source of truth is introduced.
   independently constructible.
 - Leave a stable internal ownership model for the later Harness facade and typed hook reducer.
 
+## Harness Facade Slice
+
+### Problem
+
+The coordinator ownership slice extracted lifecycle, admission, pump, and compaction owners, but
+`DeepChatRuntimeCoordinator` remains the composition root, the implementation site for every
+remaining cross-cutting session concern, and the only object every owner can reach. Its constructor
+contains 72 arrow functions, and the class body still implements session initialization and
+destruction, session-state hydration, Agent identity resolution, transcript mutation coordination,
+message refresh projection, subagent tool-call progress, system prompt assembly, tool result
+normalization, and auto-approve permission review.
+
+Because those implementations live on the root, every extracted owner must accept a callback that
+points back into it. The dependency graph is therefore a cycle rather than a layered runtime:
+root creates owner, owner holds a closure over a root private method, and that method reaches a
+different owner. The consequences are structural:
+
+- Owners are not independently constructible, so runtime coverage concentrates in one 12918-line
+  suite instead of owner suites.
+- `DeepChatLoopRunnerPorts` (32 members), `TurnCoordinatorPorts` (26 members), and
+  `InteractionCoordinatorPorts` (13 members) are wide because they must carry root helpers rather
+  than collaborators.
+- `DeepChatAgentInstance` holds a `DeepChatAgentInstanceDelegate` that calls back into orchestration,
+  so the runtime registry cannot become a pure state owner and the registry hydrator closes the
+  largest construction cycle in the module.
+- The root is at 1185 of its 1300-line architecture ceiling, so no further owner can be absorbed.
+
+### Service Ownership
+
+Each remaining root implementation moves to exactly one owner. New owners are ordinary classes with
+concrete dependencies and no reference to the facade.
+
+| Owner | Responsibility | Replaces |
+| --- | --- | --- |
+| `SessionIdentityService` | Agent identity resolution with instance cache and persisted fallback; ACP-backed subagent classification | `getSessionAgentId`, `isAcpBackedSubagentSession` |
+| `SessionStateResolver` | Runtime-state read and database hydration, including pending-interaction status projection and missing-session eviction | `getResolvedSessionState`, `getSessionState`, `getSessionListState` |
+| `SessionLifecycleCoordinator` | Session initialization and destruction ordering across settings, runtime state, compaction, Memory, durable queue, transcript, and tool mappings | `initSession`, `destroySession` |
+| `TranscriptMutationCoordinator` | Clear, retry, truncate, and fork coordination against the transcript mutation contract | `prepareClearMessages`, `finishClearMessages`, `prepareRetry`, `cancelForTranscriptMutation`, `invalidateTranscriptFrom`, `finishTranscriptTruncate`, `resetForkTarget` |
+| `MessageProjectionService` | Assistant message refresh projection and subagent tool-call progress persistence | `emitMessageRefresh`, `updateSubagentToolCallProgress` |
+
+Three existing domain implementations gain bound entry points instead of moving.
+`buildSystemPromptWithSkills` keeps its implementation in `resources/systemPromptBuilder.ts` and
+gains a binding that owns `BasePromptAssembler` and `PostCompactionPromptAssembler` construction.
+`normalizeToolResultContent` and `reviewAutoApproveToolPermission` stay domain functions and are
+bound once through named ports at composition time. Mechanically wrapping a single function in a
+class adds indirection without adding an owner.
+
+Instance access and staleness fencing are registry reads, not lifecycle operations. Owners that
+only need `getInstance`, `getHydratedInstance`, `getRuntimeState`, or `assertCurrent` take a narrow
+`SessionScopeRegistry` (`getOrHydrateScope`, `getHydratedScope`, `scopeFor`) and use
+`SessionRuntimeScope` directly. This removes those four callback shapes from every port surface and
+deletes an artificial dependency on `RunLifecycleCoordinator`.
+
+### Port Narrowing
+
+Owners depend on concrete collaborators wherever construction order already permits it:
+`TurnCoordinator` on `DeepChatLoopRunner`, `InteractionCoordinator` on `TurnCoordinator` and
+`DeferredToolExecutor`, `PendingInputPump` on `TurnCoordinator`, and `DeepChatLoopRunner` on
+`CompactionRuntimeCoordinator`. Narrow structural interfaces are retained where they express a real
+contract, such as `PendingInputTurnStarter`, but they are satisfied directly instead of by anonymous
+adapters.
+
+The six Tape capability ports on `DeepChatLoopRunnerPorts` (`tapeReconciliation`,
+`tapeViewManifestReader`, `tapeViewManifestWriter`, `tapeProviderAttemptReader`,
+`tapeProviderAttemptWriter`, `tapeToolFactWriter`) become one composed domain port. Tape is a single
+subsystem, and splitting one collaborator across six fields describes the capability types rather
+than the dependency.
+
+### Late Binding
+
+Exactly one runtime cycle is real: run settlement wakes the pending-input pump, and the pump starts
+turns through the lifecycle owner. It is expressed as one named binding module rather than an
+anonymous closure, and it is the only permitted deferred wiring in the graph.
+
+The `DeepChatAgentRuntime` hydrator cycle is not real and is removed rather than deferred.
+`DeepChatAgentInstanceDelegate` exists only to give `DeepChatAgentInstance` the four methods the
+manager backend calls. Routing those through the harness port makes the registry a pure state owner,
+deletes the hydrator, and removes `dispose()`, which has no production caller.
+
+### Facade Contract
+
+The facade implements only contracts that already exist. It adds no new public vocabulary, no
+subscription channel, and no state of its own:
+
+- `DeepChatAgentBackendPort` for the manager backend, extended with one `send` entry point that
+  absorbs the queue routing previously performed inside the instance delegate.
+- `SessionStatePort` for session state and settings.
+- `SessionTranscriptRuntimePort` for transcript mutation coordination.
+- The ACP compatibility dependency factory, the tool registry refresh entry point, the Memory
+  ingestion observer, and the runtime registry accessor.
+
+The facade owns no phase machine, queue, cache, subscription, or derived fact, and every method
+delegates to exactly one owner. Multi-owner sequences belong to `SessionLifecycleCoordinator` or
+`TranscriptMutationCoordinator`. The ACP compatibility dependency factory is bound at composition
+and reaches the facade as one pre-bound function rather than as raw infrastructure fields.
+
+The harness barrel exports only `createDeepChatAgentHarness`, the facade type, and its dependency
+types. The composed owner graph, its factory, and the pending-input wakeup binding stay
+package-private, because exporting them would let a caller reach an owner around the facade and
+would let a second graph run the restart-recovery side effects the factory performs. Deep imports
+into the harness directory from outside it are rejected for the same reason.
+
+### Zero-Behavior-Change Constraint
+
+This slice changes no runtime behavior. Any defect found while moving code is recorded and deferred
+to a separate branch rather than fixed in place, because a behavior change inside a graph rewrite
+cannot be reviewed or reverted independently.
+
+Four sequences are load-bearing and must move verbatim:
+
+1. **State hydration side effects.** `hasPendingInteractions` is read before `setRuntimeState`;
+   a missing database row evicts the runtime instance and returns null; Agent identity resolution
+   writes back onto the instance; only the full hydration mode warms effective generation settings.
+2. **Message refresh order.** `chat.stream.completed` publishes first, then the transcript message is
+   read, then the internal session update publishes. A non-assistant or unparsable message returns
+   after the first publication.
+3. **Status publication order.** `sessions.status.changed`, `sessions.updated`, internal session
+   update, then UI refresh.
+4. **Destroy ordering.** Memory destroy begins, scope operations cancel, readiness clears, then
+   durable pending inputs, transcript, and session settings are deleted, then owned state clears,
+   the instance is evicted, Memory destroy finishes, and tool mappings clear.
+
+The durable pending-input queue, Tape, Memory, and permission recovery keep their existing single
+sources of truth. No fact is duplicated onto the facade or onto a new service.
+
+One documented exception applies to source behavior only. The repository's build preflight rewrites
+`resources/model-db/providers.json` and `resources/acp-registry/registry.json`, which changes model
+availability, capability and price metadata, and executable ACP package versions. The refresh is
+required maintenance and is kept, but it lands in its own commit so it is reviewable and revertible
+independently, and ACP version bumps deserve the same supply-chain attention as any dependency
+change.
+
+### Final Review Corrections
+
+The final review admits three narrow hardening changes without broadening the facade design:
+
+| Finding | Disposition |
+| --- | --- |
+| Async Session settings ownership | `setModel`, `setAgentContext`, and `updateGenerationSettings` bind one `SessionRuntimeScope` across every await, recheck status/model identity before persistence, and never mutate a replacement instance. Focused tests cover replacement during provider-default resolution, Memory reassignment fencing, generation-setting sanitization, and skill revalidation. |
+| Harness barrel AST completeness | The export-surface guard handles export assignments, enums, modules/namespaces, import-equals declarations, anonymous default declarations, and destructured variable exports. Unsupported names fail closed under the existing allowlist. |
+| Pending-input rollback fence | `rollbackPendingInputTurn` requires the caller's already-held instance instead of silently hydrating a current instance through a default parameter. Both callers already provide that ownership token. |
+
+Other review observations do not belong in this correction:
+
+- The steer merge race remains deferred below because closing it changes queue/cancel product
+  semantics.
+- Compaction cleanup ordering predates this slice and is covered by the explicit requirement to
+  retain stale-instance and transcript ordering. Changing it requires a separate complex-bug spec.
+- Provider and ACP catalogs are external generated snapshots. Their current upstream sources still
+  contain the reported model metadata, so local edits would be overwritten by the next build.
+- `uvx` resolves package `requires-python` metadata with managed Python downloads; the ACP package's
+  Python range is not constrained by DeepChat's host interpreter range.
+
+### Deferred Findings
+
+Defects observed while moving code are recorded here and fixed on a separate branch.
+
+| Finding | Observation | Current handling |
+| --- | --- | --- |
+| Steer merge race | Merging two rapid steer inputs into one turn depends on an in-flight `steerActiveTurn` reaching the instance steer marker before a settlement-triggered drain adopts the claim. Nothing serializes the two, so the window is defined only by the async depth of the pump's session-state read. | Behavior preserved by keeping that read behind its own async boundary, with the reason recorded at the wiring site. Closing the race requires holding the steer lane across queue and cancel, which is a behavior change. |
+| Duplicated drain logging | `RunLifecycleCoordinator.schedulePendingInputDrain` and `PendingInputPump.schedule` both catch a rejected drain and log the identical `drainPendingQueueIfPossible` message, so one owner is redundant. | Left as is; both paths keep their existing coverage. |
+
+### Test Boundary
+
+Every extracted owner gets a focused suite that constructs it directly through typed dependencies
+instead of building the whole runtime. Assertions move rather than change; total executed test count
+must not drop.
+
+The former root suite is retained as the full-runtime integration suite and renamed with the
+harness. Moving its owner-specific describe blocks into the owner suites is deferred: the file
+declares four module-scope `vi.mock` factories that Vitest hoists per file, so splitting it requires
+restructuring the mock wiring rather than moving text. That restructuring is its own change and must
+not be smuggled into a graph rewrite.
+
+## Harness Facade Goals
+
+- Give every remaining root implementation exactly one named owner outside the facade.
+- Make the runtime dependency graph one-directional, with a single named late binding.
+- Make `DeepChatAgentInstance` and `DeepChatAgentRuntime` pure runtime-state owners.
+- Reduce the facade to delegation against contracts that already exist.
+- Prevent re-accretion with an architecture guard that fails on runtime modules importing the
+  harness layer and on protected implementation symbols reappearing in the facade.
+- Leave a stable service layer for a later typed hook reducer without exposing that layer as a
+  service locator.
+
 ## Typed Tool Execution Contract Goals (Completed)
 
 - Define one canonical, typed execution contract for every `MCPToolDefinition`.
@@ -282,10 +467,16 @@ execution continues to settle independently and commit results in provider call 
   arguments.
 - Do not add per-call dynamic effect classification or a segmented dependency scheduler.
 - Do not rewrite tool dispatch or change durable queue and Tape semantics.
-- Do not add the Harness facade or typed hook reducer in the coordinator-ownership slice.
+- Do not add the typed hook reducer in the harness facade slice.
 - Do not change provider retry, tool scheduling, dispatch internals, public IPC/API contracts,
   persisted formats, Tape semantics, or Memory semantics beyond the corrections explicitly listed
   above while extracting runtime owners.
+- Do not add a Pi-style `run`/`steer`/`followUp`/`subscribe` vocabulary or any third event channel;
+  the facade implements the existing manager and session contracts only.
+- Do not pass the composed service graph to hooks as a container. A later typed hook slice designs
+  its own restricted context facades.
+- Do not fix defects discovered while moving code beyond the narrow final-review corrections listed
+  above; record them and open a separate branch.
 - Do not move durable pending inputs into `DeepChatAgentInstance` or add another source of truth.
 - Do not make `SessionRuntimeScope` a dependency container or introduce a generic runtime kernel.
 - Do not add same-run steering or change abort semantics, queue ordering, or visible-turn behavior
@@ -331,3 +522,35 @@ execution continues to settle independently and commit results in provider call 
    import the concrete root coordinator.
 10. Focused owner tests, the full main-process suite, type checks, formatting, i18n validation,
     lint, and architecture guards pass before handoff.
+
+## Harness Facade Acceptance Criteria
+
+1. `deepChatRuntimeCoordinator.ts` no longer exists. Identity, state resolution, session lifecycle,
+   transcript mutation, and message projection each have one named owner, and the prompt assembler,
+   tool result normalization, and permission review remain domain modules bound at composition.
+2. No module under `src/main/agent/deepchat/{runtime,loop,instance,memory,resources}` imports the
+   harness layer, enforced by the agent cleanup guard.
+3. The composition root is the only module that wires owners, and the graph contains exactly one
+   named late binding, from `RunLifecycleCoordinator` to `PendingInputPump`.
+4. `DeepChatAgentInstance` exposes runtime state only; `DeepChatAgentInstanceDelegate`, the registry
+   hydrator, and `DeepChatAgentRuntime.dispose()` are gone, and the manager backend reaches send,
+   cancel, snapshot, and close through the harness port.
+5. The facade declares no field other than its owners and the bound ACP compatibility dependency
+   factory, and satisfies `DeepChatAgentBackendPort`, `SessionStatePort`, and
+   `SessionTranscriptRuntimePort` by explicit `implements` clauses.
+6. `DeepChatLoopRunnerPorts`, `TurnCoordinatorPorts`, and `InteractionCoordinatorPorts` shrink, the
+   six Tape capabilities are one composed port, and no port member is a closure over the facade.
+7. Every owner introduced or narrowed in this slice is constructible in a test without building the
+   full runtime, and each has a focused suite. Compacting the retained full-runtime suite is
+   deferred with its reason recorded in the test boundary.
+8. The four load-bearing sequences in the zero-behavior-change constraint are pinned by tests that
+   fail if their order changes.
+9. No source behavior, public contract, persisted format, event payload, or event ordering changes,
+   apart from the build preflight resource refresh and final-review corrections recorded above.
+   Executed test count does not drop.
+10. The harness barrel exports only the factory entry point and its types, deep imports into the
+    harness directory are rejected from outside it, and both rules fail closed in the guard.
+11. The runtime source graph is acyclic across the owners this slice touched: no owner pair and no
+    harness module pair import each other, including type-only imports.
+12. Focused owner suites, the full main-process suite, type checks, formatting, i18n validation,
+    lint, the agent cleanup guard, and a regenerated layered-runtime baseline pass before handoff.

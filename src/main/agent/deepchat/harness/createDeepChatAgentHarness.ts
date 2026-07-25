@@ -1,0 +1,403 @@
+import logger from '@shared/logger'
+import type { AcpAgentInstanceDependencyFactory } from '@/agent/acp/instance'
+import { createAcpCompatibilityDependencies } from '@/agent/acp/compatibility/dependencies'
+import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
+import { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
+import { MemoryRuntimeCoordinator } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
+import { CompactionRuntimeCoordinator } from '@/agent/deepchat/runtime/compactionRuntimeCoordinator'
+import { CompactionService } from '@/agent/deepchat/runtime/compactionService'
+import { DeepChatLoopRunner } from '@/agent/deepchat/runtime/deepChatLoopRunner'
+import { DeferredToolExecutor } from '@/agent/deepchat/runtime/deferredToolExecutor'
+import { InteractionCoordinator } from '@/agent/deepchat/runtime/interactionCoordinator'
+import { MessageProjectionService } from '@/agent/deepchat/runtime/messageProjectionService'
+import { PendingInputAdmissionCoordinator } from '@/agent/deepchat/runtime/pendingInputAdmissionCoordinator'
+import { PendingInputPump } from '@/agent/deepchat/runtime/pendingInputPump'
+import { PromptAssemblyService } from '@/agent/deepchat/runtime/promptAssemblyService'
+import { ProviderPermissionCoordinator } from '@/agent/deepchat/runtime/providerPermissionCoordinator'
+import { RunLifecycleCoordinator } from '@/agent/deepchat/runtime/runLifecycleCoordinator'
+import { RuntimeHookSink } from '@/agent/deepchat/runtime/runtimeHookSink'
+import { SessionIdentityService } from '@/agent/deepchat/runtime/sessionIdentityService'
+import { SessionLifecycleCoordinator } from '@/agent/deepchat/runtime/sessionLifecycleCoordinator'
+import { SessionSettingsCoordinator } from '@/agent/deepchat/runtime/sessionSettingsCoordinator'
+import { SessionStateResolver } from '@/agent/deepchat/runtime/sessionStateResolver'
+import { SessionStatusPublisher } from '@/agent/deepchat/runtime/sessionStatusPublisher'
+import {
+  createToolExecutionPort,
+  createToolResultPort
+} from '@/agent/deepchat/runtime/toolAdapters'
+import { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
+import { ToolOutputGuard } from '@/agent/deepchat/runtime/toolOutputGuard'
+import {
+  createToolPermissionReviewer,
+  createToolResultNormalizer,
+  type ToolRuntimeBindingDependencies
+} from '@/agent/deepchat/runtime/toolRuntimeBindings'
+import { TranscriptMutationCoordinator } from '@/agent/deepchat/runtime/transcriptMutationCoordinator'
+import { TurnCoordinator } from '@/agent/deepchat/runtime/turnCoordinator'
+import { DeepChatAgentHarness } from './deepChatAgentHarness'
+import type { DeepChatHarnessDependencies, DeepChatRuntimeServices } from './runtimeServices'
+import { createPendingInputWakeupBinding } from './pendingInputWakeupBinding'
+
+/**
+ * Single composition root for the DeepChat agent runtime. Owners are constructed in dependency
+ * order; the only deferred wiring is the run-settlement to pending-input-pump feedback loop.
+ */
+function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepChatRuntimeServices {
+  const {
+    agentSettings,
+    attachmentRouter,
+    cacheImage,
+    database,
+    hookObserver,
+    providerRuntime,
+    providerSettings,
+    publishEvent,
+    publishSessionUpdate,
+    sessionData,
+    sessionPermissionPort,
+    skillService,
+    skillSettings,
+    toolService,
+    traceSettings
+  } = deps
+  const sessionStore = sessionData.settings
+  const messageStore = sessionData.transcript
+  const tapeService = sessionData.tapeStore
+  const pendingInputCoordinator = sessionData.pendingInputs
+
+  const runtime = new DeepChatAgentRuntime()
+  const identity = new SessionIdentityService({ registry: runtime, database })
+  const messageProjection = new MessageProjectionService({
+    registry: runtime,
+    transcript: messageStore,
+    publishEvent,
+    publishSessionUpdate
+  })
+  const toolResolver = new DeepChatToolResolver({
+    agentSettings,
+    skillSettings,
+    sqlitePresenter: database,
+    toolService,
+    skillService,
+    registry: runtime,
+    identity
+  })
+  const memory = new MemoryRuntimeCoordinator({
+    memoryPort: deps.memoryPort,
+    registry: runtime,
+    identity,
+    getNextMessageOrderSeq: (sessionId) => messageStore.getNextOrderSeq(sessionId),
+    getMessagesUpToOrderSeq: (sessionId, orderSeq) =>
+      messageStore.getMessagesUpToOrderSeq(sessionId, orderSeq),
+    getMemoryCursorOrderSeq: (sessionId) =>
+      database.deepchatSessionsTable.getMemoryCursorOrderSeq(sessionId),
+    updateMemoryCursorOrderSeq: (sessionId, orderSeq) =>
+      database.deepchatSessionsTable.updateMemoryCursorOrderSeq(sessionId, orderSeq),
+    rewindMemoryCursorOrderSeq: (sessionId, orderSeq) =>
+      database.deepchatSessionsTable.rewindMemoryCursorOrderSeq(sessionId, orderSeq),
+    tapeReader: tapeService,
+    tapeAnchorWriter: tapeService,
+    getIngestionProjection: deps.getMemoryIngestionProjection
+  })
+  const sessionSettings = new SessionSettingsCoordinator({
+    providerSettings,
+    promptSettings: deps.promptSettings,
+    sessionStore,
+    toolResolver,
+    toolService,
+    sessionPermissionPort,
+    registry: runtime,
+    identity,
+    beginSessionAgentReassignment: async (sessionId) =>
+      await memory.beginSessionAgentReassignment(sessionId),
+    finishSessionAgentReassignment: (sessionId) => memory.finishSessionAgentReassignment(sessionId),
+    readPersistedProjectDir: (sessionId) => database.newSessionsTable?.get(sessionId)?.project_dir
+  })
+  const promptAssembly = new PromptAssemblyService({
+    registry: runtime,
+    providerSettings,
+    skillSettings,
+    skillService,
+    providerCatalogPort: deps.providerCatalogPort,
+    toolService,
+    identity,
+    projectDir: sessionSettings,
+    memoryPromptContributor: memory
+  })
+  const hookSink = new RuntimeHookSink({ observer: hookObserver, identity, sessionSettings })
+  const pendingInputWakeup = createPendingInputWakeupBinding()
+  const runLifecycle = new RunLifecycleCoordinator({
+    runtime,
+    statusPublisher: new SessionStatusPublisher({
+      publishEvent,
+      publishSessionUpdate,
+      sessionUiPort: deps.sessionUiPort
+    }),
+    transcript: messageStore,
+    messageProjection,
+    terminalObserver: hookSink,
+    pendingInputWakeup: pendingInputWakeup.wakeup
+  })
+  const sessionState = new SessionStateResolver({
+    registry: runtime,
+    sessionStore,
+    runLifecycle,
+    identity,
+    sessionSettings
+  })
+  const providerPermissionCoordinator = new ProviderPermissionCoordinator({
+    publishEvent,
+    messageStore,
+    runLifecycle,
+    permissionPort: deps.acpAsLlmProviderPermission,
+    messageProjection
+  })
+  const compactionService = new CompactionService(
+    sessionStore,
+    messageStore,
+    providerRuntime,
+    providerSettings,
+    async (sessionId) =>
+      await agentSettings.resolveDeepChatAgentConfig(identity.getAgentId(sessionId) ?? 'deepchat')
+  )
+  const compaction = new CompactionRuntimeCoordinator({
+    publishEvent,
+    compactionService,
+    sessionStore,
+    messageStore,
+    providerSettings,
+    toolResolver,
+    runLifecycle,
+    sessionSettings,
+    tapeReconciliation: tapeService,
+    registry: runtime,
+    sessionState,
+    promptAssembly,
+    messageProjection
+  })
+  const sessionLifecycle = new SessionLifecycleCoordinator({
+    registry: runtime,
+    providerSettings,
+    promptSettings: deps.promptSettings,
+    sessionStore,
+    transcript: messageStore,
+    pendingInputs: pendingInputCoordinator,
+    toolService,
+    identity,
+    sessionSettings,
+    compaction,
+    memory,
+    runLifecycle
+  })
+  const toolRuntimeBindings: ToolRuntimeBindingDependencies = {
+    providerSettings,
+    agentSettings,
+    providerRuntime,
+    registry: runtime,
+    sessionStore,
+    identity,
+    runLifecycle
+  }
+  const toolOutputGuard = new ToolOutputGuard()
+  const toolExecutionPort = createToolExecutionPort(toolService)
+  const toolResultPort = createToolResultPort({
+    outputGuard: toolOutputGuard,
+    normalize: createToolResultNormalizer(toolRuntimeBindings)
+  })
+  const deferredToolExecutor = new DeferredToolExecutor({
+    toolExecutionPort,
+    toolResultPort,
+    toolResolver,
+    cacheImage,
+    runLifecycle,
+    sessionSettings,
+    sessionState,
+    identity,
+    messageProjection
+  })
+  const inputPreparationCoordinator = new InputPreparationCoordinator()
+  const contextCoordinator = new DeepChatContextCoordinator()
+  const loopRunner = new DeepChatLoopRunner({
+    publishEvent,
+    publishSessionUpdate,
+    providerRuntime,
+    providerSettings,
+    traceSettings,
+    sessionStore,
+    messageStore,
+    tape: tapeService,
+    pendingInputCoordinator,
+    toolResolver,
+    providerPermissionCoordinator,
+    compactionService,
+    inputPreparationCoordinator,
+    contextCoordinator,
+    memoryIngestionObserver: memory,
+    toolExecutionPort,
+    toolResultPort,
+    cacheImage,
+    runLifecycle,
+    registry: runtime,
+    sessionSettings,
+    promptAssembly,
+    identity,
+    sessionPermissionPort,
+    reviewToolPermission: createToolPermissionReviewer(toolRuntimeBindings),
+    hookSink,
+    compaction
+  })
+  const turnCoordinator = new TurnCoordinator({
+    publishEvent,
+    providerSettings,
+    traceSettings,
+    toolService,
+    sessionStore,
+    messageStore,
+    tapeReconciliation: tapeService,
+    toolResolver,
+    compactionService,
+    compactionRuntimeCoordinator: compaction,
+    inputPreparationCoordinator,
+    contextCoordinator,
+    memoryCoordinator: memory,
+    memoryIngestionObserver: memory,
+    postCompactionPromptAssembler: promptAssembly.createPostCompactionPromptAssembler(),
+    toolOutputGuard,
+    runLifecycle,
+    registry: runtime,
+    attachmentRouter,
+    sessionSettings,
+    promptAssembly,
+    loopRunner,
+    messageProjection,
+    hookSink
+  })
+  const pendingInputPump = new PendingInputPump({
+    pendingInputs: pendingInputCoordinator,
+    transcript: messageStore,
+    runLifecycle,
+    turnStarter: turnCoordinator,
+    // Steer merging depends on an in-flight steerActiveTurn reaching the steer marker before a
+    // settlement-triggered drain adopts the claim, and that window is currently defined only by
+    // this read's async depth. The extra boundary is kept until the race is closed properly.
+    sessionState: { get: async (sessionId) => await sessionState.get(sessionId) },
+    sessionSettings
+  })
+  pendingInputWakeup.bind(pendingInputPump)
+  const pendingInputAdmission = new PendingInputAdmissionCoordinator({
+    providerSettings,
+    pendingInputs: pendingInputCoordinator,
+    pump: pendingInputPump,
+    runLifecycle,
+    attachmentRouter,
+    sessionState,
+    registry: runtime,
+    sessionSettings
+  })
+  const interactionCoordinator = new InteractionCoordinator({
+    publishEvent,
+    messageStore,
+    providerPermissionCoordinator,
+    skillService,
+    runLifecycle,
+    registry: runtime,
+    sessionSettings,
+    sessionPermissionPort,
+    deferredToolExecutor,
+    messageProjection,
+    hookSink,
+    turnCoordinator
+  })
+  const transcriptMutation = new TranscriptMutationCoordinator({
+    registry: runtime,
+    sessionState,
+    sessionSettings,
+    admission: pendingInputAdmission,
+    compaction,
+    memory,
+    runLifecycle
+  })
+
+  const acpCompatibility: AcpAgentInstanceDependencyFactory = (input) =>
+    createAcpCompatibilityDependencies(
+      {
+        publishEvent,
+        publishSessionUpdate,
+        providerSettings,
+        traceSettings,
+        providerRuntime,
+        sessionStore,
+        messageStore,
+        tapeReconciliation: tapeService,
+        toolResolver,
+        appendViewManifest: (manifest) =>
+          loopRunner.appendTapeViewManifest({
+            sessionId: manifest.sessionId,
+            messageId: manifest.messageId,
+            requestSeq: manifest.requestSeq,
+            taskType: manifest.taskType,
+            policy: manifest.policy,
+            policyVersion: manifest.policyVersion,
+            contextBuilderVersion: 'legacy-v1',
+            messages: manifest.messages,
+            tools: manifest.localToolDefinitions,
+            tokenBudget: manifest.tokenBudget,
+            providerId: manifest.providerId,
+            modelId: manifest.modelId,
+            summaryCursorOrderSeq: manifest.summaryCursorOrderSeq,
+            supportsVision: manifest.supportsVision,
+            supportsAudioInput: manifest.supportsAudioInput,
+            traceDebugEnabled: manifest.traceDebugEnabled
+          }),
+        setStatus: (sessionId, status) => runLifecycle.transitionCurrentStatus(sessionId, status),
+        getSessionState: async (sessionId) => await sessionState.get(sessionId),
+        getDeepChatInstance: (sessionId) =>
+          runtime.getOrHydrateScope(toAppSessionId(sessionId)).instance,
+        getGenerationSettings: async (sessionId, instance) =>
+          await sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
+        buildSystemPrompt: async (sessionId, basePrompt, tools, activeSkills, instance) =>
+          await promptAssembly.build(sessionId, basePrompt, tools, activeSkills, instance),
+        emitRateLimitWaitingMessage: (sessionId, messageId, requestId, snapshot) =>
+          loopRunner.emitRateLimitWaitingMessage(sessionId, messageId, requestId, snapshot),
+        clearRateLimitWaitingMessage: (sessionId, messageId, requestId) =>
+          loopRunner.clearRateLimitWaitingMessage(sessionId, messageId, requestId),
+        dispatchHook: (event, context) => hookSink.dispatch(event, context)
+      },
+      input
+    )
+
+  const recovered = messageStore.recoverPendingMessages()
+  if (recovered > 0) {
+    logger.info(`DeepChatAgent: recovered ${recovered} pending messages to error status`)
+  }
+
+  const recoveredPendingInputs = pendingInputCoordinator.recoverClaimedInputsAfterRestart()
+  if (recoveredPendingInputs > 0) {
+    logger.info(
+      `DeepChatAgent: recovered ${recoveredPendingInputs} sessions with claimed pending inputs`
+    )
+  }
+
+  return {
+    runtime,
+    sessionLifecycle,
+    sessionState,
+    sessionSettings,
+    runLifecycle,
+    turnCoordinator,
+    interactionCoordinator,
+    pendingInputAdmission,
+    compaction,
+    transcriptMutation,
+    memoryIngestionObserver: memory,
+    acpCompatibility
+  }
+}
+
+export function createDeepChatAgentHarness(
+  deps: DeepChatHarnessDependencies
+): DeepChatAgentHarness {
+  return new DeepChatAgentHarness(createDeepChatRuntimeServices(deps))
+}

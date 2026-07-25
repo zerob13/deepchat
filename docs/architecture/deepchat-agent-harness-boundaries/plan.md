@@ -2,10 +2,121 @@
 
 ## Current Slice
 
-Extract coordinator ownership boundaries as an independently reviewable refactor. Preserve runtime
-behavior except for the twelve corrections enumerated in `spec.md`, each of which must have focused
-regression coverage. The typed tool execution contract below is complete and remains a retained
-record.
+Replace the orchestration root with a thin Harness facade over a one-directional service graph.
+This slice changes no runtime behavior. The typed tool execution contract and the coordinator
+ownership slice below are complete and remain retained records.
+
+## Harness Facade Plan
+
+### Target Layout
+
+```text
+src/main/agent/deepchat/
+├── harness/
+│   ├── createDeepChatAgentHarness.ts   # single composition root
+│   ├── deepChatAgentHarness.ts         # delegation against existing ports only
+│   ├── pendingInputWakeupBinding.ts    # the only explicit late binding
+│   └── index.ts
+└── runtime/
+    ├── sessionIdentityService.ts
+    ├── sessionStateResolver.ts
+    ├── sessionLifecycleCoordinator.ts
+    ├── transcriptMutationCoordinator.ts
+    ├── messageProjectionService.ts
+    ├── promptAssemblyService.ts        # binds resources/systemPromptBuilder
+    ├── toolRuntimeBindings.ts          # binds tool result normalization and permission review
+    └── streamRequestId.ts              # shared by run lifecycle and message projection
+```
+
+Bindings live under `runtime/` rather than beside the domain functions they bind because
+`resources/` is excluded from the repository formatter by the shared `resources` ignore pattern.
+The domain implementations stay where they are.
+
+### Stage 1: Specify
+
+Extend this architecture record with the facade slice, the owner map, the port narrowing rules, the
+single permitted late binding, and the four load-bearing sequences that must move verbatim. Freeze
+the zero-behavior-change constraint before touching source.
+
+### Stage 2: Extract Runtime Services
+
+Move identity, state resolution, session lifecycle, transcript mutation, and message projection out
+of the root into named owners. Extract `resolveStreamRequestId` into a pure helper so message
+projection and run lifecycle no longer form a cycle. Add the bound prompt assembler factory and bind
+tool result normalization and permission review through named ports.
+
+The root keeps its public surface in this stage and delegates to the new owners, so the change is a
+pure move with an unchanged external contract.
+
+### Stage 3: Narrow Runtime Ports
+
+Replace registry-shaped callbacks (`getDeepChatInstance`, `getHydratedDeepChatInstance`,
+`getRuntimeState`, `assertCurrent`) with a narrow `SessionScopeRegistry` and `SessionRuntimeScope`
+usage. Replace remaining owner callbacks with concrete collaborators. Compose the six Tape
+capabilities into one domain port. Introduce the named pending-input wakeup binding and remove every
+other deferred wiring.
+
+### Stage 4: Detach Runtime Instances
+
+Delete `DeepChatAgentInstanceDelegate`, the registry hydrator, and `DeepChatAgentRuntime.dispose()`.
+Add the `send` entry point that absorbs queue routing to the runtime public surface, and move the
+manager backend to reach send, cancel, snapshot, and close through that surface.
+
+### Stage 5: Add Harness Facade
+
+Add the composition factory and the facade. The factory constructs the graph in dependency order and
+returns owners; the facade holds those owners and implements `DeepChatAgentBackendPort`,
+`SessionStatePort`, and `SessionTranscriptRuntimePort` with explicit `implements` clauses.
+
+### Stage 6: Retire Runtime Root
+
+Delete `deepChatRuntimeCoordinator.ts`. Migrate `src/main/app/composition.ts`, the ACP compatibility
+dependency factory, session deletion, and transcript mutation wiring to the harness.
+
+### Stage 7: Enforce Boundaries
+
+Split the root test suite into owner suites and one full-runtime integration suite. Replace the
+root-specific guard rules with harness rules: runtime modules must not import the harness layer, the
+facade must not call protected implementation symbols, and the facade keeps a much smaller size
+ceiling. Regenerate `docs/architecture/baselines/agent-system-layered-runtime-baseline.json` and
+update the Tape capability distribution entry in `docs/architecture/tape-layering/spec.md`, which
+names the retired root as the composition root.
+
+### Harness Facade Validation
+
+Run in increasing scope after every stage:
+
+```bash
+pnpm exec vitest run --config vitest.config.ts \
+  test/main/agent/deepchat \
+  test/main/session/runtimeIntegration.test.ts
+pnpm run typecheck:node
+pnpm run test:main
+pnpm run lint:agent-cleanup
+pnpm run format
+pnpm run i18n
+pnpm run lint
+pnpm run build
+```
+
+Regenerate `pnpm run architecture:baseline` only in the final stage, after the source layout is
+stable. If an environment-gated failure occurs, reproduce it on `dev` before classifying it as
+unrelated.
+
+### Harness Facade Commit Strategy
+
+1. `docs(agent): specify harness facade`
+2. `refactor(agent): extract runtime services`
+3. `refactor(agent): narrow runtime ports`
+4. `refactor(agent): detach runtime instances`
+5. `refactor(agent): add harness facade`
+6. `refactor(agent): retire runtime root`
+7. `test(agent): enforce harness boundaries`
+
+Every commit must compile and pass its focused suites. Before each commit, inspect staged and
+unstaged changes for hidden side effects, compatibility breaks, edge cases, performance and security
+risk, misleading names, missing tests, and future maintenance cost, then fix every finding and
+rerun the relevant validation. Do not push.
 
 ## Coordinator Ownership Plan
 
@@ -237,8 +348,7 @@ silently reverted.
 
 ## Later Slices
 
-After coordinator ownership lands in `dev`, later branches may extend this architecture record for
-a thin Harness facade and typed hook reduction. Those changes must not be implemented or coupled to
-the current branch. The facade slice also owns the remaining composition callbacks, the still-wide
-`DeepChatLoopRunnerPorts`, and root compatibility adapters for session hydration, Agent identity,
-and message refresh. Same-run steering remains a separate feature design.
+After the harness facade lands in `dev`, a later branch may extend this architecture record for
+typed hook reduction over the stabilized owner graph. That slice designs its own restricted hook
+context facades; it must not expose the composed service graph as a container, and it must not be
+implemented or coupled to the current branch. Same-run steering remains a separate feature design.

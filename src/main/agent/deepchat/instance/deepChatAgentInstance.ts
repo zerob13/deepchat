@@ -1,10 +1,8 @@
 import type { AppSessionId } from '@/agent/shared/agentSessionIds'
-import type { AgentSessionSendInput } from '@/agent/shared/agentSessionHandle'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { LoopRun } from '@/agent/deepchat/loop/loopRun'
 import type {
   DeepChatSessionState,
-  MessageStartResult,
   SessionCompactionState,
   SessionGenerationSettings
 } from '@shared/types/agent-interface'
@@ -13,13 +11,6 @@ import type {
   PersistedToolBatchState
 } from '@/agent/deepchat/loop/ports'
 import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptContributor'
-
-export interface DeepChatAgentInstanceDelegate {
-  send(input: AgentSessionSendInput): Promise<MessageStartResult>
-  cancel(): Promise<void>
-  snapshot(options?: { lightweight?: boolean }): Promise<DeepChatSessionState | null>
-  close(): Promise<void>
-}
 
 export type DeepChatActiveGeneration = LoopRun<unknown>
 export type PendingQueueDrainLease = symbol
@@ -71,11 +62,7 @@ export class DeepChatAgentInstance {
   private compactionState?: SessionCompactionState
   private readonly memorySessionHandle: MemorySessionHandle
 
-  constructor(
-    readonly sessionId: AppSessionId,
-    private readonly delegate: DeepChatAgentInstanceDelegate,
-    private readonly onClosed: (instance: DeepChatAgentInstance) => void
-  ) {
+  constructor(readonly sessionId: AppSessionId) {
     this.memorySessionHandle = Object.freeze({ sessionId })
   }
 
@@ -496,26 +483,6 @@ export class DeepChatAgentInstance {
     this.runtimeActivatedSkills.clear()
     this.invalidateToolProfileCache()
     this.clearCompactionState()
-  }
-
-  async send(input: AgentSessionSendInput): Promise<MessageStartResult> {
-    return await this.delegate.send(input)
-  }
-
-  async cancel(): Promise<void> {
-    await this.delegate.cancel()
-  }
-
-  async snapshot(options?: { lightweight?: boolean }): Promise<DeepChatSessionState | null> {
-    return await this.delegate.snapshot(options)
-  }
-
-  async close(): Promise<void> {
-    try {
-      await this.delegate.close()
-    } finally {
-      this.onClosed(this)
-    }
   }
 
   private settleFirstTurnReadyWaiters(ready: boolean): void {

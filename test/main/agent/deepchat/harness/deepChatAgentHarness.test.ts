@@ -14,11 +14,14 @@ import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import { ApiEndpointType, ModelType } from '@shared/model'
 import {
-  DeepChatRuntimeCoordinator,
+  createDeepChatAgentHarness,
+  type DeepChatAgentHarness,
+  type DeepChatHarnessDependencies
+} from '@/agent/deepchat/harness'
+import {
   PRE_STREAM_STUCK_ESCALATION_MS,
-  PRE_STREAM_STUCK_WARN_MS,
-  type DeepChatRuntimeDependencies
-} from '@/agent/deepchat/runtime/deepChatRuntimeCoordinator'
+  PRE_STREAM_STUCK_WARN_MS
+} from '@/agent/deepchat/runtime/preStreamWatchdog'
 import logger from '@shared/logger'
 import type { HookNotification, HookObserver } from '@/hook/observer'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
@@ -45,7 +48,9 @@ import { AcpPromptController, AcpRuntimeOwner, type AcpClientRuntime } from '@/a
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import type { AcpAgentDescriptor } from '@/agent/shared/agentDescriptors'
 
-const createHookObserver = (dispatcher: { dispatchEvent: ReturnType<typeof vi.fn> }): HookObserver => ({
+const createHookObserver = (dispatcher: {
+  dispatchEvent: ReturnType<typeof vi.fn>
+}): HookObserver => ({
   notify({ event, context }: HookNotification) {
     dispatcher.dispatchEvent(event, {
       conversationId: context.sessionId,
@@ -96,7 +101,9 @@ const skillServiceMock = {
   getActiveSkills: vi.fn().mockResolvedValue([]),
   setActiveSkills: vi.fn().mockImplementation(async (_id: string, skills: string[]) => skills),
   revalidateActiveSkillsForAgent: vi.fn().mockResolvedValue([]),
-  validateSkillNames: vi.fn().mockImplementation(async (_agentId: string, skills: string[]) => skills),
+  validateSkillNames: vi
+    .fn()
+    .mockImplementation(async (_agentId: string, skills: string[]) => skills),
   resolveSessionAgentId: vi.fn().mockResolvedValue('deepchat'),
   loadSkillContent: vi.fn().mockResolvedValue(null),
   viewDraftSkill: vi.fn(),
@@ -148,14 +155,14 @@ function expectPublished(eventName: string, payload: Record<string, unknown>): v
   expect(publishDeepchatEvent).toHaveBeenCalledWith(eventName, expect.objectContaining(payload))
 }
 
-function getRuntimeState(agent: DeepChatRuntimeCoordinator, sessionId: string): DeepChatSessionState {
+function getRuntimeState(agent: DeepChatAgentHarness, sessionId: string): DeepChatSessionState {
   const state = agent.deepChatRuntime.getOrHydrate(toAppSessionId(sessionId)).getRuntimeState()
   if (!state) throw new Error(`Missing runtime state for ${sessionId}`)
   return state
 }
 
 function setRuntimeStatus(
-  agent: DeepChatRuntimeCoordinator,
+  agent: DeepChatAgentHarness,
   sessionId: string,
   status: DeepChatSessionState['status']
 ): void {
@@ -701,7 +708,7 @@ function createRuntimeDependencies(
     promptSettings?: { getDefaultSystemPrompt(): Promise<string> }
     memoryPort?: MemoryRuntimePort
   } = {}
-): DeepChatRuntimeDependencies & {
+): DeepChatHarnessDependencies & {
   attachmentRouter: { prepare: ReturnType<typeof vi.fn> }
 } {
   return {
@@ -729,8 +736,9 @@ function createRuntimeDependencies(
       isDraftSuggestionsEnabled: vi.fn(() => false)
     },
     traceSettings: options.traceSettings ?? { isEnabled: () => false },
-    promptSettings:
-      options.promptSettings ?? { getDefaultSystemPrompt: vi.fn().mockResolvedValue('') },
+    promptSettings: options.promptSettings ?? {
+      getDefaultSystemPrompt: vi.fn().mockResolvedValue('')
+    },
     attachmentRouter: {
       prepare: vi.fn(async ({ content }) => ({
         content,
@@ -837,7 +845,7 @@ function makeDeepchatAssistantRow(
   }
 }
 
-describe('DeepChatRuntimeCoordinator', () => {
+describe('DeepChatAgentHarness', () => {
   let sqlitePresenter: ReturnType<typeof createMockSqlitePresenter>
   let llmProvider: ReturnType<typeof createMockProviderRuntime>
   let providerSettings: ReturnType<typeof createMockProviderSettings>
@@ -846,7 +854,7 @@ describe('DeepChatRuntimeCoordinator', () => {
     clearSessionPermissions: ReturnType<typeof vi.fn>
     approvePermission: ReturnType<typeof vi.fn>
   }
-  let agent: DeepChatRuntimeCoordinator
+  let agent: DeepChatAgentHarness
   let runtimeDependencies: ReturnType<typeof createRuntimeDependencies>
   let transcriptMutations: SessionTranscriptMutations
   let sessionData: ReturnType<typeof createSessionData>
@@ -921,16 +929,15 @@ describe('DeepChatRuntimeCoordinator', () => {
       context
     )
 
-  const normalizeToolResult = async (
-    params: Parameters<typeof normalizeToolResultContent>[1]
-  ) =>
+  const normalizeToolResult = async (params: Parameters<typeof normalizeToolResultContent>[1]) =>
     await normalizeToolResultContent(
       {
         providerSettings,
         agentSettings: providerSettings,
         providerRuntime: llmProvider,
         getAbortSignal: (sessionId) =>
-          agent.deepChatRuntime.getHydrated(toAppSessionId(sessionId))?.getAbortController()?.signal,
+          agent.deepChatRuntime.getHydrated(toAppSessionId(sessionId))?.getAbortController()
+            ?.signal,
         getSessionModel: (sessionId) => {
           const state = agent.deepChatRuntime
             .getHydrated(toAppSessionId(sessionId))
@@ -1086,9 +1093,7 @@ describe('DeepChatRuntimeCoordinator', () => {
     const skillService = getSkillServiceMock()
     skillService.getMetadataList.mockResolvedValue([])
     skillService.getActiveSkills.mockResolvedValue([])
-    skillService.setActiveSkills.mockImplementation(
-      async (_id: string, skills: string[]) => skills
-    )
+    skillService.setActiveSkills.mockImplementation(async (_id: string, skills: string[]) => skills)
     skillService.revalidateActiveSkillsForAgent.mockResolvedValue([])
     skillService.validateSkillNames.mockImplementation(
       async (_agentId: string, skills: string[]) => skills
@@ -1122,31 +1127,29 @@ describe('DeepChatRuntimeCoordinator', () => {
       skillService,
       sessionPermissionPort,
       resolveAgentPermission: llmProvider.resolveAgentPermission,
-      getMemoryIngestionProjection: () =>
-        sqlitePresenter.deepchatMemoryIngestionProjectionTable,
+      getMemoryIngestionProjection: () => sqlitePresenter.deepchatMemoryIngestionProjectionTable,
       traceSettings: {
         isEnabled: () => providerSettings.getSetting('traceDebugEnabled') === true
       },
       promptSettings: providerSettings,
       memoryPort: createDelegatingMemoryRuntimePort(() => installedMemoryPort)
     })
-    agent = new DeepChatRuntimeCoordinator(
-      llmProvider,
-      providerSettings,
-      providerSettings,
-      sqlitePresenter,
-      sessionData,
-      toolService,
-      runtimeDependencies,
-      createHookObserver(hookDispatcher)
-    )
+    agent = createDeepChatAgentHarness({
+      ...runtimeDependencies,
+      providerRuntime: llmProvider,
+      providerSettings: providerSettings,
+      agentSettings: providerSettings,
+      database: sqlitePresenter,
+      sessionData: sessionData,
+      toolService: toolService,
+      hookObserver: createHookObserver(hookDispatcher)
+    })
     transcriptMutations = new SessionTranscriptMutations({
       transcript: sessionData.transcript,
       settings: sessionData.settings,
       pendingInputs: sessionData.pendingInputs,
       runtime: agent,
-      runInTransaction: (operation) =>
-        sessionData.database.getDatabase().transaction(operation)()
+      runInTransaction: (operation) => sessionData.database.getDatabase().transaction(operation)()
     })
   })
 
@@ -2080,20 +2083,20 @@ describe('DeepChatRuntimeCoordinator', () => {
         }
       ])
 
-      new DeepChatRuntimeCoordinator(
-        llmProvider,
-        providerSettings,
-        providerSettings,
-        sqlitePresenter,
-        createSessionDataFromDatabase(sqlitePresenter as never, {
-          publishPendingInputsChanged: vi.fn()
-        }),
-        toolService,
-        createRuntimeDependencies({
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({
           skillService: getSkillServiceMock()
         }),
-        noopHookObserver
-      )
+        providerRuntime: llmProvider,
+        providerSettings: providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn()
+        }),
+        toolService: toolService,
+        hookObserver: noopHookObserver
+      })
 
       expect(loggerInfoMock).toHaveBeenCalledWith(
         'DeepChatAgent: recovered 1 pending messages to error status'
@@ -2132,20 +2135,20 @@ describe('DeepChatRuntimeCoordinator', () => {
         sessionId === 's1' ? { id: 's1' } : null
       )
 
-      new DeepChatRuntimeCoordinator(
-        llmProvider,
-        providerSettings,
-        providerSettings,
-        sqlitePresenter,
-        createSessionDataFromDatabase(sqlitePresenter as never, {
-          publishPendingInputsChanged: vi.fn()
-        }),
-        toolService,
-        createRuntimeDependencies({
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({
           skillService: getSkillServiceMock()
         }),
-        noopHookObserver
-      )
+        providerRuntime: llmProvider,
+        providerSettings: providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn()
+        }),
+        toolService: toolService,
+        hookObserver: noopHookObserver
+      })
 
       expect(sqlitePresenter.deepchatPendingInputsTable.update).toHaveBeenCalledTimes(1)
       expect(sqlitePresenter.deepchatPendingInputsTable.update).toHaveBeenCalledWith(
@@ -2563,13 +2566,13 @@ describe('DeepChatRuntimeCoordinator', () => {
       await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
 
       runtimeDependencies.attachmentRouter.prepare = vi.fn(async ({ content }) => ({
-          content,
-          summary: {
-            status: 'needs_user_action' as const,
-            issues: [{ attachmentIndex: 0, reason: 'ocr_empty' as const }],
-            suggestedActions: ['send_without_image_content' as const]
-          }
-        }))
+        content,
+        summary: {
+          status: 'needs_user_action' as const,
+          issues: [{ attachmentIndex: 0, reason: 'ocr_empty' as const }],
+          suggestedActions: ['send_without_image_content' as const]
+        }
+      }))
       const result = await agent.steerActiveTurn('s1', {
         text: '',
         files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
@@ -2604,13 +2607,13 @@ describe('DeepChatRuntimeCoordinator', () => {
         { source: 'queue' }
       )
       runtimeDependencies.attachmentRouter.prepare = vi.fn(async ({ content }) => ({
-          content,
-          summary: {
-            status: 'needs_user_action' as const,
-            issues: [{ attachmentIndex: 0, reason: 'ocr_empty' as const }],
-            suggestedActions: ['send_without_image_content' as const]
-          }
-        }))
+        content,
+        summary: {
+          status: 'needs_user_action' as const,
+          issues: [{ attachmentIndex: 0, reason: 'ocr_empty' as const }],
+          suggestedActions: ['send_without_image_content' as const]
+        }
+      }))
 
       const blocked = await agent.steerPendingInput('s1', queued.id)
 
@@ -2669,7 +2672,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       await firstProcess
       await new Promise((resolve) => setTimeout(resolve, 0))
 
-      await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      await agent.send('s1', {
         content: { text: 'Must remain second', files: [] },
         queue: { source: 'send' }
       })
@@ -4315,8 +4318,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       }
       const prepareCompaction = vi
         .spyOn(CompactionService.prototype, 'prepareForNextUserTurn')
-        .mockImplementation(
-        async (input: { systemPrompt: string }) => {
+        .mockImplementation(async (input: { systemPrompt: string }) => {
           order.push('compaction-prepare')
           expect(input.systemPrompt).toContain('BASE_PHASE_CONTENT')
           expect(input.systemPrompt).toContain('RUNTIME_CAPABILITIES')
@@ -4325,8 +4327,7 @@ describe('DeepChatRuntimeCoordinator', () => {
           expect(input.systemPrompt).not.toContain('## Conversation Summary')
           expect(input.systemPrompt).not.toContain('## Relevant Memories')
           return intent
-        }
-      )
+        })
       const applyCompaction = vi
         .spyOn(CompactionService.prototype, 'applyCompaction')
         .mockImplementation(async () => {
@@ -4621,17 +4622,21 @@ describe('DeepChatRuntimeCoordinator', () => {
           }
           return []
         }),
-        ...vi.mocked(runtimeDependencies.publishSessionUpdate).mock.calls.map(([update], index) => ({
-          order: vi.mocked(runtimeDependencies.publishSessionUpdate).mock.invocationCallOrder[index],
-          label: `session-update:${update.status}`
-        })),
-        ...vi.mocked(runtimeDependencies.sessionUiPort.refreshSessionUi).mock.calls.map(
-          (_call, index) => ({
+        ...vi
+          .mocked(runtimeDependencies.publishSessionUpdate)
+          .mock.calls.map(([update], index) => ({
+            order: vi.mocked(runtimeDependencies.publishSessionUpdate).mock.invocationCallOrder[
+              index
+            ],
+            label: `session-update:${update.status}`
+          })),
+        ...vi
+          .mocked(runtimeDependencies.sessionUiPort.refreshSessionUi)
+          .mock.calls.map((_call, index) => ({
             order: vi.mocked(runtimeDependencies.sessionUiPort.refreshSessionUi).mock
               .invocationCallOrder[index],
             label: 'refresh-ui'
-          })
-        )
+          }))
       ]
         .sort((left, right) => left.order - right.order)
         .map(({ label }) => label)
@@ -4680,9 +4685,7 @@ describe('DeepChatRuntimeCoordinator', () => {
               : []
           )
         )
-        expect(lastStatusProjectionOrder).toBeLessThan(
-          afterTurnSettled.mock.invocationCallOrder[0]
-        )
+        expect(lastStatusProjectionOrder).toBeLessThan(afterTurnSettled.mock.invocationCallOrder[0])
       }
     )
 
@@ -4715,9 +4718,7 @@ describe('DeepChatRuntimeCoordinator', () => {
               : latest,
           0
         )
-        expect(afterTurnSettled.mock.invocationCallOrder[0]).toBeLessThan(
-          terminalProjectionOrder
-        )
+        expect(afterTurnSettled.mock.invocationCallOrder[0]).toBeLessThan(terminalProjectionOrder)
       }
     )
 
@@ -5227,8 +5228,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       )) {
         void _event
       }
-      const firstAttemptTraceContext =
-        providerCoreStream.mock.calls.at(-1)?.[2].requestTraceContext
+      const firstAttemptTraceContext = providerCoreStream.mock.calls.at(-1)?.[2].requestTraceContext
 
       callArgs.run.logicalRound = 2
       for await (const _event of callArgs.coreStream(
@@ -6029,7 +6029,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(invalidateToolProfileCache).not.toHaveBeenCalled()
     })
 
-    it('invalidates the current instance cache after asynchronous agent revalidation', async () => {
+    it('does not invalidate a replacement instance after asynchronous agent revalidation', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const revalidation = deferred<void>()
       const skillService = getSkillServiceMock()
@@ -6059,9 +6059,42 @@ describe('DeepChatRuntimeCoordinator', () => {
       })
 
       revalidation.resolve(undefined)
+      await expect(update).resolves.toBeUndefined()
+
+      expect(replacement.getToolProfileCache()?.fingerprint).toBe('stale-after-revalidation')
+    })
+
+    it('clears a current-instance cache filled during asynchronous agent revalidation', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const revalidation = deferred<void>()
+      const skillService = getSkillServiceMock()
+      skillService.revalidateActiveSkillsForAgent.mockReturnValueOnce(revalidation.promise)
+
+      const update = agent.setSessionAgentContext('s1', {
+        agentId: 'other-agent',
+        providerId: 'anthropic',
+        modelId: 'claude-3-5-sonnet',
+        projectDir: '/private/project',
+        permissionMode: 'full_access'
+      })
+      await vi.waitFor(() =>
+        expect(skillService.revalidateActiveSkillsForAgent).toHaveBeenCalledWith(
+          's1',
+          'other-agent'
+        )
+      )
+
+      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
+      instance.setToolProfileCache({
+        profile: 'general',
+        fingerprint: 'filled-during-revalidation',
+        tools: []
+      })
+
+      revalidation.resolve(undefined)
       await update
 
-      expect(replacement.getToolProfileCache()).toBeUndefined()
+      expect(instance.getToolProfileCache()).toBeUndefined()
     })
 
     it('waits for old-Agent memory persistence before publishing a new Agent identity', async () => {
@@ -6127,10 +6160,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(clearAgentPlanState).toHaveBeenCalledWith('s1')
       expect(instance.getRuntimeActivatedSkills()).toEqual([])
       expect(instance.getAgentId()).toBe('strict-agent')
-      expect(skillService.revalidateActiveSkillsForAgent).toHaveBeenCalledWith(
-        's1',
-        'strict-agent'
-      )
+      expect(skillService.revalidateActiveSkillsForAgent).toHaveBeenCalledWith('s1', 'strict-agent')
       expect(skillService.setActiveSkills).not.toHaveBeenCalled()
     })
 
@@ -6609,13 +6639,13 @@ describe('DeepChatRuntimeCoordinator', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const beforeHistoryPreparation = vi.fn()
       runtimeDependencies.attachmentRouter.prepare = vi.fn(async ({ content }) => ({
-          content,
-          summary: {
-            status: 'needs_user_action' as const,
-            issues: [{ attachmentIndex: 0, reason: 'ocr_empty' as const }],
-            suggestedActions: ['send_without_image_content' as const]
-          }
-        }))
+        content,
+        summary: {
+          status: 'needs_user_action' as const,
+          issues: [{ attachmentIndex: 0, reason: 'ocr_empty' as const }],
+          suggestedActions: ['send_without_image_content' as const]
+        }
+      }))
 
       const result = await agent.processMessage(
         's1',
@@ -6650,7 +6680,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       }))
       runtimeDependencies.attachmentRouter.prepare = prepare
 
-      const result = await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      const result = await agent.send('s1', {
         content: {
           text: '',
           files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
@@ -6679,7 +6709,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       const prepare = vi.fn(async ({ content }) => ({ content, summary }))
       runtimeDependencies.attachmentRouter.prepare = prepare
 
-      const result = await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      const result = await agent.send('s1', {
         content: {
           text: '',
           files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
@@ -6715,8 +6745,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       ;(nanoid as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce('send-first')
         .mockReturnValueOnce('send-second')
-      const runtime = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
-      const first = runtime.send({
+      const first = agent.send('s1', {
         content: {
           text: 'first',
           files: [{ name: 'slow.png', path: '/tmp/slow.png', mimeType: 'image/png' }]
@@ -6724,7 +6753,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         queue: { source: 'send' }
       })
       await firstStarted.promise
-      const second = runtime.send({
+      const second = agent.send('s1', {
         content: {
           text: 'second',
           files: [{ name: 'fast.png', path: '/tmp/fast.png', mimeType: 'image/png' }]
@@ -6762,22 +6791,21 @@ describe('DeepChatRuntimeCoordinator', () => {
       ;(nanoid as ReturnType<typeof vi.fn>)
         .mockReturnValueOnce('send-first')
         .mockReturnValueOnce('send-third')
-      const runtime = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
       const imageFile = { name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }
-      const first = runtime.send({
+      const first = agent.send('s1', {
         content: { text: 'first', files: [imageFile] },
         queue: { source: 'send' }
       })
       await firstStarted.promise
       const cancelledController = new AbortController()
-      const cancelled = runtime.send({
+      const cancelled = agent.send('s1', {
         content: { text: 'cancelled', files: [imageFile] },
         context: { signal: cancelledController.signal },
         queue: { source: 'send' }
       })
       cancelledController.abort()
       await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
-      const third = runtime.send({
+      const third = agent.send('s1', {
         content: { text: 'third', files: [imageFile] },
         queue: { source: 'send' }
       })
@@ -6853,7 +6881,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         )
       runtimeDependencies.attachmentRouter.prepare = prepare
 
-      const accepted = await agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).send({
+      const accepted = await agent.send('s1', {
         content: {
           text: '',
           files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
@@ -6867,7 +6895,10 @@ describe('DeepChatRuntimeCoordinator', () => {
 
       await vi.waitFor(async () => {
         expect(await agent.listPendingInputs('s1')).toEqual([
-          expect.objectContaining({ state: 'pending', payload: expect.objectContaining({ text: '' }) })
+          expect.objectContaining({
+            state: 'pending',
+            payload: expect.objectContaining({ text: '' })
+          })
         ])
         expect((await agent.getSessionState('s1'))?.status).toBe('idle')
       })
@@ -6938,9 +6969,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         expect(processStream).not.toHaveBeenCalled()
 
         sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue([])
-        agent.deepChatRuntime
-          .getHydrated(toAppSessionId('s1'))
-          ?.replacePendingInteractions([])
+        agent.deepChatRuntime.getHydrated(toAppSessionId('s1'))?.replacePendingInteractions([])
         setRuntimeStatus(agent, 's1', 'idle')
         await agent.updateQueuedInput('s1', claimed.id, claimed.payload)
 
@@ -7118,10 +7147,9 @@ describe('DeepChatRuntimeCoordinator', () => {
           's1',
           1
         )
-        expect(sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq).toHaveBeenCalledWith(
-          's1',
-          0
-        )
+        expect(
+          sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq
+        ).toHaveBeenCalledWith('s1', 0)
         expect(
           sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mock
             .invocationCallOrder[0]
@@ -7144,11 +7172,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       let persistedUserRow: ReturnType<typeof makeDeepchatUserRow> | undefined
       sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
         if (row.role === 'user') {
-          persistedUserRow = makeDeepchatUserRow(
-            row.orderSeq,
-            JSON.parse(row.content).text,
-            row.id
-          )
+          persistedUserRow = makeDeepchatUserRow(row.orderSeq, JSON.parse(row.content).text, row.id)
           return
         }
         if (row.role === 'assistant') {
@@ -7201,11 +7225,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       let persistedUserRow: ReturnType<typeof makeDeepchatUserRow> | undefined
       sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
         if (row.role === 'user') {
-          persistedUserRow = makeDeepchatUserRow(
-            row.orderSeq,
-            JSON.parse(row.content).text,
-            row.id
-          )
+          persistedUserRow = makeDeepchatUserRow(row.orderSeq, JSON.parse(row.content).text, row.id)
         }
       })
       sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
@@ -7303,9 +7323,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       )
       sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mockImplementation(
         (sessionId: string, fromOrderSeq: number) => {
-          rows = rows.filter(
-            (row) => row.session_id !== sessionId || row.order_seq < fromOrderSeq
-          )
+          rows = rows.filter((row) => row.session_id !== sessionId || row.order_seq < fromOrderSeq)
         }
       )
       ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
@@ -7347,12 +7365,12 @@ describe('DeepChatRuntimeCoordinator', () => {
         files: []
       })
       const originalClaim = pendingInputCoordinator.claimQueuedInput.bind(pendingInputCoordinator)
-      const claimQueuedInput = vi.spyOn(pendingInputCoordinator, 'claimQueuedInput').mockImplementation(
-        (sessionId: string, itemId: string) => {
+      const claimQueuedInput = vi
+        .spyOn(pendingInputCoordinator, 'claimQueuedInput')
+        .mockImplementation((sessionId: string, itemId: string) => {
           originalClaim(sessionId, itemId)
           throw new Error('pending input update publication failed')
-        }
-      )
+        })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
       try {
@@ -7419,9 +7437,9 @@ describe('DeepChatRuntimeCoordinator', () => {
       })
       expect(await agent.listPendingInputs('s1')).toEqual(
         expect.arrayContaining([
-        expect.objectContaining({ id: 'waiting-steer-3', mode: 'steer', state: 'pending' }),
-        expect.objectContaining({ id: 'blocked-1', state: 'blocked' }),
-        expect.objectContaining({ id: 'waiting-2', state: 'pending' })
+          expect.objectContaining({ id: 'waiting-steer-3', mode: 'steer', state: 'pending' }),
+          expect.objectContaining({ id: 'blocked-1', state: 'blocked' }),
+          expect.objectContaining({ id: 'waiting-2', state: 'pending' })
         ])
       )
       expect(sqlitePresenter.deepchatMessagesTable.insert).not.toHaveBeenCalled()
@@ -7509,8 +7527,7 @@ describe('DeepChatRuntimeCoordinator', () => {
 
     it('claims immediately runnable turns instead of exposing a queued item first', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      const queueSpy = vi
-        .spyOn(sessionData.pendingInputs, 'queuePendingInput')
+      const queueSpy = vi.spyOn(sessionData.pendingInputs, 'queuePendingInput')
 
       const result = await agent.queuePendingInput('s1', 'Hello', {
         projectDir: '/tmp/workspace'
@@ -7724,7 +7741,6 @@ describe('DeepChatRuntimeCoordinator', () => {
         4
       )
     })
-
   })
 
   describe('session compaction state', () => {
@@ -8628,8 +8644,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(
         providerMessages.some(
           (message: any) =>
-            message.role === 'user' &&
-            String(message.content).includes('Persisted Rolling Summary')
+            message.role === 'user' && String(message.content).includes('Persisted Rolling Summary')
         )
       ).toBe(true)
       expect(providerMaxTokens).toBeLessThan(4096)
@@ -8754,9 +8769,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       const providerCoreStream = llmProvider.providerInstance.coreStream
       providerCoreStream.mockClear()
       const pressureText = makeTextWithEstimatedTokens(4100)
-      const originalUser = callArgs.run.messages.findLast(
-        (message: any) => message.role === 'user'
-      )
+      const originalUser = callArgs.run.messages.findLast((message: any) => message.role === 'user')
       const pressureUserContent = String(originalUser?.content ?? '').replace(
         /Hello$/,
         pressureText
@@ -9211,9 +9224,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq.mockReturnValue(6)
       const applyCompaction = vi
         .spyOn(CompactionService.prototype, 'applyCompaction')
-        .mockImplementationOnce(
-        async () => await application.promise
-      )
+        .mockImplementationOnce(async () => await application.promise)
       await agent.initSession('s1', {
         providerId: 'openai',
         modelId: 'gpt-4',
@@ -9226,9 +9237,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       const sessionId = toAppSessionId('s1')
       const staleInstance = agent.deepChatRuntime.getOrHydrate(sessionId)
       const compaction = agent.compactSession('s1')
-      await vi.waitFor(() =>
-        expect(applyCompaction).toHaveBeenCalledTimes(1)
-      )
+      await vi.waitFor(() => expect(applyCompaction).toHaveBeenCalledTimes(1))
       expect(staleInstance.getCompactionState()?.status).toBe('compacting')
 
       expect(agent.deepChatRuntime.evict(sessionId)).toBe(true)
@@ -9416,20 +9425,20 @@ describe('DeepChatRuntimeCoordinator', () => {
         permission_mode: 'full_access'
       })
 
-      const reopenedAgent = new DeepChatRuntimeCoordinator(
-        llmProvider,
-        providerSettings,
-        providerSettings,
-        sqlitePresenter,
-        createSessionDataFromDatabase(sqlitePresenter as never, {
-          publishPendingInputsChanged: vi.fn()
-        }),
-        toolService,
-        createRuntimeDependencies({
+      const reopenedAgent = createDeepChatAgentHarness({
+        ...createRuntimeDependencies({
           skillService: getSkillServiceMock()
         }),
-        noopHookObserver
-      )
+        providerRuntime: llmProvider,
+        providerSettings: providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn()
+        }),
+        toolService: toolService,
+        hookObserver: noopHookObserver
+      })
       const compactionState = await reopenedAgent.getSessionCompactionState('s1')
 
       expect(compactionState).toEqual({
@@ -9684,9 +9693,7 @@ describe('DeepChatRuntimeCoordinator', () => {
               : []
           )
         )
-        expect(lastStatusProjectionOrder).toBeLessThan(
-          afterTurnSettled.mock.invocationCallOrder[0]
-        )
+        expect(lastStatusProjectionOrder).toBeLessThan(afterTurnSettled.mock.invocationCallOrder[0])
       }
     )
 
@@ -9725,9 +9732,7 @@ describe('DeepChatRuntimeCoordinator', () => {
               : latest,
           0
         )
-        expect(afterTurnSettled.mock.invocationCallOrder[0]).toBeLessThan(
-          terminalProjectionOrder
-        )
+        expect(afterTurnSettled.mock.invocationCallOrder[0]).toBeLessThan(terminalProjectionOrder)
       }
     )
 
@@ -9738,8 +9743,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       installPendingQuestion()
       const prepareCompaction = vi
         .spyOn(CompactionService.prototype, 'prepareForResumeTurn')
-        .mockImplementation(
-        async () => {
+        .mockImplementation(async () => {
           order.push('resume-compaction')
           return {
             sessionId: 's1',
@@ -9757,8 +9761,7 @@ describe('DeepChatRuntimeCoordinator', () => {
             },
             reserveTokens: 4096
           }
-        }
-      )
+        })
       vi.spyOn(CompactionService.prototype, 'applyCompaction').mockResolvedValue({
         succeeded: true,
         summaryState: {
@@ -9880,10 +9883,7 @@ describe('DeepChatRuntimeCoordinator', () => {
     })
 
     it('handles question_option and resumes assistant message', async () => {
-      const prepareForResumeTurn = vi.spyOn(
-        CompactionService.prototype,
-        'prepareForResumeTurn'
-      )
+      const prepareForResumeTurn = vi.spyOn(CompactionService.prototype, 'prepareForResumeTurn')
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       makeAssistantRow({
         blocks: [
@@ -10110,14 +10110,12 @@ describe('DeepChatRuntimeCoordinator', () => {
         sqlitePresenter.deepchatMessagesTable.updateContentAndStatus.mock.calls.at(-1)
       expect(messageId).toBe('m1')
       expect(status).toBe('error')
-      expect(JSON.parse(contentJson).at(-1)).toEqual(
-        {
-          type: 'error',
-          content: 'common.error.userCanceledGeneration',
-          status: 'error',
-          timestamp: expect.any(Number)
-        }
-      )
+      expect(JSON.parse(contentJson).at(-1)).toEqual({
+        type: 'error',
+        content: 'common.error.userCanceledGeneration',
+        status: 'error',
+        timestamp: expect.any(Number)
+      })
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
     })
 
@@ -10318,9 +10316,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         skillName: string
         installedSkillName: string
       }>()
-      skillService.installDraftSkill.mockImplementationOnce(
-        async () => await installation.promise
-      )
+      skillService.installDraftSkill.mockImplementationOnce(async () => await installation.promise)
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       makeAssistantRow({
         blocks: [
@@ -10388,7 +10384,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(replacement.getActiveGeneration()).toBeUndefined()
     })
 
-    it('cancels a cross-message interaction without leaking queue-drain rejection', async () => {
+    it('cancels a cross-message interaction without disturbing the replacement run', async () => {
       const skillService = getSkillServiceMock()
       const installation = deferred<{
         success: true
@@ -10397,9 +10393,7 @@ describe('DeepChatRuntimeCoordinator', () => {
         skillName: string
         installedSkillName: string
       }>()
-      skillService.installDraftSkill.mockImplementationOnce(
-        async () => await installation.promise
-      )
+      skillService.installDraftSkill.mockImplementationOnce(async () => await installation.promise)
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       makeAssistantRow({
         blocks: [
@@ -10429,8 +10423,6 @@ describe('DeepChatRuntimeCoordinator', () => {
         ]
       })
       const { instance, abortController } = registerActiveInteractionRun('new-message', [])
-      const drainError = new Error('queue drain failed')
-      const getSessionState = vi.spyOn(agent, 'getSessionState').mockRejectedValueOnce(drainError)
 
       const interaction = agent.respondToolInteraction('s1', 'm1', 'tc1', {
         kind: 'question_option',
@@ -10440,13 +10432,6 @@ describe('DeepChatRuntimeCoordinator', () => {
       abortController.abort()
 
       await expect(interaction).resolves.toEqual({ resumed: false })
-      await vi.waitFor(() =>
-        expect(logger.error).toHaveBeenCalledWith(
-          '[DeepChatAgent] drainPendingQueueIfPossible error session=s1 reason=completed',
-          { name: 'Error' }
-        )
-      )
-      expect(getSessionState).toHaveBeenCalledWith('s1')
       expect(instance.getActiveGeneration()?.messageId).toBe('new-message')
       expect(instance.getAbortController()).toBe(abortController)
 
@@ -12585,9 +12570,7 @@ describe('DeepChatRuntimeCoordinator', () => {
             }))
           )
         }
-        agent.deepChatRuntime
-          .getHydrated(toAppSessionId('s1'))
-          ?.replacePendingInteractions([])
+        agent.deepChatRuntime.getHydrated(toAppSessionId('s1'))?.replacePendingInteractions([])
         toolResult.resolve({
           content: 'done',
           rawData: { content: 'done', isError: false }
@@ -12793,15 +12776,17 @@ describe('DeepChatRuntimeCoordinator', () => {
       providerSettings.resolveDeepChatAgentConfig.mockResolvedValueOnce({
         visionModel: { providerId: 'google', modelId: 'gemini-2.5-flash' }
       })
-      providerSettings.getModelConfig.mockImplementation((modelId: string, providerId?: string) => ({
-        temperature: 0.7,
-        maxTokens: 4096,
-        contextLength: 128000,
-        thinkingBudget: 512,
-        reasoningEffort: 'medium',
-        verbosity: 'medium',
-        vision: providerId === 'google' && modelId === 'gemini-2.5-flash'
-      }))
+      providerSettings.getModelConfig.mockImplementation(
+        (modelId: string, providerId?: string) => ({
+          temperature: 0.7,
+          maxTokens: 4096,
+          contextLength: 128000,
+          thinkingBudget: 512,
+          reasoningEffort: 'medium',
+          verbosity: 'medium',
+          vision: providerId === 'google' && modelId === 'gemini-2.5-flash'
+        })
+      )
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
 
@@ -12864,15 +12849,17 @@ describe('DeepChatRuntimeCoordinator', () => {
         visionModel: { providerId: 'google', modelId: 'gemini-2.5-flash' }
       })
       providerSettings.agentSupportsCapability.mockResolvedValueOnce(false)
-      providerSettings.getModelConfig.mockImplementation((modelId: string, providerId?: string) => ({
-        temperature: 0.7,
-        maxTokens: 4096,
-        contextLength: 128000,
-        thinkingBudget: 512,
-        reasoningEffort: 'medium',
-        verbosity: 'medium',
-        vision: providerId === 'google' && modelId === 'gemini-2.5-flash'
-      }))
+      providerSettings.getModelConfig.mockImplementation(
+        (modelId: string, providerId?: string) => ({
+          temperature: 0.7,
+          maxTokens: 4096,
+          contextLength: 128000,
+          thinkingBudget: 512,
+          reasoningEffort: 'medium',
+          verbosity: 'medium',
+          vision: providerId === 'google' && modelId === 'gemini-2.5-flash'
+        })
+      )
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
 

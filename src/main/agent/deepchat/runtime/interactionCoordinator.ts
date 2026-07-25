@@ -1,7 +1,5 @@
 import type {
   AssistantMessageBlock,
-  DeepChatSessionState,
-  MessageMetadata,
   ToolInteractionResponse,
   ToolInteractionResult
 } from '@shared/types/agent-interface'
@@ -39,7 +37,12 @@ import {
   incrementToolCallAccounting,
   stampTerminalMetadata
 } from './runtimeMetadata'
-import type { DeferredToolExecutionResult } from './deferredToolExecutor'
+import type { DeferredToolExecutionResult, DeferredToolExecutor } from './deferredToolExecutor'
+import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import type { MessageProjectionService } from './messageProjectionService'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { ResumeBudgetToolCall, TurnResumePort } from './turnResumeContract'
 import type { DeepChatEventPublisher, PendingToolInteraction } from './types'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { MAX_TOOL_CALLS } from '@/agent/deepchat/loop/deepChatLoopEngine'
@@ -60,12 +63,6 @@ type InteractionRunLifecyclePort = Pick<
   | 'transitionStatus'
 >
 
-export type ResumeBudgetToolCall = {
-  id: string
-  name: string
-  offloadPath?: string
-}
-
 type SkillDraftPresenter = Pick<
   SkillServicePort,
   'viewDraftSkill' | 'installDraftSkill' | 'discardDraftSkill'
@@ -76,25 +73,13 @@ export interface InteractionCoordinatorPorts {
   providerPermissionCoordinator: ProviderPermissionCoordinator
   skillService: SkillDraftPresenter
   runLifecycle: InteractionRunLifecyclePort
-  getDeepChatInstance(sessionId: string): DeepChatAgentInstance
-  getRuntimeState(sessionId: string): DeepChatSessionState | undefined
-  resolveProjectDir(sessionId: string): string | null
+  registry: SessionScopeRegistry
+  sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
   sessionPermissionPort: SessionPermissionPort
-  executeDeferredToolCall(
-    sessionId: string,
-    messageId: string,
-    toolCall: NonNullable<AssistantMessageBlock['tool_call']>,
-    onToolCallStarted?: () => void
-  ): Promise<DeferredToolExecutionResult>
-  emitMessageRefresh(sessionId: string, messageId: string): void
+  deferredToolExecutor: Pick<DeferredToolExecutor, 'execute'>
+  messageProjection: Pick<MessageProjectionService, 'refresh'>
   hookSink: Pick<RuntimeHookSink, 'dispatch'>
-  resumeAssistantMessage(
-    sessionId: string,
-    messageId: string,
-    initialBlocks: AssistantMessageBlock[],
-    budgetToolCall?: ResumeBudgetToolCall | null,
-    initialAccounting?: MessageMetadata
-  ): Promise<boolean>
+  turnCoordinator: TurnResumePort
   publishEvent: DeepChatEventPublisher
 }
 
@@ -107,7 +92,7 @@ export class InteractionCoordinator {
     toolCallId: string,
     response: ToolInteractionResponse
   ): Promise<ToolInteractionResult> {
-    const instance = this.ports.getDeepChatInstance(sessionId)
+    const instance = this.ports.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
     const scope = this.ports.runLifecycle.scopeFor(sessionId, instance)
     if (!instance.tryLockInteraction(messageId, toolCallId)) {
       return { resumed: false }
@@ -192,7 +177,7 @@ export class InteractionCoordinator {
           waitingForUserMessage = result.waitingForUserMessage
           if (result.keepPending) {
             this.ports.messageStore.updateAssistantContent(messageId, blocks)
-            this.ports.emitMessageRefresh(sessionId, messageId)
+            this.ports.messageProjection.refresh(sessionId, messageId)
             this.ports.messageStore.updateMessageStatus(messageId, 'pending')
             this.ports.runLifecycle.transitionStatus(scope, 'generating')
             return { resumed: false, handledInline: result.handledInline === true }
@@ -239,8 +224,8 @@ export class InteractionCoordinator {
           )
           return { resumed: false }
         }
-        const state = this.ports.getRuntimeState(sessionId)
-        const projectDir = this.ports.resolveProjectDir(sessionId)
+        const state = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
+        const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId)
         let shouldDispatchResolvedToolHook = false
 
         if (response.granted) {
@@ -281,7 +266,7 @@ export class InteractionCoordinator {
                 params: toolCall.params
               }
             })
-            execution = await this.ports.executeDeferredToolCall(
+            execution = await this.ports.deferredToolExecutor.execute(
               sessionId,
               messageId,
               toolCall,
@@ -327,7 +312,7 @@ export class InteractionCoordinator {
               blocks,
               JSON.stringify(terminalMetadata)
             )
-            this.ports.emitMessageRefresh(sessionId, messageId)
+            this.ports.messageProjection.refresh(sessionId, messageId)
             this.ports.publishEvent('chat.stream.failed', {
               requestId: this.ports.runLifecycle.resolveStreamRequestId(sessionId, messageId),
               sessionId,
@@ -454,7 +439,7 @@ export class InteractionCoordinator {
         finishesForUserFollowUp || accountingChanged ? JSON.stringify(persistedMetadata) : undefined
       )
       replacePendingInteractions(instance, remainingPending)
-      this.ports.emitMessageRefresh(sessionId, messageId)
+      this.ports.messageProjection.refresh(sessionId, messageId)
 
       if (remainingPending.length > 0) {
         emitResolvedToolHook?.()
@@ -479,7 +464,7 @@ export class InteractionCoordinator {
         scope,
         interactionAbortController ?? undefined
       )
-      const resumed = await this.ports.resumeAssistantMessage(
+      const resumed = await this.ports.turnCoordinator.resume(
         sessionId,
         messageId,
         blocks,

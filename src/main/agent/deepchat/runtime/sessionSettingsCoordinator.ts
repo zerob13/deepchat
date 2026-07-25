@@ -8,6 +8,12 @@ import type {
 
 import type { ToolServicePort } from '@shared/types/tool'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type {
+  SessionRuntimeScope,
+  SessionScopeRegistry
+} from '@/agent/deepchat/instance/deepChatAgentRuntime'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import type { SessionIdentityService } from './sessionIdentityService'
 import { BUILTIN_DEEPCHAT_AGENT_ID } from '@/agent/deepchat/deepChatAgentRepository'
 import type { SessionPermissionPort } from '@/session/contracts'
 import {
@@ -28,11 +34,8 @@ interface SessionSettingsCoordinatorDependencies {
   toolResolver: DeepChatToolResolver
   toolService: ToolServicePort
   sessionPermissionPort: SessionPermissionPort
-  getRuntimeState(sessionId: string): DeepChatSessionState | undefined
-  getSessionAgentId(sessionId: string): string | undefined
-  getInstance(sessionId: string): DeepChatAgentInstance
-  getHydratedInstance(sessionId: string): DeepChatAgentInstance | undefined
-  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
+  registry: SessionScopeRegistry
+  identity: Pick<SessionIdentityService, 'getAgentId'>
   beginSessionAgentReassignment(sessionId: string): Promise<void>
   finishSessionAgentReassignment(sessionId: string): void
   readPersistedProjectDir(sessionId: string): string | null | undefined
@@ -41,8 +44,36 @@ interface SessionSettingsCoordinatorDependencies {
 export class SessionSettingsCoordinator {
   constructor(private readonly deps: SessionSettingsCoordinatorDependencies) {}
 
+  private instance(sessionId: string): DeepChatAgentInstance {
+    return this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
+  }
+
+  private state(sessionId: string): DeepChatSessionState | undefined {
+    return this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
+  }
+
+  private assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void {
+    this.deps.registry.scopeFor(toAppSessionId(sessionId), instance).assertCurrent()
+  }
+
+  private resolveUpdateScope(sessionId: string): {
+    scope: SessionRuntimeScope
+    dbSession: ReturnType<SessionSettingsStore['get']>
+  } {
+    const appSessionId = toAppSessionId(sessionId)
+    const hydratedScope = this.deps.registry.getHydratedScope(appSessionId)
+    const dbSession = this.deps.sessionStore.get(sessionId)
+    if (!hydratedScope?.state() && !dbSession) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+
+    const scope = hydratedScope ?? this.deps.registry.getOrHydrateScope(appSessionId)
+    scope.assertCurrent()
+    return { scope, dbSession }
+  }
+
   async setPermissionMode(sessionId: string, mode: PermissionMode): Promise<void> {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     this.deps.sessionStore.updatePermissionMode(sessionId, mode)
     if (state) {
       state.permissionMode = mode
@@ -56,11 +87,8 @@ export class SessionSettingsCoordinator {
       throw new Error('Session model update requires providerId and modelId.')
     }
 
-    const state = this.deps.getRuntimeState(sessionId)
-    const dbSession = this.deps.sessionStore.get(sessionId)
-    if (!state && !dbSession) {
-      throw new Error(`Session ${sessionId} not found`)
-    }
+    const { scope, dbSession } = this.resolveUpdateScope(sessionId)
+    const state = scope.state()
     const permissionMode = state?.permissionMode ?? dbSession?.permission_mode
     if (!permissionMode) {
       throw new Error(`Session ${sessionId} permission mode is missing`)
@@ -69,7 +97,7 @@ export class SessionSettingsCoordinator {
       throw new Error('Cannot switch model while session is generating.')
     }
 
-    const currentGeneration = await this.getEffectiveGenerationSettings(sessionId)
+    const currentGeneration = await this.getEffectiveGenerationSettings(sessionId, scope.instance)
     const sanitized = await sanitizeGenerationSettings(
       this.deps.providerSettings,
       this.deps.promptSettings,
@@ -77,6 +105,11 @@ export class SessionSettingsCoordinator {
       nextModelId,
       { systemPrompt: currentGeneration.systemPrompt }
     )
+    scope.assertCurrent()
+    const currentState = scope.state()
+    if (currentState?.status === 'generating') {
+      throw new Error('Cannot switch model while session is generating.')
+    }
     this.deps.sessionStore.updateSessionConfiguration(
       sessionId,
       nextProviderId,
@@ -84,20 +117,19 @@ export class SessionSettingsCoordinator {
       buildPersistedGenerationSettingsReplacement(sanitized)
     )
 
-    const instance = this.deps.getInstance(sessionId)
-    if (state) {
-      state.providerId = nextProviderId
-      state.modelId = nextModelId
+    if (currentState) {
+      currentState.providerId = nextProviderId
+      currentState.modelId = nextModelId
     } else {
-      instance.setRuntimeState({
+      scope.instance.setRuntimeState({
         status: 'idle',
         providerId: nextProviderId,
         modelId: nextModelId,
         permissionMode
       })
     }
-    instance.setGenerationSettings(sanitized)
-    this.invalidateToolProfile(sessionId)
+    scope.instance.setGenerationSettings(sanitized)
+    scope.instance.invalidateToolProfileCache()
   }
 
   async setAgentContext(sessionId: string, config: SessionAgentContextUpdate): Promise<void> {
@@ -108,11 +140,8 @@ export class SessionSettingsCoordinator {
       throw new Error('Session agent context update requires agentId, providerId and modelId.')
     }
 
-    const state = this.deps.getRuntimeState(sessionId)
-    const dbSession = this.deps.sessionStore.get(sessionId)
-    if (!state && !dbSession) {
-      throw new Error(`Session ${sessionId} not found`)
-    }
+    const { scope } = this.resolveUpdateScope(sessionId)
+    const state = scope.state()
     if (state?.status === 'generating') {
       throw new Error('Cannot move session while it is generating.')
     }
@@ -125,11 +154,20 @@ export class SessionSettingsCoordinator {
       nextModelId,
       config.generationSettings ?? {}
     )
+    scope.assertCurrent()
+    if (scope.state()?.status === 'generating') {
+      throw new Error('Cannot move session while it is generating.')
+    }
     const isAgentReassignment =
-      (this.deps.getSessionAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID) !== nextAgentId
+      (this.deps.identity.getAgentId(sessionId) ?? BUILTIN_DEEPCHAT_AGENT_ID) !== nextAgentId
     try {
       if (isAgentReassignment) {
         await this.deps.beginSessionAgentReassignment(sessionId)
+      }
+      scope.assertCurrent()
+      const currentState = scope.state()
+      if (currentState?.status === 'generating') {
+        throw new Error('Cannot move session while it is generating.')
       }
       this.deps.sessionStore.updateSessionConfiguration(
         sessionId,
@@ -139,21 +177,23 @@ export class SessionSettingsCoordinator {
         permissionMode
       )
 
-      const instance = this.deps.getInstance(sessionId)
-      instance.setRuntimeState({
-        status: state?.status ?? 'idle',
+      scope.instance.setRuntimeState({
+        status: currentState?.status ?? 'idle',
         providerId: nextProviderId,
         modelId: nextModelId,
         permissionMode
       })
-      instance.setAgentId(nextAgentId)
-      instance.setProjectDir(this.normalizeProjectDir(config.projectDir))
-      instance.setGenerationSettings(generationSettings)
+      scope.instance.setAgentId(nextAgentId)
+      scope.instance.setProjectDir(this.normalizeProjectDir(config.projectDir))
+      scope.instance.setGenerationSettings(generationSettings)
       this.deps.sessionPermissionPort.clearSessionPermissions(sessionId)
       this.deps.toolService.clearAgentPlanState(sessionId)
-      instance.replaceRuntimeActivatedSkills([])
+      scope.instance.replaceRuntimeActivatedSkills([])
+      scope.instance.invalidateToolProfileCache()
       await this.deps.toolResolver.revalidateActiveSkillsForAgent(sessionId, nextAgentId)
-      this.invalidateToolProfile(sessionId)
+      if (scope.isCurrent()) {
+        scope.instance.invalidateToolProfileCache()
+      }
     } finally {
       if (isAgentReassignment) {
         this.deps.finishSessionAgentReassignment(sessionId)
@@ -162,15 +202,15 @@ export class SessionSettingsCoordinator {
   }
 
   setProjectDir(sessionId: string, projectDir: string | null): void {
-    this.applyProjectDir(sessionId, this.deps.getInstance(sessionId), projectDir)
+    this.applyProjectDir(sessionId, this.instance(sessionId), projectDir)
   }
 
   resolveProjectDir(
     sessionId: string,
     incoming?: string | null,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): string | null {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     if (incoming !== undefined) {
       return this.applyProjectDir(sessionId, expectedInstance, incoming)
     }
@@ -205,7 +245,7 @@ export class SessionSettingsCoordinator {
   }
 
   getPermissionMode(sessionId: string): PermissionMode {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     if (state) {
       return state.permissionMode
     }
@@ -213,7 +253,7 @@ export class SessionSettingsCoordinator {
   }
 
   async getGenerationSettings(sessionId: string): Promise<SessionGenerationSettings | null> {
-    const state = this.deps.getRuntimeState(sessionId)
+    const state = this.state(sessionId)
     const dbSession = this.deps.sessionStore.get(sessionId)
     if (!state && !dbSession) {
       return null
@@ -225,18 +265,15 @@ export class SessionSettingsCoordinator {
     sessionId: string,
     settings: Partial<SessionGenerationSettings>
   ): Promise<SessionGenerationSettings> {
-    const state = this.deps.getRuntimeState(sessionId)
-    const dbSession = this.deps.sessionStore.get(sessionId)
-    if (!state && !dbSession) {
-      throw new Error(`Session ${sessionId} not found`)
-    }
+    const { scope, dbSession } = this.resolveUpdateScope(sessionId)
+    const state = scope.state()
     const providerId = state?.providerId ?? dbSession?.provider_id
     const modelId = state?.modelId ?? dbSession?.model_id
     if (!providerId || !modelId) {
       throw new Error(`Session ${sessionId} model information is missing`)
     }
 
-    const current = await this.getEffectiveGenerationSettings(sessionId)
+    const current = await this.getEffectiveGenerationSettings(sessionId, scope.instance)
     const sanitized = await sanitizeGenerationSettings(
       this.deps.providerSettings,
       this.deps.promptSettings,
@@ -245,19 +282,27 @@ export class SessionSettingsCoordinator {
       settings,
       current
     )
+    scope.assertCurrent()
+    const latestState = scope.state()
+    const latestDbSession = latestState ? dbSession : this.deps.sessionStore.get(sessionId)
+    const latestProviderId = latestState?.providerId ?? latestDbSession?.provider_id
+    const latestModelId = latestState?.modelId ?? latestDbSession?.model_id
+    if (latestProviderId !== providerId || latestModelId !== modelId) {
+      throw new Error(`Session ${sessionId} model changed while generation settings were updating.`)
+    }
     this.deps.sessionStore.updateGenerationSettings(
       sessionId,
       buildPersistedGenerationSettingsPatch(settings, sanitized)
     )
-    this.deps.getInstance(sessionId).setGenerationSettings(sanitized)
+    scope.instance.setGenerationSettings(sanitized)
     return sanitized
   }
 
   async getEffectiveGenerationSettings(
     sessionId: string,
-    expectedInstance = this.deps.getInstance(sessionId)
+    expectedInstance = this.instance(sessionId)
   ): Promise<SessionGenerationSettings> {
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     const cached = expectedInstance.getGenerationSettings()
     if (cached) {
       return { ...cached }
@@ -284,7 +329,7 @@ export class SessionSettingsCoordinator {
       modelId,
       persistedPatch
     )
-    this.deps.assertCurrent(sessionId, expectedInstance)
+    this.assertCurrent(sessionId, expectedInstance)
     expectedInstance.setGenerationSettings(sanitized)
     return { ...sanitized }
   }
@@ -301,7 +346,4 @@ export class SessionSettingsCoordinator {
     }
   }
 
-  private invalidateToolProfile(sessionId: string): void {
-    this.deps.getHydratedInstance(sessionId)?.invalidateToolProfileCache()
-  }
 }

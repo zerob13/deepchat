@@ -1,6 +1,6 @@
 import { AppSessionService } from '@/agent/shared/appSessionService'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { DeepChatRuntimeCoordinator } from '@/agent/deepchat/runtime/deepChatRuntimeCoordinator'
+import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
 import type { HookNotification, HookObserver } from '@/hook/observer'
 import type { PermissionMode } from '@shared/types/agent-interface'
@@ -812,7 +812,7 @@ function createRuntimeDependencies() {
 }
 
 function createTranscriptMutations(
-  runtime: DeepChatRuntimeCoordinator,
+  runtime: DeepChatAgentHarness,
   sessionData: ReturnType<typeof createSessionData>
 ) {
   return new SessionTranscriptMutations({
@@ -824,7 +824,7 @@ function createTranscriptMutations(
   })
 }
 
-function createDeepChatManager(deepchatAgent: DeepChatRuntimeCoordinator, sqlitePresenter: any) {
+function createDeepChatManager(deepchatAgent: DeepChatAgentHarness, sqlitePresenter: any) {
   const backend = createDeepChatAgentBackendFixture(deepchatAgent, deepchatAgent.deepChatRuntime)
   const descriptor = (agentId: string) => ({
     id: agentId,
@@ -870,16 +870,16 @@ describe('Integration: createSession end-to-end', () => {
       publishPendingInputsChanged: vi.fn()
     })
 
-    const deepchatAgent = new DeepChatRuntimeCoordinator(
-      llmProvider,
-      providerSettings,
-      providerSettings,
-      sqlitePresenter,
-      sessionData,
-      toolService,
-      createRuntimeDependencies(),
-      noopHookObserver
-    )
+    const deepchatAgent = createDeepChatAgentHarness({
+      ...createRuntimeDependencies(),
+      providerRuntime: llmProvider,
+      providerSettings: providerSettings,
+      agentSettings: providerSettings,
+      database: sqlitePresenter,
+      sessionData: sessionData,
+      toolService: toolService,
+      hookObserver: noopHookObserver
+    })
     const agentManager = createDeepChatManager(deepchatAgent, sqlitePresenter) as any
     const appSessionService = new AppSessionService(sqlitePresenter, sqlitePresenter as never)
     const sharedData = {
@@ -1053,16 +1053,16 @@ describe('Integration: ACP hook observer', () => {
       publishPendingInputsChanged: vi.fn()
     })
 
-    const deepchatAgent = new DeepChatRuntimeCoordinator(
-      llmProvider,
-      providerSettings,
-      providerSettings,
-      sqlitePresenter,
-      sessionData,
-      createMockToolService(),
-      createRuntimeDependencies(),
-      createHookObserver(hookDispatcher)
-    )
+    const deepchatAgent = createDeepChatAgentHarness({
+      ...createRuntimeDependencies(),
+      providerRuntime: llmProvider,
+      providerSettings: providerSettings,
+      agentSettings: providerSettings,
+      database: sqlitePresenter,
+      sessionData: sessionData,
+      toolService: createMockToolService(),
+      hookObserver: createHookObserver(hookDispatcher)
+    })
     const agentManager = createDeepChatManager(deepchatAgent, sqlitePresenter) as any
     const appSessionService = new AppSessionService(sqlitePresenter, sqlitePresenter as never)
     const sharedData = {
@@ -1148,7 +1148,7 @@ describe('Integration: multi-turn context', () => {
   let sqlitePresenter: ReturnType<typeof createMockSqlitePresenter>
   let llmProvider: ReturnType<typeof createMockProviderRuntime>
   let providerSettings: ReturnType<typeof createMockProviderSettings>
-  let deepchatAgent: DeepChatRuntimeCoordinator
+  let deepchatAgent: DeepChatAgentHarness
   let lifecycle: ReturnType<typeof createSessionFixture>['lifecycle']
   let turn: ReturnType<typeof createSessionFixture>['turn']
   let assignment: ReturnType<typeof createSessionFixture>['assignment']
@@ -1163,16 +1163,16 @@ describe('Integration: multi-turn context', () => {
       publishPendingInputsChanged: vi.fn()
     })
 
-    deepchatAgent = new DeepChatRuntimeCoordinator(
-      llmProvider,
-      providerSettings,
-      providerSettings,
-      sqlitePresenter,
-      sessionData,
-      createMockToolService(),
-      createRuntimeDependencies(),
-      noopHookObserver
-    )
+    deepchatAgent = createDeepChatAgentHarness({
+      ...createRuntimeDependencies(),
+      providerRuntime: llmProvider,
+      providerSettings: providerSettings,
+      agentSettings: providerSettings,
+      database: sqlitePresenter,
+      sessionData: sessionData,
+      toolService: createMockToolService(),
+      hookObserver: noopHookObserver
+    })
     const agentManager = createDeepChatManager(deepchatAgent, sqlitePresenter) as any
     const appSessionService = new AppSessionService(sqlitePresenter, sqlitePresenter as never)
     const sharedData = {
@@ -1826,18 +1826,18 @@ describe('Integration: crash recovery', () => {
     const loggerInfoMock = vi.mocked(logger.info)
 
     // Creating the agent triggers crash recovery
-    new DeepChatRuntimeCoordinator(
-      llmProvider,
-      providerSettings,
-      providerSettings,
-      sqlitePresenter,
-      createSessionDataFromDatabase(sqlitePresenter as never, {
+    createDeepChatAgentHarness({
+      ...createRuntimeDependencies(),
+      providerRuntime: llmProvider,
+      providerSettings: providerSettings,
+      agentSettings: providerSettings,
+      database: sqlitePresenter,
+      sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
         publishPendingInputsChanged: vi.fn()
       }),
-      createMockToolService(),
-      createRuntimeDependencies(),
-      noopHookObserver
-    )
+      toolService: createMockToolService(),
+      hookObserver: noopHookObserver
+    })
 
     expect(sqlitePresenter.deepchatMessagesTable.getByStatus).toHaveBeenCalledWith('pending')
     expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).toHaveBeenCalledTimes(2)

@@ -6,13 +6,6 @@ import {
   type SessionStatusPublisherPorts
 } from '@/agent/deepchat/runtime/sessionStatusPublisher'
 
-const createDelegate = () => ({
-  send: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  cancel: vi.fn().mockResolvedValue(undefined),
-  snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),
-  close: vi.fn().mockResolvedValue(undefined)
-})
-
 function createPublisher() {
   const ports: SessionStatusPublisherPorts = {
     publishEvent: vi.fn(),
@@ -24,7 +17,7 @@ function createPublisher() {
 
 describe('SessionStatusPublisher', () => {
   it('updates current state and publishes the four projections in order', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const scope = runtime.getOrHydrateScope(toAppSessionId('session'))
     scope.instance.setRuntimeState({
       status: 'idle',
@@ -63,7 +56,7 @@ describe('SessionStatusPublisher', () => {
   })
 
   it('does not publish when state is missing and treats an unchanged status as success', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const scope = runtime.getOrHydrateScope(toAppSessionId('session'))
     const { ports, publisher } = createPublisher()
 
@@ -82,7 +75,7 @@ describe('SessionStatusPublisher', () => {
   })
 
   it('fences stale and mismatched scopes before mutating any instance', () => {
-    const runtime = new DeepChatAgentRuntime(() => createDelegate())
+    const runtime = new DeepChatAgentRuntime()
     const sessionId = toAppSessionId('session')
     const staleScope = runtime.getOrHydrateScope(sessionId)
     staleScope.instance.setRuntimeState({

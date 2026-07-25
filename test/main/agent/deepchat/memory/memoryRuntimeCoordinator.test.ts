@@ -4,11 +4,9 @@ import {
   MEMORY_INJECTION_TIMEOUT_MS,
   MemoryRuntimeCoordinator
 } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
+import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
-import type {
-  MemoryPromptContributor,
-  MemorySessionHandle
-} from '@/agent/deepchat/memory/memoryPromptContributor'
+import type { MemoryPromptContributor } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import logger from '@shared/logger'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
@@ -85,8 +83,14 @@ function createHarness() {
   let cursor = 0
   let rows = [createRecord('u1', 1, 'Remember Redis.')]
   let tapeRows = rows.map(toTapeRow)
-  const runtimeStates = new Map([['s1', { providerId: 'openai', modelId: 'gpt-4' }]])
-  const handles = new Map<string, MemorySessionHandle>()
+  const registry = new DeepChatAgentRuntime()
+  const instance = registry.getOrHydrate(toAppSessionId('s1'))
+  instance.setRuntimeState({
+    status: 'idle',
+    providerId: 'openai',
+    modelId: 'gpt-4',
+    permissionMode: 'default'
+  })
   const executionGenerations = new Map<string, number>()
   const isEnabled = vi.fn((_agentId: string) => true)
   const port = {
@@ -116,14 +120,8 @@ function createHarness() {
   const appendTapeAnchor = vi.fn(toTapeAnchorRow)
   const deps = {
     memoryPort: port as any,
-    getSessionAgentId: vi.fn(() => 'agent-a'),
-    getSessionRuntimeState: vi.fn((sessionId: string) => runtimeStates.get(sessionId)),
-    hasSessionRuntimeState: vi.fn((sessionId: string) => runtimeStates.has(sessionId)),
-    assertCurrentSessionHandle: vi.fn((handle: MemorySessionHandle) => {
-      if (handles.get(handle.sessionId) !== handle) {
-        throw new Error(`DeepChat agent instance was replaced: ${handle.sessionId}`)
-      }
-    }),
+    identity: { getAgentId: vi.fn(() => 'agent-a') },
+    registry,
     getNextMessageOrderSeq: vi.fn(() => Math.max(0, ...rows.map((row) => row.orderSeq)) + 1),
     getMessagesUpToOrderSeq: vi.fn((_sessionId: string, orderSeq: number) =>
       rows.filter((row) => row.orderSeq <= orderSeq)
@@ -148,16 +146,14 @@ function createHarness() {
     getIngestionProjection: vi.fn(() => projection)
   }
   const coordinator = new MemoryRuntimeCoordinator(deps)
-  const memorySession = Object.freeze({ sessionId: toAppSessionId('s1') })
-  handles.set(memorySession.sessionId, memorySession)
+  const memorySession = instance.getMemorySessionHandle()
 
   return {
     coordinator,
     deps,
-    handles,
+    registry,
     port,
     projection,
-    runtimeStates,
     memorySession,
     advanceExecution(agentId = 'agent-a') {
       executionGenerations.set(agentId, (executionGenerations.get(agentId) ?? 0) + 1)
@@ -181,7 +177,7 @@ afterEach(() => {
 
 describe('MemoryRuntimeCoordinator', () => {
   it('returns an empty structured contribution when memory is unavailable', async () => {
-    const { coordinator, deps, handles, memorySession, port } = createHarness()
+    const { coordinator, deps, registry, memorySession, port } = createHarness()
     const contributor: MemoryPromptContributor = coordinator
     const input = { session: memorySession, query: 'redis', messageId: 'message-1' }
     const emptyContribution = { content: null, manifest: null, anchorEntryId: null }
@@ -195,7 +191,8 @@ describe('MemoryRuntimeCoordinator', () => {
     await expect(contributor.contribute(input)).resolves.toEqual(emptyContribution)
 
     port.buildInjection.mockClear()
-    handles.set(memorySession.sessionId, Object.freeze({ sessionId: memorySession.sessionId }))
+    registry.evict(memorySession.sessionId)
+    registry.getOrHydrate(memorySession.sessionId)
     await expect(contributor.contribute(input)).resolves.toEqual(emptyContribution)
     expect(port.buildInjection).not.toHaveBeenCalled()
   })
@@ -548,7 +545,7 @@ describe('MemoryRuntimeCoordinator', () => {
     coordinator.enqueueSessionExtraction('s1', async () => queued())
     await tick()
 
-    deps.getSessionAgentId.mockReturnValue('agent-b')
+    deps.identity.getAgentId.mockReturnValue('agent-b')
     blocker.resolve()
     await coordinator.waitForSession('s1')
 
@@ -1207,12 +1204,13 @@ describe('MemoryRuntimeCoordinator', () => {
   )
 
   it('keeps stable instance handles and ignores a handle after replacement', () => {
-    const { coordinator, handles, port } = createHarness()
+    const { coordinator, registry, port } = createHarness()
     const observer: MemoryIngestionObserver = coordinator
     port.isEnabled.mockReturnValue(false)
     const sessionId = toAppSessionId('s1')
-    const handle = Object.freeze({ sessionId })
-    handles.set(sessionId, handle)
+    const handle = registry.getOrHydrate(sessionId).getMemorySessionHandle()
+
+    expect(registry.getOrHydrate(sessionId).getMemorySessionHandle()).toBe(handle)
 
     expect(() =>
       observer.afterCompactionApplyReturned({
@@ -1222,7 +1220,8 @@ describe('MemoryRuntimeCoordinator', () => {
       })
     ).not.toThrow()
 
-    handles.set(sessionId, Object.freeze({ sessionId }))
+    registry.evict(sessionId)
+    expect(registry.getOrHydrate(sessionId).getMemorySessionHandle()).not.toBe(handle)
     expect(() =>
       observer.afterCompactionApplyReturned({
         session: handle,

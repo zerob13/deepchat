@@ -487,7 +487,7 @@
     {
       "id": "dirac",
       "name": "Dirac",
-      "version": "0.4.23",
+      "version": "0.4.24",
       "description": "Reduces API costs by more than 50%, produces better and faster work. Uses Hash anchored parallel edits, AST manipulation and a whole lot of neat optimizations. Fully Open Source.",
       "repository": "https://github.com/dirac-run/dirac",
       "website": "https://dirac.run",
@@ -498,7 +498,7 @@
       "icon": "https://cdn.agentclientprotocol.com/registry/v1/latest/dirac.svg",
       "distribution": {
         "npx": {
-          "package": "dirac-cli@0.4.23",
+          "package": "dirac-cli@0.4.24",
           "args": [
             "--acp"
           ]
@@ -534,7 +534,7 @@
     {
       "id": "fast-agent",
       "name": "fast-agent",
-      "version": "0.9.23",
+      "version": "0.9.24",
       "description": "Code and build agents with comprehensive multi-provider support",
       "repository": "https://github.com/evalstate/fast-agent",
       "website": "https://fast-agent.ai",
@@ -544,7 +544,7 @@
       "license": "Apache 2.0",
       "distribution": {
         "uvx": {
-          "package": "fast-agent-acp==0.9.23",
+          "package": "fast-agent-acp==0.9.24",
           "args": [
             "-x"
           ]

@@ -72,8 +72,8 @@
   ],
   "exemptions": [
     {
-      "path": "test/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.test.ts",
-      "reason": "Cross-domain runtime regression suite remains in the full main gate; focused Memory coordinator coverage is classified separately."
+      "path": "test/main/agent/deepchat/harness/deepChatAgentHarness.test.ts",
+      "reason": "Cross-domain harness regression suite remains in the full main gate; focused Memory coordinator coverage is classified separately."
     },
     {
       "path": "test/main/provider/deprecatedProviderCleanup.test.ts",

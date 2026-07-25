@@ -37,6 +37,16 @@ function createInput(
   }
 }
 
+function createScopeRegistry(
+  instance: unknown
+): PendingInputAdmissionCoordinatorPorts['registry'] {
+  return {
+    getOrHydrateScope: vi.fn(),
+    getHydratedScope: vi.fn((sessionId: string) => ({ sessionId, instance })),
+    scopeFor: vi.fn()
+  } as unknown as PendingInputAdmissionCoordinatorPorts['registry']
+}
+
 function createHarness(onDrain?: (harness: HarnessState) => void) {
   const state: DeepChatSessionState = {
     status: 'idle',
@@ -161,8 +171,8 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
         summary: { status: 'ready', issues: [], suggestedActions: [] }
       }))
     },
-    getSessionState: vi.fn(async () => state),
-    getHydratedInstance: vi.fn(() => ({
+    sessionState: { get: vi.fn(async () => state) },
+    registry: createScopeRegistry({
       clearActiveSteerPendingInputId: (expectedItemId?: string) => {
         if (
           !harness.activeSteerInputId ||
@@ -180,8 +190,8 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
       setActiveSteerPendingInputId: (itemId: string) => {
         harness.activeSteerInputId = itemId
       }
-    })),
-    resolveProjectDir: vi.fn(() => null)
+    }),
+    sessionSettings: { resolveProjectDir: vi.fn(() => null) }
   }
 
   return {
@@ -386,7 +396,7 @@ describe('PendingInputAdmissionCoordinator', () => {
 
   it('classifies a missing hydrated steer owner as a stale runtime instance', async () => {
     const test = createHarness()
-    vi.mocked(test.ports.getHydratedInstance).mockReturnValue(undefined)
+    vi.mocked(test.ports.registry.getHydratedScope).mockReturnValue(undefined)
 
     await expect(test.coordinator.steerActiveTurn(SESSION_ID, 'Steer now')).rejects.toMatchObject({
       name: 'StaleDeepChatAgentInstanceError'

@@ -19,13 +19,6 @@ import {
 
 const SESSION_ID = 'session'
 
-const createDelegate = () => ({
-  send: vi.fn().mockResolvedValue({ requestId: 'request', messageId: 'message' }),
-  cancel: vi.fn().mockResolvedValue(undefined),
-  snapshot: vi.fn().mockResolvedValue({ status: 'idle' }),
-  close: vi.fn().mockResolvedValue(undefined)
-})
-
 function createState(status: DeepChatSessionState['status'] = 'idle'): DeepChatSessionState {
   return {
     status,
@@ -84,7 +77,7 @@ function createMessage(
 }
 
 function createHarness(initialMessages: ChatMessageRecord[] = []) {
-  const runtime = new DeepChatAgentRuntime(() => createDelegate())
+  const runtime = new DeepChatAgentRuntime()
   const messages = [...initialMessages]
   const statusPorts: SessionStatusPublisherPorts = {
     publishEvent: vi.fn(),
@@ -102,7 +95,7 @@ function createHarness(initialMessages: ChatMessageRecord[] = []) {
     drain: vi.fn().mockResolvedValue(false)
   }
   const terminalObserver: RunLifecycleCoordinatorPorts['terminalObserver'] = {
-    observe: vi.fn()
+    observeTerminal: vi.fn()
   }
   const emitMessageRefresh = vi.fn()
   const coordinator = new RunLifecycleCoordinator({
@@ -111,7 +104,7 @@ function createHarness(initialMessages: ChatMessageRecord[] = []) {
     transcript,
     pendingInputWakeup,
     terminalObserver,
-    emitMessageRefresh
+    messageProjection: { refresh: emitMessageRefresh }
   })
 
   return {
@@ -258,7 +251,7 @@ describe('RunLifecycleCoordinator', () => {
     const currentRun = createRun(SESSION_ID, 'run-current', 'message-current')
     coordinator.registerRun(scope, staleRun)
     coordinator.registerRun(scope, currentRun)
-    vi.mocked(terminalObserver.observe).mockImplementation(() => {
+    vi.mocked(terminalObserver.observeTerminal).mockImplementation(() => {
       expect(scope.state()?.status).toBe('generating')
     })
 
@@ -268,7 +261,7 @@ describe('RunLifecycleCoordinator', () => {
       staleRun.runId
     )
 
-    expect(terminalObserver.observe).toHaveBeenCalledOnce()
+    expect(terminalObserver.observeTerminal).toHaveBeenCalledOnce()
     expect(scope.state()?.status).toBe('generating')
 
     coordinator.applyProcessResultStatus(
@@ -277,7 +270,7 @@ describe('RunLifecycleCoordinator', () => {
       currentRun.runId
     )
 
-    expect(terminalObserver.observe).toHaveBeenCalledTimes(2)
+    expect(terminalObserver.observeTerminal).toHaveBeenCalledTimes(2)
     expect(scope.state()?.status).toBe('idle')
   })
 
@@ -293,7 +286,7 @@ describe('RunLifecycleCoordinator', () => {
     expect(scope.state()?.status).toBe('generating')
     expect(scope.instance.getAbortController()).toBe(replacement)
     expect(transcript.setMessageError).toHaveBeenCalledOnce()
-    expect(terminalObserver.observe).toHaveBeenCalledOnce()
+    expect(terminalObserver.observeTerminal).toHaveBeenCalledOnce()
   })
 
   it('settles a paused interaction immediately when no async owner remains', async () => {
@@ -315,7 +308,7 @@ describe('RunLifecycleCoordinator', () => {
     expect(scope.instance.getPendingInteractions()).toEqual([])
     expect(scope.state()?.status).toBe('idle')
     expect(transcript.setMessageError).toHaveBeenCalledOnce()
-    expect(terminalObserver.observe).toHaveBeenCalledOnce()
+    expect(terminalObserver.observeTerminal).toHaveBeenCalledOnce()
     expect(pendingInputWakeup.drain).toHaveBeenCalledWith(SESSION_ID, 'completed')
   })
 
@@ -366,7 +359,7 @@ describe('RunLifecycleCoordinator', () => {
       'message-1',
       'message-2'
     ])
-    expect(terminalObserver.observe).toHaveBeenCalledOnce()
+    expect(terminalObserver.observeTerminal).toHaveBeenCalledOnce()
     expect(scope.state()?.status).toBe('idle')
     expect(pendingInputWakeup.drain).toHaveBeenCalledWith(SESSION_ID, 'completed')
   })

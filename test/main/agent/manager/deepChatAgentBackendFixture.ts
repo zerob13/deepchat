@@ -24,23 +24,7 @@ export function createDeepChatAgentBackendFixture(
     }
   }
 ) {
-  const runtime =
-    providedRuntime ??
-    new DeepChatAgentRuntime((sessionId) => ({
-      async send(input) {
-        if (input.queue) {
-          await port.queuePendingInput(sessionId, input.content, input.queue)
-          return { requestId: null, messageId: null }
-        }
-        return await port.processMessage(sessionId, input.content, input.context)
-      },
-      cancel: () => port.cancelGeneration(sessionId),
-      snapshot: (options) =>
-        options?.lightweight
-          ? port.getSessionListState(sessionId)
-          : port.getSessionState(sessionId),
-      close: () => port.destroySession(sessionId)
-    }))
+  const runtime = providedRuntime ?? new DeepChatAgentRuntime()
 
   return createDeepChatAgentBackend({ port, runtime, ...data })
 }

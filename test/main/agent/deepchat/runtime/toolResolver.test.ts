@@ -19,6 +19,18 @@ const createResourceInstance = (agentId = 'deepchat') => {
   }
 }
 
+const createScopeRegistry = (instance: unknown) =>
+  ({
+    getToolRegistryRevision: vi.fn(() => 1),
+    getOrHydrateScope: vi.fn((sessionId: string) => ({ sessionId, instance })),
+    getHydratedScope: vi.fn((sessionId: string) => ({
+      sessionId,
+      instance,
+      state: () => undefined
+    })),
+    scopeFor: vi.fn(() => ({ assertCurrent: vi.fn() }))
+  }) as any
+
 describe('DeepChatToolResolver Subagent capability', () => {
   it('refreshes the catalog from capability cache keys without event invalidation', async () => {
     let config: DeepChatAgentConfig = {
@@ -56,13 +68,11 @@ describe('DeepChatToolResolver Subagent capability', () => {
         getAllToolDefinitions,
         syncAgentToolContext: vi.fn()
       },
-      deepChatRuntime: { getToolRegistryRevision: vi.fn(() => 1) },
-      getDeepChatInstance: vi.fn(() => resourceInstance),
-      getSessionAgentId: vi.fn(() => 'deepchat'),
-      getRuntimeState: vi.fn(),
-      assertCurrent: vi.fn(),
-      isAcpBackedSubagentSession: vi.fn(() => false),
-      isStaleInstanceError: vi.fn(() => false)
+      registry: createScopeRegistry(resourceInstance),
+      identity: {
+        getAgentId: vi.fn(() => 'deepchat'),
+        isAcpBackedSubagentSession: vi.fn(() => false)
+      }
     } as any)
 
     await resolver.loadToolDefinitionsForSession(
@@ -149,13 +159,11 @@ describe('DeepChatToolResolver Subagent capability', () => {
         }
       },
       toolService: { getAllToolDefinitions },
-      deepChatRuntime: { getToolRegistryRevision: vi.fn(() => 1) },
-      getDeepChatInstance: vi.fn(() => resourceInstance),
-      getSessionAgentId: vi.fn(() => 'deepchat'),
-      getRuntimeState: vi.fn(),
-      assertCurrent: vi.fn(),
-      isAcpBackedSubagentSession: vi.fn(() => false),
-      isStaleInstanceError: vi.fn(() => false)
+      registry: createScopeRegistry(resourceInstance),
+      identity: {
+        getAgentId: vi.fn(() => 'deepchat'),
+        isAcpBackedSubagentSession: vi.fn(() => false)
+      }
     } as any)
 
     await resolver.loadToolDefinitionsForSession(
@@ -203,13 +211,11 @@ describe('DeepChatToolResolver Subagent capability', () => {
         }
       },
       toolService: { getAllToolDefinitions },
-      deepChatRuntime: { getToolRegistryRevision: vi.fn(() => 1) },
-      getDeepChatInstance: vi.fn(() => resourceInstance),
-      getSessionAgentId: vi.fn(() => 'acp-reviewer'),
-      getRuntimeState: vi.fn(),
-      assertCurrent: vi.fn(),
-      isAcpBackedSubagentSession: vi.fn(() => false),
-      isStaleInstanceError: vi.fn(() => false)
+      registry: createScopeRegistry(resourceInstance),
+      identity: {
+        getAgentId: vi.fn(() => 'acp-reviewer'),
+        isAcpBackedSubagentSession: vi.fn(() => false)
+      }
     } as any)
 
     await resolver.loadToolDefinitionsForSession(
@@ -259,13 +265,11 @@ describe('DeepChatToolResolver Subagent capability', () => {
         }
       },
       toolService: { getAllToolDefinitions },
-      deepChatRuntime: { getToolRegistryRevision: vi.fn(() => 1) },
-      getDeepChatInstance: vi.fn(() => resourceInstance),
-      getSessionAgentId: vi.fn(() => 'custom-agent'),
-      getRuntimeState: vi.fn(),
-      assertCurrent: vi.fn(),
-      isAcpBackedSubagentSession: vi.fn(() => false),
-      isStaleInstanceError: vi.fn(() => false)
+      registry: createScopeRegistry(resourceInstance),
+      identity: {
+        getAgentId: vi.fn(() => 'custom-agent'),
+        isAcpBackedSubagentSession: vi.fn(() => false)
+      }
     } as any)
 
     await resolver.loadToolDefinitionsForSession(
@@ -310,13 +314,11 @@ describe('DeepChatToolResolver Subagent capability', () => {
         }
       },
       toolService: { getAllToolDefinitions },
-      deepChatRuntime: { getToolRegistryRevision: vi.fn(() => 1) },
-      getDeepChatInstance: vi.fn(() => resourceInstance),
-      getSessionAgentId: vi.fn(() => 'deepchat'),
-      getRuntimeState: vi.fn(),
-      assertCurrent: vi.fn(),
-      isAcpBackedSubagentSession: vi.fn(() => false),
-      isStaleInstanceError: vi.fn(() => false)
+      registry: createScopeRegistry(resourceInstance),
+      identity: {
+        getAgentId: vi.fn(() => 'deepchat'),
+        isAcpBackedSubagentSession: vi.fn(() => false)
+      }
     } as any)
 
     await resolver.loadToolDefinitionsForSession(
@@ -372,13 +374,11 @@ describe('DeepChatToolResolver Agent Skill scope', () => {
         }
       },
       toolService: { getAllToolDefinitions },
-      deepChatRuntime: { getToolRegistryRevision: vi.fn(() => 1) },
-      getDeepChatInstance: vi.fn(() => resourceInstance),
-      getSessionAgentId: vi.fn(() => 'writer'),
-      getRuntimeState: vi.fn(),
-      assertCurrent: vi.fn(),
-      isAcpBackedSubagentSession: vi.fn(() => false),
-      isStaleInstanceError: vi.fn(() => false)
+      registry: createScopeRegistry(resourceInstance),
+      identity: {
+        getAgentId: vi.fn(() => 'writer'),
+        isAcpBackedSubagentSession: vi.fn(() => false)
+      }
     } as any)
 
     return {

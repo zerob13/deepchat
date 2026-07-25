@@ -20,6 +20,8 @@ import {
 import type { PendingInputWakeReason } from './runLifecycleCoordinator'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
+import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { SessionStateResolver } from './sessionStateResolver'
 import type {
   ClaimedInputDisposition,
   ClaimedInputSettlementResult,
@@ -80,8 +82,8 @@ export interface PendingInputPumpPorts {
   transcript: Pick<SessionTranscript, 'getMessages'>
   runLifecycle: PendingInputPumpLifecyclePort
   turnStarter: PendingInputTurnStarter
-  getSessionState(sessionId: string): Promise<DeepChatSessionState | null>
-  resolveProjectDir(sessionId: string): string | null
+  sessionState: Pick<SessionStateResolver, 'get'>
+  sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
 }
 
 class DurablePendingInputClaim implements ClaimedPendingInputHandle {
@@ -319,7 +321,7 @@ export class PendingInputPump {
 
     let launchOwnsLease = false
     try {
-      const state = await this.ports.getSessionState(sessionId)
+      const state = await this.ports.sessionState.get(sessionId)
       if (!state || !scope.isCurrent()) {
         return false
       }
@@ -345,7 +347,7 @@ export class PendingInputPump {
 
       let projectDir: string | null
       try {
-        projectDir = this.ports.resolveProjectDir(sessionId)
+        projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId)
       } catch (error) {
         this.logDrainError(sessionId, reason, 'resolve-project-dir', error)
         return false
@@ -493,7 +495,7 @@ export class PendingInputPump {
       if (
         !releasedInputIsWaitingForRetry &&
         this.ports.pendingInputs.hasPendingTurnInput(sessionId) &&
-        (await this.ports.getSessionState(sessionId))?.status === 'idle' &&
+        (await this.ports.sessionState.get(sessionId))?.status === 'idle' &&
         !this.hasInteractionBlocker(sessionId)
       ) {
         this.schedule(sessionId, 'completed')

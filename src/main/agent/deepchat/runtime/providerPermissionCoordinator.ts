@@ -16,6 +16,7 @@ import type {
 } from './types'
 import type { LoopRun } from '@/agent/deepchat/loop/loopRun'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { MessageProjectionService } from './messageProjectionService'
 import { resolveProviderPermissionSafely } from './providerPermissionResolution'
 
 type ProviderPermissionRunLifecyclePort = Pick<
@@ -33,7 +34,7 @@ interface ProviderPermissionCoordinatorDependencies {
   messageStore: SessionTranscript
   runLifecycle: ProviderPermissionRunLifecyclePort
   permissionPort: AcpAsLlmProviderPermissionPort
-  emitMessageRefresh(sessionId: string, messageId: string): void
+  messageProjection: Pick<MessageProjectionService, 'refresh'>
   publishEvent: DeepChatEventPublisher
 }
 
@@ -234,7 +235,7 @@ export class ProviderPermissionCoordinator {
       terminalBlocks,
       JSON.stringify(terminalMetadata)
     )
-    this.deps.emitMessageRefresh(input.sessionId, input.messageId)
+    this.deps.messageProjection.refresh(input.sessionId, input.messageId)
     this.deps.publishEvent('chat.stream.failed', {
       requestId: this.deps.runLifecycle.resolveStreamRequestId(
         input.sessionId,
