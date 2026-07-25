@@ -824,10 +824,12 @@ export class TurnCoordinator {
                 pendingInputSource
               )
             } else {
-              this.releaseClaimedPendingInput(
+              this.rollbackClaimedPendingInputTurn(
                 sessionId,
                 context.pendingQueueItemId,
-                pendingInputSource
+                pendingInputSource,
+                userMessageId,
+                instance
               )
             }
             pendingInputDispositionHandled = true

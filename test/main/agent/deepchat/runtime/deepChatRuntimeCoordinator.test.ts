@@ -7119,6 +7119,58 @@ describe('DeepChatRuntimeCoordinator', () => {
       }
     })
 
+    it('rolls back a live-send user fact before releasing a rejected claim', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      let persistedUserRow: ReturnType<typeof makeDeepchatUserRow> | undefined
+      sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
+        if (row.role === 'user') {
+          persistedUserRow = makeDeepchatUserRow(
+            row.orderSeq,
+            JSON.parse(row.content).text,
+            row.id
+          )
+          return
+        }
+        if (row.role === 'assistant') {
+          throw new Error('assistant persistence unavailable')
+        }
+      })
+      sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
+        persistedUserRow?.id === id ? persistedUserRow : undefined
+      )
+      const releaseSpy = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+      try {
+        const claimed = await agent.queuePendingInput('s1', 'Retry live send', {
+          source: 'send'
+        })
+        expect(claimed.state).toBe('claimed')
+
+        await vi.waitFor(async () => {
+          expect(await agent.listPendingInputs('s1')).toEqual([
+            expect.objectContaining({ id: claimed.id, state: 'pending' })
+          ])
+        })
+
+        expect(persistedUserRow).toMatchObject({
+          role: 'user',
+          content: expect.stringContaining('Retry live send')
+        })
+        expect(sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq).toHaveBeenCalledWith(
+          's1',
+          1
+        )
+        expect(releaseSpy).toHaveBeenCalledWith('s1', claimed.id)
+        expect(
+          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
+        ).toBeLessThan(releaseSpy.mock.invocationCallOrder[0])
+        expect(processStream).not.toHaveBeenCalled()
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
+
     it('releases a partially claimed queue item when claim publication throws', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const pendingInputCoordinator = sessionData.pendingInputs
