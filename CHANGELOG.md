@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.0-beta.7 (2026-07-25)
+- Fixed auto-update failing with `Invalid input: expected string, received Date` by force-quoting releaseDate in updater metadata and tolerating Date payloads in the client contract
+- Retried transient provider failures and stabilized the provider retry lifecycle
+- Integrated Light-OCR and restored OCR compatibility
+- Added Linux ARM64 build support
+- Strengthened tool execution contracts across MCP, browser, and agent tools
+- Reworked agent runtime ownership across pending inputs, lifecycle, compaction, and permissions
+- Reduced dashboard CPU usage and lazy-loaded renderer locales
+- 修复自动更新因 updater 元数据中 releaseDate 字段类型不一致而报错 `Invalid input: expected string, received Date` 的问题；从发布端强制对 releaseDate 加引号，并放宽客户端契约以兼容 Date 字段
+- 重试瞬时 provider 失败并稳定 provider 重试生命周期
+- 集成 Light-OCR 并恢复 OCR 兼容性
+- 新增 Linux ARM64 构建支持
+- 强化 MCP、browser 与 agent tools 的工具执行契约
+- 重构 pending input、生命周期、compaction 与权限相关的 agent runtime ownership
+- 降低 dashboard CPU 占用并懒加载渲染器语言包
+
 ## v1.1.0-beta.6 (2026-07-25)
 - Retried transient provider failures and stabilized the provider retry lifecycle
 - Preserved streaming failure state and modeled provider attempt identity across the agent runtime
