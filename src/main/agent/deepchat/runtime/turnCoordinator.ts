@@ -75,6 +75,7 @@ import {
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
 import { isAbortError, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { RuntimeHookSink } from './runtimeHookSink'
 import type {
   ClaimedPendingInputHandle,
   TurnCompletion
@@ -110,20 +111,6 @@ export interface TurnStartContext {
 
 export interface TurnExecutionContext extends TurnStartContext {
   claimedInput?: ClaimedPendingInputHandle
-}
-
-type RuntimeHookEvent = 'UserPromptSubmit' | 'Stop' | 'SessionEnd'
-
-type RuntimeHookContext = {
-  sessionId: string
-  messageId?: string
-  promptPreview?: string
-  providerId?: string
-  modelId?: string
-  projectDir?: string | null
-  stop?: { reason?: string; userStop?: boolean } | null
-  usage?: Record<string, number> | null
-  error?: { message?: string; stack?: string } | null
 }
 
 export interface TurnCoordinatorPorts {
@@ -165,7 +152,7 @@ export interface TurnCoordinatorPorts {
   createBasePromptAssembler(expectedInstance: DeepChatAgentInstance): BasePromptAssembler
   runStreamForMessage(args: DeepChatLoopRunInput): Promise<{ runId: string; result: ProcessResult }>
   emitMessageRefresh(sessionId: string, messageId: string): void
-  dispatchHook(event: RuntimeHookEvent, context: RuntimeHookContext): void
+  hookSink: Pick<RuntimeHookSink, 'dispatch'>
 }
 
 export class TurnCoordinator {
@@ -578,7 +565,7 @@ export class TurnCoordinator {
       throwIfAbortRequested(preStreamAbortSignal)
       this.ports.emitMessageRefresh(sessionId, userMessageId)
 
-      this.ports.dispatchHook('UserPromptSubmit', {
+      this.ports.hookSink.dispatch('UserPromptSubmit', {
         sessionId,
         messageId: userMessageId,
         promptPreview: content.text,
@@ -884,14 +871,14 @@ export class TurnCoordinator {
           error: errorMessage
         })
       }
-      this.ports.dispatchHook('Stop', {
+      this.ports.hookSink.dispatch('Stop', {
         sessionId,
         providerId: state.providerId,
         modelId: state.modelId,
         projectDir,
         stop: { reason: stopReason, userStop: false }
       })
-      this.ports.dispatchHook('SessionEnd', {
+      this.ports.hookSink.dispatch('SessionEnd', {
         sessionId,
         providerId: state.providerId,
         modelId: state.modelId,

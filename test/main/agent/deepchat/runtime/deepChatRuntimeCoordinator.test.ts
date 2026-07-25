@@ -36,7 +36,6 @@ import {
 } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
 import type { MemoryRuntimePort } from '@/memory/injection'
 import { CompactionService } from '@/agent/deepchat/runtime/compactionService'
-import { CompactionRuntimeCoordinator } from '@/agent/deepchat/runtime/compactionRuntimeCoordinator'
 import { reviewAutoApproveToolPermission } from '@/agent/deepchat/runtime/toolPermissionReviewer'
 import { normalizeToolResultContent } from '@/agent/deepchat/runtime/toolAdapters'
 import { ToolOutputGuard } from '@/agent/deepchat/runtime/toolOutputGuard'
@@ -946,36 +945,6 @@ describe('DeepChatRuntimeCoordinator', () => {
       },
       params
     )
-
-  const createCompactionRuntime = () => {
-    const compactionService = new CompactionService(
-      sessionData.settings,
-      sessionData.transcript,
-      llmProvider,
-      providerSettings
-    )
-    const coordinator = new CompactionRuntimeCoordinator({
-      publishEvent: publishDeepchatEvent,
-      compactionService,
-      sessionStore: sessionData.settings,
-      messageStore: sessionData.transcript,
-      getInstance: (sessionId) =>
-        agent.deepChatRuntime.getOrHydrate(toAppSessionId(sessionId)),
-      assertCurrent: (sessionId, instance) => {
-        if (agent.deepChatRuntime.getHydrated(toAppSessionId(sessionId)) !== instance) {
-          throw new Error(`DeepChat agent instance was replaced: ${sessionId}`)
-        }
-      },
-      emitMessageRefresh: vi.fn(),
-      isAbortError: (error) =>
-        error instanceof Error &&
-        (error.name === 'AbortError' || error.name === 'CanceledError'),
-      throwIfAbortRequested: (signal) => {
-        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      }
-    })
-    return { compactionService, coordinator }
-  }
 
   const installPendingQuestion = (
     messageId = 'm1',
@@ -6060,6 +6029,41 @@ describe('DeepChatRuntimeCoordinator', () => {
       expect(invalidateToolProfileCache).not.toHaveBeenCalled()
     })
 
+    it('invalidates the current instance cache after asynchronous agent revalidation', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const revalidation = deferred<void>()
+      const skillService = getSkillServiceMock()
+      skillService.revalidateActiveSkillsForAgent.mockReturnValueOnce(revalidation.promise)
+
+      const update = agent.setSessionAgentContext('s1', {
+        agentId: 'other-agent',
+        providerId: 'anthropic',
+        modelId: 'claude-3-5-sonnet',
+        projectDir: '/private/project',
+        permissionMode: 'full_access'
+      })
+      await vi.waitFor(() =>
+        expect(skillService.revalidateActiveSkillsForAgent).toHaveBeenCalledWith(
+          's1',
+          'other-agent'
+        )
+      )
+
+      const appSessionId = toAppSessionId('s1')
+      expect(agent.deepChatRuntime.evict(appSessionId)).toBe(true)
+      const replacement = agent.deepChatRuntime.getOrHydrate(appSessionId)
+      replacement.setToolProfileCache({
+        profile: 'general',
+        fingerprint: 'stale-after-revalidation',
+        tools: []
+      })
+
+      revalidation.resolve(undefined)
+      await update
+
+      expect(replacement.getToolProfileCache()).toBeUndefined()
+    })
+
     it('waits for old-Agent memory persistence before publishing a new Agent identity', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
@@ -9268,103 +9272,6 @@ describe('DeepChatRuntimeCoordinator', () => {
         })
       ])
       expect(sqlitePresenter.deepchatMessagesTable.delete).toHaveBeenCalledWith('mock-msg-id')
-    })
-
-    it('normalizes a late compaction failure to AbortError after cancellation', async () => {
-      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
-      sqlitePresenter.deepchatMessagesTable.delete.mockClear()
-
-      const abortController = new AbortController()
-      abortController.abort()
-      const { coordinator } = createCompactionRuntime()
-      vi.spyOn(CompactionService.prototype, 'applyCompaction').mockRejectedValueOnce(
-        new Error('late failure')
-      )
-
-      await expect(
-        coordinator.apply(
-          's1',
-          {
-            sessionId: 's1',
-            previousState: {
-              summaryText: null,
-              summaryCursorOrderSeq: 1,
-              summaryUpdatedAt: null
-            },
-            targetCursorOrderSeq: 3,
-            summaryBlocks: ['summarize this'],
-            currentModel: {
-              providerId: 'openai',
-              modelId: 'gpt-4',
-              contextLength: 128000
-            },
-            reserveTokens: 512
-          },
-          { signal: abortController.signal },
-          instance
-        )
-      ).rejects.toMatchObject({ name: 'AbortError' })
-
-      expect(sqlitePresenter.deepchatMessagesTable.delete).toHaveBeenCalledWith('mock-msg-id')
-      expect(instance.getCompactionState()).toEqual({
-        status: 'idle',
-        cursorOrderSeq: 1,
-        summaryUpdatedAt: null
-      })
-      expectPublished('sessions.compaction.changed', {
-        sessionId: 's1',
-        status: 'idle',
-        cursorOrderSeq: 1,
-        summaryUpdatedAt: null
-      })
-    })
-
-    it('restores the previous compaction state when compaction throws', async () => {
-      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
-      sqlitePresenter.deepchatMessagesTable.delete.mockClear()
-      const { coordinator } = createCompactionRuntime()
-      vi.spyOn(CompactionService.prototype, 'applyCompaction').mockRejectedValueOnce(
-        new Error('compaction failed')
-      )
-
-      await expect(
-        coordinator.apply(
-          's1',
-          {
-            sessionId: 's1',
-            previousState: {
-              summaryText: 'previous summary',
-              summaryCursorOrderSeq: 3,
-              summaryUpdatedAt: 111
-            },
-            targetCursorOrderSeq: 5,
-            summaryBlocks: ['summarize this'],
-            currentModel: {
-              providerId: 'openai',
-              modelId: 'gpt-4',
-              contextLength: 128000
-            },
-            reserveTokens: 512
-          },
-          undefined,
-          instance
-        )
-      ).rejects.toThrow('compaction failed')
-
-      expect(sqlitePresenter.deepchatMessagesTable.delete).toHaveBeenCalledWith('mock-msg-id')
-      expect(instance.getCompactionState()).toEqual({
-        status: 'compacted',
-        cursorOrderSeq: 3,
-        summaryUpdatedAt: 111
-      })
-      expectPublished('sessions.compaction.changed', {
-        sessionId: 's1',
-        status: 'compacted',
-        cursorOrderSeq: 3,
-        summaryUpdatedAt: 111
-      })
     })
 
     it('emits idle when clearMessages resets compaction state', async () => {

@@ -21,6 +21,14 @@ const AGENT_SYSTEM_RUNTIME_BOUNDARY_FILES = [
   'src/main/session/turn.ts',
   'src/main/session/lifecycle.ts',
   'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts',
+  'src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts',
+  'src/main/agent/deepchat/runtime/sessionStatusPublisher.ts',
+  'src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts',
+  'src/main/agent/deepchat/runtime/pendingInputPump.ts',
+  'src/main/agent/deepchat/runtime/turnCoordinator.ts',
+  'src/main/agent/deepchat/runtime/compactionRuntimeCoordinator.ts',
+  'src/main/agent/deepchat/runtime/sessionSettingsCoordinator.ts',
+  'src/main/agent/deepchat/runtime/runtimeHookSink.ts',
   'src/main/agent/deepchat/runtime/process.ts',
   'src/main/agent/deepchat/runtime/dispatch.ts',
   'src/main/session/data/transcript.ts',
@@ -128,6 +136,46 @@ const AGENT_SYSTEM_OWNER_EVIDENCE = [
     'deepChatRuntimeCoordinator',
     'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts',
     /\bclass DeepChatRuntimeCoordinator\b/g
+  ],
+  [
+    'runLifecycleCoordinator',
+    'src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts',
+    /\bclass RunLifecycleCoordinator\b/g
+  ],
+  [
+    'sessionStatusPublisher',
+    'src/main/agent/deepchat/runtime/sessionStatusPublisher.ts',
+    /\bclass SessionStatusPublisher\b/g
+  ],
+  [
+    'pendingInputAdmissionCoordinator',
+    'src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts',
+    /\bclass PendingInputAdmissionCoordinator\b/g
+  ],
+  [
+    'pendingInputPump',
+    'src/main/agent/deepchat/runtime/pendingInputPump.ts',
+    /\bclass PendingInputPump\b/g
+  ],
+  [
+    'turnCoordinator',
+    'src/main/agent/deepchat/runtime/turnCoordinator.ts',
+    /\bclass TurnCoordinator\b/g
+  ],
+  [
+    'compactionRuntimeCoordinator',
+    'src/main/agent/deepchat/runtime/compactionRuntimeCoordinator.ts',
+    /\bclass CompactionRuntimeCoordinator\b/g
+  ],
+  [
+    'sessionSettingsCoordinator',
+    'src/main/agent/deepchat/runtime/sessionSettingsCoordinator.ts',
+    /\bclass SessionSettingsCoordinator\b/g
+  ],
+  [
+    'runtimeHookSink',
+    'src/main/agent/deepchat/runtime/runtimeHookSink.ts',
+    /\bclass RuntimeHookSink\b/g
   ]
 ]
 const AGENT_SYSTEM_RETIRED_PATHS = [

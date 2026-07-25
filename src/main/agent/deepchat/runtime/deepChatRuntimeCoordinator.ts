@@ -50,25 +50,14 @@ import type {
   DeepChatAgentInstanceDelegate
 } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
-import { capAgentRequestMaxTokens, estimateToolReserveTokens } from './contextBudget'
 import {
-  resolveDeepChatContextBudgetLength,
-  shouldBypassDeepChatContextBudget
-} from './contextBudgetPolicy'
-import {
-  mapPersistedGenerationPatch,
-  resolveInterleavedReasoningConfig,
   sanitizeGenerationSettings,
   type PersistedSessionGenerationRow
 } from './generationSettings'
-import {
-  CompactionService,
-  type CompactionIntent
-} from './compactionService'
+import { CompactionService } from './compactionService'
 import { buildContextCheckpoint } from './contextContributions'
 import { reviewAutoApproveToolPermission } from './toolPermissionReviewer'
 import type { SessionData } from '@/session/data'
-import type { SessionSummaryState } from '@/session/data/settings'
 import type { MemoryRuntimePort } from '@/memory/injection'
 import type {
   DeepChatEventPublisher,
@@ -98,7 +87,6 @@ import type {
   ProviderCatalogPort
 } from '@/provider/ports'
 import type { SessionPermissionPort, SessionUiPort } from '@/session/contracts'
-import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
   buildAssistantDeliverySegments,
   buildAssistantPreviewMarkdown,
@@ -111,13 +99,12 @@ import { createAcpCompatibilityDependencies } from '@/agent/acp/compatibility/de
 import type { SkillSettingsPort } from '@/skill/settings'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
 import { logSlowPreStreamStep } from './preStreamWatchdog'
-import { resolveProviderInputCapabilities } from './providerInputCapabilities'
 import { SessionStatusPublisher } from './sessionStatusPublisher'
 import { RunLifecycleCoordinator } from './runLifecycleCoordinator'
-import { throwIfAbortRequested } from './abortErrors'
 import type { AttachmentCapabilityRouter } from '@/ocr/attachmentCapabilityRouter'
 import { PendingInputPump } from './pendingInputPump'
 import { PendingInputAdmissionCoordinator } from './pendingInputAdmissionCoordinator'
+import { RuntimeHookSink } from './runtimeHookSink'
 
 export {
   PRE_STREAM_STUCK_ESCALATION_MS,
@@ -180,7 +167,7 @@ export class DeepChatRuntimeCoordinator {
   private readonly loopRunner: DeepChatLoopRunner
   private readonly turnCoordinator: TurnCoordinator
   private readonly interactionCoordinator: InteractionCoordinator
-  private readonly hookObserver: HookObserver
+  private readonly runtimeHookSink: RuntimeHookSink
   private readonly providerCatalogPort: Pick<
     ProviderCatalogPort,
     'getProviderModels' | 'getCustomModels'
@@ -219,7 +206,6 @@ export class DeepChatRuntimeCoordinator {
     this.agentSettings = agentSettings
     this.sqlitePresenter = sqlitePresenter
     this.toolService = toolService
-    this.hookObserver = hookObserver
     this.providerCatalogPort = runtimePorts.providerCatalogPort
     this.sessionPermissionPort = runtimePorts.sessionPermissionPort
     this.acpAsLlmProviderPermission = runtimePorts.acpAsLlmProviderPermission
@@ -238,25 +224,6 @@ export class DeepChatRuntimeCoordinator {
     this.deepChatRuntime = new DeepChatAgentRuntime((sessionId) =>
       this.createDeepChatInstanceDelegate(sessionId)
     )
-    this.sessionStatusPublisher = new SessionStatusPublisher({
-      publishEvent: this.publishEvent,
-      publishSessionUpdate: this.publishSessionUpdate,
-      sessionUiPort: runtimePorts.sessionUiPort
-    })
-    this.runLifecycle = new RunLifecycleCoordinator({
-      runtime: this.deepChatRuntime,
-      statusPublisher: this.sessionStatusPublisher,
-      transcript: this.messageStore,
-      emitMessageRefresh: (sessionId, messageId) =>
-        this.emitMessageRefresh(sessionId, messageId),
-      terminalObserver: {
-        observe: (sessionId, state, result) =>
-          this.dispatchTerminalHooks(sessionId, state, result)
-      },
-      pendingInputWakeup: {
-        drain: async (sessionId, reason) => await this.pendingInputPump.drain(sessionId, reason)
-      }
-    })
     this.toolResolver = new DeepChatToolResolver({
       agentSettings: this.agentSettings,
       skillSettings: this.skillSettings,
@@ -272,33 +239,6 @@ export class DeepChatRuntimeCoordinator {
       isAcpBackedSubagentSession: (sessionId, providerId) =>
         this.isAcpBackedSubagentSession(sessionId, providerId),
       isStaleInstanceError: (error) => this.isStaleDeepChatInstanceError(error)
-    })
-    this.sessionSettingsCoordinator = new SessionSettingsCoordinator({
-      providerSettings: this.providerSettings,
-      promptSettings: this.promptSettings,
-      sessionStore: this.sessionStore,
-      toolResolver: this.toolResolver,
-      toolService: this.toolService,
-      sessionPermissionPort: this.sessionPermissionPort,
-      getRuntimeState: (sessionId) => this.getDeepChatRuntimeState(sessionId),
-      getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
-      getInstance: (sessionId) => this.getDeepChatInstance(sessionId),
-      beginSessionAgentReassignment: async (sessionId) =>
-        await this.memoryCoordinator.beginSessionAgentReassignment(sessionId),
-      finishSessionAgentReassignment: (sessionId) =>
-        this.memoryCoordinator.finishSessionAgentReassignment(sessionId),
-      getEffectiveGenerationSettings: async (sessionId) =>
-        await this.getEffectiveSessionGenerationSettings(sessionId),
-      normalizeProjectDir: (projectDir) => this.normalizeProjectDir(projectDir),
-      resolvePersistedProjectDir: (sessionId) => this.resolvePersistedSessionProjectDir(sessionId),
-      invalidateToolProfileCache: (sessionId) => this.invalidateToolProfileCache(sessionId)
-    })
-    this.providerPermissionCoordinator = new ProviderPermissionCoordinator({
-      publishEvent: this.publishEvent,
-      messageStore: this.messageStore,
-      runLifecycle: this.runLifecycle,
-      permissionPort: this.acpAsLlmProviderPermission,
-      emitMessageRefresh: (sessionId, messageId) => this.emitMessageRefresh(sessionId, messageId)
     })
     this.memoryCoordinator = new MemoryRuntimeCoordinator({
       memoryPort: runtimePorts.memoryPort,
@@ -340,6 +280,59 @@ export class DeepChatRuntimeCoordinator {
         }
       }
     }
+    this.sessionSettingsCoordinator = new SessionSettingsCoordinator({
+      providerSettings: this.providerSettings,
+      promptSettings: this.promptSettings,
+      sessionStore: this.sessionStore,
+      toolResolver: this.toolResolver,
+      toolService: this.toolService,
+      sessionPermissionPort: this.sessionPermissionPort,
+      getRuntimeState: (sessionId) => this.getDeepChatRuntimeState(sessionId),
+      getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
+      getInstance: (sessionId) => this.getDeepChatInstance(sessionId),
+      getHydratedInstance: (sessionId) => this.getHydratedDeepChatInstance(sessionId),
+      assertCurrent: (sessionId, instance) =>
+        this.throwIfStaleDeepChatInstance(sessionId, instance),
+      beginSessionAgentReassignment: async (sessionId) =>
+        await this.memoryCoordinator.beginSessionAgentReassignment(sessionId),
+      finishSessionAgentReassignment: (sessionId) =>
+        this.memoryCoordinator.finishSessionAgentReassignment(sessionId),
+      readPersistedProjectDir: (sessionId) =>
+        this.sqlitePresenter.newSessionsTable?.get(sessionId)?.project_dir
+    })
+    this.runtimeHookSink = new RuntimeHookSink({
+      observer: hookObserver,
+      getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
+      resolveProjectDir: (sessionId) =>
+        this.sessionSettingsCoordinator.resolveProjectDir(sessionId)
+    })
+    this.sessionStatusPublisher = new SessionStatusPublisher({
+      publishEvent: this.publishEvent,
+      publishSessionUpdate: this.publishSessionUpdate,
+      sessionUiPort: runtimePorts.sessionUiPort
+    })
+    this.runLifecycle = new RunLifecycleCoordinator({
+      runtime: this.deepChatRuntime,
+      statusPublisher: this.sessionStatusPublisher,
+      transcript: this.messageStore,
+      emitMessageRefresh: (sessionId, messageId) =>
+        this.emitMessageRefresh(sessionId, messageId),
+      terminalObserver: {
+        observe: (sessionId, state, result) =>
+          this.runtimeHookSink.observeTerminal(sessionId, state, result)
+      },
+      // Run settlement wakes the pump, while the pump starts turns through this lifecycle owner.
+      pendingInputWakeup: {
+        drain: async (sessionId, reason) => await this.pendingInputPump.drain(sessionId, reason)
+      }
+    })
+    this.providerPermissionCoordinator = new ProviderPermissionCoordinator({
+      publishEvent: this.publishEvent,
+      messageStore: this.messageStore,
+      runLifecycle: this.runLifecycle,
+      permissionPort: this.acpAsLlmProviderPermission,
+      emitMessageRefresh: (sessionId, messageId) => this.emitMessageRefresh(sessionId, messageId)
+    })
     this.compactionService = new CompactionService(
       this.sessionStore,
       this.messageStore,
@@ -355,9 +348,17 @@ export class DeepChatRuntimeCoordinator {
       compactionService: this.compactionService,
       sessionStore: this.sessionStore,
       messageStore: this.messageStore,
+      providerSettings: this.providerSettings,
+      toolResolver: this.toolResolver,
+      runLifecycle: this.runLifecycle,
+      sessionSettings: this.sessionSettingsCoordinator,
+      tapeReconciliation: this.tapeService,
       getInstance: (sessionId) => this.getDeepChatInstance(sessionId),
+      getHydratedInstance: (sessionId) => this.getHydratedDeepChatInstance(sessionId),
+      getSessionListState: async (sessionId) => await this.getSessionListState(sessionId),
       assertCurrent: (sessionId, instance) =>
         this.throwIfStaleDeepChatInstance(sessionId, instance),
+      createBasePromptAssembler: (instance) => this.createBasePromptAssembler(instance),
       emitMessageRefresh: (sessionId, messageId) => this.emitMessageRefresh(sessionId, messageId)
     })
     this.toolOutputGuard = new ToolOutputGuard()
@@ -385,7 +386,7 @@ export class DeepChatRuntimeCoordinator {
       clearAbortController: (sessionId, toolCallId, controller) =>
         this.runLifecycle.clearDeferredToolController(sessionId, toolCallId, controller),
       getAbortSignal: (sessionId) => this.runLifecycle.getAbortSignal(sessionId),
-      resolveProjectDir: (sessionId) => this.resolveProjectDir(sessionId),
+      resolveProjectDir: (sessionId) => this.sessionSettingsCoordinator.resolveProjectDir(sessionId),
       getSessionState: async (sessionId) => await this.getSessionState(sessionId),
       getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
       updateSubagentProgress: (...args) => this.updateSubagentToolCallProgress(...args)
@@ -417,15 +418,15 @@ export class DeepChatRuntimeCoordinator {
       runLifecycle: this.runLifecycle,
       getDeepChatInstance: (sessionId) => this.getDeepChatInstance(sessionId),
       getEffectiveSessionGenerationSettings: async (sessionId, instance) =>
-        await this.getEffectiveSessionGenerationSettings(sessionId, instance),
+        await this.sessionSettingsCoordinator.getEffectiveGenerationSettings(sessionId, instance),
       createBasePromptAssembler: (instance) => this.createBasePromptAssembler(instance),
       getSessionAgentId: (sessionId) => this.getSessionAgentId(sessionId),
       sessionPermissionPort: this.sessionPermissionPort,
       reviewToolPermission: async (request, context) =>
         await this.reviewToolPermissionForAutoApprove(request, context),
-      dispatchHook: (event, context) => this.dispatchHook(event, context),
+      hookSink: this.runtimeHookSink,
       applyCompactionIntent: async (sessionId, intent, options, instance) =>
-        await this.applyCompactionIntent(sessionId, intent, options, instance)
+        await this.compactionRuntimeCoordinator.apply(sessionId, intent, options, instance)
     })
     this.turnCoordinator = new TurnCoordinator({
       publishEvent: this.publishEvent,
@@ -449,13 +450,13 @@ export class DeepChatRuntimeCoordinator {
       getHydratedDeepChatInstance: (sessionId) => this.getHydratedDeepChatInstance(sessionId),
       prepareAttachments: async (input) => await this.attachmentRouter.prepare(input),
       resolveProjectDir: (sessionId, projectDir, instance) =>
-        this.resolveProjectDir(sessionId, projectDir, instance),
+        this.sessionSettingsCoordinator.resolveProjectDir(sessionId, projectDir, instance),
       getEffectiveSessionGenerationSettings: async (sessionId, instance) =>
-        await this.getEffectiveSessionGenerationSettings(sessionId, instance),
+        await this.sessionSettingsCoordinator.getEffectiveGenerationSettings(sessionId, instance),
       createBasePromptAssembler: (instance) => this.createBasePromptAssembler(instance),
       runStreamForMessage: async (args) => await this.runStreamForMessage(args),
       emitMessageRefresh: (sessionId, messageId) => this.emitMessageRefresh(sessionId, messageId),
-      dispatchHook: (event, context) => this.dispatchHook(event, context)
+      hookSink: this.runtimeHookSink
     })
     this.pendingInputPump = new PendingInputPump({
       pendingInputs: this.pendingInputCoordinator,
@@ -466,7 +467,7 @@ export class DeepChatRuntimeCoordinator {
           await this.turnCoordinator.start(sessionId, content, context)
       },
       getSessionState: async (sessionId) => await this.getSessionState(sessionId),
-      resolveProjectDir: (sessionId) => this.resolveProjectDir(sessionId)
+      resolveProjectDir: (sessionId) => this.sessionSettingsCoordinator.resolveProjectDir(sessionId)
     })
     this.pendingInputAdmission = new PendingInputAdmissionCoordinator({
       providerSettings: this.providerSettings,
@@ -476,7 +477,8 @@ export class DeepChatRuntimeCoordinator {
       attachmentRouter: this.attachmentRouter,
       getSessionState: async (sessionId) => await this.getSessionState(sessionId),
       getHydratedInstance: (sessionId) => this.getHydratedDeepChatInstance(sessionId),
-      resolveProjectDir: (sessionId, projectDir) => this.resolveProjectDir(sessionId, projectDir)
+      resolveProjectDir: (sessionId, projectDir) =>
+        this.sessionSettingsCoordinator.resolveProjectDir(sessionId, projectDir)
     })
     this.interactionCoordinator = new InteractionCoordinator({
       publishEvent: this.publishEvent,
@@ -486,11 +488,11 @@ export class DeepChatRuntimeCoordinator {
       runLifecycle: this.runLifecycle,
       getDeepChatInstance: (sessionId) => this.getDeepChatInstance(sessionId),
       getRuntimeState: (sessionId) => this.getDeepChatRuntimeState(sessionId),
-      resolveProjectDir: (sessionId) => this.resolveProjectDir(sessionId),
+      resolveProjectDir: (sessionId) => this.sessionSettingsCoordinator.resolveProjectDir(sessionId),
       sessionPermissionPort: this.sessionPermissionPort,
       executeDeferredToolCall: async (...args) => await this.executeDeferredToolCall(...args),
       emitMessageRefresh: (sessionId, messageId) => this.emitMessageRefresh(sessionId, messageId),
-      dispatchHook: (event, context) => this.dispatchHook(event, context),
+      hookSink: this.runtimeHookSink,
       resumeAssistantMessage: async (...args) => await this.resumeAssistantMessage(...args)
     })
     const recovered = this.messageStore.recoverPendingMessages()
@@ -550,7 +552,7 @@ export class DeepChatRuntimeCoordinator {
         getSessionState: async (sessionId) => await this.getSessionState(sessionId),
         getDeepChatInstance: (sessionId) => this.getDeepChatInstance(sessionId),
         getGenerationSettings: async (sessionId, instance) =>
-          await this.getEffectiveSessionGenerationSettings(sessionId, instance),
+          await this.sessionSettingsCoordinator.getEffectiveGenerationSettings(sessionId, instance),
         buildSystemPrompt: async (sessionId, basePrompt, tools, activeSkills, instance) =>
           await this.buildSystemPromptWithSkills(
             sessionId,
@@ -563,7 +565,7 @@ export class DeepChatRuntimeCoordinator {
           this.loopRunner.emitRateLimitWaitingMessage(sessionId, messageId, requestId, snapshot),
         clearRateLimitWaitingMessage: (sessionId, messageId, requestId) =>
           this.loopRunner.clearRateLimitWaitingMessage(sessionId, messageId, requestId),
-        dispatchHook: (event, context) => this.dispatchHook(event, context)
+        dispatchHook: (event, context) => this.runtimeHookSink.dispatch(event, context)
       },
       input
     )
@@ -659,7 +661,7 @@ export class DeepChatRuntimeCoordinator {
       generationSettings?: Partial<SessionGenerationSettings>
     }
   ): Promise<void> {
-    const projectDir = this.normalizeProjectDir(config.projectDir)
+    const projectDir = this.sessionSettingsCoordinator.normalizeProjectDir(config.projectDir)
     const permissionMode = config.permissionMode ?? 'default'
     logger.info(
       `[DeepChatAgent] initSession id=${sessionId} provider=${config.providerId} model=${config.modelId} permission=${permissionMode} hasProjectDir=${projectDir !== null}`
@@ -691,7 +693,7 @@ export class DeepChatRuntimeCoordinator {
     instance.setCompactionState(this.compactionRuntimeCoordinator.idleState())
     this.memoryCoordinator.initializeSession(sessionId)
     this.runLifecycle.clearFirstTurnReady(sessionId)
-    this.invalidateToolProfileCache(sessionId)
+    instance.invalidateToolProfileCache()
   }
 
   async destroySession(sessionId: string): Promise<void> {
@@ -728,7 +730,7 @@ export class DeepChatRuntimeCoordinator {
     if (state) {
       this.getSessionAgentId(sessionId)
       if (hydrationMode === 'full') {
-        await this.getEffectiveSessionGenerationSettings(sessionId)
+        await this.sessionSettingsCoordinator.getEffectiveGenerationSettings(sessionId)
       }
       return {
         ...state,
@@ -754,7 +756,7 @@ export class DeepChatRuntimeCoordinator {
     }
     instance.setRuntimeState(rebuilt)
     if (hydrationMode === 'full') {
-      await this.getEffectiveSessionGenerationSettings(sessionId)
+      await this.sessionSettingsCoordinator.getEffectiveGenerationSettings(sessionId)
     }
     return {
       ...rebuilt,
@@ -906,95 +908,6 @@ export class DeepChatRuntimeCoordinator {
     return true
   }
 
-  private dispatchTerminalHooks(
-    sessionId: string,
-    state: DeepChatSessionState | undefined,
-    result: ProcessResult
-  ): void {
-    if (!state || result.status === 'paused') {
-      return
-    }
-
-    this.dispatchHook('Stop', {
-      sessionId,
-      providerId: state.providerId,
-      modelId: state.modelId,
-      projectDir: this.resolveProjectDir(sessionId),
-      stop: {
-        reason:
-          result.stopReason ??
-          (result.status === 'completed'
-            ? 'complete'
-            : result.status === 'aborted'
-              ? 'user_stop'
-              : 'error'),
-        userStop: result.status === 'aborted'
-      }
-    })
-    this.dispatchHook('SessionEnd', {
-      sessionId,
-      providerId: state.providerId,
-      modelId: state.modelId,
-      projectDir: this.resolveProjectDir(sessionId),
-      usage: result.usage ?? null,
-      error:
-        result.errorMessage || result.terminalError
-          ? {
-              message: result.errorMessage ?? result.terminalError
-            }
-          : null
-    })
-  }
-
-  private dispatchHook(
-    event:
-      | 'UserPromptSubmit'
-      | 'SessionStart'
-      | 'PreToolUse'
-      | 'PostToolUse'
-      | 'PostToolUseFailure'
-      | 'PermissionRequest'
-      | 'Stop'
-      | 'SessionEnd',
-    context: {
-      sessionId: string
-      messageId?: string
-      promptPreview?: string
-      providerId?: string
-      modelId?: string
-      projectDir?: string | null
-      tool?: {
-        callId?: string
-        name?: string
-        params?: string
-        response?: string
-        error?: string
-      }
-      permission?: Record<string, unknown> | null
-      stop?: {
-        reason?: string
-        userStop?: boolean
-      } | null
-      usage?: Record<string, number> | null
-      error?: {
-        message?: string
-        stack?: string
-      } | null
-    }
-  ): void {
-    try {
-      this.hookObserver.notify({
-        event,
-        context: {
-          ...context,
-          agentId: this.getSessionAgentId(context.sessionId) ?? 'deepchat'
-        }
-      })
-    } catch (error) {
-      console.warn(`[DeepChatAgent] Failed to dispatch ${event} hook:`, error)
-    }
-  }
-
   private getSessionAgentId(sessionId: string): string | undefined {
     const instance = this.deepChatRuntime.getHydrated(toAppSessionId(sessionId))
     const cached = instance?.getAgentId()?.trim()
@@ -1023,166 +936,13 @@ export class DeepChatRuntimeCoordinator {
   }
 
   async getSessionCompactionState(sessionId: string): Promise<SessionCompactionState> {
-    return await this.getSessionCompactionStateForInstance(sessionId)
-  }
-
-  private async getSessionCompactionStateForInstance(
-    sessionId: string,
-    expectedInstance?: DeepChatAgentInstance
-  ): Promise<SessionCompactionState> {
-    const hydratedInstance = expectedInstance ?? this.getHydratedDeepChatInstance(sessionId)
-    const runtimeState = hydratedInstance?.getRuntimeState()
-    const session = this.sessionStore.get(sessionId)
-    if (!runtimeState && !session) {
-      throw new Error(`Session ${sessionId} not found`)
-    }
-    const instance = hydratedInstance ?? this.getDeepChatInstance(sessionId)
-    this.throwIfStaleDeepChatInstance(sessionId, instance)
-
-    const persistedState = this.compactionRuntimeCoordinator.fromSummary(
-      this.sessionStore.getSummaryState(sessionId)
-    )
-    const currentCompactionState = instance.getCompactionState()
-    if (currentCompactionState?.status === 'compacting') {
-      return currentCompactionState
-    }
-
-    if (
-      currentCompactionState &&
-      this.compactionRuntimeCoordinator.isSame(currentCompactionState, persistedState)
-    ) {
-      return currentCompactionState
-    }
-
-    instance.setCompactionState(persistedState)
-    return { ...persistedState }
+    return await this.compactionRuntimeCoordinator.getState(sessionId)
   }
 
   async compactSession(
     sessionId: string
   ): Promise<{ compacted: boolean; state: SessionCompactionState }> {
-    const instance = this.getDeepChatInstance(sessionId)
-    const scope = this.runLifecycle.scopeFor(sessionId, instance)
-    const state = instance.getRuntimeState() ?? (await this.getSessionListState(sessionId))
-    if (!state) {
-      throw new Error(`Session ${sessionId} not found`)
-    }
-    this.throwIfStaleDeepChatInstance(sessionId, instance)
-    const modelConfig = this.providerSettings.getModelConfig(state.modelId, state.providerId)
-    if (shouldBypassDeepChatContextBudget(state.providerId, modelConfig, state.modelId)) {
-      throw new Error('Manual compaction is only available for DeepChat agent sessions.')
-    }
-    if (state.status !== 'idle') {
-      throw new Error('Manual compaction is only available when the session is idle.')
-    }
-    if (this.runLifecycle.hasPendingInteractions(sessionId)) {
-      throw new Error('Pending tool interactions must be resolved before compacting.')
-    }
-
-    this.runLifecycle.transitionStatus(scope, 'generating')
-    const compactionAbortController = this.runLifecycle.ensureOperationController(scope)
-    const compactionAbortSignal = compactionAbortController.signal
-    try {
-      throwIfAbortRequested(compactionAbortSignal)
-      const generationSettings = await awaitWithAbort(
-        this.getEffectiveSessionGenerationSettings(sessionId, instance),
-        compactionAbortSignal
-      )
-      const interleavedReasoning = resolveInterleavedReasoningConfig(
-        this.providerSettings,
-        state.providerId,
-        state.modelId,
-        generationSettings
-      )
-      const contextBudgetLength = resolveDeepChatContextBudgetLength(
-        state.providerId,
-        generationSettings.contextLength,
-        modelConfig,
-        state.modelId
-      )
-      const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
-      const activeSkillNames = await awaitWithAbort(
-        this.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
-        compactionAbortSignal
-      )
-      this.throwIfStaleDeepChatInstance(sessionId, instance)
-      const projectDir = this.resolveProjectDir(sessionId, undefined, instance)
-      const tools = await awaitWithAbort(
-        this.toolResolver.loadToolDefinitionsForSession(
-          sessionId,
-          projectDir,
-          activeSkillNames,
-          instance
-        ),
-        compactionAbortSignal
-      )
-      const toolReserveTokens = estimateToolReserveTokens(tools)
-      const baseSystemPrompt = await awaitWithAbort(
-        this.createBasePromptAssembler(instance).assemble({
-          sessionId: toAppSessionId(sessionId),
-          configuredPrompt: generationSettings.systemPrompt,
-          toolDefinitions: tools,
-          activeSkillNames
-        }),
-        compactionAbortSignal
-      )
-      throwIfAbortRequested(compactionAbortSignal)
-      const tapeReady = this.tapeService.ensureSessionTapeReady(sessionId, this.messageStore)
-      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
-        this.providerSettings,
-        state.providerId,
-        state.modelId
-      )
-
-      const intent = await this.compactionService.prepareForManualCompaction({
-        sessionId,
-        providerId: state.providerId,
-        modelId: state.modelId,
-        systemPrompt: baseSystemPrompt,
-        contextLength: generationSettings.contextLength,
-        reserveTokens: maxTokens,
-        extraReserveTokens: toolReserveTokens,
-        supportsVision,
-        supportsAudioInput,
-        preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-        preserveEmptyInterleavedReasoning:
-          interleavedReasoning.preserveEmptyReasoningContent === true,
-        historyRecords: tapeReady.historyRecords,
-        signal: compactionAbortSignal
-      })
-      throwIfAbortRequested(compactionAbortSignal)
-      this.throwIfStaleDeepChatInstance(sessionId, instance)
-
-      if (!intent) {
-        return {
-          compacted: false,
-          state: await this.getSessionCompactionStateForInstance(sessionId, instance)
-        }
-      }
-
-      const summaryState = await this.applyCompactionIntent(
-        sessionId,
-        intent,
-        { signal: compactionAbortSignal },
-        instance
-      )
-      throwIfAbortRequested(compactionAbortSignal)
-      this.throwIfStaleDeepChatInstance(sessionId, instance)
-      const compacted = summaryState.summaryUpdatedAt !== intent.previousState.summaryUpdatedAt
-      return {
-        compacted,
-        state: await this.getSessionCompactionStateForInstance(sessionId, instance)
-      }
-    } finally {
-      const stillOwnsLifecycle = this.runLifecycle.canSettleOperation(
-        scope,
-        compactionAbortController
-      )
-      this.runLifecycle.clearOperationController(scope, compactionAbortController)
-      if (stillOwnsLifecycle) {
-        this.runLifecycle.transitionStatus(scope, 'idle')
-      }
-    }
+    return await this.compactionRuntimeCoordinator.compact(sessionId)
   }
 
   async prepareClearMessages(sessionId: string): Promise<void> {
@@ -1222,7 +982,13 @@ export class DeepChatRuntimeCoordinator {
     }
     this.assertNoActivePendingInputs(sessionId)
     this.throwIfStaleDeepChatInstance(sessionId, instance)
-    return { projectDir: this.resolveProjectDir(sessionId, undefined, instance) }
+    return {
+      projectDir: this.sessionSettingsCoordinator.resolveProjectDir(
+        sessionId,
+        undefined,
+        instance
+      )
+    }
   }
 
   async cancelForTranscriptMutation(sessionId: string): Promise<void> {
@@ -1300,7 +1066,7 @@ export class DeepChatRuntimeCoordinator {
         isAcpBackedSubagentSession: (id, providerId) =>
           this.isAcpBackedSubagentSession(id, providerId),
         resolveProjectDir: (id, projectDir, instance) =>
-          this.resolveProjectDir(id, projectDir, instance),
+          this.sessionSettingsCoordinator.resolveProjectDir(id, projectDir, instance),
         logSlowStep: logSlowPreStreamStep
       },
       {
@@ -1313,46 +1079,8 @@ export class DeepChatRuntimeCoordinator {
     )
   }
 
-  private invalidateToolProfileCache(sessionId: string): void {
-    this.getHydratedDeepChatInstance(sessionId)?.invalidateToolProfileCache()
-  }
-
   private handleToolRegistryChanged(): void {
     this.deepChatRuntime.markToolRegistryChanged()
-  }
-
-  private async getEffectiveSessionGenerationSettings(
-    sessionId: string,
-    expectedInstance = this.getDeepChatInstance(sessionId)
-  ): Promise<SessionGenerationSettings> {
-    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
-    const cached = expectedInstance.getGenerationSettings()
-    if (cached) {
-      return { ...cached }
-    }
-
-    const state = expectedInstance.getRuntimeState()
-    const dbSession = this.sessionStore.get(sessionId) as PersistedSessionGenerationRow | undefined
-    const providerId = state?.providerId ?? dbSession?.provider_id
-    const modelId = state?.modelId ?? dbSession?.model_id
-
-    if (!providerId || !modelId) {
-      throw new Error(`Session ${sessionId} not found`)
-    }
-
-    const persistedPatch = dbSession
-      ? mapPersistedGenerationPatch(this.providerSettings, dbSession)
-      : {}
-    const sanitized = await sanitizeGenerationSettings(
-      this.providerSettings,
-      this.promptSettings,
-      providerId,
-      modelId,
-      persistedPatch
-    )
-    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
-    expectedInstance.setGenerationSettings(sanitized)
-    return { ...sanitized }
   }
 
   assertNoActivePendingInputs(sessionId: string): void {
@@ -1424,26 +1152,6 @@ export class DeepChatRuntimeCoordinator {
     )
   }
 
-  private async applyCompactionIntent(
-    sessionId: string,
-    intent: CompactionIntent | null,
-    options?: {
-      compactionMessageId?: string
-      compactionMessageOrderSeq?: number
-      shiftMessagesFromCompactionOrderSeq?: boolean
-      startedExternally?: boolean
-      signal?: AbortSignal
-    },
-    expectedInstance = this.getDeepChatInstance(sessionId)
-  ): Promise<SessionSummaryState> {
-    return await this.compactionRuntimeCoordinator.apply(
-      sessionId,
-      intent,
-      options,
-      expectedInstance
-    )
-  }
-
   private emitMessageRefresh(sessionId: string, messageId: string): void {
     this.publishEvent('chat.stream.completed', {
       requestId: this.runLifecycle.resolveStreamRequestId(sessionId, messageId),
@@ -1474,48 +1182,4 @@ export class DeepChatRuntimeCoordinator {
     }
   }
 
-  private normalizeProjectDir(projectDir?: string | null): string | null {
-    const normalized = projectDir?.trim()
-    return normalized ? normalized : null
-  }
-
-  private resolvePersistedSessionProjectDir(sessionId: string): string | null {
-    try {
-      const session = this.sqlitePresenter.newSessionsTable?.get(sessionId)
-      return this.normalizeProjectDir(session?.project_dir ?? null)
-    } catch (error) {
-      console.warn('[DeepChatAgent] Failed to resolve persisted project directory:', {
-        sessionId,
-        error
-      })
-      return null
-    }
-  }
-
-  private resolveProjectDir(
-    sessionId: string,
-    incoming?: string | null,
-    expectedInstance = this.getDeepChatInstance(sessionId)
-  ): string | null {
-    this.throwIfStaleDeepChatInstance(sessionId, expectedInstance)
-    const instance = expectedInstance
-    if (incoming !== undefined) {
-      const normalized = this.normalizeProjectDir(incoming)
-      const previous = instance.hasProjectDir()
-        ? instance.getProjectDir()
-        : this.resolvePersistedSessionProjectDir(sessionId)
-      instance.setProjectDir(normalized)
-      if (previous !== normalized) {
-        instance.invalidateToolProfileCache()
-      }
-      return normalized
-    }
-    if (instance.hasProjectDir()) {
-      return instance.getProjectDir()
-    }
-
-    const persisted = this.resolvePersistedSessionProjectDir(sessionId)
-    instance.setProjectDir(persisted)
-    return persisted
-  }
 }

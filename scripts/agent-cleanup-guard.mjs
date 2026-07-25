@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const ROOT = process.cwd()
 
@@ -46,7 +47,23 @@ const DEEPCHAT_RUNTIME_COORDINATOR_FILE = path.join(
   ROOT,
   'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts'
 )
-const DEEPCHAT_RUNTIME_COORDINATOR_MAX_LINES = 3_200
+const DEEPCHAT_AGENT_DIR = path.join(ROOT, 'src/main/agent/deepchat')
+const DEEPCHAT_RUNTIME_COORDINATOR_MAX_LINES = 1_300
+const DEEPCHAT_ROOT_OWNERSHIP_PATTERNS = [
+  ['manual-compaction-lifecycle', /\bprepareForManualCompaction\s*\(/],
+  [
+    'pending-input-claim-lifecycle',
+    /\.(?:claimQueuedInput|claimSteerInput|consumeQueuedInput|consumeSteerInput|releaseClaimedInput)\s*\(/
+  ],
+  [
+    'pending-input-drain-selection',
+    /\.(?:getNextQueuedInput|getNextSteerInput)\s*\(|\bpendingQueueDraining\b/
+  ],
+  [
+    'operation-controller-lifecycle',
+    /\.(?:ensureOperationController|setAbortController|clearAbortController)\s*\(/
+  ]
+]
 
 const LEGACY_AGENT_RUNTIME_GLOBALS = [
   'sessionManager',
@@ -148,6 +165,31 @@ function isLegacyMainImport(filePath, specifier) {
   )
 }
 
+function withoutSourceExtension(value) {
+  return value.replace(/\.(?:[cm]?[jt]sx?)$/, '')
+}
+
+export function isDeepChatRuntimeCoordinatorImport(filePath, specifier) {
+  if (
+    filePath === DEEPCHAT_RUNTIME_COORDINATOR_FILE ||
+    !isUnder(filePath, DEEPCHAT_AGENT_DIR)
+  ) {
+    return false
+  }
+
+  if (specifier.startsWith('.')) {
+    return (
+      withoutSourceExtension(path.resolve(path.dirname(filePath), specifier)) ===
+      withoutSourceExtension(DEEPCHAT_RUNTIME_COORDINATOR_FILE)
+    )
+  }
+
+  return (
+    withoutSourceExtension(specifier) ===
+    '@/agent/deepchat/runtime/deepChatRuntimeCoordinator'
+  )
+}
+
 function buildViolation(kind, filePath, specifier) {
   return {
     kind,
@@ -201,11 +243,22 @@ async function findViolations() {
           )
         )
       }
+      for (const [kind, pattern] of DEEPCHAT_ROOT_OWNERSHIP_PATTERNS) {
+        if (pattern.test(source)) {
+          violations.push(buildViolation(kind, filePath, pattern.source))
+        }
+      }
     }
 
     for (const specifier of extractModuleSpecifiers(source)) {
       if (isLegacyMainImport(filePath, specifier)) {
         violations.push(buildViolation('legacy-main-import', filePath, specifier))
+      }
+
+      if (isDeepChatRuntimeCoordinatorImport(filePath, specifier)) {
+        violations.push(
+          buildViolation('deepchat-runtime-owner-imports-root', filePath, specifier)
+        )
       }
 
       if (
@@ -269,7 +322,12 @@ async function main() {
   console.log('Agent cleanup guard passed. Baseline violations tracked: 0.')
 }
 
-main().catch((error) => {
-  console.error('Agent cleanup guard failed to run:', error)
-  process.exit(1)
-})
+const isMainModule =
+  process.argv[1] !== undefined && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
+
+if (isMainModule) {
+  main().catch((error) => {
+    console.error('Agent cleanup guard failed to run:', error)
+    process.exit(1)
+  })
+}

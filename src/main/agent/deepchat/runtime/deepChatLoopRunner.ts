@@ -76,6 +76,7 @@ import type {
   TapeViewManifestWriter
 } from '@/tape/ports/capabilities'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
+import type { RuntimeHookSink } from './runtimeHookSink'
 import type { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
 import type {
   DeepChatEventPublisher,
@@ -125,30 +126,6 @@ type LoopRunLifecyclePort = Pick<
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
-
-type HookEvent =
-  | 'SessionStart'
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'PermissionRequest'
-
-type HookContext = {
-  sessionId: string
-  messageId?: string
-  promptPreview?: string
-  providerId?: string
-  modelId?: string
-  projectDir?: string | null
-  tool?: {
-    callId?: string
-    name?: string
-    params?: string
-    response?: string
-    error?: string
-  }
-  permission?: Record<string, unknown> | null
-}
 
 export type PendingTapeViewContext = {
   taskType: DeepChatTapeViewTaskType
@@ -250,7 +227,7 @@ export interface DeepChatLoopRunnerPorts {
       signal: AbortSignal
     }
   ): Promise<ToolPermissionReviewResult>
-  dispatchHook(event: HookEvent, context: HookContext): void
+  hookSink: Pick<RuntimeHookSink, 'dispatch'>
   applyCompactionIntent(
     sessionId: string,
     intent: CompactionIntent | null,
@@ -485,7 +462,7 @@ export class DeepChatLoopRunner {
     const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
 
     try {
-      this.ports.dispatchHook('SessionStart', {
+      this.ports.hookSink.dispatch('SessionStart', {
         sessionId,
         messageId,
         promptPreview,
@@ -732,7 +709,7 @@ export class DeepChatLoopRunner {
           Boolean(this.ports.pendingInputCoordinator.getNextSteerInput(sessionId)),
         notificationObserver: {
           notify: (notification) => {
-            this.ports.dispatchHook(notification.event, {
+            this.ports.hookSink.dispatch(notification.event, {
               sessionId,
               messageId,
               providerId: state.providerId,

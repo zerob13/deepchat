@@ -45,6 +45,7 @@ import { parseMessageMetadata } from '@/session/usageStats'
 import { MAX_TOOL_CALLS } from '@/agent/deepchat/loop/deepChatLoopEngine'
 import { isAbortError, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import type { RuntimeHookSink } from './runtimeHookSink'
 
 type InteractionRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -70,33 +71,6 @@ type SkillDraftPresenter = Pick<
   'viewDraftSkill' | 'installDraftSkill' | 'discardDraftSkill'
 >
 
-type RuntimeHookEvent =
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'PostToolUseFailure'
-  | 'PermissionRequest'
-  | 'Stop'
-  | 'SessionEnd'
-
-type RuntimeHookContext = {
-  sessionId: string
-  messageId?: string
-  providerId?: string
-  modelId?: string
-  projectDir?: string | null
-  tool?: {
-    callId?: string
-    name?: string
-    params?: string
-    response?: string
-    error?: string
-  }
-  permission?: Record<string, unknown> | null
-  stop?: { reason?: string; userStop?: boolean } | null
-  usage?: Record<string, number> | null
-  error?: { message?: string; stack?: string } | null
-}
-
 export interface InteractionCoordinatorPorts {
   messageStore: SessionTranscript
   providerPermissionCoordinator: ProviderPermissionCoordinator
@@ -113,7 +87,7 @@ export interface InteractionCoordinatorPorts {
     onToolCallStarted?: () => void
   ): Promise<DeferredToolExecutionResult>
   emitMessageRefresh(sessionId: string, messageId: string): void
-  dispatchHook(event: RuntimeHookEvent, context: RuntimeHookContext): void
+  hookSink: Pick<RuntimeHookSink, 'dispatch'>
   resumeAssistantMessage(
     sessionId: string,
     messageId: string,
@@ -295,7 +269,7 @@ export class InteractionCoordinator {
               isError: true
             }
           } else {
-            this.ports.dispatchHook('PreToolUse', {
+            this.ports.hookSink.dispatch('PreToolUse', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -331,7 +305,7 @@ export class InteractionCoordinator {
           if (execution.terminalError) {
             const terminalMetadata = stampTerminalMetadata(resumeAccounting, 'error', 'tool_error')
             instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
-            this.ports.dispatchHook('PostToolUseFailure', {
+            this.ports.hookSink.dispatch('PostToolUseFailure', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -358,7 +332,7 @@ export class InteractionCoordinator {
               failedAt: Date.now(),
               error: execution.terminalError
             })
-            this.ports.dispatchHook('Stop', {
+            this.ports.hookSink.dispatch('Stop', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -366,7 +340,7 @@ export class InteractionCoordinator {
               projectDir,
               stop: { reason: 'tool_error', userStop: false }
             })
-            this.ports.dispatchHook('SessionEnd', {
+            this.ports.hookSink.dispatch('SessionEnd', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -413,7 +387,7 @@ export class InteractionCoordinator {
               toolCall.id,
               'post-call-permission'
             )
-            this.ports.dispatchHook('PermissionRequest', {
+            this.ports.hookSink.dispatch('PermissionRequest', {
               sessionId,
               messageId,
               providerId: state?.providerId,
@@ -676,7 +650,7 @@ export class InteractionCoordinator {
     const responseText = resolvedBlock?.tool_call?.response ?? ''
     const isError = resolvedBlock?.status === 'error'
 
-    this.ports.dispatchHook(isError ? 'PostToolUseFailure' : 'PostToolUse', {
+    this.ports.hookSink.dispatch(isError ? 'PostToolUseFailure' : 'PostToolUse', {
       sessionId: params.sessionId,
       messageId: params.messageId,
       providerId: params.providerId,

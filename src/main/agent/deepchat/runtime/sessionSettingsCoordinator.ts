@@ -13,7 +13,9 @@ import type { SessionPermissionPort } from '@/session/contracts'
 import {
   buildPersistedGenerationSettingsPatch,
   buildPersistedGenerationSettingsReplacement,
-  sanitizeGenerationSettings
+  mapPersistedGenerationPatch,
+  sanitizeGenerationSettings,
+  type PersistedSessionGenerationRow
 } from './generationSettings'
 import type { SessionSettingsStore } from '@/session/data/settings'
 import type { DeepChatToolResolver } from './toolResolver'
@@ -29,12 +31,11 @@ interface SessionSettingsCoordinatorDependencies {
   getRuntimeState(sessionId: string): DeepChatSessionState | undefined
   getSessionAgentId(sessionId: string): string | undefined
   getInstance(sessionId: string): DeepChatAgentInstance
+  getHydratedInstance(sessionId: string): DeepChatAgentInstance | undefined
+  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
   beginSessionAgentReassignment(sessionId: string): Promise<void>
   finishSessionAgentReassignment(sessionId: string): void
-  getEffectiveGenerationSettings(sessionId: string): Promise<SessionGenerationSettings>
-  normalizeProjectDir(projectDir?: string | null): string | null
-  resolvePersistedProjectDir(sessionId: string): string | null
-  invalidateToolProfileCache(sessionId: string): void
+  readPersistedProjectDir(sessionId: string): string | null | undefined
 }
 
 export class SessionSettingsCoordinator {
@@ -68,7 +69,7 @@ export class SessionSettingsCoordinator {
       throw new Error('Cannot switch model while session is generating.')
     }
 
-    const currentGeneration = await this.deps.getEffectiveGenerationSettings(sessionId)
+    const currentGeneration = await this.getEffectiveGenerationSettings(sessionId)
     const sanitized = await sanitizeGenerationSettings(
       this.deps.providerSettings,
       this.deps.promptSettings,
@@ -146,7 +147,7 @@ export class SessionSettingsCoordinator {
         permissionMode
       })
       instance.setAgentId(nextAgentId)
-      instance.setProjectDir(this.deps.normalizeProjectDir(config.projectDir))
+      instance.setProjectDir(this.normalizeProjectDir(config.projectDir))
       instance.setGenerationSettings(generationSettings)
       this.deps.sessionPermissionPort.clearSessionPermissions(sessionId)
       this.deps.toolService.clearAgentPlanState(sessionId)
@@ -161,15 +162,46 @@ export class SessionSettingsCoordinator {
   }
 
   setProjectDir(sessionId: string, projectDir: string | null): void {
-    const normalized = this.deps.normalizeProjectDir(projectDir)
+    const normalized = this.normalizeProjectDir(projectDir)
     const instance = this.deps.getInstance(sessionId)
     const previous = instance.hasProjectDir()
       ? instance.getProjectDir()
-      : this.deps.resolvePersistedProjectDir(sessionId)
+      : this.resolvePersistedProjectDir(sessionId)
     instance.setProjectDir(normalized)
     if (previous !== normalized) {
       this.invalidateToolProfile(sessionId)
     }
+  }
+
+  resolveProjectDir(
+    sessionId: string,
+    incoming?: string | null,
+    expectedInstance = this.deps.getInstance(sessionId)
+  ): string | null {
+    this.deps.assertCurrent(sessionId, expectedInstance)
+    if (incoming !== undefined) {
+      const normalized = this.normalizeProjectDir(incoming)
+      const previous = expectedInstance.hasProjectDir()
+        ? expectedInstance.getProjectDir()
+        : this.resolvePersistedProjectDir(sessionId)
+      expectedInstance.setProjectDir(normalized)
+      if (previous !== normalized) {
+        expectedInstance.invalidateToolProfileCache()
+      }
+      return normalized
+    }
+    if (expectedInstance.hasProjectDir()) {
+      return expectedInstance.getProjectDir()
+    }
+
+    const persisted = this.resolvePersistedProjectDir(sessionId)
+    expectedInstance.setProjectDir(persisted)
+    return persisted
+  }
+
+  normalizeProjectDir(projectDir?: string | null): string | null {
+    const normalized = projectDir?.trim()
+    return normalized ? normalized : null
   }
 
   getPermissionMode(sessionId: string): PermissionMode {
@@ -186,7 +218,7 @@ export class SessionSettingsCoordinator {
     if (!state && !dbSession) {
       return null
     }
-    return await this.deps.getEffectiveGenerationSettings(sessionId)
+    return await this.getEffectiveGenerationSettings(sessionId)
   }
 
   async updateGenerationSettings(
@@ -204,7 +236,7 @@ export class SessionSettingsCoordinator {
       throw new Error(`Session ${sessionId} model information is missing`)
     }
 
-    const current = await this.deps.getEffectiveGenerationSettings(sessionId)
+    const current = await this.getEffectiveGenerationSettings(sessionId)
     const sanitized = await sanitizeGenerationSettings(
       this.deps.providerSettings,
       this.deps.promptSettings,
@@ -221,7 +253,55 @@ export class SessionSettingsCoordinator {
     return sanitized
   }
 
+  async getEffectiveGenerationSettings(
+    sessionId: string,
+    expectedInstance = this.deps.getInstance(sessionId)
+  ): Promise<SessionGenerationSettings> {
+    this.deps.assertCurrent(sessionId, expectedInstance)
+    const cached = expectedInstance.getGenerationSettings()
+    if (cached) {
+      return { ...cached }
+    }
+
+    const state = expectedInstance.getRuntimeState()
+    const dbSession = this.deps.sessionStore.get(sessionId) as
+      | PersistedSessionGenerationRow
+      | undefined
+    const providerId = state?.providerId ?? dbSession?.provider_id
+    const modelId = state?.modelId ?? dbSession?.model_id
+
+    if (!providerId || !modelId) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+
+    const persistedPatch = dbSession
+      ? mapPersistedGenerationPatch(this.deps.providerSettings, dbSession)
+      : {}
+    const sanitized = await sanitizeGenerationSettings(
+      this.deps.providerSettings,
+      this.deps.promptSettings,
+      providerId,
+      modelId,
+      persistedPatch
+    )
+    this.deps.assertCurrent(sessionId, expectedInstance)
+    expectedInstance.setGenerationSettings(sanitized)
+    return { ...sanitized }
+  }
+
+  private resolvePersistedProjectDir(sessionId: string): string | null {
+    try {
+      return this.normalizeProjectDir(this.deps.readPersistedProjectDir(sessionId))
+    } catch (error) {
+      console.warn('[DeepChatAgent] Failed to resolve persisted project directory:', {
+        sessionId,
+        error
+      })
+      return null
+    }
+  }
+
   private invalidateToolProfile(sessionId: string): void {
-    this.deps.invalidateToolProfileCache(sessionId)
+    this.deps.getHydratedInstance(sessionId)?.invalidateToolProfileCache()
   }
 }
