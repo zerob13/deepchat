@@ -124,7 +124,7 @@ import { SessionDeletion } from '@/session/deletion'
 import { SessionTranscriptMutations } from '@/session/transcriptMutations'
 import { SessionTurn } from '@/session/turn'
 import { SessionLifecycle } from '@/session/lifecycle'
-import { DeepChatRuntimeCoordinator } from '@/agent/deepchat/runtime/deepChatRuntimeCoordinator'
+import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import { createAcpRuntimeOwner } from '@/agent/acp/createRuntimeOwner'
 import { createAcpRoutes } from '@/agent/acp/routes'
@@ -260,7 +260,7 @@ export async function createMainProcessControl(dependencies: {
   let knowledgeService: KnowledgeServicePort
   let workspaceService: WorkspaceServicePort
   let toolService: ToolServicePort
-  let deepChatRuntimeCoordinator: DeepChatRuntimeCoordinator
+  let deepChatAgentHarness: DeepChatAgentHarness
   let yoBrowserPresenter: IYoBrowserPresenter
   let dialogService: DialogServicePort
   let skillService: SkillServicePort
@@ -649,7 +649,7 @@ export async function createMainProcessControl(dependencies: {
       knowledgeService: knowledgeService
     }),
     providerRuntime,
-    () => deepChatRuntimeCoordinator.refreshToolRegistry(),
+    () => deepChatAgentHarness.refreshToolRegistry(),
     publishDeepchatEvent,
     (data) => deviceService.cacheImage(data)
   )
@@ -1025,54 +1025,52 @@ export async function createMainProcessControl(dependencies: {
   agentSettings.start()
 
   // Initialize new agent architecture presenters
-  deepChatRuntimeCoordinator = new DeepChatRuntimeCoordinator(
+  deepChatAgentHarness = createDeepChatAgentHarness({
     providerRuntime,
     providerSettings,
     agentSettings,
-    sessionData.database,
+    database: sessionData.database,
     sessionData,
     toolService,
-    {
-      publishEvent: publishDeepchatEvent,
-      publishSessionUpdate: (update) => sessionRuntimeEvents.publish(update),
-      providerCatalogPort,
-      sessionPermissionPort,
-      acpAsLlmProviderPermission: acpAsLlmProviderPermission,
-      sessionUiPort,
-      memoryPort: memoryService,
-      getMemoryIngestionProjection: () => memoryDatabase.ingestionProjectionTable,
-      cacheImage: (data) => deviceService.cacheImage(data),
-      skillService: skillService,
-      skillSettings,
-      traceSettings,
-      promptSettings,
-      attachmentRouter
-    },
-    hookService
-  )
+    hookObserver: hookService,
+    publishEvent: publishDeepchatEvent,
+    publishSessionUpdate: (update) => sessionRuntimeEvents.publish(update),
+    providerCatalogPort,
+    sessionPermissionPort,
+    acpAsLlmProviderPermission: acpAsLlmProviderPermission,
+    sessionUiPort,
+    memoryPort: memoryService,
+    getMemoryIngestionProjection: () => memoryDatabase.ingestionProjectionTable,
+    cacheImage: (data) => deviceService.cacheImage(data),
+    skillService: skillService,
+    skillSettings,
+    traceSettings,
+    promptSettings,
+    attachmentRouter
+  })
   const sessionTranscriptMutations = new SessionTranscriptMutations({
     transcript: sessionData.transcript,
     settings: sessionData.settings,
     pendingInputs: sessionData.pendingInputs,
-    runtime: deepChatRuntimeCoordinator,
+    runtime: deepChatAgentHarness,
     runInTransaction: (operation) => sessionData.database.getDatabase().transaction(operation)()
   })
-  memoryIngestionObserver = deepChatRuntimeCoordinator.memoryIngestionObserver
+  memoryIngestionObserver = deepChatAgentHarness.memoryIngestionObserver
   acpAgentRuntime = new AcpAgentRuntime(
     acpRuntimeOwner,
-    (input) => deepChatRuntimeCoordinator.createAcpAgentInstanceDependencies(input),
+    (input) => deepChatAgentHarness.createAcpAgentInstanceDependencies(input),
     sessionData.pendingInputs
   )
   agentManager = new AgentManager(agentRepository, appSessionService, {
     deepchat: createDeepChatAgentBackend({
-      port: deepChatRuntimeCoordinator,
-      runtime: deepChatRuntimeCoordinator.deepChatRuntime,
+      port: deepChatAgentHarness,
+      runtime: deepChatAgentHarness.deepChatRuntime,
       transcript: sessionData.transcript,
       tape: sessionData.tape
     }),
     acp: createDirectAcpAgentBackend({
       runtime: acpAgentRuntime,
-      sessionState: deepChatRuntimeCoordinator,
+      sessionState: deepChatAgentHarness,
       transcript: sessionData.transcript,
       tape: sessionData.tape,
       deleteDurableSession: async (sessionId) => {
@@ -1174,7 +1172,7 @@ export async function createMainProcessControl(dependencies: {
       cleanupSessionBackends: async (sessionId) =>
         await agentManager.cleanupSessionBackends(sessionId)
     },
-    state: deepChatRuntimeCoordinator,
+    state: deepChatAgentHarness,
     permissions: sessionPermissionPort,
     skills: {
       clearNewAgentSessionSkills: async (sessionId) =>
@@ -1552,7 +1550,7 @@ export async function createMainProcessControl(dependencies: {
 
     try {
       await mcpService.initialize()
-      deepChatRuntimeCoordinator.refreshToolRegistry()
+      deepChatAgentHarness.refreshToolRegistry()
       deeplinkService.processPendingMcpInstall()
     } catch (error) {
       console.error('Failed to initialize McpService:', error)
@@ -2212,7 +2210,7 @@ export async function createMainProcessControl(dependencies: {
       appSessionService.list({ includeSubagents: true }).map(async (session) => {
         const sessionId = toAppSessionId(session.id)
         await Promise.all([
-          deepChatRuntimeCoordinator.cleanupSession(sessionId),
+          deepChatAgentHarness.cleanupSession(sessionId),
           acpAgentRuntime.cleanupSession(sessionId)
         ])
       })

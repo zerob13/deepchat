@@ -63,7 +63,7 @@
       backend send, cancel, snapshot, and close through the harness port.
 - [x] Add the composition factory and the facade implementing the existing manager and session
       contracts.
-- [ ] Delete `deepChatRuntimeCoordinator.ts` and migrate app composition, ACP compatibility, session
+- [x] Delete `deepChatRuntimeCoordinator.ts` and migrate app composition, ACP compatibility, session
       deletion, and transcript mutation wiring.
 - [ ] Pin state hydration, message refresh, status publication, and destroy ordering with tests that
       fail if their order changes.

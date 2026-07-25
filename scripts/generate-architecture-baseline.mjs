@@ -20,7 +20,8 @@ const AGENT_SYSTEM_RUNTIME_BOUNDARY_FILES = [
   'src/main/session/assignment.ts',
   'src/main/session/turn.ts',
   'src/main/session/lifecycle.ts',
-  'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts',
+  'src/main/agent/deepchat/harness/deepChatAgentHarness.ts',
+  'src/main/agent/deepchat/harness/createDeepChatAgentHarness.ts',
   'src/main/agent/deepchat/runtime/runLifecycleCoordinator.ts',
   'src/main/agent/deepchat/runtime/sessionStatusPublisher.ts',
   'src/main/agent/deepchat/runtime/pendingInputAdmissionCoordinator.ts',
@@ -133,9 +134,9 @@ const AGENT_SYSTEM_OWNER_EVIDENCE = [
     /\bclass SessionLifecycle\b/g
   ],
   [
-    'deepChatRuntimeCoordinator',
-    'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts',
-    /\bclass DeepChatRuntimeCoordinator\b/g
+    'deepChatAgentHarness',
+    'src/main/agent/deepchat/harness/deepChatAgentHarness.ts',
+    /\bclass DeepChatAgentHarness\b/g
   ],
   [
     'runLifecycleCoordinator',
@@ -261,7 +262,7 @@ const BRIDGE_REGISTER_PATH = path.join(
 const HOT_PATH_FILES = [
   path.join(ROOT, 'src/main/app/composition.ts'),
   path.join(ROOT, 'src/main/routes/index.ts'),
-  path.join(ROOT, 'src/main/agent/deepchat/runtime/deepChatRuntimeCoordinator.ts'),
+  path.join(ROOT, 'src/main/agent/deepchat/harness/createDeepChatAgentHarness.ts'),
   path.join(ROOT, 'src/main/provider/index.ts')
 ]
 
