@@ -62,6 +62,16 @@ const DEEPCHAT_RUNTIME_LAYER_DIRS = [
   'memory',
   'resources'
 ].map((segment) => path.join(ROOT, 'src/main/agent/deepchat', segment))
+const DEEPCHAT_HARNESS_BARREL_FILE = path.join(DEEPCHAT_HARNESS_DIR, 'index.ts')
+// The harness barrel is the only supported entry point. Exporting the composed owner graph or its
+// factory would let callers reach an owner around the facade, or build a second runtime with its
+// own restart-recovery side effects.
+const DEEPCHAT_HARNESS_PUBLIC_EXPORTS = new Set([
+  'createDeepChatAgentHarness',
+  'DeepChatAgentHarness',
+  'DeepChatHarnessDependencies',
+  'DeepChatHarnessSkillPort'
+])
 const DEEPCHAT_AGENT_HARNESS_MAX_LINES = 350
 const DEEPCHAT_PENDING_INPUTS_FILE = path.join(ROOT, 'src/main/session/data/pendingInputs.ts')
 const DEEPCHAT_AGENT_INSTANCE_FILE = path.join(
@@ -349,6 +359,74 @@ function withoutSourceExtension(value) {
   return value.replace(/\.(?:[cm]?[jt]sx?)$/, '')
 }
 
+function resolveSpecifierPath(filePath, specifier) {
+  if (specifier.startsWith('.')) {
+    return path.resolve(path.dirname(filePath), specifier)
+  }
+  if (specifier.startsWith('@/')) {
+    return path.join(ROOT, 'src/main', specifier.slice(2))
+  }
+  return null
+}
+
+export function isDeepChatHarnessInternalImport(filePath, specifier) {
+  if (isUnder(filePath, DEEPCHAT_HARNESS_DIR)) {
+    return false
+  }
+  const resolved = resolveSpecifierPath(filePath, specifier)
+  if (!resolved || !isUnder(resolved, DEEPCHAT_HARNESS_DIR)) {
+    return false
+  }
+  const normalized = withoutSourceExtension(resolved)
+  return (
+    normalized !== withoutSourceExtension(DEEPCHAT_HARNESS_DIR) &&
+    normalized !== withoutSourceExtension(DEEPCHAT_HARNESS_BARREL_FILE)
+  )
+}
+
+export function findDeepChatHarnessBarrelViolations(source) {
+  const sourceFile = createTypeScriptSourceFile(DEEPCHAT_HARNESS_BARREL_FILE, source)
+  const violations = []
+  const flag = (name) => {
+    if (!DEEPCHAT_HARNESS_PUBLIC_EXPORTS.has(name)) {
+      violations.push({ kind: 'deepchat-harness-export-surface', detail: name })
+    }
+  }
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (!statement.exportClause || !ts.isNamedExports(statement.exportClause)) {
+        violations.push({ kind: 'deepchat-harness-export-surface', detail: '* re-export' })
+        continue
+      }
+      for (const element of statement.exportClause.elements) {
+        flag(element.name.text)
+      }
+      continue
+    }
+    const isDeclaration =
+      ts.isClassDeclaration(statement) ||
+      ts.isFunctionDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isVariableStatement(statement)
+    if (!isDeclaration) continue
+    if ((ts.getCombinedModifierFlags(statement) & ts.ModifierFlags.Export) === 0) continue
+
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) flag(declaration.name.text)
+      }
+      continue
+    }
+    if (statement.name) {
+      flag(statement.name.text)
+    }
+  }
+
+  return violations
+}
+
 export function isDeepChatHarnessImport(filePath, specifier) {
   if (!DEEPCHAT_RUNTIME_LAYER_DIRS.some((layerDir) => isUnder(filePath, layerDir))) {
     return false
@@ -375,6 +453,7 @@ function buildViolation(kind, filePath, detail) {
 async function findViolations() {
   const scanRoots = [
     path.join(ROOT, 'src/main/agent'),
+    path.join(ROOT, 'src/main/app/composition.ts'),
     path.join(ROOT, 'src/main/skill'),
     path.join(ROOT, 'src/main/mcp/toolManager.ts'),
     path.join(ROOT, 'src/main/sync/index.ts'),
@@ -428,6 +507,12 @@ async function findViolations() {
       }
     }
 
+    if (filePath === DEEPCHAT_HARNESS_BARREL_FILE) {
+      for (const violation of findDeepChatHarnessBarrelViolations(source)) {
+        violations.push(buildViolation(violation.kind, filePath, violation.detail))
+      }
+    }
+
     if (DEEPCHAT_HARNESS_OWNERSHIP_FILES.includes(filePath)) {
       for (const violation of findDeepChatRootOwnershipViolations(source, filePath)) {
         violations.push(buildViolation(violation.kind, filePath, violation.detail))
@@ -441,6 +526,10 @@ async function findViolations() {
 
       if (isDeepChatHarnessImport(filePath, specifier)) {
         violations.push(buildViolation('deepchat-runtime-owner-imports-harness', filePath, specifier))
+      }
+
+      if (isDeepChatHarnessInternalImport(filePath, specifier)) {
+        violations.push(buildViolation('deepchat-harness-internal-import', filePath, specifier))
       }
 
       if (

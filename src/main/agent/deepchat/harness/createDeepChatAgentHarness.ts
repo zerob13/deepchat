@@ -1,30 +1,11 @@
 import logger from '@shared/logger'
-import type { ProviderExecutionPort } from '@shared/types/provider'
-import type { SkillServicePort } from '@shared/types/skill'
-import type { ToolServicePort } from '@shared/types/tool'
-import type { AgentSettingsPort } from '@/agent/settings'
-import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
-import type { PromptSettings } from '@/agent/promptSettings'
-import type { HookObserver } from '@/hook/observer'
-import type { MemoryRuntimePort } from '@/memory/injection'
-import type { AttachmentCapabilityRouter } from '@/ocr/attachmentCapabilityRouter'
-import type { AcpAsLlmProviderPermissionPort, ProviderCatalogPort } from '@/provider/ports'
-import type { ProviderModelResolutionPort } from '@/provider/settings'
-import type { SessionData } from '@/session/data'
-import type { SessionDatabase } from '@/session/data/database'
-import type { SessionPermissionPort, SessionUiPort } from '@/session/contracts'
-import type { SkillSettingsPort } from '@/skill/settings'
 import type { AcpAgentInstanceDependencyFactory } from '@/agent/acp/instance'
 import { createAcpCompatibilityDependencies } from '@/agent/acp/compatibility/dependencies'
 import { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
-import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
-import {
-  MemoryRuntimeCoordinator,
-  type MemoryIngestionProjection
-} from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
+import { MemoryRuntimeCoordinator } from '@/agent/deepchat/memory/memoryRuntimeCoordinator'
 import { CompactionRuntimeCoordinator } from '@/agent/deepchat/runtime/compactionRuntimeCoordinator'
 import { CompactionService } from '@/agent/deepchat/runtime/compactionService'
 import { DeepChatLoopRunner } from '@/agent/deepchat/runtime/deepChatLoopRunner'
@@ -55,74 +36,15 @@ import {
 } from '@/agent/deepchat/runtime/toolRuntimeBindings'
 import { TranscriptMutationCoordinator } from '@/agent/deepchat/runtime/transcriptMutationCoordinator'
 import { TurnCoordinator } from '@/agent/deepchat/runtime/turnCoordinator'
-import type {
-  DeepChatEventPublisher,
-  DeepChatSessionUpdatePublisher
-} from '@/agent/deepchat/runtime/types'
 import { DeepChatAgentHarness } from './deepChatAgentHarness'
+import type { DeepChatHarnessDependencies, DeepChatRuntimeServices } from './runtimeServices'
 import { createPendingInputWakeupBinding } from './pendingInputWakeupBinding'
-
-export type DeepChatHarnessSkillPort = Pick<
-  SkillServicePort,
-  | 'getMetadataList'
-  | 'getActiveSkills'
-  | 'resolveSessionAgentId'
-  | 'setActiveSkills'
-  | 'revalidateActiveSkillsForAgent'
-  | 'validateSkillNames'
-  | 'loadSkillContent'
-  | 'viewDraftSkill'
-  | 'installDraftSkill'
-  | 'discardDraftSkill'
->
-
-export interface DeepChatHarnessDependencies {
-  providerRuntime: ProviderExecutionPort
-  providerSettings: ProviderModelResolutionPort
-  agentSettings: AgentSettingsPort
-  database: SessionDatabase
-  sessionData: SessionData
-  toolService: ToolServicePort
-  hookObserver: HookObserver
-  publishEvent: DeepChatEventPublisher
-  publishSessionUpdate: DeepChatSessionUpdatePublisher
-  providerCatalogPort: Pick<ProviderCatalogPort, 'getProviderModels' | 'getCustomModels'>
-  sessionPermissionPort: SessionPermissionPort
-  acpAsLlmProviderPermission: AcpAsLlmProviderPermissionPort
-  sessionUiPort: SessionUiPort
-  memoryPort: MemoryRuntimePort
-  getMemoryIngestionProjection(): MemoryIngestionProjection
-  cacheImage(data: string): Promise<string>
-  skillService: DeepChatHarnessSkillPort
-  skillSettings: SkillSettingsPort
-  traceSettings: AgentTraceSettingsPort
-  promptSettings: Pick<PromptSettings, 'getDefaultSystemPrompt'>
-  attachmentRouter: Pick<AttachmentCapabilityRouter, 'prepare'>
-}
-
-/** Owners the harness delegates to. Internal collaborators stay inside the composition. */
-export interface DeepChatRuntimeServices {
-  runtime: DeepChatAgentRuntime
-  sessionLifecycle: SessionLifecycleCoordinator
-  sessionState: SessionStateResolver
-  sessionSettings: SessionSettingsCoordinator
-  runLifecycle: RunLifecycleCoordinator
-  turnCoordinator: TurnCoordinator
-  interactionCoordinator: InteractionCoordinator
-  pendingInputAdmission: PendingInputAdmissionCoordinator
-  compaction: CompactionRuntimeCoordinator
-  transcriptMutation: TranscriptMutationCoordinator
-  memoryIngestionObserver: MemoryIngestionObserver
-  acpCompatibility: AcpAgentInstanceDependencyFactory
-}
 
 /**
  * Single composition root for the DeepChat agent runtime. Owners are constructed in dependency
  * order; the only deferred wiring is the run-settlement to pending-input-pump feedback loop.
  */
-export function createDeepChatRuntimeServices(
-  deps: DeepChatHarnessDependencies
-): DeepChatRuntimeServices {
+function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepChatRuntimeServices {
   const {
     agentSettings,
     attachmentRouter,

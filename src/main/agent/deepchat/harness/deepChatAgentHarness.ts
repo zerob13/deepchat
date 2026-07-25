@@ -20,7 +20,7 @@ import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatAgentBackendPort } from '@/agent/manager/deepChatAgentBackend'
 import type { SessionStatePort } from '@/session/data/contracts'
 import type { SessionTranscriptRuntimePort } from '@/session/transcriptMutations'
-import type { DeepChatRuntimeServices } from './createDeepChatAgentHarness'
+import type { DeepChatRuntimeServices } from './runtimeServices'
 
 /**
  * Public boundary of the DeepChat agent runtime. Every method delegates to exactly one owner; the
