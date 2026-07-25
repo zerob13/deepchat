@@ -17,15 +17,20 @@ src/main/agent/deepchat/
 │   ├── deepChatAgentHarness.ts         # delegation against existing ports only
 │   ├── pendingInputWakeupBinding.ts    # the only explicit late binding
 │   └── index.ts
-├── runtime/
-│   ├── sessionIdentityService.ts
-│   ├── sessionStateResolver.ts
-│   ├── sessionLifecycleCoordinator.ts
-│   ├── transcriptMutationCoordinator.ts
-│   └── messageProjectionService.ts
-└── resources/
-    └── systemPromptBuilder.ts          # domain implementation plus bound assembler factory
+└── runtime/
+    ├── sessionIdentityService.ts
+    ├── sessionStateResolver.ts
+    ├── sessionLifecycleCoordinator.ts
+    ├── transcriptMutationCoordinator.ts
+    ├── messageProjectionService.ts
+    ├── promptAssemblyService.ts        # binds resources/systemPromptBuilder
+    ├── toolRuntimeBindings.ts          # binds tool result normalization and permission review
+    └── streamRequestId.ts              # shared by run lifecycle and message projection
 ```
+
+Bindings live under `runtime/` rather than beside the domain functions they bind because
+`resources/` is excluded from the repository formatter by the shared `resources` ignore pattern.
+The domain implementations stay where they are.
 
 ### Stage 1: Specify
 

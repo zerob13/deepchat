@@ -25,6 +25,7 @@ import { resolveProviderPermissionSafely } from './providerPermissionResolution'
 import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
 import { buildUsageFromMetadata, stampTerminalMetadata } from './runtimeMetadata'
 import type { SessionStatusPublisher } from './sessionStatusPublisher'
+import { resolveStreamRequestId as resolveRegistryStreamRequestId } from './streamRequestId'
 import type { ProcessResult } from './types'
 
 export type PendingInputWakeReason = 'enqueue' | 'completed'
@@ -248,11 +249,7 @@ export class RunLifecycleCoordinator {
   }
 
   resolveStreamRequestId(sessionId: string, messageId: string): string {
-    const activeRun = this.getHydratedScope(sessionId)?.instance.getActiveGeneration()
-    if (!activeRun || !this.isMessageAssociatedWithRun(activeRun, messageId)) {
-      return messageId
-    }
-    return activeRun.runId
+    return resolveRegistryStreamRequestId(this.ports.runtime, sessionId, messageId)
   }
 
   async cancel(sessionId: string): Promise<void> {

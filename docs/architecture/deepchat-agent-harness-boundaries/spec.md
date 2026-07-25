@@ -215,9 +215,9 @@ concrete dependencies and no reference to the facade.
 | `TranscriptMutationCoordinator` | Clear, retry, truncate, and fork coordination against the transcript mutation contract | `prepareClearMessages`, `finishClearMessages`, `prepareRetry`, `cancelForTranscriptMutation`, `invalidateTranscriptFrom`, `finishTranscriptTruncate`, `resetForkTarget` |
 | `MessageProjectionService` | Assistant message refresh projection and subagent tool-call progress persistence | `emitMessageRefresh`, `updateSubagentToolCallProgress` |
 
-Two existing domain modules gain bound entry points instead of new wrapper classes.
-`resources/systemPromptBuilder.ts` keeps its domain implementation and gains a bound assembler
-factory that owns `BasePromptAssembler` and `PostCompactionPromptAssembler` construction.
+Three existing domain implementations gain bound entry points instead of moving.
+`buildSystemPromptWithSkills` keeps its implementation in `resources/systemPromptBuilder.ts` and
+gains a binding that owns `BasePromptAssembler` and `PostCompactionPromptAssembler` construction.
 `normalizeToolResultContent` and `reviewAutoApproveToolPermission` stay domain functions and are
 bound once through named ports at composition time. Mechanically wrapping a single function in a
 class adds indirection without adding an owner.
