@@ -7043,6 +7043,8 @@ describe('DeepChatRuntimeCoordinator', () => {
 
     it('rolls back a user fact when compaction fails after the fact is appended', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      sqlitePresenter.deepchatSessionsTable.updateMemoryCursorOrderSeq('s1', 8)
+      sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mockClear()
       vi.mocked(nanoid)
         .mockReturnValueOnce('compaction-pending')
         .mockReturnValueOnce('compaction-projection')
@@ -7069,6 +7071,7 @@ describe('DeepChatRuntimeCoordinator', () => {
       const applyCompaction = vi
         .spyOn(CompactionService.prototype, 'applyCompaction')
         .mockRejectedValue(new Error('compaction failed after append'))
+      const releaseClaim = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
       let persistedUserRow: any
       sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
         if (row.role !== 'user') return
@@ -7111,6 +7114,19 @@ describe('DeepChatRuntimeCoordinator', () => {
           's1',
           1
         )
+        expect(sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq).toHaveBeenCalledWith(
+          's1',
+          0
+        )
+        expect(
+          sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mock
+            .invocationCallOrder[0]
+        ).toBeLessThan(
+          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
+        )
+        expect(
+          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
+        ).toBeLessThan(releaseClaim.mock.invocationCallOrder[0])
         expect(prepareCompaction).toHaveBeenCalledOnce()
         expect(applyCompaction).toHaveBeenCalledOnce()
         expect(processStream).not.toHaveBeenCalled()
@@ -7168,6 +7184,66 @@ describe('DeepChatRuntimeCoordinator', () => {
         expect(processStream).not.toHaveBeenCalled()
       } finally {
         errorSpy.mockRestore()
+      }
+    })
+
+    it('keeps a claimed input fenced when transcript rollback fails', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      vi.mocked(nanoid)
+        .mockReturnValueOnce('rollback-fenced')
+        .mockReturnValueOnce('rollback-user')
+        .mockReturnValueOnce('rollback-assistant')
+        .mockReturnValueOnce('waiting-after-rollback')
+      let persistedUserRow: ReturnType<typeof makeDeepchatUserRow> | undefined
+      sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
+        if (row.role === 'user') {
+          persistedUserRow = makeDeepchatUserRow(
+            row.orderSeq,
+            JSON.parse(row.content).text,
+            row.id
+          )
+        }
+      })
+      sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
+        persistedUserRow?.id === id ? persistedUserRow : undefined
+      )
+      sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mockImplementation(() => {
+        throw new Error('transcript rollback unavailable')
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 'error',
+        stopReason: 'provider_error'
+      })
+      const releaseClaim = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+      try {
+        const claimed = await agent.queuePendingInput('s1', 'Do not duplicate', {
+          source: 'queue'
+        })
+
+        await vi.waitFor(() => {
+          expect(
+            agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1')).isPendingQueueDraining()
+          ).toBe(false)
+          expect(sqlitePresenter.deepchatPendingInputsTable.get(claimed.id)).toMatchObject({
+            state: 'claimed'
+          })
+        })
+
+        expect(releaseClaim).not.toHaveBeenCalled()
+        const waiting = await agent.queuePendingInput('s1', 'Wait behind fenced claim', {
+          source: 'queue'
+        })
+        await Promise.resolve()
+        expect(processStream).toHaveBeenCalledOnce()
+        expect(await agent.listPendingInputs('s1')).toEqual([
+          expect.objectContaining({ id: waiting.id, state: 'pending' })
+        ])
+      } finally {
+        errorSpy.mockRestore()
+        warnSpy.mockRestore()
       }
     })
 
@@ -7341,23 +7417,8 @@ describe('DeepChatRuntimeCoordinator', () => {
 
     it('claims immediately runnable turns instead of exposing a queued item first', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-
-      const claimedRecord = {
-        id: 'q1',
-        sessionId: 's1',
-        mode: 'queue',
-        state: 'claimed',
-        payload: { text: 'Hello', files: [] },
-        queueOrder: 1,
-        claimedAt: 1,
-        consumedAt: null,
-        createdAt: 1,
-        updatedAt: 1
-      }
       const queueSpy = vi
         .spyOn(sessionData.pendingInputs, 'queuePendingInput')
-        .mockReturnValue(claimedRecord)
-      const processSpy = vi.spyOn(agent, 'processMessage').mockResolvedValue()
 
       const result = await agent.queuePendingInput('s1', 'Hello', {
         projectDir: '/tmp/workspace'
@@ -7368,15 +7429,20 @@ describe('DeepChatRuntimeCoordinator', () => {
         { text: 'Hello', files: [] },
         { state: 'claimed' }
       )
-      expect(processSpy).toHaveBeenCalledWith(
-        's1',
-        claimedRecord.payload,
-        expect.objectContaining({
-          projectDir: '/tmp/workspace',
-          pendingQueueItemId: claimedRecord.id
-        })
+      expect(result).toMatchObject({
+        sessionId: 's1',
+        mode: 'queue',
+        state: 'claimed',
+        payload: { text: 'Hello', files: [] }
+      })
+      await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(callArgs.run.messages.at(-1)).toEqual({ role: 'user', content: 'Hello' })
+      expect(hookDispatcher.dispatchEvent).toHaveBeenCalledWith(
+        'UserPromptSubmit',
+        expect.objectContaining({ workdir: '/tmp/workspace', promptPreview: 'Hello' })
       )
-      expect(result).toBe(claimedRecord)
+      expect(await agent.listPendingInputs('s1')).toEqual([])
     })
 
     it('keeps queue-origin inputs pending while waiting for a tool follow-up', async () => {
@@ -7567,52 +7633,6 @@ describe('DeepChatRuntimeCoordinator', () => {
       )
     })
 
-    it.each(['queue', 'steer'] as const)(
-      'rolls back transcript and Memory before releasing a claimed $source input',
-      (source) => {
-        sqlitePresenter.deepchatSessionsTable.updateMemoryCursorOrderSeq('s1', 8)
-        sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mockClear()
-        sqlitePresenter.deepchatMessagesTable.get.mockReturnValue(
-          makeDeepchatUserRow(5, 'pending text', 'pending-user')
-        )
-        const payload = { text: 'pending text', files: [] }
-        const pending =
-          source === 'queue'
-            ? sessionData.pendingInputs.queuePendingInput('s1', payload)
-            : sessionData.pendingInputs.queueSteerInput('s1', payload)
-        const claimed =
-          source === 'queue'
-            ? sessionData.pendingInputs.claimQueuedInput('s1', pending.id)
-            : sessionData.pendingInputs.claimSteerInput('s1', pending.id)
-        const releaseSpy =
-          source === 'queue'
-            ? vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
-            : vi.spyOn(sessionData.pendingInputs, 'releaseClaimedInput')
-
-        agent.rollbackClaimedPendingInputTurn('s1', claimed.id, source, 'pending-user')
-
-        expect(
-          sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq
-        ).toHaveBeenCalledWith('s1', 4)
-        expect(sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq).toHaveBeenCalledWith(
-          's1',
-          5
-        )
-        expect(releaseSpy).toHaveBeenCalledWith('s1', claimed.id)
-        expect(sessionData.pendingInputs.listPendingInputs('s1')).toEqual([
-          expect.objectContaining({ id: claimed.id, mode: source, state: 'pending' })
-        ])
-        expect(
-          sqlitePresenter.deepchatSessionsTable.rewindMemoryCursorOrderSeq.mock
-            .invocationCallOrder[0]
-        ).toBeLessThan(
-          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
-        )
-        expect(
-          sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq.mock.invocationCallOrder[0]
-        ).toBeLessThan(releaseSpy.mock.invocationCallOrder[0])
-      }
-    )
   })
 
   describe('session compaction state', () => {
