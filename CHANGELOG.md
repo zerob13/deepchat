@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.0-beta.6 (2026-07-25)
+- Retried transient provider failures and stabilized the provider retry lifecycle
+- Preserved streaming failure state and modeled provider attempt identity across the agent runtime
+- 重试瞬时 provider 失败并稳定 provider 重试生命周期
+- 保留流式失败状态并在 agent runtime 中建模 provider 尝试身份
+
 ## v1.1.0-beta.5 (2026-07-24)
 - Integrated Light-OCR and restored OCR compatibility
 - Added Linux ARM64 build support
