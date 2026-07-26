@@ -392,22 +392,31 @@ That weak contract produced measurable defects:
 
 ### Event Contract
 
-`HookEvent` is a discriminated union of one session envelope and one event body. Each body carries
-exactly the facts its event defines, so tool facts cannot ride on `Stop` and `PreToolUse` cannot omit
-them. Two compile-time guards keep it honest: one fails when the union and `HOOK_EVENT_NAMES` drift
-apart in either direction, and one pins the combinations the union must refuse. Surplus fields on an
-event literal are refused by excess property checking at the emit site, which no type-level assertion
-can express.
+`HookEvent` is a discriminated union of one session envelope and one event body. Each variant is
+closed against every fact it does not declare, so tool facts cannot ride on `Stop` and `PreToolUse`
+cannot omit them. Closing the variants matters because excess property checking alone only refuses
+surplus fields on a fresh literal: a variable carrying both `stop` and `tool` would otherwise
+satisfy the union. Two compile-time guards keep it honest: one fails when the union and
+`HOOK_EVENT_NAMES` drift apart in either direction, and one pins the combinations the union must
+refuse, for both missing and foreign facts.
 
 `HookEventName`, the settings shape, and the `payloadVersion: 1` wire payload are unchanged, because
 they are the renderer contract and the user script contract respectively.
 
 ### Runtime Scope
 
-`RuntimeHookSink` becomes a factory for `RuntimeHookScope`, which binds the immutable session facts
-of one turn: session and message identity, provider, model, agent, and working directory. The scope
-holds no service graph, persists nothing, and duplicates no runtime state. Producers emit event
-bodies against it, so no call site assembles an envelope.
+`RuntimeHookSink` becomes a factory for `RuntimeHookScope`, a bound emitter that resolves one session
+envelope once for the producer that created it: session and message identity, provider, model,
+agent, and working directory. The scope holds no service graph, persists nothing, and duplicates no
+runtime state. Producers emit event bodies against it, so no emit site assembles an envelope
+field by field.
+
+The scope is per producer, not per turn. A normal turn creates three: `TurnCoordinator` for the
+submitted prompt, `DeepChatLoopRunner` for the run and its tool facts, and
+`RuntimeHookSink.observeTerminal` for settlement, which reaches the sink from
+`RunLifecycleCoordinator` without the turn's scope. Threading one scope through the run lifecycle
+would add a new state carrier to that owner and is out of this slice, so a setting changed mid-turn
+can still be observed by later events of the same turn.
 
 The scope resolves the working directory lazily and once. An unobserved event resolves nothing, and
 a resolution failure leaves the directory unanswered rather than dropping the notification, so
@@ -441,6 +450,18 @@ and unrelated sessions never wait for each other. The guarantee is event accepta
 order; completion order of external processes is not ordered, no hook is awaited, and Agent tool
 execution never blocks on one.
 
+Configuration is owned at acceptance, not at delivery. An accepted event carries the identity and
+command of every hook eligible at that moment, and delivery runs a hook only when it is still
+eligible under the same command. A hook enabled or edited after an event happened therefore never
+receives it, and one disabled while the event was queued stops receiving it. Because enrichment is
+asynchronous, that revalidation is settled immediately before spawning rather than when the delivery
+was dequeued.
+
+A hook command that outlives its timeout settles its own result. A killed shell can keep a process
+tree alive and never emit `close`, so waiting for exit could leave the settings test call pending
+forever. Captured stdout and stderr are bounded by the diagnostic limit they are truncated to, so a
+command that streams for its whole timeout window cannot grow main-process memory without bound.
+
 Fault isolation stays layered rather than collapsed. The loop guards its notification boundary, the
 scope guards the runtime boundary so no hook failure reaches settlement, the service guards each
 queued delivery, and each hook command is isolated from its siblings and from the next event.
@@ -449,7 +470,7 @@ queued delivery, and each hook command is isolated from its siblings and from th
 
 | Correction | Previous behavior | Required behavior and rationale |
 | --- | --- | --- |
-| Terminal drift | Four independent `Stop` plus `SessionEnd` implementations computed their own reason, and the ACP path omitted `usage`. | One projection owns the pair, so `usage` and `error` no longer depend on the entry point. |
+| Terminal drift | Four independent `Stop` plus `SessionEnd` implementations computed their own reason and fallbacks, and each could drift again. | One projection owns the pair and normalizes a missing `usage` or `error` to an explicit null. ACP still reports `usage: null` because `AcpObserverPort.terminal` carries no token accounting; giving ACP real usage needs protocol design and is not part of this slice. |
 | Assistant text as prompt preview | An event carrying a message id but no preview read that message and reported its text as `user.promptPreview`. Every producer passes an assistant message id, so the fallback was wrong at every call site and cost a row read per event. | Prompt previews come from the producer that owns the prompt. The message lookup and its query port are removed; `user.messageId` is unchanged. |
 | Answered null project directory | Enrichment triggered whenever `workdir` was falsy, so an explicit null cost a session read that returned null. | Only an unanswered field triggers a lookup. |
 | Unguarded envelope resolution | `observeTerminal` resolved the project directory outside the sink's guard, so a stale-instance assertion could propagate into run settlement. | Envelope resolution happens inside the guarded region and degrades to an unanswered field. |
@@ -465,6 +486,8 @@ captured when the event occurs rather than when its payload is assembled.
 | --- | --- | --- |
 | Hydrating project-directory read | `resolveProjectDir` reaches `getOrHydrateScope`, so resolving a hook envelope can recreate a runtime instance for an evicted session. | Pre-existing. The subscription gate removes the call entirely for unconfigured installations; making the read non-hydrating changes `SessionSettingsCoordinator` and belongs to its own change. |
 | Hook command environment inheritance | Hook commands spawn with the full parent environment, so any secret in the Agent process environment is visible to them. | Pre-existing and out of scope for a delivery contract. Closing it requires an allowlist design and a settings surface. |
+| Orphaned process trees | A timed-out command is killed with `SIGKILL` on the shell only, so grandchildren can survive and keep the child registered until the process exits. | The result no longer depends on that exit. Killing the whole tree and bounding concurrent hook processes is separate reliability work. |
+| Per-turn envelope resolution | Three producers each resolve their own envelope, so a setting changed mid-turn can be observed by later events of the same turn. | Accepted. Threading one scope through the run lifecycle adds a state carrier to `RunLifecycleCoordinator` and belongs to its own change. |
 
 ## Typed Hook Notification Pipeline Goals
 
@@ -676,19 +699,23 @@ execution continues to settle independently and commit results in provider call 
 
 ## Typed Hook Notification Pipeline Acceptance Criteria
 
-1. `HookEvent` correlates every event name with its payload, and the coverage and rejection guards
-   fail compilation when a name loses its body variant or a required fact becomes optional.
-2. No producer assembles a session envelope, and `Stop` plus `SessionEnd` has one implementation
-   that all four previous entry points reach.
+1. `HookEvent` correlates every event name with its payload, refuses a foreign fact through a
+   variable as well as a literal, and the coverage and rejection guards fail compilation when a name
+   loses its body variant or a required fact becomes optional.
+2. No emit site assembles a session envelope field by field, and `Stop` plus `SessionEnd` has one
+   implementation that all four previous entry points reach.
 3. An event with no enabled subscriber performs one subscription lookup and nothing else: no
    envelope resolution, projection, clone, settings read, session read, or spawn.
 4. A configuration write through the service refreshes the subscription index atomically, and a
    write that bypasses the service is picked up by the next explicit refresh or service restart.
+   A hook enabled or edited after an event was accepted never receives that event, and a hook
+   disabled while the event was queued does not run it.
 5. Tool previews are truncated before any clone, and the permission record receives the only clone.
 6. Events of one session start their commands in emission order under delayed enrichment, and a
    stalled session does not delay another.
 7. A hook command that fails to spawn, times out, or throws does not stall its siblings or the next
-   event, and no hook failure reaches run settlement.
+   event, and no hook failure reaches run settlement. A timed-out command settles its own result
+   without waiting for an exit that may never arrive, and captured diagnostics stay bounded.
 8. `payloadVersion`, the stdin payload shape, environment variables, command placeholders, the
    command timeout, and the settings contract are unchanged; `user.promptPreview` reports only a
    prompt the producer supplied.
