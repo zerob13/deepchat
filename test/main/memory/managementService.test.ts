@@ -1831,7 +1831,9 @@ describe('MemoryService agentId safety guards', () => {
       archivedMemoryCount: 0,
       conflictCount: 0,
       personaDraftCount: 0,
-      personaVersionCount: 0
+      personaVersionCount: 0,
+      directiveDraftCount: 0,
+      activeDirectiveCount: 0
     })
     expect(presenter.getHealth('ghost')).toEqual(createEmptyMemoryHealth())
     expect(await presenter.clearMemories('ghost')).toBe(0)

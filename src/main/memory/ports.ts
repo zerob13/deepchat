@@ -9,6 +9,13 @@ import type {
   MemoryAuditListOptions
 } from './domain/audit'
 import type {
+  AgentMemoryDirectiveRow,
+  MemoryDirectiveCounts,
+  MemoryDirectiveInsertResult,
+  MemoryDirectiveWriteInput,
+  MemoryDirectiveWriteResult
+} from './domain/directives'
+import type {
   AgentMemoryHealthStats,
   AgentMemoryDerivationRow,
   AgentMemoryEmbeddingState,
@@ -264,6 +271,30 @@ export interface MemoryDirtyRepositoryPort {
   settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number
   deferDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[], deferredAt: number): number
   countDirtySeeds(agentId: string): number
+}
+
+export interface MemoryDirectiveRepositoryPort {
+  getDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | undefined
+  listDirectives(
+    agentId: string,
+    options?: {
+      statuses?: readonly AgentMemoryDirectiveRow['status'][]
+      limit?: number
+    }
+  ): AgentMemoryDirectiveRow[]
+  listActiveDirectives(agentId: string, limit: number): AgentMemoryDirectiveRow[]
+  upsertExplicitDirective(input: MemoryDirectiveWriteInput): MemoryDirectiveWriteResult
+  insertDerivedDirectiveDraft(input: MemoryDirectiveWriteInput): MemoryDirectiveInsertResult
+  transitionDirective(
+    agentId: string,
+    directiveId: string,
+    fromStatus: AgentMemoryDirectiveRow['status'],
+    toStatus: AgentMemoryDirectiveRow['status'],
+    updatedAt: number
+  ): AgentMemoryDirectiveRow | null
+  deleteDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
+  countDirectivesByStatus(agentId: string): MemoryDirectiveCounts
+  retireDirectiveNamespace(agentId: string): number
 }
 
 export interface MemoryRepositoryPort

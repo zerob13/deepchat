@@ -54,6 +54,8 @@ import type {
   MemoryTransactionPort
 } from '../ports'
 
+type ClaimMemoryStatus = Omit<MemoryStatus, 'directiveDraftCount' | 'activeDirectiveCount'>
+
 function toHealthTopAccessedItem(
   row: AgentMemoryRow
 ): MemoryHealthDto['access']['topAccessed'][number] | null {
@@ -720,7 +722,7 @@ export class ManagementService {
     return { removed, cleanupPendingRestart }
   }
 
-  getStatus(agentId: string): MemoryStatus {
+  getStatus(agentId: string): ClaimMemoryStatus {
     this.ctx.assertSafeAgentId(agentId)
     if (!this.ctx.isManagedAgent(agentId)) {
       return {

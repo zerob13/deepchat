@@ -500,6 +500,8 @@ export interface MemoryStatus {
   conflictCount: number
   personaDraftCount: number
   personaVersionCount: number
+  directiveDraftCount: number
+  activeDirectiveCount: number
   reindexing?: boolean
   lastReindex?: MemoryReindexResult
 }
@@ -528,6 +530,7 @@ export interface MemoryReindexResult {
 
 export interface MemoryUpdateContext {
   memoryId?: string
+  directiveId?: string
   sessionId?: string | null
   createdIds?: string[]
 }

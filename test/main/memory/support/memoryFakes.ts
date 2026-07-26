@@ -2,6 +2,7 @@ import { vi } from 'vitest'
 
 import { MemoryService } from '@/memory'
 import {
+  AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT,
   AGENT_MEMORY_CATEGORIES,
   AGENT_MEMORY_HEALTH_KIND_KEYS,
   AGENT_MEMORY_HEALTH_STATUS_KEYS,
@@ -17,6 +18,7 @@ import type {
   IMemoryVectorStore,
   MemoryAuditListOptions,
   MemoryAuditRepositoryPort,
+  MemoryDirectiveRepositoryPort,
   MemoryRepositoryPort,
   MemoryServiceDeps,
   MemoryVectorMatch,
@@ -34,6 +36,13 @@ import type {
   MemoryReadRepositoryPort,
   MemoryTransactionPort
 } from '@/memory/ports'
+import type {
+  AgentMemoryDirectiveRow,
+  MemoryDirectiveCounts,
+  MemoryDirectiveInsertResult,
+  MemoryDirectiveWriteInput,
+  MemoryDirectiveWriteResult
+} from '@/memory/domain/directives'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
 import { normalizeMemoryTemporalMetadata } from '@/memory/core/temporal'
 import {
@@ -2147,6 +2156,173 @@ export function createFakeRepository(): FakeRepository {
   ) as FakeRepository
 }
 
+function copyDirective(row: AgentMemoryDirectiveRow): AgentMemoryDirectiveRow {
+  return { ...row }
+}
+
+export class FakeDirectiveRepository implements MemoryDirectiveRepositoryPort {
+  readonly rows = new Map<string, AgentMemoryDirectiveRow>()
+
+  private key(agentId: string, directiveId: string): string {
+    return JSON.stringify([agentId, directiveId])
+  }
+
+  private findByIdentity(
+    agentId: string,
+    kind: AgentMemoryDirectiveRow['kind'],
+    identityHash: string
+  ): AgentMemoryDirectiveRow | undefined {
+    return [...this.rows.values()].find(
+      (row) => row.agent_id === agentId && row.kind === kind && row.identity_hash === identityHash
+    )
+  }
+
+  getDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | undefined {
+    const row = this.rows.get(this.key(agentId, directiveId))
+    return row ? copyDirective(row) : undefined
+  }
+
+  listDirectives(
+    agentId: string,
+    options: {
+      statuses?: readonly AgentMemoryDirectiveRow['status'][]
+      limit?: number
+    } = {}
+  ): AgentMemoryDirectiveRow[] {
+    const statuses = options.statuses?.length ? new Set(options.statuses) : null
+    const limit = Math.min(200, Math.max(0, Math.floor(options.limit ?? 100)))
+    return [...this.rows.values()]
+      .filter((row) => row.agent_id === agentId && (!statuses || statuses.has(row.status)))
+      .sort((left, right) => right.updated_at - left.updated_at || left.id.localeCompare(right.id))
+      .slice(0, limit)
+      .map(copyDirective)
+  }
+
+  listActiveDirectives(agentId: string, limit: number): AgentMemoryDirectiveRow[] {
+    return this.listDirectives(agentId, { statuses: ['active'], limit })
+  }
+
+  upsertExplicitDirective(input: MemoryDirectiveWriteInput): MemoryDirectiveWriteResult {
+    if (input.status !== 'active' || input.source === 'derived_suggestion') {
+      throw new Error('[Memory] explicit directives must enter the active trust state')
+    }
+    const existing = this.findByIdentity(input.agentId, input.kind, input.identityHash)
+    if (
+      existing?.status !== 'active' &&
+      this.countDirectivesByStatus(input.agentId).active >= AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
+    ) {
+      return { action: 'capacity', row: null }
+    }
+    if (
+      existing?.status === input.status &&
+      existing.source === input.source &&
+      existing.content === input.content &&
+      existing.normalized_topic === input.normalizedTopic
+    ) {
+      return { action: 'unchanged', row: copyDirective(existing) }
+    }
+    const row: AgentMemoryDirectiveRow = existing
+      ? {
+          ...existing,
+          status: input.status,
+          source: input.source,
+          content: input.content,
+          normalized_topic: input.normalizedTopic,
+          updated_at: Math.max(existing.updated_at, input.updatedAt)
+        }
+      : {
+          agent_id: input.agentId,
+          id: input.id,
+          kind: input.kind,
+          status: input.status,
+          source: input.source,
+          content: input.content,
+          normalized_topic: input.normalizedTopic,
+          identity_hash: input.identityHash,
+          created_at: input.createdAt,
+          updated_at: input.updatedAt
+        }
+    this.rows.set(this.key(row.agent_id, row.id), row)
+    return { action: existing ? 'updated' : 'created', row: copyDirective(row) }
+  }
+
+  insertDerivedDirectiveDraft(input: MemoryDirectiveWriteInput): MemoryDirectiveInsertResult {
+    if (input.status !== 'draft' || input.source !== 'derived_suggestion') {
+      throw new Error('[Memory] derived directives must enter the draft trust state')
+    }
+    const existing = this.findByIdentity(input.agentId, input.kind, input.identityHash)
+    if (existing) return { inserted: false, row: copyDirective(existing) }
+    const row: AgentMemoryDirectiveRow = {
+      agent_id: input.agentId,
+      id: input.id,
+      kind: input.kind,
+      status: 'draft',
+      source: 'derived_suggestion',
+      content: input.content,
+      normalized_topic: input.normalizedTopic,
+      identity_hash: input.identityHash,
+      created_at: input.createdAt,
+      updated_at: input.updatedAt
+    }
+    this.rows.set(this.key(row.agent_id, row.id), row)
+    return { inserted: true, row: copyDirective(row) }
+  }
+
+  transitionDirective(
+    agentId: string,
+    directiveId: string,
+    fromStatus: AgentMemoryDirectiveRow['status'],
+    toStatus: AgentMemoryDirectiveRow['status'],
+    updatedAt: number
+  ): AgentMemoryDirectiveRow | null {
+    if (fromStatus !== 'draft' || (toStatus !== 'active' && toStatus !== 'rejected')) {
+      throw new Error('[Memory] invalid directive trust transition')
+    }
+    const key = this.key(agentId, directiveId)
+    const row = this.rows.get(key)
+    if (!row || row.status !== fromStatus) return null
+    if (
+      toStatus === 'active' &&
+      this.countDirectivesByStatus(agentId).active >= AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
+    ) {
+      return null
+    }
+    const updated = {
+      ...row,
+      status: toStatus,
+      updated_at: Math.max(row.updated_at, Math.max(0, Math.floor(updatedAt)))
+    }
+    this.rows.set(key, updated)
+    return copyDirective(updated)
+  }
+
+  deleteDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
+    const key = this.key(agentId, directiveId)
+    const row = this.rows.get(key)
+    if (!row) return null
+    this.rows.delete(key)
+    return copyDirective(row)
+  }
+
+  countDirectivesByStatus(agentId: string): MemoryDirectiveCounts {
+    const counts: MemoryDirectiveCounts = { draft: 0, active: 0, rejected: 0 }
+    for (const row of this.rows.values()) {
+      if (row.agent_id === agentId) counts[row.status] += 1
+    }
+    return counts
+  }
+
+  retireDirectiveNamespace(agentId: string): number {
+    let removed = 0
+    for (const [key, row] of this.rows) {
+      if (row.agent_id !== agentId) continue
+      this.rows.delete(key)
+      removed += 1
+    }
+    return removed
+  }
+}
+
 export class FakeAuditRepository implements MemoryAuditRepositoryPort {
   rows: AgentMemoryAuditRow[] = []
 
@@ -2355,6 +2531,7 @@ export function makePresenter(
   repo = createFakeRepository(),
   options: {
     isManagedAgent?: (agentId: string) => boolean
+    directiveRepository?: MemoryDirectiveRepositoryPort
     markVectorStoreQuarantined?: MemoryServiceDeps['markVectorStoreQuarantined']
     onMemoryChanged?: MemoryServiceDeps['onMemoryChanged']
     clock?: MemoryServiceDeps['clock']
@@ -2362,6 +2539,7 @@ export function makePresenter(
 ) {
   const store = new FakeVectorStore()
   const auditRepo = new FakeAuditRepository()
+  const directiveRepo = options.directiveRepository ?? new FakeDirectiveRepository()
   const getEmbeddings = vi.fn(async (_p: string, _m: string, texts: string[]) =>
     texts.map((text) => textToVector(text))
   )
@@ -2375,6 +2553,7 @@ export function makePresenter(
   const presenter = new MemoryService({
     executeWithRateLimit: vi.fn(async () => undefined),
     repository: repo,
+    directiveRepository: directiveRepo,
     auditRepository: auditRepo,
     resolveAgentConfig: () => config,
     isManagedAgent: options.isManagedAgent,
@@ -2389,5 +2568,14 @@ export function makePresenter(
     resetVectorStore,
     clock: options.clock
   })
-  return { presenter, repo, auditRepo, store, getEmbeddings, getDimensions, resetVectorStore }
+  return {
+    presenter,
+    repo,
+    directiveRepo,
+    auditRepo,
+    store,
+    getEmbeddings,
+    getDimensions,
+    resetVectorStore
+  }
 }

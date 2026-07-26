@@ -263,6 +263,71 @@ describeIfNative('Memory native SQLite migration', () => {
     })
   })
 
+  it('migrates v49 databases to the isolated directive trust store', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      legacy.exec(`
+        DROP TABLE agent_memory_directive;
+        DELETE FROM schema_versions;
+        INSERT INTO schema_versions (version, applied_at) VALUES (49, 1);
+      `)
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const db = migrated.getDatabase()
+      expect(db.prepare('SELECT version FROM schema_versions WHERE version = 50').get()).toEqual({
+        version: 50
+      })
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_directive'"
+          )
+          .get()
+      ).toEqual({ present: 1 })
+      expect(() =>
+        db.exec(`
+          INSERT INTO agent_memory_directive (
+            agent_id, id, kind, status, source, content, normalized_topic,
+            identity_hash, created_at, updated_at
+          )
+          VALUES (
+            'a', 'approved-derived', 'instruction', 'active', 'derived_suggestion',
+            'Approved suggestion', NULL,
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 1
+          )
+        `)
+      ).not.toThrow()
+      expect(() =>
+        db.exec(`
+          INSERT INTO agent_memory_directive (
+            agent_id, id, kind, status, source, content, normalized_topic,
+            identity_hash, created_at, updated_at
+          )
+          VALUES (
+            'a', 'bad-kind', 'unknown', 'active', 'manual',
+            'Invalid kind', NULL,
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 1, 1
+          )
+        `)
+      ).toThrow(/CHECK constraint failed/)
+      migrated.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(reopened.getLatestSchemaVersion()).toBe(50)
+      expect(
+        reopened
+          .getDatabase()
+          .prepare('SELECT id FROM agent_memory_directive WHERE agent_id = ?')
+          .all('a')
+      ).toEqual([{ id: 'approved-derived' }])
+      reopened.close()
+    })
+  })
+
   it('repairs missing or stale bridge definitions only when canonical shadow is consistent', () => {
     withTemporaryDatabase((databasePath) => {
       const seeded = new MainDatabaseCtor(databasePath)

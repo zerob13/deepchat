@@ -1,6 +1,7 @@
 import type { DatabaseConnectionProvider } from '@/data/databaseConnection'
 import { AgentMemoryTable } from './tables/agentMemory'
 import { AgentMemoryAuditTable } from './tables/agentMemoryAudit'
+import { AgentMemoryDirectiveTable } from './tables/agentMemoryDirective'
 import { DeepChatMemoryIngestionProjectionTable } from './tables/deepchatMemoryIngestionProjection'
 
 export class MemoryDatabase {
@@ -29,6 +30,10 @@ export class MemoryDatabase {
 
   get agentMemoryAuditTable() {
     return new AgentMemoryAuditTable(this.getDatabase())
+  }
+
+  get agentMemoryDirectiveTable() {
+    return new AgentMemoryDirectiveTable(this.getDatabase())
   }
 
   get ingestionProjectionTable() {

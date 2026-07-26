@@ -744,10 +744,27 @@ describe('memory.getStatus route contract', () => {
       conflictCount: 1,
       personaDraftCount: 1,
       personaVersionCount: 4,
+      directiveDraftCount: 2,
+      activeDirectiveCount: 3,
       reindexing: false
     }
 
     expect(memoryGetStatusRoute.output.parse({ status }).status).toEqual(status)
+    expect(
+      memoryGetStatusRoute.output.parse({
+        status: {
+          total: 3,
+          pendingEmbedding: 1,
+          hasPersona: true,
+          activeMemoryCount: 3,
+          archivedMemoryCount: 2,
+          conflictCount: 1,
+          personaDraftCount: 1,
+          personaVersionCount: 4,
+          reindexing: false
+        }
+      }).status
+    ).toMatchObject({ directiveDraftCount: 0, activeDirectiveCount: 0 })
     expect(
       memoryGetStatusRoute.output.safeParse({
         status: { total: 3, pendingEmbedding: 1, hasPersona: true }
@@ -843,6 +860,22 @@ describe('memory.updated event contract', () => {
       reason: 'manual-edit',
       version: 1000,
       memoryId: 'm1'
+    })
+  })
+
+  it('carries content-free directive identity for targeted refreshes', () => {
+    expect(
+      memoryUpdatedEvent.payload.parse({
+        agentId: 'deepchat',
+        reason: 'directive-approve',
+        version: 1000,
+        directiveId: 'directive-1'
+      })
+    ).toEqual({
+      agentId: 'deepchat',
+      reason: 'directive-approve',
+      version: 1000,
+      directiveId: 'directive-1'
     })
   })
 })

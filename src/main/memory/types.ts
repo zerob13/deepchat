@@ -8,6 +8,7 @@ import type {
   IMemoryVectorStore,
   MemoryAgentPolicyPort,
   MemoryAuditRepositoryPort,
+  MemoryDirectiveRepositoryPort,
   MemoryPerfObserver,
   MemoryRepositoryPort
 } from './ports'
@@ -91,6 +92,7 @@ export type {
 export type {
   IMemoryVectorStore,
   MemoryAuditRepositoryPort,
+  MemoryDirectiveRepositoryPort,
   MemoryRepositoryPort,
   MemoryRetrievalPort
 } from './ports'
@@ -102,9 +104,11 @@ export type {
   MemoryInjectionPort,
   MemoryInjectionResult
 } from './injection'
+export type { AgentMemoryDirectiveRow, MemoryDirectiveInput } from './domain/directives'
 
 export interface MemoryServiceDeps {
   repository: MemoryRepositoryPort
+  directiveRepository: MemoryDirectiveRepositoryPort
   auditRepository?: MemoryAuditRepositoryPort
   perfObserver?: MemoryPerfObserver
   resolveAgentConfig: MemoryAgentPolicyPort['resolveAgentConfig']

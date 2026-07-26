@@ -971,6 +971,7 @@ export async function createMainProcessControl(dependencies: {
     createMemoryVectorStorePaths(memoryDbDir, agentId)
   memoryService = new MemoryService({
     repository: createLivePort(() => memoryDatabase.agentMemoryTable),
+    directiveRepository: createLivePort(() => memoryDatabase.agentMemoryDirectiveTable),
     auditRepository: createLivePort(() => memoryDatabase.agentMemoryAuditTable),
     resolveAgentConfig: (agentId) => agentRepository.resolveDeepChatAgentConfig(agentId),
     resolveAgentDefaultModel: (agentId) => {
@@ -1017,6 +1018,7 @@ export async function createMainProcessControl(dependencies: {
         reason,
         version: Date.now(),
         ...(typeof context?.memoryId === 'string' ? { memoryId: context.memoryId } : {}),
+        ...(typeof context?.directiveId === 'string' ? { directiveId: context.directiveId } : {}),
         ...(typeof context?.sessionId === 'string' ? { sessionId: context.sessionId } : {}),
         ...(context?.createdIds?.length ? { createdIds: context.createdIds } : {})
       })

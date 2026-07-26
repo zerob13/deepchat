@@ -11,6 +11,7 @@ import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
 import {
   createFakeRepository,
   FakeAuditRepository,
+  FakeDirectiveRepository,
   FakeVectorStore,
   textToVector,
   type FakeRepository
@@ -30,7 +31,11 @@ export function deferred<T>() {
 
 export class MemoryService extends BaseMemoryService {
   constructor(deps: ConstructorParameters<typeof BaseMemoryService>[0]) {
-    super({ executeWithRateLimit: vi.fn(async () => undefined), ...deps })
+    super({
+      directiveRepository: new FakeDirectiveRepository(),
+      executeWithRateLimit: vi.fn(async () => undefined),
+      ...deps
+    })
   }
 }
 

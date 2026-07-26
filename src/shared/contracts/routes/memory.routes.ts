@@ -105,6 +105,8 @@ export const MemoryStatusSchema = z.object({
   conflictCount: NonnegativeCountSchema,
   personaDraftCount: NonnegativeCountSchema,
   personaVersionCount: NonnegativeCountSchema,
+  directiveDraftCount: NonnegativeCountSchema.default(0),
+  activeDirectiveCount: NonnegativeCountSchema.default(0),
   reindexing: z.boolean().optional(),
   lastReindex: z
     .object({

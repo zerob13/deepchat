@@ -43,6 +43,8 @@ const baseStatus: MemoryStatusDto = {
   archivedMemoryCount: 0,
   conflictCount: 0,
   personaDraftCount: 0,
+  directiveDraftCount: 0,
+  activeDirectiveCount: 0,
   personaVersionCount: 0,
   reindexing: false
 }

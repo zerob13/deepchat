@@ -46,8 +46,12 @@ export class AgentRepository {
     this.deepchat = new DeepChatAgentRepository({
       rows: sqlitePresenter.agentsTable,
       listSessionIdsByAgent,
-      retireMemoryNamespace: (agentId) =>
-        memoryDatabase.agentMemoryTable.retireAgentMemoryNamespace(agentId),
+      retireMemoryNamespace: (agentId) => {
+        const retiredClaims = memoryDatabase.agentMemoryTable.retireAgentMemoryNamespace(agentId)
+        const retiredDirectives =
+          memoryDatabase.agentMemoryDirectiveTable.retireDirectiveNamespace(agentId)
+        return retiredClaims + retiredDirectives
+      },
       clearMemoryAuditByAgent: (agentId) =>
         memoryDatabase.agentMemoryAuditTable.clearByAgent(agentId),
       transaction: (operation) => sqlitePresenter.getDatabase().transaction(operation)()

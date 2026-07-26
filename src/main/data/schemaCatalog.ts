@@ -27,6 +27,7 @@ import { LegacyImportStatusTable } from '@/app/data/tables/legacyImportStatus'
 import { AgentsTable } from '@/agent/data/tables/agents'
 import { AgentMemoryTable } from '@/memory/data/tables/agentMemory'
 import { AgentMemoryAuditTable } from '@/memory/data/tables/agentMemoryAudit'
+import { AgentMemoryDirectiveTable } from '@/memory/data/tables/agentMemoryDirective'
 import { AppSettingsTable } from '@/settings/data/tables/appSettingsTable'
 import { ProviderSettingsTable } from '@/provider/data/settingsTable'
 import { McpSettingsTable } from '@/mcp/data/settingsTable'
@@ -285,6 +286,11 @@ const CATALOG_DEFINITIONS: CatalogDefinition[] = [
     }
   },
   {
+    name: 'agent_memory_directive',
+    createTable: (db) => new AgentMemoryDirectiveTable(db),
+    typeCheckedColumns: ['kind', 'status', 'source', 'created_at', 'updated_at']
+  },
+  {
     name: 'new_session_active_skills',
     createTable: (db) => new NewSessionActiveSkillsTable(db)
   },
@@ -403,6 +409,7 @@ export function createMainSchemaCatalog(db: Database.Database): MainSchemaCatalo
   const agents = new AgentsTable(db)
   const memory = new AgentMemoryTable(db)
   const memoryAudit = new AgentMemoryAuditTable(db)
+  const memoryDirectives = new AgentMemoryDirectiveTable(db)
   const providerSettings = new ProviderSettingsTable(db)
   const mcpSettings = new McpSettingsTable(db)
   const agentCatalogSettings = new AgentCatalogSettingsTable(db)
@@ -440,6 +447,7 @@ export function createMainSchemaCatalog(db: Database.Database): MainSchemaCatalo
     agents,
     memory,
     memoryAudit,
+    memoryDirectives,
     providerSettings,
     mcpSettings,
     agentCatalogSettings,
@@ -461,6 +469,7 @@ export function createMainSchemaCatalog(db: Database.Database): MainSchemaCatalo
       memory.assertCurrentSchema({
         backupBeforeLegacyBridgeRecovery: backupBeforeMemoryRecovery
       })
+      memoryDirectives.assertCurrentSchema()
     }
   }
 }

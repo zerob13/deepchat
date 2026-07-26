@@ -56,6 +56,7 @@ import { ConflictService } from './services/conflictService'
 import { MaintenanceService } from './services/maintenanceService'
 import { WriteCoordinator } from './services/writeCoordinator'
 import { ManagementService } from './services/managementService'
+import { DirectiveService } from './services/directiveService'
 import {
   createCompositeMemoryPerfObserver,
   MemoryDiagnosticsCollector
@@ -129,6 +130,7 @@ export class MemoryService implements MemoryRuntimePort {
   private readonly maintenance: MaintenanceService
   private readonly writeCoordinator: WriteCoordinator
   private readonly management: ManagementService
+  private readonly directives: DirectiveService
   private readonly diagnostics: MemoryDiagnosticsCollector
 
   constructor(deps: MemoryServiceDeps) {
@@ -168,6 +170,10 @@ export class MemoryService implements MemoryRuntimePort {
       changeSink: { onMemoryChanged: deps.onMemoryChanged },
       providerControl: providerGateway,
       clock: deps.clock
+    })
+    this.directives = new DirectiveService({
+      ctx: this.runtime,
+      repository: deps.directiveRepository
     })
     this.rows = new MemoryRowMutations({
       repository,
@@ -564,6 +570,38 @@ export class MemoryService implements MemoryRuntimePort {
     return this.persona.rejectPersonaDraft(agentId, draftId)
   }
 
+  listDirectives(agentId: string, options?: Parameters<DirectiveService['listDirectives']>[1]) {
+    return this.directives.listDirectives(agentId, options)
+  }
+
+  listActiveDirectives(agentId: string) {
+    return this.directives.listActiveDirectives(agentId)
+  }
+
+  createDirective(
+    agentId: string,
+    input: Parameters<DirectiveService['createExplicitDirective']>[1],
+    source?: Parameters<DirectiveService['createExplicitDirective']>[2]
+  ) {
+    return this.directives.createExplicitDirective(agentId, input, source)
+  }
+
+  suggestDirective(agentId: string, input: Parameters<DirectiveService['suggestDirective']>[1]) {
+    return this.directives.suggestDirective(agentId, input)
+  }
+
+  approveDirective(agentId: string, directiveId: string) {
+    return this.directives.approveDirective(agentId, directiveId)
+  }
+
+  rejectDirective(agentId: string, directiveId: string) {
+    return this.directives.rejectDirective(agentId, directiveId)
+  }
+
+  deleteDirective(agentId: string, directiveId: string): boolean {
+    return this.directives.deleteDirective(agentId, directiveId)
+  }
+
   async setPersonaAnchor(agentId: string, versionId: string, anchored: boolean): Promise<boolean> {
     return this.persona.setPersonaAnchor(agentId, versionId, anchored)
   }
@@ -664,7 +702,13 @@ export class MemoryService implements MemoryRuntimePort {
   }
 
   getStatus(agentId: string): MemoryStatus {
-    return this.management.getStatus(agentId)
+    const status = this.management.getStatus(agentId)
+    const directives = this.directives.getCounts(agentId)
+    return {
+      ...status,
+      directiveDraftCount: directives.draft,
+      activeDirectiveCount: directives.active
+    }
   }
 
   async dispose(): Promise<void> {

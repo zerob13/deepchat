@@ -195,6 +195,10 @@ export class MemoryRuntimeContext {
     return !this.disposed && this.isManagedAgent(agentId) && this.isEnabled(agentId)
   }
 
+  canManageAgentMemory(agentId: string): boolean {
+    return !this.disposed && this.isManagedAgent(agentId)
+  }
+
   canReadAgentMemory(agentId: string): boolean {
     return !this.disposed && this.isManagedAgent(agentId) && this.isEnabled(agentId)
   }
