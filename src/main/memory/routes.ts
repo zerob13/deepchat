@@ -52,6 +52,7 @@ import type {
 import type { CanonicalAgentMemoryRow as AgentMemoryRow, MemoryClearResult } from './domain/types'
 import { projectLegacyStatus } from './domain/stateModel'
 import type { AgentMemoryAuditRow, MemoryAuditListOptions } from './domain/audit'
+import { temporalMetadataFromRow } from './core/temporal'
 
 const MEMORY_PERSONA_STATES = ['draft', 'active', 'superseded', 'rejected'] as const
 type MemoryPersonaState = (typeof MEMORY_PERSONA_STATES)[number]
@@ -85,6 +86,7 @@ function normalizeMemoryPersonaState(value: unknown): MemoryPersonaState | null 
 }
 
 export function toMemoryItemDto(row: AgentMemoryRow) {
+  const temporal = temporalMetadataFromRow(row)
   return {
     id: row.id,
     agentId: row.agent_id,
@@ -98,6 +100,12 @@ export function toMemoryItemDto(row: AgentMemoryRow) {
     supersededBy: row.superseded_by,
     createdAt: row.created_at,
     confidence: row.confidence,
+    temporalKind: temporal.temporalKind,
+    validFrom: temporal.validFrom,
+    validUntil: temporal.validUntil,
+    temporalConfidence: temporal.temporalConfidence,
+    temporalPrecision: temporal.temporalPrecision,
+    temporalTimeZone: temporal.temporalTimeZone,
     conflictState: row.conflict_state,
     conflictWith: row.conflict_with,
     personaState: normalizeMemoryPersonaState(row.persona_state),

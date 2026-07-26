@@ -6,7 +6,12 @@ import {
   isAgentMemoryCategory
 } from '@shared/types/agent-memory'
 import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
-import { buildMemoryProvenanceKey, distanceToSimilarity } from '../core/scoring'
+import {
+  buildMemoryProvenanceKey,
+  distanceToSimilarity,
+  normalizeForProvenanceV2
+} from '../core/scoring'
+import { resolveMergedClaimTemporalMetadata, temporalMetadataFromRow } from '../core/temporal'
 import {
   ADD_DECISION,
   buildDecisionPrompt,
@@ -656,6 +661,15 @@ export class MaintenanceService {
         ? (survivor.category ?? otherCategory)
         : undefined
     const provenanceKey = buildMemoryProvenanceKey(agentId, survivor.kind, mergedContent)
+    const normalizedMergedContent = normalizeForProvenanceV2(mergedContent)
+    const nextTemporal = resolveMergedClaimTemporalMetadata(
+      temporalMetadataFromRow(survivor),
+      temporalMetadataFromRow(retired),
+      {
+        existing: normalizedMergedContent === normalizeForProvenanceV2(survivor.content),
+        incoming: normalizedMergedContent === normalizeForProvenanceV2(retired.content)
+      }
+    )
 
     try {
       this.ports.repository.runInTransaction(() => {
@@ -667,7 +681,8 @@ export class MaintenanceService {
           provenanceKey,
           at: now,
           category: nextCategory,
-          importance: Math.max(survivor.importance, retired.importance)
+          importance: Math.max(survivor.importance, retired.importance),
+          temporal: nextTemporal
         })
         if (!contentApplied) throw new MaintenanceRevisionConflictError()
         if (

@@ -58,6 +58,7 @@ import {
   buildLegacyStatusProjectionSql,
   buildStatusProjectionFromExpressionsSql
 } from './agentMemoryStateSql'
+import { normalizeMemoryTemporalMetadata } from '../../core/temporal'
 
 // 'working' is an internal session-open injection cache (a single blob row per agent); it is never
 // recalled, embedded, reflected on, or archived. A 'crystal' kind (3+ corroborated sources) is a
@@ -69,7 +70,8 @@ import {
 // optimistic concurrency control for semantic decision writes; v42 normalizes lifecycle and
 // embedding state while retaining the legacy status shadow.
 const AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION = 42
-const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION
+const AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION = 46
+const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION
 
 const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
@@ -494,6 +496,20 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         decay_score REAL,
         source_entry_ids TEXT,
         confidence REAL,
+        temporal_kind TEXT NOT NULL DEFAULT 'atemporal'
+          CHECK (temporal_kind IN ('atemporal', 'state', 'event', 'plan', 'recurring')),
+        valid_from INTEGER,
+        valid_until INTEGER,
+        temporal_confidence REAL
+          CHECK (temporal_confidence IS NULL OR
+                 (temporal_confidence >= 0 AND temporal_confidence <= 1)),
+        temporal_precision TEXT
+          CHECK (temporal_precision IS NULL OR
+                 temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown')),
+        temporal_timezone TEXT
+          CHECK (temporal_timezone IS NULL OR
+                 (length(temporal_timezone) BETWEEN 1 AND 128
+                  AND temporal_timezone = trim(temporal_timezone))),
         last_consolidated_at INTEGER,
         conflict_state TEXT,
         conflict_with TEXT,
@@ -502,7 +518,16 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         lifecycle_state TEXT NOT NULL DEFAULT 'active'
           CHECK (lifecycle_state IN ('active', 'archived', 'conflicted')),
         embedding_state TEXT NOT NULL DEFAULT 'pending'
-          CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'))
+          CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable')),
+        CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_from < valid_until),
+        CHECK (
+          (temporal_kind = 'atemporal' AND valid_from IS NULL AND valid_until IS NULL
+            AND temporal_confidence IS NULL AND temporal_precision IS NULL
+            AND temporal_timezone IS NULL)
+          OR
+          (temporal_kind != 'atemporal' AND temporal_confidence IS NOT NULL
+            AND temporal_precision IS NOT NULL AND temporal_timezone IS NOT NULL)
+        )
       );
       ${AGENT_MEMORY_BASE_INDEX_SQL}
       ${AGENT_MEMORY_CONFLICT_INDEX_SQL}
@@ -639,7 +664,17 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       notnull: number
       dflt_value: string | null
     }>
-    for (const columnName of ['decision_revision', 'lifecycle_state', 'embedding_state']) {
+    for (const columnName of [
+      'decision_revision',
+      'lifecycle_state',
+      'embedding_state',
+      'temporal_kind',
+      'valid_from',
+      'valid_until',
+      'temporal_confidence',
+      'temporal_precision',
+      'temporal_timezone'
+    ]) {
       if (!columns.some((column) => column.name === columnName)) {
         throw new Error(`[Memory] agent_memory schema migration is incomplete: ${columnName}`)
       }
@@ -651,6 +686,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )?.sql
     const lifecycleColumn = columns.find((column) => column.name === 'lifecycle_state')
     const embeddingColumn = columns.find((column) => column.name === 'embedding_state')
+    const temporalKindColumn = columns.find((column) => column.name === 'temporal_kind')
+    const normalizedTableSql = tableSql?.replace(/\s+/gu, ' ')
     if (
       lifecycleColumn?.notnull !== 1 ||
       lifecycleColumn.dflt_value !== "'active'" ||
@@ -666,6 +703,57 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       )
     ) {
       throw new Error('[Memory] agent_memory embedding_state constraints are incomplete')
+    }
+    if (
+      temporalKindColumn?.notnull !== 1 ||
+      temporalKindColumn.dflt_value !== "'atemporal'" ||
+      !normalizedTableSql?.includes(
+        "CHECK (temporal_kind IN ('atemporal', 'state', 'event', 'plan', 'recurring'))"
+      ) ||
+      !normalizedTableSql.includes(
+        'CHECK (temporal_confidence IS NULL OR (temporal_confidence >= 0 AND temporal_confidence <= 1))'
+      ) ||
+      !normalizedTableSql.includes(
+        "CHECK (temporal_precision IS NULL OR temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown'))"
+      ) ||
+      !normalizedTableSql.includes(
+        'CHECK (temporal_timezone IS NULL OR (length(temporal_timezone) BETWEEN 1 AND 128 AND temporal_timezone = trim(temporal_timezone)))'
+      )
+    ) {
+      throw new Error('[Memory] agent_memory temporal constraints are incomplete')
+    }
+    const invalidTemporalRows = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM agent_memory
+           WHERE (valid_from IS NOT NULL AND valid_until IS NOT NULL AND valid_from >= valid_until)
+              OR temporal_kind NOT IN ('atemporal', 'state', 'event', 'plan', 'recurring')
+              OR (temporal_confidence IS NOT NULL
+                  AND (temporal_confidence < 0 OR temporal_confidence > 1))
+              OR (temporal_precision IS NOT NULL AND temporal_precision NOT IN (
+                   'exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown'
+                 ))
+              OR (temporal_timezone IS NOT NULL AND (
+                   length(temporal_timezone) NOT BETWEEN 1 AND 128
+                   OR temporal_timezone != trim(temporal_timezone)
+                 ))
+              OR (temporal_kind = 'atemporal' AND (
+                   valid_from IS NOT NULL OR valid_until IS NOT NULL
+                   OR temporal_confidence IS NOT NULL OR temporal_precision IS NOT NULL
+                   OR temporal_timezone IS NOT NULL
+                 ))
+              OR (temporal_kind != 'atemporal' AND (
+                   temporal_confidence IS NULL OR temporal_precision IS NULL
+                   OR temporal_timezone IS NULL
+                 ))`
+        )
+        .get() as { count: number }
+    ).count
+    if (invalidTemporalRows !== 0) {
+      throw new Error(
+        `[Memory] agent_memory contains ${invalidTemporalRows} invalid temporal claim rows`
+      )
     }
     this.db.exec(AGENT_MEMORY_BASE_INDEX_SQL)
     this.db.exec(AGENT_MEMORY_RETIRED_INDEX_SQL)
@@ -768,6 +856,16 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         AGENT_MEMORY_SHADOW_RECONCILE_SQL,
         AGENT_MEMORY_RETIRED_INDEX_SQL,
         AGENT_MEMORY_CANONICAL_INDEX_SQL
+      ].join('\n')
+    }
+    if (version === AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION) {
+      return [
+        "ALTER TABLE agent_memory ADD COLUMN temporal_kind TEXT NOT NULL DEFAULT 'atemporal' CHECK (temporal_kind IN ('atemporal', 'state', 'event', 'plan', 'recurring'));",
+        'ALTER TABLE agent_memory ADD COLUMN valid_from INTEGER;',
+        'ALTER TABLE agent_memory ADD COLUMN valid_until INTEGER;',
+        'ALTER TABLE agent_memory ADD COLUMN temporal_confidence REAL CHECK (temporal_confidence IS NULL OR (temporal_confidence >= 0 AND temporal_confidence <= 1));',
+        "ALTER TABLE agent_memory ADD COLUMN temporal_precision TEXT CHECK (temporal_precision IS NULL OR temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown'));",
+        'ALTER TABLE agent_memory ADD COLUMN temporal_timezone TEXT CHECK (temporal_timezone IS NULL OR (length(temporal_timezone) BETWEEN 1 AND 128 AND temporal_timezone = trim(temporal_timezone)));'
       ].join('\n')
     }
     return null
@@ -1101,6 +1199,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         conflictWith: input.conflictWith ?? null
       })
     }
+    const temporal = normalizeMemoryTemporalMetadata(input.temporal)
     const row: AgentMemoryRow = {
       id: input.id,
       agent_id: input.agentId,
@@ -1125,6 +1224,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       decay_score: null,
       source_entry_ids: serializeAgentMemorySourceEntryIds(input.sourceEntryIds),
       confidence: null,
+      temporal_kind: temporal.temporalKind,
+      valid_from: temporal.validFrom,
+      valid_until: temporal.validUntil,
+      temporal_confidence: temporal.temporalConfidence,
+      temporal_precision: temporal.temporalPrecision,
+      temporal_timezone: temporal.temporalTimeZone,
       last_consolidated_at: null,
       conflict_state: null,
       conflict_with: input.conflictWith ?? null,
@@ -1158,6 +1263,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
            decay_score,
            source_entry_ids,
            confidence,
+           temporal_kind,
+           valid_from,
+           valid_until,
+           temporal_confidence,
+           temporal_precision,
+           temporal_timezone,
            last_consolidated_at,
            conflict_state,
            conflict_with,
@@ -1166,7 +1277,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
            lifecycle_state,
            embedding_state
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             row.id,
@@ -1190,6 +1301,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
             row.decay_score,
             row.source_entry_ids,
             row.confidence,
+            row.temporal_kind,
+            row.valid_from,
+            row.valid_until,
+            row.temporal_confidence,
+            row.temporal_precision,
+            row.temporal_timezone,
             row.last_consolidated_at,
             row.conflict_state,
             row.conflict_with,
@@ -1792,14 +1909,27 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )
     const updateContent = input.content !== undefined
     const updateCategory = updateContent && Object.prototype.hasOwnProperty.call(input, 'category')
+    const temporal = updateContent ? normalizeMemoryTemporalMetadata(input.temporal) : null
     const contentSql = updateContent
-      ? `, content = ?, provenance_key = ?${updateCategory ? ', category = ?' : ''}, last_accessed = ?`
+      ? `, content = ?, provenance_key = ?${
+          updateCategory ? ', category = ?' : ''
+        }, last_accessed = ?,
+           temporal_kind = ?, valid_from = ?, valid_until = ?,
+           temporal_confidence = ?, temporal_precision = ?, temporal_timezone = ?`
       : ''
     const params: unknown[] = []
-    if (updateContent) {
+    if (updateContent && temporal) {
       params.push(input.content, input.provenanceKey)
       if (updateCategory) params.push(input.category ?? null)
-      params.push(input.at)
+      params.push(
+        input.at,
+        temporal.temporalKind,
+        temporal.validFrom,
+        temporal.validUntil,
+        temporal.temporalConfidence,
+        temporal.temporalPrecision,
+        temporal.temporalTimeZone
+      )
     }
     params.push(input.agentId, input.id, input.expectedRevision, input.targetId)
     const result = this.runRecallMutation({
@@ -2282,16 +2412,33 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )
     const categorySql = input.category === undefined ? '' : ', category = ?'
     const importanceSql = input.importance === undefined ? '' : ', importance = ?'
+    const temporal =
+      input.temporal === undefined ? null : normalizeMemoryTemporalMetadata(input.temporal)
+    const temporalSql =
+      temporal === null
+        ? ''
+        : `, temporal_kind = ?, valid_from = ?, valid_until = ?,
+             temporal_confidence = ?, temporal_precision = ?, temporal_timezone = ?`
     const params: unknown[] = [input.content, input.provenanceKey, input.at]
     if (input.category !== undefined) params.push(input.category)
     if (input.importance !== undefined) params.push(input.importance)
+    if (temporal !== null) {
+      params.push(
+        temporal.temporalKind,
+        temporal.validFrom,
+        temporal.validUntil,
+        temporal.temporalConfidence,
+        temporal.temporalPrecision,
+        temporal.temporalTimeZone
+      )
+    }
     params.push(input.id, input.agentId, input.expectedRevision)
     const result = this.runRecallMutation({
       mutate: () =>
         this.db
           .prepare(
             `UPDATE agent_memory
-             SET content = ?, provenance_key = ?, last_accessed = ?${categorySql}${importanceSql},
+             SET content = ?, provenance_key = ?, last_accessed = ?${categorySql}${importanceSql}${temporalSql},
                  embedding_state = 'pending', status = 'pending_embedding',
                  embedding_id = NULL, embedding_dim = NULL, embedding_model = NULL,
                  decision_revision = decision_revision + 1
@@ -2323,6 +2470,25 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     if (Object.prototype.hasOwnProperty.call(input, 'lastAccessedAt')) {
       sets.push('last_accessed = ?')
       params.push(input.lastAccessedAt)
+    }
+    if (input.temporal !== undefined) {
+      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      sets.push(
+        'temporal_kind = ?',
+        'valid_from = ?',
+        'valid_until = ?',
+        'temporal_confidence = ?',
+        'temporal_precision = ?',
+        'temporal_timezone = ?'
+      )
+      params.push(
+        temporal.temporalKind,
+        temporal.validFrom,
+        temporal.validUntil,
+        temporal.temporalConfidence,
+        temporal.temporalPrecision,
+        temporal.temporalTimeZone
+      )
     }
     if (!sets.length) return false
     sets.push('decision_revision = decision_revision + 1')

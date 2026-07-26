@@ -6,6 +6,7 @@ import {
   partitionBatchDecisions,
   type BatchDecisionInput
 } from '@/memory/core/batchDecision'
+import { ATEMPORAL_MEMORY_METADATA } from '@/memory/core/temporal'
 
 function input(
   candidateIndex: number,
@@ -13,7 +14,13 @@ function input(
 ): BatchDecisionInput {
   return {
     candidateIndex,
-    candidate: { kind: 'semantic', category: null, content, importance: 0.5 },
+    candidate: {
+      kind: 'semantic',
+      category: null,
+      content,
+      importance: 0.5,
+      temporal: ATEMPORAL_MEMORY_METADATA
+    },
     neighbors: [
       { content: `neighbor-${candidateIndex}-0` },
       { content: `neighbor-${candidateIndex}-1` },

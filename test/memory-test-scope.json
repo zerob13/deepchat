@@ -39,6 +39,7 @@
     "test/main/memory/memorySearch.test.ts",
     "test/main/memory/memoryServiceHarness.test.ts",
     "test/main/memory/memoryStateModel.test.ts",
+    "test/main/memory/memoryTemporal.test.ts",
     "test/main/memory/memoryUpdate.test.ts",
     "test/main/memory/memoryVectorStore.test.ts",
     "test/main/memory/recallKeyword.test.ts",

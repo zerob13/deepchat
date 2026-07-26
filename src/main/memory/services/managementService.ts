@@ -22,6 +22,7 @@ import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
 import { deriveLifecycle, type DeriveLifecycleOptions } from '../core/lifecycle'
 import { resolveRetrieval } from '../core/scoring'
+import { temporalMetadataFromRow } from '../core/temporal'
 import {
   MEMORY_HEALTH_AUDIT_SCAN_LIMIT,
   MEMORY_HEALTH_RECENT_FAILURES_LIMIT,
@@ -557,7 +558,8 @@ export class ManagementService {
       kind: row.kind,
       category: nextCategory,
       content,
-      importance: nextImportance
+      importance: nextImportance,
+      temporal: temporalMetadataFromRow(row)
     }
     const providedFields: ManualEditFieldFlags = {
       category: categoryProvided,

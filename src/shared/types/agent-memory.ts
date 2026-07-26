@@ -6,6 +6,24 @@ export const AGENT_MEMORY_CATEGORIES = [
   'anti_pattern'
 ] as const
 
+export const AGENT_MEMORY_TEMPORAL_KINDS = [
+  'atemporal',
+  'state',
+  'event',
+  'plan',
+  'recurring'
+] as const
+
+export const AGENT_MEMORY_TEMPORAL_PRECISIONS = [
+  'exact',
+  'day',
+  'week',
+  'month',
+  'quarter',
+  'year',
+  'unknown'
+] as const
+
 export const AGENT_MEMORY_AUDIT_ACTOR_TYPES = ['scheduler', 'user', 'runtime'] as const
 export const AGENT_MEMORY_AUDIT_STATUSES = ['completed', 'skipped', 'failed'] as const
 export const AGENT_MEMORY_AUDIT_FAILURE_STATUSES = ['failed', 'skipped'] as const
@@ -68,6 +86,8 @@ export function isSafeAgentId(agentId: unknown): agentId is string {
 }
 
 export type AgentMemoryCategory = (typeof AGENT_MEMORY_CATEGORIES)[number]
+export type AgentMemoryTemporalKind = (typeof AGENT_MEMORY_TEMPORAL_KINDS)[number]
+export type AgentMemoryTemporalPrecision = (typeof AGENT_MEMORY_TEMPORAL_PRECISIONS)[number]
 
 export const AGENT_MEMORY_HEALTH_KIND_KEYS = [
   'episodic',

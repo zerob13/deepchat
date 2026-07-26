@@ -16,6 +16,12 @@ import {
 } from '../core/batchDecision'
 import { normalizeMemoryCandidate } from '../core/candidates'
 import {
+  memoryTemporalMetadataEquals,
+  reconcileEquivalentClaimTemporalMetadata,
+  resolveMergedClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
+import {
   buildExtractionPrompt,
   buildTriagePrompt,
   parseMemoryCandidates,
@@ -35,6 +41,7 @@ import type {
   MemoryDecisionNeighborSet,
   MemoryDecisionQueryVectorSnapshot,
   MemoryRecallItem,
+  MemoryTemporalMetadata,
   NormalizedMemoryCandidate,
   MemoryUpdateContext,
   MemoryWriteOutcome,
@@ -196,6 +203,18 @@ interface CandidateApplyPolicy {
   retryConflict: boolean
 }
 
+function resolveContentMergeTemporalMetadata(
+  existing: AgentMemoryRow,
+  incoming: NormalizedMemoryCandidate,
+  mergedContent: string
+): MemoryTemporalMetadata {
+  const normalizedMergedContent = normalizeForProvenanceV2(mergedContent)
+  return resolveMergedClaimTemporalMetadata(temporalMetadataFromRow(existing), incoming.temporal, {
+    existing: normalizedMergedContent === normalizeForProvenanceV2(existing.content),
+    incoming: normalizedMergedContent === normalizeForProvenanceV2(incoming.content)
+  })
+}
+
 function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
   return {
     id: row.id,
@@ -207,6 +226,7 @@ function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
     sources: { fts: true },
     sourceSession: row.source_session,
     sourceEntryIds: null,
+    temporal: temporalMetadataFromRow(row),
     breakdown: {
       similarity: 0,
       recency: row.last_accessed ?? row.created_at,
@@ -265,6 +285,7 @@ export class WriteCoordinator {
   writeMemoriesSync(candidates: MemoryCandidate[], options: WriteMemoriesOptions): string[] {
     if (!candidates.length) return []
     const created: string[] = []
+    let touched = false
     const now = this.ctx.now()
     for (const candidate of candidates) {
       const normalized = normalizeMemoryCandidate(candidate)
@@ -275,9 +296,20 @@ export class WriteCoordinator {
       if (duplicate) {
         const hit = this.ports.rows.handleProvenanceHit(options.agentId, duplicate)
         if (hit.action === 'absorbed') {
-          if (this.absorbArchivedProvenanceOwner(options.agentId, duplicate)) {
+          if (this.absorbArchivedProvenanceOwner(options.agentId, duplicate, normalized.temporal)) {
             created.push(duplicate.id)
+            touched = true
           }
+        } else if (
+          hit.action === 'noop' &&
+          hit.reason === 'duplicate' &&
+          this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+            options.agentId,
+            duplicate,
+            normalized.temporal
+          )
+        ) {
+          touched = true
         }
         continue
       }
@@ -289,9 +321,12 @@ export class WriteCoordinator {
         options,
         now
       )
-      if (id) created.push(id)
+      if (id) {
+        created.push(id)
+        touched = true
+      }
     }
-    if (created.length > 0) this.ctx.markDomainMutationCommitted(options.agentId)
+    if (touched) this.ctx.markDomainMutationCommitted(options.agentId)
     return created
   }
 
@@ -332,19 +367,21 @@ export class WriteCoordinator {
         return { ok: true, createdIds: [] }
       }
 
+      const now = this.ctx.now()
+      const timeZone = this.ctx.timeZone()
       llmCalls += 1
       const response = await this.ports.textGeneration.generateText(
         input.agentId,
         model.providerId,
         model.modelId,
-        buildExtractionPrompt(span),
+        buildExtractionPrompt(span, { now, timeZone }),
         'extraction'
       )
       if (!this.ctx.canContinueOperation(operationFence)) {
         extractionOutcome = 'cancelled'
         return { ok: false }
       }
-      const parsed = parseMemoryCandidates(response)
+      const parsed = parseMemoryCandidates(response, { fallbackTimeZone: timeZone })
       if (!parsed.ok) {
         logger.warn(`[Memory] extraction parse failed: ${parsed.reason}`)
         return { ok: false }
@@ -355,7 +392,6 @@ export class WriteCoordinator {
         sourceSession: input.sourceSession ?? null,
         sourceEntryIds: input.sourceEntryIds ?? null
       }
-      const now = this.ctx.now()
       const batch = await this.coordinateBatchWrites(
         input.agentId,
         candidateStats.candidates,
@@ -422,7 +458,7 @@ export class WriteCoordinator {
       candidateIndex: number
       reason: 'candidate-too-large'
     }> = []
-    const seen = new Set<string>()
+    const acceptedIndexByKey = new Map<string, number>()
     candidates.forEach((candidate, candidateIndex) => {
       const normalized = normalizeMemoryCandidate(candidate)
       if (!normalized) return
@@ -431,11 +467,23 @@ export class WriteCoordinator {
         return
       }
       const key = `${normalized.kind}\0${normalizeForProvenanceV2(normalized.content)}`
-      if (seen.has(key)) {
+      const acceptedIndex = acceptedIndexByKey.get(key)
+      if (acceptedIndex !== undefined) {
         duplicateCandidateIndexes.push(candidateIndex)
+        const existing = accepted[acceptedIndex]
+        accepted[acceptedIndex] = {
+          ...existing,
+          candidate: {
+            ...existing.candidate,
+            temporal: reconcileEquivalentClaimTemporalMetadata(
+              existing.candidate.temporal,
+              normalized.temporal
+            )
+          }
+        }
         return
       }
-      seen.add(key)
+      acceptedIndexByKey.set(key, accepted.length)
       accepted.push({ candidateIndex, candidate: normalized })
     })
     return { candidates: accepted, duplicateCandidateIndexes, rejectedCandidates }
@@ -544,17 +592,36 @@ export class WriteCoordinator {
           allowDecisionForSuperseded: true
         })
         if (hit.action === 'absorbed') {
-          outcome = this.ports.repository.restoreArchivedMemory({
+          const restored = this.ports.repository.restoreArchivedMemory({
             agentId,
             id: owner.id,
             expectedRevision: owner.decision_revision
           })
+          if (restored) {
+            const current = this.ports.repository.getById(owner.id)
+            if (current) {
+              this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+                agentId,
+                current,
+                candidate.temporal
+              )
+            }
+          }
+          outcome = restored
             ? { action: 'updated', id: owner.id }
             : { action: 'noop', reason: 'concurrent-update' }
           return
         }
         if (hit.action === 'noop') {
-          outcome = { action: 'noop', reason: hit.reason, id: owner.id }
+          outcome =
+            hit.reason === 'duplicate' &&
+            this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+              agentId,
+              owner,
+              candidate.temporal
+            )
+              ? { action: 'updated', id: owner.id }
+              : { action: 'noop', reason: hit.reason, id: owner.id }
           return
         }
         const head = this.ports.rows.supersedeHead(agentId, owner)
@@ -562,7 +629,13 @@ export class WriteCoordinator {
           outcome = { action: 'noop', reason: 'conflict', id: head.id }
           return
         }
-        outcome = this.reviveProvenanceOwner(agentId, owner, now, candidate.category)
+        outcome = this.reviveProvenanceOwner(
+          agentId,
+          owner,
+          now,
+          candidate.category,
+          candidate.temporal
+        )
         return
       }
       if (!allowInsert) return
@@ -959,11 +1032,23 @@ export class WriteCoordinator {
         allowDecisionForSuperseded: true
       })
       if (hit.action === 'absorbed') {
-        return this.absorbArchivedProvenanceOwner(agentId, duplicate)
+        return this.absorbArchivedProvenanceOwner(agentId, duplicate, normalized.temporal)
           ? { action: 'updated', id: duplicate.id }
           : { action: 'noop', reason: 'concurrent-update', id: duplicate.id }
       }
-      if (hit.action === 'noop') return { action: 'noop', reason: hit.reason, id: duplicate.id }
+      if (hit.action === 'noop') {
+        if (
+          hit.reason === 'duplicate' &&
+          this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+            agentId,
+            duplicate,
+            normalized.temporal
+          )
+        ) {
+          return { action: 'updated', id: duplicate.id }
+        }
+        return { action: 'noop', reason: hit.reason, id: duplicate.id }
+      }
       const head = this.ports.rows.supersedeHead(agentId, duplicate)
       if (isChallengedDecisionHead(agentId, head)) {
         return { action: 'noop', reason: 'conflict', id: head.id }
@@ -1059,6 +1144,11 @@ export class WriteCoordinator {
           const targetRow = this.ports.repository.getById(target.id)
           if (isLiveDecisionTarget(agentId, targetRow)) {
             const merged = decision.mergedContent ?? content
+            const mergedTemporal = resolveContentMergeTemporalMetadata(
+              targetRow,
+              normalized,
+              merged
+            )
             const mergedKey = buildMemoryProvenanceKey(agentId, targetRow.kind, merged)
             const owner = this.ports.rows.resolveProvenance(agentId, targetRow.kind, merged)
             if (owner && owner.id !== targetRow.id) {
@@ -1067,7 +1157,8 @@ export class WriteCoordinator {
                 target,
                 owner,
                 now,
-                normalized.category
+                normalized.category,
+                mergedTemporal
               )
               if (folded.action !== 'superseded') return folded
               return { action: 'updated', id: folded.id }
@@ -1085,7 +1176,8 @@ export class WriteCoordinator {
                   content: merged,
                   provenanceKey: mergedKey,
                   at: now,
-                  category: nextCategory
+                  category: nextCategory,
+                  temporal: mergedTemporal
                 })
                 if (!applied) throw new DecisionRevisionConflictError()
                 this.ports.rows.bumpConfidence(targetRow.id)
@@ -1104,6 +1196,8 @@ export class WriteCoordinator {
           const targetRow = this.ports.repository.getById(target.id)
           if (!isLiveDecisionTarget(agentId, targetRow)) return { action: 'retry' }
           const merged = decision.mergedContent ?? content
+          const mergedTemporal = resolveContentMergeTemporalMetadata(targetRow, normalized, merged)
+          const mergedCandidate = { ...normalized, temporal: mergedTemporal }
           const mergedKey = buildMemoryProvenanceKey(agentId, normalized.kind, merged)
           const collisionOwner = this.ports.rows.resolveProvenance(agentId, normalized.kind, merged)
           if (collisionOwner && collisionOwner.id !== target.id) {
@@ -1112,7 +1206,8 @@ export class WriteCoordinator {
               target,
               collisionOwner,
               now,
-              normalized.category
+              normalized.category,
+              mergedTemporal
             )
           }
           let newId: string | null = null
@@ -1120,7 +1215,7 @@ export class WriteCoordinator {
             this.ports.repository.runInTransaction(() => {
               newId = this.ports.rows.insertMemory(
                 agentId,
-                normalized,
+                mergedCandidate,
                 merged,
                 mergedKey,
                 options,
@@ -1142,7 +1237,14 @@ export class WriteCoordinator {
             if (error instanceof DecisionInsertCollisionError) {
               const owner = this.ports.rows.resolveProvenance(agentId, normalized.kind, merged)
               return owner && owner.id !== target.id
-                ? this.foldDecisionTargetIntoOwner(agentId, target, owner, now, normalized.category)
+                ? this.foldDecisionTargetIntoOwner(
+                    agentId,
+                    target,
+                    owner,
+                    now,
+                    normalized.category,
+                    mergedTemporal
+                  )
                 : { action: 'retry' }
             }
             if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
@@ -1167,7 +1269,8 @@ export class WriteCoordinator {
               target,
               collisionOwner,
               now,
-              normalized.category
+              normalized.category,
+              normalized.temporal
             )
           }
           let challengerId: string | null = null
@@ -1198,7 +1301,14 @@ export class WriteCoordinator {
             if (error instanceof DecisionInsertCollisionError) {
               const owner = this.ports.rows.resolveProvenance(agentId, normalized.kind, content)
               return owner && owner.id !== target.id
-                ? this.foldDecisionTargetIntoOwner(agentId, target, owner, now, normalized.category)
+                ? this.foldDecisionTargetIntoOwner(
+                    agentId,
+                    target,
+                    owner,
+                    now,
+                    normalized.category,
+                    normalized.temporal
+                  )
                 : { action: 'retry' }
             }
             if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
@@ -1219,7 +1329,8 @@ export class WriteCoordinator {
     target: MemoryRecallItem,
     owner: AgentMemoryRow,
     now: number,
-    category: AgentMemoryRow['category']
+    category: AgentMemoryRow['category'],
+    incomingTemporal: MemoryTemporalMetadata
   ): CoordinateWriteResult {
     const hit = this.ports.rows.handleProvenanceHit(agentId, owner, {
       allowDecisionForSuperseded: true
@@ -1273,17 +1384,24 @@ export class WriteCoordinator {
           }
           ownerRevision += 1
         }
-        if (
+        const currentTemporal = temporalMetadataFromRow(owner)
+        const nextTemporal = reconcileEquivalentClaimTemporalMetadata(
+          currentTemporal,
+          incomingTemporal
+        )
+        const shouldUpdateTemporal = !memoryTemporalMetadataEquals(currentTemporal, nextTemporal)
+        const shouldUpdateCategory =
           (owner.kind === 'episodic' || owner.kind === 'semantic') &&
           owner.category === null &&
           category !== null
-        ) {
+        if (shouldUpdateCategory || shouldUpdateTemporal) {
           if (
             !this.ports.repository.updateUserMetadataIfRevision({
               agentId,
               id: owner.id,
               expectedRevision: ownerRevision,
-              category,
+              ...(shouldUpdateCategory ? { category } : {}),
+              ...(shouldUpdateTemporal ? { temporal: nextTemporal } : {}),
               lastAccessedAt: now
             })
           ) {
@@ -1349,9 +1467,20 @@ export class WriteCoordinator {
     if (duplicate) {
       const hit = this.ports.rows.handleProvenanceHit(agentId, duplicate)
       if (hit.action === 'absorbed') {
-        return this.absorbArchivedProvenanceOwner(agentId, duplicate)
+        return this.absorbArchivedProvenanceOwner(agentId, duplicate, normalized.temporal)
           ? { action: 'updated', id: duplicate.id }
           : { action: 'noop', reason: 'concurrent-update', id: duplicate.id }
+      }
+      if (
+        hit.action === 'noop' &&
+        hit.reason === 'duplicate' &&
+        this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+          agentId,
+          duplicate,
+          normalized.temporal
+        )
+      ) {
+        return { action: 'updated', id: duplicate.id }
       }
       const reason = hit.action === 'noop' ? hit.reason : 'duplicate'
       return { action: 'noop', reason, id: duplicate.id }
@@ -1367,21 +1496,33 @@ export class WriteCoordinator {
     return id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
   }
 
-  private absorbArchivedProvenanceOwner(agentId: string, existing: AgentMemoryRow): boolean {
-    return this.ports.repository.runInTransaction(() =>
-      this.ports.repository.restoreArchivedMemory({
+  private absorbArchivedProvenanceOwner(
+    agentId: string,
+    existing: AgentMemoryRow,
+    temporal: MemoryTemporalMetadata
+  ): boolean {
+    let restored = false
+    this.ports.repository.runInTransaction(() => {
+      restored = this.ports.repository.restoreArchivedMemory({
         agentId,
         id: existing.id,
         expectedRevision: existing.decision_revision
       })
-    )
+      if (!restored) return
+      const current = this.ports.repository.getById(existing.id)
+      if (current) {
+        this.ports.rows.enrichEquivalentClaimTemporalMetadata(agentId, current, temporal)
+      }
+    })
+    return restored
   }
 
   private reviveProvenanceOwner(
     agentId: string,
     existing: AgentMemoryRow,
     now: number,
-    category: AgentMemoryRow['category']
+    category: AgentMemoryRow['category'],
+    temporal: MemoryTemporalMetadata
   ): MemoryWriteOutcome {
     let transitionApplied = true
     this.ports.repository.runInTransaction(() => {
@@ -1399,12 +1540,17 @@ export class WriteCoordinator {
         if (transitionApplied) expectedRevision += 1
       }
       if (!transitionApplied) return
-      if (existing.category === null && category !== null) {
+      const currentTemporal = temporalMetadataFromRow(existing)
+      const nextTemporal = reconcileEquivalentClaimTemporalMetadata(currentTemporal, temporal)
+      const shouldUpdateTemporal = !memoryTemporalMetadataEquals(currentTemporal, nextTemporal)
+      const shouldUpdateCategory = existing.category === null && category !== null
+      if (shouldUpdateCategory || shouldUpdateTemporal) {
         transitionApplied = this.ports.repository.updateUserMetadataIfRevision({
           agentId,
           id: existing.id,
           expectedRevision,
-          category,
+          ...(shouldUpdateCategory ? { category } : {}),
+          ...(shouldUpdateTemporal ? { temporal: nextTemporal } : {}),
           lastAccessedAt: now
         })
       }

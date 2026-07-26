@@ -30,6 +30,7 @@ import type {
   MemoryManagementPageCursor,
   MemoryModelRef,
   MemoryTransitionTarget,
+  MemoryTemporalMetadata,
   ResolveChallengerTransition,
   ReviveSupersededTransition,
   ArchiveChallengerTransition,
@@ -418,6 +419,11 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     createdAt: number
   ): string | null
   bumpConfidence(id: string): void
+  enrichEquivalentClaimTemporalMetadata(
+    agentId: string,
+    existing: AgentMemoryRow,
+    incoming: MemoryTemporalMetadata
+  ): boolean
   supersedeHead(agentId: string, row: AgentMemoryRow): AgentMemoryRow
   handleProvenanceHit(
     agentId: string,

@@ -456,12 +456,27 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     const { presenter, repo } = makeLLMPresenter(generateText)
     const now = 1_000 * DAY
     const targetId = await seedEmbedded(presenter, 'user likes redis')
-    seedConflicted(repo, 'c1', targetId, 'user prefers valkey')
+    seedConflicted(repo, 'c1', targetId, 'user prefers valkey', {
+      temporalKind: 'state',
+      validFrom: 500 * DAY,
+      validUntil: null,
+      temporalConfidence: 0.8,
+      temporalPrecision: 'day',
+      temporalTimeZone: 'UTC'
+    })
 
     await presenter.runConsolidationPass('a', now)
     await presenter.processPendingEmbeddings('a')
 
-    expect(repo.getById('c1')?.content).toBe('user prefers valkey over redis')
+    expect(repo.getById('c1')).toMatchObject({
+      content: 'user prefers valkey over redis',
+      temporal_kind: 'atemporal',
+      valid_from: null,
+      valid_until: null,
+      temporal_confidence: null,
+      temporal_precision: null,
+      temporal_timezone: null
+    })
     expect(repo.getById('c1')?.provenance_key).toBe(
       buildMemoryProvenanceKey('a', 'semantic', 'user prefers valkey over redis')
     )

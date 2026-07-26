@@ -6,7 +6,7 @@ import type { MaintenanceService } from '@/memory/services/maintenanceService'
 import type { MemoryDiagnosticsCollector } from '@/memory/infra/diagnostics/memoryDiagnosticsCollector'
 import type { VectorStoreManager } from '@/memory/infra/vectorStoreManager'
 import type { MemoryServiceDeps } from '@/memory/types'
-import type { AgentMemoryRow } from '@/memory/domain/types'
+import type { AgentMemoryRow, MemoryTemporalMetadata } from '@/memory/domain/types'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
 import {
   createFakeRepository,
@@ -121,6 +121,12 @@ export function makeRow(id: string, overrides: Partial<AgentMemoryRow> = {}): Ag
     decay_score: null,
     source_entry_ids: null,
     confidence: null,
+    temporal_kind: 'atemporal',
+    valid_from: null,
+    valid_until: null,
+    temporal_confidence: null,
+    temporal_precision: null,
+    temporal_timezone: null,
     last_consolidated_at: null,
     conflict_state: null,
     conflict_with: null,
@@ -228,7 +234,8 @@ export function seedConflicted(
   repo: FakeRepository,
   challengerId: string,
   targetId: string,
-  content: string
+  content: string,
+  temporal?: MemoryTemporalMetadata
 ): void {
   repo.insert({
     id: challengerId,
@@ -236,7 +243,8 @@ export function seedConflicted(
     kind: 'semantic',
     content,
     status: 'conflicted',
-    conflictWith: targetId
+    conflictWith: targetId,
+    temporal
   })
   repo.seedConflictState(targetId, 'challenged')
 }

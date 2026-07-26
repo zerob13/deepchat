@@ -80,7 +80,7 @@ function seedReadyEmbedding(
 }
 
 describeIfNative('Memory native SQLite migration', () => {
-  it('creates the fresh v42 schema with canonical memory state and reopens idempotently', () => {
+  it('creates the fresh temporal schema with canonical memory state and reopens idempotently', () => {
     withTemporaryDatabase((databasePath) => {
       const first = new MainDatabaseCtor(databasePath)
       const db = first.getDatabase()
@@ -88,6 +88,8 @@ describeIfNative('Memory native SQLite migration', () => {
       expect(columns.some((column) => column.name === 'decision_revision')).toBe(true)
       expect(columns.some((column) => column.name === 'lifecycle_state')).toBe(true)
       expect(columns.some((column) => column.name === 'embedding_state')).toBe(true)
+      expect(columns.some((column) => column.name === 'temporal_kind')).toBe(true)
+      expect(columns.some((column) => column.name === 'temporal_confidence')).toBe(true)
       expect(() =>
         db.exec(
           "INSERT INTO agent_memory (id, agent_id, kind, content, lifecycle_state, created_at) VALUES ('bad-life', 'a', 'semantic', 'bad', 'invalid', 1)"
@@ -98,13 +100,23 @@ describeIfNative('Memory native SQLite migration', () => {
           "INSERT INTO agent_memory (id, agent_id, kind, content, embedding_state, created_at) VALUES ('bad-embedding', 'a', 'semantic', 'bad', 'invalid', 1)"
         )
       ).toThrow(/CHECK constraint failed/)
+      expect(() =>
+        db.exec(
+          "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, valid_from, valid_until, created_at) VALUES ('bad-time', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', 'UTC', 20, 10, 1)"
+        )
+      ).toThrow(/CHECK constraint failed/)
+      expect(() =>
+        db.exec(
+          "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, created_at) VALUES ('bad-zone', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', ' UTC ', 1)"
+        )
+      ).toThrow(/CHECK constraint failed/)
       expect(
         db.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'agent_memory_fts'").get()
       ).toEqual({ present: 1 })
       first.close()
 
       const reopened = new MainDatabaseCtor(databasePath)
-      expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(42)
+      expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(46)
       reopened.close()
     })
   })

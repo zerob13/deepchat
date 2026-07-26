@@ -746,6 +746,14 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: 'after-key',
           category: 'user_preference',
           importance: 0.9,
+          temporal: {
+            temporalKind: 'state',
+            validFrom: 100,
+            validUntil: 200,
+            temporalConfidence: 0.8,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          },
           at: 10
         })
       ).toBe(true)
@@ -756,6 +764,33 @@ describeIfSqlite('AgentMemoryTable', () => {
         provenance_key: 'after-key',
         category: 'user_preference',
         importance: 0.9,
+        temporal_kind: 'state',
+        valid_from: 100,
+        valid_until: 200,
+        temporal_confidence: 0.8,
+        embedding_state: 'pending'
+      })
+      expect(
+        table.updateUserMetadataIfRevision({
+          agentId: 'a',
+          id: edited.id,
+          expectedRevision: edited.decision_revision,
+          temporal: {
+            temporalKind: 'event',
+            validFrom: 300,
+            validUntil: 400,
+            temporalConfidence: 0.95,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          }
+        })
+      ).toBe(true)
+      expect(table.getById('user')).toMatchObject({
+        temporal_kind: 'event',
+        valid_from: 300,
+        valid_until: 400,
+        temporal_confidence: 0.95,
+        decision_revision: edited.decision_revision + 1,
         embedding_state: 'pending'
       })
 
@@ -857,11 +892,35 @@ describeIfSqlite('AgentMemoryTable', () => {
           agentId: 'a',
           id: challenger.id,
           expectedRevision: challenger.decision_revision,
-          targetId: challengedTarget.id
+          targetId: challengedTarget.id,
+          content: 'resolved challenger',
+          provenanceKey: 'resolved-provenance',
+          category: 'user_preference',
+          temporal: {
+            temporalKind: 'state',
+            validFrom: 100,
+            validUntil: null,
+            temporalConfidence: 0.8,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          },
+          at: 200
         })
       ).toBe(true)
       const activated = table.getById('challenger')!
-      expect(activated.decision_revision).toBe(challenger.decision_revision + 1)
+      expect(activated).toMatchObject({
+        content: 'resolved challenger',
+        provenance_key: 'resolved-provenance',
+        category: 'user_preference',
+        last_accessed: 200,
+        temporal_kind: 'state',
+        valid_from: 100,
+        valid_until: null,
+        temporal_confidence: 0.8,
+        temporal_precision: 'exact',
+        temporal_timezone: 'UTC',
+        decision_revision: challenger.decision_revision + 1
+      })
       expect(
         table.archiveResolvedConflictTarget({
           agentId: 'a',
@@ -2228,7 +2287,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
     }
   })
 
-  it('carries embedding_model + lineage in the authoritative schema and exposes migration v32', () => {
+  it('carries authoritative claim metadata and exposes additive migrations', () => {
     const db = new DatabaseCtor(':memory:')
     try {
       const table = new AgentMemoryTableCtor(db)
@@ -2242,13 +2301,16 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain('conflict_with')
       expect(createSql).toContain('category')
       expect(createSql).toContain('decision_revision INTEGER NOT NULL DEFAULT 1')
-      expect(table.getLatestVersion()).toBe(42)
+      expect(createSql).toContain("temporal_kind TEXT NOT NULL DEFAULT 'atemporal'")
+      expect(createSql).toContain('temporal_confidence REAL')
+      expect(table.getLatestVersion()).toBe(46)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
       expect(table.getMigrationSQL(35)).toMatch(/ADD COLUMN conflict_with/)
       expect(table.getMigrationSQL(37)).toMatch(/ADD COLUMN category/)
       expect(table.getMigrationSQL(41)).toMatch(/ADD COLUMN decision_revision/)
+      expect(table.getMigrationSQL(46)).toMatch(/ADD COLUMN temporal_kind/)
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()
@@ -2260,6 +2322,79 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(columns).toContain('conflict_with')
       expect(columns).toContain('category')
       expect(columns).toContain('decision_revision')
+      expect(columns).toContain('temporal_kind')
+      expect(columns).toContain('valid_from')
+      expect(columns).toContain('valid_until')
+      expect(columns).toContain('temporal_confidence')
+      expect(columns).toContain('temporal_precision')
+      expect(columns).toContain('temporal_timezone')
+
+      const row = table.insert({
+        id: 'temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'User is in Shanghai this month.',
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 100,
+          validUntil: 200,
+          temporalConfidence: 0.9,
+          temporalPrecision: 'month',
+          temporalTimeZone: 'Asia/Shanghai'
+        }
+      })
+      expect(row).toMatchObject({
+        temporal_kind: 'state',
+        valid_from: 100,
+        valid_until: 200,
+        temporal_confidence: 0.9,
+        temporal_precision: 'month',
+        temporal_timezone: 'Asia/Shanghai'
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies the temporal migration to a pre-temporal memory table', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE agent_memory (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO agent_memory (id, agent_id, kind, content, created_at)
+        VALUES ('legacy', 'a', 'semantic', 'legacy memory', 1);
+      `)
+      const table = new AgentMemoryTableCtor(db)
+      const migration = table.getMigrationSQL(46)
+      if (!migration) throw new Error('expected temporal migration')
+
+      db.exec(migration)
+
+      expect(
+        db
+          .prepare(
+            `SELECT temporal_kind, valid_from, valid_until, temporal_confidence,
+                    temporal_precision, temporal_timezone
+             FROM agent_memory WHERE id = 'legacy'`
+          )
+          .get()
+      ).toEqual({
+        temporal_kind: 'atemporal',
+        valid_from: null,
+        valid_until: null,
+        temporal_confidence: null,
+        temporal_precision: null,
+        temporal_timezone: null
+      })
+      expect(() =>
+        db.prepare('UPDATE agent_memory SET temporal_confidence = 2 WHERE id = ?').run('legacy')
+      ).toThrow(/CHECK constraint failed/)
     } finally {
       db.close()
     }

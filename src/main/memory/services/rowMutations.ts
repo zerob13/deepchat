@@ -10,6 +10,7 @@ import {
   CONFIDENCE_INCREMENT,
   DEFAULT_CONFIDENCE,
   type AgentMemoryRow,
+  type MemoryTemporalMetadata,
   type NormalizedMemoryCandidate,
   type WriteMemoriesOptions
 } from '../types'
@@ -20,6 +21,11 @@ import type {
 } from '../domain/types'
 import { isEmbeddingEligibleState } from '../domain/stateModel'
 import { isUniqueConstraintError } from '../context'
+import {
+  memoryTemporalMetadataEquals,
+  reconcileEquivalentClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
 import type {
   MemoryAuditReadPort,
   MemoryEmbeddingRepositoryPort,
@@ -129,7 +135,8 @@ export class MemoryRowMutations {
         userScope: options.userScope ?? null,
         provenanceKey,
         sourceEntryIds,
-        createdAt
+        createdAt,
+        temporal: candidate.temporal
       })
       return id
     } catch (error) {
@@ -166,7 +173,8 @@ export class MemoryRowMutations {
         provenanceKey,
         sourceEntryIds,
         conflictWith: targetId,
-        createdAt
+        createdAt,
+        temporal: candidate.temporal
       })
       return id
     } catch (error) {
@@ -179,6 +187,22 @@ export class MemoryRowMutations {
   bumpConfidence(id: string): void {
     const current = this.ports.repository.getById(id)?.confidence ?? DEFAULT_CONFIDENCE
     this.ports.repository.setConfidence(id, Math.min(1, current + CONFIDENCE_INCREMENT))
+  }
+
+  enrichEquivalentClaimTemporalMetadata(
+    agentId: string,
+    existing: AgentMemoryRow,
+    incoming: MemoryTemporalMetadata
+  ): boolean {
+    const current = temporalMetadataFromRow(existing)
+    const next = reconcileEquivalentClaimTemporalMetadata(current, incoming)
+    if (memoryTemporalMetadataEquals(current, next)) return false
+    return this.ports.repository.updateUserMetadataIfRevision({
+      agentId,
+      id: existing.id,
+      expectedRevision: existing.decision_revision,
+      temporal: next
+    })
   }
 
   applyManualContentEdit(
@@ -209,7 +233,8 @@ export class MemoryRowMutations {
         provenanceKey: newKey,
         at: now,
         category: nextCategory,
-        importance: candidate.importance
+        importance: candidate.importance,
+        temporal: candidate.temporal
       })
       if (!updated) return { action: 'suppressed', id: row.id, reason: 'concurrent-update' }
       return { action: 'updated', id: row.id }
@@ -284,7 +309,11 @@ export class MemoryRowMutations {
         ownerRevision += 1
         retiredHeadId = revival.retiredHeadId
       }
-      const metadataPatch: { category?: string | null; importance?: number } = {}
+      const metadataPatch: {
+        category?: string | null
+        importance?: number
+        temporal?: MemoryTemporalMetadata
+      } = {}
       if (
         providedFields.category &&
         canCarryCategory(owner.kind) &&
@@ -294,6 +323,14 @@ export class MemoryRowMutations {
       }
       if (providedFields.importance && owner.importance !== candidate.importance) {
         metadataPatch.importance = candidate.importance
+      }
+      const ownerTemporal = temporalMetadataFromRow(owner)
+      const nextTemporal = reconcileEquivalentClaimTemporalMetadata(
+        ownerTemporal,
+        candidate.temporal
+      )
+      if (!memoryTemporalMetadataEquals(ownerTemporal, nextTemporal)) {
+        metadataPatch.temporal = nextTemporal
       }
       if (Object.keys(metadataPatch).length > 0) {
         if (

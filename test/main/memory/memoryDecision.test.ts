@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildDecisionPrompt, parseDecision } from '@/memory/core/decision'
+import { ATEMPORAL_MEMORY_METADATA } from '@/memory/core/temporal'
 
 describe('buildDecisionPrompt', () => {
   it('embeds the candidate, indexes neighbors, and declares the data untrusted', () => {
     const prompt = buildDecisionPrompt(
-      { kind: 'semantic', category: null, content: 'user prefers redis', importance: 0.5 },
+      {
+        kind: 'semantic',
+        category: null,
+        content: 'user prefers redis',
+        importance: 0.5,
+        temporal: ATEMPORAL_MEMORY_METADATA
+      },
       [{ content: 'user likes databases' }, { content: 'user lives in berlin' }]
     )
     expect(prompt).toContain('user prefers redis')
@@ -17,7 +24,13 @@ describe('buildDecisionPrompt', () => {
 
   it('renders (none) when there are no neighbors', () => {
     const prompt = buildDecisionPrompt(
-      { kind: 'semantic', category: null, content: 'x', importance: 0.5 },
+      {
+        kind: 'semantic',
+        category: null,
+        content: 'x',
+        importance: 0.5,
+        temporal: ATEMPORAL_MEMORY_METADATA
+      },
       []
     )
     expect(prompt).toContain('(none)')

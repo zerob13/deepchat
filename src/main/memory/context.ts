@@ -20,7 +20,11 @@ import type {
   MemoryChangeSinkPort,
   MemoryProviderControlPort
 } from './ports'
-import { systemMemoryDomainClock, type MemoryDomainClock } from './domain/clock'
+import {
+  canonicalizeMemoryTimeZone,
+  systemMemoryDomainClock,
+  type MemoryDomainClock
+} from './domain/clock'
 
 export type { MemoryModelRef } from './domain/types'
 
@@ -74,8 +78,7 @@ export class MemoryRuntimeContext {
   }
 
   timeZone(): string {
-    const timeZone = this.clock.timeZone().trim()
-    return timeZone || 'UTC'
+    return canonicalizeMemoryTimeZone(this.clock.timeZone()) ?? 'UTC'
   }
 
   markDisposed(): void {

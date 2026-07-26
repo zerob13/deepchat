@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { buildMemoryProvenanceKey } from '@/memory/core/scoring'
-import type { AgentMemoryRow } from '@/memory/domain/types'
+import type { AgentMemoryRow, MemoryTemporalMetadata } from '@/memory/domain/types'
 import {
   AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
   type AgentMemoryCategory
@@ -22,6 +22,7 @@ function insertMemory(
     supersededBy?: string | null
     conflictState?: 'challenged' | null
     conflictWith?: string | null
+    temporal?: MemoryTemporalMetadata
   }
 ) {
   repo.insert({
@@ -33,7 +34,8 @@ function insertMemory(
     importance: input.importance ?? 0.5,
     status: input.status ?? 'embedded',
     provenanceKey: input.provenanceKey ?? null,
-    conflictWith: input.conflictWith ?? null
+    conflictWith: input.conflictWith ?? null,
+    temporal: input.temporal
   })
   if (input.supersededBy !== undefined) repo.seedSupersededBy(input.id, input.supersededBy)
   if (input.conflictState !== undefined) repo.seedConflictState(input.id, input.conflictState)
@@ -219,7 +221,15 @@ describe('MemoryService.updateMemory', () => {
       id: 'edited',
       content: 'user likes redis',
       category: 'user_preference',
-      importance: 0.5
+      importance: 0.5,
+      temporal: {
+        temporalKind: 'state',
+        validFrom: 100,
+        validUntil: 200,
+        temporalConfidence: 0.8,
+        temporalPrecision: 'exact',
+        temporalTimeZone: 'UTC'
+      }
     })
 
     const result = presenter.updateMemory('deepchat', 'edited', {
@@ -231,7 +241,11 @@ describe('MemoryService.updateMemory', () => {
     expect(repo.getById('owner')).toMatchObject({
       content: 'user likes valkey',
       category: 'project_fact',
-      importance: 0.9
+      importance: 0.9,
+      temporal_kind: 'state',
+      valid_from: 100,
+      valid_until: 200,
+      temporal_confidence: 0.8
     })
   })
 

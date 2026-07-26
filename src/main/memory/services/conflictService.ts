@@ -11,7 +11,8 @@ import {
 import { normalizeMemoryCandidate } from '../core/candidates'
 import { estimateTokens } from '../core/injectionPort'
 import { MaintenanceBudget } from '../core/maintenanceBudget'
-import { buildMemoryProvenanceKey } from '../core/scoring'
+import { buildMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
+import { resolveMergedClaimTemporalMetadata, temporalMetadataFromRow } from '../core/temporal'
 import type {
   MemoryConflictPair,
   MemoryConflictResolution,
@@ -177,6 +178,7 @@ export class ConflictService {
     switch (outcome) {
       case 'keep_challenger': {
         const content = options.mergedContent?.trim()
+        const normalizedContent = content ? normalizeForProvenanceV2(content) : null
         const transitionTarget = {
           agentId,
           id: pair.challenger.id,
@@ -190,6 +192,15 @@ export class ConflictService {
                 content,
                 provenanceKey: buildMemoryProvenanceKey(agentId, pair.challenger.kind, content),
                 category: pair.challenger.category,
+                temporal: resolveMergedClaimTemporalMetadata(
+                  temporalMetadataFromRow(pair.challenger),
+                  temporalMetadataFromRow(pair.target),
+                  {
+                    existing:
+                      normalizedContent === normalizeForProvenanceV2(pair.challenger.content),
+                    incoming: normalizedContent === normalizeForProvenanceV2(pair.target.content)
+                  }
+                ),
                 at: now
               })
             : this.ports.repository.activateResolvedChallenger(transitionTarget)

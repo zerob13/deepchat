@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ATEMPORAL_MEMORY_METADATA } from '@/memory/core/temporal'
 
 import { MemoryService } from '@/memory'
 import { MemoryRuntimeContext } from '@/memory/context'
@@ -245,7 +246,15 @@ describe('RetrievalService diagnostics', () => {
     await expect(
       service.retrieveForDecisions(
         'agent',
-        [{ kind: 'semantic', category: null, content: 'redis', importance: 0.5 }],
+        [
+          {
+            kind: 'semantic',
+            category: null,
+            content: 'redis',
+            importance: 0.5,
+            temporal: ATEMPORAL_MEMORY_METADATA
+          }
+        ],
         Date.now()
       )
     ).resolves.toHaveLength(1)

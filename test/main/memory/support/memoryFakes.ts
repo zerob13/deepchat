@@ -33,12 +33,18 @@ import type {
   MemoryTransactionPort
 } from '@/memory/ports'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
+import { normalizeMemoryTemporalMetadata } from '@/memory/core/temporal'
 import {
   assertValidMemoryInsertState,
   deriveCanonicalStateFromLegacy,
   projectLegacyStatus
 } from '@/memory/domain/stateModel'
-import type { AgentMemoryEmbeddingState, AgentMemoryRow } from '@/memory/domain/types'
+import type {
+  AgentMemoryEmbeddingState,
+  AgentMemoryRow,
+  MemoryTemporalMetadata,
+  ResolveChallengerTransition
+} from '@/memory/domain/types'
 
 class MemoryRowMap extends Map<string, AgentMemoryRow> {
   override set(key: string, row: AgentMemoryRow): this {
@@ -102,6 +108,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         conflictWith: input.conflictWith ?? null
       })
     }
+    const temporal = normalizeMemoryTemporalMetadata(input.temporal)
     const row: AgentMemoryRow = {
       id: input.id,
       agent_id: input.agentId,
@@ -126,6 +133,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       decay_score: null,
       source_entry_ids: input.sourceEntryIds?.length ? JSON.stringify(input.sourceEntryIds) : null,
       confidence: null,
+      temporal_kind: temporal.temporalKind,
+      valid_from: temporal.validFrom,
+      valid_until: temporal.validUntil,
+      temporal_confidence: temporal.temporalConfidence,
+      temporal_precision: temporal.temporalPrecision,
+      temporal_timezone: temporal.temporalTimeZone,
       last_consolidated_at: null,
       conflict_state: null,
       conflict_with: input.conflictWith ?? null,
@@ -461,16 +474,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     return true
   }
 
-  activateResolvedChallenger(input: {
-    agentId: string
-    id: string
-    expectedRevision: number
-    targetId: string
-    content?: string
-    provenanceKey?: string | null
-    category?: string | null
-    at?: number
-  }) {
+  activateResolvedChallenger(input: ResolveChallengerTransition) {
     const row = this.rows.get(input.id)
     const target = this.rows.get(input.targetId)
     if (
@@ -504,6 +508,13 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       if (Object.prototype.hasOwnProperty.call(input, 'category')) {
         row.category = input.category ?? null
       }
+      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      row.temporal_kind = temporal.temporalKind
+      row.valid_from = temporal.validFrom
+      row.valid_until = temporal.validUntil
+      row.temporal_confidence = temporal.temporalConfidence
+      row.temporal_precision = temporal.temporalPrecision
+      row.temporal_timezone = temporal.temporalTimeZone
       row.last_accessed = input.at ?? 0
     }
     row.decision_revision += 1
@@ -836,6 +847,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     at: number
     category?: string | null
     importance?: number
+    temporal?: MemoryTemporalMetadata
   }) {
     const row = this.rows.get(input.id)
     if (
@@ -856,6 +868,15 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.last_accessed = input.at
     if (input.category !== undefined) row.category = input.category
     if (input.importance !== undefined) row.importance = input.importance
+    if (input.temporal !== undefined) {
+      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      row.temporal_kind = temporal.temporalKind
+      row.valid_from = temporal.validFrom
+      row.valid_until = temporal.validUntil
+      row.temporal_confidence = temporal.temporalConfidence
+      row.temporal_precision = temporal.temporalPrecision
+      row.temporal_timezone = temporal.temporalTimeZone
+    }
     row.embedding_state = 'pending'
     row.status = 'pending_embedding'
     row.embedding_id = null
@@ -872,6 +893,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     category?: string | null
     importance?: number
     lastAccessedAt?: number
+    temporal?: MemoryTemporalMetadata
   }) {
     const row = this.rows.get(input.id)
     if (
@@ -895,6 +917,15 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     if (Object.prototype.hasOwnProperty.call(input, 'lastAccessedAt')) {
       row.last_accessed = input.lastAccessedAt ?? row.last_accessed
+    }
+    if (input.temporal !== undefined) {
+      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      row.temporal_kind = temporal.temporalKind
+      row.valid_from = temporal.validFrom
+      row.valid_until = temporal.validUntil
+      row.temporal_confidence = temporal.temporalConfidence
+      row.temporal_precision = temporal.temporalPrecision
+      row.temporal_timezone = temporal.temporalTimeZone
     }
     row.decision_revision += 1
     return true

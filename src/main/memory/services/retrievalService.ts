@@ -14,6 +14,7 @@ import {
 } from '../core/scoring'
 import { withSoftDeadline } from '../core/asyncDeadline'
 import { isMemoryProviderCancellationError } from '../core/providerCancellation'
+import { temporalMetadataFromRow } from '../core/temporal'
 import {
   buildRecallKeywordQuery,
   extractRecallKeywordCandidates,
@@ -417,6 +418,7 @@ export class RetrievalService {
               sources: { fts: true },
               sourceSession: pinned.source_session,
               sourceEntryIds: null,
+              temporal: temporalMetadataFromRow(pinned),
               breakdown: {
                 similarity: 0,
                 recency: pinned.last_accessed ?? pinned.created_at,

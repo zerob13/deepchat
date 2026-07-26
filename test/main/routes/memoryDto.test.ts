@@ -57,6 +57,12 @@ function makeRow(overrides: Partial<AgentMemoryRow> = {}): AgentMemoryRow {
     decay_score: null,
     source_entry_ids: null,
     confidence: null,
+    temporal_kind: 'atemporal',
+    valid_from: null,
+    valid_until: null,
+    temporal_confidence: null,
+    temporal_precision: null,
+    temporal_timezone: null,
     last_consolidated_at: null,
     conflict_state: null,
     conflict_with: null,
@@ -159,6 +165,27 @@ describe('toMemoryItemDto sourceEntryIds passthrough', () => {
     const parsed = memoryListRoute.output.parse({ memories })
     expect(parsed.memories[0].sourceEntryIds).toEqual([1, 2])
     expect(parsed.memories[1].sourceEntryIds).toBeNull()
+  })
+
+  it('projects pre-migration row shapes as atemporal', () => {
+    const {
+      temporal_kind: _temporalKind,
+      valid_from: _validFrom,
+      valid_until: _validUntil,
+      temporal_confidence: _temporalConfidence,
+      temporal_precision: _temporalPrecision,
+      temporal_timezone: _temporalTimeZone,
+      ...legacyRow
+    } = makeRow()
+
+    expect(toMemoryItemDto(legacyRow as unknown as AgentMemoryRow)).toMatchObject({
+      temporalKind: 'atemporal',
+      validFrom: null,
+      validUntil: null,
+      temporalConfidence: null,
+      temporalPrecision: null,
+      temporalTimeZone: null
+    })
   })
 
   it('maps conflict_with to camelCase conflictWith and accepts conflicted status', () => {

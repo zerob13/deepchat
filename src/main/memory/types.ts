@@ -45,6 +45,7 @@ export type {
   MemoryManagementPageCursor,
   MemoryPersonaDraftResult,
   MemoryRecallItem,
+  MemoryTemporalMetadata,
   MemoryReflectionResult,
   MemorySearchHit,
   MemoryStatus,

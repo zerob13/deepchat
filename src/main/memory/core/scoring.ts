@@ -20,6 +20,7 @@ import {
 import type { AgentMemoryKind } from '../domain/types'
 import type { DeepChatAgentMemoryRetrieval } from '@shared/types/agent-interface'
 import { parseAgentMemorySourceEntryIds } from '@shared/lib/agentMemoryLineage'
+import { temporalMetadataFromRow } from './temporal'
 
 // Recency half-life per cognitive layer: reflections persist longest, episodic summaries next,
 // everything else on the semantic default. persona/working never reach recall, so they fall through.
@@ -151,7 +152,8 @@ function toRecallItem(
     sources,
     similarity,
     sourceSession: row.source_session,
-    sourceEntryIds: parseSourceEntryIds(row.source_entry_ids)
+    sourceEntryIds: parseSourceEntryIds(row.source_entry_ids),
+    temporal: temporalMetadataFromRow(row)
   }
 }
 

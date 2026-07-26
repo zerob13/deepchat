@@ -9,7 +9,7 @@ import {
   makePresenter,
   textToVector
 } from './support/memoryFakes'
-import { routedLLM, seedEmbedded } from './serviceTestSupport'
+import { makeLLMPresenter, routedLLM, seedEmbedded } from './serviceTestSupport'
 
 import { MemoryService, embeddingDimensions, waitForMemoryCondition } from './serviceTestSupport'
 
@@ -26,6 +26,92 @@ describe('MemoryService write + two-phase embedding', () => {
     expect(first).toHaveLength(1)
     expect(second).toHaveLength(0)
     expect(repo.countByAgent('a')).toBe(1)
+  })
+
+  it('enriches a migrated atemporal duplicate without replacing an established interval', () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    const content = 'user works on the memory project'
+    const initial = presenter.writeMemoriesSync([{ kind: 'semantic', content }], { agentId: 'a' })
+    const temporal = {
+      temporalKind: 'state' as const,
+      validFrom: 100,
+      validUntil: 200,
+      temporalConfidence: 0.8,
+      temporalPrecision: 'exact' as const,
+      temporalTimeZone: 'UTC'
+    }
+
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content, temporal }], { agentId: 'a' })
+    ).toEqual([])
+    expect(repo.getById(initial[0])).toMatchObject({
+      temporal_kind: 'state',
+      valid_from: 100,
+      valid_until: 200,
+      temporal_confidence: 0.8,
+      confidence: null,
+      decision_revision: 2
+    })
+
+    expect(
+      presenter.writeMemoriesSync(
+        [
+          {
+            kind: 'semantic',
+            content,
+            temporal: { ...temporal, validFrom: 120, temporalConfidence: 1 }
+          }
+        ],
+        { agentId: 'a' }
+      )
+    ).toEqual([])
+    expect(repo.getById(initial[0])).toMatchObject({
+      valid_from: 100,
+      temporal_confidence: 0.8,
+      decision_revision: 2
+    })
+  })
+
+  it('retains temporal metadata from duplicate extraction candidates', async () => {
+    const content = 'The release is planned for tomorrow.'
+    const { presenter, repo } = makeLLMPresenter(
+      routedLLM({
+        extraction: JSON.stringify({
+          memories: [
+            { content, importance: 0.8 },
+            {
+              content,
+              importance: 0.8,
+              temporal: {
+                temporalKind: 'plan',
+                validFrom: '2026-07-27T00:00:00Z',
+                validUntil: '2026-07-28T00:00:00Z',
+                temporalConfidence: 0.9,
+                temporalPrecision: 'day',
+                timeZone: 'UTC'
+              }
+            }
+          ]
+        })
+      })
+    )
+
+    await expect(
+      presenter.extractAndStore({
+        agentId: 'a',
+        spanText: 'User: the release is planned for tomorrow',
+        model: { providerId: 'main', modelId: 'main' }
+      })
+    ).resolves.toMatchObject({ ok: true })
+    expect(repo.listByAgent('a')).toEqual([
+      expect.objectContaining({
+        content,
+        temporal_kind: 'plan',
+        valid_from: Date.parse('2026-07-27T00:00:00Z'),
+        valid_until: Date.parse('2026-07-28T00:00:00Z'),
+        temporal_confidence: 0.9
+      })
+    ])
   })
 
   it('lazy re-keys a matching legacy provenance owner without bumping its decision revision', () => {

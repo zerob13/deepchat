@@ -3,6 +3,8 @@ import type {
   AgentMemoryEmbeddingState,
   AgentMemoryHealthCategory,
   AgentMemoryLifecycleState,
+  AgentMemoryTemporalKind,
+  AgentMemoryTemporalPrecision,
   LegacyAgentMemoryStatus
 } from '@shared/types/agent-memory'
 import { AGENT_MEMORY_HEALTH_KIND_KEYS } from '@shared/types/agent-memory'
@@ -65,6 +67,16 @@ export type AgentMemoryStatus = LegacyAgentMemoryStatus
 export type { AgentMemoryEmbeddingState, AgentMemoryLifecycleState }
 export type AgentMemoryConflictState = 'challenged'
 export type AgentMemoryPersonaState = 'draft' | 'active' | 'superseded' | 'rejected'
+export type { AgentMemoryTemporalKind, AgentMemoryTemporalPrecision }
+
+export interface MemoryTemporalMetadata {
+  temporalKind: AgentMemoryTemporalKind
+  validFrom: number | null
+  validUntil: number | null
+  temporalConfidence: number | null
+  temporalPrecision: AgentMemoryTemporalPrecision | null
+  temporalTimeZone: string | null
+}
 
 export interface MemoryTransitionTarget {
   agentId: string
@@ -89,12 +101,14 @@ export type ResolveChallengerTransition = ResolveChallengerTransitionBase &
         content?: never
         provenanceKey?: never
         category?: never
+        temporal?: never
         at?: never
       }
     | {
         content: string
         provenanceKey: string | null
         category?: string | null
+        temporal: MemoryTemporalMetadata
         at: number
       }
   )
@@ -114,6 +128,7 @@ export interface UserContentTransition extends MemoryTransitionTarget {
   at: number
   category?: string | null
   importance?: number
+  temporal?: MemoryTemporalMetadata
 }
 
 export interface InternalContentTransition extends MemoryTransitionTarget {
@@ -126,6 +141,7 @@ export interface UserMetadataTransition extends MemoryTransitionTarget {
   category?: string | null
   importance?: number
   lastAccessedAt?: number
+  temporal?: MemoryTemporalMetadata
 }
 
 export interface AgentMemoryRow {
@@ -152,6 +168,12 @@ export interface AgentMemoryRow {
   decay_score: number | null
   source_entry_ids: string | null
   confidence: number | null
+  temporal_kind: AgentMemoryTemporalKind
+  valid_from: number | null
+  valid_until: number | null
+  temporal_confidence: number | null
+  temporal_precision: AgentMemoryTemporalPrecision | null
+  temporal_timezone: string | null
   last_consolidated_at: number | null
   conflict_state: string | null
   conflict_with: string | null
@@ -210,6 +232,7 @@ export type AgentMemoryInsertInput = {
   isAnchor?: boolean
   createdAt?: number
   sourceEntryIds?: number[] | null
+  temporal?: MemoryTemporalMetadata
   conflictWith?: string | null
   personaState?: AgentMemoryPersonaState | null
 } & AgentMemoryCanonicalInsertState
@@ -295,6 +318,7 @@ export interface MemoryCandidate {
   category?: string | null
   content: string
   importance?: number
+  temporal?: MemoryTemporalMetadata
 }
 
 export interface NormalizedMemoryCandidate {
@@ -302,6 +326,7 @@ export interface NormalizedMemoryCandidate {
   category: AgentMemoryCategory | null
   content: string
   importance: number
+  temporal: MemoryTemporalMetadata
 }
 
 export interface WriteMemoriesOptions {
@@ -336,6 +361,7 @@ export interface MemoryRecallItem {
   similarity?: number
   sourceSession?: string | null
   sourceEntryIds?: number[] | null
+  temporal?: MemoryTemporalMetadata
   breakdown?: {
     similarity: number
     recency: number

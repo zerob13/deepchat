@@ -9,11 +9,11 @@
 
 ## 1. Temporal claims
 
-- [ ] Add temporal domain types and normalization helpers.
-- [ ] Add additive SQLite columns, migration, repair, and fresh-schema constraints.
-- [ ] Extend insert/read/management/route DTO contracts.
-- [ ] Extend extraction prompt/parser with clock context and legacy response compatibility.
-- [ ] Preserve temporal metadata across update, supersede, conflict, merge, and manual-edit paths.
+- [x] Add temporal domain types and normalization helpers.
+- [x] Add additive SQLite columns, migration, repair, and fresh-schema constraints.
+- [x] Extend insert/read/management/route DTO contracts.
+- [x] Extend extraction prompt/parser with clock context and legacy response compatibility.
+- [x] Preserve temporal metadata across update, supersede, conflict, merge, and manual-edit paths.
 - [ ] Apply temporal eligibility, ranking, annotations, and trace data before access accounting.
 - [ ] Cover atemporal, current, expired, future, uncertain, plan, event, and recurring cases.
 
