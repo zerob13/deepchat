@@ -53,6 +53,18 @@ type HookConfigSnapshot = {
   readonly subscribedEvents: ReadonlySet<HookEventName>
 }
 
+/** Identity of a hook as it stood when the event was accepted. */
+type AcceptedHook = {
+  readonly id: string
+  readonly command: string
+}
+
+/** An accepted event together with the subscribers that were eligible at that moment. */
+type HookDelivery = {
+  readonly projection: HookEventProjection
+  readonly accepted: readonly AcceptedHook[]
+}
+
 /** One event reduced to detached, already-truncated wire facts. */
 type HookEventProjection = {
   readonly event: HookEventName
@@ -236,7 +248,14 @@ export class HookService implements HookObserver {
       if (!this.isObserved(event.event)) {
         return
       }
-      this.enqueue(projectHookEvent(event, new Date().toISOString()))
+      const accepted = this.acceptSubscribers(event.event)
+      if (accepted.length === 0) {
+        return
+      }
+      this.enqueue({
+        projection: projectHookEvent(event, new Date().toISOString()),
+        accepted
+      })
     } catch (error) {
       log.warn('[Hook] Notification observer failed:', error)
     }
@@ -282,12 +301,18 @@ export class HookService implements HookObserver {
     return this.snapshot
   }
 
-  private enqueue(projection: HookEventProjection): void {
-    const sessionId = projection.session.sessionId
+  private acceptSubscribers(event: HookEventName): readonly AcceptedHook[] {
+    return this.readSnapshot()
+      .config.hooks.filter((hook) => shouldDispatchHook(hook, event))
+      .map((hook) => ({ id: hook.id, command: hook.command }))
+  }
+
+  private enqueue(delivery: HookDelivery): void {
+    const sessionId = delivery.projection.session.sessionId
     const previous = this.sessionChains.get(sessionId) ?? Promise.resolve()
     const next = previous.then(async () => {
       try {
-        await this.deliver(projection)
+        await this.deliver(delivery)
       } catch (error) {
         log.warn('[Hook] Dispatch failed:', error)
       }
@@ -301,27 +326,45 @@ export class HookService implements HookObserver {
     })
   }
 
-  private async deliver(projection: HookEventProjection): Promise<void> {
+  private async deliver({ projection, accepted }: HookDelivery): Promise<void> {
     if (!this.accepting) {
       return
     }
 
-    const { config } = this.readSnapshot()
+    // Skip enrichment entirely when nothing can run any more.
+    if (this.runnableHooks(projection.event, accepted).length === 0) {
+      return
+    }
+
     const payload = await this.buildPayload(projection)
     if (!this.accepting) {
       return
     }
 
-    for (const hook of config.hooks) {
-      if (!shouldDispatchHook(hook, projection.event)) {
-        continue
-      }
-
+    // Authoritative revalidation: enrichment is asynchronous, so eligibility is settled here
+    // rather than before it.
+    for (const hook of this.runnableHooks(projection.event, accepted)) {
       // Per-command isolation: one failing hook must not affect its siblings or the next event.
       void this.runHookCommand(hook, payload).catch((error) => {
         log.warn(`[HooksNotifications] Hook "${hook.name}" failed:`, error)
       })
     }
+  }
+
+  /**
+   * A hook runs only if it was eligible when the event happened and is still eligible now under
+   * the same command, so a hook enabled or edited afterwards never receives an earlier event and
+   * one disabled meanwhile stops receiving queued ones.
+   */
+  private runnableHooks(
+    event: HookEventName,
+    accepted: readonly AcceptedHook[]
+  ): readonly HookCommandItem[] {
+    return this.readSnapshot().config.hooks.filter(
+      (hook) =>
+        shouldDispatchHook(hook, event) &&
+        accepted.some((item) => item.id === hook.id && item.command === hook.command)
+    )
   }
 
   private async buildPayload(projection: HookEventProjection): Promise<HookEventPayload> {

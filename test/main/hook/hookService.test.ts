@@ -294,6 +294,75 @@ describe('HookService subscription index', () => {
     expect(service.isObserved('PreToolUse')).toBe(false)
   })
 
+  it('never backfills an event to a hook enabled in the same tick', async () => {
+    const { service } = createHarness([enabledHook('a', ['PostToolUse'])])
+
+    service.notify(toolEvent('session-1', 'call-1'))
+    service.updateConfig({
+      hooks: [enabledHook('a', ['PostToolUse']), enabledHook('b', ['PostToolUse'])]
+    })
+    await flush()
+
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    expect(spawnMock.mock.calls[0][0]).toBe('run-a')
+  })
+
+  it('never backfills an event while enrichment is still pending', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['PostToolUse'])])
+    let releaseSession: (value: null) => void = () => undefined
+    getSession.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        releaseSession = resolve
+      })
+    )
+
+    service.notify({
+      event: 'PostToolUse',
+      session: { sessionId: 'session-1' },
+      tool: { callId: 'call-1' }
+    })
+    await flush()
+    service.updateConfig({
+      hooks: [enabledHook('a', ['PostToolUse']), enabledHook('b', ['PostToolUse'])]
+    })
+    releaseSession(null)
+    await flush()
+
+    expect(spawnMock.mock.calls.map(([command]) => command)).toEqual(['run-a'])
+  })
+
+  it('drops a queued event for a hook disabled or edited before delivery', async () => {
+    const { service, getSession } = createHarness([
+      enabledHook('a', ['PostToolUse']),
+      enabledHook('b', ['PostToolUse']),
+      enabledHook('c', ['PostToolUse'])
+    ])
+    let releaseSession: (value: null) => void = () => undefined
+    getSession.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        releaseSession = resolve
+      })
+    )
+
+    service.notify({
+      event: 'PostToolUse',
+      session: { sessionId: 'session-1' },
+      tool: { callId: 'call-1' }
+    })
+    await flush()
+    service.updateConfig({
+      hooks: [
+        { ...enabledHook('a', ['PostToolUse']), enabled: false },
+        { ...enabledHook('b', ['PostToolUse']), command: 'run-b-edited' },
+        enabledHook('c', ['PostToolUse'])
+      ]
+    })
+    releaseSession(null)
+    await flush()
+
+    expect(spawnMock.mock.calls.map(([command]) => command)).toEqual(['run-c'])
+  })
+
   it('picks up a store write that bypassed the service after a refresh', () => {
     const { service, writeExternally } = createHarness()
 
