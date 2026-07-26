@@ -11,6 +11,13 @@
           <Badge v-if="draftCount > 0" variant="secondary" class="text-[10px]">
             {{ t('settings.memory.redesign.personaDraftBadge', { count: draftCount }) }}
           </Badge>
+          <Badge v-if="directiveDraftCount > 0" variant="secondary" class="text-[10px]">
+            {{
+              t('settings.memory.redesign.directiveDraftBadge', {
+                count: directiveDraftCount
+              })
+            }}
+          </Badge>
         </div>
         <p class="mt-1 text-xs text-muted-foreground">
           {{ t('settings.memory.redesign.inboxDescription') }}
@@ -121,6 +128,54 @@
           </div>
         </article>
       </section>
+
+      <section v-if="directiveDrafts.length > 0" class="space-y-2">
+        <div class="text-xs font-medium">
+          {{
+            t('settings.memory.redesign.directiveDraftSectionTitle', {
+              count: directiveDrafts.length
+            })
+          }}
+        </div>
+        <article
+          v-for="directive in directiveDrafts"
+          :key="directive.id"
+          class="rounded-lg border border-border bg-background p-3"
+        >
+          <div class="mb-2 flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" class="text-[10px]">
+              {{ t(`settings.memory.redesign.directiveKind.${directive.kind}`) }}
+            </Badge>
+            <span v-if="directive.topic" class="wrap-break-word text-[11px] text-muted-foreground">
+              {{
+                t('settings.memory.redesign.directiveTopicValue', {
+                  topic: directive.topic
+                })
+              }}
+            </span>
+          </div>
+          <p class="whitespace-pre-wrap wrap-break-word text-xs">{{ directive.content }}</p>
+          <div class="mt-3 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 text-xs"
+              :disabled="directivePendingIds.has(directive.id)"
+              @click="rejectDirective(directive.id)"
+            >
+              {{ t('settings.deepchatAgents.memoryManager.reject') }}
+            </Button>
+            <Button
+              size="sm"
+              class="h-8 text-xs"
+              :disabled="directivePendingIds.has(directive.id)"
+              @click="approveDirective(directive.id)"
+            >
+              {{ t('settings.deepchatAgents.memoryManager.approve') }}
+            </Button>
+          </div>
+        </article>
+      </section>
     </div>
   </section>
 </template>
@@ -133,13 +188,14 @@ import { Badge } from '@shadcn/components/ui/badge'
 import { Button } from '@shadcn/components/ui/button'
 import { useToast } from '@/components/use-toast'
 import { createMemoryClient } from '@api/MemoryClient'
-import type { MemoryConflictItem, MemoryItem } from '@shared/contracts/routes'
+import type { MemoryConflictItem, MemoryDirectiveItem, MemoryItem } from '@shared/contracts/routes'
 import { notifyMemoryActionFailed } from './memoryRedesignUtils'
 
 const props = defineProps<{
   agentId: string
   conflictCount: number
   draftCount: number
+  directiveDraftCount: number
   refreshToken: number
 }>()
 
@@ -151,14 +207,20 @@ const loading = ref(false)
 const conflicts = ref<MemoryConflictItem[]>([])
 const drafts = ref<MemoryItem[]>([])
 const versions = ref<MemoryItem[]>([])
+const directiveDrafts = ref<MemoryDirectiveItem[]>([])
+const directivePendingIds = ref<ReadonlySet<string>>(new Set())
 let requestId = 0
+let loadedAgentId = ''
+let directiveRevision = 0
 
 const visible = computed(
   () =>
     props.conflictCount > 0 ||
     props.draftCount > 0 ||
+    props.directiveDraftCount > 0 ||
     conflicts.value.length > 0 ||
-    drafts.value.length > 0
+    drafts.value.length > 0 ||
+    directiveDrafts.value.length > 0
 )
 
 const activePersonaContent = computed<string | null>(() => {
@@ -177,21 +239,49 @@ function notifyFailed(error?: unknown): void {
 async function load(): Promise<void> {
   const agentId = props.agentId
   if (!agentId || !visible.value) return
+  if (loadedAgentId !== agentId) {
+    loadedAgentId = agentId
+    directiveRevision += 1
+    conflicts.value = []
+    drafts.value = []
+    versions.value = []
+    directiveDrafts.value = []
+    directivePendingIds.value = new Set()
+  }
   const current = ++requestId
+  const revision = directiveRevision
   loading.value = true
   try {
-    const [nextConflicts, nextDrafts, nextVersions] = await Promise.all([
-      memoryClient.listConflicts(agentId),
-      memoryClient.listPersonaDrafts(agentId),
-      memoryClient.listPersonaVersions(agentId)
+    const [memoryResult, directiveResult] = await Promise.allSettled([
+      Promise.all([
+        memoryClient.listConflicts(agentId),
+        memoryClient.listPersonaDrafts(agentId),
+        memoryClient.listPersonaVersions(agentId)
+      ]),
+      memoryClient.listDirectives(agentId, { statuses: ['draft'], limit: 64 })
     ])
     if (current !== requestId || props.agentId !== agentId) return
-    conflicts.value = nextConflicts
-    drafts.value = nextDrafts
-    versions.value = nextVersions
-  } catch (error) {
-    if (current !== requestId || props.agentId !== agentId) return
-    notifyFailed(error)
+
+    let failed = false
+    let failure: unknown
+    if (memoryResult.status === 'fulfilled') {
+      const [nextConflicts, nextDrafts, nextVersions] = memoryResult.value
+      conflicts.value = nextConflicts
+      drafts.value = nextDrafts
+      versions.value = nextVersions
+    } else {
+      failed = true
+      failure = memoryResult.reason
+    }
+
+    if (directiveResult.status === 'fulfilled') {
+      if (revision === directiveRevision) directiveDrafts.value = directiveResult.value
+    } else {
+      if (!failed) failure = directiveResult.reason
+      failed = true
+    }
+
+    if (failed) notifyFailed(failure)
   } finally {
     if (current === requestId && props.agentId === agentId) loading.value = false
   }
@@ -223,6 +313,71 @@ async function rejectDraft(draftId: string): Promise<void> {
     await memoryClient.rejectPersonaDraft(props.agentId, draftId)
   } catch (error) {
     notifyFailed(error)
+  }
+}
+
+function setDirectivePending(directiveId: string, pending: boolean): void {
+  const next = new Set(directivePendingIds.value)
+  if (pending) next.add(directiveId)
+  else next.delete(directiveId)
+  directivePendingIds.value = next
+}
+
+async function approveDirective(directiveId: string): Promise<void> {
+  const agentId = props.agentId
+  directiveRevision += 1
+  setDirectivePending(directiveId, true)
+  let shouldReload = false
+  try {
+    const approved = await memoryClient.approveDirective(agentId, directiveId)
+    if (props.agentId !== agentId) return
+    if (!approved) {
+      notifyFailed()
+      return
+    }
+    directiveDrafts.value = directiveDrafts.value.filter(
+      (directive) => directive.id !== directiveId
+    )
+  } catch (error) {
+    if (props.agentId === agentId) {
+      shouldReload = true
+      notifyFailed(error)
+    }
+  } finally {
+    if (props.agentId === agentId) {
+      directiveRevision += 1
+      setDirectivePending(directiveId, false)
+      if (shouldReload) void load()
+    }
+  }
+}
+
+async function rejectDirective(directiveId: string): Promise<void> {
+  const agentId = props.agentId
+  directiveRevision += 1
+  setDirectivePending(directiveId, true)
+  let shouldReload = false
+  try {
+    const rejected = await memoryClient.rejectDirective(agentId, directiveId)
+    if (props.agentId !== agentId) return
+    if (!rejected) {
+      notifyFailed()
+      return
+    }
+    directiveDrafts.value = directiveDrafts.value.filter(
+      (directive) => directive.id !== directiveId
+    )
+  } catch (error) {
+    if (props.agentId === agentId) {
+      shouldReload = true
+      notifyFailed(error)
+    }
+  } finally {
+    if (props.agentId === agentId) {
+      directiveRevision += 1
+      setDirectivePending(directiveId, false)
+      if (shouldReload) void load()
+    }
   }
 }
 

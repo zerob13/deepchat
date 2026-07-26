@@ -3104,7 +3104,45 @@
         "memory-persona-rollback": "Kişilik geri alındı",
         "memory-persona-anchor": "Kişilik çapası güncellendi",
         "memory-reindex": "Bellek yeniden indekslendi"
-      }
+      },
+      "tabDirectives": "Directives",
+      "directiveDraftBadge": "{count} directive drafts",
+      "directiveDraftSectionTitle": "Suggested directives ({count})",
+      "directiveCreateTitle": "Create a standing directive",
+      "directiveCreateDescription": "Manual directives become active immediately. Model suggestions remain drafts until you approve them.",
+      "directiveRuntimeEnabled": "Applied at runtime",
+      "directiveRuntimeDisabled": "Inactive while memory is off",
+      "directiveKindLabel": "Directive type",
+      "directiveKind": {
+        "instruction": "Standing instruction",
+        "suppress_topic": "Suppress topic"
+      },
+      "directiveTopicLabel": "Matched topic",
+      "directiveTopicPlaceholder": "Exact topic or phrase to suppress from recalled memory",
+      "directiveContentLabel": "Instruction",
+      "directiveInstructionPlaceholder": "Write a standing instruction for this agent.",
+      "directiveSuppressPlaceholder": "Explain how the agent should handle this topic.",
+      "directiveInstructionHint": "This is user-level guidance and cannot override system or safety rules.",
+      "directiveSuppressHint": "The topic gates recalled memory; the instruction guides the response. This is not an output firewall.",
+      "directiveLength": "Instruction {content}/{contentMax} · Topic {topic}/{topicMax}",
+      "directiveCreateAction": "Activate directive",
+      "directiveListTitle": "Saved directives",
+      "directiveListDescription": "{active} active · {draft} awaiting approval",
+      "directiveEmptyTitle": "No directives yet",
+      "directiveEmptyDescription": "Create a standing instruction here, or approve a suggestion from the inbox.",
+      "directiveStatus": {
+        "active": "Active",
+        "draft": "Draft",
+        "rejected": "Rejected"
+      },
+      "directiveSource": {
+        "explicit_user": "Explicit user action",
+        "manual": "Settings",
+        "derived_suggestion": "Suggested from conversation"
+      },
+      "directiveTopicValue": "Topic: {topic}",
+      "directiveDeleteTitle": "Delete this directive?",
+      "directiveDeleteDescription": "The directive will stop applying immediately. You can create it again later."
     }
   },
   "pluginsHub": {

@@ -37,6 +37,12 @@ const stubs = {
     'agentId',
     'conflictCount',
     'draftCount',
+    'directiveDraftCount',
+    'refreshToken'
+  ]),
+  MemoryDirectivesPanel: PropStub('MemoryDirectivesPanel', [
+    'agentId',
+    'memoryEnabled',
     'refreshToken'
   ]),
   MemoryListView: PropStub('MemoryListView', ['agentId', 'memoryEnabled', 'refreshToken']),
@@ -142,6 +148,10 @@ function inboxBar(wrapper: Awaited<ReturnType<typeof setup>>['wrapper']) {
   return wrapper.findComponent({ name: 'MemoryInboxBar' })
 }
 
+function directivesPanel(wrapper: Awaited<ReturnType<typeof setup>>['wrapper']) {
+  return wrapper.findComponent({ name: 'MemoryDirectivesPanel' })
+}
+
 describe('MemorySettings redesign shell', () => {
   it('defaults to the built-in deepchat agent', async () => {
     const { wrapper } = await setup([other, deepchat])
@@ -171,6 +181,8 @@ describe('MemorySettings redesign shell', () => {
         archivedMemoryCount: 2,
         conflictCount: 1,
         personaDraftCount: 1,
+        directiveDraftCount: 2,
+        activeDirectiveCount: 3,
         personaVersionCount: 1
       })
     })
@@ -180,6 +192,12 @@ describe('MemorySettings redesign shell', () => {
     expect(statusSummary(wrapper).text()).toContain('Embedding: text-embedding-v4')
     expect(wrapper.findComponent({ name: 'MemoryStatusCard' }).exists()).toBe(false)
     expect(wrapper.text()).toContain('settings.memory.redesign.tabPersona')
+    expect(wrapper.text()).toContain('settings.memory.redesign.tabDirectives')
+    expect(inboxBar(wrapper).props('directiveDraftCount')).toBe(2)
+    expect(directivesPanel(wrapper).props()).toMatchObject({
+      agentId: 'deepchat',
+      memoryEnabled: true
+    })
   })
 
   it('keeps a single configure entry that toggles the inline config panel', async () => {
@@ -296,7 +314,8 @@ describe('MemorySettings redesign shell', () => {
               activeMemoryCount: 7,
               archivedMemoryCount: 3,
               conflictCount: 5,
-              personaDraftCount: 4
+              personaDraftCount: 4,
+              directiveDraftCount: 3
             })
           : otherStatusPending
     })
@@ -304,6 +323,7 @@ describe('MemorySettings redesign shell', () => {
     expect(statusSummary(wrapper).text()).toContain('7 active · 3 archived')
     expect(inboxBar(wrapper).props('conflictCount')).toBe(5)
     expect(inboxBar(wrapper).props('draftCount')).toBe(4)
+    expect(inboxBar(wrapper).props('directiveDraftCount')).toBe(3)
 
     wrapper.findComponent({ name: 'Select' }).vm.$emit('update:model-value', 'other')
     await flushPromises()
@@ -312,6 +332,7 @@ describe('MemorySettings redesign shell', () => {
     expect(statusSummary(wrapper).text()).toContain('0 active · 0 archived')
     expect(inboxBar(wrapper).props('conflictCount')).toBe(0)
     expect(inboxBar(wrapper).props('draftCount')).toBe(0)
+    expect(inboxBar(wrapper).props('directiveDraftCount')).toBe(0)
 
     resolveOtherStatus(baseStatus)
     await flushPromises()

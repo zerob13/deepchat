@@ -1075,6 +1075,7 @@ declare module 'vue-i18n' {
         reindexInternalReason: string
         tabMemories: string
         tabPersona: string
+        tabDirectives: string
         tabDiagnostics: string
         statusEnabled: string
         statusDisabled: string
@@ -1119,10 +1120,47 @@ declare module 'vue-i18n' {
         inboxDescription: string
         conflictBadge: string
         personaDraftBadge: string
+        directiveDraftBadge: string
         conflictSectionTitle: string
         conflictExisting: string
         conflictNew: string
         personaDraftSectionTitle: string
+        directiveDraftSectionTitle: string
+        directiveCreateTitle: string
+        directiveCreateDescription: string
+        directiveRuntimeEnabled: string
+        directiveRuntimeDisabled: string
+        directiveKindLabel: string
+        directiveKind: {
+          instruction: string
+          suppress_topic: string
+        }
+        directiveTopicLabel: string
+        directiveTopicPlaceholder: string
+        directiveContentLabel: string
+        directiveInstructionPlaceholder: string
+        directiveSuppressPlaceholder: string
+        directiveInstructionHint: string
+        directiveSuppressHint: string
+        directiveLength: string
+        directiveCreateAction: string
+        directiveListTitle: string
+        directiveListDescription: string
+        directiveEmptyTitle: string
+        directiveEmptyDescription: string
+        directiveStatus: {
+          active: string
+          draft: string
+          rejected: string
+        }
+        directiveSource: {
+          explicit_user: string
+          manual: string
+          derived_suggestion: string
+        }
+        directiveTopicValue: string
+        directiveDeleteTitle: string
+        directiveDeleteDescription: string
         diagnosticsTitle: string
         diagnosticsDescription: string
         pipelineTitle: string

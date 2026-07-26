@@ -1,0 +1,533 @@
+<template>
+  <section class="flex min-h-0 flex-1 flex-col gap-3">
+    <div class="rounded-lg border border-border bg-card p-4">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div class="min-w-0">
+          <h2 class="text-sm font-semibold">
+            {{ t('settings.memory.redesign.directiveCreateTitle') }}
+          </h2>
+          <p class="mt-1 text-xs text-muted-foreground">
+            {{ t('settings.memory.redesign.directiveCreateDescription') }}
+          </p>
+        </div>
+        <Badge :variant="memoryEnabled ? 'secondary' : 'outline'" class="w-fit text-[10px]">
+          {{
+            memoryEnabled
+              ? t('settings.memory.redesign.directiveRuntimeEnabled')
+              : t('settings.memory.redesign.directiveRuntimeDisabled')
+          }}
+        </Badge>
+      </div>
+
+      <div class="mt-4 grid gap-3 lg:grid-cols-[minmax(10rem,0.35fr)_minmax(0,1fr)]">
+        <label class="space-y-1.5">
+          <span class="text-[11px] font-medium text-muted-foreground">
+            {{ t('settings.memory.redesign.directiveKindLabel') }}
+          </span>
+          <Select v-model="form.kind">
+            <SelectTrigger class="h-9 text-xs" data-testid="memory-directive-kind">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="instruction" class="text-xs">
+                {{ t('settings.memory.redesign.directiveKind.instruction') }}
+              </SelectItem>
+              <SelectItem value="suppress_topic" class="text-xs">
+                {{ t('settings.memory.redesign.directiveKind.suppress_topic') }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+
+        <label v-if="form.kind === 'suppress_topic'" class="space-y-1.5">
+          <span class="text-[11px] font-medium text-muted-foreground">
+            {{ t('settings.memory.redesign.directiveTopicLabel') }}
+          </span>
+          <Input
+            v-model="form.topic"
+            :placeholder="t('settings.memory.redesign.directiveTopicPlaceholder')"
+            :aria-invalid="topicLength > AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS"
+            data-testid="memory-directive-topic"
+          />
+        </label>
+      </div>
+
+      <label class="mt-3 block space-y-1.5">
+        <span class="text-[11px] font-medium text-muted-foreground">
+          {{ t('settings.memory.redesign.directiveContentLabel') }}
+        </span>
+        <Textarea
+          v-model="form.content"
+          class="min-h-24 text-sm"
+          :placeholder="directiveContentPlaceholder"
+          :aria-invalid="contentLength > AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS"
+          data-testid="memory-directive-content"
+        />
+      </label>
+
+      <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div class="text-[11px] text-muted-foreground">
+          <p>
+            {{
+              form.kind === 'suppress_topic'
+                ? t('settings.memory.redesign.directiveSuppressHint')
+                : t('settings.memory.redesign.directiveInstructionHint')
+            }}
+          </p>
+          <p
+            :class="
+              contentLength > AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS ||
+              topicLength > AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
+                ? 'text-destructive'
+                : ''
+            "
+          >
+            {{
+              t('settings.memory.redesign.directiveLength', {
+                content: contentLength,
+                contentMax: AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
+                topic: topicLength,
+                topicMax: AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
+              })
+            }}
+          </p>
+        </div>
+        <Button
+          size="sm"
+          class="h-8 shrink-0 text-xs"
+          :disabled="!canCreate"
+          data-testid="memory-directive-create"
+          @click="create"
+        >
+          <Icon icon="lucide:plus" class="mr-1.5 h-3.5 w-3.5" />
+          {{ t('settings.memory.redesign.directiveCreateAction') }}
+        </Button>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-3">
+      <div>
+        <h2 class="text-sm font-semibold">
+          {{ t('settings.memory.redesign.directiveListTitle') }}
+        </h2>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          {{
+            t('settings.memory.redesign.directiveListDescription', {
+              active: activeCount,
+              draft: draftCount
+            })
+          }}
+        </p>
+      </div>
+      <Button variant="ghost" size="sm" class="h-8 text-xs" :disabled="loading" @click="load">
+        <Icon icon="lucide:refresh-cw" class="mr-1.5 h-3.5 w-3.5" />
+        {{ t('settings.memory.redesign.refresh') }}
+      </Button>
+    </div>
+
+    <div v-if="loading" class="py-12 text-center text-sm text-muted-foreground">
+      {{ t('common.loading') }}
+    </div>
+
+    <Empty v-else-if="orderedDirectives.length === 0" class="min-h-48 border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Icon icon="lucide:list-checks" />
+        </EmptyMedia>
+        <EmptyTitle>{{ t('settings.memory.redesign.directiveEmptyTitle') }}</EmptyTitle>
+        <EmptyDescription>
+          {{ t('settings.memory.redesign.directiveEmptyDescription') }}
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+
+    <ScrollArea v-else class="min-h-0 flex-1 pr-3">
+      <ol class="space-y-2">
+        <li
+          v-for="directive in orderedDirectives"
+          :key="directive.id"
+          class="rounded-lg border border-border bg-card px-3 py-3"
+          :data-testid="`memory-directive-${directive.id}`"
+        >
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div class="min-w-0">
+              <div class="mb-2 flex flex-wrap items-center gap-1.5">
+                <Badge :variant="statusVariant(directive.status)" class="text-[10px]">
+                  {{ t(`settings.memory.redesign.directiveStatus.${directive.status}`) }}
+                </Badge>
+                <Badge variant="outline" class="text-[10px]">
+                  {{ t(`settings.memory.redesign.directiveKind.${directive.kind}`) }}
+                </Badge>
+                <span class="text-[10px] text-muted-foreground">
+                  {{ t(`settings.memory.redesign.directiveSource.${directive.source}`) }}
+                </span>
+                <span class="text-[10px] text-muted-foreground">
+                  {{ shortDate(directive.updatedAt, locale) }}
+                </span>
+              </div>
+              <p
+                v-if="directive.topic"
+                class="mb-1.5 wrap-break-word text-xs font-medium text-muted-foreground"
+              >
+                {{
+                  t('settings.memory.redesign.directiveTopicValue', {
+                    topic: directive.topic
+                  })
+                }}
+              </p>
+              <p class="whitespace-pre-wrap wrap-break-word text-sm">{{ directive.content }}</p>
+            </div>
+
+            <div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
+              <template v-if="directive.status === 'draft'">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-8 text-xs"
+                  :disabled="pendingIds.has(directive.id)"
+                  @click="transition(directive.id, 'rejected')"
+                >
+                  {{ t('settings.deepchatAgents.memoryManager.reject') }}
+                </Button>
+                <Button
+                  size="sm"
+                  class="h-8 text-xs"
+                  :disabled="pendingIds.has(directive.id)"
+                  @click="transition(directive.id, 'active')"
+                >
+                  {{ t('settings.deepchatAgents.memoryManager.approve') }}
+                </Button>
+              </template>
+
+              <AlertDialog>
+                <AlertDialogTrigger as-child>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-8 w-8 text-destructive"
+                    :disabled="pendingIds.has(directive.id)"
+                    :aria-label="t('common.delete')"
+                  >
+                    <Icon icon="lucide:trash-2" class="h-3.5 w-3.5" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      {{ t('settings.memory.redesign.directiveDeleteTitle') }}
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {{ t('settings.memory.redesign.directiveDeleteDescription') }}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{{ t('common.cancel') }}</AlertDialogCancel>
+                    <AlertDialogAction
+                      class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      @click="remove(directive.id)"
+                    >
+                      {{ t('common.delete') }}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </ScrollArea>
+  </section>
+</template>
+
+<script setup lang="ts">
+import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { Icon } from '@iconify/vue'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger
+} from '@shadcn/components/ui/alert-dialog'
+import { Badge } from '@shadcn/components/ui/badge'
+import { Button } from '@shadcn/components/ui/button'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle
+} from '@shadcn/components/ui/empty'
+import { Input } from '@shadcn/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@shadcn/components/ui/select'
+import { ScrollArea } from '@shadcn/components/ui/scroll-area'
+import { Textarea } from '@shadcn/components/ui/textarea'
+import { useToast } from '@/components/use-toast'
+import { createMemoryClient } from '@api/MemoryClient'
+import {
+  AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT,
+  AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
+  AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
+  type AgentMemoryDirectiveKind,
+  type AgentMemoryDirectiveStatus
+} from '@shared/types/agent-memory'
+import type { MemoryDirectiveCreateInput, MemoryDirectiveItem } from '@shared/contracts/routes'
+import { unicodeCodePointLength } from '@shared/lib/unicodeText'
+import { notifyMemoryActionFailed, shortDate } from './memoryRedesignUtils'
+
+const props = defineProps<{
+  agentId: string
+  memoryEnabled: boolean
+  refreshToken: number
+}>()
+
+const { t, locale } = useI18n()
+const { toast } = useToast()
+const memoryClient = createMemoryClient()
+
+const loading = ref(false)
+const creating = ref(false)
+const directives = ref<MemoryDirectiveItem[]>([])
+const pendingIds = ref<ReadonlySet<string>>(new Set())
+const form = reactive<{
+  kind: AgentMemoryDirectiveKind
+  content: string
+  topic: string
+}>({
+  kind: 'instruction',
+  content: '',
+  topic: ''
+})
+let requestId = 0
+let directiveRevision = 0
+
+const directiveContentPlaceholder = computed(() =>
+  form.kind === 'suppress_topic'
+    ? t('settings.memory.redesign.directiveSuppressPlaceholder')
+    : t('settings.memory.redesign.directiveInstructionPlaceholder')
+)
+
+const contentLength = computed(() => unicodeCodePointLength(form.content.trim()))
+const topicLength = computed(() => unicodeCodePointLength(form.topic.trim()))
+
+const canCreate = computed(
+  () =>
+    Boolean(props.agentId) &&
+    !creating.value &&
+    Boolean(form.content.trim()) &&
+    contentLength.value <= AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS &&
+    (form.kind !== 'suppress_topic' ||
+      (Boolean(form.topic.trim()) && topicLength.value <= AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS))
+)
+
+const activeCount = computed(
+  () => directives.value.filter((directive) => directive.status === 'active').length
+)
+const draftCount = computed(
+  () => directives.value.filter((directive) => directive.status === 'draft').length
+)
+
+const statusPriority: Record<AgentMemoryDirectiveStatus, number> = {
+  active: 0,
+  draft: 1,
+  rejected: 2
+}
+
+const orderedDirectives = computed(() =>
+  [...directives.value].sort((left, right) => {
+    const statusOrder = statusPriority[left.status] - statusPriority[right.status]
+    if (statusOrder !== 0) return statusOrder
+    if (left.updatedAt !== right.updatedAt) return left.updatedAt < right.updatedAt ? 1 : -1
+    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+  })
+)
+
+function statusVariant(status: AgentMemoryDirectiveStatus): 'default' | 'secondary' | 'outline' {
+  if (status === 'active') return 'default'
+  if (status === 'draft') return 'secondary'
+  return 'outline'
+}
+
+function notifyFailed(error?: unknown): void {
+  notifyMemoryActionFailed(toast, t, error)
+}
+
+function resetForm(): void {
+  form.kind = 'instruction'
+  form.content = ''
+  form.topic = ''
+}
+
+function setPending(directiveId: string, pending: boolean): void {
+  const next = new Set(pendingIds.value)
+  if (pending) next.add(directiveId)
+  else next.delete(directiveId)
+  pendingIds.value = next
+}
+
+function upsertDirective(directive: MemoryDirectiveItem): void {
+  directives.value = [
+    directive,
+    ...directives.value.filter((candidate) => candidate.id !== directive.id)
+  ]
+}
+
+async function load(): Promise<void> {
+  const agentId = props.agentId
+  if (!agentId) {
+    directives.value = []
+    return
+  }
+  const current = ++requestId
+  const revision = directiveRevision
+  loading.value = true
+  try {
+    const [recent, active] = await Promise.all([
+      memoryClient.listDirectives(agentId, { limit: 200 }),
+      memoryClient.listDirectives(agentId, {
+        statuses: ['active'],
+        limit: AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
+      })
+    ])
+    if (current !== requestId || props.agentId !== agentId || revision !== directiveRevision) {
+      return
+    }
+    directives.value = [
+      ...new Map(
+        [...recent, ...active].map((directive) => [directive.id, directive] as const)
+      ).values()
+    ]
+  } catch (error) {
+    if (current !== requestId || props.agentId !== agentId) return
+    notifyFailed(error)
+  } finally {
+    if (current === requestId && props.agentId === agentId) loading.value = false
+  }
+}
+
+async function create(): Promise<void> {
+  if (!canCreate.value) return
+  const agentId = props.agentId
+  const content = form.content.trim()
+  const topic = form.topic.trim()
+  const input: MemoryDirectiveCreateInput =
+    form.kind === 'suppress_topic'
+      ? { kind: 'suppress_topic', content, topic }
+      : { kind: 'instruction', content }
+  directiveRevision += 1
+  creating.value = true
+  let shouldReload = false
+  try {
+    const created = await memoryClient.createDirective(agentId, input)
+    if (props.agentId !== agentId) return
+    if (!created) {
+      notifyFailed()
+      return
+    }
+    upsertDirective(created)
+    resetForm()
+  } catch (error) {
+    if (props.agentId === agentId) {
+      shouldReload = true
+      notifyFailed(error)
+    }
+  } finally {
+    if (props.agentId === agentId) {
+      directiveRevision += 1
+      creating.value = false
+      if (shouldReload) void load()
+    }
+  }
+}
+
+async function transition(
+  directiveId: string,
+  status: Extract<AgentMemoryDirectiveStatus, 'active' | 'rejected'>
+): Promise<void> {
+  const agentId = props.agentId
+  directiveRevision += 1
+  setPending(directiveId, true)
+  let shouldReload = false
+  try {
+    const updated =
+      status === 'active'
+        ? await memoryClient.approveDirective(agentId, directiveId)
+        : await memoryClient.rejectDirective(agentId, directiveId)
+    if (props.agentId !== agentId) return
+    if (!updated) {
+      notifyFailed()
+      return
+    }
+    upsertDirective(updated)
+  } catch (error) {
+    if (props.agentId === agentId) {
+      shouldReload = true
+      notifyFailed(error)
+    }
+  } finally {
+    if (props.agentId === agentId) {
+      directiveRevision += 1
+      setPending(directiveId, false)
+      if (shouldReload) void load()
+    }
+  }
+}
+
+async function remove(directiveId: string): Promise<void> {
+  const agentId = props.agentId
+  directiveRevision += 1
+  setPending(directiveId, true)
+  let shouldReload = false
+  try {
+    const removed = await memoryClient.deleteDirective(agentId, directiveId)
+    if (props.agentId !== agentId) return
+    if (!removed) {
+      notifyFailed()
+      return
+    }
+    directives.value = directives.value.filter((directive) => directive.id !== directiveId)
+  } catch (error) {
+    if (props.agentId === agentId) {
+      shouldReload = true
+      notifyFailed(error)
+    }
+  } finally {
+    if (props.agentId === agentId) {
+      directiveRevision += 1
+      setPending(directiveId, false)
+      if (shouldReload) void load()
+    }
+  }
+}
+
+watch(
+  () => props.agentId,
+  () => {
+    requestId += 1
+    directiveRevision += 1
+    loading.value = false
+    creating.value = false
+    directives.value = []
+    pendingIds.value = new Set()
+    resetForm()
+    void load()
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.refreshToken,
+  () => void load()
+)
+</script>
