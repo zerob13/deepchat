@@ -104,6 +104,13 @@ export const expandHookCommandPlaceholders = (
     return platform === 'win32' ? `"%${envName}%"` : `"\${${envName}}"`
   })
 
+/**
+ * Diagnostics are truncated to DIAGNOSTIC_TEXT_LIMIT anyway, so a command that streams for its
+ * whole timeout window must not be able to hold more than that in the main process.
+ */
+const captureDiagnostic = (current: string, chunk: unknown): string =>
+  current.length >= DIAGNOSTIC_TEXT_LIMIT ? current : current + String(chunk)
+
 const redactSensitiveText = (text: string, secrets: string[]): string => {
   if (!text) {
     return ''
@@ -469,6 +476,8 @@ export class HookService implements HookObserver {
       DEEPCHAT_TOOL_CALL_ID: payload.tool?.callId ?? ''
     }
 
+    const secrets = [payload.session.conversationId ?? '', payload.session.workdir ?? '']
+
     return await new Promise<HookCommandResult>((resolve) => {
       let stdout = ''
       let stderr = ''
@@ -498,6 +507,16 @@ export class HookService implements HookObserver {
         } catch {
           // ignore
         }
+        // A killed shell can keep its process tree alive and never emit `close`, so the timeout
+        // settles the result itself instead of waiting for an exit that may never arrive.
+        finalize({
+          success: false,
+          durationMs: Date.now() - start,
+          exitCode: null,
+          stdout: redactSensitiveText(truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT), secrets),
+          stderr: redactSensitiveText(truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT), secrets),
+          error: 'Command timed out'
+        })
       }, COMMAND_TIMEOUT_MS)
 
       child.on('error', (error) => {
@@ -514,16 +533,15 @@ export class HookService implements HookObserver {
       })
 
       child.stdout?.on('data', (chunk) => {
-        stdout += String(chunk)
+        stdout = captureDiagnostic(stdout, chunk)
       })
       child.stderr?.on('data', (chunk) => {
-        stderr += String(chunk)
+        stderr = captureDiagnostic(stderr, chunk)
       })
 
       child.on('close', (code) => {
         this.activeChildren.delete(child)
         clearTimeout(timeout)
-        const secrets = [payload.session.conversationId ?? '', payload.session.workdir ?? '']
         finalize({
           success: !timedOut && code === 0,
           durationMs: Date.now() - start,

@@ -485,16 +485,34 @@ describe('HookService delivery ordering', () => {
 
       const pending = service.testHookCommand('a')
       await vi.advanceTimersByTimeAsync(30_000)
-      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
 
-      child.emit('close', null)
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+      // Settles without any close event: a killed shell can keep its process tree alive.
       await expect(pending).resolves.toMatchObject({
         success: false,
+        exitCode: undefined,
         error: 'Command timed out'
       })
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('bounds captured command output while the command streams', async () => {
+    const { service } = createHarness([enabledHook('a', ['SessionStart'])])
+    const child = new FakeChild()
+    spawnMock.mockImplementationOnce(() => child)
+
+    const pending = service.testHookCommand('a')
+    await flush()
+    for (let index = 0; index < 64; index += 1) {
+      child.stdout.emit('data', 'x'.repeat(4096))
+    }
+    child.emit('close', 0)
+
+    const result = await pending
+    expect(result.stdout).toHaveLength(2000)
+    expect(result.stdout?.endsWith(' ...(truncated)')).toBe(true)
   })
 
   it('kills running hook commands on stop', async () => {
