@@ -211,7 +211,7 @@ export class HookService implements HookObserver {
   ) {}
 
   getConfigSnapshot(): HooksNotificationsSettings {
-    return this.readSnapshot().config
+    return cloneConfig(this.readSnapshot().config)
   }
 
   /** Store write and subscription refresh happen together so the index is never behind the config. */
@@ -586,10 +586,17 @@ const isHookRunnable = (hook: HookCommandItem): boolean =>
 const shouldDispatchHook = (hook: HookCommandItem, event: HookEventName): boolean =>
   isHookRunnable(hook) && hook.events.includes(event)
 
-const buildConfigSnapshot = (config: HooksNotificationsSettings): HookConfigSnapshot => {
+const cloneConfig = (config: HooksNotificationsSettings): HooksNotificationsSettings => ({
+  hooks: config.hooks.map((hook) => ({ ...hook, events: [...hook.events] }))
+})
+
+// Owns a private copy so the settings port never observes the delivery path freezing its result.
+const buildConfigSnapshot = (source: HooksNotificationsSettings): HookConfigSnapshot => {
+  const config = cloneConfig(source)
   const subscribedEvents = new Set<HookEventName>()
   for (const hook of config.hooks) {
-    Object.freeze(Object.freeze(hook).events)
+    Object.freeze(hook.events)
+    Object.freeze(hook)
     if (!isHookRunnable(hook)) {
       continue
     }
@@ -597,7 +604,7 @@ const buildConfigSnapshot = (config: HooksNotificationsSettings): HookConfigSnap
       subscribedEvents.add(event)
     }
   }
-  // The delivery path and every getConfigSnapshot caller share this object.
-  Object.freeze(Object.freeze(config).hooks)
+  Object.freeze(config.hooks)
+  Object.freeze(config)
   return { config, subscribedEvents }
 }

@@ -286,12 +286,23 @@ describe('HookService subscription index', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1)
   })
 
-  it('hands out an immutable configuration snapshot', () => {
-    const { service } = createHarness([enabledHook('a', ['Stop'])])
-    const snapshot = service.getConfigSnapshot()
+  it('detaches the configuration snapshot from its own delivery state', () => {
+    const stored: HooksNotificationsSettings = { hooks: [enabledHook('a', ['Stop'])] }
+    const service = new HookService(
+      {
+        getHooksNotificationsConfig: () => stored,
+        setHooksNotificationsConfig: (next) => next
+      },
+      { getSession: vi.fn().mockResolvedValue(null) }
+    )
 
-    expect(() => snapshot.hooks.push(enabledHook('b', ['PreToolUse']))).toThrow(TypeError)
+    const snapshot = service.getConfigSnapshot()
+    snapshot.hooks.push(enabledHook('b', ['PreToolUse']))
+    snapshot.hooks[0].events.push('PreToolUse')
+
     expect(service.isObserved('PreToolUse')).toBe(false)
+    expect(Object.isFrozen(stored)).toBe(false)
+    expect(Object.isFrozen(stored.hooks[0])).toBe(false)
   })
 
   it('never backfills an event to a hook enabled in the same tick', async () => {
