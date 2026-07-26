@@ -140,7 +140,7 @@ export interface TurnCoordinatorPorts {
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
   loopRunner: Pick<DeepChatLoopRunner, 'run'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
-  hookSink: Pick<RuntimeHookSink, 'dispatch'>
+  hookSink: Pick<RuntimeHookSink, 'scope'>
 }
 
 export class TurnCoordinator {
@@ -553,14 +553,15 @@ export class TurnCoordinator {
       throwIfAbortRequested(preStreamAbortSignal)
       this.ports.messageProjection.refresh(sessionId, userMessageId)
 
-      this.ports.hookSink.dispatch('UserPromptSubmit', {
-        sessionId,
-        messageId: userMessageId,
-        promptPreview: content.text,
-        providerId: state.providerId,
-        modelId: state.modelId,
-        projectDir
-      })
+      this.ports.hookSink
+        .scope({
+          sessionId,
+          messageId: userMessageId,
+          providerId: state.providerId,
+          modelId: state.modelId,
+          projectDir
+        })
+        .emit({ event: 'UserPromptSubmit', promptPreview: content.text })
 
       const preparedContext = await this.ports.contextCoordinator.assemble({
         assembleContributions: async () => {
@@ -863,21 +864,14 @@ export class TurnCoordinator {
           error: errorMessage
         })
       }
-      this.ports.hookSink.dispatch('Stop', {
-        sessionId,
-        providerId: state.providerId,
-        modelId: state.modelId,
-        projectDir,
-        stop: { reason: stopReason, userStop: false }
-      })
-      this.ports.hookSink.dispatch('SessionEnd', {
-        sessionId,
-        providerId: state.providerId,
-        modelId: state.modelId,
-        projectDir,
-        usage: buildUsageFromMetadata(terminalMetadata) ?? null,
-        error: { message: errorMessage }
-      })
+      this.ports.hookSink
+        .scope({ sessionId, providerId: state.providerId, modelId: state.modelId, projectDir })
+        .terminal({
+          reason: stopReason,
+          userStop: false,
+          usage: buildUsageFromMetadata(terminalMetadata) ?? null,
+          error: { message: errorMessage }
+        })
       this.ports.runLifecycle.transitionCurrentStatus(sessionId, 'error')
       return complete({
         requestId: assistantMessageId,

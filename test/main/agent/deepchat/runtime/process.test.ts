@@ -1059,6 +1059,7 @@ describe('processStream', () => {
         permissionMode: 'auto_approve',
         controls,
         notificationObserver: {
+          isObserved: () => true,
           notify: (notification) => notifications.push(structuredClone(notification))
         }
       })
@@ -1981,6 +1982,7 @@ describe('processStream', () => {
       toolExecution: createToolExecutionPort(toolService),
       tools: [makeTool('get_weather')],
       notificationObserver: {
+        isObserved: () => true,
         notify: (notification) => {
           notifications.push(structuredClone(notification))
           ;(notification.tool as { name?: string; response?: string }).name = 'observer-mutated'
@@ -2031,6 +2033,7 @@ describe('processStream', () => {
           toolExecution: createToolExecutionPort(toolService),
           tools: [makeTool('get_weather')],
           notificationObserver: {
+            isObserved: () => true,
             notify: () => {
               throw new Error('observer failed')
             }
@@ -2046,52 +2049,23 @@ describe('processStream', () => {
     }
   })
 
-  it('does not await rejected or never-settling notification observers', async () => {
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    let releaseObserver!: () => void
-    const neverSettlingUntilReleased = new Promise<void>((resolve) => {
-      releaseObserver = resolve
-    })
-    const rejectedThenable = {
-      then: (_resolve: unknown, reject?: (reason: unknown) => unknown) => {
-        reject?.(new Error('observer rejected'))
-      }
-    } as unknown as PromiseLike<void>
-    const notify = vi.fn((notification: DeepChatLoopNotification) =>
-      notification.event === 'PreToolUse' ? neverSettlingUntilReleased : rejectedThenable
-    )
+  it('assembles no notification for an unobserved event', async () => {
+    const notify = vi.fn()
+    const isObserved = vi.fn((event: DeepChatLoopNotification['event']) => event !== 'PreToolUse')
     const toolService = createMockToolService({ get_weather: 'Sunny, 72F' })
-    const processPromise = processStream(
+
+    const result = await processStream(
       createParams({
         coreStream: createToolThenCompleteStream('get_weather'),
         toolExecution: createToolExecutionPort(toolService),
         tools: [makeTool('get_weather')],
-        notificationObserver: { notify }
+        notificationObserver: { isObserved, notify }
       })
     )
-    let settled = false
-    void processPromise.then(() => {
-      settled = true
-    })
 
-    try {
-      await vi.runAllTimersAsync()
-      await Promise.resolve()
-
-      expect(notify.mock.calls.map(([notification]) => notification.event)).toEqual([
-        'PreToolUse',
-        'PostToolUse'
-      ])
-      expect(settled).toBe(true)
-    } finally {
-      releaseObserver()
-    }
-
-    const result = await processPromise
-    await Promise.resolve()
     expect(result.status).toBe('completed')
-    expect(warning).toHaveBeenCalledTimes(1)
-    warning.mockRestore()
+    expect(isObserved.mock.calls.map(([event]) => event)).toEqual(['PreToolUse', 'PostToolUse'])
+    expect(notify.mock.calls.map(([notification]) => notification.event)).toEqual(['PostToolUse'])
   })
 
   it('signals first provider round after flushing without blocking tool loop', async () => {

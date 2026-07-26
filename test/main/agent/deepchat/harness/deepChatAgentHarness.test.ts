@@ -23,7 +23,8 @@ import {
   PRE_STREAM_STUCK_WARN_MS
 } from '@/agent/deepchat/runtime/preStreamWatchdog'
 import logger from '@shared/logger'
-import type { HookNotification, HookObserver } from '@/hook/observer'
+import type { HookEvent } from '@/hook/events'
+import type { HookObserver } from '@/hook/observer'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
 import {
   estimateToolReserveTokens,
@@ -51,24 +52,25 @@ import type { AcpAgentDescriptor } from '@/agent/shared/agentDescriptors'
 const createHookObserver = (dispatcher: {
   dispatchEvent: ReturnType<typeof vi.fn>
 }): HookObserver => ({
-  notify({ event, context }: HookNotification) {
-    dispatcher.dispatchEvent(event, {
-      conversationId: context.sessionId,
-      agentId: context.agentId,
-      workdir: context.projectDir,
-      messageId: context.messageId,
-      promptPreview: context.promptPreview,
-      providerId: context.providerId,
-      modelId: context.modelId,
-      tool: context.tool,
-      permission: context.permission,
-      stop: context.stop,
-      usage: context.usage,
-      error: context.error
+  isObserved: () => true,
+  notify(event: HookEvent) {
+    dispatcher.dispatchEvent(event.event, {
+      conversationId: event.session.sessionId,
+      agentId: event.session.agentId,
+      workdir: event.session.projectDir,
+      messageId: event.session.messageId,
+      providerId: event.session.providerId,
+      modelId: event.session.modelId,
+      promptPreview: 'promptPreview' in event ? event.promptPreview : undefined,
+      tool: 'tool' in event ? event.tool : undefined,
+      permission: 'permission' in event ? event.permission : undefined,
+      stop: 'stop' in event ? event.stop : undefined,
+      usage: 'usage' in event ? event.usage : undefined,
+      error: 'error' in event ? event.error : undefined
     })
   }
 })
-const noopHookObserver: HookObserver = { notify: vi.fn() }
+const noopHookObserver: HookObserver = { isObserved: () => true, notify: vi.fn() }
 import type { AcpAgentConfig } from '@shared/types/acp'
 import type * as schema from '@agentclientprotocol/sdk/dist/schema/index.js'
 import { nanoid } from 'nanoid'

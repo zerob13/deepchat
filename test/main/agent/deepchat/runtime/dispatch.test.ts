@@ -246,6 +246,7 @@ async function settleToolBatch(
     collaborators: {
       notificationObserver: hooks
         ? {
+            isObserved: () => true,
             notify: (notification) => {
               if (notification.event === 'PreToolUse') {
                 hooks.onPreToolUse?.(notification.tool)

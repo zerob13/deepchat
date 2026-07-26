@@ -2,8 +2,7 @@ import type { ProviderModelResolutionPort } from '@/provider/settings'
 import type { ProviderExecutionPort, RateLimitQueueSnapshot } from '@shared/types/provider'
 import type { DeepChatSessionState } from '@shared/types/agent-interface'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
-import type { HookEventName } from '@shared/hooksNotifications'
-import type { HookContext } from '@/hook/observer'
+import type { RuntimeHookSink } from '@/agent/deepchat/runtime/runtimeHookSink'
 import type { AcpAgentInstanceDependencyFactory } from '@/agent/acp/instance'
 import { AcpCompatibilityPromptBuilder } from '@/agent/acp/runtime'
 import type { AcpViewManifestInput } from '@/agent/acp/instance/ports'
@@ -58,7 +57,7 @@ export interface AcpCompatibilityDependencyBuilderDependencies {
     snapshot: RateLimitQueueSnapshot
   ): void
   clearRateLimitWaitingMessage(sessionId: string, messageId: string, requestId: string): void
-  dispatchHook(event: HookEventName, context: HookContext): void
+  hookSink: Pick<RuntimeHookSink, 'scope'>
 }
 
 function throwIfAbortRequested(signal?: AbortSignal): void {
@@ -229,41 +228,29 @@ export function createAcpCompatibilityDependencies(
     },
     observer: {
       userPromptSubmitted: (input) => {
-        dependencies.dispatchHook('UserPromptSubmit', {
+        const hooks = dependencies.hookSink.scope({
           sessionId: input.sessionId,
           messageId: input.messageId,
-          promptPreview: input.promptPreview,
           providerId: 'acp',
           modelId: input.agentId,
           projectDir: input.workdir
         })
-        dependencies.dispatchHook('SessionStart', {
-          sessionId: input.sessionId,
-          messageId: input.messageId,
-          promptPreview: input.promptPreview,
-          providerId: 'acp',
-          modelId: input.agentId,
-          projectDir: input.workdir
-        })
+        hooks.emit({ event: 'UserPromptSubmit', promptPreview: input.promptPreview })
+        hooks.emit({ event: 'SessionStart', promptPreview: input.promptPreview })
       },
       terminal: (input) => {
-        dependencies.dispatchHook('Stop', {
-          sessionId: input.sessionId,
-          providerId: 'acp',
-          modelId: input.agentId,
-          projectDir: input.workdir,
-          stop: {
+        dependencies.hookSink
+          .scope({
+            sessionId: input.sessionId,
+            providerId: 'acp',
+            modelId: input.agentId,
+            projectDir: input.workdir
+          })
+          .terminal({
             reason: input.stopReason,
-            userStop: input.status === 'aborted'
-          }
-        })
-        dependencies.dispatchHook('SessionEnd', {
-          sessionId: input.sessionId,
-          providerId: 'acp',
-          modelId: input.agentId,
-          projectDir: input.workdir,
-          error: input.errorMessage ? { message: input.errorMessage } : null
-        })
+            userStop: input.status === 'aborted',
+            error: input.errorMessage ? { message: input.errorMessage } : null
+          })
       }
     }
   }

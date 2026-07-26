@@ -490,6 +490,7 @@ export async function runNativeAgentEvalScenario(
     maxProviderRounds: scenario.maxProviderRounds,
     shouldYieldForPendingInput: () => scenario.yieldForPendingInput === true,
     notificationObserver: {
+      isObserved: () => true,
       notify: (notification) => {
         if (notification.event === 'PermissionRequest') {
           permissionRequests += 1

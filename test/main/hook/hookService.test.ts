@@ -1,12 +1,16 @@
-import { describe, expect, it, vi } from 'vitest'
-import { expandHookCommandPlaceholders, HookService, truncateText } from '../../../src/main/hook'
-import {
-  createDefaultHookCommand,
-  createDefaultHooksNotificationsConfig,
-  normalizeHooksNotificationsConfig
-} from '../../../src/main/hook/config'
+import { EventEmitter } from 'node:events'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  HookCommandItem,
+  HookEventName,
+  HookEventPayload,
+  HooksNotificationsSettings
+} from '../../../src/shared/hooksNotifications'
 import { DEFAULT_IMPORTANT_HOOK_EVENTS } from '../../../src/shared/hooksNotifications'
 
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
+
+vi.mock('child_process', () => ({ spawn: spawnMock }))
 vi.mock('electron-log', () => ({
   default: {
     warn: vi.fn(),
@@ -14,6 +18,14 @@ vi.mock('electron-log', () => ({
     error: vi.fn()
   }
 }))
+
+import { expandHookCommandPlaceholders, HookService, truncateText } from '../../../src/main/hook'
+import {
+  createDefaultHookCommand,
+  createDefaultHooksNotificationsConfig,
+  normalizeHooksNotificationsConfig
+} from '../../../src/main/hook/config'
+import type { HookEvent } from '../../../src/main/hook/events'
 
 describe('HookService helpers', () => {
   it('truncateText keeps short strings intact', () => {
@@ -168,70 +180,480 @@ describe('HookService helpers', () => {
   })
 })
 
-describe('HookService observer', () => {
-  const createService = () =>
-    new HookService(
-      { getHooksNotificationsConfig: () => ({ hooks: [] }) },
-      {
-        getSession: vi.fn().mockResolvedValue(null),
-        getMessage: vi.fn().mockResolvedValue(null)
-      }
-    )
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
-  it('forwards ordered detached snapshots to the notification dispatcher', () => {
-    const service = createService()
-    const dispatchEvent = vi.spyOn(service, 'dispatchEvent').mockImplementation(() => undefined)
-    const context = {
-      sessionId: 'session-1',
-      agentId: 'agent-1',
-      tool: {
-        callId: 'tool-1',
-        name: 'write_file',
-        params: '{"path":"before.txt"}'
-      },
-      permission: {
-        permissionType: 'write',
-        metadata: { path: 'before.txt' }
-      }
+const enabledHook = (id: string, events: HookEventName[]): HookCommandItem => ({
+  id,
+  name: id,
+  enabled: true,
+  command: `run-${id}`,
+  events
+})
+
+class FakeChild extends EventEmitter {
+  readonly stdout = new EventEmitter()
+  readonly stderr = new EventEmitter()
+  readonly stdin = { write: vi.fn(), end: vi.fn() }
+  readonly kill = vi.fn()
+}
+
+const spawnedPayloads = (): HookEventPayload[] =>
+  spawnMock.mock.results.map(
+    (result) =>
+      JSON.parse(
+        (result.value as FakeChild).stdin.write.mock.calls[0][0] as string
+      ) as HookEventPayload
+  )
+
+const createHarness = (hooks: HookCommandItem[] = []) => {
+  let stored: HooksNotificationsSettings = { hooks }
+  const getHooksNotificationsConfig = vi.fn(() => stored)
+  const setHooksNotificationsConfig = vi.fn((next: HooksNotificationsSettings) => {
+    stored = next
+    return next
+  })
+  const getSession = vi.fn().mockResolvedValue(null)
+  const service = new HookService(
+    { getHooksNotificationsConfig, setHooksNotificationsConfig },
+    { getSession }
+  )
+  return {
+    service,
+    getSession,
+    getHooksNotificationsConfig,
+    setHooksNotificationsConfig,
+    writeExternally: (next: HooksNotificationsSettings) => {
+      stored = next
     }
+  }
+}
 
-    service.notify({ event: 'PermissionRequest', context })
-    context.tool.name = 'mutated_tool'
-    context.permission.metadata.path = 'after.txt'
-    service.notify({ event: 'PreToolUse', context })
+const toolEvent = (sessionId: string, callId: string): HookEvent => ({
+  event: 'PostToolUse',
+  session: { sessionId, providerId: 'openai', modelId: 'gpt-5', projectDir: null },
+  tool: { callId, name: 'read_file', params: '{"path":"a.txt"}', response: 'ok' }
+})
 
-    expect(dispatchEvent.mock.calls.map(([event]) => event)).toEqual([
-      'PermissionRequest',
-      'PreToolUse'
+describe('HookService subscription index', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChild()
+      queueMicrotask(() => child.emit('close', 0))
+      return child
+    })
+  })
+
+  it('does nothing but one index lookup when no hook subscribes', async () => {
+    const { service, getSession, getHooksNotificationsConfig } = createHarness()
+
+    expect(service.isObserved('PostToolUse')).toBe(false)
+    for (let index = 0; index < 25; index += 1) {
+      service.notify(toolEvent('session-1', `call-${index}`))
+    }
+    await flush()
+
+    expect(getSession).not.toHaveBeenCalled()
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(getHooksNotificationsConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores hooks that are disabled or have no command', async () => {
+    const { service } = createHarness([
+      { id: 'a', name: 'a', enabled: false, command: 'run-a', events: ['PostToolUse'] },
+      { id: 'b', name: 'b', enabled: true, command: '   ', events: ['PostToolUse'] }
     ])
-    expect(dispatchEvent.mock.calls[0][1]).toEqual(
-      expect.objectContaining({
-        conversationId: 'session-1',
-        agentId: 'agent-1',
-        tool: expect.objectContaining({ name: 'write_file' }),
-        permission: expect.objectContaining({
-          metadata: { path: 'before.txt' }
-        })
+
+    expect(service.isObserved('PostToolUse')).toBe(false)
+    service.notify(toolEvent('session-1', 'call-1'))
+    await flush()
+
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('applies a configuration write to the index without re-reading the store', async () => {
+    const { service, getHooksNotificationsConfig, setHooksNotificationsConfig } = createHarness()
+
+    expect(service.isObserved('PostToolUse')).toBe(false)
+    service.updateConfig({ hooks: [enabledHook('a', ['PostToolUse'])] })
+
+    expect(setHooksNotificationsConfig).toHaveBeenCalledTimes(1)
+    expect(service.isObserved('PostToolUse')).toBe(true)
+    expect(getHooksNotificationsConfig).toHaveBeenCalledTimes(1)
+
+    service.notify(toolEvent('session-1', 'call-1'))
+    await flush()
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands out an immutable configuration snapshot', () => {
+    const { service } = createHarness([enabledHook('a', ['Stop'])])
+    const snapshot = service.getConfigSnapshot()
+
+    expect(() => snapshot.hooks.push(enabledHook('b', ['PreToolUse']))).toThrow(TypeError)
+    expect(service.isObserved('PreToolUse')).toBe(false)
+  })
+
+  it('picks up a store write that bypassed the service after a refresh', () => {
+    const { service, writeExternally } = createHarness()
+
+    expect(service.isObserved('Stop')).toBe(false)
+    writeExternally({ hooks: [enabledHook('a', ['Stop'])] })
+    expect(service.isObserved('Stop')).toBe(false)
+
+    service.refreshSubscriptions()
+    expect(service.isObserved('Stop')).toBe(true)
+  })
+
+  it('rebuilds the index when the service restarts around a maintenance window', async () => {
+    const { service, writeExternally } = createHarness()
+
+    await service.stop()
+    expect(service.isObserved('Stop')).toBe(false)
+
+    writeExternally({ hooks: [enabledHook('a', ['Stop'])] })
+    service.start()
+
+    expect(service.isObserved('Stop')).toBe(true)
+  })
+})
+
+describe('HookService delivery ordering', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChild()
+      queueMicrotask(() => child.emit('close', 0))
+      return child
+    })
+  })
+
+  it('keeps one session in emission order even when enrichment is slow', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['PostToolUse'])])
+    let releaseSession: (value: null) => void = () => undefined
+    getSession.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        releaseSession = resolve
       })
     )
-    expect(dispatchEvent.mock.calls[1][1]).toEqual(
+
+    service.notify({
+      event: 'PostToolUse',
+      session: { sessionId: 'session-1' },
+      tool: { callId: 'slow' }
+    })
+    service.notify(toolEvent('session-1', 'fast'))
+    await flush()
+
+    expect(spawnMock).not.toHaveBeenCalled()
+
+    releaseSession(null)
+    await flush()
+
+    expect(spawnedPayloads().map((payload) => payload.tool?.callId)).toEqual(['slow', 'fast'])
+  })
+
+  it('does not let one session block another', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['PostToolUse'])])
+    getSession.mockReturnValueOnce(new Promise<null>(() => undefined))
+
+    service.notify({
+      event: 'PostToolUse',
+      session: { sessionId: 'blocked' },
+      tool: { callId: 'stuck' }
+    })
+    service.notify(toolEvent('other', 'free'))
+    await flush()
+
+    expect(spawnedPayloads().map((payload) => payload.tool?.callId)).toEqual(['free'])
+  })
+
+  it('keeps delivering after a hook command fails to spawn', async () => {
+    const { service } = createHarness([
+      enabledHook('broken', ['PostToolUse']),
+      enabledHook('healthy', ['PostToolUse'])
+    ])
+    spawnMock.mockImplementationOnce(() => {
+      throw new Error('spawn failed')
+    })
+
+    service.notify(toolEvent('session-1', 'first'))
+    await flush()
+    service.notify(toolEvent('session-1', 'second'))
+    await flush()
+
+    expect(spawnMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('stops delivering queued events once the service is stopped', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['PostToolUse'])])
+    let releaseSession: (value: null) => void = () => undefined
+    getSession.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        releaseSession = resolve
+      })
+    )
+
+    service.notify({
+      event: 'PostToolUse',
+      session: { sessionId: 'session-1' },
+      tool: { callId: 'queued' }
+    })
+    releaseSession(null)
+    const stopped = service.stop()
+    await stopped
+    await flush()
+
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('kills a hook command that outlives the command timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const { service } = createHarness([enabledHook('a', ['SessionStart'])])
+      const child = new FakeChild()
+      spawnMock.mockImplementationOnce(() => child)
+
+      const pending = service.testHookCommand('a')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+
+      child.emit('close', null)
+      await expect(pending).resolves.toMatchObject({
+        success: false,
+        error: 'Command timed out'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('kills running hook commands on stop', async () => {
+    const { service } = createHarness([enabledHook('a', ['PostToolUse'])])
+    const child = new FakeChild()
+    spawnMock.mockImplementationOnce(() => child)
+
+    service.notify(toolEvent('session-1', 'call-1'))
+    await flush()
+    await service.stop()
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+  })
+})
+
+describe('HookService payload projection', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChild()
+      queueMicrotask(() => child.emit('close', 0))
+      return child
+    })
+  })
+
+  it('truncates tool previews before any clone runs', async () => {
+    const { service } = createHarness([enabledHook('a', ['PostToolUse'])])
+    const clone = vi.spyOn(globalThis, 'structuredClone')
+    const huge = 'x'.repeat(2_000_000)
+
+    service.notify({
+      event: 'PostToolUse',
+      session: { sessionId: 'session-1', providerId: 'openai', modelId: 'gpt-5', projectDir: null },
+      tool: { callId: 'call-1', name: 'write_file', params: huge, response: huge }
+    })
+    await flush()
+
+    const [payload] = spawnedPayloads()
+    expect(payload.tool?.paramsPreview).toHaveLength(1200)
+    expect(payload.tool?.responsePreview).toHaveLength(1200)
+    expect(clone).not.toHaveBeenCalled()
+    clone.mockRestore()
+  })
+
+  it('clones only the permission record and detaches it from later mutation', async () => {
+    const { service } = createHarness([enabledHook('a', ['PermissionRequest'])])
+    const clone = vi.spyOn(globalThis, 'structuredClone')
+    const permission = { permissionType: 'write', metadata: { path: 'before.txt' } }
+
+    service.notify({
+      event: 'PermissionRequest',
+      session: { sessionId: 'session-1', providerId: 'openai', modelId: 'gpt-5', projectDir: null },
+      tool: { callId: 'call-1', name: 'write_file' },
+      permission
+    })
+    permission.metadata.path = 'after.txt'
+    await flush()
+
+    expect(clone).toHaveBeenCalledTimes(1)
+    expect(spawnedPayloads()[0].permission).toEqual({
+      permissionType: 'write',
+      metadata: { path: 'before.txt' }
+    })
+    clone.mockRestore()
+  })
+
+  it('emits the version 1 payload shape', async () => {
+    const { service } = createHarness([enabledHook('a', ['SessionEnd'])])
+
+    service.notify({
+      event: 'SessionEnd',
+      session: {
+        sessionId: 'session-1',
+        agentId: 'deepchat',
+        providerId: 'openai',
+        modelId: 'gpt-5',
+        projectDir: '/workspace',
+        messageId: 'message-1'
+      },
+      usage: { totalTokens: 12 },
+      error: { message: 'boom' }
+    })
+    await flush()
+
+    const [payload] = spawnedPayloads()
+    expect(payload.time).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/)
+    expect({ ...payload, time: undefined }).toEqual({
+      payloadVersion: 1,
+      event: 'SessionEnd',
+      time: undefined,
+      isTest: false,
+      app: { version: expect.any(String), platform: process.platform },
+      session: {
+        conversationId: 'session-1',
+        agentId: 'deepchat',
+        workdir: '/workspace',
+        providerId: 'openai',
+        modelId: 'gpt-5'
+      },
+      user: { messageId: 'message-1', promptPreview: '' },
+      tool: null,
+      permission: null,
+      stop: null,
+      usage: { totalTokens: 12 },
+      error: { message: 'boom' }
+    })
+  })
+
+  it('exposes the same core metadata through the command environment', async () => {
+    const { service } = createHarness([enabledHook('a', ['PreToolUse'])])
+
+    service.notify({
+      event: 'PreToolUse',
+      session: {
+        sessionId: 'session-1',
+        agentId: 'deepchat',
+        providerId: 'openai',
+        modelId: 'gpt-5',
+        projectDir: null,
+        messageId: 'message-1'
+      },
+      tool: { callId: 'call-1', name: 'read_file' }
+    })
+    await flush()
+
+    const [, , options] = spawnMock.mock.calls[0]
+    expect(options.env).toEqual(
       expect.objectContaining({
-        tool: expect.objectContaining({ name: 'mutated_tool' }),
-        permission: expect.objectContaining({
-          metadata: { path: 'after.txt' }
-        })
+        DEEPCHAT_HOOK_EVENT: 'PreToolUse',
+        DEEPCHAT_HOOK_IS_TEST: 'false',
+        DEEPCHAT_CONVERSATION_ID: 'session-1',
+        DEEPCHAT_AGENT_ID: 'deepchat',
+        DEEPCHAT_PROVIDER_ID: 'openai',
+        DEEPCHAT_MODEL_ID: 'gpt-5',
+        DEEPCHAT_MESSAGE_ID: 'message-1',
+        DEEPCHAT_TOOL_NAME: 'read_file',
+        DEEPCHAT_TOOL_CALL_ID: 'call-1',
+        DEEPCHAT_WORKDIR: ''
       })
     )
   })
 
-  it('isolates a synchronous observer failure', () => {
-    const service = createService()
-    vi.spyOn(service, 'dispatchEvent').mockImplementation(() => {
-      throw new Error('sync failure')
+  it('treats an explicit null project directory as an answered fact', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['Stop'])])
+
+    service.notify({
+      event: 'Stop',
+      session: { sessionId: 'session-1', providerId: 'openai', modelId: 'gpt-5', projectDir: null },
+      stop: { reason: 'complete', userStop: false }
+    })
+    await flush()
+
+    expect(getSession).not.toHaveBeenCalled()
+    expect(spawnedPayloads()[0].session.workdir).toBeNull()
+  })
+
+  it('resolves unanswered session facts from the session store', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['Stop'])])
+    getSession.mockResolvedValueOnce({
+      providerId: 'acp',
+      modelId: 'claude-code',
+      projectDir: '/from-db'
     })
 
-    expect(() =>
-      service.notify({ event: 'SessionStart', context: { sessionId: 'session-1' } })
-    ).not.toThrow()
+    service.notify({
+      event: 'Stop',
+      session: { sessionId: 'session-1' },
+      stop: { reason: 'complete', userStop: false }
+    })
+    await flush()
+
+    expect(getSession).toHaveBeenCalledTimes(1)
+    expect(spawnedPayloads()[0].session).toEqual({
+      conversationId: 'session-1',
+      agentId: 'claude-code',
+      workdir: '/from-db',
+      providerId: 'acp',
+      modelId: 'claude-code'
+    })
+  })
+
+  it('never reads a message to describe a prompt it was not given', async () => {
+    const { service } = createHarness([enabledHook('a', ['SessionStart'])])
+
+    service.notify({
+      event: 'SessionStart',
+      session: {
+        sessionId: 'session-1',
+        providerId: 'openai',
+        modelId: 'gpt-5',
+        projectDir: null,
+        messageId: 'assistant-1'
+      }
+    })
+    await flush()
+
+    expect(spawnedPayloads()[0].user).toEqual({
+      messageId: 'assistant-1',
+      promptPreview: ''
+    })
+  })
+})
+
+describe('HookService detachment', () => {
+  beforeEach(() => {
+    spawnMock.mockReset()
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChild()
+      queueMicrotask(() => child.emit('close', 0))
+      return child
+    })
+  })
+
+  it('detaches session facts mutated after the event was accepted', async () => {
+    const { service, getSession } = createHarness([enabledHook('a', ['Stop'])])
+    let releaseSession: (value: null) => void = () => undefined
+    getSession.mockReturnValueOnce(
+      new Promise<null>((resolve) => {
+        releaseSession = resolve
+      })
+    )
+    const session = { sessionId: 'session-1', modelId: 'gpt-5' }
+
+    service.notify({ event: 'Stop', session, stop: { reason: 'complete', userStop: false } })
+    session.modelId = 'mutated'
+    releaseSession(null)
+    await flush()
+
+    expect(spawnedPayloads()[0].session.modelId).toBe('gpt-5')
   })
 })

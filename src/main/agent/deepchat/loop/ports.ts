@@ -64,7 +64,8 @@ export type DeepChatLoopNotification =
     }
 
 export interface DeepChatLoopNotificationObserver {
-  notify(notification: DeepChatLoopNotification): void | PromiseLike<void>
+  isObserved(event: DeepChatLoopNotification['event']): boolean
+  notify(notification: DeepChatLoopNotification): void
 }
 
 export type PendingToolInteractionOrigin =

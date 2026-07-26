@@ -895,8 +895,7 @@ export async function createMainProcessControl(dependencies: {
   skillSyncService = new SkillSyncService(skillService, skillSettings, publishDeepchatEvent)
 
   hookService = new HookService(hookSettings, {
-    getSession: (sessionId) => sessionQuery.getSession(sessionId),
-    getMessage: (messageId) => sessionQuery.getMessage(messageId)
+    getSession: (sessionId) => sessionQuery.getSession(sessionId)
   })
   const providerCatalogPort: ProviderCatalogPort = {
     getProviderModels: (providerId) => providerSettings.getProviderModels(providerId),
@@ -1848,10 +1847,7 @@ export async function createMainProcessControl(dependencies: {
         if (proxyConfig.getProxyMode() === ProxyMode.CUSTOM) void proxyConfig.resolveProxy()
       }
     })
-    const hookRoutes = createHookRoutes({
-      settings: hookSettings,
-      testCommand: (hookId) => hookService.testHookCommand(hookId)
-    })
+    const hookRoutes = createHookRoutes({ service: hookService })
     const appSettingsRoutes = createAppSettingsRoutes({
       settings: dependencies.settingsStore,
       agentDefaults,
