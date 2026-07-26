@@ -303,14 +303,20 @@ describe('memory repository fakes', () => {
         lastAccessedAt: 2_000
       })
     ).toBe(true)
-    const currentSeed = repo.listDirtySeeds('a', 10)[0]
+    const currentSeed = repo.listDirtySeeds('a', 10).find((seed) => seed.memoryId === parent.id)!
     expect(currentSeed.generation).toBe(staleSeed.generation + 1)
+    expect(repo.deferDirtySeeds('a', [staleSeed], 2_500)).toBe(0)
+    expect(repo.deferDirtySeeds('a', [currentSeed], 2_500)).toBe(1)
+    expect(repo.listDirtySeeds('a', 10).find((seed) => seed.memoryId === parent.id)).toEqual({
+      ...currentSeed,
+      enqueuedAt: 2_500
+    })
     expect(repo.settleDirtySeeds('a', [staleSeed])).toBe(0)
     expect(repo.settleDirtySeeds('a', [currentSeed])).toBe(1)
 
     repo.delete(parent.id)
     expect(repo.listDerivationsByParent('a', parent.id)).toHaveLength(1)
-    expect(repo.countDirtySeeds('a')).toBe(1)
+    expect(repo.countDirtySeeds('a')).toBe(2)
     expect(repo.retireAgentMemoryNamespace('a')).toBe(1)
     expect(repo.listDerivationsByChild('a', 'child')).toEqual([])
     expect(repo.countDirtySeeds('a')).toBe(0)

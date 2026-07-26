@@ -21,7 +21,6 @@ import type {
   CanonicalAgentMemoryRow as AgentMemoryRow,
   AgentMemoryStatus,
   AgentMemoryWorkingCandidateCursor,
-  ConsolidationScanCursor,
   ContentUpdateResult,
   EmbeddedMemoryUpdate,
   FailedEmbeddingUpdate,
@@ -233,15 +232,6 @@ export interface MemoryLifecycleRepositoryPort {
     clearedTargets: number
     clearedLinks: number
   }
-  listConsolidationScanRows(
-    agentId: string,
-    options: {
-      embeddingDim: number
-      embeddingModel: string
-      after?: ConsolidationScanCursor
-      limit: number
-    }
-  ): AgentMemoryRow[]
   repairInternalKindStatuses(agentId: string): number
 }
 
@@ -272,6 +262,7 @@ export interface MemoryLineageRepositoryPort {
 export interface MemoryDirtyRepositoryPort {
   listDirtySeeds(agentId: string, limit: number): MemoryDirtySeed[]
   settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number
+  deferDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[], deferredAt: number): number
   countDirtySeeds(agentId: string): number
 }
 

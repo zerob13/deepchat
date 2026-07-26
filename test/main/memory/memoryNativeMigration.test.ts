@@ -158,6 +158,12 @@ describeIfNative('Memory native SQLite migration', () => {
           .prepare('SELECT version FROM schema_versions WHERE version = 48')
           .get()
       ).toEqual({ version: 48 })
+      expect(
+        migrated
+          .getDatabase()
+          .prepare('SELECT version FROM schema_versions WHERE version = 49')
+          .get()
+      ).toEqual({ version: 49 })
       expect(table.listDirtySeeds('a', 10)).toEqual([
         {
           memoryId: 'legacy-claim',
@@ -190,6 +196,70 @@ describeIfNative('Memory native SQLite migration', () => {
       ])
       expect(memoryTable(reopened).listDerivationsByParent('a', 'legacy-claim')).toHaveLength(1)
       reopened.close()
+    })
+  })
+
+  it('migrates v48 dirty work to include reflection claims', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      memoryTable(seeded).insert({
+        id: 'legacy-reflection',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'legacy reflection',
+        createdAt: 1_000
+      })
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      legacy.exec(`
+        DELETE FROM agent_memory_dirty WHERE memory_id = 'legacy-reflection';
+        DROP TRIGGER agent_memory_dirty_ai;
+        DROP TRIGGER agent_memory_dirty_au;
+        DROP TRIGGER agent_memory_dirty_ad;
+        CREATE TRIGGER agent_memory_dirty_ai
+        AFTER INSERT ON agent_memory
+        WHEN NEW.kind IN ('episodic', 'semantic')
+        BEGIN
+          SELECT 1;
+        END;
+        DELETE FROM schema_versions;
+        INSERT INTO schema_versions (version, applied_at) VALUES (48, 1);
+      `)
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const table = memoryTable(migrated)
+      expect(table.listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'legacy-reflection',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 1_000
+        }
+      ])
+      table.insert({
+        id: 'new-reflection',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'new reflection',
+        createdAt: 2_000
+      })
+      expect(table.listDirtySeeds('a', 10).map((seed) => seed.memoryId)).toEqual([
+        'legacy-reflection',
+        'new-reflection'
+      ])
+      expect(
+        (
+          migrated
+            .getDatabase()
+            .prepare(
+              "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'agent_memory_dirty_ai'"
+            )
+            .get() as { sql: string }
+        ).sql
+      ).toContain("NEW.kind IN ('episodic', 'semantic', 'reflection')")
+      migrated.close()
     })
   })
 

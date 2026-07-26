@@ -77,12 +77,13 @@ import type { MemoryTombstoneDeleteInput, MemoryTombstoneReason } from '../../do
 // optimistic concurrency control for semantic decision writes; v42 normalizes lifecycle and
 // embedding state while retaining the legacy status shadow; v46 adds temporal claim metadata; v47
 // adds privacy-preserving exact-forgetting tombstones; v48 adds durable derivation edges and the
-// rebuildable dirty-work index.
+// rebuildable dirty-work index; v49 extends dirty work to reflection claims.
 const AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION = 42
 const AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION = 46
 const AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION = 47
 const AGENT_MEMORY_LINEAGE_SCHEMA_VERSION = 48
-const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_LINEAGE_SCHEMA_VERSION
+const AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION = 49
+const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION
 
 const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
@@ -141,14 +142,14 @@ const AGENT_MEMORY_DIRTY_BACKFILL_SQL = `
   SELECT agent_id, id, 1, max(1, decision_revision),
          max(0, COALESCE(last_accessed, created_at))
   FROM agent_memory
-  WHERE kind IN ('episodic', 'semantic')
+  WHERE kind IN ('episodic', 'semantic', 'reflection')
   ON CONFLICT (agent_id, memory_id) DO NOTHING;
 `
 
 const AGENT_MEMORY_DIRTY_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai
   AFTER INSERT ON agent_memory
-  WHEN NEW.kind IN ('episodic', 'semantic')
+  WHEN NEW.kind IN ('episodic', 'semantic', 'reflection')
   BEGIN
     INSERT INTO agent_memory_dirty (
       agent_id, memory_id, generation, claim_revision, enqueued_at
@@ -166,7 +167,7 @@ const AGENT_MEMORY_DIRTY_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_au
   AFTER UPDATE OF decision_revision, embedding_state, embedding_dim, embedding_model
   ON agent_memory
-  WHEN NEW.kind IN ('episodic', 'semantic')
+  WHEN NEW.kind IN ('episodic', 'semantic', 'reflection')
   BEGIN
     INSERT INTO agent_memory_dirty (
       agent_id, memory_id, generation, claim_revision, enqueued_at
@@ -183,7 +184,7 @@ const AGENT_MEMORY_DIRTY_TRIGGER_SQL = `
 
   CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ad
   AFTER DELETE ON agent_memory
-  WHEN OLD.kind IN ('episodic', 'semantic')
+  WHEN OLD.kind IN ('episodic', 'semantic', 'reflection')
   BEGIN
     INSERT INTO agent_memory_dirty (
       agent_id, memory_id, generation, claim_revision, enqueued_at
@@ -197,6 +198,12 @@ const AGENT_MEMORY_DIRTY_TRIGGER_SQL = `
       claim_revision = excluded.claim_revision,
       enqueued_at = max(agent_memory_dirty.enqueued_at, excluded.enqueued_at);
   END;
+`
+
+const AGENT_MEMORY_DIRTY_TRIGGER_DROP_SQL = `
+  DROP TRIGGER IF EXISTS agent_memory_dirty_ai;
+  DROP TRIGGER IF EXISTS agent_memory_dirty_au;
+  DROP TRIGGER IF EXISTS agent_memory_dirty_ad;
 `
 
 const DIRTY_SEED_REPOSITORY_LIMIT = 256
@@ -1000,13 +1007,22 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       throw new Error('[Memory] agent_memory_dirty constraints are incomplete')
     }
-    for (const [name, signature] of [
-      ['agent_memory_dirty_ai', 'AFTER INSERT ON agent_memory'],
+    for (const [name, signature, kindSignature] of [
+      [
+        'agent_memory_dirty_ai',
+        'AFTER INSERT ON agent_memory',
+        "WHEN NEW.kind IN ('episodic', 'semantic', 'reflection')"
+      ],
       [
         'agent_memory_dirty_au',
-        'AFTER UPDATE OF decision_revision, embedding_state, embedding_dim, embedding_model ON agent_memory'
+        'AFTER UPDATE OF decision_revision, embedding_state, embedding_dim, embedding_model ON agent_memory',
+        "WHEN NEW.kind IN ('episodic', 'semantic', 'reflection')"
       ],
-      ['agent_memory_dirty_ad', 'AFTER DELETE ON agent_memory']
+      [
+        'agent_memory_dirty_ad',
+        'AFTER DELETE ON agent_memory',
+        "WHEN OLD.kind IN ('episodic', 'semantic', 'reflection')"
+      ]
     ] as const) {
       const triggerSql = (
         this.db
@@ -1016,6 +1032,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       const normalizedTriggerSql = triggerSql?.replace(/\s+/gu, ' ')
       if (
         !normalizedTriggerSql?.includes(signature) ||
+        !normalizedTriggerSql.includes(kindSignature) ||
         !normalizedTriggerSql.includes('INSERT INTO agent_memory_dirty') ||
         !normalizedTriggerSql.includes('generation = agent_memory_dirty.generation + 1')
       ) {
@@ -1038,7 +1055,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   finalizeMigration(version: number): void {
-    if (version === AGENT_MEMORY_LINEAGE_SCHEMA_VERSION) {
+    if (
+      version === AGENT_MEMORY_LINEAGE_SCHEMA_VERSION ||
+      version === AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION
+    ) {
       this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
       return
     }
@@ -1155,6 +1175,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         AGENT_MEMORY_DIRTY_TABLE_SQL,
         AGENT_MEMORY_DIRTY_BACKFILL_SQL
       ].join('\n')
+    }
+    if (version === AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION) {
+      return [AGENT_MEMORY_DIRTY_TRIGGER_DROP_SQL, AGENT_MEMORY_DIRTY_BACKFILL_SQL].join('\n')
     }
     return null
   }
@@ -1713,6 +1736,36 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     return this.db.transaction(() =>
       unique.reduce(
         (removed, seed) => removed + remove.run(agentId, seed.memoryId, seed.generation).changes,
+        0
+      )
+    )()
+  }
+
+  deferDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[], deferredAt: number): number {
+    if (!seeds.length || !Number.isFinite(deferredAt)) return 0
+    const unique = [
+      ...new Map(
+        seeds.map((seed) => [JSON.stringify([seed.memoryId, seed.generation]), seed] as const)
+      ).values()
+    ].slice(0, DIRTY_SEED_REPOSITORY_LIMIT)
+    const normalizedDeferredAt = Math.max(0, Math.floor(deferredAt))
+    const defer = this.db.prepare(
+      `UPDATE agent_memory_dirty
+       SET enqueued_at = max(
+         ?,
+         (
+           SELECT COALESCE(max(queued.enqueued_at), -1) + 1
+           FROM agent_memory_dirty AS queued
+           WHERE queued.agent_id = ?
+         )
+       )
+       WHERE agent_id = ? AND memory_id = ? AND generation = ?`
+    )
+    return this.db.transaction(() =>
+      unique.reduce(
+        (deferred, seed) =>
+          deferred +
+          defer.run(normalizedDeferredAt, agentId, agentId, seed.memoryId, seed.generation).changes,
         0
       )
     )()
@@ -3891,41 +3944,6 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       )
       .all(...candidates, cappedLimit) as Array<{ agent_id: string }>
     return rows.map((row) => row.agent_id)
-  }
-
-  listConsolidationScanRows(
-    agentId: string,
-    options: {
-      embeddingDim: number
-      embeddingModel: string
-      after?: { createdAt: number; id: string }
-      limit: number
-    }
-  ): AgentMemoryRow[] {
-    const cappedLimit = Math.max(0, Math.floor(options.limit))
-    if (cappedLimit === 0) return []
-    const params: Array<string | number> = [agentId, options.embeddingDim, options.embeddingModel]
-    const cursorClause = options.after ? 'AND (created_at > ? OR (created_at = ? AND id > ?))' : ''
-    if (options.after) {
-      params.push(options.after.createdAt, options.after.createdAt, options.after.id)
-    }
-    params.push(cappedLimit)
-    return this.db
-      .prepare(
-        `SELECT *
-         FROM agent_memory
-         WHERE agent_id = ?
-           AND lifecycle_state = 'active'
-           AND embedding_state = 'ready'
-           AND superseded_by IS NULL
-           AND kind NOT IN ('persona', 'working')
-           AND embedding_dim = ?
-           AND embedding_model = ?
-           ${cursorClause}
-         ORDER BY created_at ASC, id ASC
-         LIMIT ?`
-      )
-      .all(...params) as AgentMemoryRow[]
   }
 
   repairInternalKindStatuses(agentId: string): number {

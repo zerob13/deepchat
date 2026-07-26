@@ -30,11 +30,11 @@
 
 - [x] Add durable derivation relations and idempotent inserts.
 - [x] Write merge/reflection/supersede/manual-edit edges transactionally.
-- [ ] Add the persistent bounded dirty-work queue.
-- [ ] Mark dirty work on committed claim mutations.
-- [ ] Consolidate bounded dirty clusters and settle only successful seeds.
+- [x] Add the persistent bounded dirty-work queue.
+- [x] Mark dirty work on committed claim mutations.
+- [x] Consolidate bounded dirty clusters and settle only successful seeds.
 - [x] Remove dependence on operational audit retention for lineage.
-- [ ] Cover retries, stale IDs, budget exhaustion, and audit pruning.
+- [x] Cover retries, stale IDs, budget exhaustion, and audit pruning.
 
 ## 4. Directive plane
 

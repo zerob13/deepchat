@@ -254,6 +254,8 @@ one Agent and cannot cross its ownership boundary.
 - A committed claim mutation marks bounded dirty work.
 - Consolidation consumes dirty seeds and bounded neighbors instead of repeatedly scanning the full
   corpus.
+- Reflection claims participate in dirty consolidation; transient failures rotate retryable
+  generations behind untouched work, while stale and terminal generations are discarded safely.
 - Merge/reflection outputs retain durable parent edges after audit pruning.
 - Retrying maintenance is idempotent.
 

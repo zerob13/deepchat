@@ -129,7 +129,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   private touchDirty(row: AgentMemoryRow): void {
-    if (row.kind !== 'episodic' && row.kind !== 'semantic') return
+    if (row.kind !== 'episodic' && row.kind !== 'semantic' && row.kind !== 'reflection') return
     const key = this.dirtyKey(row.agent_id, row.id)
     const existing = this.dirtySeeds.get(key)
     this.dirtySeeds.set(key, {
@@ -339,6 +339,32 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       removed += 1
     }
     return removed
+  }
+
+  deferDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[], deferredAt: number): number {
+    if (!Number.isFinite(deferredAt)) return 0
+    let deferred = 0
+    const normalizedDeferredAt = Math.max(0, Math.floor(deferredAt))
+    const unique = [
+      ...new Map(
+        seeds.map((seed) => [JSON.stringify([seed.memoryId, seed.generation]), seed] as const)
+      ).values()
+    ].slice(0, 256)
+    let latestEnqueuedAt = -1
+    for (const queued of this.dirtySeeds.values()) {
+      if (queued.agentId === agentId) {
+        latestEnqueuedAt = Math.max(latestEnqueuedAt, queued.enqueuedAt)
+      }
+    }
+    for (const seed of unique) {
+      const key = this.dirtyKey(agentId, seed.memoryId)
+      const current = this.dirtySeeds.get(key)
+      if (!current || current.generation !== seed.generation) continue
+      current.enqueuedAt = Math.max(latestEnqueuedAt + 1, normalizedDeferredAt)
+      latestEnqueuedAt = current.enqueuedAt
+      deferred += 1
+    }
+    return deferred
   }
 
   countDirtySeeds(agentId: string): number {
@@ -1831,33 +1857,6 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       .map(([agentId]) => agentId)
   }
 
-  listConsolidationScanRows(
-    agentId: string,
-    options: {
-      embeddingDim: number
-      embeddingModel: string
-      after?: { createdAt: number; id: string }
-      limit: number
-    }
-  ) {
-    return [...this.rows.values()]
-      .filter(
-        (row) =>
-          row.agent_id === agentId &&
-          row.status === 'embedded' &&
-          row.superseded_by === null &&
-          row.kind !== 'persona' &&
-          row.kind !== 'working' &&
-          row.embedding_dim === options.embeddingDim &&
-          row.embedding_model === options.embeddingModel &&
-          (!options.after ||
-            row.created_at > options.after.createdAt ||
-            (row.created_at === options.after.createdAt && row.id > options.after.id))
-      )
-      .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
-      .slice(0, Math.max(0, Math.floor(options.limit)))
-  }
-
   repairInternalKindStatuses(agentId: string) {
     let changed = 0
     for (const row of this.rows.values()) {
@@ -2087,7 +2086,6 @@ const LIFECYCLE_CAPABILITY_KEYS = [
   'retireConflictSiblings',
   'clearTargetConflictIfNoChallengers',
   'repairConflictIntegrityBatch',
-  'listConsolidationScanRows',
   'repairInternalKindStatuses'
 ] as const satisfies readonly (keyof MemoryLifecycleRepositoryPort)[]
 
@@ -2109,6 +2107,7 @@ const LINEAGE_CAPABILITY_KEYS = [
 const DIRTY_CAPABILITY_KEYS = [
   'listDirtySeeds',
   'settleDirtySeeds',
+  'deferDirtySeeds',
   'countDirtySeeds'
 ] as const satisfies readonly (keyof MemoryDirtyRepositoryPort)[]
 

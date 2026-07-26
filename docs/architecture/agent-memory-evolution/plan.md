@@ -142,8 +142,9 @@ Add `agent_memory_dirty` keyed by `(agent_id, memory_id)`. Every relevant commit
 upserts a dirty seed. Maintenance claims a bounded ordered batch, retrieves a bounded neighbor set,
 processes the resulting local clusters, and removes only successfully settled seeds.
 
-The queue is a work index, not authoritative fact state. Stale IDs are safely discarded. Failure
-leaves seeds retryable.
+The queue is a work index, not authoritative fact state. It covers episodic, semantic, and
+reflection claims. Stale IDs are safely discarded. Failure leaves seeds retryable and rotates the
+failed generation behind untouched work so a fixed failing prefix cannot starve the queue.
 
 Replace the full-corpus pairwise consolidation loop after parity tests cover merge decisions and
 maintenance budgets.

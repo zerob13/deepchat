@@ -377,11 +377,6 @@ export interface MemoryVectorRef {
   embeddingModel: string
 }
 
-export interface ConsolidationScanCursor {
-  createdAt: number
-  id: string
-}
-
 export interface MemoryManagementPageCursor {
   createdAt: number
   id: string

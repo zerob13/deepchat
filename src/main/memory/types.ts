@@ -25,7 +25,6 @@ export type {
   AgentMemoryPersonaState,
   AgentMemoryStatus,
   AgentMemoryWorkingCandidateCursor,
-  ConsolidationScanCursor,
   EmbeddedMemoryUpdate,
   FailedEmbeddingUpdate,
   FuseOptions,

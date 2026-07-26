@@ -185,6 +185,10 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
       } else {
         expect(repo.getById(currentId)).toBeUndefined()
       }
+      const expectedDirtyId = mutation === 'edit' ? editedId : currentId
+      expect(repo.listDirtySeeds('a', 256).some((seed) => seed.memoryId === expectedDirtyId)).toBe(
+        true
+      )
     }
   )
 
@@ -251,7 +255,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(repo.getById('old')?.superseded_by).toBe('new')
   })
 
-  it('bounds stored-vector consolidation scans and resumes with a compound cursor', async () => {
+  it('bounds dirty consolidation work and resumes from the persistent queue', async () => {
     const generateText = routedLLM({
       decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'
     })
@@ -279,16 +283,75 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', now)
     expect(queryByMemoryId).toHaveBeenCalledTimes(64)
     expect(decisionCalls(generateText)).toBe(0)
+    expect(repo.countDirtySeeds('a')).toBe(6)
 
     await presenter.runConsolidationPass('a', now + 6 * 60 * 60 * 1000 + 1)
     expect(queryByMemoryId).toHaveBeenCalledTimes(70)
+    expect(repo.countDirtySeeds('a')).toBe(0)
+  })
+
+  it('rotates retryable vector failures behind untouched dirty seeds', async () => {
+    const generateText = routedLLM({
+      decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'
+    })
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
+    const now = 1_000 * DAY
+    const queryByMemoryId = vi
+      .spyOn(store, 'queryByMemoryId')
+      .mockRejectedValue(new Error('injected vector query failure'))
+    for (let index = 0; index < 65; index += 1) {
+      const id = `m-${String(index).padStart(2, '0')}`
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `memory ${index}`,
+        status: 'embedded',
+        createdAt: now + index
+      })
+      repo.seedLegacyStatus(id, 'embedded', {
+        embeddingId: id,
+        embeddingDim: 4,
+        embeddingModel: 'p:m'
+      })
+      store.vectors.set(id, textToVector(`memory ${index}`))
+    }
+
+    await presenter.runConsolidationPass('a', now + 100)
+    expect(queryByMemoryId).toHaveBeenCalledTimes(64)
+    expect(queryByMemoryId.mock.calls.map((call) => call[0])).not.toContain('m-64')
+    expect(repo.countDirtySeeds('a')).toBe(65)
+
+    queryByMemoryId.mockClear()
+    await presenter.runConsolidationPass('a', now + 6 * 60 * 60 * 1000 + 101)
+
+    expect(queryByMemoryId.mock.calls[0]?.[0]).toBe('m-64')
+    expect(repo.countDirtySeeds('a')).toBe(65)
+  })
+
+  it('settles deleted dirty seeds without a live embedding dimension', async () => {
+    const { presenter, repo } = makeLLMPresenter(routedLLM({}))
+    const claim = repo.insert({
+      id: 'deleted',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'deleted claim',
+      status: 'embedded',
+      createdAt: 1_000
+    })
+    repo.delete(claim.id)
+    expect(repo.countDirtySeeds('a')).toBe(1)
+
+    await presenter.runConsolidationPass('a', 1_000 * DAY)
+
+    expect(repo.countDirtySeeds('a')).toBe(0)
   })
 
   it('skips vector neighbor scans after earlier maintenance steps exhaust the token budget', async () => {
     const generateText = routedLLM({
       decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'
     })
-    const { presenter, store } = makeLLMPresenter(generateText)
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
     await seedEmbedded(presenter, 'user likes bounded maintenance')
     const queryByMemoryId = vi.spyOn(store, 'queryByMemoryId')
     vi.spyOn(
@@ -304,6 +367,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', 1_000 * DAY)
 
     expect(queryByMemoryId).not.toHaveBeenCalled()
+    expect(repo.countDirtySeeds('a')).toBe(1)
   })
 
   it('respects the cooldown: a second pass within the window does no LLM work (T-B5)', async () => {
@@ -349,8 +413,19 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     const secondId = await seedEmbedded(presenter, 'user likes redis b')
     repo.rows.get(firstId)!.created_at = now
     repo.rows.get(secondId)!.created_at = now + 1
+    repo.insert({
+      id: 'deleted-before-model',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'stale queue entry',
+      createdAt: now + 2
+    })
+    repo.delete('deleted-before-model')
+    expect(repo.countDirtySeeds('a')).toBe(3)
+
     await presenter.runConsolidationPass('a', now)
     expect(decisionCalls(generateText)).toBe(0)
+    expect(repo.countDirtySeeds('a')).toBe(2)
     expect(auditRepo.getLatestCompletedEventAt('a', 'memory/maintenance_llm')).toBeNull()
     expect(auditRepo.listByAgent('a')[0]).toMatchObject({
       event_type: 'memory/maintenance_llm',
@@ -511,6 +586,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', now)
     const callsAfterFailure = decisionCalls(generateText)
     expect(callsAfterFailure).toBeGreaterThan(0)
+    expect(repo.countDirtySeeds('a')).toBe(2)
     expect(auditRepo.getLatestCompletedEventAt('a', 'memory/maintenance_llm')).toBeNull()
     expect(auditRepo.listByAgent('a')[0]).toMatchObject({
       event_type: 'memory/maintenance_llm',
@@ -526,6 +602,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', now + 31 * 60 * 1000)
     expect(decisionCalls(generateText)).toBeGreaterThan(callsAfterFailure)
     expect(auditRepo.getLatestCompletedEventAt('a', 'memory/maintenance_llm')).toBeNull()
+    expect(repo.countDirtySeeds('a')).toBe(2)
   })
 
   it('does not keep completed cooldown when heavy maintenance aborts after memory is disabled', async () => {
@@ -670,6 +747,8 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
       status: 'pending_embedding',
       createdAt: now - 2000
     })
+    await presenter.processPendingEmbeddings('a')
+    repo.settleDirtySeeds('a', repo.listDirtySeeds('a', 10))
     repo.insert({
       id: 'reflection-primary',
       agentId: 'a',
@@ -680,6 +759,9 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
       createdAt: now - 1000
     })
     await presenter.processPendingEmbeddings('a')
+    expect(repo.listDirtySeeds('a', 10).map((seed) => seed.memoryId)).toEqual([
+      'reflection-primary'
+    ])
 
     await presenter.runConsolidationPass('a', now)
 

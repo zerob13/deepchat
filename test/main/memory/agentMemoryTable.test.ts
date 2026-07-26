@@ -2133,7 +2133,7 @@ describeIfSqlite('AgentMemoryTable', () => {
         status: 'embedded',
         createdAt: 1_100
       })
-      expect(table.countDirtySeeds('a')).toBe(1)
+      expect(table.countDirtySeeds('a')).toBe(2)
       const staleSeed = table.listDirtySeeds('a', 10)[0]
       expect(staleSeed).toEqual({
         memoryId: claim.id,
@@ -2151,7 +2151,7 @@ describeIfSqlite('AgentMemoryTable', () => {
           lastAccessedAt: 2_000
         })
       ).toBe(true)
-      const currentSeed = table.listDirtySeeds('a', 10)[0]
+      const currentSeed = table.listDirtySeeds('a', 10).find((seed) => seed.memoryId === claim.id)!
       expect(currentSeed).toEqual({
         memoryId: claim.id,
         generation: 2,
@@ -2159,7 +2159,34 @@ describeIfSqlite('AgentMemoryTable', () => {
         enqueuedAt: 2_000
       })
       expect(table.listDirtySeeds('a', Number.NaN)).toEqual([])
-      expect(table.listDirtySeeds('a', Number.POSITIVE_INFINITY)).toEqual([currentSeed])
+      const reflectionSeed = table
+        .listDirtySeeds('a', Number.POSITIVE_INFINITY)
+        .find((seed) => seed.memoryId === 'reflection')!
+      expect(reflectionSeed).toEqual({
+        memoryId: 'reflection',
+        generation: 1,
+        claimRevision: 1,
+        enqueuedAt: 1_100
+      })
+      table.insert({
+        id: 'later-claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'later claim',
+        createdAt: 3_000
+      })
+      expect(table.deferDirtySeeds('a', [staleSeed], 2_500)).toBe(0)
+      expect(table.deferDirtySeeds('a', [currentSeed], 2_500)).toBe(1)
+      expect(table.listDirtySeeds('a', 10)).toEqual([
+        reflectionSeed,
+        {
+          memoryId: 'later-claim',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 3_000
+        },
+        { ...currentSeed, enqueuedAt: 3_001 }
+      ])
       expect(table.settleDirtySeeds('a', [staleSeed])).toBe(0)
       expect(table.settleDirtySeeds('a', [currentSeed, staleSeed])).toBe(1)
 
@@ -2172,7 +2199,7 @@ describeIfSqlite('AgentMemoryTable', () => {
           createdAt: 2_000
         }
       ])
-      expect(table.retireAgentMemoryNamespace('a')).toBe(2)
+      expect(table.retireAgentMemoryNamespace('a')).toBe(3)
       expect(table.countDirtySeeds('a')).toBe(0)
       expect(table.listDerivationsByChild('a', claim.id)).toEqual([])
     } finally {
@@ -2776,7 +2803,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_derivation')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_dirty')
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai')
-      expect(table.getLatestVersion()).toBe(48)
+      expect(table.getLatestVersion()).toBe(49)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
@@ -2788,6 +2815,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(table.getMigrationSQL(48)).toMatch(
         /CREATE TABLE IF NOT EXISTS agent_memory_derivation/
       )
+      expect(table.getMigrationSQL(49)).toMatch(/DROP TRIGGER IF EXISTS agent_memory_dirty_ai/)
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()
