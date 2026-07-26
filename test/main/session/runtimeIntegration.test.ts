@@ -2,8 +2,7 @@ import { AppSessionService } from '@/agent/shared/appSessionService'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
-import type { HookEvent } from '@/hook/events'
-import type { HookObserver } from '@/hook/observer'
+import { createHookObserver, noopHookObserver } from '../hook/hookObserverFixture'
 import type { PermissionMode } from '@shared/types/agent-interface'
 import type { ReasoningEffort, Verbosity } from '@shared/types/model-db'
 import logger from '@shared/logger'
@@ -19,29 +18,6 @@ vi.mock('nanoid', () => {
   let counter = 0
   return { nanoid: vi.fn(() => `id-${++counter}`) }
 })
-
-const createHookObserver = (dispatcher: {
-  dispatchEvent: ReturnType<typeof vi.fn>
-}): HookObserver => ({
-  isObserved: () => true,
-  notify(event: HookEvent) {
-    dispatcher.dispatchEvent(event.event, {
-      conversationId: event.session.sessionId,
-      agentId: event.session.agentId,
-      workdir: event.session.projectDir,
-      messageId: event.session.messageId,
-      providerId: event.session.providerId,
-      modelId: event.session.modelId,
-      promptPreview: 'promptPreview' in event ? event.promptPreview : undefined,
-      tool: 'tool' in event ? event.tool : undefined,
-      permission: 'permission' in event ? event.permission : undefined,
-      stop: 'stop' in event ? event.stop : undefined,
-      usage: 'usage' in event ? event.usage : undefined,
-      error: 'error' in event ? event.error : undefined
-    })
-  }
-})
-const noopHookObserver: HookObserver = { isObserved: () => true, notify: vi.fn() }
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 
