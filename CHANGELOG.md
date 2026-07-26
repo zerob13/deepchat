@@ -1,50 +1,34 @@
 # Changelog
 
-## v1.1.0-beta.7 (2026-07-25)
-- Fixed auto-update failing with `Invalid input: expected string, received Date` by force-quoting releaseDate in updater metadata and tolerating Date payloads in the client contract
-- Retried transient provider failures and stabilized the provider retry lifecycle
-- Integrated Light-OCR and restored OCR compatibility
-- Added Linux ARM64 build support
-- Strengthened tool execution contracts across MCP, browser, and agent tools
-- Reworked agent runtime ownership across pending inputs, lifecycle, compaction, and permissions
-- Reduced dashboard CPU usage and lazy-loaded renderer locales
-- 修复自动更新因 updater 元数据中 releaseDate 字段类型不一致而报错 `Invalid input: expected string, received Date` 的问题；从发布端强制对 releaseDate 加引号，并放宽客户端契约以兼容 Date 字段
-- 重试瞬时 provider 失败并稳定 provider 重试生命周期
-- 集成 Light-OCR 并恢复 OCR 兼容性
-- 新增 Linux ARM64 构建支持
-- 强化 MCP、browser 与 agent tools 的工具执行契约
-- 重构 pending input、生命周期、compaction 与权限相关的 agent runtime ownership
-- 降低 dashboard CPU 占用并懒加载渲染器语言包
-
-## v1.1.0-beta.6 (2026-07-25)
-- Retried transient provider failures and stabilized the provider retry lifecycle
-- Preserved streaming failure state and modeled provider attempt identity across the agent runtime
-- Integrated Light-OCR and restored OCR compatibility
-- Added Linux ARM64 build support
-- Isolated agent skill roots for safer scope boundaries
-- Added StepFun Token Plan, Straico, and Routerra provider presets
-- Recorded provider cache outcomes in the Tape runtime
-- Reduced dashboard CPU usage and lazy-loaded renderer locales
-- Recovered truncated tool calls and stabilized cache provenance
-- Prioritized history over memory and recovered session revisions
-- Unified native packaging and added a branded macOS dmg layout
-- Reworked agent runtime ownership across pending inputs, lifecycle, compaction, and permissions
-- Strengthened tool execution contracts across MCP, browser, and agent tools
-- Fixed verification of draft GitHub releases that are not discoverable through the tag endpoint
-- 重试瞬时 provider 失败并稳定 provider 重试生命周期
-- 保留流式失败状态并在 agent runtime 中建模 provider 尝试身份
-- 集成 Light-OCR 并恢复 OCR 兼容性
-- 新增 Linux ARM64 构建支持
-- 隔离 agent skill roots，提升作用域边界安全性
-- 新增 StepFun Token Plan、Straico 与 Routerra provider 预设
-- 在 Tape runtime 中记录 provider 缓存结果
-- 降低 dashboard CPU 占用并懒加载渲染器语言包
-- 恢复截断的工具调用并稳定缓存溯源
-- 优先使用 history 而非 memory，并恢复 session 修订
-- 统一原生打包并新增 macOS 品牌 dmg 布局
-- 重构 pending input、生命周期、compaction 与权限相关的 agent runtime ownership
-- 强化 MCP、browser 与 agent tools 的工具执行契约
-- 修复无法通过 tag endpoint 查询 GitHub draft release 时的验证流程
+## v1.1.0-beta.8 (2026-07-26)
+- Added fully offline OCR for image attachments (Light-OCR): images are routed to vision or OCR based on the selected model, OCR text is reused across history, retry, edit and compaction, and per-attachment mode, cancellation and cache controls are available in Settings
+- Gave every Agent its own Skills root and catalog, replacing the shared catalog and its sync workflow with explicit import from another Agent or from an external DeepChat data directory
+- Rebuilt the Agent browser picture-in-picture as a native overlay: open-in-side-panel and close controls, dragging outside the DeepChat window, with the Canvas overlay kept as a fallback
+- Added Routerra, Straico, and StepFun Token Plan as built-in provider presets
+- Added Linux ARM64 installers, and gave the macOS DMG installer a proper drag-to-install window with a background image and the app and Applications icons aligned to it
+- Made long conversations reuse the provider prompt cache: the system prompt no longer changes whenever a summary, handoff state or memory updates, cache markers now reach the request for OpenAI, Anthropic, Bedrock, OpenRouter and Zenmux, and compaction sizes the retained history to the model's context budget
+- Retried transient provider failures with bounded, abortable backoff, and never replayed a request once text, reasoning or tool output was committed
+- Stopped executing tool calls truncated by `max_tokens`: the batch is rejected atomically, matching error results are written, and the request is retried once
+- Restructured the Agent runtime into a one-directional owner graph behind a harness facade, added a typed tool execution contract that keeps write-capable tools sequential, and rebuilt Hooks on a typed event pipeline with bounded command execution
+- Fixed chat search highlights on streamed rows, sidebar search pagination, the invisible pending-assistant row, session-restore scrolling that overrode a search or spotlight jump, and session revision recovery on existing databases
+- Cut Settings startup cost by lazy-loading locales (synchronous JS 4.25 MB to 0.9 MB) and reduced Dashboard CPU with cached formatters and polling that pauses in the background
+- Fixed auto-update failing with `Invalid input: expected string, received Date`: updater metadata is now published with a quoted releaseDate and validated against electron-updater's own parser across all four channel files
+- Fixed the macOS clean-install Gatekeeper failure caused by the bundled Computer Use helper, and added distribution verification for both the app and the macOS updater payload
+- Rebuilt the release pipeline to verify every published package before release, and locked dependencies with a tracked pnpm lockfile for reproducible builds
+- 新增完全离线的图片附件 OCR（Light-OCR）：根据所选模型自动在视觉与 OCR 之间路由，OCR 文本在历史、重试、编辑与压缩中复用，并提供逐附件模式、取消与缓存管理
+- 每个 Agent 拥有独立的 Skills 根目录与目录管理，取消共享目录与同步流程，改为从其他 Agent 或外部 DeepChat 数据目录显式导入
+- 将 Agent 浏览器画中画重构为原生浮窗：提供打开侧边栏与关闭按钮，可拖动到 DeepChat 窗口之外，并保留 Canvas 浮层作为回退方案
+- 新增 Routerra、Straico 与 StepFun Token Plan 内置 Provider
+- 新增 Linux ARM64 安装包；macOS DMG 安装窗口改为带背景图的拖拽安装界面，应用图标与 Applications 快捷方式按背景对齐
+- 让长对话真正复用 Provider 的提示词缓存：系统提示词不再随摘要、handoff 状态与记忆的更新而变化，缓存标记能正确传给 OpenAI、Anthropic、Bedrock、OpenRouter 与 Zenmux，压缩时按模型上下文预算保留近期历史
+- 对瞬时 Provider 失败进行有界、可中断的退避重试，并在已产出文本、思考或工具调用后不再重放请求
+- 不再执行被 `max_tokens` 截断的工具调用：整批原子拒绝并写入对应错误结果，随后仅自动重试一次
+- 将 Agent runtime 重构为 harness facade 之上的单向 owner 图，引入类型化工具执行契约（可写工具强制串行），并将 Hook 重建为类型化事件管道与有界命令执行
+- 修复流式消息的搜索高亮、侧边栏搜索分页、待生成消息行不可见、会话恢复滚动覆盖搜索/聚光跳转，以及已有数据库的 session revision 恢复问题
+- 懒加载语言包降低设置页启动开销（同步 JS 4.25 MB 降至 0.9 MB），并通过缓存 formatter 与后台暂停轮询降低 Dashboard CPU 占用
+- 修复自动更新报错 `Invalid input: expected string, received Date`：发布端强制为 releaseDate 加引号，并用 electron-updater 自身的解析器校验全部四个更新渠道文件
+- 修复由内置 Computer Use 助手导致的 macOS 全新安装 Gatekeeper 失败，并对应用与 macOS 更新包补充分发校验
+- 重构发布流水线，发布前校验每个产物；纳入 pnpm lockfile 锁定依赖，保证构建可复现
 
 ## v1.1.0-beta.4 (2026-07-19)
 - Added browser session import and an agent picture-in-picture view
