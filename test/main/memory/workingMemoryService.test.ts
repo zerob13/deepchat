@@ -42,6 +42,8 @@ describe('working-memory L1 (T5)', () => {
     presenter.refreshWorkingMemory('deepchat')
     const working = [...repo.rows.values()].filter((row) => row.kind === 'working')
     expect(working).toHaveLength(1)
+    expect(working[0].content).toContain('[Stable preferences and facts]')
+    expect(working[0].content).toContain('[High-level reflections]')
     expect(working[0].content).toContain('user prefers redis')
 
     // Empty query at session open: no embedding/recall, but the blob is injected.
@@ -139,6 +141,8 @@ describe('working-memory L1 (T5)', () => {
 
     const beforeBoundary = (await presenter.buildInjection('deepchat', ''))?.payload.working ?? ''
     expect(beforeBoundary).not.toContain('expired state')
+    expect(beforeBoundary).toContain('[Current high-confidence states]')
+    expect(beforeBoundary).toContain('[Qualified states]')
     expect(beforeBoundary).toContain('uncertain old state [Temporal: possibly outdated state')
     expect(beforeBoundary).toContain('current state [Temporal: current state')
 

@@ -2,8 +2,7 @@ import logger from '@shared/logger'
 import { nanoid } from 'nanoid'
 
 import { buildLegacyMemoryProvenanceKey, buildMemoryProvenanceKey } from '../core/scoring'
-import { estimateTokens } from '../core/injectionPort'
-import { evaluateMemoryTemporalPolicy, temporalMetadataFromRow } from '../core/temporal'
+import { buildStructuredWorkingProjection } from '../core/workingProjection'
 import {
   WORKING_BLOB_TOKEN_LIMIT,
   WORKING_CANDIDATE_PAGE_LIMIT,
@@ -247,12 +246,10 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
 
   private buildWorkingProjection(agentId: string): WorkingProjection {
     const now = this.ctx.now()
-    const lines: string[] = []
-    let tokens = 0
     let scanned = 0
-    let nextRefreshAt: number | null = null
     let cursor: AgentMemoryWorkingCandidateCursor | undefined
-    while (scanned < WORKING_CANDIDATE_SCAN_LIMIT && tokens < WORKING_BLOB_TOKEN_LIMIT) {
+    const candidates: AgentMemoryRow[] = []
+    while (scanned < WORKING_CANDIDATE_SCAN_LIMIT) {
       const pageLimit = Math.min(
         WORKING_CANDIDATE_PAGE_LIMIT,
         WORKING_CANDIDATE_SCAN_LIMIT - scanned
@@ -260,27 +257,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
       const units = this.ports.repository.listWorkingCandidates(agentId, pageLimit, cursor)
       if (!units.length) break
       scanned += units.length
-      for (const unit of units) {
-        const temporal = temporalMetadataFromRow(unit)
-        for (const boundary of [temporal.validFrom, temporal.validUntil]) {
-          if (boundary !== null && boundary > now) {
-            nextRefreshAt = nextRefreshAt === null ? boundary : Math.min(nextRefreshAt, boundary)
-          }
-        }
-        const temporalPolicy = evaluateMemoryTemporalPolicy(temporal, now, 'current')
-        if (!temporalPolicy.eligible) continue
-        const content = unit.content.trim()
-        if (!content) continue
-        const rendered = temporalPolicy.annotation
-          ? `${content} ${temporalPolicy.annotation}`
-          : content
-        const line = `- ${rendered}`
-        const cost = estimateTokens(line)
-        if (tokens + cost > WORKING_BLOB_TOKEN_LIMIT) continue
-        lines.push(line)
-        tokens += cost
-        if (tokens >= WORKING_BLOB_TOKEN_LIMIT) break
-      }
+      candidates.push(...units)
       const last = units[units.length - 1]
       cursor = {
         importance: last.importance,
@@ -290,10 +267,11 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
       }
       if (units.length < pageLimit) break
     }
+    const projection = buildStructuredWorkingProjection(candidates, now, WORKING_BLOB_TOKEN_LIMIT)
     return {
-      content: lines.join('\n').trim(),
+      content: projection.content,
       builtAt: now,
-      nextRefreshAt,
+      nextRefreshAt: projection.nextRefreshAt,
       sourceCandidatesScanned: scanned
     }
   }
