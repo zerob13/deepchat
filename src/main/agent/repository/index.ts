@@ -46,7 +46,8 @@ export class AgentRepository {
     this.deepchat = new DeepChatAgentRepository({
       rows: sqlitePresenter.agentsTable,
       listSessionIdsByAgent,
-      clearMemoryByAgent: (agentId) => memoryDatabase.agentMemoryTable.clearByAgent(agentId),
+      retireMemoryNamespace: (agentId) =>
+        memoryDatabase.agentMemoryTable.retireAgentMemoryNamespace(agentId),
       clearMemoryAuditByAgent: (agentId) =>
         memoryDatabase.agentMemoryAuditTable.clearByAgent(agentId),
       transaction: (operation) => sqlitePresenter.getDatabase().transaction(operation)()

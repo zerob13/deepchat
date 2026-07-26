@@ -102,6 +102,37 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
   })
 
+  it('does not merge a pair into an exact hard-deleted claim', async () => {
+    const generateText = routedLLM({
+      decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"user prefers redis"}'
+    })
+    const { presenter, repo } = makeLLMPresenter(generateText)
+    const forgotten = repo.insert({
+      id: 'forgotten-merge',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user prefers redis',
+      provenanceKey: 'forgotten-merge-source'
+    })
+    repo.tombstoneAndDelete({
+      agentId: 'a',
+      id: forgotten.id,
+      expectedRevision: forgotten.decision_revision,
+      createdAt: 1
+    })
+    const now = 1_000 * DAY
+    const oldId = await seedEmbedded(presenter, 'user likes redis a')
+    const newId = await seedEmbedded(presenter, 'user likes redis b')
+    repo.rows.get(oldId)!.created_at = now - 2_000
+    repo.rows.get(newId)!.created_at = now - 1_000
+
+    await presenter.runConsolidationPass('a', now)
+
+    expect(repo.getById(oldId)?.superseded_by).toBeNull()
+    expect(repo.getById(newId)?.superseded_by).toBeNull()
+    expect(repo.listByAgent('a')).toHaveLength(2)
+  })
+
   it.each(['edit', 'archive', 'delete'] as const)(
     'does not apply a stale maintenance merge after a user %s',
     async (mutation) => {

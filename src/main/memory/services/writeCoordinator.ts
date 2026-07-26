@@ -166,6 +166,7 @@ function isChallengedDecisionHead(agentId: string, row: AgentMemoryRow | undefin
 
 class DecisionRevisionConflictError extends Error {}
 class DecisionInsertCollisionError extends Error {}
+class DecisionForgottenClaimError extends Error {}
 
 type CoordinateWriteResult = MemoryWriteOutcome | { action: 'retry' }
 
@@ -339,7 +340,7 @@ export class WriteCoordinator {
         }
         continue
       }
-      const id = this.ports.rows.insertMemory(
+      const insert = this.ports.rows.insertMemory(
         options.agentId,
         normalized,
         content,
@@ -347,8 +348,8 @@ export class WriteCoordinator {
         options,
         now
       )
-      if (id) {
-        created.push(id)
+      if (insert.action === 'inserted') {
+        created.push(insert.id)
         touched = true
       }
     }
@@ -666,7 +667,7 @@ export class WriteCoordinator {
       }
       if (!allowInsert) return
       const provenanceKey = buildMemoryProvenanceKey(agentId, candidate.kind, candidate.content)
-      const id = this.ports.rows.insertMemory(
+      const insert = this.ports.rows.insertMemory(
         agentId,
         candidate,
         candidate.content,
@@ -674,7 +675,13 @@ export class WriteCoordinator {
         options,
         now
       )
-      outcome = id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
+      outcome =
+        insert.action === 'inserted'
+          ? { action: 'created', id: insert.id }
+          : {
+              action: 'noop',
+              reason: insert.reason === 'forgotten' ? 'forgotten' : 'insert-skipped'
+            }
     })
     return outcome
   }
@@ -1205,10 +1212,16 @@ export class WriteCoordinator {
                   category: nextCategory,
                   temporal: mergedTemporal
                 })
-                if (!applied) throw new DecisionRevisionConflictError()
+                if (applied.action === 'suppressed') {
+                  if (applied.reason === 'forgotten') throw new DecisionForgottenClaimError()
+                  throw new DecisionRevisionConflictError()
+                }
                 this.ports.rows.bumpConfidence(targetRow.id)
               })
             } catch (error) {
+              if (error instanceof DecisionForgottenClaimError) {
+                return { action: 'noop', reason: 'forgotten' }
+              }
               if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
               throw error
             }
@@ -1239,7 +1252,7 @@ export class WriteCoordinator {
           let newId: string | null = null
           try {
             this.ports.repository.runInTransaction(() => {
-              newId = this.ports.rows.insertMemory(
+              const insert = this.ports.rows.insertMemory(
                 agentId,
                 mergedCandidate,
                 merged,
@@ -1247,7 +1260,11 @@ export class WriteCoordinator {
                 options,
                 now
               )
-              if (!newId) throw new DecisionInsertCollisionError()
+              if (insert.action === 'suppressed') {
+                if (insert.reason === 'forgotten') throw new DecisionForgottenClaimError()
+                throw new DecisionInsertCollisionError()
+              }
+              newId = insert.id
               if (
                 !this.ports.repository.markSupersededIfRevision(
                   agentId,
@@ -1260,6 +1277,9 @@ export class WriteCoordinator {
               }
             })
           } catch (error) {
+            if (error instanceof DecisionForgottenClaimError) {
+              return { action: 'noop', reason: 'forgotten' }
+            }
             if (error instanceof DecisionInsertCollisionError) {
               const owner = this.ports.rows.resolveProvenance(agentId, normalized.kind, merged)
               return owner && owner.id !== target.id
@@ -1302,7 +1322,7 @@ export class WriteCoordinator {
           let challengerId: string | null = null
           try {
             this.ports.repository.runInTransaction(() => {
-              challengerId = this.ports.rows.insertConflictedMemory(
+              const insert = this.ports.rows.insertConflictedMemory(
                 agentId,
                 normalized,
                 content,
@@ -1311,7 +1331,11 @@ export class WriteCoordinator {
                 options,
                 now
               )
-              if (!challengerId) throw new DecisionInsertCollisionError()
+              if (insert.action === 'suppressed') {
+                if (insert.reason === 'forgotten') throw new DecisionForgottenClaimError()
+                throw new DecisionInsertCollisionError()
+              }
+              challengerId = insert.id
               if (
                 !this.ports.repository.markConflictIfRevision(
                   agentId,
@@ -1324,6 +1348,9 @@ export class WriteCoordinator {
               }
             })
           } catch (error) {
+            if (error instanceof DecisionForgottenClaimError) {
+              return { action: 'noop', reason: 'forgotten' }
+            }
             if (error instanceof DecisionInsertCollisionError) {
               const owner = this.ports.rows.resolveProvenance(agentId, normalized.kind, content)
               return owner && owner.id !== target.id
@@ -1511,7 +1538,7 @@ export class WriteCoordinator {
       const reason = hit.action === 'noop' ? hit.reason : 'duplicate'
       return { action: 'noop', reason, id: duplicate.id }
     }
-    const id = this.ports.rows.insertMemory(
+    const insert = this.ports.rows.insertMemory(
       agentId,
       normalized,
       content,
@@ -1519,7 +1546,12 @@ export class WriteCoordinator {
       options,
       now
     )
-    return id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
+    return insert.action === 'inserted'
+      ? { action: 'created', id: insert.id }
+      : {
+          action: 'noop',
+          reason: insert.reason === 'forgotten' ? 'forgotten' : 'insert-skipped'
+        }
   }
 
   private absorbArchivedProvenanceOwner(

@@ -121,6 +121,14 @@ export interface MemoryTombstoneDeleteInput {
   createdAt: number
 }
 
+export type MemoryClaimInsertResult =
+  | { action: 'inserted'; id: string }
+  | { action: 'suppressed'; reason: 'forgotten' | 'collision' }
+
+export type MemoryClaimContentUpdateResult =
+  | { action: 'updated' }
+  | { action: 'suppressed'; reason: 'forgotten' | 'concurrent-update' }
+
 export interface MemoryTransitionTarget {
   agentId: string
   id: string
@@ -279,6 +287,10 @@ export type AgentMemoryInsertInput = {
   conflictWith?: string | null
   personaState?: AgentMemoryPersonaState | null
 } & AgentMemoryCanonicalInsertState
+
+export type InternalMemoryInsertInput = AgentMemoryInsertInput & {
+  kind: Extract<AgentMemoryKind, 'persona' | 'working'>
+}
 
 export interface AgentMemoryListOptions {
   kinds?: AgentMemoryKind[]

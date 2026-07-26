@@ -344,6 +344,94 @@ describeIfNative('Memory native SQLite migration', () => {
     }
   })
 
+  it('does not resurrect target-forgotten claims during database import', async () => {
+    const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-tombstone-import-'))
+    const sourcePath = join(directory, 'source.db')
+    const targetPath = join(directory, 'target.db')
+    try {
+      const source = new MainDatabaseCtor(sourcePath)
+      memoryTable(source).insert({
+        id: 'forgotten-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron uses Rust.',
+        provenanceKey: 'session:saffron'
+      })
+      memoryTable(source).insert({
+        id: 'allowed-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron uses Rust 2024 edition.',
+        provenanceKey: 'session:saffron-2024'
+      })
+      const sourceForgotten = memoryTable(source).insert({
+        id: 'source-forgotten-original',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron stores secrets in plaintext.',
+        provenanceKey: 'session:saffron-secrets'
+      })
+      memoryTable(source).tombstoneAndDelete({
+        agentId: 'a',
+        id: sourceForgotten.id,
+        expectedRevision: sourceForgotten.decision_revision,
+        createdAt: 900
+      })
+      memoryTable(source).insert({
+        id: 'source-forgotten-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron stores secrets in plaintext.',
+        provenanceKey: 'session:saffron-secrets'
+      })
+      source.close()
+
+      const target = new MainDatabaseCtor(targetPath)
+      const forgotten = memoryTable(target).insert({
+        id: 'forgotten-original',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron uses Rust.',
+        provenanceKey: 'session:saffron'
+      })
+      expect(
+        memoryTable(target).tombstoneAndDelete({
+          agentId: 'a',
+          id: forgotten.id,
+          expectedRevision: forgotten.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: forgotten.id })
+      target.close()
+
+      const importer = new DataImporterCtor(sourcePath, targetPath)
+      const summary = await importer.importData()
+      importer.close()
+
+      const reopened = new MainDatabaseCtor(targetPath)
+      expect(memoryTable(reopened).getById('forgotten-replay')).toBeUndefined()
+      expect(memoryTable(reopened).getById('source-forgotten-replay')).toBeUndefined()
+      expect(memoryTable(reopened).getById('allowed-replay')).toMatchObject({
+        content: 'Project Saffron uses Rust 2024 edition.'
+      })
+      expect(summary.skippedRowCounts.agent_memory).toBe(2)
+      const tombstones = reopened
+        .getDatabase()
+        .prepare(
+          `SELECT identity_kind, identity_hash
+           FROM agent_memory_tombstone
+           WHERE agent_id = 'a'`
+        )
+        .all() as Array<{ identity_kind: string; identity_hash: string }>
+      expect(tombstones).toHaveLength(4)
+      expect(JSON.stringify(tombstones)).not.toContain('Project Saffron')
+      expect(JSON.stringify(tombstones)).not.toContain('session:saffron')
+      reopened.close()
+    } finally {
+      actualFs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('promotes clean v41 FTS metadata in place and rebuilds partial or dirty variants', () => {
     const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-fts-upgrade-'))
     try {

@@ -484,6 +484,38 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(repo.getById(targetId)?.status).toBe('archived')
   })
 
+  it('does not resolve a challenger into an exact hard-deleted claim', async () => {
+    const { presenter, repo } = makeLLMPresenter(routedLLM({}))
+    const forgotten = repo.insert({
+      id: 'forgotten-resolution',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user prefers valkey over redis',
+      provenanceKey: 'forgotten-resolution-source'
+    })
+    repo.tombstoneAndDelete({
+      agentId: 'a',
+      id: forgotten.id,
+      expectedRevision: forgotten.decision_revision,
+      createdAt: 1
+    })
+    const targetId = await seedEmbedded(presenter, 'user likes redis')
+    seedConflicted(repo, 'c1', targetId, 'user prefers valkey')
+    const conflictService = memoryRuntimeForTests(presenter).conflictService
+
+    await expect(
+      conflictService.resolveConflict('a', 'c1', 'keep_challenger', 'scheduler', null, {
+        mergedContent: ' user   prefers valkey over redis '
+      })
+    ).resolves.toBe(false)
+    expect(repo.getById('c1')).toMatchObject({
+      lifecycle_state: 'conflicted',
+      conflict_with: targetId,
+      content: 'user prefers valkey'
+    })
+    expect(repo.getById(targetId)?.conflict_state).toBe('challenged')
+  })
+
   it('continues challenge resolution after a merged challenger hits provenance uniqueness', async () => {
     const mergedContent = 'occupied merged memory'
     const generateText = routedLLM({

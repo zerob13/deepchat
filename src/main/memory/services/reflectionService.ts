@@ -158,7 +158,7 @@ export class ReflectionService {
     if (this.ports.provenance.resolveProvenance(agentId, 'reflection', trimmed)) return null
     const id = `mem-${nanoid(12)}`
     try {
-      this.ports.repository.insert({
+      const inserted = this.ports.repository.insertClaimUnlessTombstoned({
         id,
         agentId,
         kind: 'reflection',
@@ -170,7 +170,7 @@ export class ReflectionService {
         provenanceKey,
         createdAt
       })
-      return id
+      return inserted ? id : null
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
       return null

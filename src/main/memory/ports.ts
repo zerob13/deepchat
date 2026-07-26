@@ -29,6 +29,8 @@ import type {
   MemoryCognitiveMaintenanceInput,
   MemoryManagementPageCursor,
   MemoryModelRef,
+  MemoryClaimContentUpdateResult,
+  MemoryClaimInsertResult,
   MemoryTransitionTarget,
   MemoryTemporalMetadata,
   MemoryTombstoneDeleteInput,
@@ -39,6 +41,7 @@ import type {
   UserContentTransition,
   UserMetadataTransition,
   InternalContentTransition,
+  InternalMemoryInsertInput,
   MemoryRecallItem,
   MemoryVectorMatch,
   MemoryVectorQueryOptions,
@@ -86,11 +89,13 @@ export interface MemoryReadRepositoryPort {
 }
 
 export interface MemoryMutationRepositoryPort {
-  insert(input: AgentMemoryInsertInput): AgentMemoryRow
+  insertInternalMemory(input: InternalMemoryInsertInput): AgentMemoryRow
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null
   rekeyProvenance(agentId: string, id: string, expectedKey: string, nextKey: string): boolean
   updateInternalContent(input: InternalContentTransition): boolean
-  updateUserContentAndInvalidateEmbedding(input: UserContentTransition): boolean
+  updateUserContentAndInvalidateEmbedding(
+    input: UserContentTransition
+  ): MemoryClaimContentUpdateResult
   updateUserMetadataIfRevision(input: UserMetadataTransition): boolean
   setConfidence(id: string, confidence: number): void
   setPersonaState(id: string, state: AgentMemoryPersonaState, supersededBy?: string | null): void
@@ -107,8 +112,7 @@ export interface MemoryMutationRepositoryPort {
     expectedRevision: number,
     state: AgentMemoryConflictState
   ): boolean
-  delete(id: string): void
-  clearByAgent(agentId: string): number
+  deleteInternalMemory(agentId: string, id: string): boolean
   tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null
   tombstoneAndClearByAgent(agentId: string, createdAt: number): number
   retireAgentMemoryNamespace(agentId: string): number
@@ -413,7 +417,7 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     provenanceKey: string,
     options: WriteMemoriesOptions,
     createdAt: number
-  ): string | null
+  ): MemoryClaimInsertResult
   insertConflictedMemory(
     agentId: string,
     candidate: NormalizedMemoryCandidate,
@@ -422,7 +426,7 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     targetId: string,
     options: WriteMemoriesOptions,
     createdAt: number
-  ): string | null
+  ): MemoryClaimInsertResult
   bumpConfidence(id: string): void
   enrichEquivalentClaimTemporalMetadata(
     agentId: string,

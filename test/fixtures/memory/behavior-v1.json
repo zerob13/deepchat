@@ -208,7 +208,16 @@
         }
       ],
       "deleteIds": ["forgotten-language"],
+      "replayRows": [
+        {
+          "id": "forgotten-language-replay",
+          "kind": "semantic",
+          "content": " Project   Saffron uses Rust. ",
+          "importance": 1
+        }
+      ],
       "expected": {
+        "replayCreatedCount": 0,
         "selectedMemoryIds": ["retained-language"],
         "excludedMemoryIds": ["forgotten-language"],
         "sectionIncludes": ["Project Saffron documentation uses Markdown."],

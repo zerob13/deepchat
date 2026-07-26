@@ -72,6 +72,7 @@ import type {
 } from '../ports'
 
 class MaintenanceRevisionConflictError extends Error {}
+class MaintenanceClaimSuppressedError extends Error {}
 
 export class MaintenanceService {
   private readonly ctx: MemoryRuntimeContext
@@ -707,7 +708,9 @@ export class MaintenanceService {
           importance: Math.max(survivor.importance, retired.importance),
           temporal: nextTemporal
         })
-        if (!contentApplied) throw new MaintenanceRevisionConflictError()
+        if (contentApplied.action === 'suppressed') {
+          throw new MaintenanceClaimSuppressedError()
+        }
         if (
           !this.ports.repository.markSupersededIfRevision(
             agentId,
@@ -721,7 +724,11 @@ export class MaintenanceService {
         this.ports.rows.bumpConfidence(survivor.id)
       })
     } catch (error) {
-      if (error instanceof MaintenanceRevisionConflictError || isUniqueConstraintError(error)) {
+      if (
+        error instanceof MaintenanceRevisionConflictError ||
+        error instanceof MaintenanceClaimSuppressedError ||
+        isUniqueConstraintError(error)
+      ) {
         return false
       }
       throw error

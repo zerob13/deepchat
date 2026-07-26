@@ -67,7 +67,10 @@ type MemoryServiceRuntimeTestSeams = {
     cleanupAgent(agentId: string): Promise<void>
   }
   vectorStore: VectorStoreManager
-  conflict: Pick<ConflictService, 'repairConflictIntegrity' | 'runChallengeResolutionPass'>
+  conflict: Pick<
+    ConflictService,
+    'repairConflictIntegrity' | 'resolveConflict' | 'runChallengeResolutionPass'
+  >
   maintenance: Pick<MaintenanceService, 'clearCooldown'>
   diagnostics: Pick<MemoryDiagnosticsCollector, 'cleanupAgent'>
 }

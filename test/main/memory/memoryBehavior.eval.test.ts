@@ -19,6 +19,10 @@ interface MemoryBehaviorRow {
   temporal?: MemoryTemporalMetadata
 }
 
+interface MemoryBehaviorReplayRow extends Omit<MemoryBehaviorRow, 'kind'> {
+  kind: 'episodic' | 'semantic'
+}
+
 interface MemoryBehaviorScenario {
   id: string
   axis: MemoryBehaviorAxis
@@ -26,7 +30,9 @@ interface MemoryBehaviorScenario {
   query: string
   rows: MemoryBehaviorRow[]
   deleteIds?: string[]
+  replayRows?: MemoryBehaviorReplayRow[]
   expected: {
+    replayCreatedCount?: number
     selectedMemoryIds: string[]
     excludedMemoryIds: string[]
     sectionIncludes: string[]
@@ -87,7 +93,7 @@ function validateFixture(value: unknown): asserts value is MemoryBehaviorFixture
 }
 
 validateFixture(fixtureValue)
-const fixture = fixtureValue
+const fixture = fixtureValue as MemoryBehaviorFixtureV1
 
 describe('agent memory behavior fixture v1', () => {
   it('covers every maintained behavior axis with a deterministic clock', () => {
@@ -121,6 +127,16 @@ describe('agent memory behavior fixture v1', () => {
       for (const id of scenario.deleteIds ?? []) {
         await expect(presenter.deleteMemory('behavior-agent', id)).resolves.toBe(true)
       }
+      const replayCreatedIds = presenter.writeMemoriesSync(
+        (scenario.replayRows ?? []).map(({ kind, content, importance, temporal }) => ({
+          kind,
+          content,
+          importance,
+          temporal
+        })),
+        { agentId: 'behavior-agent' }
+      )
+      expect(replayCreatedIds).toHaveLength(scenario.expected.replayCreatedCount ?? 0)
       if (scenario.mode === 'working') presenter.refreshWorkingMemory('behavior-agent')
 
       const injection = await presenter.buildInjection('behavior-agent', scenario.query)

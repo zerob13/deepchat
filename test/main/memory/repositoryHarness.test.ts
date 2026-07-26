@@ -8,11 +8,11 @@ describe('memory repository fakes', () => {
     const repo = createFakeRepository()
     const harness = createMemoryServiceHarness({
       read: createCapabilityFragment(repo, ['getById', 'listByAgent']),
-      mutation: createCapabilityFragment(repo, ['insert'])
+      mutation: createCapabilityFragment(repo, ['insertClaimUnlessTombstoned'])
     })
     const repository = Object.assign({}, harness.compose(['read']), harness.compose(['mutation']))
     for (let index = 0; index < 3; index += 1) {
-      repository.insert({
+      repository.insertClaimUnlessTombstoned({
         id: `m${index}`,
         agentId: 'a',
         kind: 'semantic',
@@ -235,6 +235,35 @@ describe('memory repository fakes', () => {
         provenanceKey: 'new-source'
       })
     ).toMatchObject({ id: 'after-retirement' })
+  })
+
+  it('restricts runtime raw mutations to internal memory kinds', () => {
+    const repo = createFakeRepository()
+    expect(() =>
+      repo.insertInternalMemory({
+        id: 'invalid-internal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user claim'
+      } as unknown as Parameters<typeof repo.insertInternalMemory>[0])
+    ).toThrow(/unsupported internal memory kind/)
+    const claim = repo.insert({
+      id: 'claim',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user claim'
+    })
+    const working = repo.insertInternalMemory({
+      id: 'working',
+      agentId: 'a',
+      kind: 'working',
+      content: 'working projection'
+    })
+
+    expect(repo.deleteInternalMemory('a', claim.id)).toBe(false)
+    expect(repo.deleteInternalMemory('other', working.id)).toBe(false)
+    expect(repo.deleteInternalMemory('a', working.id)).toBe(true)
+    expect(repo.getById(claim.id)).toBeDefined()
   })
 
   it('matches AgentMemoryAuditTable list limit defaults and caps', () => {

@@ -84,7 +84,15 @@ export const MemoryUpdateResultSchema = z.object({
   supersededId: z.string().optional(),
   // Only populated on a 'noop' outcome, explaining why the edit was refused/ignored.
   reason: z
-    .enum(['not-editable', 'conflict', 'suppressed', 'duplicate', 'empty', 'content-too-large'])
+    .enum([
+      'not-editable',
+      'conflict',
+      'suppressed',
+      'duplicate',
+      'forgotten',
+      'empty',
+      'content-too-large'
+    ])
     .optional()
 })
 

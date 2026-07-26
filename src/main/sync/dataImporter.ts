@@ -9,6 +9,10 @@ import {
   normalizeCanonicalStateFromLegacy,
   projectLegacyStatus
 } from '../memory/domain/stateModel'
+import {
+  buildMemoryTombstoneIdentities,
+  isTombstoneEligibleMemoryKind
+} from '../memory/core/tombstone'
 import type {
   AgentMemoryEmbeddingState,
   AgentMemoryLifecycleState,
@@ -214,6 +218,19 @@ export class DataImporter {
         ? `INSERT OR IGNORE INTO ${wrappedTableName} (${insertColumnsSql}) VALUES (${insertPlaceholders})`
         : `INSERT INTO ${wrappedTableName} (${insertColumnsSql}) VALUES (${insertPlaceholders})`
     const insertStmt = this.targetDb.prepare(insertSql)
+    const tombstoneLookups =
+      tableName === 'agent_memory'
+        ? [this.sourceDb, this.targetDb]
+            .filter((db) => this.tableExists(db, 'agent_memory_tombstone'))
+            .map((db) =>
+              db.prepare(
+                `SELECT 1 AS present
+                 FROM agent_memory_tombstone
+                 WHERE agent_id = ? AND identity_kind = ? AND identity_hash = ?
+                 LIMIT 1`
+              )
+            )
+        : []
 
     let inserted = 0
     let repaired = 0
@@ -264,6 +281,29 @@ export class DataImporter {
           lifecycleState,
           embeddingState,
           status: projectedStatus
+        }
+      }
+      if (
+        tombstoneLookups.length > 0 &&
+        typeof row.agent_id === 'string' &&
+        isAgentMemoryKind(row.kind) &&
+        isTombstoneEligibleMemoryKind(row.kind) &&
+        typeof row.content === 'string'
+      ) {
+        const identities = buildMemoryTombstoneIdentities({
+          agentId: row.agent_id,
+          content: row.content,
+          provenanceKey: typeof row.provenance_key === 'string' ? row.provenance_key : null
+        })
+        if (
+          tombstoneLookups.some((lookup) =>
+            identities.some((identity) =>
+              lookup.get(row.agent_id, identity.identityKind, identity.identityHash)
+            )
+          )
+        ) {
+          skipped += 1
+          continue
         }
       }
       const values = targetColumnNamesInInsert.map((column) => {

@@ -34,6 +34,28 @@ describe('MemoryService management', () => {
     expect(store.vectors.size).toBe(0)
   })
 
+  it('clearMemories suppresses exact replay without suppressing new claims', async () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    presenter.writeMemoriesSync([{ kind: 'semantic', content: 'Project Atlas uses SQLite.' }], {
+      agentId: 'a'
+    })
+
+    await expect(presenter.clearMemories('a')).resolves.toBe(1)
+    expect(repo.tombstones.size).toBe(2)
+    expect(
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: ' Project   Atlas uses SQLite. ' }],
+        { agentId: 'a' }
+      )
+    ).toEqual([])
+    expect(
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: 'Project Atlas uses SQLite and FTS5.' }],
+        { agentId: 'a' }
+      )
+    ).toHaveLength(1)
+  })
+
   it('clearMemories clears the latest reindex result', async () => {
     const repo = createFakeRepository()
     const presenter = new MemoryService({
@@ -681,7 +703,7 @@ describe('MemoryService management', () => {
         ),
         at: Date.now()
       })
-    ).toBe(true)
+    ).toEqual({ action: 'updated' })
     expect(repo.getById(memoryId)?.status).toBe('pending_embedding')
 
     const recalled = await presenter.recall('a', 'redis obsolete wording')
@@ -1288,6 +1310,7 @@ describe('MemoryService management', () => {
     expect(await presenter.forgetMemory('other-agent', ids[0])).toBe(false)
     expect(repo.getById(ids[0])?.status).toBe('embedded')
     expect(await presenter.forgetMemory('a', ids[0])).toBe(true)
+    expect(repo.tombstones.size).toBe(0)
     expect(repo.getById(ids[0])?.status).toBe('archived')
     expect(repo.rows.has(ids[0])).toBe(true)
     expect(store.vectors.has(ids[0])).toBe(true)

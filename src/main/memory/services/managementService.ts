@@ -108,9 +108,12 @@ function isConflictParticipant(row: AgentMemoryRow | undefined): boolean {
   return !!row && (row.lifecycle_state === 'conflicted' || row.conflict_state === 'challenged')
 }
 
-function mapContentSuppressedReason(reason: string): 'conflict' | 'duplicate' | 'suppressed' {
+function mapContentSuppressedReason(
+  reason: string
+): 'conflict' | 'duplicate' | 'forgotten' | 'suppressed' {
   if (reason === 'conflict') return 'conflict'
   if (reason === 'duplicate') return 'duplicate'
+  if (reason === 'forgotten') return 'forgotten'
   return 'suppressed'
 }
 
@@ -626,14 +629,20 @@ export class ManagementService {
     if (!row || row.agent_id !== agentId) return false
     if (this.ports.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
     this.ctx.invalidateAgentOperations(agentId)
-    this.ports.repository.delete(memoryId)
+    const deleted = this.ports.repository.tombstoneAndDelete({
+      agentId,
+      id: memoryId,
+      expectedRevision: row.decision_revision,
+      createdAt: this.ctx.now()
+    })
+    if (!deleted) return false
     this.ctx.markDomainMutationCommitted(agentId)
-    if (row.kind !== 'working') {
+    if (deleted.kind !== 'working') {
       this.ports.syncWorkingMemoryAfterMutation(agentId)
     }
     const deleteResult = await this.ports.deleteVectorsForDeletedMemory(agentId, [memoryId], {
-      embeddingModel: row.embedding_model,
-      embeddingDim: row.embedding_dim
+      embeddingModel: deleted.embedding_model,
+      embeddingDim: deleted.embedding_dim
     })
     if (deleteResult === 'unusable' && !this.ports.isReindexing(agentId)) {
       void this.ports.reindexEmbeddings(agentId, true).catch((error) => {
@@ -652,7 +661,7 @@ export class ManagementService {
       return { removed: 0, cleanupPendingRestart: false }
     }
     this.ctx.invalidateAgentOperations(agentId)
-    const removed = this.ports.repository.clearByAgent(agentId)
+    const removed = this.ports.repository.tombstoneAndClearByAgent(agentId, this.ctx.now())
     if (removed > 0) {
       this.ctx.markDomainMutationCommitted(agentId)
       this.ports.syncWorkingMemoryAfterMutation(agentId)

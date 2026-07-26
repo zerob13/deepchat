@@ -64,7 +64,7 @@ export class PersonaService {
     const trimmed = content.trim()
     if (!trimmed) return null
     const id = `persona-${nanoid(12)}`
-    this.ports.repository.insert({
+    this.ports.repository.insertInternalMemory({
       id,
       agentId,
       kind: 'persona',

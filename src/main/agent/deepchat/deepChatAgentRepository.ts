@@ -20,7 +20,7 @@ export const BUILTIN_DEEPCHAT_AGENT_ID = 'deepchat'
 export interface DeepChatAgentRepositoryDependencies {
   rows: AgentRowStore
   listSessionIdsByAgent(agentId: string): AppSessionId[]
-  clearMemoryByAgent(agentId: string): number
+  retireMemoryNamespace(agentId: string): number
   clearMemoryAuditByAgent(agentId: string): number
   transaction<T>(operation: () => T): T
 }
@@ -237,7 +237,7 @@ export class DeepChatAgentRepository {
       const row = this.dependencies.rows.get(agentId)
       if (!row || row.agent_type !== 'deepchat' || row.protected === 1) return false
       if (this.dependencies.listSessionIdsByAgent(agentId).length > 0) return false
-      this.dependencies.clearMemoryByAgent(agentId)
+      this.dependencies.retireMemoryNamespace(agentId)
       this.dependencies.clearMemoryAuditByAgent(agentId)
       this.dependencies.rows.delete(agentId)
       return true

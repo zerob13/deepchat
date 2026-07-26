@@ -638,7 +638,7 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: null,
           at: 10
         })
-      ).toBe(true)
+      ).toEqual({ action: 'updated' })
 
       expect(
         table.markPendingEmbeddingsReady('a', [
@@ -756,7 +756,7 @@ describeIfSqlite('AgentMemoryTable', () => {
           },
           at: 10
         })
-      ).toBe(true)
+      ).toEqual({ action: 'updated' })
       const edited = table.getById('user')!
       expect(edited.decision_revision).toBe(restored.decision_revision + 1)
       expect(edited).toMatchObject({
@@ -1939,6 +1939,58 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: 'different-source'
         })
       ).toBeNull()
+      const editable = table.insert({
+        id: 'editable',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Unrelated live claim',
+        provenanceKey: 'editable-source'
+      })
+      expect(
+        table.updateUserContentAndInvalidateEmbedding({
+          agentId: 'a',
+          id: editable.id,
+          expectedRevision: editable.decision_revision,
+          content: 'Secret launch plan',
+          provenanceKey: 'another-source',
+          at: 1_001
+        })
+      ).toEqual({ action: 'suppressed', reason: 'forgotten' })
+      expect(table.getById(editable.id)).toMatchObject({
+        content: 'Unrelated live claim',
+        provenance_key: 'editable-source',
+        decision_revision: editable.decision_revision
+      })
+      const archivedReplay = table.insert({
+        id: 'archived-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Secret launch plan',
+        provenanceKey: 'archived-replay-source',
+        status: 'archived'
+      })
+      expect(
+        table.restoreArchivedMemory({
+          agentId: 'a',
+          id: archivedReplay.id,
+          expectedRevision: archivedReplay.decision_revision
+        })
+      ).toBe(false)
+      const supersededReplay = table.insert({
+        id: 'superseded-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Secret launch plan',
+        provenanceKey: 'superseded-replay-source',
+        supersededBy: editable.id
+      })
+      expect(
+        table.reviveSupersededMemory({
+          agentId: 'a',
+          id: supersededReplay.id,
+          expectedRevision: supersededReplay.decision_revision
+        })
+      ).toBe(false)
       expect(
         table.insertClaimUnlessTombstoned({
           id: 'same-source',
@@ -1966,6 +2018,42 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: 'session:secret-span'
         })
       ).toMatchObject({ id: 'other-agent' })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('keeps raw insertion and deletion outside the runtime mutation port', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      expect(() =>
+        table.insertInternalMemory({
+          id: 'invalid-internal',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'user claim'
+        } as unknown as Parameters<typeof table.insertInternalMemory>[0])
+      ).toThrow(/unsupported internal memory kind/)
+      const claim = table.insert({
+        id: 'claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user claim'
+      })
+      const working = table.insertInternalMemory({
+        id: 'working',
+        agentId: 'a',
+        kind: 'working',
+        content: 'working projection'
+      })
+
+      expect(table.deleteInternalMemory('a', claim.id)).toBe(false)
+      expect(table.deleteInternalMemory('other', working.id)).toBe(false)
+      expect(table.deleteInternalMemory('a', working.id)).toBe(true)
+      expect(table.getById(claim.id)).toBeDefined()
+      expect(table.getById(working.id)).toBeUndefined()
     } finally {
       db.close()
     }

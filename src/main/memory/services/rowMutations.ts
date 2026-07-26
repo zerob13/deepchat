@@ -17,6 +17,7 @@ import {
 import type {
   ContentUpdateResult,
   ManualEditFieldFlags,
+  MemoryClaimInsertResult,
   ProvenanceHitResult
 } from '../domain/types'
 import { isEmbeddingEligibleState } from '../domain/stateModel'
@@ -117,12 +118,12 @@ export class MemoryRowMutations {
     provenanceKey: string,
     options: WriteMemoriesOptions,
     createdAt: number
-  ): string | null {
+  ): MemoryClaimInsertResult {
     const sourceSession = options.sourceSession ?? null
     const sourceEntryIds = sourceSession ? (options.sourceEntryIds ?? null) : null
     const id = `mem-${nanoid(12)}`
     try {
-      this.ports.repository.insert({
+      const inserted = this.ports.repository.insertClaimUnlessTombstoned({
         id,
         agentId,
         kind: candidate.kind,
@@ -138,11 +139,11 @@ export class MemoryRowMutations {
         createdAt,
         temporal: candidate.temporal
       })
-      return id
+      return inserted ? { action: 'inserted', id } : { action: 'suppressed', reason: 'forgotten' }
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
       logger.warn(`[Memory] insert skipped (dedupe/race): ${String(error)}`)
-      return null
+      return { action: 'suppressed', reason: 'collision' }
     }
   }
 
@@ -154,12 +155,12 @@ export class MemoryRowMutations {
     targetId: string,
     options: WriteMemoriesOptions,
     createdAt: number
-  ): string | null {
+  ): MemoryClaimInsertResult {
     const sourceSession = options.sourceSession ?? null
     const sourceEntryIds = sourceSession ? (options.sourceEntryIds ?? null) : null
     const id = `mem-${nanoid(12)}`
     try {
-      this.ports.repository.insert({
+      const inserted = this.ports.repository.insertClaimUnlessTombstoned({
         id,
         agentId,
         kind: candidate.kind,
@@ -176,11 +177,11 @@ export class MemoryRowMutations {
         createdAt,
         temporal: candidate.temporal
       })
-      return id
+      return inserted ? { action: 'inserted', id } : { action: 'suppressed', reason: 'forgotten' }
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
       logger.warn(`[Memory] conflicted insert skipped (dedupe/race): ${String(error)}`)
-      return null
+      return { action: 'suppressed', reason: 'collision' }
     }
   }
 
@@ -236,24 +237,35 @@ export class MemoryRowMutations {
         importance: candidate.importance,
         temporal: candidate.temporal
       })
-      if (!updated) return { action: 'suppressed', id: row.id, reason: 'concurrent-update' }
+      if (updated.action === 'suppressed') {
+        return { action: 'suppressed', id: row.id, reason: updated.reason }
+      }
       return { action: 'updated', id: row.id }
     }
 
     let newId: string | null = null
+    let insertSuppression:
+      | Extract<MemoryClaimInsertResult, { action: 'suppressed' }>['reason']
+      | null = null
     const insertedAndSuperseded = this.runAtomicTransition(() => {
-      newId = this.insertMemory(agentId, candidate, content, newKey, options, now)
-      if (!newId) return false
+      const insert = this.insertMemory(agentId, candidate, content, newKey, options, now)
+      if (insert.action === 'suppressed') {
+        insertSuppression = insert.reason
+        return false
+      }
+      newId = insert.id
       return this.ports.repository.markSupersededIfRevision(
         agentId,
         row.id,
         row.decision_revision,
-        newId
+        insert.id
       )
     })
-    if (!insertedAndSuperseded) newId = null
 
-    if (!newId) {
+    if (!insertedAndSuperseded) {
+      if (insertSuppression === 'forgotten') {
+        return { action: 'suppressed', id: row.id, reason: 'forgotten' }
+      }
       const owner = this.resolveProvenance(agentId, row.kind, content)
       if (owner && owner.id !== row.id) {
         return this.resolveManualEditFold(agentId, row, owner, candidate, providedFields, now)
@@ -261,6 +273,9 @@ export class MemoryRowMutations {
       return { action: 'suppressed', id: row.id, reason: 'insert-skipped' }
     }
 
+    if (!newId) {
+      throw new Error('Inserted memory result was lost after a successful transition')
+    }
     return { action: 'superseded', id: newId, supersededId: row.id, created: true }
   }
 

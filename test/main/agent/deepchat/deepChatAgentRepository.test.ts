@@ -9,7 +9,8 @@ function createRepository(sqlitePresenter: any): DeepChatAgentRepository {
       (sqlitePresenter.newSessionsTable?.list({ agentId, includeSubagents: true }) ?? []).map(
         (session: { id: string }) => session.id
       ),
-    clearMemoryByAgent: (agentId) => sqlitePresenter.agentMemoryTable?.clearByAgent(agentId) ?? 0,
+    retireMemoryNamespace: (agentId) =>
+      sqlitePresenter.agentMemoryTable?.retireAgentMemoryNamespace(agentId) ?? 0,
     clearMemoryAuditByAgent: (agentId) =>
       sqlitePresenter.agentMemoryAuditTable?.clearByAgent(agentId) ?? 0,
     transaction: (operation) =>
@@ -89,6 +90,10 @@ describe('DeepChatAgentRepository', () => {
       ['m1', 'writer'],
       ['m2', 'other']
     ])
+    const tombstones = new Map<string, string>([
+      ['t1', 'writer'],
+      ['t2', 'other']
+    ])
     const audits = new Map<string, string>([
       ['a1', 'writer'],
       ['a2', 'other']
@@ -104,13 +109,16 @@ describe('DeepChatAgentRepository', () => {
         }
       },
       agentMemoryTable: {
-        clearByAgent: (agentId: string) => {
+        retireAgentMemoryNamespace: (agentId: string) => {
           let removed = 0
           for (const [id, owner] of [...memories]) {
             if (owner === agentId) {
               memories.delete(id)
               removed += 1
             }
+          }
+          for (const [id, owner] of [...tombstones]) {
+            if (owner === agentId) tombstones.delete(id)
           }
           return removed
         }
@@ -136,6 +144,7 @@ describe('DeepChatAgentRepository', () => {
     expect(repository.delete('writer')).toBe(true)
     expect(agents.has('writer')).toBe(false)
     expect([...memories.entries()]).toEqual([['m2', 'other']])
+    expect([...tombstones.entries()]).toEqual([['t2', 'other']])
     expect([...audits.entries()]).toEqual([['a2', 'other']])
   })
 
@@ -156,6 +165,7 @@ describe('DeepChatAgentRepository', () => {
       updated_at: 1
     }
     const memories = new Map<string, string>([['m1', 'writer']])
+    const tombstones = new Map<string, string>([['t1', 'writer']])
     const audits = new Map<string, string>([['a1', 'writer']])
     const sqlitePresenter = {
       getDatabase: () => ({
@@ -168,8 +178,9 @@ describe('DeepChatAgentRepository', () => {
         }
       },
       agentMemoryTable: {
-        clearByAgent: () => {
+        retireAgentMemoryNamespace: () => {
           memories.clear()
+          tombstones.clear()
           return 1
         }
       },
@@ -187,6 +198,7 @@ describe('DeepChatAgentRepository', () => {
 
     expect(repository.delete('writer')).toBe(false)
     expect(memories.has('m1')).toBe(true)
+    expect(tombstones.has('t1')).toBe(true)
     expect(audits.has('a1')).toBe(true)
   })
 
@@ -225,7 +237,7 @@ describe('DeepChatAgentRepository', () => {
           }
         },
         agentMemoryTable: {
-          clearByAgent: () => {
+          retireAgentMemoryNamespace: () => {
             memories.clear()
             return 1
           }
@@ -270,12 +282,14 @@ describe('DeepChatAgentRepository', () => {
       ]
     ])
     const memories = new Map<string, string>([['m1', 'writer']])
+    const tombstones = new Map<string, string>([['t1', 'writer']])
     const audits = new Map<string, string>([['a1', 'writer']])
     const sqlitePresenter = {
       getDatabase: () => ({
         transaction: (callback: () => boolean) => () => {
           const agentSnapshot = new Map(agents)
           const memorySnapshot = new Map(memories)
+          const tombstoneSnapshot = new Map(tombstones)
           const auditSnapshot = new Map(audits)
           try {
             return callback()
@@ -284,6 +298,8 @@ describe('DeepChatAgentRepository', () => {
             for (const entry of agentSnapshot) agents.set(...entry)
             memories.clear()
             for (const entry of memorySnapshot) memories.set(...entry)
+            tombstones.clear()
+            for (const entry of tombstoneSnapshot) tombstones.set(...entry)
             audits.clear()
             for (const entry of auditSnapshot) audits.set(...entry)
             throw error
@@ -297,13 +313,16 @@ describe('DeepChatAgentRepository', () => {
         }
       },
       agentMemoryTable: {
-        clearByAgent: (agentId: string) => {
+        retireAgentMemoryNamespace: (agentId: string) => {
           let removed = 0
           for (const [id, owner] of [...memories]) {
             if (owner === agentId) {
               memories.delete(id)
               removed += 1
             }
+          }
+          for (const [id, owner] of [...tombstones]) {
+            if (owner === agentId) tombstones.delete(id)
           }
           return removed
         }
@@ -329,6 +348,7 @@ describe('DeepChatAgentRepository', () => {
     expect(() => repository.delete('writer')).toThrow('delete failed')
     expect(agents.has('writer')).toBe(true)
     expect(memories.has('m1')).toBe(true)
+    expect(tombstones.has('t1')).toBe(true)
     expect(audits.has('a1')).toBe(true)
   })
 

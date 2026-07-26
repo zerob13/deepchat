@@ -10,15 +10,16 @@ import { createFakeRepository, createFakeRepositoryHarness } from './support/mem
 describe('memory service harness builders', () => {
   it('splits repository capabilities over shared state and composes facade dependencies explicitly', () => {
     const harness = createFakeRepositoryHarness()
-    const inserted = harness.mutation.insert({
+    const inserted = harness.mutation.insertClaimUnlessTombstoned({
       id: 'memory-1',
       agentId: 'agent',
       kind: 'semantic',
       content: 'bounded test state'
     })
 
-    expect(harness.read.getById(inserted.id)).toBe(inserted)
-    expect('insert' in harness.read).toBe(false)
+    expect(inserted).not.toBeNull()
+    expect(harness.read.getById(inserted!.id)).toBe(inserted)
+    expect('insertClaimUnlessTombstoned' in harness.read).toBe(false)
     expect('getHealthStats' in harness.embedding).toBe(false)
 
     const facadeRepository = createFakeRepository()

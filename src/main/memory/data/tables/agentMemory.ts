@@ -24,7 +24,9 @@ import type {
   ArchiveChallengerTransition,
   ArchiveConflictTargetTransition,
   InternalContentTransition,
+  InternalMemoryInsertInput,
   MemoryTransitionTarget,
+  MemoryClaimContentUpdateResult,
   ResolveChallengerTransition,
   ReviveSupersededTransition,
   UserContentTransition,
@@ -604,7 +606,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     }
   }
 
-  private hasTombstoneForClaim(input: AgentMemoryInsertInput): boolean {
+  private hasTombstoneForClaim(
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
+  ): boolean {
     if (!isTombstoneEligibleMemoryKind(input.kind)) return false
     const identities = buildMemoryTombstoneIdentities({
       agentId: input.agentId,
@@ -1404,6 +1408,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     return row
   }
 
+  insertInternalMemory(input: InternalMemoryInsertInput): AgentMemoryRow {
+    if (input.kind !== 'persona' && input.kind !== 'working') {
+      throw new Error(`[Memory] unsupported internal memory kind: ${String(input.kind)}`)
+    }
+    return this.insert(input)
+  }
+
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
     return this.db.transaction(() => {
       if (this.hasTombstoneForClaim(input)) return null
@@ -1860,6 +1871,16 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       return false
     }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: before.kind,
+        content: before.content,
+        provenanceKey: before.provenance_key
+      })
+    ) {
+      return false
+    }
     assertValidMemoryTransition(
       transitionSnapshot(before),
       transitionSnapshot(before, {
@@ -1939,6 +1960,16 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       return false
     }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: before.kind,
+        content: before.content,
+        provenanceKey: before.provenance_key
+      })
+    ) {
+      return false
+    }
     assertValidMemoryTransition(
       transitionSnapshot(before),
       transitionSnapshot(before, {
@@ -1983,6 +2014,17 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       before.conflict_state !== null ||
       before.kind === 'persona' ||
       before.kind === 'working'
+    ) {
+      return false
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: before.kind,
+        content: input.content ?? before.content,
+        provenanceKey:
+          input.content === undefined ? before.provenance_key : (input.provenanceKey ?? null)
+      })
     ) {
       return false
     }
@@ -2476,73 +2518,89 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     return result.changes === 1
   }
 
-  updateUserContentAndInvalidateEmbedding(input: UserContentTransition): boolean {
-    const before = this.getFtsMirrorRow(input.id)
-    if (
-      !before ||
-      before.agent_id !== input.agentId ||
-      before.decision_revision !== input.expectedRevision ||
-      before.lifecycle_state !== 'active' ||
-      before.superseded_by !== null ||
-      before.conflict_state !== null ||
-      before.conflict_with !== null ||
-      before.kind === 'persona' ||
-      before.kind === 'working'
-    ) {
-      return false
-    }
-    assertValidMemoryTransition(
-      transitionSnapshot(before),
-      transitionSnapshot(before, {
-        embeddingState: 'pending',
-        embeddingRefsState: 'none'
-      }),
-      'user_content'
-    )
-    const categorySql = input.category === undefined ? '' : ', category = ?'
-    const importanceSql = input.importance === undefined ? '' : ', importance = ?'
-    const temporal =
-      input.temporal === undefined ? null : normalizeMemoryTemporalMetadata(input.temporal)
-    const temporalSql =
-      temporal === null
-        ? ''
-        : `, temporal_kind = ?, valid_from = ?, valid_until = ?,
-             temporal_confidence = ?, temporal_precision = ?, temporal_timezone = ?`
-    const params: unknown[] = [input.content, input.provenanceKey, input.at]
-    if (input.category !== undefined) params.push(input.category)
-    if (input.importance !== undefined) params.push(input.importance)
-    if (temporal !== null) {
-      params.push(
-        temporal.temporalKind,
-        temporal.validFrom,
-        temporal.validUntil,
-        temporal.temporalConfidence,
-        temporal.temporalPrecision,
-        temporal.temporalTimeZone
+  updateUserContentAndInvalidateEmbedding(
+    input: UserContentTransition
+  ): MemoryClaimContentUpdateResult {
+    return this.db.transaction((): MemoryClaimContentUpdateResult => {
+      const before = this.getFtsMirrorRow(input.id)
+      if (
+        !before ||
+        before.agent_id !== input.agentId ||
+        before.decision_revision !== input.expectedRevision ||
+        before.lifecycle_state !== 'active' ||
+        before.superseded_by !== null ||
+        before.conflict_state !== null ||
+        before.conflict_with !== null ||
+        before.kind === 'persona' ||
+        before.kind === 'working'
+      ) {
+        return { action: 'suppressed', reason: 'concurrent-update' }
+      }
+      if (
+        this.hasTombstoneForClaim({
+          agentId: input.agentId,
+          kind: before.kind,
+          content: input.content,
+          provenanceKey: input.provenanceKey
+        })
+      ) {
+        return { action: 'suppressed', reason: 'forgotten' }
+      }
+      assertValidMemoryTransition(
+        transitionSnapshot(before),
+        transitionSnapshot(before, {
+          embeddingState: 'pending',
+          embeddingRefsState: 'none'
+        }),
+        'user_content'
       )
-    }
-    params.push(input.id, input.agentId, input.expectedRevision)
-    const result = this.runRecallMutation({
-      mutate: () =>
-        this.db
-          .prepare(
-            `UPDATE agent_memory
-             SET content = ?, provenance_key = ?, last_accessed = ?${categorySql}${importanceSql}${temporalSql},
-                 embedding_state = 'pending', status = 'pending_embedding',
-                 embedding_id = NULL, embedding_dim = NULL, embedding_model = NULL,
-                 decision_revision = decision_revision + 1
-             WHERE id = ? AND agent_id = ? AND decision_revision = ?
-               AND lifecycle_state = 'active'
-               AND superseded_by IS NULL
-               AND conflict_state IS NULL
-               AND conflict_with IS NULL
-               AND kind NOT IN ('persona', 'working')`
-          )
-          .run(...params),
-      didMutate: (mutationResult) => mutationResult.changes === 1,
-      maintainFts: () => this.replaceFtsMirrorRow(before, input.id)
-    })
-    return result.changes === 1
+      const categorySql = input.category === undefined ? '' : ', category = ?'
+      const importanceSql = input.importance === undefined ? '' : ', importance = ?'
+      const temporal =
+        input.temporal === undefined ? null : normalizeMemoryTemporalMetadata(input.temporal)
+      const temporalSql =
+        temporal === null
+          ? ''
+          : `, temporal_kind = ?, valid_from = ?, valid_until = ?,
+               temporal_confidence = ?, temporal_precision = ?, temporal_timezone = ?`
+      const params: unknown[] = [input.content, input.provenanceKey, input.at]
+      if (input.category !== undefined) params.push(input.category)
+      if (input.importance !== undefined) params.push(input.importance)
+      if (temporal !== null) {
+        params.push(
+          temporal.temporalKind,
+          temporal.validFrom,
+          temporal.validUntil,
+          temporal.temporalConfidence,
+          temporal.temporalPrecision,
+          temporal.temporalTimeZone
+        )
+      }
+      params.push(input.id, input.agentId, input.expectedRevision)
+      const result = this.runRecallMutation({
+        mutate: () =>
+          this.db
+            .prepare(
+              `UPDATE agent_memory
+               SET content = ?, provenance_key = ?, last_accessed = ?${categorySql}${importanceSql}${temporalSql},
+                   embedding_state = 'pending', status = 'pending_embedding',
+                   embedding_id = NULL, embedding_dim = NULL, embedding_model = NULL,
+                   decision_revision = decision_revision + 1
+               WHERE id = ? AND agent_id = ? AND decision_revision = ?
+                 AND lifecycle_state = 'active'
+                 AND superseded_by IS NULL
+                 AND conflict_state IS NULL
+                 AND conflict_with IS NULL
+                 AND kind NOT IN ('persona', 'working')`
+            )
+            .run(...params),
+        didMutate: (mutationResult) => mutationResult.changes === 1,
+        maintainFts: () => this.replaceFtsMirrorRow(before, input.id)
+      })
+      return result.changes === 1
+        ? { action: 'updated' }
+        : { action: 'suppressed', reason: 'concurrent-update' }
+    })()
   }
 
   updateUserMetadataIfRevision(input: UserMetadataTransition): boolean {
@@ -2967,6 +3025,15 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       didMutate: (result) => result.changes === 1,
       maintainFts: () => this.deleteFtsMirrorRow(before)
     })
+  }
+
+  deleteInternalMemory(agentId: string, id: string): boolean {
+    const row = this.getById(id)
+    if (!row || row.agent_id !== agentId || (row.kind !== 'persona' && row.kind !== 'working')) {
+      return false
+    }
+    this.delete(id)
+    return this.getById(id) === undefined
   }
 
   tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null {

@@ -332,6 +332,27 @@ describe('MemoryService.updateMemory', () => {
     spy.mockRestore()
   })
 
+  it('does not let a manual edit recreate a hard-deleted claim', async () => {
+    const { presenter, repo, auditRepo } = makePresenter(enabledConfig)
+    const [forgottenId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'Project Saffron uses Rust.' }],
+      { agentId: 'deepchat' }
+    )
+    await expect(presenter.deleteMemory('deepchat', forgottenId)).resolves.toBe(true)
+    insertMemory(repo, { id: 'editable', content: 'Project Saffron uses Go.' })
+
+    expect(
+      presenter.updateMemory('deepchat', 'editable', {
+        content: ' Project   Saffron uses Rust. '
+      })
+    ).toEqual({ action: 'noop', reason: 'forgotten' })
+    expect(repo.getById('editable')).toMatchObject({
+      content: 'Project Saffron uses Go.',
+      superseded_by: null
+    })
+    expect(auditRepo.listByAgent('deepchat', { eventType: 'memory/manual_edit' })).toHaveLength(0)
+  })
+
   it('revives archived provenance owners instead of clearing their provenance key', () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     const duplicateKey = buildMemoryProvenanceKey('deepchat', 'semantic', 'archived fact')

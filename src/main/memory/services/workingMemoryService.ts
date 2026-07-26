@@ -71,7 +71,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
 
     if (v2Row) {
       if (validLegacy && legacyRow.id !== v2Row.id) {
-        this.ports.repository.delete(legacyRow.id)
+        this.ports.repository.deleteInternalMemory(agentId, legacyRow.id)
       }
       return v2Row.kind === 'working' ? v2Row : undefined
     }
@@ -88,7 +88,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
 
     const owner = this.ports.repository.getByProvenanceKey(agentId, v2Key)
     if (owner?.kind === 'working' && owner.id !== legacyRow.id) {
-      this.ports.repository.delete(legacyRow.id)
+      this.ports.repository.deleteInternalMemory(agentId, legacyRow.id)
       return owner
     }
     return owner?.kind === 'working' ? owner : undefined
@@ -98,7 +98,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     this.workingProjectionFreshness.delete(agentId)
     const existing = this.resolveWorkingRow(agentId)
     if (existing) {
-      this.ports.repository.delete(existing.id)
+      this.ports.repository.deleteInternalMemory(agentId, existing.id)
       this.ctx.markDomainMutationCommitted(agentId)
     }
   }
@@ -171,7 +171,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
         existing &&
         (!options.preserveOrphanedExisting || projection.sourceCandidatesScanned > 0)
       ) {
-        this.ports.repository.delete(existing.id)
+        this.ports.repository.deleteInternalMemory(agentId, existing.id)
         this.ctx.markDomainMutationCommitted(agentId)
       }
       this.recordProjectionFreshness(agentId, projection)
@@ -204,7 +204,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
             existing &&
             (!options.preserveOrphanedExisting || projection.sourceCandidatesScanned > 0)
           ) {
-            this.ports.repository.delete(existing.id)
+            this.ports.repository.deleteInternalMemory(agentId, existing.id)
             this.ctx.markDomainMutationCommitted(agentId)
           }
           this.recordProjectionFreshness(agentId, projection)
@@ -220,7 +220,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     }
     const now = this.ctx.now()
     try {
-      this.ports.repository.insert({
+      this.ports.repository.insertInternalMemory({
         id: `working-${nanoid(12)}`,
         agentId,
         kind: 'working',

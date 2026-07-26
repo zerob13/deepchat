@@ -46,7 +46,9 @@ import {
 import type {
   AgentMemoryEmbeddingState,
   AgentMemoryRow,
+  InternalMemoryInsertInput,
   MemoryTemporalMetadata,
+  MemoryClaimContentUpdateResult,
   MemoryTombstoneDeleteInput,
   MemoryTombstoneIdentityKind,
   MemoryTombstoneReason,
@@ -132,7 +134,9 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
   }
 
-  private hasTombstoneForClaim(input: AgentMemoryInsertInput): boolean {
+  private hasTombstoneForClaim(
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
+  ): boolean {
     if (!isTombstoneEligibleMemoryKind(input.kind)) return false
     return buildMemoryTombstoneIdentities({
       agentId: input.agentId,
@@ -208,6 +212,13 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     this.rows.set(row.id, row)
     return row
+  }
+
+  insertInternalMemory(input: InternalMemoryInsertInput): AgentMemoryRow {
+    if (input.kind !== 'persona' && input.kind !== 'working') {
+      throw new Error(`[Memory] unsupported internal memory kind: ${String(input.kind)}`)
+    }
+    return this.insert(input)
   }
 
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
@@ -486,6 +497,16 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     ) {
       return false
     }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: row.content,
+        provenanceKey: row.provenance_key
+      })
+    ) {
+      return false
+    }
     this.activateForEmbedding(row.id)
     return true
   }
@@ -508,6 +529,16 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.conflict_with !== null ||
       row.kind === 'persona' ||
       row.kind === 'working'
+    ) {
+      return false
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: row.content,
+        provenanceKey: row.provenance_key
+      })
     ) {
       return false
     }
@@ -558,6 +589,17 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       target.lifecycle_state !== 'active' ||
       target.conflict_state !== 'challenged' ||
       target.superseded_by !== null
+    ) {
+      return false
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: input.content ?? row.content,
+        provenanceKey:
+          input.content === undefined ? row.provenance_key : (input.provenanceKey ?? null)
+      })
     ) {
       return false
     }
@@ -914,7 +956,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     category?: string | null
     importance?: number
     temporal?: MemoryTemporalMetadata
-  }) {
+  }): MemoryClaimContentUpdateResult {
     const row = this.rows.get(input.id)
     if (
       !row ||
@@ -927,7 +969,17 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.kind === 'persona' ||
       row.kind === 'working'
     ) {
-      return false
+      return { action: 'suppressed', reason: 'concurrent-update' }
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: input.content,
+        provenanceKey: input.provenanceKey
+      })
+    ) {
+      return { action: 'suppressed', reason: 'forgotten' }
     }
     row.content = input.content
     row.provenance_key = input.provenanceKey
@@ -949,7 +1001,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
-    return true
+    return { action: 'updated' }
   }
 
   updateUserMetadataIfRevision(input: {
@@ -1260,6 +1312,15 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
   delete(id: string) {
     this.rows.delete(id)
+  }
+
+  deleteInternalMemory(agentId: string, id: string): boolean {
+    const row = this.rows.get(id)
+    if (!row || row.agent_id !== agentId || (row.kind !== 'persona' && row.kind !== 'working')) {
+      return false
+    }
+    this.rows.delete(id)
+    return true
   }
 
   tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null {
@@ -1722,7 +1783,8 @@ export interface FakeRepositoryState {
 }
 
 interface FakeRepositoryRowAccess {
-  insert(...args: Parameters<MemoryRepositoryPort['insert']>): AgentMemoryRow
+  insert(input: AgentMemoryInsertInput): AgentMemoryRow
+  delete(id: string): void
   getById(...args: Parameters<MemoryRepositoryPort['getById']>): AgentMemoryRow | undefined
   getByProvenanceKey(
     ...args: Parameters<MemoryRepositoryPort['getByProvenanceKey']>
@@ -1795,7 +1857,7 @@ const READ_CAPABILITY_KEYS = [
 ] as const satisfies readonly (keyof MemoryReadRepositoryPort)[]
 
 const MUTATION_CAPABILITY_KEYS = [
-  'insert',
+  'insertInternalMemory',
   'insertClaimUnlessTombstoned',
   'rekeyProvenance',
   'updateInternalContent',
@@ -1806,8 +1868,7 @@ const MUTATION_CAPABILITY_KEYS = [
   'setAnchor',
   'markSupersededIfRevision',
   'markConflictIfRevision',
-  'delete',
-  'clearByAgent',
+  'deleteInternalMemory',
   'tombstoneAndDelete',
   'tombstoneAndClearByAgent',
   'retireAgentMemoryNamespace'
