@@ -100,6 +100,9 @@ export type { MemoryUpdateReason } from '@shared/contracts/events/memory.events'
 export type { MemoryDomainClock } from './domain/clock'
 
 export type {
+  DirectiveContributionManifest,
+  DirectiveContributionResult,
+  DirectiveContributionSelection,
   MemoryInjectionPayload,
   MemoryInjectionPort,
   MemoryInjectionResult

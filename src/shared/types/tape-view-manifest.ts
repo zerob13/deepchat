@@ -17,6 +17,7 @@ export type DeepChatTapeViewEntryReason =
   | 'summary_checkpoint'
   | 'reconstruction_checkpoint'
   | 'memory_context'
+  | 'directive_context'
   | 'selected_history'
   | 'new_user_input'
   | 'resume_target'
@@ -44,7 +45,11 @@ export interface DeepChatTapeViewEntryRef {
 
 export interface DeepChatTapeViewSyntheticContribution {
   role: 'user'
-  reason: 'summary_checkpoint' | 'reconstruction_checkpoint' | 'memory_context'
+  reason:
+    | 'summary_checkpoint'
+    | 'reconstruction_checkpoint'
+    | 'memory_context'
+    | 'directive_context'
   sourceEntryIds?: number[]
   contentHash: string
 }
@@ -88,7 +93,7 @@ export interface DeepChatTapeViewMeta {
 }
 
 export interface DeepChatTapeViewManifest {
-  schemaVersion: 1 | 2 | 3
+  schemaVersion: 1 | 2 | 3 | 4
   hashVersion: number
   viewId: string
   sessionId: string

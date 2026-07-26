@@ -1110,6 +1110,14 @@ function buildCacheAwareLeadingMessages(
   return messages
 }
 
+function buildActiveTurnLeadingContext(context: ContextRuntimeContributions): string | null {
+  const sections = [
+    context.memoryIncluded ? context.memory.content : null,
+    context.directivesIncluded ? context.directives.content : null
+  ].filter((value): value is string => Boolean(value))
+  return sections.length > 0 ? sections.join('\n\n') : null
+}
+
 function resolveFiniteInputBudget(
   contextLength: number,
   reserveTokens: number,
@@ -1213,22 +1221,22 @@ function omitMemoryFromActiveTurn(
   return messages
 }
 
-function activeTurnContainsMemory(
+function activeTurnContainsLeadingContext(
   activeTurn: ChatMessage[],
-  memoryContent: string
+  leadingContext: string
 ): boolean {
-  const prefix = `${memoryContent}\n\n`
+  const prefix = `${leadingContext}\n\n`
   return activeTurn.some((message) => {
     if (message.role !== 'user') return false
     if (typeof message.content === 'string') {
-      return message.content === memoryContent || message.content.startsWith(prefix)
+      return message.content === leadingContext || message.content.startsWith(prefix)
     }
     return (
       Array.isArray(message.content) &&
       message.content.some(
         (part) =>
           part.type === 'text' &&
-          (part.text === memoryContent || part.text.startsWith(prefix))
+          (part.text === leadingContext || part.text.startsWith(prefix))
       )
     )
   })
@@ -1329,7 +1337,7 @@ export function buildCacheAwareContextWithMetadata(
     newUserContent,
     supportsVision,
     supportsAudioInput,
-    context.memoryIncluded ? context.memory.content : null
+    buildActiveTurnLeadingContext(context)
   )
   let fixedMessages = [
     ...leadingMessages,
@@ -1339,12 +1347,17 @@ export function buildCacheAwareContextWithMetadata(
   const historyTokens = historyTurns.reduce((total, turn) => total + turn.tokens, 0)
 
   if (
-    fixedTokens + historyTokens > inputBudget &&
+    (fixedTokens + historyTokens > inputBudget || fixedTokens > physicalInputBudget) &&
     context.memoryIncluded &&
     context.memory.content
   ) {
     context.memoryIncluded = false
-    newUserMessage = createUserChatMessage(newUserContent, supportsVision, supportsAudioInput)
+    newUserMessage = createUserChatMessage(
+      newUserContent,
+      supportsVision,
+      supportsAudioInput,
+      buildActiveTurnLeadingContext(context)
+    )
     fixedMessages = [
       ...leadingMessages,
       ...(hasPromptMessageContent(newUserMessage) ? [newUserMessage] : [])
@@ -1410,6 +1423,7 @@ export function buildCacheAwareResumeContextWithMetadata(
   }
   if (!ownerUser) {
     context.memoryIncluded = false
+    context.directivesIncluded = false
   }
 
   const historyRecords = recordsThroughTarget.filter((record) => {
@@ -1417,9 +1431,10 @@ export function buildCacheAwareResumeContextWithMetadata(
     if (!isContextHistoryRecord(record)) return false
     return record.orderSeq >= cursor || Boolean(ownerUser && record.orderSeq >= ownerUser.orderSeq)
   })
-  const memoryByOwnerId =
-    ownerUser && context.memoryIncluded && context.memory.content
-      ? new Map([[ownerUser.id, context.memory.content]])
+  const activeTurnContext = buildActiveTurnLeadingContext(context)
+  const leadingContextByOwnerId =
+    ownerUser && activeTurnContext
+      ? new Map([[ownerUser.id, activeTurnContext]])
       : undefined
   let historyTurns = buildHistoryTurns(
     historyRecords,
@@ -1427,7 +1442,7 @@ export function buildCacheAwareResumeContextWithMetadata(
     options.preserveInterleavedReasoning ?? false,
     options.preserveEmptyInterleavedReasoning ?? false,
     supportsAudioInput,
-    memoryByOwnerId
+    leadingContextByOwnerId
   )
   let activeTurnIndex = historyTurns.findIndex((turn) =>
     turn.records.some((record) => record.id === assistantMessageId)
@@ -1452,7 +1467,7 @@ export function buildCacheAwareResumeContextWithMetadata(
   const historyPrefixTokens = historyPrefix.reduce((total, turn) => total + turn.tokens, 0)
 
   if (
-    fixedTokens + historyPrefixTokens > inputBudget &&
+    (fixedTokens + historyPrefixTokens > inputBudget || fixedTokens > physicalInputBudget) &&
     activeTurn &&
     context.memoryIncluded &&
     context.memory.content
@@ -1700,20 +1715,27 @@ export function fitCacheAwareMessagesToContextWindow(
 
   const turns = buildChatMessageTurns(messages.slice(offset))
   let activeTurn = turns.pop() ?? { messages: [], tokens: 0 }
+  const activeLeadingContext = buildActiveTurnLeadingContext(context)
   if (
-    context.memoryIncluded &&
-    context.memory.content &&
-    !activeTurnContainsMemory(activeTurn.messages, context.memory.content)
+    activeLeadingContext &&
+    !activeTurnContainsLeadingContext(activeTurn.messages, activeLeadingContext)
   ) {
     context.memoryIncluded = false
+    context.directivesIncluded = false
   }
   const availableInputTokens = Math.max(0, contextLength - Math.max(0, reserveTokens))
   let totalTokens =
     estimateMessagesTokens(leadingMessages) +
     turns.reduce((sum, turn) => sum + turn.tokens, 0) +
     activeTurn.tokens
+  const physicalInputBudget = Math.max(0, contextLength - 1)
 
-  if (totalTokens > availableInputTokens && context.memoryIncluded && context.memory.content) {
+  if (
+    (totalTokens > availableInputTokens ||
+      estimateMessagesTokens(leadingMessages) + activeTurn.tokens > physicalInputBudget) &&
+    context.memoryIncluded &&
+    context.memory.content
+  ) {
     const activeMessages = omitMemoryFromActiveTurn(activeTurn.messages, context)
     if (activeMessages !== activeTurn.messages) {
       activeTurn = {
@@ -1732,7 +1754,7 @@ export function fitCacheAwareMessagesToContextWindow(
   }
 
   const fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
-  if (fixedTokens > Math.max(0, contextLength - 1)) {
+  if (fixedTokens > physicalInputBudget) {
     throw buildCacheAwareOverflowError({
       contextLength,
       fixedTokens,

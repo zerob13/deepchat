@@ -7,6 +7,7 @@ import type {
   MemoryPersonaDraftResult,
   MemoryReflectionResult
 } from '../types'
+import type { DirectiveContributionResult } from './directiveContribution'
 
 export interface MemoryInjectionMemory {
   id: string
@@ -116,6 +117,9 @@ export interface MemoryRuntimePort extends MemoryInjectionPort {
   // Runtime work binds this token at admission and must retain it across queued continuations.
   captureExecutionToken(agentId: string): MemoryExecutionToken
   canContinueExecution(token: MemoryExecutionToken): boolean
+
+  // Builds the bounded trusted-instruction contribution independently from recalled memory.
+  buildDirectiveContribution(agentId: string): DirectiveContributionResult
 
   observeExtractionQueue?(depth: number, oldestQueuedAt: number | null): void
 

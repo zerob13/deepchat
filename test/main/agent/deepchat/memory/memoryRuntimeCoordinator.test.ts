@@ -107,6 +107,7 @@ function createHarness() {
     buildInjection: vi
       .fn<(agentId: string, query: string, options?: { signal?: AbortSignal }) => Promise<any>>()
       .mockResolvedValue(null),
+    buildDirectiveContribution: vi.fn(() => ({ content: null, manifest: null })),
     recordInjectionAccess: vi.fn(),
     extractAndStore: vi.fn().mockResolvedValue({ ok: true, createdIds: [] }),
     observeExtractionQueue: vi.fn()
@@ -180,7 +181,10 @@ describe('MemoryRuntimeCoordinator', () => {
     const { coordinator, deps, registry, memorySession, port } = createHarness()
     const contributor: MemoryPromptContributor = coordinator
     const input = { session: memorySession, query: 'redis', messageId: 'message-1' }
-    const emptyContribution = { content: null, manifest: null, anchorEntryId: null }
+    const emptyContribution = {
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      directives: { content: null, manifest: null, anchorEntryId: null }
+    }
 
     port.isEnabled.mockReturnValue(false)
     await expect(contributor.contribute(input)).resolves.toEqual(emptyContribution)
@@ -222,9 +226,8 @@ describe('MemoryRuntimeCoordinator', () => {
 
     port.isEnabled.mockReset().mockReturnValueOnce(true).mockReturnValueOnce(false)
     await expect(coordinator.contribute(input)).resolves.toEqual({
-      content: null,
-      manifest: null,
-      anchorEntryId: null
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      directives: { content: null, manifest: null, anchorEntryId: null }
     })
     expect(port.recordInjectionAccess).not.toHaveBeenCalled()
     expect(deps.appendTapeAnchor).not.toHaveBeenCalled()
@@ -236,7 +239,7 @@ describe('MemoryRuntimeCoordinator', () => {
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false)
     const contributionWithoutAccounting = await coordinator.contribute(input)
-    expect(contributionWithoutAccounting.content).toContain('Remember Redis.')
+    expect(contributionWithoutAccounting.memory.content).toContain('Remember Redis.')
     expect(port.recordInjectionAccess).not.toHaveBeenCalled()
     expect(deps.appendTapeAnchor).not.toHaveBeenCalled()
 
@@ -247,8 +250,8 @@ describe('MemoryRuntimeCoordinator', () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false)
     const contributionWithoutAnchor = await coordinator.contribute(input)
-    expect(contributionWithoutAnchor.content).toContain('Remember Redis.')
-    expect(contributionWithoutAnchor.anchorEntryId).toBeNull()
+    expect(contributionWithoutAnchor.memory.content).toContain('Remember Redis.')
+    expect(contributionWithoutAnchor.memory.anchorEntryId).toBeNull()
     expect(port.recordInjectionAccess).toHaveBeenCalledWith('agent-a', ['selected'])
     expect(deps.appendTapeAnchor).not.toHaveBeenCalled()
   })
@@ -282,9 +285,8 @@ describe('MemoryRuntimeCoordinator', () => {
     })
 
     await expect(contribution).resolves.toEqual({
-      content: null,
-      manifest: null,
-      anchorEntryId: null
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      directives: { content: null, manifest: null, anchorEntryId: null }
     })
     expect(port.isEnabled).toHaveLastReturnedWith(true)
     expect(port.recordInjectionAccess).not.toHaveBeenCalled()
@@ -325,10 +327,10 @@ describe('MemoryRuntimeCoordinator', () => {
       messageId: 'message-1'
     })
 
-    expect(contribution.content).toContain('Remember Redis.')
-    expect(contribution.content).not.toContain('PRIVATE_')
-    expect(contribution.content).not.toContain('raw-internal-query-hash')
-    expect(contribution.anchorEntryId).toBeNull()
+    expect(contribution.memory.content).toContain('Remember Redis.')
+    expect(contribution.memory.content).not.toContain('PRIVATE_')
+    expect(contribution.memory.content).not.toContain('raw-internal-query-hash')
+    expect(contribution.memory.anchorEntryId).toBeNull()
     expect(port.recordInjectionAccess).toHaveBeenCalledWith('agent-a', ['selected'])
     expect(deps.appendTapeAnchor).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -364,9 +366,8 @@ describe('MemoryRuntimeCoordinator', () => {
     await vi.advanceTimersByTimeAsync(1)
 
     await expect(contribution).resolves.toEqual({
-      content: null,
-      manifest: null,
-      anchorEntryId: null
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      directives: { content: null, manifest: null, anchorEntryId: null }
     })
     expect(port.buildInjection.mock.calls[0][2]?.signal?.aborted).toBe(true)
     expect(port.recordInjectionAccess).not.toHaveBeenCalled()
@@ -393,6 +394,63 @@ describe('MemoryRuntimeCoordinator', () => {
     warn.mockRestore()
   })
 
+  it('keeps the independently bounded directive contribution when memory times out', async () => {
+    vi.useFakeTimers()
+    const { coordinator, deps, memorySession, port } = createHarness()
+    const lateInjection = deferred<any>()
+    port.buildInjection.mockReturnValue(lateInjection.promise)
+    port.buildDirectiveContribution.mockReturnValue({
+      content:
+        '<runtime-directives policy-version="1">Prefer concise answers.</runtime-directives>',
+      manifest: {
+        policyVersion: 1,
+        selected: [
+          {
+            id: 'directive-1',
+            kind: 'instruction',
+            source: 'manual'
+          }
+        ],
+        dropped: [],
+        tokenBudget: 512,
+        itemTokenBudget: 192,
+        estimatedTokens: 20
+      }
+    })
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined)
+
+    const contribution = coordinator.contribute({
+      session: memorySession,
+      query: 'redis',
+      messageId: 'message-1'
+    })
+    await vi.advanceTimersByTimeAsync(MEMORY_INJECTION_TIMEOUT_MS)
+
+    await expect(contribution).resolves.toMatchObject({
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      directives: {
+        content: expect.stringContaining('Prefer concise answers.'),
+        manifest: expect.objectContaining({
+          selected: [expect.objectContaining({ id: 'directive-1' })]
+        }),
+        anchorEntryId: 99
+      }
+    })
+    expect(deps.appendTapeAnchor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'memory/directive_view_assembled',
+        state: expect.not.objectContaining({ content: expect.anything() })
+      })
+    )
+    expect(JSON.stringify(deps.appendTapeAnchor.mock.calls)).not.toContain(
+      'Prefer concise answers.'
+    )
+
+    lateInjection.resolve(null)
+    await Promise.resolve()
+    warn.mockRestore()
+  })
+
   it('observes a late injection rejection after the deadline', async () => {
     vi.useFakeTimers()
     const { coordinator, memorySession, port } = createHarness()
@@ -405,9 +463,8 @@ describe('MemoryRuntimeCoordinator', () => {
     })
     await vi.advanceTimersByTimeAsync(MEMORY_INJECTION_TIMEOUT_MS)
     await expect(contribution).resolves.toEqual({
-      content: null,
-      manifest: null,
-      anchorEntryId: null
+      memory: { content: null, manifest: null, anchorEntryId: null },
+      directives: { content: null, manifest: null, anchorEntryId: null }
     })
     lateInjection.reject(new Error('late failure'))
     await Promise.resolve()
@@ -435,9 +492,12 @@ describe('MemoryRuntimeCoordinator', () => {
         messageId: 'message-1'
       })
     ).resolves.toEqual({
-      content: null,
-      manifest: expect.objectContaining({ degradations: ['storeTimeout'] }),
-      anchorEntryId: 99
+      memory: {
+        content: null,
+        manifest: expect.objectContaining({ degradations: ['storeTimeout'] }),
+        anchorEntryId: 99
+      },
+      directives: { content: null, manifest: null, anchorEntryId: null }
     })
 
     expect(port.recordInjectionAccess).not.toHaveBeenCalled()

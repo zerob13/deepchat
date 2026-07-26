@@ -29,7 +29,11 @@ import type {
   MemoryIngestionObserver
 } from './memoryIngestionObserver'
 import {
+  EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION,
+  EMPTY_MEMORY_CONTEXT_CONTRIBUTION,
   EMPTY_MEMORY_PROMPT_CONTRIBUTION,
+  type DirectiveContextContribution,
+  type MemoryContextContribution,
   type MemoryPromptContribution,
   type MemoryPromptContributor,
   type MemorySessionHandle
@@ -177,42 +181,78 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
       const agentId = this.resolveSessionAgentId(sessionId)
       if (!this.memoryPort.isEnabled(agentId)) return EMPTY_MEMORY_PROMPT_CONTRIBUTION
       const executionToken = this.memoryPort.captureExecutionToken(agentId)
+      const memory = await this.buildMemoryPromptContribution({
+        agentId,
+        sessionId,
+        executionToken,
+        query: input.query,
+        messageId: input.messageId
+      })
+      if (!this.canContinueExecution(sessionId, executionToken)) {
+        return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+      }
+      const directives = this.buildDirectivePromptContribution({
+        agentId,
+        sessionId,
+        executionToken,
+        messageId: input.messageId
+      })
+      if (!this.canContinueExecution(sessionId, executionToken)) {
+        return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+      }
+      return { memory, directives }
+    } catch (error) {
+      logger.warn(`[DeepChatAgent] memory injection skipped: ${String(error)}`)
+      return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+    }
+  }
+
+  private async buildMemoryPromptContribution(input: {
+    agentId: string
+    sessionId: string
+    executionToken: MemoryExecutionToken
+    query: string
+    messageId?: string | null
+  }): Promise<MemoryContextContribution> {
+    try {
       const injectionAbort = new AbortController()
       const deadlineResult = await withSoftDeadline(
-        this.memoryPort.buildInjection(agentId, input.query, { signal: injectionAbort.signal }),
+        this.memoryPort.buildInjection(input.agentId, input.query, {
+          signal: injectionAbort.signal
+        }),
         MEMORY_INJECTION_TIMEOUT_MS
       )
       if (deadlineResult.timedOut) {
         injectionAbort.abort()
         logger.warn(
-          `[DeepChatAgent] memory injection timed out for session=${sessionId}; sending without memory section`
+          `[DeepChatAgent] memory injection timed out for session=${input.sessionId}; sending without memory section`
         )
-        return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+        return EMPTY_MEMORY_CONTEXT_CONTRIBUTION
       }
       const injection = deadlineResult.value
-      if (!this.canContinueExecution(sessionId, executionToken)) {
-        return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+      if (!this.canContinueExecution(input.sessionId, input.executionToken)) {
+        return EMPTY_MEMORY_CONTEXT_CONTRIBUTION
       }
       const assembled = buildMemoryContextWithManifest(injection)
       let anchorEntryId: number | null = null
       if (assembled.manifest) {
         if (assembled.manifest.degradations?.length) {
           logger.info(
-            `[DeepChatAgent] memory injection degraded for session=${sessionId} causes=${assembled.manifest.degradations.join(',')}`
+            `[DeepChatAgent] memory injection degraded for session=${input.sessionId} causes=${assembled.manifest.degradations.join(',')}`
           )
         }
-        if (this.canContinueExecution(sessionId, executionToken)) {
+        if (this.canContinueExecution(input.sessionId, input.executionToken)) {
           this.recordInjectionAccess(
-            agentId,
-            sessionId,
+            input.agentId,
+            input.sessionId,
             assembled.manifest.selected,
             input.messageId
           )
         }
-        if (this.canContinueExecution(sessionId, executionToken)) {
+        if (this.canContinueExecution(input.sessionId, input.executionToken)) {
           try {
             const anchor = this.deps.tapeAnchorWriter.appendAnchor({
-              sessionId,
+              sessionId: input.sessionId,
               name: 'memory/view_assembled',
               state: assembled.manifest as unknown as Record<string, unknown>,
               meta: input.messageId ? { messageId: input.messageId } : undefined
@@ -230,7 +270,43 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
       }
     } catch (error) {
       logger.warn(`[DeepChatAgent] memory injection skipped: ${String(error)}`)
-      return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+      return EMPTY_MEMORY_CONTEXT_CONTRIBUTION
+    }
+  }
+
+  private buildDirectivePromptContribution(input: {
+    agentId: string
+    sessionId: string
+    executionToken: MemoryExecutionToken
+    messageId?: string | null
+  }): DirectiveContextContribution {
+    try {
+      const assembled = this.memoryPort.buildDirectiveContribution(input.agentId)
+      if (!this.canContinueExecution(input.sessionId, input.executionToken)) {
+        return EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION
+      }
+      let anchorEntryId: number | null = null
+      if (assembled.manifest) {
+        try {
+          const anchor = this.deps.tapeAnchorWriter.appendAnchor({
+            sessionId: input.sessionId,
+            name: 'memory/directive_view_assembled',
+            state: assembled.manifest as unknown as Record<string, unknown>,
+            meta: input.messageId ? { messageId: input.messageId } : undefined
+          })
+          anchorEntryId = anchor.entry_id
+        } catch (error) {
+          logger.warn(`[DeepChatAgent] directive view anchor skipped: ${String(error)}`)
+        }
+      }
+      return {
+        content: assembled.content,
+        manifest: assembled.manifest,
+        anchorEntryId
+      }
+    } catch (error) {
+      logger.warn(`[DeepChatAgent] directive contribution skipped: ${String(error)}`)
+      return EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION
     }
   }
 

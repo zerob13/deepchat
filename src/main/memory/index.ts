@@ -1,6 +1,7 @@
 import {
   appendMemorySection,
   appendMemorySectionWithManifest,
+  buildDirectiveContribution,
   buildMemorySection,
   type MemoryExecutionToken,
   type MemoryInjectionOptions,
@@ -532,6 +533,10 @@ export class MemoryService implements MemoryRuntimePort {
     options?: MemoryInjectionOptions
   ): Promise<MemoryInjectionResult | null> {
     return this.retrieval.buildInjection(agentId, query, options)
+  }
+
+  buildDirectiveContribution(agentId: string) {
+    return buildDirectiveContribution(this.directives.listActiveDirectives(agentId))
   }
 
   recordInjectionAccess(agentId: string, memoryIds: string[], accessedAt?: number): void {
