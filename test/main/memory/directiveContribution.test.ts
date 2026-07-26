@@ -118,6 +118,18 @@ describe('directive contribution', () => {
     expect(result.content).not.toContain('记')
   })
 
+  it('honors an explicit sub-default total instead of falling back to the directive default', () => {
+    const result = buildDirectiveContribution(
+      [directive('first', 'Prefer concise answers.'), directive('second', 'Use examples.')],
+      { tokenBudget: 64 }
+    )
+
+    expect(result.manifest?.tokenBudget).toBe(64)
+    expect(result.manifest?.estimatedTokens).toBeLessThanOrEqual(64)
+    expect(result.manifest?.selected).toEqual([])
+    expect(result.content).toBeNull()
+  })
+
   it('returns no contribution when every directive is untrusted', () => {
     expect(
       buildDirectiveContribution([

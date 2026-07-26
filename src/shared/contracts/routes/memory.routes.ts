@@ -575,6 +575,27 @@ export function createEmptyMemoryRuntimeDiagnostics(): MemoryRuntimeDiagnosticsD
 
 const JsonRecordSchema = z.record(z.string(), z.unknown())
 
+const MemoryContributionTokenMapSchema = z.object({
+  directive: z.number().nonnegative(),
+  persona: z.number().nonnegative(),
+  working: z.number().nonnegative(),
+  queryRecall: z.number().nonnegative()
+})
+
+const MemoryContributionBudgetSchema = z.object({
+  policyVersion: z.number().nonnegative(),
+  totalTokenBudget: z.number().nonnegative(),
+  overheadTokens: z.number().nonnegative(),
+  demand: MemoryContributionTokenMapSchema,
+  allocated: MemoryContributionTokenMapSchema,
+  used: MemoryContributionTokenMapSchema,
+  borrowed: MemoryContributionTokenMapSchema,
+  unallocatedTokens: z.number().nonnegative(),
+  estimatedTotalTokens: z.number().nonnegative(),
+  unusedTokens: z.number().nonnegative(),
+  constrained: z.boolean()
+})
+
 export const MemoryAuditEventSchema = z.object({
   id: z.string(),
   agentId: z.string(),
@@ -601,6 +622,7 @@ export const MemoryViewManifestSchema = z.object({
   selectedIds: z.array(z.string()).nullable(),
   droppedCount: z.number(),
   queryHash: z.string().nullable(),
+  allocation: MemoryContributionBudgetSchema.nullable().optional(),
   createdAt: z.number()
 })
 

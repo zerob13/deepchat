@@ -11,6 +11,7 @@ import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import logger from '@shared/logger'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { MemoryService } from '@/memory'
+import { estimateTokens } from '@/memory/injection'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '@/tape/domain/entry'
 import {
   createFakeRepository,
@@ -104,6 +105,7 @@ function createHarness() {
         isEnabled(token.agentId) &&
         (executionGenerations.get(token.agentId) ?? 0) === token.generation
     ),
+    getInjectionTokenBudget: vi.fn(() => 1_200),
     buildInjection: vi
       .fn<(agentId: string, query: string, options?: { signal?: AbortSignal }) => Promise<any>>()
       .mockResolvedValue(null),
@@ -449,6 +451,91 @@ describe('MemoryRuntimeCoordinator', () => {
     lateInjection.resolve(null)
     await Promise.resolve()
     warn.mockRestore()
+  })
+
+  it('enforces one total budget across memory and directive contributions', async () => {
+    const { coordinator, memorySession, port } = createHarness()
+    const directiveContent = 'D'.repeat(1_600)
+    port.getInjectionTokenBudget.mockReturnValue(600)
+    port.buildDirectiveContribution.mockReturnValue({
+      content: directiveContent,
+      manifest: {
+        policyVersion: 1,
+        selected: [{ id: 'directive-1', kind: 'instruction', source: 'manual' }],
+        dropped: [],
+        tokenBudget: 512,
+        itemTokenBudget: 192,
+        estimatedTokens: estimateTokens(directiveContent)
+      }
+    })
+    port.buildInjection.mockResolvedValue({
+      payload: {
+        selfModel: 'P'.repeat(4_000),
+        working: 'W'.repeat(4_000),
+        memories: [{ id: 'query-hit', kind: 'semantic', content: 'query-specific memory' }],
+        tokenBudget: 1_200
+      },
+      manifest: {
+        policyVersion: 1,
+        selected: [],
+        dropped: [],
+        tokenBudget: 1_200,
+        estimatedTokens: 0
+      }
+    })
+
+    const contribution = await coordinator.contribute({
+      session: memorySession,
+      query: 'redis',
+      messageId: 'message-1'
+    })
+    const combined = [contribution.memory.content, contribution.directives.content]
+      .filter(Boolean)
+      .join('\n\n')
+
+    expect(port.buildDirectiveContribution).toHaveBeenCalledWith('agent-a', 600)
+    expect(estimateTokens(combined)).toBeLessThanOrEqual(600)
+    expect(contribution.memory.content).toContain('query-specific memory')
+    expect(contribution.memory.manifest?.allocation).toMatchObject({
+      totalTokenBudget: 600,
+      estimatedTotalTokens: estimateTokens(combined)
+    })
+  })
+
+  it('drops an invalid directive implementation that exceeds the shared total', async () => {
+    const { coordinator, deps, memorySession, port } = createHarness()
+    port.getInjectionTokenBudget.mockReturnValue(64)
+    port.buildDirectiveContribution.mockReturnValue({
+      content: 'D'.repeat(1_000),
+      manifest: {
+        policyVersion: 1,
+        selected: [{ id: 'directive-1', kind: 'instruction', source: 'manual' }],
+        dropped: [],
+        tokenBudget: 64,
+        itemTokenBudget: 192,
+        estimatedTokens: 250
+      }
+    })
+    const error = vi.spyOn(logger, 'error').mockImplementation(() => undefined)
+
+    const contribution = await coordinator.contribute({
+      session: memorySession,
+      query: 'redis',
+      messageId: 'message-1'
+    })
+
+    expect(contribution.directives).toEqual({
+      content: null,
+      manifest: null,
+      anchorEntryId: null
+    })
+    expect(deps.appendTapeAnchor).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'memory/directive_view_assembled' })
+    )
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('directive contribution exceeded its budget')
+    )
+    error.mockRestore()
   })
 
   it('observes a late injection rejection after the deadline', async () => {

@@ -6,8 +6,17 @@ import {
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { SessionIdentityService } from '@/agent/deepchat/runtime/sessionIdentityService'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
-import { buildMemoryContextWithManifest } from '@/memory/injection'
-import type { MemoryExecutionToken, MemoryRuntimePort } from '@/memory/injection'
+import {
+  buildMemoryContextWithManifest,
+  DIRECTIVE_TOKEN_CEILING,
+  estimateTokens,
+  resolveInjectionTokenBudget
+} from '@/memory/injection'
+import type {
+  MemoryExecutionToken,
+  MemoryInjectionResult,
+  MemoryRuntimePort
+} from '@/memory/injection'
 import { BUILTIN_DEEPCHAT_AGENT_ID } from '@/agent/repository'
 import { withSoftDeadline } from '@/memory/core/asyncDeadline'
 import { buildEffectiveTapeView } from '@/tape/domain/effectiveView'
@@ -181,18 +190,36 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
       const agentId = this.resolveSessionAgentId(sessionId)
       if (!this.memoryPort.isEnabled(agentId)) return EMPTY_MEMORY_PROMPT_CONTRIBUTION
       const executionToken = this.memoryPort.captureExecutionToken(agentId)
-      const memory = await this.buildMemoryPromptContribution({
+      const totalTokenBudget = resolveInjectionTokenBudget(
+        this.memoryPort.getInjectionTokenBudget(agentId)
+      )
+      const injection = await this.fetchMemoryInjection({
         agentId,
         sessionId,
-        executionToken,
-        query: input.query,
-        messageId: input.messageId
+        query: input.query
       })
       if (!this.canContinueExecution(sessionId, executionToken)) {
         return EMPTY_MEMORY_PROMPT_CONTRIBUTION
       }
-      const directives = this.buildDirectivePromptContribution({
+      const directiveDraft = this.buildDirectivePromptContribution({
         agentId,
+        sessionId,
+        totalTokenBudget
+      })
+      const memory = this.buildMemoryPromptContribution({
+        agentId,
+        sessionId,
+        executionToken,
+        injection,
+        directiveContent: directiveDraft.content,
+        messageId: input.messageId,
+        totalTokenBudget
+      })
+      if (!this.canContinueExecution(sessionId, executionToken)) {
+        return EMPTY_MEMORY_PROMPT_CONTRIBUTION
+      }
+      const directives = this.anchorDirectivePromptContribution({
+        contribution: directiveDraft,
         sessionId,
         executionToken,
         messageId: input.messageId
@@ -207,13 +234,11 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
     }
   }
 
-  private async buildMemoryPromptContribution(input: {
+  private async fetchMemoryInjection(input: {
     agentId: string
     sessionId: string
-    executionToken: MemoryExecutionToken
     query: string
-    messageId?: string | null
-  }): Promise<MemoryContextContribution> {
+  }): Promise<MemoryInjectionResult | null> {
     try {
       const injectionAbort = new AbortController()
       const deadlineResult = await withSoftDeadline(
@@ -227,13 +252,38 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
         logger.warn(
           `[DeepChatAgent] memory injection timed out for session=${input.sessionId}; sending without memory section`
         )
+        return null
+      }
+      return deadlineResult.value
+    } catch (error) {
+      logger.warn(`[DeepChatAgent] memory injection skipped: ${String(error)}`)
+      return null
+    }
+  }
+
+  private buildMemoryPromptContribution(input: {
+    agentId: string
+    sessionId: string
+    executionToken: MemoryExecutionToken
+    injection: MemoryInjectionResult | null
+    directiveContent: string | null
+    messageId?: string | null
+    totalTokenBudget: number
+  }): MemoryContextContribution {
+    try {
+      const assembled = buildMemoryContextWithManifest(input.injection, {
+        totalTokenBudget: input.totalTokenBudget,
+        directiveContent: input.directiveContent
+      })
+      const combinedContent = [assembled.content, input.directiveContent]
+        .filter((content): content is string => Boolean(content))
+        .join('\n\n')
+      if (estimateTokens(combinedContent) > input.totalTokenBudget) {
+        logger.error(
+          `[DeepChatAgent] memory contribution exceeded its budget for session=${input.sessionId}; dropping memory section`
+        )
         return EMPTY_MEMORY_CONTEXT_CONTRIBUTION
       }
-      const injection = deadlineResult.value
-      if (!this.canContinueExecution(input.sessionId, input.executionToken)) {
-        return EMPTY_MEMORY_CONTEXT_CONTRIBUTION
-      }
-      const assembled = buildMemoryContextWithManifest(injection)
       let anchorEntryId: number | null = null
       if (assembled.manifest) {
         if (assembled.manifest.degradations?.length) {
@@ -277,36 +327,55 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
   private buildDirectivePromptContribution(input: {
     agentId: string
     sessionId: string
-    executionToken: MemoryExecutionToken
-    messageId?: string | null
+    totalTokenBudget: number
   }): DirectiveContextContribution {
     try {
-      const assembled = this.memoryPort.buildDirectiveContribution(input.agentId)
-      if (!this.canContinueExecution(input.sessionId, input.executionToken)) {
+      const assembled = this.memoryPort.buildDirectiveContribution(
+        input.agentId,
+        input.totalTokenBudget
+      )
+      if (
+        assembled.content &&
+        estimateTokens(assembled.content) >
+          Math.min(input.totalTokenBudget, DIRECTIVE_TOKEN_CEILING)
+      ) {
+        logger.error(
+          `[DeepChatAgent] directive contribution exceeded its budget for session=${input.sessionId}; dropping directive section`
+        )
         return EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION
-      }
-      let anchorEntryId: number | null = null
-      if (assembled.manifest) {
-        try {
-          const anchor = this.deps.tapeAnchorWriter.appendAnchor({
-            sessionId: input.sessionId,
-            name: 'memory/directive_view_assembled',
-            state: assembled.manifest as unknown as Record<string, unknown>,
-            meta: input.messageId ? { messageId: input.messageId } : undefined
-          })
-          anchorEntryId = anchor.entry_id
-        } catch (error) {
-          logger.warn(`[DeepChatAgent] directive view anchor skipped: ${String(error)}`)
-        }
       }
       return {
         content: assembled.content,
         manifest: assembled.manifest,
-        anchorEntryId
+        anchorEntryId: null
       }
     } catch (error) {
       logger.warn(`[DeepChatAgent] directive contribution skipped: ${String(error)}`)
       return EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION
+    }
+  }
+
+  private anchorDirectivePromptContribution(input: {
+    contribution: DirectiveContextContribution
+    sessionId: string
+    executionToken: MemoryExecutionToken
+    messageId?: string | null
+  }): DirectiveContextContribution {
+    if (!input.contribution.manifest) return input.contribution
+    if (!this.canContinueExecution(input.sessionId, input.executionToken)) {
+      return EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION
+    }
+    try {
+      const anchor = this.deps.tapeAnchorWriter.appendAnchor({
+        sessionId: input.sessionId,
+        name: 'memory/directive_view_assembled',
+        state: input.contribution.manifest as unknown as Record<string, unknown>,
+        meta: input.messageId ? { messageId: input.messageId } : undefined
+      })
+      return { ...input.contribution, anchorEntryId: anchor.entry_id }
+    } catch (error) {
+      logger.warn(`[DeepChatAgent] directive view anchor skipped: ${String(error)}`)
+      return input.contribution
     }
   }
 

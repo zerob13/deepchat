@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   appendMemorySection,
   appendMemorySectionWithManifest,
+  buildMemoryContextWithManifest,
   buildMemorySection,
   DEFAULT_INJECTION_TOKEN_BUDGET,
   estimateTokens,
@@ -345,6 +346,90 @@ describe('Context Assembler token budget (T4)', () => {
     expect(result.manifest).toEqual(
       expect.objectContaining({ selected: [], degradations: ['storeTimeout'] })
     )
+  })
+
+  it('reserves query recall while sharing one hard ceiling with directives', () => {
+    const directiveContent = 'D'.repeat(2_000)
+    const assembled = buildMemoryContextWithManifest(
+      {
+        selfModel: 'P'.repeat(4_000),
+        working: 'W'.repeat(4_000),
+        memories: [{ id: 'query-hit', kind: 'semantic', content: 'the query-specific answer' }],
+        tokenBudget: 1_200
+      },
+      { directiveContent }
+    )
+    const combined = [assembled.content, directiveContent].filter(Boolean).join('\n\n')
+
+    expect(assembled.content).toContain('the query-specific answer')
+    expect(estimateTokens(combined)).toBeLessThanOrEqual(1_200)
+    expect(assembled.manifest?.allocation).toMatchObject({
+      totalTokenBudget: 1_200,
+      used: {
+        directive: estimateTokens(directiveContent)
+      }
+    })
+    expect(assembled.manifest?.allocation?.allocated.queryRecall).toBeGreaterThanOrEqual(
+      assembled.manifest?.allocation?.used.queryRecall ?? Number.POSITIVE_INFINITY
+    )
+  })
+
+  it('uses a viable lane instead of fragmenting a very small shared budget', () => {
+    const assembled = buildMemoryContextWithManifest({
+      selfModel: 'P'.repeat(2_000),
+      working: 'W'.repeat(2_000),
+      memories: [{ id: 'small-hit', kind: 'semantic', content: 'small query fact' }],
+      tokenBudget: 80
+    })
+
+    expect(assembled.content).toContain('small query fact')
+    expect(estimateTokens(assembled.content ?? '')).toBeLessThanOrEqual(80)
+    expect(assembled.manifest?.allocation?.allocated).toMatchObject({
+      persona: 0,
+      working: 0
+    })
+  })
+
+  it('counts dense CJK content and never splits an astral code point while truncating', () => {
+    const assembled = buildMemoryContextWithManifest({
+      selfModel: '😀'.repeat(1_000),
+      working: '记'.repeat(1_000),
+      memories: [],
+      tokenBudget: 160
+    })
+
+    expect(estimateTokens(assembled.content ?? '')).toBeLessThanOrEqual(160)
+    expect(assembled.manifest?.allocation?.demand.working).toBeGreaterThan(
+      assembled.manifest?.allocation?.demand.persona ?? Number.POSITIVE_INFINITY
+    )
+    expect(assembled.content).not.toMatch(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u
+    )
+    expect(assembled.manifest?.allocation?.estimatedTotalTokens).toBe(
+      estimateTokens(assembled.content ?? '')
+    )
+  })
+
+  it('holds the combined ceiling across tight and default mixed-language budgets', () => {
+    for (const totalTokenBudget of [64, 80, 160, 600, 1_200]) {
+      const directiveTokens = Math.min(400, Math.floor(totalTokenBudget / 2))
+      const directiveContent = 'D'.repeat(directiveTokens * 4)
+      const assembled = buildMemoryContextWithManifest(
+        {
+          selfModel: `${'😀'.repeat(800)}${'P'.repeat(800)}`,
+          working: `${'记'.repeat(800)}${'W'.repeat(800)}`,
+          memories: [
+            { id: 'cjk', kind: 'semantic', content: `事实 ${'记'.repeat(400)}` },
+            { id: 'ascii', kind: 'episodic', content: `event ${'x'.repeat(400)}` }
+          ],
+          tokenBudget: totalTokenBudget
+        },
+        { directiveContent }
+      )
+      const combined = [assembled.content, directiveContent].filter(Boolean).join('\n\n')
+
+      expect(estimateTokens(combined)).toBeLessThanOrEqual(totalTokenBudget)
+    }
   })
 })
 

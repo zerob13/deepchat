@@ -179,6 +179,32 @@ describe('MemoryTurnDialog', () => {
     expect(wrapper.text()).not.toContain('db down')
   })
 
+  it('shows the assembled contribution budget allocation when available', () => {
+    const next = makeTurn()
+    next.manifest.allocation = {
+      policyVersion: 1,
+      totalTokenBudget: 1000,
+      overheadTokens: 40,
+      demand: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+      allocated: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+      used: { directive: 49, persona: 90, working: 180, queryRecall: 450 },
+      borrowed: { directive: 0, persona: 0, working: 8, queryRecall: 194 },
+      unallocatedTokens: 110,
+      estimatedTotalTokens: 809,
+      unusedTokens: 191,
+      constrained: false
+    }
+    memoryActivity.selectedTurn = next
+
+    const wrapper = mount(MemoryTurnDialog)
+
+    expect(wrapper.get('[data-testid="memory-budget-allocation"]').text()).toContain(
+      'chat.memory.turn.allocation'
+    )
+    expect(wrapper.get('[data-testid="memory-budget-allocation"]').text()).toContain('809 / 1000')
+    expect(wrapper.get('[data-testid="memory-budget-allocation"]').text()).toContain('450 / 500')
+  })
+
   it('disables forget mutations in read-only mode', async () => {
     const wrapper = mount(MemoryTurnDialog, {
       props: {

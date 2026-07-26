@@ -3,6 +3,7 @@ import {
   appendMemorySectionWithManifest,
   buildDirectiveContribution,
   buildMemorySection,
+  resolveInjectionTokenBudget,
   type MemoryExecutionToken,
   type MemoryInjectionOptions,
   type MemoryInjectionPayload,
@@ -535,8 +536,17 @@ export class MemoryService implements MemoryRuntimePort {
     return this.retrieval.buildInjection(agentId, query, options)
   }
 
-  buildDirectiveContribution(agentId: string) {
-    return buildDirectiveContribution(this.directives.listActiveDirectives(agentId))
+  getInjectionTokenBudget(agentId: string): number {
+    this.runtime.assertSafeAgentId(agentId)
+    return resolveInjectionTokenBudget(
+      this.policy.resolveAgentConfig(agentId)?.memoryInjectionTokenBudget
+    )
+  }
+
+  buildDirectiveContribution(agentId: string, totalTokenBudget?: number) {
+    return buildDirectiveContribution(this.directives.listActiveDirectives(agentId), {
+      tokenBudget: totalTokenBudget ?? this.getInjectionTokenBudget(agentId)
+    })
   }
 
   recordInjectionAccess(agentId: string, memoryIds: string[], accessedAt?: number): void {

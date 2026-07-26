@@ -4,12 +4,11 @@ import type {
 } from '@shared/types/agent-memory'
 
 import type { AgentMemoryDirectiveRow } from '../domain/directives'
+import { DIRECTIVE_TOKEN_CEILING } from './contributionBudget'
 import { estimateTokens } from './injectionPort'
 
 export const DIRECTIVE_CONTRIBUTION_POLICY_VERSION = 1
-export const DEFAULT_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET = 512
-const MIN_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET = 128
-const MAX_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET = 2_048
+export const DEFAULT_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET = DIRECTIVE_TOKEN_CEILING
 const MAX_DIRECTIVE_ITEM_TOKEN_BUDGET = 192
 
 const DIRECTIVE_NOTICE =
@@ -32,6 +31,7 @@ export interface DirectiveContributionManifest {
     reason: 'item_budget' | 'total_budget'
   }>
   tokenBudget: number
+  totalTokenBudget?: number
   itemTokenBudget: number
   estimatedTokens: number
 }
@@ -68,15 +68,11 @@ function renderContribution(directives: readonly RenderedDirective[]): string {
   ].join('\n')
 }
 
-function resolveTokenBudget(value: number | null | undefined): number {
+function resolveTotalTokenBudget(value: number | null | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return DEFAULT_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET
   }
-  const floored = Math.floor(value)
-  if (floored < MIN_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET) {
-    return DEFAULT_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET
-  }
-  return Math.min(floored, MAX_DIRECTIVE_CONTRIBUTION_TOKEN_BUDGET)
+  return Math.max(0, Math.floor(value))
 }
 
 function compareDirectivePriority(
@@ -106,7 +102,8 @@ export function buildDirectiveContribution(
   rows: readonly AgentMemoryDirectiveRow[],
   options: { tokenBudget?: number | null } = {}
 ): DirectiveContributionResult {
-  const tokenBudget = resolveTokenBudget(options.tokenBudget)
+  const totalTokenBudget = resolveTotalTokenBudget(options.tokenBudget)
+  const tokenBudget = Math.min(totalTokenBudget, DIRECTIVE_TOKEN_CEILING)
   const seenIds = new Set<string>()
   const activeRows = rows
     .filter((row) => row.status === 'active')
@@ -147,6 +144,7 @@ export function buildDirectiveContribution(
       })),
       dropped,
       tokenBudget,
+      totalTokenBudget,
       itemTokenBudget: MAX_DIRECTIVE_ITEM_TOKEN_BUDGET,
       estimatedTokens: content ? estimateTokens(content) : 0
     }

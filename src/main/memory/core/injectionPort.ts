@@ -8,6 +8,11 @@ import type {
   MemoryReflectionResult
 } from '../types'
 import type { DirectiveContributionResult } from './directiveContribution'
+import {
+  allocateMemoryContributionBudget,
+  type MemoryContributionBudgetManifest,
+  type MemoryContributionTokenMap
+} from './contributionBudget'
 
 export interface MemoryInjectionMemory {
   id: string
@@ -50,6 +55,7 @@ export interface MemoryInjectionManifest {
   dropped: Array<{ id: string; kind: AgentMemoryKind; reason: 'budget' }>
   tokenBudget: number
   estimatedTokens: number
+  allocation?: MemoryContributionBudgetManifest
   queryHash?: string
   degradations?: MemoryRetrievalDegradationCause[]
 }
@@ -118,8 +124,14 @@ export interface MemoryRuntimePort extends MemoryInjectionPort {
   captureExecutionToken(agentId: string): MemoryExecutionToken
   canContinueExecution(token: MemoryExecutionToken): boolean
 
+  // Returns the single configured ceiling shared by all memory-plane contributions for this turn.
+  getInjectionTokenBudget(agentId: string): number
+
   // Builds the bounded trusted-instruction contribution independently from recalled memory.
-  buildDirectiveContribution(agentId: string): DirectiveContributionResult
+  buildDirectiveContribution(
+    agentId: string,
+    totalTokenBudget?: number
+  ): DirectiveContributionResult
 
   observeExtractionQueue?(depth: number, oldestQueuedAt: number | null): void
 
@@ -217,14 +229,15 @@ function fitSectionWithinBudget(
     estimateTokens([...sections, buildSection(header, candidate)].join('\n\n'))
   if (projectedTokens(body) <= budget) return buildSection(header, body)
   if (projectedTokens('') > budget) return null
+  const codePoints = [...body]
   let lo = 0
-  let hi = body.length
+  let hi = codePoints.length
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2)
-    if (projectedTokens(body.slice(0, mid)) <= budget) lo = mid
+    if (projectedTokens(codePoints.slice(0, mid).join('')) <= budget) lo = mid
     else hi = mid - 1
   }
-  return buildSection(header, body.slice(0, lo))
+  return buildSection(header, codePoints.slice(0, lo).join(''))
 }
 
 const MIN_SECTION_BODY_CHARS = 24
@@ -232,7 +245,10 @@ const MIN_SECTION_BODY_CHARS = 24
 // Smallest non-empty body prefix used to seed a high-priority section so a kept section is never
 // reduced to a bare header/container shell while the sibling section still carries body.
 function minimalSectionBody(body: string): string {
-  return body.length > MIN_SECTION_BODY_CHARS ? body.slice(0, MIN_SECTION_BODY_CHARS) : body
+  const codePoints = [...body]
+  return codePoints.length > MIN_SECTION_BODY_CHARS
+    ? codePoints.slice(0, MIN_SECTION_BODY_CHARS).join('')
+    : body
 }
 
 // Admits persona and working under a hard budget. Priority is persona > working, but when both are
@@ -358,22 +374,247 @@ export function buildMemorySection(
   return assembleMemorySection(normalizeMemoryInjectionInput(payload)).section
 }
 
+export interface MemoryContextAssemblyOptions {
+  totalTokenBudget?: number | null
+  directiveContent?: string | null
+}
+
+interface RenderedRecallCandidate {
+  memory: MemoryInjectionMemory
+  line: string
+}
+
+function buildRecallCandidates(
+  memories: readonly MemoryInjectionMemory[]
+): RenderedRecallCandidate[] {
+  const recalled = memories.filter((memory) => memory.kind !== 'working')
+  const ordered = [
+    ...recalled.filter((memory) => memory.kind !== 'episodic'),
+    ...recalled.filter((memory) => memory.kind === 'episodic')
+  ]
+  return ordered.map((memory) => {
+    const rendered = memory.temporalAnnotation
+      ? `${memory.content} ${memory.temporalAnnotation}`
+      : memory.content
+    return { memory, line: `- ${sanitizeForInjection(rendered)}` }
+  })
+}
+
+function fitStandaloneSection(header: string, body: string, tokenBudget: number): string | null {
+  if (!body || tokenBudget <= 0) return null
+  const full = buildSection(header, body)
+  if (estimateTokens(full) <= tokenBudget) return full
+  const codePoints = [...body]
+  const shellWeight = estimateTokenWeight(buildSection(header, ''))
+  const prefixWeights = Array.from({ length: codePoints.length + 1 }, () => 0)
+  prefixWeights[0] = 0
+  for (let index = 0; index < codePoints.length; index += 1) {
+    prefixWeights[index + 1] = prefixWeights[index] + estimateTokenWeight(codePoints[index])
+  }
+  let lo = 0
+  let hi = codePoints.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (Math.ceil(shellWeight + prefixWeights[mid]) <= tokenBudget) lo = mid
+    else hi = mid - 1
+  }
+  if (lo === 0) return null
+  return buildSection(header, codePoints.slice(0, lo).join(''))
+}
+
+function toSelectedMemory(
+  memory: MemoryInjectionMemory
+): MemoryInjectionManifest['selected'][number] {
+  return {
+    id: memory.id,
+    kind: memory.kind,
+    score: memory.score,
+    sources: memory.sources,
+    similarity: memory.similarity,
+    breakdown: memory.breakdown
+  }
+}
+
+function fitRecallSection(
+  candidates: readonly RenderedRecallCandidate[],
+  tokenBudget: number
+): {
+  section: string | null
+  selected: MemoryInjectionManifest['selected']
+  dropped: MemoryInjectionManifest['dropped']
+} {
+  const lines: string[] = []
+  const selected: MemoryInjectionManifest['selected'] = []
+  const dropped: MemoryInjectionManifest['dropped'] = []
+  const shellWeight = estimateTokenWeight(buildSection(MEMORIES_HEADER, ''))
+  const lineBreakWeight = estimateTokenWeight('\n')
+  let bodyWeight = 0
+  for (const candidate of candidates) {
+    const nextBodyWeight =
+      bodyWeight + (lines.length > 0 ? lineBreakWeight : 0) + estimateTokenWeight(candidate.line)
+    if (tokenBudget <= 0 || Math.ceil(shellWeight + nextBodyWeight) > tokenBudget) {
+      dropped.push({
+        id: candidate.memory.id,
+        kind: candidate.memory.kind,
+        reason: 'budget'
+      })
+      continue
+    }
+    lines.push(candidate.line)
+    bodyWeight = nextBodyWeight
+    selected.push(toSelectedMemory(candidate.memory))
+  }
+  return {
+    section: lines.length > 0 ? buildSection(MEMORIES_HEADER, lines.join('\n')) : null,
+    selected,
+    dropped
+  }
+}
+
+function tokenMap(input: Partial<MemoryContributionTokenMap>): MemoryContributionTokenMap {
+  return {
+    directive: input.directive ?? 0,
+    persona: input.persona ?? 0,
+    working: input.working ?? 0,
+    queryRecall: input.queryRecall ?? 0
+  }
+}
+
+function assembleBudgetedMemoryContext(
+  payload: MemoryInjectionPayload,
+  options: MemoryContextAssemblyOptions
+): {
+  content: string | null
+  manifest: Omit<MemoryInjectionManifest, 'queryHash' | 'degradations'>
+} {
+  const totalTokenBudget = resolveInjectionTokenBudget(
+    options.totalTokenBudget ?? payload.tokenBudget
+  )
+  const directiveContent = options.directiveContent || ''
+  const personaBody = payload.selfModel ? sanitizeForInjection(payload.selfModel) : ''
+  const workingBody = payload.working ? sanitizeForInjection(payload.working) : ''
+  const recallCandidates = buildRecallCandidates(payload.memories)
+
+  const personaDemand = personaBody
+    ? estimateTokens(buildSection(SELF_MODEL_HEADER, personaBody))
+    : 0
+  const workingDemand = workingBody
+    ? estimateTokens(buildSection(WORKING_MEMORY_HEADER, workingBody))
+    : 0
+  const recallDemand =
+    recallCandidates.length > 0
+      ? estimateTokens(
+          buildSection(
+            MEMORIES_HEADER,
+            recallCandidates.map((candidate) => candidate.line).join('\n')
+          )
+        )
+      : 0
+  const personaMinimum = personaBody
+    ? estimateTokens(buildSection(SELF_MODEL_HEADER, minimalSectionBody(personaBody)))
+    : 0
+  const workingMinimum = workingBody
+    ? estimateTokens(buildSection(WORKING_MEMORY_HEADER, minimalSectionBody(workingBody)))
+    : 0
+  const recallMinimum =
+    recallCandidates.length > 0
+      ? Math.min(
+          ...recallCandidates.map((candidate) =>
+            estimateTokens(buildSection(MEMORIES_HEADER, candidate.line))
+          )
+        )
+      : 0
+  const memoryLaneCount = [personaDemand, workingDemand, recallDemand].filter(
+    (demand) => demand > 0
+  ).length
+  const overheadDemand =
+    memoryLaneCount > 0
+      ? estimateTokens(
+          `${READONLY_NOTICE}${'\n\n'.repeat(memoryLaneCount + (directiveContent ? 1 : 0))}`
+        )
+      : 0
+  const allocation = allocateMemoryContributionBudget({
+    totalTokenBudget,
+    overheadTokens: overheadDemand,
+    demand: {
+      directive: directiveContent ? estimateTokens(directiveContent) : 0,
+      persona: personaDemand,
+      working: workingDemand,
+      queryRecall: recallDemand
+    },
+    minimumViable: {
+      persona: personaMinimum,
+      working: workingMinimum,
+      queryRecall: recallMinimum
+    }
+  })
+
+  const personaSection = fitStandaloneSection(
+    SELF_MODEL_HEADER,
+    personaBody,
+    allocation.allocated.persona
+  )
+  const workingSection = fitStandaloneSection(
+    WORKING_MEMORY_HEADER,
+    workingBody,
+    allocation.allocated.working
+  )
+  const recall = fitRecallSection(recallCandidates, allocation.allocated.queryRecall)
+  const sections = [personaSection, workingSection, recall.section].filter(
+    (section): section is string => Boolean(section)
+  )
+  const content = sections.length > 0 ? `${READONLY_NOTICE}\n\n${sections.join('\n\n')}` : null
+  const combinedContent = [content, directiveContent].filter(Boolean).join('\n\n')
+  const estimatedTotalTokens = combinedContent ? estimateTokens(combinedContent) : 0
+  const used = tokenMap({
+    directive: directiveContent ? estimateTokens(directiveContent) : 0,
+    persona: personaSection ? estimateTokens(personaSection) : 0,
+    working: workingSection ? estimateTokens(workingSection) : 0,
+    queryRecall: recall.section ? estimateTokens(recall.section) : 0
+  })
+  const allocationManifest: MemoryContributionBudgetManifest = {
+    ...allocation,
+    used,
+    estimatedTotalTokens,
+    unusedTokens: Math.max(0, totalTokenBudget - estimatedTotalTokens)
+  }
+
+  return {
+    content,
+    manifest: {
+      policyVersion: MEMORY_INJECTION_POLICY_VERSION,
+      selected: recall.selected,
+      dropped: recall.dropped,
+      tokenBudget: totalTokenBudget,
+      estimatedTokens: content ? estimateTokens(content) : 0,
+      allocation: allocationManifest
+    }
+  }
+}
+
 export function buildMemoryContextWithManifest(
-  result: MemoryInjectionResult | MemoryInjectionPayload | null
+  result: MemoryInjectionResult | MemoryInjectionPayload | null,
+  options: MemoryContextAssemblyOptions = {}
 ): { content: string | null; manifest: MemoryInjectionManifest | null } {
   if (!result) return { content: null, manifest: null }
   const payload = normalizeMemoryInjectionInput(result)
-  const assembled = assembleMemorySection(payload)
+  if (!payload) return { content: null, manifest: null }
+  const assembled = assembleBudgetedMemoryContext(payload, options)
   const baseManifest = 'manifest' in result ? result.manifest : assembled.manifest
-  const manifest = { ...baseManifest, ...assembled.manifest }
-  if (!assembled.section) {
+  const manifest: MemoryInjectionManifest = { ...baseManifest, ...assembled.manifest }
+  if (!assembled.content) {
     return {
       content: null,
-      manifest: manifest.degradations?.length ? manifest : null
+      manifest:
+        manifest.degradations?.length ||
+        manifest.dropped.length > 0 ||
+        manifest.allocation?.constrained
+          ? manifest
+          : null
     }
   }
   return {
-    content: `${READONLY_NOTICE}\n\n${assembled.section}`,
+    content: assembled.content,
     manifest
   }
 }

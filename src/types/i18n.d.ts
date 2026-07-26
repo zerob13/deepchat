@@ -1016,6 +1016,13 @@ declare module 'vue-i18n' {
         dropped: string
         tokens: string
         budget: string
+        allocation: string
+        directive: string
+        persona: string
+        working: string
+        queryRecall: string
+        overhead: string
+        unused: string
         countOnly: string
         unavailable: string
         noSelectedDetails: string
