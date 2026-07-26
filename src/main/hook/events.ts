@@ -31,23 +31,34 @@ export type HookUsageFacts = Readonly<Record<string, number>>
 
 export type HookPermissionFacts = Readonly<Record<string, unknown>>
 
+type HookFactKey = 'promptPreview' | 'tool' | 'permission' | 'stop' | 'error' | 'usage'
+
+/**
+ * Closes a variant against every fact it does not declare. Excess property checking alone only
+ * refuses surplus fields on a fresh literal, so a variable carrying both `stop` and `tool` would
+ * otherwise satisfy the union.
+ */
+type Exclusive<TBody> = TBody & {
+  readonly [TKey in Exclude<HookFactKey, keyof TBody>]?: never
+}
+
 export type HookEventBody =
-  | { readonly event: 'SessionStart'; readonly promptPreview?: string }
-  | { readonly event: 'UserPromptSubmit'; readonly promptPreview: string }
-  | { readonly event: 'PreToolUse'; readonly tool: HookToolFacts }
-  | { readonly event: 'PostToolUse'; readonly tool: HookToolFacts }
-  | { readonly event: 'PostToolUseFailure'; readonly tool: HookToolFacts }
-  | {
+  | Exclusive<{ readonly event: 'SessionStart'; readonly promptPreview?: string }>
+  | Exclusive<{ readonly event: 'UserPromptSubmit'; readonly promptPreview: string }>
+  | Exclusive<{ readonly event: 'PreToolUse'; readonly tool: HookToolFacts }>
+  | Exclusive<{ readonly event: 'PostToolUse'; readonly tool: HookToolFacts }>
+  | Exclusive<{ readonly event: 'PostToolUseFailure'; readonly tool: HookToolFacts }>
+  | Exclusive<{
       readonly event: 'PermissionRequest'
       readonly tool: HookToolFacts
       readonly permission: HookPermissionFacts
-    }
-  | { readonly event: 'Stop'; readonly stop: HookStopFacts }
-  | {
+    }>
+  | Exclusive<{ readonly event: 'Stop'; readonly stop: HookStopFacts }>
+  | Exclusive<{
       readonly event: 'SessionEnd'
       readonly usage?: HookUsageFacts | null
       readonly error?: HookErrorFacts | null
-    }
+    }>
 
 export type HookEvent = HookEventBody & { readonly session: HookSessionFacts }
 
@@ -61,13 +72,13 @@ export type HookEventCoverage = [
   AssertNever<Exclude<HookEventBody['event'], HookEventName>>
 ]
 
-/**
- * Pins the combinations the union must refuse. Surplus fields on an event literal are refused by
- * excess property checking at the emit site, which no type-level assertion can express.
- */
+/** Pins the combinations the union must refuse, for both missing and foreign facts. */
 export type HookEventBodyRejections = [
   AssertTrue<Rejects<{ event: 'PreToolUse' }>>,
+  AssertTrue<Rejects<{ event: 'UserPromptSubmit' }>>,
   AssertTrue<Rejects<{ event: 'PermissionRequest'; tool: HookToolFacts }>>,
-  AssertTrue<Rejects<{ event: 'Stop'; tool: HookToolFacts }>>,
-  AssertTrue<Rejects<{ event: 'UserPromptSubmit' }>>
+  AssertTrue<Rejects<{ event: 'Stop'; stop: HookStopFacts; tool: HookToolFacts }>>,
+  AssertTrue<Rejects<{ event: 'PostToolUse'; tool: HookToolFacts; stop: HookStopFacts }>>,
+  AssertTrue<Rejects<{ event: 'SessionEnd'; stop: HookStopFacts }>>,
+  AssertTrue<Rejects<{ event: 'SessionStart'; promptPreview: string; usage: HookUsageFacts }>>
 ]
