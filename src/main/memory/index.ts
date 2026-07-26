@@ -65,6 +65,7 @@ import {
   resolveMemoryEmbedding,
   type MemoryExecutionConfigObservation
 } from './core/executionIdentity'
+import { createMemoryTopicSuppressionPolicy } from './core/directivePolicy'
 import type {
   MemoryAgentPolicyPort,
   MemoryPerfObserver,
@@ -221,6 +222,7 @@ export class MemoryService implements MemoryRuntimePort {
           dimensions,
           memoryIds
         ),
+      getActiveSuppressionTopics: (agentId) => this.directives.listActiveSuppressionTopics(agentId),
       diagnostics: this.diagnostics
     })
     this.reflection = new ReflectionService({
@@ -536,7 +538,13 @@ export class MemoryService implements MemoryRuntimePort {
     if (!this.runtime.canReadAgentMemory(agentId)) return
     const uniqueIds = [...new Set(memoryIds.map((id) => id.trim()).filter(Boolean))]
     if (!uniqueIds.length) return
-    const ownedIds = this.repository.listByIds(agentId, uniqueIds).map((row) => row.id)
+    const suppressionPolicy = createMemoryTopicSuppressionPolicy(
+      this.directives.listActiveSuppressionTopics(agentId)
+    )
+    const ownedIds = this.repository
+      .listByIds(agentId, uniqueIds)
+      .filter((row) => !suppressionPolicy.suppresses(row.content))
+      .map((row) => row.id)
     if (!ownedIds.length) return
     this.repository.recordAccessBatch(ownedIds, accessedAt ?? this.runtime.now())
   }

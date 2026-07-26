@@ -372,6 +372,116 @@ describe('MemoryService recall + injection', () => {
     expect(recordAccess).toHaveBeenCalledWith(['current-a', 'current-b'], expect.any(Number))
   })
 
+  it('filters active suppressed topics before top-k selection and recall access accounting', async () => {
+    const config: DeepChatAgentConfig = {
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 2 }
+    }
+    const { presenter, repo } = makePresenter(config)
+    for (let index = 0; index < 4; index += 1) {
+      repo.insert({
+        id: `saffron-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis Project Saffron detail ${index}`,
+        createdAt: 10_000 - index
+      })
+    }
+    repo.insert({
+      id: 'safe-a',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis safe fact a',
+      createdAt: 1_000
+    })
+    repo.insert({
+      id: 'safe-b',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis safe fact b',
+      createdAt: 900
+    })
+    presenter.createDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+    const recordAccess = vi.spyOn(repo, 'recordAccessBatch')
+
+    const recalled = await presenter.recall('a', 'redis')
+
+    expect(recalled.map((item) => item.id)).toEqual(['safe-a', 'safe-b'])
+    expect(recordAccess).toHaveBeenCalledWith(['safe-a', 'safe-b'], expect.any(Number))
+    expect(repo.getById('saffron-0')?.access_count).toBe(0)
+  })
+
+  it('keeps draft suppressions inert and revalidates runtime access against active directives', async () => {
+    const { presenter, repo } = makePresenter({
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 4 }
+    })
+    repo.insert({
+      id: 'saffron',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis Project Saffron detail'
+    })
+    repo.insert({
+      id: 'safe',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis public detail'
+    })
+    const draft = presenter.suggestDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+
+    expect((await presenter.recall('a', 'redis')).map((item) => item.id)).toContain('saffron')
+    const suppressedAccessBeforeApproval = repo.getById('saffron')?.access_count
+    expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
+    expect((await presenter.searchMemories('a', 'redis')).map((item) => item.row.id)).toEqual([
+      'safe'
+    ])
+    const injection = await presenter.buildInjection('a', 'redis')
+    expect(injection?.payload.memories.map((memory) => memory.id)).toEqual(['safe'])
+
+    presenter.recordInjectionAccess('a', ['saffron', 'safe'], 1_234)
+    expect(repo.getById('saffron')?.access_count).toBe(suppressedAccessBeforeApproval)
+    expect(repo.getById('safe')?.access_count).toBe(2)
+    expect(repo.getById('safe')?.last_accessed).toBe(1_234)
+  })
+
+  it('cancels a stale recall when suppression is approved during asynchronous retrieval', async () => {
+    const { presenter, repo, getEmbeddings } = makePresenter(enabledConfig)
+    const [memoryId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'redis Project Saffron detail' }],
+      { agentId: 'a' }
+    )
+    await presenter.processPendingEmbeddings('a')
+    const draft = presenter.suggestDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+    const pendingEmbedding = deferred<number[][]>()
+    const callsBeforeRecall = getEmbeddings.mock.calls.length
+    getEmbeddings.mockImplementationOnce(() => pendingEmbedding.promise)
+
+    const recall = presenter.recall('a', 'redis')
+    await vi.waitFor(() => {
+      expect(getEmbeddings).toHaveBeenCalledTimes(callsBeforeRecall + 1)
+    })
+    expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
+    pendingEmbedding.resolve([textToVector('redis')])
+
+    await expect(recall).resolves.toEqual([])
+    expect(repo.getById(memoryId)?.access_count).toBe(0)
+  })
+
   it('records injection access only for rows owned by the requested agent', () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     const [aId] = presenter.writeMemoriesSync([{ kind: 'semantic', content: 'a redis fact' }], {

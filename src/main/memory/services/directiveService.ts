@@ -45,6 +45,12 @@ export class DirectiveService {
     return this.ports.repository.listActiveDirectives(agentId, ACTIVE_DIRECTIVE_READ_LIMIT)
   }
 
+  listActiveSuppressionTopics(agentId: string): string[] {
+    return this.listActiveDirectives(agentId).flatMap((row) =>
+      row.kind === 'suppress_topic' && row.normalized_topic ? [row.normalized_topic] : []
+    )
+  }
+
   createExplicitDirective(
     agentId: string,
     input: MemoryDirectiveInput,

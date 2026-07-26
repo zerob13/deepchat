@@ -6,7 +6,11 @@ import { MemoryRuntimeContext } from '@/memory/context'
 import { VectorStoreQueryTimeoutError } from '@/memory/domain/types'
 import { RetrievalService } from '@/memory/services/retrievalService'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
-import { createFakeRepository, FakeVectorStore } from './support/memoryFakes'
+import {
+  createFakeRepository,
+  FakeDirectiveRepository,
+  FakeVectorStore
+} from './support/memoryFakes'
 import { createControlledPromise } from './serviceHarness'
 
 function createPresenter(options: { enabled?: boolean; embedding?: boolean } = {}) {
@@ -16,6 +20,7 @@ function createPresenter(options: { enabled?: boolean; embedding?: boolean } = {
   let embedding = options.embedding === false ? undefined : { providerId: 'p', modelId: 'm' }
   const presenter = new MemoryService({
     repository,
+    directiveRepository: new FakeDirectiveRepository(),
     executeWithRateLimit: vi.fn(async () => undefined),
     resolveAgentConfig: () => ({
       memoryEnabled: options.enabled !== false,
@@ -240,6 +245,7 @@ describe('RetrievalService diagnostics', () => {
       backfillEmbeddings: async () => undefined,
       isReindexing: () => false,
       deletePrunableVectorsForMemoryIds: async () => [],
+      getActiveSuppressionTopics: () => [],
       diagnostics: { recordRecall }
     })
 

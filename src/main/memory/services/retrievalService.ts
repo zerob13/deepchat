@@ -16,6 +16,10 @@ import { withSoftDeadline } from '../core/asyncDeadline'
 import { isMemoryProviderCancellationError } from '../core/providerCancellation'
 import { evaluateMemoryTemporalPolicy, temporalMetadataFromRow } from '../core/temporal'
 import {
+  createMemoryTopicSuppressionPolicy,
+  directiveSuppressionAppliesToPurpose
+} from '../core/directivePolicy'
+import {
   buildRecallKeywordQuery,
   extractRecallKeywordCandidates,
   selectRecallKeywordTerms
@@ -67,6 +71,7 @@ type QueryEmbeddingInFlight = {
 
 const LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER = 2
 const TEMPORAL_RETRIEVAL_CANDIDATE_MULTIPLIER = 4
+const DIRECTIVE_RETRIEVAL_CANDIDATE_MULTIPLIER = 4
 
 function temporalPolicyModeForPurpose(purpose: MemoryRetrievalPurpose): MemoryTemporalPolicyMode {
   return purpose === 'recall' || purpose === 'injection' ? 'current' : 'evidence'
@@ -182,6 +187,7 @@ export class RetrievalService {
         dimensions: number,
         memoryIds: string[]
       ) => Promise<string[]>
+      getActiveSuppressionTopics: (agentId: string) => readonly string[]
       diagnostics?: {
         recordRecall(
           agentId: string,
@@ -607,6 +613,7 @@ export class RetrievalService {
     let selected = 0
     let activeStage: MemoryRecallLatencyStage | 'idle' = 'idle'
     let operationFence: MemoryOperationFence | null = null
+    let readEpoch: number | null = null
     try {
       if (!this.ctx.canReadAgentMemory(agentId)) {
         outcome = 'disabled'
@@ -622,16 +629,24 @@ export class RetrievalService {
         return []
       }
       const normalizedKeywordQuery = (options.keywordQuery ?? normalizedQuery).trim()
+      const directiveSuppressionApplies = directiveSuppressionAppliesToPurpose(options.purpose)
+      activeStage = 'authoritativeRevalidation'
+      const suppressionTopics = directiveSuppressionApplies
+        ? this.ports.getActiveSuppressionTopics(agentId)
+        : []
+      if (directiveSuppressionApplies) readEpoch = this.ctx.captureReadEpoch(agentId)
 
       const effectiveTopK =
         options.topKOverride !== undefined ? clampRetrievalTopK(options.topKOverride) : topK
       const temporalMode = temporalPolicyModeForPurpose(options.purpose)
       const fusionCandidateLimit = effectiveTopK * LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER
-      const candidateLimit =
-        effectiveTopK *
-        (temporalMode === 'current'
+      const candidateMultiplier =
+        temporalMode === 'current'
           ? TEMPORAL_RETRIEVAL_CANDIDATE_MULTIPLIER
-          : LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER)
+          : suppressionTopics.length > 0
+            ? DIRECTIVE_RETRIEVAL_CANDIDATE_MULTIPLIER
+            : LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER
+      const candidateLimit = effectiveTopK * candidateMultiplier
       const keywordStartedAt = performance.now()
       activeStage = 'keyword'
       const keywordSearch = normalizedKeywordQuery
@@ -783,7 +798,10 @@ export class RetrievalService {
         }
       }
 
-      if (!this.ctx.canContinueOperation(operationFence)) {
+      if (
+        !this.ctx.canContinueOperation(operationFence) ||
+        (readEpoch !== null && !this.ctx.isReadEpochCurrent(agentId, readEpoch))
+      ) {
         outcome = 'cancelled'
         return []
       }
@@ -819,15 +837,26 @@ export class RetrievalService {
             : null
         })
         .filter((match): match is { row: AgentMemoryRow; similarity: number } => match !== null)
+      const suppressionPolicy = directiveSuppressionApplies
+        ? createMemoryTopicSuppressionPolicy(suppressionTopics)
+        : null
+      const directiveEligibleFtsRows = suppressionPolicy
+        ? structurallyValidFtsRows.filter((row) => !suppressionPolicy.suppresses(row.content))
+        : structurallyValidFtsRows
+      const directiveEligibleVecMatches = suppressionPolicy
+        ? structurallyValidVecMatches.filter(
+            (match) => !suppressionPolicy.suppresses(match.row.content)
+          )
+        : structurallyValidVecMatches
       const authoritativeFtsRows = selectTemporalCandidates(
-        structurallyValidFtsRows,
+        directiveEligibleFtsRows,
         (row) => row,
         fusionCandidateLimit,
         now,
         temporalMode
       )
       const authoritativeVecMatches = selectTemporalCandidates(
-        structurallyValidVecMatches,
+        directiveEligibleVecMatches,
         (match) => match.row,
         fusionCandidateLimit,
         now,
