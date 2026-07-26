@@ -12,6 +12,7 @@
     "test/main/memory/maintenanceService.test.ts",
     "test/main/memory/maintenanceDiagnostics.test.ts",
     "test/main/memory/managementService.test.ts",
+    "test/main/memory/memoryBehavior.eval.test.ts",
     "test/main/memory/personaService.test.ts",
     "test/main/memory/reflectionService.test.ts",
     "test/main/memory/reindexResult.test.ts",

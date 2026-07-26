@@ -4,7 +4,7 @@
 
 - [x] Record the non-versioned architecture goal and invariants.
 - [x] Define temporal, directive, lineage, forgetting, projection, and scope contracts.
-- [ ] Add deterministic four-axis behavioral fixtures and a CI test harness.
+- [x] Add deterministic four-axis behavioral fixtures and a CI test harness.
 - [x] Add a domain clock without coupling scheduler/performance time to business time.
 
 ## 1. Temporal claims
