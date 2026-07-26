@@ -1,0 +1,298 @@
+# Agent Memory Evolution
+
+## Status
+
+- State: In progress
+- Branch: `feat/agent-memory-evolution`
+- Classification: Architecture evolution with user-visible behavior
+- Naming: This work does not assign a numeric version to the Agent Memory system. Existing `v1` and
+  `v2` names remain scoped to the DuckDB vector-store format.
+
+## Context
+
+DeepChat already has a mature per-agent memory subsystem:
+
+- Tape-backed extraction with provenance;
+- SQLite rows as durable synthesized memory;
+- FTS and per-agent DuckDB vector retrieval;
+- background conflict handling, consolidation, reflection, persona drafting, and decay;
+- a rebuildable working-memory projection;
+- bounded, sanitized user-role injection;
+- management, diagnostics, and retrieval-quality gates.
+
+The remaining quality failures are semantic rather than infrastructural:
+
+1. A fact can remain highly ranked after it has stopped being true because temporal validity is not
+   represented.
+2. Evidence confidence and temporal-parse confidence share no explicit boundary.
+3. Repeated confirmation monotonically raises factual confidence, so overloading it with temporal
+   confidence would make a bad date interpretation increasingly authoritative.
+4. Derived claims have source data in operational audit events, but audit retention is not a durable
+   lineage contract.
+5. Explicit deletion hard-deletes the row and releases the provenance key, allowing the same source
+   span to recreate the memory.
+6. User directives cannot safely share the read-only memory container: memory content is untrusted
+   data, while an executable directive is trusted only after an explicit user action.
+7. The current working blob is rebuildable but does not expose temporal state or allocate its budget
+   against query recall through one explicit policy.
+8. `user_scope` exists without a complete applicability contract.
+
+The design is informed by the behavior demonstrated in OpenAI's memory research, especially
+carry-forward, preference adherence, and temporal correctness. It does not claim to reproduce
+OpenAI's undisclosed implementation.
+
+## Goal
+
+Make Agent Memory behave as a time-aware, correctable, auditable set of atomic claims while
+preserving the existing ownership, failure-isolation, and bounded-runtime contracts.
+
+The runtime model is:
+
+```text
+authoritative atomic claims
+  + durable derivation edges
+  + exact deletion tombstones
+  + explicit trusted directives
+  -> rebuildable working projection
+  + query-dependent retrieval
+  -> bounded typed user-role contributions
+```
+
+## Terminology
+
+### Claim
+
+An existing non-internal `agent_memory` row is the authoritative atomic claim. This work evolves the
+row contract; it does not introduce a second fact table or a summary that can diverge from the row.
+
+### Projection
+
+A projection is derived, replaceable state such as the working-memory row, FTS mirror, vector
+sidecar, or UI summary. A projection is never an independent fact source.
+
+### Directive
+
+A directive is an instruction the runtime may execute. It is stored outside `agent_memory` and is
+active only after explicit user creation or approval. Model-derived text may create a draft, never
+an active directive.
+
+## Required invariants
+
+1. `agent_memory` remains the sole authoritative store for remembered facts.
+2. Existing rows migrate to an atemporal, agent-scoped interpretation without changing their recall
+   eligibility. The historically non-enforced `user_scope` value remains metadata until a caller
+   explicitly writes the new scope contract.
+3. Temporal intervals use half-open semantics: `[valid_from, valid_until)`.
+4. Factual confidence and temporal confidence are independent values with independent update rules.
+5. Temporal precision is explicit; an inferred month or year must not masquerade as an exact
+   timestamp.
+6. Expired state claims may be excluded only when the temporal parse is sufficiently trustworthy.
+   Uncertain parses fail open with a ranking penalty and an annotation.
+7. A past plan is represented as “previously planned”; the system must not infer that it happened.
+8. Directive content never enters the read-only memory container.
+9. Active directives come only from explicit user input or an explicit approval action.
+10. Forget tombstones store only hashes and metadata, never the forgotten plaintext.
+11. The first tombstone contract is exact: it blocks replay of the same provenance/content identity.
+    Semantic suppression of paraphrases is out of scope until behavioral evaluation can bound false
+    positives.
+12. Claim-to-claim derivation remains available after operational audit retention.
+13. All query and mutation paths retain the current Agent ownership checks and execution fences.
+14. Runtime time decisions use an injected domain clock. Infrastructure timeout measurement may
+    continue to use a monotonic or wall clock local to that infrastructure.
+15. Scope broadening is explicit. Missing scope context never grants access to a narrower scope.
+16. Memory, projection, and directive contributions remain user-role data; none may rewrite or
+    append to the base system prompt.
+
+## Temporal claim contract
+
+Each authoritative claim gains:
+
+| Field | Contract |
+| --- | --- |
+| `temporal_kind` | `atemporal`, `state`, `event`, `plan`, or `recurring` |
+| `valid_from` | Inclusive epoch milliseconds, nullable |
+| `valid_until` | Exclusive epoch milliseconds, nullable |
+| `temporal_confidence` | Independent parse confidence in `[0, 1]`, nullable for atemporal claims |
+| `temporal_precision` | `exact`, `day`, `week`, `month`, `quarter`, `year`, or `unknown` |
+| `temporal_timezone` | IANA timezone used to interpret local temporal text, nullable |
+
+Validation rules:
+
+- `atemporal` has no validity bounds, confidence, precision, or timezone.
+- Non-atemporal claims require `temporal_confidence`.
+- When both bounds exist, `valid_from < valid_until`.
+- Extraction outputs are normalized and rejected per candidate when malformed; a malformed temporal
+  fragment does not fail the entire extraction batch.
+- Existing rows backfill to `atemporal`.
+
+Runtime interpretation:
+
+- `state`: a high-confidence expired or not-yet-effective state is ineligible for current-fact
+  recall; a low-confidence one remains eligible with a penalty and qualification.
+- `event`: remains historical evidence and is annotated with its interval.
+- `plan`: remains a plan; after its interval it is annotated as previously planned.
+- `recurring`: remains eligible when its recurrence is not fully materialized; the stored interval
+  describes the known recurrence window, not proof of an occurrence.
+- `atemporal`: preserves existing behavior.
+
+The initial hard-filter threshold is a named policy constant and is covered by behavioral tests. It
+is not user-configurable in this change.
+
+## Directive contract
+
+Directives use a dedicated durable table and typed runtime contribution.
+
+Minimum fields:
+
+- owner Agent;
+- stable ID;
+- kind: `instruction` or `suppress_topic`;
+- status: `draft`, `active`, or `rejected`;
+- source: `explicit_user`, `manual`, or `derived_suggestion`;
+- content;
+- optional normalized topic for `suppress_topic`;
+- creation/update timestamps.
+
+Behavior:
+
+1. Explicit manual creation may create an active directive.
+2. Extraction may propose a `derived_suggestion` draft.
+3. Only an explicit approve action changes a draft to active.
+4. Active `suppress_topic` directives gate recalled claim content before access accounting and
+   assembly.
+5. Active directives are rendered in a dedicated directive contribution with a separate container
+   and policy version.
+6. Natural-language directives are prompt-level guidance, not a hard output guarantee. Strict
+   “never mention” guarantees would require output verification/regeneration and are a non-goal.
+
+## Durable derivation contract
+
+Claim derivation uses a dedicated relation:
+
+```text
+(agent_id, parent_memory_id, child_memory_id, derivation_kind, created_at)
+```
+
+`derivation_kind` is a closed set for the implemented writers:
+
+- `merge`;
+- `reflection`;
+- `supersede`;
+- `manual_edit`.
+
+Rows are inserted transactionally with the resulting claim mutation. Audit may duplicate the IDs for
+operational observability, but audit is not the source of truth for lineage.
+
+## Forget contract
+
+Explicit single-row deletion:
+
+1. resolves the owned row;
+2. hashes its canonical provenance key and normalized content;
+3. inserts tombstones and deletes the row in one SQLite transaction;
+4. removes the vector after the durable transaction;
+5. blocks future exact provenance/content recreation.
+
+Agent-wide clear is an explicit forget operation. It tombstones the cleared claims before deleting
+them and preserves those tombstones so replay of existing Tape cannot repopulate the cleared data.
+Directive clearing is explicit and independent.
+
+Agent deletion is a namespace-retirement operation. It removes claims, tombstones, directives, and
+derived state, so a newly created Agent identity starts clean.
+
+## Scope contract
+
+Memory ownership and applicability remain separate:
+
+- `agent_id` is always the storage/security owner and vector-sidecar namespace;
+- `scope_type` is `agent`, `user`, `project`, or `session`;
+- `scope_id` is null only for `agent`; narrower scopes require a non-empty ID.
+
+Existing `user_scope` remains a compatibility shadow during this evolution:
+
+- all existing rows backfill to `scope_type=agent`, `scope_id=NULL`, because `user_scope` has never
+  participated in recall and narrowing it during migration would be a behavior regression;
+- new callers use the typed scope object; new writes keep the shadow synchronized for user-scoped
+  rows;
+- other scope types write `user_scope=null`.
+
+This change does not introduce cross-Agent sharing. A user- or project-scoped claim remains owned by
+one Agent and cannot cross its ownership boundary.
+
+## Behavioral acceptance criteria
+
+### AC-1: Carry-forward
+
+- Stable atemporal claims continue to be retrieved and injected across sessions.
+- The new policies do not regress the maintained retrieval fixture beyond its declared thresholds.
+
+### AC-2: Preference and directive adherence
+
+- Stable user preferences remain recallable.
+- Active directives are present in the directive contribution and absent from the read-only memory
+  contribution.
+- Draft and rejected directives never affect retrieval or injection.
+- Suppressed-topic claims are neither injected nor access-counted.
+
+### AC-3: Temporal correctness
+
+- A high-confidence expired state is not presented as current.
+- An uncertain expired state fails open but is qualified.
+- A future plan stays a plan.
+- An expired plan is rendered as previously planned and never as a completed event.
+- Atemporal rows retain current ranking behavior.
+
+### AC-4: Correction and forgetting
+
+- Contradicting claims still follow the existing decision/conflict lifecycle.
+- Exact source replay cannot recreate a selectively deleted claim.
+- A later, independently sourced statement is not suppressed merely because it is semantically
+  similar to forgotten content.
+
+### AC-5: Consolidation and lineage
+
+- A committed claim mutation marks bounded dirty work.
+- Consolidation consumes dirty seeds and bounded neighbors instead of repeatedly scanning the full
+  corpus.
+- Merge/reflection outputs retain durable parent edges after audit pruning.
+- Retrying maintenance is idempotent.
+
+### AC-6: Projection and budget
+
+- The working projection is deterministic for identical authoritative rows and clock.
+- Projection ordering and temporal annotations are stable and diffable.
+- One allocator reserves query-recall capacity, applies explicit floors/ceilings, and permits bounded
+  borrowing of unused capacity.
+- Assembled contributions never exceed the configured total memory budget.
+
+### AC-7: Scope isolation
+
+- Agent-scoped rows preserve current behavior.
+- User/project/session rows are returned only when the matching scope context is supplied.
+- A scope ID never broadens access outside the owner Agent.
+
+### AC-8: Compatibility, reliability, and security
+
+- Existing databases migrate without re-extraction or re-embedding solely because of new metadata.
+- Existing public DTO fields remain compatible; new fields are additive.
+- Memory remains fail-open for the conversation and fail-closed for stale writes.
+- No forgotten plaintext appears in tombstones, logs, audit refs, or diagnostics.
+- Hot-path database and vector work remains bounded.
+
+## Non-goals
+
+- Reproducing OpenAI's Dreaming implementation or claiming equivalent internals.
+- Assigning an Agent Memory V2/V3 product version.
+- Promoting file, tool, or knowledge-base content into long-term memory without the current policy
+  and provenance path.
+- Cross-Agent memory sharing.
+- Semantic tombstones or embedding-based topic suppression.
+- A strict output firewall for natural-language directives.
+- Replacing query retrieval with a single summary.
+- Rewriting every infrastructure `Date.now()` call.
+- Prompt-cache savings from projection ordering; ordering is for determinism and testability.
+
+## Open questions
+
+No implementation-blocking questions remain. Policy thresholds and initial budget shares are named
+constants guarded by tests so they can be tuned without changing persisted contracts.
