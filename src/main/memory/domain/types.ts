@@ -583,8 +583,14 @@ export type ProvenanceHitResult =
 
 export type ContentUpdateResult =
   | { action: 'updated'; id: string }
-  | { action: 'folded'; id: string }
-  | { action: 'superseded'; id: string; supersededId: string; created?: boolean }
+  | { action: 'folded'; id: string; retiredHeadId?: string }
+  | {
+      action: 'superseded'
+      id: string
+      supersededId: string
+      created?: boolean
+      retiredHeadId?: string
+    }
   | { action: 'suppressed'; id: string; reason: string }
 
 export interface ManualEditFieldFlags {

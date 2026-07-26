@@ -18,6 +18,7 @@ import type { MemoryMaintenanceReflectionResult, MemoryReflectionResult } from '
 import { isUniqueConstraintError, type MemoryModelRef, type MemoryRuntimeContext } from '../context'
 import type {
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryProvenanceResolverPort,
   MemoryReadRepositoryPort,
@@ -35,6 +36,7 @@ export class ReflectionService {
       repository: MemoryReadRepositoryPort &
         MemoryMutationRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       textGeneration: MemoryTextGenerationPort
       provenance: MemoryProvenanceResolverPort
@@ -120,12 +122,25 @@ export class ReflectionService {
       if (!this.ctx.canContinueOperation(operationFence)) return finish(null)
       const insights = parseReflectionInsights(raw)
       const now = this.ctx.now()
-      const reflectionIds = this.ports.repository.runInTransaction(() =>
-        insights.flatMap((insight) => {
+      const sourceMemoryIds = top.map((row) => row.id)
+      const reflectionIds = this.ports.repository.runInTransaction(() => {
+        const insertedIds = insights.flatMap((insight) => {
           const id = this.insertReflection(agentId, insight, sourceSession ?? null, now)
           return id ? [id] : []
         })
-      )
+        this.ports.repository.insertDerivations(
+          insertedIds.flatMap((childMemoryId) =>
+            sourceMemoryIds.map((parentMemoryId) => ({
+              agentId,
+              parentMemoryId,
+              childMemoryId,
+              derivationKind: 'reflection' as const,
+              createdAt: now
+            }))
+          )
+        )
+        return insertedIds
+      })
       if (!reflectionIds.length) {
         this.reflectionAttemptWatermark.set(agentId, maxUnitCreatedAt)
         return finish(null)
@@ -138,7 +153,7 @@ export class ReflectionService {
       void this.ports.triggerEmbedding(agentId).catch((error) => {
         logger.warn(`[Memory] background embedding failed: ${String(error)}`)
       })
-      return finish({ reflectionIds, sourceMemoryIds: top.map((row) => row.id) })
+      return finish({ reflectionIds, sourceMemoryIds })
     } catch (error) {
       logger.warn(`[Memory] reflection skipped: ${String(error)}`)
       return finish(null)

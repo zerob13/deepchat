@@ -26,6 +26,7 @@ import { isUniqueConstraintError, type MemoryModelRef, type MemoryRuntimeContext
 import type {
   MemoryEmbeddingRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTextGenerationPort,
@@ -55,6 +56,7 @@ export class ConflictService {
         MemoryMutationRepositoryPort &
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       textGeneration: MemoryTextGenerationPort
       scheduleConsolidation: (agentId: string) => void
@@ -181,6 +183,9 @@ export class ConflictService {
     const now = this.ctx.now()
     switch (outcome) {
       case 'keep_challenger': {
+        const siblingIds = this.ports.repository
+          .listConflictSiblings(agentId, pair.target.id, pair.challenger.id)
+          .map((sibling) => sibling.id)
         const content = options.mergedContent?.trim()
         const normalizedContent = content ? normalizeForProvenanceV2(content) : null
         const transitionTarget = {
@@ -226,6 +231,15 @@ export class ConflictService {
         ) {
           throw new ConflictTransitionRejectedError()
         }
+        this.ports.repository.insertDerivations(
+          [pair.target.id, ...siblingIds].map((parentMemoryId) => ({
+            agentId,
+            parentMemoryId,
+            childMemoryId: pair.challenger.id,
+            derivationKind: 'supersede' as const,
+            createdAt: now
+          }))
+        )
         return
       }
       case 'keep_target':
@@ -241,6 +255,15 @@ export class ConflictService {
           throw new ConflictTransitionRejectedError()
         }
         this.ports.repository.clearTargetConflictIfNoChallengers(agentId, pair.target.id)
+        this.ports.repository.insertDerivations([
+          {
+            agentId,
+            parentMemoryId: pair.challenger.id,
+            childMemoryId: pair.target.id,
+            derivationKind: 'supersede',
+            createdAt: now
+          }
+        ])
         return
       case 'keep_both':
         if (

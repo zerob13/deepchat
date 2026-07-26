@@ -82,6 +82,13 @@ describe('MemoryService.updateMemory', () => {
     expect(repo.getById('m1')).toMatchObject({ category: null, importance: 0.2 })
     expect(getEmbeddings).not.toHaveBeenCalled()
     expect(auditRepo.listByAgent('deepchat', { eventType: 'memory/manual_edit' })).toHaveLength(1)
+    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([
+      expect.objectContaining({
+        parent_memory_id: 'm1',
+        child_memory_id: 'm1',
+        derivation_kind: 'manual_edit'
+      })
+    ])
     expect(onMemoryChanged).toHaveBeenCalledWith('deepchat', 'manual-edit', { memoryId: 'm1' })
   })
 
@@ -113,6 +120,13 @@ describe('MemoryService.updateMemory', () => {
       status: 'pending_embedding'
     })
     expect(repo.getById('m1')?.superseded_by).toBe(result.memoryId)
+    expect(repo.listDerivationsByChild('deepchat', result.memoryId!)).toEqual([
+      expect.objectContaining({
+        parent_memory_id: 'm1',
+        child_memory_id: result.memoryId,
+        derivation_kind: 'manual_edit'
+      })
+    ])
     expect(auditRepo.listByAgent('deepchat', { eventType: 'memory/manual_edit' })).toHaveLength(1)
     expect(onMemoryChanged).toHaveBeenCalledWith('deepchat', 'manual-edit', {
       memoryId: result.memoryId
@@ -149,6 +163,13 @@ describe('MemoryService.updateMemory', () => {
       superseded_by: null
     })
     expect(repo.listByAgent('deepchat', { includeSuperseded: true })).toHaveLength(1)
+    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([
+      expect.objectContaining({
+        parent_memory_id: 'm1',
+        child_memory_id: 'm1',
+        derivation_kind: 'manual_edit'
+      })
+    ])
   })
 
   it('returns an empty noop for blank content edits without mutating the row', () => {
@@ -201,10 +222,46 @@ describe('MemoryService.updateMemory', () => {
     expect(result).toEqual({ action: 'folded', memoryId: 'owner', supersededId: 'old' })
     expect(repo.getById('old')?.superseded_by).toBe('owner')
     expect(repo.getById('owner')).toMatchObject({ category: null, importance: 0.1 })
+    expect(repo.listDerivationsByChild('deepchat', 'owner')).toEqual([
+      expect.objectContaining({
+        parent_memory_id: 'old',
+        child_memory_id: 'owner',
+        derivation_kind: 'manual_edit'
+      })
+    ])
     expect(repo.listByAgent('deepchat', { includeSuperseded: true }).map((row) => row.id)).toEqual([
       'old',
       'owner'
     ])
+  })
+
+  it('rolls back a metadata edit when its durable lineage cannot be written', () => {
+    const { presenter, repo, auditRepo } = makePresenter(enabledConfig)
+    insertMemory(repo, {
+      id: 'm1',
+      content: 'user likes redis',
+      category: 'user_preference',
+      importance: 0.6
+    })
+    const before = { ...repo.getById('m1')! }
+    vi.spyOn(repo, 'insertDerivations').mockImplementation(() => {
+      throw new Error('injected lineage failure')
+    })
+
+    expect(() =>
+      presenter.updateMemory('deepchat', 'm1', {
+        category: 'project_fact',
+        importance: 0.2
+      })
+    ).toThrow('injected lineage failure')
+
+    expect(repo.getById('m1')).toMatchObject({
+      category: before.category,
+      importance: before.importance,
+      decision_revision: before.decision_revision
+    })
+    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([])
+    expect(auditRepo.listByAgent('deepchat')).toEqual([])
   })
 
   it('folds into a live duplicate without overwriting metadata fields the patch omitted', () => {
@@ -382,6 +439,44 @@ describe('MemoryService.updateMemory', () => {
       content: 'archived fact',
       provenance_key: duplicateKey
     })
+  })
+
+  it('records every retired parent when an edit revives a superseded owner', () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    const ownerKey = buildMemoryProvenanceKey('deepchat', 'semantic', 'original fact')
+    insertMemory(repo, {
+      id: 'owner',
+      content: 'original fact',
+      provenanceKey: ownerKey,
+      supersededBy: 'current-head'
+    })
+    insertMemory(repo, {
+      id: 'current-head',
+      content: 'replacement fact'
+    })
+    insertMemory(repo, {
+      id: 'edited',
+      content: 'unrelated fact'
+    })
+
+    expect(presenter.updateMemory('deepchat', 'edited', { content: 'original fact' })).toEqual({
+      action: 'superseded',
+      memoryId: 'owner',
+      supersededId: 'edited'
+    })
+
+    expect(repo.getById('current-head')?.superseded_by).toBe('owner')
+    expect(repo.getById('edited')?.superseded_by).toBe('owner')
+    expect(repo.listDerivationsByChild('deepchat', 'owner')).toEqual([
+      expect.objectContaining({
+        parent_memory_id: 'current-head',
+        derivation_kind: 'supersede'
+      }),
+      expect.objectContaining({
+        parent_memory_id: 'edited',
+        derivation_kind: 'manual_edit'
+      })
+    ])
   })
 
   it('rejects manual edits for active conflict participants', () => {

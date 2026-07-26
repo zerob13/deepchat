@@ -588,6 +588,15 @@ describe('MemoryService.maybeReflect cheap model', () => {
     const reflection = repo.getById(result!.reflectionIds[0])
     expect(reflection.kind).toBe('reflection')
     expect(reflection.source_entry_ids).toBe(null)
+    const derivations = repo.listDerivationsByChild('a', reflection.id)
+    expect(new Set(derivations.map((edge) => edge.parent_memory_id))).toEqual(
+      new Set(result!.sourceMemoryIds)
+    )
+    expect(
+      derivations.every(
+        (edge) => edge.child_memory_id === reflection.id && edge.derivation_kind === 'reflection'
+      )
+    ).toBe(true)
     expect([...repo.rows.values()].some((r: any) => r.kind === 'persona')).toBe(false)
   })
 
@@ -649,6 +658,7 @@ describe('MemoryService.maybeReflect cheap model', () => {
     })
     expect(await presenter.maybeReflect('a', { providerId: 'p', modelId: 'm' })).toBeNull()
     expect(generateText).toHaveBeenCalledTimes(1)
+    expect(repo.derivations.size).toBe(0)
     expect(await presenter.maybeReflect('a', { providerId: 'p', modelId: 'm' })).toBeNull()
     expect(generateText).toHaveBeenCalledTimes(1)
   })

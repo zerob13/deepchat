@@ -57,6 +57,7 @@ import type {
   MemoryAgentPolicyPort,
   MemoryEmbeddingRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTextGenerationPort,
@@ -275,6 +276,7 @@ export class WriteCoordinator {
         MemoryMutationRepositoryPort &
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       policy: MemoryAgentPolicyPort
       textGeneration: MemoryTextGenerationPort
@@ -1217,6 +1219,15 @@ export class WriteCoordinator {
                   throw new DecisionRevisionConflictError()
                 }
                 this.ports.rows.bumpConfidence(targetRow.id)
+                this.ports.repository.insertDerivations([
+                  {
+                    agentId,
+                    parentMemoryId: targetRow.id,
+                    childMemoryId: targetRow.id,
+                    derivationKind: 'supersede',
+                    createdAt: now
+                  }
+                ])
               })
             } catch (error) {
               if (error instanceof DecisionForgottenClaimError) {
@@ -1275,6 +1286,15 @@ export class WriteCoordinator {
               ) {
                 throw new DecisionRevisionConflictError()
               }
+              this.ports.repository.insertDerivations([
+                {
+                  agentId,
+                  parentMemoryId: target.id,
+                  childMemoryId: newId,
+                  derivationKind: 'supersede',
+                  createdAt: now
+                }
+              ])
             })
           } catch (error) {
             if (error instanceof DecisionForgottenClaimError) {
@@ -1397,6 +1417,7 @@ export class WriteCoordinator {
         let ownerRevision = owner.decision_revision
         const ownerHead =
           hit.action === 'continue' ? this.ports.rows.supersedeHead(agentId, owner) : undefined
+        let retiredHeadId: string | null = null
         if (
           !this.ports.repository.markSupersededIfRevision(
             agentId,
@@ -1431,9 +1452,11 @@ export class WriteCoordinator {
               throw new DecisionRevisionConflictError()
             }
           } else {
-            if (!this.ports.rows.reviveSupersededAfterDecision(agentId, owner).applied) {
+            const revival = this.ports.rows.reviveSupersededAfterDecision(agentId, owner)
+            if (!revival.applied) {
               throw new DecisionRevisionConflictError()
             }
+            retiredHeadId = revival.retiredHeadId
           }
           ownerRevision += 1
         }
@@ -1461,6 +1484,17 @@ export class WriteCoordinator {
             throw new DecisionRevisionConflictError()
           }
         }
+        this.ports.repository.insertDerivations(
+          [target.id, retiredHeadId]
+            .filter((parentMemoryId): parentMemoryId is string => parentMemoryId !== null)
+            .map((parentMemoryId) => ({
+              agentId,
+              parentMemoryId,
+              childMemoryId: owner.id,
+              derivationKind: 'supersede' as const,
+              createdAt: now
+            }))
+        )
       })
     } catch (error) {
       if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
@@ -1583,6 +1617,7 @@ export class WriteCoordinator {
     temporal: MemoryTemporalMetadata
   ): MemoryWriteOutcome {
     let transitionApplied = true
+    let retiredHeadId: string | null = null
     this.ports.repository.runInTransaction(() => {
       let expectedRevision = existing.decision_revision
       if (existing.lifecycle_state === 'archived' && existing.superseded_by === null) {
@@ -1594,7 +1629,9 @@ export class WriteCoordinator {
         if (transitionApplied) expectedRevision += 1
       }
       if (existing.superseded_by !== null) {
-        transitionApplied = this.ports.rows.reviveSupersededAfterDecision(agentId, existing).applied
+        const revival = this.ports.rows.reviveSupersededAfterDecision(agentId, existing)
+        transitionApplied = revival.applied
+        retiredHeadId = revival.retiredHeadId
         if (transitionApplied) expectedRevision += 1
       }
       if (!transitionApplied) return
@@ -1611,6 +1648,17 @@ export class WriteCoordinator {
           ...(shouldUpdateTemporal ? { temporal: nextTemporal } : {}),
           lastAccessedAt: now
         })
+      }
+      if (transitionApplied && retiredHeadId !== null) {
+        this.ports.repository.insertDerivations([
+          {
+            agentId,
+            parentMemoryId: retiredHeadId,
+            childMemoryId: existing.id,
+            derivationKind: 'supersede',
+            createdAt: now
+          }
+        ])
       }
     })
 

@@ -302,10 +302,10 @@ export class MemoryRowMutations {
 
     const isRetiredOwner = owner.lifecycle_state === 'archived' || owner.superseded_by !== null
     const action: 'folded' | 'superseded' = isRetiredOwner ? 'superseded' : 'folded'
+    let retiredHeadId: string | null = null
 
     const transitionApplied = this.runAtomicTransition(() => {
       let ownerRevision = owner.decision_revision
-      let retiredHeadId: string | null = null
       if (hit.action === 'absorbed') {
         if (
           !this.ports.repository.restoreArchivedMemory({
@@ -374,8 +374,18 @@ export class MemoryRowMutations {
     }
 
     return action === 'folded'
-      ? { action: 'folded', id: owner.id }
-      : { action: 'superseded', id: owner.id, supersededId: row.id, created: false }
+      ? {
+          action: 'folded',
+          id: owner.id,
+          ...(retiredHeadId && retiredHeadId !== row.id ? { retiredHeadId } : {})
+        }
+      : {
+          action: 'superseded',
+          id: owner.id,
+          supersededId: row.id,
+          created: false,
+          ...(retiredHeadId && retiredHeadId !== row.id ? { retiredHeadId } : {})
+        }
   }
 
   supersedeHead(agentId: string, row: AgentMemoryRow): AgentMemoryRow {

@@ -64,6 +64,7 @@ import type {
   MemoryAuditReadPort,
   MemoryEmbeddingRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMaintenanceRowMutationPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
@@ -96,6 +97,7 @@ export class MaintenanceService {
         MemoryMutationRepositoryPort &
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       policy: MemoryAgentPolicyPort
       textGeneration: MemoryTextGenerationPort
@@ -722,6 +724,15 @@ export class MaintenanceService {
           throw new MaintenanceRevisionConflictError()
         }
         this.ports.rows.bumpConfidence(survivor.id)
+        this.ports.repository.insertDerivations(
+          [survivor.id, retired.id].map((parentMemoryId) => ({
+            agentId,
+            parentMemoryId,
+            childMemoryId: survivor.id,
+            derivationKind: 'merge' as const,
+            createdAt: now
+          }))
+        )
       })
     } catch (error) {
       if (

@@ -31,6 +31,7 @@ import {
 import {
   VectorStoreQuarantineMarkerError,
   type MemoryClearResult,
+  type MemoryDerivationInsertInput,
   type MemoryManagementPage,
   type MemoryManagementPageCursor,
   type MemoryStatus,
@@ -46,6 +47,7 @@ import type {
   MemoryEmbeddingRepositoryPort,
   MemoryHealthRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryManualEditPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
@@ -130,6 +132,7 @@ export class ManagementService {
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
         MemoryHealthRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       policy: MemoryAgentPolicyPort
       auditReader?: MemoryAuditReadPort
@@ -515,6 +518,7 @@ export class ManagementService {
       return { action: 'noop', memoryId: row.id }
     }
 
+    const now = this.ctx.now()
     const updated = this.ports.repository.runInTransaction(() => {
       if (
         !this.ports.repository.updateUserMetadataIfRevision({
@@ -526,6 +530,15 @@ export class ManagementService {
       ) {
         return false
       }
+      this.ports.repository.insertDerivations([
+        {
+          agentId,
+          parentMemoryId: row.id,
+          childMemoryId: row.id,
+          derivationKind: 'manual_edit',
+          createdAt: now
+        }
+      ])
       this.ctx.writeAudit(agentId, {
         eventType: 'memory/manual_edit',
         actorType: 'user',
@@ -571,13 +584,14 @@ export class ManagementService {
 
     // Wrapped in one transaction so the row mutation and its audit event commit atomically, same as
     // the metadata-only path below — a suppressed/noop outcome writes neither.
+    const now = this.ctx.now()
     const result = this.ports.repository.runInTransaction((): MemoryUpdateResult => {
       const update = this.ports.rows.applyManualContentEdit(
         agentId,
         row,
         candidate,
         content,
-        this.ctx.now(),
+        now,
         {
           agentId,
           sourceSession: row.source_session,
@@ -598,6 +612,25 @@ export class ManagementService {
             ? { action: 'superseded', memoryId, supersededId: update.supersededId }
             : { action: 'updated', memoryId }
 
+      const derivations: MemoryDerivationInsertInput[] = [
+        {
+          agentId,
+          parentMemoryId: row.id,
+          childMemoryId: memoryId,
+          derivationKind: 'manual_edit' as const,
+          createdAt: now
+        }
+      ]
+      if ((update.action === 'folded' || update.action === 'superseded') && update.retiredHeadId) {
+        derivations.push({
+          agentId,
+          parentMemoryId: update.retiredHeadId,
+          childMemoryId: memoryId,
+          derivationKind: 'supersede',
+          createdAt: now
+        })
+      }
+      this.ports.repository.insertDerivations(derivations)
       this.ctx.writeAudit(agentId, {
         eventType: 'memory/manual_edit',
         actorType: 'user',

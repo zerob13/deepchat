@@ -167,6 +167,13 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(repo.countByAgent('a')).toBe(1)
     expect(repo.getById(neighborId)?.content).toBe('user prefers redis 7')
     expect(repo.getById(neighborId)?.status).toBe('pending_embedding')
+    expect(repo.listDerivationsByChild('a', neighborId)).toEqual([
+      expect.objectContaining({
+        parent_memory_id: neighborId,
+        child_memory_id: neighborId,
+        derivation_kind: 'supersede'
+      })
+    ])
   })
 
   it('rolls back decision content and embedding reset when confidence update fails', async () => {
@@ -197,6 +204,7 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
       embedding_model: before.embedding_model,
       decision_revision: before.decision_revision
     })
+    expect(repo.listDerivationsByChild('a', targetId)).toEqual([])
   })
 
   it('SUPERSEDE: links the old row to the new one and recall returns only the new', async () => {
@@ -216,6 +224,13 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(result.createdIds).toHaveLength(1)
     const newId = result.createdIds[0]
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
+    expect(repo.listDerivationsByChild('a', newId)).toEqual([
+      expect.objectContaining({
+        parent_memory_id: oldId,
+        child_memory_id: newId,
+        derivation_kind: 'supersede'
+      })
+    ])
     await presenter.processPendingEmbeddings('a')
     const recalled = await presenter.recall('a', 'redis')
     expect(recalled.some((item) => item.id === oldId)).toBe(false)
@@ -240,6 +255,13 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(result.createdIds).toHaveLength(0)
     expect(repo.getById(oldId)?.superseded_by).toBe(existingId)
     expect(repo.getById(existingId)?.superseded_by).toBeNull()
+    expect(repo.listDerivationsByChild('a', existingId)).toEqual([
+      expect.objectContaining({
+        parent_memory_id: oldId,
+        child_memory_id: existingId,
+        derivation_kind: 'supersede'
+      })
+    ])
   })
 
   it('NOOP: writes nothing and leaves the neighbor untouched', async () => {
@@ -389,10 +411,20 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(await presenter.resolveConflict('a', 'c1', 'keep_target')).toBe(true)
     expect(repo.getById(targetId)?.conflict_state).toBe('challenged')
     expect(repo.getById('c1')?.status).toBe('archived')
+    expect(repo.listDerivationsByChild('a', targetId)).toEqual([
+      expect.objectContaining({
+        parent_memory_id: 'c1',
+        child_memory_id: targetId,
+        derivation_kind: 'supersede'
+      })
+    ])
     expect(presenter.listConflicts('a').map((pair) => pair.challenger.id)).toEqual(['c2'])
 
     expect(await presenter.resolveConflict('a', 'c2', 'keep_target')).toBe(true)
     expect(repo.getById(targetId)?.conflict_state).toBeNull()
+    expect(
+      new Set(repo.listDerivationsByChild('a', targetId).map((edge) => edge.parent_memory_id))
+    ).toEqual(new Set(['c1', 'c2']))
     expect(presenter.listConflicts('a')).toHaveLength(0)
   })
 
@@ -406,6 +438,7 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(repo.getById('c1')?.status).toBe('pending_embedding')
     expect(repo.getById('c1')?.conflict_with).toBeNull()
     expect(repo.getById(targetId)?.conflict_state).toBe('challenged')
+    expect(repo.derivations.size).toBe(0)
     expect(presenter.listConflicts('a').map((pair) => pair.challenger.id)).toEqual(['c2'])
 
     expect(await presenter.resolveConflict('a', 'c2', 'keep_both')).toBe(true)
@@ -427,6 +460,11 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(repo.getById('c2')?.status).toBe('archived')
     expect(repo.getById('c2')?.superseded_by).toBe('c1')
     expect(repo.getById('c2')?.conflict_with).toBeNull()
+    const derivations = repo.listDerivationsByChild('a', 'c1')
+    expect(new Set(derivations.map((edge) => edge.parent_memory_id))).toEqual(
+      new Set([targetId, 'c2'])
+    )
+    expect(derivations.every((edge) => edge.derivation_kind === 'supersede')).toBe(true)
     expect(presenter.listConflicts('a')).toHaveLength(0)
   })
 
