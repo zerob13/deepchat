@@ -8,10 +8,10 @@ string convention instead of the tool catalog that owns tool capabilities. A ren
 or new read-only tool therefore requires runtime knowledge that does not belong in dispatch.
 
 This architecture goal establishes stable contracts around the DeepChat Agent harness over
-multiple short-lived pull requests. The typed tool execution contract and the coordinator ownership
-slice are complete. The current slice replaces the orchestration root with a thin Harness facade
-over a one-directional service graph, and is a strict zero-behavior-change refactor. Typed hooks
-and same-run steering remain separate changes.
+multiple short-lived pull requests. The typed tool execution contract, the coordinator ownership
+slice, and the Harness facade are complete. The current slice replaces the untyped hook fan-out with
+a typed deterministic notification pipeline. Same-run steering remains a separate change, and hook
+decision semantics remain an unscheduled product feature rather than part of this goal.
 
 ## Comparative Evidence
 
@@ -360,6 +360,143 @@ not be smuggled into a graph rewrite.
 - Leave a stable service layer for a later typed hook reducer without exposing that layer as a
   service locator.
 
+## Typed Hook Notification Pipeline Slice
+
+### Problem
+
+Hooks are user-configured shell commands that observe the Agent lifecycle. The contract that reaches
+them is a single flat `HookContext` whose fields are all optional, so the event name and its payload
+are uncorrelated. `dispatch('Stop', { tool })` compiles, `dispatch('PreToolUse', { sessionId })`
+compiles, and adding a name to `HOOK_EVENT_NAMES` fails no build.
+
+That weak contract produced measurable defects:
+
+- Every dispatch site hand-assembles the session envelope, and the `Stop` plus `SessionEnd` pair has
+  four independent implementations in `runtimeHookSink`, `turnCoordinator`, `interactionCoordinator`,
+  and the ACP compatibility path. The ACP copy already dropped `usage`.
+- `HookService` re-read `hooksNotifications` on every event. That key is a sensitive app setting, so
+  each read is a database read plus a JSON deep clone, a Zod normalization, and two `JSON.stringify`
+  calls, performed twice per tool call even when no hook is configured.
+- A tool event was `structuredClone`d three times before truncation, so multi-megabyte tool
+  arguments and responses were copied for a payload that keeps 1200 characters of each.
+- Payload enrichment read the session row whenever `workdir` was falsy, so a session with no project
+  directory paid a database read per event.
+- The `messageId` to `promptPreview` fallback read a message row and described the assistant's own
+  output as the user's prompt, because every producer passes an assistant message id.
+- Events were dispatched through independent microtasks with per-event asynchronous enrichment, so
+  the order in which hook commands started did not match the order in which events happened.
+- Three nested layers repeated the same defensive catch with two different loggers, while
+  `dispatchEvent` remained a public untyped bypass of the runtime sink.
+- `observeTerminal` resolved the project directory as an argument expression outside the sink's
+  guard, so an envelope failure could propagate into run settlement.
+
+### Event Contract
+
+`HookEvent` is a discriminated union of one session envelope and one event body. Each variant is
+closed against every fact it does not declare, so tool facts cannot ride on `Stop` and `PreToolUse`
+cannot omit them. Closing the variants matters because excess property checking alone only refuses
+surplus fields on a fresh literal: a variable carrying both `stop` and `tool` would otherwise
+satisfy the union. Two compile-time guards keep it honest: one fails when the union and
+`HOOK_EVENT_NAMES` drift apart in either direction, and one pins the combinations the union must
+refuse, for both missing and foreign facts.
+
+`HookEventName`, the settings shape, and the `payloadVersion: 1` wire payload are unchanged, because
+they are the renderer contract and the user script contract respectively.
+
+### Runtime Scope
+
+`RuntimeHookSink` becomes a factory for `RuntimeHookScope`, a bound emitter that resolves one session
+envelope once for the producer that created it: session and message identity, provider, model,
+agent, and working directory. The scope holds no service graph, persists nothing, and duplicates no
+runtime state. Producers emit event bodies against it, so no emit site assembles an envelope
+field by field.
+
+The scope is per producer, not per turn. A normal turn creates three: `TurnCoordinator` for the
+submitted prompt, `DeepChatLoopRunner` for the run and its tool facts, and
+`RuntimeHookSink.observeTerminal` for settlement, which reaches the sink from
+`RunLifecycleCoordinator` without the turn's scope. Threading one scope through the run lifecycle
+would add a new state carrier to that owner and is out of this slice, so a setting changed mid-turn
+can still be observed by later events of the same turn.
+
+The scope resolves the working directory lazily and once. An unobserved event resolves nothing, and
+a resolution failure leaves the directory unanswered rather than dropping the notification, so
+delivery can still resolve it from the session row.
+
+`RuntimeHookScope.terminal` is the single terminal projection. Every settled turn, whatever its entry
+point, reports `Stop` then `SessionEnd` through it.
+
+The loop keeps its own tool-fact vocabulary. `DeepChatLoopNotification` describes what a tool batch
+did, not what a hook consumes, and the scope's tool observer is the one adapter between them. Making
+the loop import the hook contract to remove a structural duplicate would trade a real layer boundary
+for cosmetic reuse.
+
+### Delivery Semantics
+
+`HookService` owns its configuration as state instead of re-reading a store per event. The
+configuration and the derived subscription index are rebuilt as one unit, so a subscription probe
+can never disagree with the hooks the delivery path will run. Every write path refreshes it
+atomically: the routes write through the service, and `start()` covers the maintenance window that
+already brackets configuration import.
+
+`isObserved` is a synchronous set lookup exposed to producers. An unsubscribed event costs one
+lookup: no envelope resolution, no projection, no clone, no database read, and no spawn.
+
+An observed event is projected synchronously into detached wire facts, with previews truncated
+first, so no oversized string reaches a clone. The permission record is the only field of unbounded
+shape and receives the single bounded clone.
+
+Delivery is serialized per session. Events of one session reach their commands in emission order,
+and unrelated sessions never wait for each other. The guarantee is event acceptance and command start
+order; completion order of external processes is not ordered, no hook is awaited, and Agent tool
+execution never blocks on one.
+
+Configuration is owned at acceptance, not at delivery. An accepted event carries the identity and
+command of every hook eligible at that moment, and delivery runs a hook only when it is still
+eligible under the same command. A hook enabled or edited after an event happened therefore never
+receives it, and one disabled while the event was queued stops receiving it. Because enrichment is
+asynchronous, that revalidation is settled immediately before spawning rather than when the delivery
+was dequeued.
+
+A hook command that outlives its timeout settles its own result. A killed shell can keep a process
+tree alive and never emit `close`, so waiting for exit could leave the settings test call pending
+forever. Captured stdout and stderr are bounded by the diagnostic limit they are truncated to, so a
+command that streams for its whole timeout window cannot grow main-process memory without bound.
+
+Fault isolation stays layered rather than collapsed. The loop guards its notification boundary, the
+scope guards the runtime boundary so no hook failure reaches settlement, the service guards each
+queued delivery, and each hook command is isolated from its siblings and from the next event.
+
+### Included Corrections
+
+| Correction | Previous behavior | Required behavior and rationale |
+| --- | --- | --- |
+| Terminal drift | Four independent `Stop` plus `SessionEnd` implementations computed their own reason and fallbacks, and each could drift again. | One projection owns the pair and normalizes a missing `usage` or `error` to an explicit null. ACP still reports `usage: null` because `AcpObserverPort.terminal` carries no token accounting; giving ACP real usage needs protocol design and is not part of this slice. |
+| Assistant text as prompt preview | An event carrying a message id but no preview read that message and reported its text as `user.promptPreview`. Every producer passes an assistant message id, so the fallback was wrong at every call site and cost a row read per event. | Prompt previews come from the producer that owns the prompt. The message lookup and its query port are removed; `user.messageId` is unchanged. |
+| Answered null project directory | Enrichment triggered whenever `workdir` was falsy, so an explicit null cost a session read that returned null. | Only an unanswered field triggers a lookup. |
+| Unguarded envelope resolution | `observeTerminal` resolved the project directory outside the sink's guard, so a stale-instance assertion could propagate into run settlement. | Envelope resolution happens inside the guarded region and degrades to an unanswered field. |
+
+`user.promptPreview` therefore becomes empty for tool events and for a resumed `SessionStart`, where
+it previously contained assistant output. The payload shape, `payloadVersion`, environment variables,
+command placeholders, command timeout, redaction, and settings contract are unchanged. `time` is now
+captured when the event occurs rather than when its payload is assembled.
+
+### Deferred Findings
+
+| Finding | Observation | Current handling |
+| --- | --- | --- |
+| Hydrating project-directory read | `resolveProjectDir` reaches `getOrHydrateScope`, so resolving a hook envelope can recreate a runtime instance for an evicted session. | Pre-existing. The subscription gate removes the call entirely for unconfigured installations; making the read non-hydrating changes `SessionSettingsCoordinator` and belongs to its own change. |
+| Hook command environment inheritance | Hook commands spawn with the full parent environment, so any secret in the Agent process environment is visible to them. | Pre-existing and out of scope for a delivery contract. Closing it requires an allowlist design and a settings surface. |
+| Orphaned process trees | A timed-out command is killed with `SIGKILL` on the shell only, so grandchildren can survive and keep the child registered until the process exits. | The result no longer depends on that exit. Killing the whole tree and bounding concurrent hook processes is separate reliability work. |
+| Per-turn envelope resolution | Three producers each resolve their own envelope, so a setting changed mid-turn can be observed by later events of the same turn. | Accepted. Threading one scope through the run lifecycle adds a state carrier to `RunLifecycleCoordinator` and belongs to its own change. |
+
+## Typed Hook Notification Pipeline Goals
+
+- Make the event name and its payload one value that cannot describe an impossible event.
+- Give the terminal projection, and every session envelope, exactly one implementation.
+- Make an unconfigured installation pay one map lookup per event.
+- Make delivery order within a session deterministic without coupling sessions or blocking the Agent.
+- Keep the user-facing hook contract, including the version 1 payload, byte-compatible.
+
 ## Typed Tool Execution Contract Goals (Completed)
 
 - Define one canonical, typed execution contract for every `MCPToolDefinition`.
@@ -473,8 +610,13 @@ execution continues to settle independently and commit results in provider call 
   above while extracting runtime owners.
 - Do not add a Pi-style `run`/`steer`/`followUp`/`subscribe` vocabulary or any third event channel;
   the facade implements the existing manager and session contracts only.
-- Do not pass the composed service graph to hooks as a container. A later typed hook slice designs
-  its own restricted context facades.
+- Do not pass the composed service graph to hooks as a container. `RuntimeHookScope` carries
+  immutable session facts only.
+- Do not give hooks a decision channel. Blocking, replacing, cancelling, or rewriting provider
+  requests and tool arguments would require a versioned stdout protocol, a conflict and timeout
+  policy, argument revalidation, permission recheck after rewriting, and a trust surface. It is a
+  product feature with its own security model, not part of a delivery contract, and DeepChat has no
+  in-process participant that could use it today.
 - Do not fix defects discovered while moving code beyond the narrow final-review corrections listed
   above; record them and open a separate branch.
 - Do not move durable pending inputs into `DeepChatAgentInstance` or add another source of truth.
@@ -554,3 +696,28 @@ execution continues to settle independently and commit results in provider call 
     harness module pair import each other, including type-only imports.
 12. Focused owner suites, the full main-process suite, type checks, formatting, i18n validation,
     lint, the agent cleanup guard, and a regenerated layered-runtime baseline pass before handoff.
+
+## Typed Hook Notification Pipeline Acceptance Criteria
+
+1. `HookEvent` correlates every event name with its payload, refuses a foreign fact through a
+   variable as well as a literal, and the coverage and rejection guards fail compilation when a name
+   loses its body variant or a required fact becomes optional.
+2. No emit site assembles a session envelope field by field, and `Stop` plus `SessionEnd` has one
+   implementation that all four previous entry points reach.
+3. An event with no enabled subscriber performs one subscription lookup and nothing else: no
+   envelope resolution, projection, clone, settings read, session read, or spawn.
+4. A configuration write through the service refreshes the subscription index atomically, and a
+   write that bypasses the service is picked up by the next explicit refresh or service restart.
+   A hook enabled or edited after an event was accepted never receives that event, and a hook
+   disabled while the event was queued does not run it.
+5. Tool previews are truncated before any clone, and the permission record receives the only clone.
+6. Events of one session start their commands in emission order under delayed enrichment, and a
+   stalled session does not delay another.
+7. A hook command that fails to spawn, times out, or throws does not stall its siblings or the next
+   event, and no hook failure reaches run settlement. A timed-out command settles its own result
+   without waiting for an exit that may never arrive, and captured diagnostics stay bounded.
+8. `payloadVersion`, the stdin payload shape, environment variables, command placeholders, the
+   command timeout, and the settings contract are unchanged; `user.promptPreview` reports only a
+   prompt the producer supplied.
+9. Focused suites, the full main-process suite, type checks, formatting, i18n validation, lint, and
+   the agent cleanup guard pass, and executed test count does not drop.

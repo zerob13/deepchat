@@ -34,7 +34,7 @@ describe('session boundary composition', () => {
     )
   })
 
-  it('keeps hooks notifications on one instance with lazy projection dependencies', async () => {
+  it('keeps hooks notifications on one instance that owns every configuration write', async () => {
     const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
     const compositionSource = readFileSync(
       path.resolve(process.cwd(), 'src/main/app/composition.ts'),
@@ -45,9 +45,8 @@ describe('session boundary composition', () => {
     expect(compositionSource).toContain(
       'getSession: (sessionId) => sessionQuery.getSession(sessionId)'
     )
-    expect(compositionSource).toContain(
-      'getMessage: (messageId) => sessionQuery.getMessage(messageId)'
-    )
+    expect(compositionSource).toContain('createHookRoutes({ service: hookService })')
+    expect(compositionSource).not.toContain('settings: hookSettings')
   })
 
   it('constructs Scheduler once after Remote with complete execution dependencies', async () => {

@@ -23,7 +23,7 @@ import {
   PRE_STREAM_STUCK_WARN_MS
 } from '@/agent/deepchat/runtime/preStreamWatchdog'
 import logger from '@shared/logger'
-import type { HookNotification, HookObserver } from '@/hook/observer'
+import { createHookObserver, noopHookObserver } from '../../../hook/hookObserverFixture'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
 import {
   estimateToolReserveTokens,
@@ -48,27 +48,6 @@ import { AcpPromptController, AcpRuntimeOwner, type AcpClientRuntime } from '@/a
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import type { AcpAgentDescriptor } from '@/agent/shared/agentDescriptors'
 
-const createHookObserver = (dispatcher: {
-  dispatchEvent: ReturnType<typeof vi.fn>
-}): HookObserver => ({
-  notify({ event, context }: HookNotification) {
-    dispatcher.dispatchEvent(event, {
-      conversationId: context.sessionId,
-      agentId: context.agentId,
-      workdir: context.projectDir,
-      messageId: context.messageId,
-      promptPreview: context.promptPreview,
-      providerId: context.providerId,
-      modelId: context.modelId,
-      tool: context.tool,
-      permission: context.permission,
-      stop: context.stop,
-      usage: context.usage,
-      error: context.error
-    })
-  }
-})
-const noopHookObserver: HookObserver = { notify: vi.fn() }
 import type { AcpAgentConfig } from '@shared/types/acp'
 import type * as schema from '@agentclientprotocol/sdk/dist/schema/index.js'
 import { nanoid } from 'nanoid'

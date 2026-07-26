@@ -84,8 +84,23 @@
 - [x] Run focused and full validation, review the complete diff, and disposition every finding.
 - [x] Commit every reviewed stage without pushing.
 
+## Typed Hook Notification Pipeline
+
+- [x] Record the 16-test hook baseline and enumerate the contract, ordering, and cost defects.
+- [x] Specify the event contract, runtime scope, delivery semantics, corrections, and non-goals.
+- [x] Add the canonical `HookEvent` union with coverage and rejection guards.
+- [x] Replace the untyped observer contract with `isObserved` plus a typed `notify`.
+- [x] Make `HookService` own its configuration and derived subscription index with atomic refresh.
+- [x] Project and truncate synchronously, then clone only the permission record.
+- [x] Serialize delivery per session without coupling sessions or awaiting hook commands.
+- [x] Turn `RuntimeHookSink` into a scope factory and unify the terminal projection.
+- [x] Migrate the loop, turn, interaction, and ACP compatibility producers onto the scope.
+- [x] Route hook configuration writes through the service and drop the unused message query port.
+- [x] Add subscription, ordering, projection, terminal parity, and resilience coverage.
+- [x] Run focused and full validation, review the complete diff, and disposition every finding.
+- [x] Commit every reviewed stage without pushing.
+
 ## Future Pull Requests
 
-- [ ] Add typed deterministic hook/event reduction with restricted hook context facades over the
-      stabilized owner graph.
+- [ ] Design hook decision semantics separately if the product and security model are approved.
 - [ ] Design same-run steering separately if the product semantics are approved.

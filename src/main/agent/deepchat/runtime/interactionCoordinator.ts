@@ -41,14 +41,13 @@ import type { DeferredToolExecutionResult, DeferredToolExecutor } from './deferr
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { MessageProjectionService } from './messageProjectionService'
-import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { ResumeBudgetToolCall, TurnResumePort } from './turnResumeContract'
 import type { DeepChatEventPublisher, PendingToolInteraction } from './types'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { MAX_TOOL_CALLS } from '@/agent/deepchat/loop/deepChatLoopEngine'
 import { isAbortError, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
-import type { RuntimeHookSink } from './runtimeHookSink'
+import type { RuntimeHookScope, RuntimeHookSink } from './runtimeHookSink'
 
 type InteractionRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -74,11 +73,10 @@ export interface InteractionCoordinatorPorts {
   skillService: SkillDraftPresenter
   runLifecycle: InteractionRunLifecyclePort
   registry: SessionScopeRegistry
-  sessionSettings: Pick<SessionSettingsCoordinator, 'resolveProjectDir'>
   sessionPermissionPort: SessionPermissionPort
   deferredToolExecutor: Pick<DeferredToolExecutor, 'execute'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
-  hookSink: Pick<RuntimeHookSink, 'dispatch'>
+  hookSink: Pick<RuntimeHookSink, 'scope'>
   turnCoordinator: TurnResumePort
   publishEvent: DeepChatEventPublisher
 }
@@ -225,7 +223,12 @@ export class InteractionCoordinator {
           return { resumed: false }
         }
         const state = this.ports.registry.getHydratedScope(toAppSessionId(sessionId))?.state()
-        const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId)
+        const hooks = this.ports.hookSink.scope({
+          sessionId,
+          messageId,
+          providerId: state?.providerId,
+          modelId: state?.modelId
+        })
         let shouldDispatchResolvedToolHook = false
 
         if (response.granted) {
@@ -254,17 +257,9 @@ export class InteractionCoordinator {
               isError: true
             }
           } else {
-            this.ports.hookSink.dispatch('PreToolUse', {
-              sessionId,
-              messageId,
-              providerId: state?.providerId,
-              modelId: state?.modelId,
-              projectDir,
-              tool: {
-                callId: toolCall.id,
-                name: toolCall.name,
-                params: toolCall.params
-              }
+            hooks.emit({
+              event: 'PreToolUse',
+              tool: { callId: toolCall.id, name: toolCall.name, params: toolCall.params }
             })
             execution = await this.ports.deferredToolExecutor.execute(
               sessionId,
@@ -293,12 +288,8 @@ export class InteractionCoordinator {
           if (execution.terminalError) {
             const terminalMetadata = stampTerminalMetadata(resumeAccounting, 'error', 'tool_error')
             instance.advancePendingToolBatch({ committedResultCallId: toolCall.id })
-            this.ports.hookSink.dispatch('PostToolUseFailure', {
-              sessionId,
-              messageId,
-              providerId: state?.providerId,
-              modelId: state?.modelId,
-              projectDir,
+            hooks.emit({
+              event: 'PostToolUseFailure',
               tool: {
                 callId: toolCall.id,
                 name: toolCall.name,
@@ -320,20 +311,9 @@ export class InteractionCoordinator {
               failedAt: Date.now(),
               error: execution.terminalError
             })
-            this.ports.hookSink.dispatch('Stop', {
-              sessionId,
-              messageId,
-              providerId: state?.providerId,
-              modelId: state?.modelId,
-              projectDir,
-              stop: { reason: 'tool_error', userStop: false }
-            })
-            this.ports.hookSink.dispatch('SessionEnd', {
-              sessionId,
-              messageId,
-              providerId: state?.providerId,
-              modelId: state?.modelId,
-              projectDir,
+            hooks.terminal({
+              reason: 'tool_error',
+              userStop: false,
               usage: buildUsageFromMetadata(terminalMetadata) ?? null,
               error: { message: execution.terminalError }
             })
@@ -375,18 +355,10 @@ export class InteractionCoordinator {
               toolCall.id,
               'post-call-permission'
             )
-            this.ports.hookSink.dispatch('PermissionRequest', {
-              sessionId,
-              messageId,
-              providerId: state?.providerId,
-              modelId: state?.modelId,
-              projectDir,
+            hooks.emit({
+              event: 'PermissionRequest',
               permission: execution.permissionRequest,
-              tool: {
-                callId: toolCall.id,
-                name: toolCall.name,
-                params: toolCall.params
-              }
+              tool: { callId: toolCall.id, name: toolCall.name, params: toolCall.params }
             })
             actionBlock.status = 'pending'
             actionBlock.content = execution.permissionRequest.description
@@ -409,15 +381,7 @@ export class InteractionCoordinator {
 
         emitResolvedToolHook = shouldDispatchResolvedToolHook
           ? () => {
-              this.dispatchResolvedToolHook({
-                sessionId,
-                messageId,
-                providerId: state?.providerId,
-                modelId: state?.modelId,
-                projectDir,
-                blocks,
-                toolCall
-              })
+              this.emitResolvedToolFacts(hooks, blocks, toolCall)
             }
           : null
       } else {
@@ -626,41 +590,23 @@ export class InteractionCoordinator {
     return { keepPending: false, waitingForUserMessage: false }
   }
 
-  private dispatchResolvedToolHook(params: {
-    sessionId: string
-    messageId: string
-    providerId?: string
-    modelId?: string
-    projectDir?: string | null
-    blocks: AssistantMessageBlock[]
+  private emitResolvedToolFacts(
+    hooks: RuntimeHookScope,
+    blocks: AssistantMessageBlock[],
     toolCall: NonNullable<AssistantMessageBlock['tool_call']>
-  }): void {
-    const resolvedBlock = params.blocks.find(
-      (block) => block.type === 'tool_call' && block.tool_call?.id === params.toolCall.id
+  ): void {
+    const resolvedBlock = blocks.find(
+      (block) => block.type === 'tool_call' && block.tool_call?.id === toolCall.id
     )
     const responseText = resolvedBlock?.tool_call?.response ?? ''
     const isError = resolvedBlock?.status === 'error'
+    const tool = { callId: toolCall.id, name: toolCall.name, params: toolCall.params }
 
-    this.ports.hookSink.dispatch(isError ? 'PostToolUseFailure' : 'PostToolUse', {
-      sessionId: params.sessionId,
-      messageId: params.messageId,
-      providerId: params.providerId,
-      modelId: params.modelId,
-      projectDir: params.projectDir,
-      tool: isError
-        ? {
-            callId: params.toolCall.id,
-            name: params.toolCall.name,
-            params: params.toolCall.params,
-            error: responseText
-          }
-        : {
-            callId: params.toolCall.id,
-            name: params.toolCall.name,
-            params: params.toolCall.params,
-            response: responseText
-          }
-    })
+    hooks.emit(
+      isError
+        ? { event: 'PostToolUseFailure', tool: { ...tool, error: responseText } }
+        : { event: 'PostToolUse', tool: { ...tool, response: responseText } }
+    )
   }
 
   private async grantPermissionForPayload(

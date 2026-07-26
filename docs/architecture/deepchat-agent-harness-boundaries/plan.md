@@ -2,9 +2,61 @@
 
 ## Current Slice
 
-Replace the orchestration root with a thin Harness facade over a one-directional service graph.
-This slice changes no runtime behavior. The typed tool execution contract and the coordinator
-ownership slice below are complete and remain retained records.
+Replace the untyped hook fan-out with a typed deterministic notification pipeline. The typed tool
+execution contract, the coordinator ownership slice, and the Harness facade below are complete and
+remain retained records.
+
+## Typed Hook Notification Pipeline Plan
+
+### Target Layout
+
+```text
+src/main/hook/
+├── events.ts     # canonical HookEvent union with coverage and rejection guards
+├── observer.ts   # isObserved plus typed notify
+├── index.ts      # subscription index, synchronous projection, per-session delivery
+└── routes.ts     # configuration reads and writes through the service
+
+src/main/agent/deepchat/runtime/
+└── runtimeHookSink.ts  # scope factory plus the single terminal projection
+```
+
+### Stage 1: Contract
+
+Add the `HookEvent` union and the two compile-time guards, then replace the observer interface. The
+shared settings module, the renderer surface, and the version 1 payload stay untouched.
+
+### Stage 2: Delivery
+
+Give `HookService` ownership of its configuration and derived subscription index, refreshed
+atomically on every write path. Project and truncate synchronously, clone only the permission
+record, and serialize delivery per session.
+
+### Stage 3: Producers
+
+Turn `RuntimeHookSink` into a scope factory, unify the terminal projection, and migrate the loop,
+turn, interaction, and ACP compatibility producers. Drop the ports each producer no longer needs.
+
+### Validation
+
+```bash
+pnpm exec vitest run --config vitest.config.ts \
+  test/main/hook \
+  test/main/agent/deepchat/runtime/runtimeHookSink.test.ts \
+  test/main/agent/deepchat/runtime/process.test.ts \
+  test/main/agent/deepchat/runtime/dispatch.test.ts \
+  test/main/session/runtimeIntegration.test.ts \
+  test/main/routes/dispatcher.test.ts \
+  test/main/app/compositionBoundaries.test.ts
+pnpm run typecheck
+pnpm run format
+pnpm run i18n
+pnpm run lint
+pnpm test
+```
+
+Verify both compile-time guards by temporarily removing an event variant and by weakening a
+required fact, confirming each fails `typecheck:node` before restoring the contract.
 
 ## Harness Facade Plan
 
@@ -348,7 +400,8 @@ silently reverted.
 
 ## Later Slices
 
-After the harness facade lands in `dev`, a later branch may extend this architecture record for
-typed hook reduction over the stabilized owner graph. That slice designs its own restricted hook
-context facades; it must not expose the composed service graph as a container, and it must not be
-implemented or coupled to the current branch. Same-run steering remains a separate feature design.
+Hook decision semantics remain unscheduled. Letting a hook block, replace, cancel, or rewrite a
+provider request or tool arguments needs a versioned stdout protocol, a conflict and timeout policy,
+argument revalidation, a permission recheck after rewriting, and a trust surface in settings. That
+is a product feature with its own security model and must not be folded into a delivery contract.
+Same-run steering remains a separate feature design.

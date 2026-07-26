@@ -1,12 +1,12 @@
 # Dependency Baseline
 
-Generated on 2026-07-25.
+Generated on 2026-07-26.
 
 ## main
 
-- Total files: 683
-- Internal dependency edges: 2182
-- Cycles detected: 10
+- Total files: 684
+- Internal dependency edges: 2183
+- Cycles detected: 9
 
 ### Top outgoing dependencies
 
@@ -19,7 +19,7 @@ Generated on 2026-07-25.
 - `agent/deepchat/harness/runtimeServices.ts`: 26
 - `session/data/database.ts`: 23
 - `agent/deepchat/runtime/compactionRuntimeCoordinator.ts`: 21
-- `agent/deepchat/runtime/interactionCoordinator.ts`: 21
+- `agent/deepchat/runtime/interactionCoordinator.ts`: 20
 - `memory/index.ts`: 20
 - `app/mainProcess.ts`: 18
 - `mcp/inMemoryServers/builder.ts`: 18
@@ -49,7 +49,6 @@ Generated on 2026-07-25.
 - `memory/injection.ts -> memory/core/injectionPort.ts -> memory/types.ts -> memory/injection.ts`
 - `agent/acp/runtime/index.ts -> agent/acp/runtime/acpCompatibilityPromptBuilder.ts -> agent/acp/instance/ports.ts -> agent/acp/runtime/index.ts`
 - `agent/acp/client/acpRuntimeOwner.ts -> agent/acp/client/index.ts -> agent/acp/client/acpRuntimeOwner.ts`
-- `hook/observer.ts -> hook/index.ts -> hook/observer.ts`
 - `desktop/browser/YoBrowserPresenter.ts -> desktop/browser/YoBrowserToolHandler.ts -> desktop/browser/YoBrowserPresenter.ts`
 - `tool/agentTools/agentToolManager.ts -> tool/agentTools/subagentOrchestratorTool.ts -> tool/agentTools/agentToolManager.ts`
 - `tool/agentTools/agentToolManager.ts -> tool/agentTools/agentTapeTools.ts -> tool/agentTools/agentToolManager.ts`

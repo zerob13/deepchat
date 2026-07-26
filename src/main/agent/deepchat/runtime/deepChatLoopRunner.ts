@@ -197,7 +197,7 @@ export interface DeepChatLoopRunnerPorts {
   identity: Pick<SessionIdentityService, 'getAgentId'>
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission: ToolPermissionReviewer
-  hookSink: Pick<RuntimeHookSink, 'dispatch'>
+  hookSink: Pick<RuntimeHookSink, 'scope'>
   compaction: Pick<CompactionRuntimeCoordinator, 'apply'>
 }
 
@@ -426,15 +426,16 @@ export class DeepChatLoopRunner {
     const emitRateLimitWaitingMessage = this.emitRateLimitWaitingMessage.bind(this)
     const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
 
+    const hooks = this.ports.hookSink.scope({
+      sessionId,
+      messageId,
+      providerId: state.providerId,
+      modelId: state.modelId,
+      projectDir
+    })
+
     try {
-      this.ports.hookSink.dispatch('SessionStart', {
-        sessionId,
-        messageId,
-        promptPreview,
-        providerId: state.providerId,
-        modelId: state.modelId,
-        projectDir
-      })
+      hooks.emit({ event: 'SessionStart', promptPreview })
 
       let reviewConversationMessages = messages
       const result = await processStream({
@@ -672,20 +673,7 @@ export class DeepChatLoopRunner {
         },
         shouldYieldForPendingInput: () =>
           Boolean(this.ports.pendingInputCoordinator.getNextSteerInput(sessionId)),
-        notificationObserver: {
-          notify: (notification) => {
-            this.ports.hookSink.dispatch(notification.event, {
-              sessionId,
-              messageId,
-              providerId: state.providerId,
-              modelId: state.modelId,
-              projectDir,
-              tool: { ...notification.tool },
-              permission:
-                notification.event === 'PermissionRequest' ? { ...notification.permission } : null
-            })
-          }
-        },
+        notificationObserver: hooks.toolObserver(),
         controls: {
           getActiveSkillNames: () => getEffectiveRuntimeSkillNames(),
           getEnabledMcpServerIds: () =>

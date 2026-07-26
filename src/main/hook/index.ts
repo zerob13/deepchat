@@ -10,7 +10,8 @@ import type {
   HookTestResult,
   HooksNotificationsSettings
 } from '@shared/hooksNotifications'
-import type { HookNotification, HookObserver } from './observer'
+import type { HookEvent, HookSessionFacts } from './events'
+import type { HookObserver } from './observer'
 
 const HOOK_PAYLOAD_VERSION = 1 as const
 const COMMAND_TIMEOUT_MS = 30_000
@@ -31,51 +32,50 @@ const HOOK_COMMAND_PLACEHOLDER_ENV_MAP = {
   toolCallId: 'DEEPCHAT_TOOL_CALL_ID'
 } as const
 
-export type HookDispatchContext = {
-  conversationId?: string
-  messageId?: string
-  promptPreview?: string
-  providerId?: string
-  modelId?: string
-  agentId?: string | null
-  workdir?: string | null
-  tool?: {
-    callId?: string
-    name?: string
-    params?: string
-    response?: string
-    error?: string
-  }
-  permission?: Record<string, unknown> | null
-  stop?: {
-    reason?: string
-    userStop?: boolean
-  } | null
-  usage?: Record<string, number> | null
-  error?: {
-    message?: string
-    stack?: string
-  } | null
-  isTest?: boolean
-}
-
 type HookSessionLookup = {
   providerId?: string
   modelId?: string
   projectDir?: string | null
 }
 
-type HookMessageLookup = {
-  content: unknown
-}
-
 export interface HookSettingsPort {
   getHooksNotificationsConfig(): HooksNotificationsSettings
+  setHooksNotificationsConfig(config: HooksNotificationsSettings): HooksNotificationsSettings
 }
 
 export interface HookQueryPort {
   getSession(sessionId: string): Promise<HookSessionLookup | null>
-  getMessage(messageId: string): Promise<HookMessageLookup | null>
+}
+
+/** Configuration and its derived subscription index, rebuilt as one unit so they cannot disagree. */
+type HookConfigSnapshot = {
+  readonly config: HooksNotificationsSettings
+  readonly subscribedEvents: ReadonlySet<HookEventName>
+}
+
+/** Identity of a hook as it stood when the event was accepted. */
+type AcceptedHook = {
+  readonly id: string
+  readonly command: string
+}
+
+/** An accepted event together with the subscribers that were eligible at that moment. */
+type HookDelivery = {
+  readonly projection: HookEventProjection
+  readonly accepted: readonly AcceptedHook[]
+}
+
+/** One event reduced to detached, already-truncated wire facts. */
+type HookEventProjection = {
+  readonly event: HookEventName
+  readonly time: string
+  readonly session: HookSessionFacts
+  readonly user: HookEventPayload['user']
+  readonly tool: HookEventPayload['tool']
+  readonly permission: HookEventPayload['permission']
+  readonly stop: HookEventPayload['stop']
+  readonly usage: HookEventPayload['usage']
+  readonly error: HookEventPayload['error']
 }
 
 export const truncateText = (value: string, limit: number): string => {
@@ -104,36 +104,12 @@ export const expandHookCommandPlaceholders = (
     return platform === 'win32' ? `"%${envName}%"` : `"\${${envName}}"`
   })
 
-const extractPromptPreview = (content: unknown): string => {
-  if (typeof content === 'string') {
-    try {
-      return extractPromptPreview(JSON.parse(content) as unknown)
-    } catch {
-      return content
-    }
-  }
-
-  if (!content || typeof content !== 'object') {
-    return ''
-  }
-
-  const userCandidate = content as { text?: string }
-  if (typeof userCandidate.text === 'string') {
-    return userCandidate.text
-  }
-
-  if (Array.isArray(content)) {
-    return content
-      .filter((block) => typeof block === 'object' && block && 'type' in block)
-      .map((block) => {
-        const contentBlock = block as { type?: string; content?: string }
-        return contentBlock.type === 'content' ? contentBlock.content || '' : ''
-      })
-      .join('')
-  }
-
-  return ''
-}
+/**
+ * Diagnostics are truncated to DIAGNOSTIC_TEXT_LIMIT anyway, so a command that streams for its
+ * whole timeout window must not be able to hold more than that in the main process.
+ */
+const captureDiagnostic = (current: string, chunk: unknown): string =>
+  current.length >= DIAGNOSTIC_TEXT_LIMIT ? current : current + String(chunk)
 
 const redactSensitiveText = (text: string, secrets: string[]): string => {
   if (!text) {
@@ -157,10 +133,77 @@ const redactSensitiveText = (text: string, secrets: string[]): string => {
   return output
 }
 
+const projectUser = (
+  messageId: string | undefined,
+  promptPreview: string | undefined
+): HookEventPayload['user'] =>
+  promptPreview || messageId
+    ? { messageId, promptPreview: truncateText(promptPreview || '', PREVIEW_TEXT_LIMIT) }
+    : null
+
+const projectTool = (tool: {
+  callId?: string
+  name?: string
+  params?: string
+  response?: string
+  error?: string
+}): HookEventPayload['tool'] => ({
+  callId: tool.callId,
+  name: tool.name,
+  paramsPreview: tool.params ? truncateText(tool.params, PREVIEW_TEXT_LIMIT) : undefined,
+  responsePreview: tool.response ? truncateText(tool.response, PREVIEW_TEXT_LIMIT) : undefined,
+  error: tool.error ? truncateText(tool.error, PREVIEW_TEXT_LIMIT) : undefined
+})
+
+/** Truncates before the only clone, so a multi-megabyte tool argument never reaches structuredClone. */
+const projectHookEvent = (event: HookEvent, time: string): HookEventProjection => {
+  const base = {
+    event: event.event,
+    time,
+    session: { ...event.session },
+    user: projectUser(event.session.messageId, undefined),
+    tool: null,
+    permission: null,
+    stop: null,
+    usage: null,
+    error: null
+  } satisfies HookEventProjection
+
+  switch (event.event) {
+    case 'SessionStart':
+    case 'UserPromptSubmit':
+      return { ...base, user: projectUser(event.session.messageId, event.promptPreview) }
+    case 'PreToolUse':
+    case 'PostToolUse':
+    case 'PostToolUseFailure':
+      return { ...base, tool: projectTool(event.tool) }
+    case 'PermissionRequest':
+      return {
+        ...base,
+        tool: projectTool(event.tool),
+        permission: structuredClone(event.permission) as Record<string, unknown>
+      }
+    case 'Stop':
+      return { ...base, stop: { reason: event.stop.reason, userStop: event.stop.userStop } }
+    case 'SessionEnd':
+      return {
+        ...base,
+        usage: event.usage ? { ...event.usage } : null,
+        error: event.error ? { message: event.error.message, stack: event.error.stack } : null
+      }
+    default: {
+      const unreachable: never = event
+      throw new Error(`Unhandled hook event: ${JSON.stringify(unreachable)}`)
+    }
+  }
+}
+
 export class HookService implements HookObserver {
   private accepting = true
   private readonly activeChildren = new Set<ChildProcess>()
-  private readonly pendingDispatches = new Set<Promise<void>>()
+  /** Per-session delivery chain: emission order within a session, no coupling across sessions. */
+  private readonly sessionChains = new Map<string, Promise<void>>()
+  private snapshot: HookConfigSnapshot | null = null
 
   constructor(
     private readonly settings: HookSettingsPort,
@@ -168,11 +211,24 @@ export class HookService implements HookObserver {
   ) {}
 
   getConfigSnapshot(): HooksNotificationsSettings {
-    return this.settings.getHooksNotificationsConfig()
+    return cloneConfig(this.readSnapshot().config)
+  }
+
+  /** Store write and subscription refresh happen together so the index is never behind the config. */
+  updateConfig(config: HooksNotificationsSettings): HooksNotificationsSettings {
+    const stored = this.settings.setHooksNotificationsConfig(config)
+    this.snapshot = buildConfigSnapshot(stored)
+    return stored
+  }
+
+  /** Drops the cached snapshot for writers that reach the settings store directly. */
+  refreshSubscriptions(): void {
+    this.snapshot = null
   }
 
   start(): void {
     this.accepting = true
+    this.refreshSubscriptions()
   }
 
   async stop(): Promise<void> {
@@ -184,46 +240,32 @@ export class HookService implements HookObserver {
         // Process may already be closing.
       }
     }
-    await Promise.allSettled(this.pendingDispatches)
+    await Promise.allSettled(Array.from(this.sessionChains.values()))
   }
 
-  notify(notification: HookNotification): void {
+  isObserved(event: HookEventName): boolean {
+    if (!this.accepting) {
+      return false
+    }
+    return this.readSnapshot().subscribedEvents.has(event)
+  }
+
+  notify(event: HookEvent): void {
     try {
-      const context = structuredClone(notification.context)
-      this.dispatchEvent(notification.event, {
-        conversationId: context.sessionId,
-        messageId: context.messageId,
-        promptPreview: context.promptPreview,
-        providerId: context.providerId,
-        modelId: context.modelId,
-        agentId: context.agentId ?? null,
-        workdir: context.projectDir ?? null,
-        tool: context.tool,
-        permission: context.permission ?? null,
-        stop: context.stop ?? null,
-        usage: context.usage ?? null,
-        error: context.error ?? null
+      if (!this.isObserved(event.event)) {
+        return
+      }
+      const accepted = this.acceptSubscribers(event.event)
+      if (accepted.length === 0) {
+        return
+      }
+      this.enqueue({
+        projection: projectHookEvent(event, new Date().toISOString()),
+        accepted
       })
     } catch (error) {
       log.warn('[Hook] Notification observer failed:', error)
     }
-  }
-
-  dispatchEvent(event: HookEventName, context: HookDispatchContext): void {
-    if (!this.accepting) {
-      return
-    }
-    const snapshot = structuredClone(context)
-    queueMicrotask(() => {
-      if (!this.accepting) {
-        return
-      }
-      const pending = this.dispatchEventAsync(event, snapshot).catch((error) => {
-        log.warn('[Hook] Dispatch failed:', error)
-      })
-      this.pendingDispatches.add(pending)
-      void pending.finally(() => this.pendingDispatches.delete(pending))
-    })
   }
 
   async testHookCommand(hookId: string): Promise<HookTestResult> {
@@ -245,56 +287,113 @@ export class HookService implements HookObserver {
     }
 
     const event = hook.events[0] ?? 'SessionStart'
-    const payload = await this.buildPayload(event, {
+    return await this.runHookCommand(hook, {
+      payloadVersion: HOOK_PAYLOAD_VERSION,
+      event,
+      time: new Date().toISOString(),
       isTest: true,
-      promptPreview: 'Test message'
+      app: { version: app.getVersion(), platform: process.platform },
+      session: { conversationId: undefined, agentId: null, workdir: null },
+      user: { messageId: undefined, promptPreview: 'Test message' },
+      tool: null,
+      permission: null,
+      stop: null,
+      usage: null,
+      error: null
     })
-
-    return await this.runHookCommand(hook, payload)
   }
 
-  private async dispatchEventAsync(
-    event: HookEventName,
-    context: HookDispatchContext
-  ): Promise<void> {
-    const config = this.getConfigSnapshot()
-    const payload = await this.buildPayload(event, context)
+  private readSnapshot(): HookConfigSnapshot {
+    this.snapshot ??= buildConfigSnapshot(this.settings.getHooksNotificationsConfig())
+    return this.snapshot
+  }
 
-    for (const hook of config.hooks) {
-      if (!this.shouldDispatchHook(hook, event)) {
-        continue
+  private acceptSubscribers(event: HookEventName): readonly AcceptedHook[] {
+    return this.readSnapshot()
+      .config.hooks.filter((hook) => shouldDispatchHook(hook, event))
+      .map((hook) => ({ id: hook.id, command: hook.command }))
+  }
+
+  private enqueue(delivery: HookDelivery): void {
+    const sessionId = delivery.projection.session.sessionId
+    const previous = this.sessionChains.get(sessionId) ?? Promise.resolve()
+    const next = previous.then(async () => {
+      try {
+        await this.deliver(delivery)
+      } catch (error) {
+        log.warn('[Hook] Dispatch failed:', error)
       }
+    })
 
+    this.sessionChains.set(sessionId, next)
+    void next.finally(() => {
+      if (this.sessionChains.get(sessionId) === next) {
+        this.sessionChains.delete(sessionId)
+      }
+    })
+  }
+
+  private async deliver({ projection, accepted }: HookDelivery): Promise<void> {
+    if (!this.accepting) {
+      return
+    }
+
+    // Skip enrichment entirely when nothing can run any more.
+    if (this.runnableHooks(projection.event, accepted).length === 0) {
+      return
+    }
+
+    const payload = await this.buildPayload(projection)
+    if (!this.accepting) {
+      return
+    }
+
+    // Authoritative revalidation: enrichment is asynchronous, so eligibility is settled here
+    // rather than before it.
+    for (const hook of this.runnableHooks(projection.event, accepted)) {
+      // Per-command isolation: one failing hook must not affect its siblings or the next event.
       void this.runHookCommand(hook, payload).catch((error) => {
         log.warn(`[HooksNotifications] Hook "${hook.name}" failed:`, error)
       })
     }
   }
 
-  private shouldDispatchHook(hook: HookCommandItem, event: HookEventName): boolean {
-    return Boolean(hook.enabled && hook.command.trim() && hook.events.includes(event))
+  /**
+   * A hook runs only if it was eligible when the event happened and is still eligible now under
+   * the same command, so a hook enabled or edited afterwards never receives an earlier event and
+   * one disabled meanwhile stops receiving queued ones.
+   */
+  private runnableHooks(
+    event: HookEventName,
+    accepted: readonly AcceptedHook[]
+  ): readonly HookCommandItem[] {
+    return this.readSnapshot().config.hooks.filter(
+      (hook) =>
+        shouldDispatchHook(hook, event) &&
+        accepted.some((item) => item.id === hook.id && item.command === hook.command)
+    )
   }
 
-  private async buildPayload(
-    event: HookEventName,
-    context: HookDispatchContext
-  ): Promise<HookEventPayload> {
-    const now = new Date().toISOString()
-    let conversationId = context.conversationId
-    let providerId = context.providerId
-    let modelId = context.modelId
-    let agentId = context.agentId
-    let workdir = context.workdir
+  private async buildPayload(projection: HookEventProjection): Promise<HookEventPayload> {
+    const { sessionId, agentId, providerId, modelId, projectDir } = projection.session
+    let resolvedAgentId = agentId
+    let resolvedProviderId = providerId
+    let resolvedModelId = modelId
+    let resolvedWorkdir = projectDir
 
-    if (conversationId && (!providerId || !modelId || !workdir)) {
+    // Only an unanswered field triggers a lookup; an explicit null is already a resolved answer.
+    if (
+      sessionId &&
+      (providerId === undefined || modelId === undefined || projectDir === undefined)
+    ) {
       try {
-        const session = await this.query.getSession(conversationId)
+        const session = await this.query.getSession(sessionId)
         if (session) {
-          providerId = providerId ?? session.providerId
-          modelId = modelId ?? session.modelId
-          workdir = workdir ?? session.projectDir
-          if (!agentId && session.providerId === 'acp') {
-            agentId = session.modelId
+          resolvedProviderId = resolvedProviderId ?? session.providerId
+          resolvedModelId = resolvedModelId ?? session.modelId
+          resolvedWorkdir = resolvedWorkdir ?? session.projectDir
+          if (!resolvedAgentId && session.providerId === 'acp') {
+            resolvedAgentId = session.modelId
           }
         }
       } catch (error) {
@@ -302,60 +401,28 @@ export class HookService implements HookObserver {
       }
     }
 
-    let promptPreview = context.promptPreview
-    if (!promptPreview && context.messageId) {
-      try {
-        const message = await this.query.getMessage(context.messageId)
-        if (message) {
-          promptPreview = extractPromptPreview(message.content)
-        }
-      } catch (error) {
-        log.warn('[HooksNotifications] Failed to read message for preview:', error)
-      }
-    }
-
-    const hasUser = Boolean(promptPreview || context.messageId)
     return {
       payloadVersion: HOOK_PAYLOAD_VERSION,
-      event,
-      time: now,
-      isTest: Boolean(context.isTest),
+      event: projection.event,
+      time: projection.time,
+      isTest: false,
       app: {
         version: app.getVersion(),
         platform: process.platform
       },
       session: {
-        conversationId,
-        agentId: agentId ?? null,
-        workdir: workdir ?? null,
-        providerId,
-        modelId
+        conversationId: sessionId,
+        agentId: resolvedAgentId ?? null,
+        workdir: resolvedWorkdir ?? null,
+        providerId: resolvedProviderId,
+        modelId: resolvedModelId
       },
-      user: hasUser
-        ? {
-            messageId: context.messageId,
-            promptPreview: truncateText(promptPreview || '', PREVIEW_TEXT_LIMIT)
-          }
-        : null,
-      tool: context.tool
-        ? {
-            callId: context.tool.callId,
-            name: context.tool.name,
-            paramsPreview: context.tool.params
-              ? truncateText(context.tool.params, PREVIEW_TEXT_LIMIT)
-              : undefined,
-            responsePreview: context.tool.response
-              ? truncateText(context.tool.response, PREVIEW_TEXT_LIMIT)
-              : undefined,
-            error: context.tool.error
-              ? truncateText(context.tool.error, PREVIEW_TEXT_LIMIT)
-              : undefined
-          }
-        : null,
-      permission: context.permission ?? null,
-      stop: context.stop ?? null,
-      usage: context.usage ?? null,
-      error: context.error ?? null
+      user: projection.user,
+      tool: projection.tool,
+      permission: projection.permission,
+      stop: projection.stop,
+      usage: projection.usage,
+      error: projection.error
     }
   }
 
@@ -409,6 +476,8 @@ export class HookService implements HookObserver {
       DEEPCHAT_TOOL_CALL_ID: payload.tool?.callId ?? ''
     }
 
+    const secrets = [payload.session.conversationId ?? '', payload.session.workdir ?? '']
+
     return await new Promise<HookCommandResult>((resolve) => {
       let stdout = ''
       let stderr = ''
@@ -431,6 +500,13 @@ export class HookService implements HookObserver {
         resolve(result)
       }
 
+      // Every settlement path reports diagnostics through here, so redaction cannot be forgotten
+      // on one of them.
+      const diagnostics = () => ({
+        stdout: redactSensitiveText(truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT), secrets),
+        stderr: redactSensitiveText(truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT), secrets)
+      })
+
       const timeout = setTimeout(() => {
         timedOut = true
         try {
@@ -438,6 +514,15 @@ export class HookService implements HookObserver {
         } catch {
           // ignore
         }
+        // A killed shell can keep its process tree alive and never emit `close`, so the timeout
+        // settles the result itself instead of waiting for an exit that may never arrive.
+        finalize({
+          success: false,
+          durationMs: Date.now() - start,
+          exitCode: null,
+          ...diagnostics(),
+          error: 'Command timed out'
+        })
       }, COMMAND_TIMEOUT_MS)
 
       child.on('error', (error) => {
@@ -447,29 +532,26 @@ export class HookService implements HookObserver {
           success: false,
           durationMs: Date.now() - start,
           exitCode: null,
-          stdout: truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT),
-          stderr: truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT),
+          ...diagnostics(),
           error: error instanceof Error ? error.message : String(error)
         })
       })
 
       child.stdout?.on('data', (chunk) => {
-        stdout += String(chunk)
+        stdout = captureDiagnostic(stdout, chunk)
       })
       child.stderr?.on('data', (chunk) => {
-        stderr += String(chunk)
+        stderr = captureDiagnostic(stderr, chunk)
       })
 
       child.on('close', (code) => {
         this.activeChildren.delete(child)
         clearTimeout(timeout)
-        const secrets = [payload.session.conversationId ?? '', payload.session.workdir ?? '']
         finalize({
           success: !timedOut && code === 0,
           durationMs: Date.now() - start,
           exitCode: code ?? null,
-          stdout: redactSensitiveText(truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT), secrets),
-          stderr: redactSensitiveText(truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT), secrets),
+          ...diagnostics(),
           error: timedOut ? 'Command timed out' : code === 0 ? undefined : 'Command failed'
         })
       })
@@ -493,11 +575,39 @@ export class HookService implements HookObserver {
           success: false,
           durationMs: Date.now() - start,
           exitCode: null,
-          stdout: truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT),
-          stderr: truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT),
+          ...diagnostics(),
           error: error instanceof Error ? error.message : String(error)
         })
       }
     })
   }
+}
+
+const isHookRunnable = (hook: HookCommandItem): boolean =>
+  Boolean(hook.enabled && hook.command.trim())
+
+const shouldDispatchHook = (hook: HookCommandItem, event: HookEventName): boolean =>
+  isHookRunnable(hook) && hook.events.includes(event)
+
+const cloneConfig = (config: HooksNotificationsSettings): HooksNotificationsSettings => ({
+  hooks: config.hooks.map((hook) => ({ ...hook, events: [...hook.events] }))
+})
+
+// Owns a private copy so the settings port never observes the delivery path freezing its result.
+const buildConfigSnapshot = (source: HooksNotificationsSettings): HookConfigSnapshot => {
+  const config = cloneConfig(source)
+  const subscribedEvents = new Set<HookEventName>()
+  for (const hook of config.hooks) {
+    Object.freeze(hook.events)
+    Object.freeze(hook)
+    if (!isHookRunnable(hook)) {
+      continue
+    }
+    for (const event of hook.events) {
+      subscribedEvents.add(event)
+    }
+  }
+  Object.freeze(config.hooks)
+  Object.freeze(config)
+  return { config, subscribedEvents }
 }

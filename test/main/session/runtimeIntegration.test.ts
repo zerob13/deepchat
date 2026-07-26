@@ -2,7 +2,7 @@ import { AppSessionService } from '@/agent/shared/appSessionService'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
-import type { HookNotification, HookObserver } from '@/hook/observer'
+import { createHookObserver, noopHookObserver } from '../hook/hookObserverFixture'
 import type { PermissionMode } from '@shared/types/agent-interface'
 import type { ReasoningEffort, Verbosity } from '@shared/types/model-db'
 import logger from '@shared/logger'
@@ -18,28 +18,6 @@ vi.mock('nanoid', () => {
   let counter = 0
   return { nanoid: vi.fn(() => `id-${++counter}`) }
 })
-
-const createHookObserver = (dispatcher: {
-  dispatchEvent: ReturnType<typeof vi.fn>
-}): HookObserver => ({
-  notify({ event, context }: HookNotification) {
-    dispatcher.dispatchEvent(event, {
-      conversationId: context.sessionId,
-      agentId: context.agentId,
-      workdir: context.projectDir,
-      messageId: context.messageId,
-      promptPreview: context.promptPreview,
-      providerId: context.providerId,
-      modelId: context.modelId,
-      tool: context.tool,
-      permission: context.permission,
-      stop: context.stop,
-      usage: context.usage,
-      error: context.error
-    })
-  }
-})
-const noopHookObserver: HookObserver = { notify: vi.fn() }
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 

@@ -303,7 +303,6 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     skillService,
     runLifecycle,
     registry: runtime,
-    sessionSettings,
     sessionPermissionPort,
     deferredToolExecutor,
     messageProjection,
@@ -363,7 +362,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
           loopRunner.emitRateLimitWaitingMessage(sessionId, messageId, requestId, snapshot),
         clearRateLimitWaitingMessage: (sessionId, messageId, requestId) =>
           loopRunner.clearRateLimitWaitingMessage(sessionId, messageId, requestId),
-        dispatchHook: (event, context) => hookSink.dispatch(event, context)
+        hookSink
       },
       input
     )

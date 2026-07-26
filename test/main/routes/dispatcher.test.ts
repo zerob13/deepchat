@@ -1664,8 +1664,11 @@ function createRuntime() {
     applyCustomProxyUrl
   })
   const hookRoutes = createHookRoutes({
-    settings: hookSettings as never,
-    testCommand: testHookCommand
+    service: {
+      getConfigSnapshot: () => hookSettings.getHooksNotificationsConfig(),
+      updateConfig: (config) => hookSettings.setHooksNotificationsConfig(config as never),
+      testHookCommand
+    } as never
   })
   const appSettingsRoutes = createAppSettingsRoutes({
     settings: {

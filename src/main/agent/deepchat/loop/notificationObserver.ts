@@ -9,12 +9,10 @@ export function emitDeepChatLoopNotification(
   }
 
   try {
-    const pending = observer.notify(structuredClone(notification))
-    if (pending) {
-      void Promise.resolve(pending).catch((error) => {
-        console.warn('[DeepChatLoop] Notification observer failed:', error)
-      })
+    if (!observer.isObserved(notification.event)) {
+      return
     }
+    observer.notify(notification)
   } catch (error) {
     console.warn('[DeepChatLoop] Notification observer failed:', error)
   }

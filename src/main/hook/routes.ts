@@ -4,12 +4,16 @@ import {
   configTestHookCommandRoute,
   type DeepchatRouteName
 } from '@shared/contracts/routes'
-import type { HookTestResult } from '@shared/hooksNotifications'
-import type { HookSettings } from './config'
+import type { HooksNotificationsSettings, HookTestResult } from '@shared/hooksNotifications'
+
+export interface HookRoutesPort {
+  getConfigSnapshot(): HooksNotificationsSettings
+  updateConfig(config: HooksNotificationsSettings): HooksNotificationsSettings
+  testHookCommand(hookId: string): Promise<HookTestResult>
+}
 
 export function createHookRoutes(deps: {
-  settings: HookSettings
-  testCommand(hookId: string): Promise<HookTestResult>
+  service: HookRoutesPort
 }): ReadonlyMap<DeepchatRouteName, (rawInput: unknown) => Promise<unknown>> {
   return new Map<DeepchatRouteName, (rawInput: unknown) => Promise<unknown>>([
     [
@@ -17,7 +21,7 @@ export function createHookRoutes(deps: {
       async (rawInput: unknown) => {
         configGetHooksNotificationsRoute.input.parse(rawInput)
         return configGetHooksNotificationsRoute.output.parse({
-          config: deps.settings.getHooksNotificationsConfig()
+          config: deps.service.getConfigSnapshot()
         })
       }
     ],
@@ -26,7 +30,7 @@ export function createHookRoutes(deps: {
       async (rawInput: unknown) => {
         const input = configSetHooksNotificationsRoute.input.parse(rawInput)
         return configSetHooksNotificationsRoute.output.parse({
-          config: deps.settings.setHooksNotificationsConfig(input.config)
+          config: deps.service.updateConfig(input.config)
         })
       }
     ],
@@ -35,7 +39,7 @@ export function createHookRoutes(deps: {
       async (rawInput: unknown) => {
         const input = configTestHookCommandRoute.input.parse(rawInput)
         return configTestHookCommandRoute.output.parse({
-          result: await deps.testCommand(input.hookId)
+          result: await deps.service.testHookCommand(input.hookId)
         })
       }
     ]
