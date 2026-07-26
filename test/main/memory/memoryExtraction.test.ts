@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFakeRepository } from './support/memoryFakes'
+import { createFakeRepository, FakeDirectiveRepository } from './support/memoryFakes'
 
 import {
   buildExtractionPrompt,
@@ -9,6 +9,7 @@ import {
   personaChangeRatio,
   PERSONA_MAX_CHANGE_RATIO
 } from '@/memory/core/extraction'
+import { AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS } from '@shared/types/agent-memory'
 
 describe('personaChangeRatio', () => {
   it('is 0 for identical or both-empty self-models', () => {
@@ -43,7 +44,8 @@ describe('parseMemoryCandidates', () => {
           content: 'user likes redis',
           importance: 0.8
         }
-      ]
+      ],
+      directiveSuggestions: []
     })
   })
 
@@ -86,6 +88,11 @@ describe('parseMemoryCandidates', () => {
       ok: false,
       reason: 'missing-json-array'
     })
+    expect(
+      parseMemoryCandidates(
+        '{"memories":"invalid","directiveSuggestions":[{"kind":"instruction","content":"Never activate"}]}'
+      )
+    ).toEqual({ ok: false, reason: 'non-array' })
     expect(parseMemoryCandidates('[broken')).toEqual({ ok: false, reason: 'missing-json-array' })
   })
 
@@ -114,6 +121,71 @@ describe('parseMemoryCandidates', () => {
       'repo uses pnpm'
     ])
   })
+
+  it('parses bounded directive drafts separately from memory candidates', () => {
+    const out = parseMemoryCandidates(
+      JSON.stringify({
+        memories: [{ category: 'user_preference', content: 'User prefers concise answers.' }],
+        directiveSuggestions: [
+          { kind: 'instruction', content: '  Keep responses concise.  ' },
+          {
+            kind: 'suppress_topic',
+            content: 'Do not mention Project Saffron.',
+            topic: ' Project   SAFFRON '
+          },
+          { kind: 'instruction', content: '' },
+          { kind: 'instruction', content: 'Ambiguous instruction.', topic: 'unexpected' },
+          { kind: 'unknown', content: 'Ignore me.' }
+        ]
+      })
+    )
+
+    expect(out).toEqual({
+      ok: true,
+      candidates: [
+        {
+          category: 'user_preference',
+          kind: undefined,
+          content: 'User prefers concise answers.',
+          importance: undefined
+        }
+      ],
+      directiveSuggestions: [
+        { kind: 'instruction', content: 'Keep responses concise.' },
+        {
+          kind: 'suppress_topic',
+          content: 'Do not mention Project Saffron.',
+          topic: 'project saffron'
+        }
+      ]
+    })
+  })
+
+  it('caps directive suggestions and drops malformed or oversized entries', () => {
+    const out = parseMemoryCandidates(
+      JSON.stringify({
+        memories: [],
+        directiveSuggestions: [
+          {
+            kind: 'instruction',
+            content: 'x'.repeat(AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS + 1)
+          },
+          ...Array.from({ length: 8 }, (_, index) => ({
+            kind: 'instruction',
+            content: `Directive ${index}`
+          }))
+        ]
+      })
+    )
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected parse to succeed')
+    expect(out.directiveSuggestions).toEqual(
+      Array.from({ length: 4 }, (_, index) => ({
+        kind: 'instruction',
+        content: `Directive ${index}`
+      }))
+    )
+  })
 })
 
 describe('buildExtractionPrompt', () => {
@@ -129,6 +201,9 @@ describe('buildExtractionPrompt', () => {
     expect(prompt).toContain('anti_pattern')
     expect(prompt).toContain('raw tool results')
     expect(prompt).toContain('Return at most one task_outcome')
+    expect(prompt).toContain('explicit user approval')
+    expect(prompt).toContain('directiveSuggestions')
+    expect(prompt).toContain('suppress_topic')
   })
 
   it('preserves very long spans because runtime owns chunking', () => {
@@ -229,6 +304,60 @@ describe('MemoryService.extractAndStore', () => {
     })
     expect(again).toEqual({ ok: true, createdIds: [] })
     expect(repo.listByAgent('on').length).toBe(1)
+  })
+
+  it('stores model-derived directives as inactive drafts', async () => {
+    const { MemoryService } = await import('@/memory')
+    const repo = makeFakeRepo()
+    const directiveRepository = new FakeDirectiveRepository()
+    const generateText = vi.fn(async (_p: string, _m: string, prompt: string) => {
+      if (prompt.includes('KEEP or SKIP')) return 'KEEP'
+      return JSON.stringify({
+        memories: [],
+        directiveSuggestions: [
+          {
+            kind: 'suppress_topic',
+            content: 'Do not mention Project Saffron.',
+            topic: 'Project Saffron'
+          }
+        ]
+      })
+    })
+    const presenter = new MemoryService({
+      executeWithRateLimit: vi.fn(async () => undefined),
+      repository: repo,
+      directiveRepository,
+      resolveAgentConfig: () => ({ memoryEnabled: true }),
+      getEmbeddings: async () => [],
+      generateText,
+      createVectorStore: async () => ({
+        upsert: async () => {},
+        query: async () => [],
+        queryByMemoryId: async () => [],
+        deleteByMemoryIds: async () => {},
+        listMemoryIds: async () => [],
+        clear: async () => {},
+        close: async () => {},
+        isUsable: () => true
+      })
+    })
+
+    await expect(
+      presenter.extractAndStore({
+        agentId: 'a',
+        spanText: 'User: Never mention Project Saffron in future replies.',
+        model: { providerId: 'p', modelId: 'm' }
+      })
+    ).resolves.toEqual({ ok: true, createdIds: [] })
+    expect(presenter.listDirectives('a')).toEqual([
+      expect.objectContaining({
+        kind: 'suppress_topic',
+        status: 'draft',
+        source: 'derived_suggestion',
+        normalized_topic: 'project saffron'
+      })
+    ])
+    expect(presenter.listActiveDirectives('a')).toEqual([])
   })
 
   it('applies category-derived kind and importance floor through extraction writes', async () => {

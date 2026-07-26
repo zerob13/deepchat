@@ -48,6 +48,7 @@ import type {
   MemoryWriteOutcome,
   WriteMemoriesOptions
 } from '../types'
+import type { MemoryDirectiveInput } from '../domain/directives'
 import {
   type MemoryModelRef,
   type MemoryOperationFence,
@@ -296,6 +297,7 @@ export class WriteCoordinator {
       markWorkingMemoryDirty: (agentId: string) => void
       triggerEmbedding: (agentId: string) => Promise<void>
       scheduleConsolidation: (agentId: string) => void
+      suggestDirective: (agentId: string, input: MemoryDirectiveInput) => void
       diagnostics?: {
         recordExtraction(
           agentId: string,
@@ -444,9 +446,19 @@ export class WriteCoordinator {
           touched = true
         }
       }
+      if (!batch.failed) {
+        for (const suggestion of parsed.directiveSuggestions) {
+          if (!this.ctx.canContinueOperation(operationFence)) {
+            extractionOutcome = 'cancelled'
+            return { ok: false }
+          }
+          this.ports.suggestDirective(input.agentId, suggestion)
+        }
+      }
       this.writeExtractionAudit(input, model, {
         parsedCount: parsed.candidates.length,
         acceptedCount: candidateStats.candidates.length,
+        directiveSuggestionCount: parsed.directiveSuggestions.length,
         duplicateCandidateIndexes: candidateStats.duplicateCandidateIndexes,
         rejectedCandidates: candidateStats.rejectedCandidates,
         decisionBudgetFallbacks: batch.decisionBudgetFallbacks,
@@ -524,6 +536,7 @@ export class WriteCoordinator {
     summary: {
       parsedCount: number
       acceptedCount: number
+      directiveSuggestionCount: number
       duplicateCandidateIndexes: number[]
       rejectedCandidates: Array<{ candidateIndex: number; reason: 'candidate-too-large' }>
       decisionBudgetFallbacks: number
@@ -537,7 +550,8 @@ export class WriteCoordinator {
       reason: summary.failed ? 'partial-apply-failed' : null,
       inputRefs: {
         parsedCount: summary.parsedCount,
-        acceptedCount: summary.acceptedCount
+        acceptedCount: summary.acceptedCount,
+        directiveSuggestionCount: summary.directiveSuggestionCount
       },
       outputRefs: {
         duplicateCandidateIndexes: summary.duplicateCandidateIndexes,

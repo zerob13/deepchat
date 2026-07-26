@@ -310,6 +310,9 @@ export class MemoryService implements MemoryRuntimePort {
       markWorkingMemoryDirty: (agentId) => this.workingMemory.markWorkingMemoryDirty(agentId),
       triggerEmbedding: (agentId) => this.embedding.processPendingEmbeddings(agentId),
       scheduleConsolidation: (agentId) => this.maintenance.scheduleConsolidation(agentId),
+      suggestDirective: (agentId, input) => {
+        this.directives.suggestDirective(agentId, input)
+      },
       diagnostics: this.diagnostics
     })
 
