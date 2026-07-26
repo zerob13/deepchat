@@ -5,7 +5,12 @@ import {
   type AgentMemoryTemporalPrecision
 } from '@shared/types/agent-memory'
 
-import type { AgentMemoryRow, MemoryTemporalMetadata } from '../domain/types'
+import type {
+  AgentMemoryRow,
+  MemoryTemporalMetadata,
+  MemoryTemporalPolicyMode,
+  MemoryTemporalPolicyResult
+} from '../domain/types'
 import { canonicalizeMemoryTimeZone } from '../domain/clock'
 
 const TEMPORAL_KIND_SET = new Set<unknown>(AGENT_MEMORY_TEMPORAL_KINDS)
@@ -13,6 +18,14 @@ const TEMPORAL_PRECISION_SET = new Set<unknown>(AGENT_MEMORY_TEMPORAL_PRECISIONS
 const ISO_TIMESTAMP_WITH_ZONE =
   /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})T(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,3}))?)?(?<zone>Z|(?<offsetSign>[+-])(?<offsetHour>\d{2}):(?<offsetMinute>\d{2}))$/u
 const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000
+const TEMPORAL_FORMATTER_CACHE_LIMIT = 64
+const temporalFormatterCache = new Map<string, Intl.DateTimeFormat>()
+
+export const MEMORY_TEMPORAL_HARD_FILTER_CONFIDENCE = 0.8
+export const MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR = 0.65
+export const MEMORY_TEMPORAL_UNDATED_STATE_FACTOR = 0.9
+export const MEMORY_TEMPORAL_PREVIOUS_PLAN_FACTOR = 0.85
+export const MEMORY_TEMPORAL_ENDED_RECURRENCE_FACTOR = 0.9
 
 export const ATEMPORAL_MEMORY_METADATA: MemoryTemporalMetadata = Object.freeze({
   temporalKind: 'atemporal',
@@ -210,4 +223,192 @@ export function resolveMergedClaimTemporalMetadata(
   return (incoming.temporalConfidence ?? 0) > (existing.temporalConfidence ?? 0)
     ? { ...incoming }
     : { ...existing }
+}
+
+type TemporalIntervalRelation = 'current' | 'future' | 'expired' | 'undated'
+
+function intervalRelation(temporal: MemoryTemporalMetadata, now: number): TemporalIntervalRelation {
+  if (!Number.isFinite(now)) return 'undated'
+  if (temporal.validFrom !== null && now < temporal.validFrom) return 'future'
+  if (temporal.validUntil !== null && now >= temporal.validUntil) return 'expired'
+  if (temporal.validFrom === null && temporal.validUntil === null) return 'undated'
+  return 'current'
+}
+
+function temporalFormatter(timeZone: string): Intl.DateTimeFormat {
+  const cached = temporalFormatterCache.get(timeZone)
+  if (cached) return cached
+  const formatter = new Intl.DateTimeFormat('en-CA-u-ca-iso8601-nu-latn', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  })
+  if (temporalFormatterCache.size >= TEMPORAL_FORMATTER_CACHE_LIMIT) {
+    const oldest = temporalFormatterCache.keys().next().value
+    if (oldest !== undefined) temporalFormatterCache.delete(oldest)
+  }
+  temporalFormatterCache.set(timeZone, formatter)
+  return formatter
+}
+
+function formatTemporalBound(
+  epoch: number,
+  precision: AgentMemoryTemporalPrecision,
+  timeZone: string
+): string {
+  try {
+    const values = new Map(
+      temporalFormatter(timeZone)
+        .formatToParts(new Date(epoch))
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value])
+    )
+    const year = values.get('year')
+    const month = values.get('month')
+    const day = values.get('day')
+    if (!year || !month || !day) return new Date(epoch).toISOString()
+    if (precision === 'year') return year
+    if (precision === 'quarter') return `${year}-Q${Math.ceil(Number(month) / 3)}`
+    if (precision === 'month') return `${year}-${month}`
+    const date = `${year}-${month}-${day}`
+    if (precision !== 'exact' && precision !== 'unknown') return date
+    const hour = values.get('hour')
+    const minute = values.get('minute')
+    const second = values.get('second')
+    return hour && minute && second ? `${date} ${hour}:${minute}:${second}` : date
+  } catch {
+    return new Date(epoch).toISOString()
+  }
+}
+
+function formatTemporalInterval(temporal: MemoryTemporalMetadata): string {
+  const precision = temporal.temporalPrecision ?? 'unknown'
+  const timeZone = temporal.temporalTimeZone ?? 'UTC'
+  const from =
+    temporal.validFrom === null
+      ? null
+      : formatTemporalBound(temporal.validFrom, precision, timeZone)
+  const until =
+    temporal.validUntil === null
+      ? null
+      : formatTemporalBound(temporal.validUntil, precision, timeZone)
+  const interval =
+    from && until
+      ? `from ${from} until ${until}`
+      : from
+        ? `from ${from}`
+        : until
+          ? `until ${until}`
+          : null
+  return interval ? `${interval} (${timeZone})` : 'validity window unspecified'
+}
+
+function temporalAnnotation(
+  label: string,
+  temporal: MemoryTemporalMetadata,
+  options: { includeConfidence?: boolean } = {}
+): string {
+  const details = [`Temporal: ${label}`, formatTemporalInterval(temporal)]
+  if (temporal.temporalPrecision === 'unknown') details.push('approximate')
+  if (options.includeConfidence && temporal.temporalConfidence !== null) {
+    details.push(`confidence ${temporal.temporalConfidence.toFixed(2)}`)
+  }
+  return `[${details.join('; ')}]`
+}
+
+export function evaluateMemoryTemporalPolicy(
+  input: MemoryTemporalMetadata,
+  now: number,
+  mode: MemoryTemporalPolicyMode = 'current'
+): MemoryTemporalPolicyResult {
+  const temporal = normalizeMemoryTemporalMetadata(input)
+  if (temporal.temporalKind === 'atemporal') {
+    return { eligible: true, scoreFactor: 1, status: 'atemporal', annotation: null }
+  }
+
+  const relation = intervalRelation(temporal, now)
+  const confidence = temporal.temporalConfidence ?? 0.5
+  const trustworthy = confidence >= MEMORY_TEMPORAL_HARD_FILTER_CONFIDENCE
+  const evidenceMode = mode === 'evidence'
+
+  switch (temporal.temporalKind) {
+    case 'state': {
+      if (relation === 'expired' || relation === 'future') {
+        const eligible = evidenceMode || !trustworthy
+        const status = relation
+        const label =
+          relation === 'expired'
+            ? trustworthy
+              ? 'expired state'
+              : 'possibly outdated state'
+            : trustworthy
+              ? 'future state'
+              : 'possibly not yet effective state'
+        return {
+          eligible,
+          scoreFactor: evidenceMode ? 1 : eligible ? MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR : 0,
+          status,
+          annotation: temporalAnnotation(label, temporal, {
+            includeConfidence: !trustworthy
+          })
+        }
+      }
+      if (relation === 'undated') {
+        return {
+          eligible: true,
+          scoreFactor: evidenceMode ? 1 : MEMORY_TEMPORAL_UNDATED_STATE_FACTOR,
+          status: 'undated',
+          annotation: temporalAnnotation('state with unspecified validity', temporal, {
+            includeConfidence: true
+          })
+        }
+      }
+      return {
+        eligible: true,
+        scoreFactor: 1,
+        status: 'current',
+        annotation: temporalAnnotation('current state', temporal)
+      }
+    }
+    case 'event': {
+      const future = relation === 'future'
+      return {
+        eligible: true,
+        scoreFactor: 1,
+        status: future ? 'future_event' : 'historical',
+        annotation: temporalAnnotation(future ? 'future-dated event' : 'historical event', temporal)
+      }
+    }
+    case 'plan': {
+      const previous = relation === 'expired'
+      return {
+        eligible: true,
+        scoreFactor: evidenceMode || !previous ? 1 : MEMORY_TEMPORAL_PREVIOUS_PLAN_FACTOR,
+        status: previous ? 'previously_planned' : 'planned',
+        annotation: temporalAnnotation(previous ? 'previously planned' : 'plan', temporal)
+      }
+    }
+    case 'recurring': {
+      const ended = relation === 'expired'
+      const future = relation === 'future'
+      return {
+        eligible: true,
+        scoreFactor: evidenceMode || !ended ? 1 : MEMORY_TEMPORAL_ENDED_RECURRENCE_FACTOR,
+        status: ended ? 'ended_recurrence' : future ? 'future_recurrence' : 'recurring',
+        annotation: temporalAnnotation(
+          ended
+            ? 'recurring; known window ended'
+            : future
+              ? 'recurring; known window starts in the future'
+              : 'recurring',
+          temporal
+        )
+      }
+    }
+  }
 }

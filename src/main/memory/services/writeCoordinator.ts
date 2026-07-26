@@ -16,6 +16,7 @@ import {
 } from '../core/batchDecision'
 import { normalizeMemoryCandidate } from '../core/candidates'
 import {
+  evaluateMemoryTemporalPolicy,
   memoryTemporalMetadataEquals,
   reconcileEquivalentClaimTemporalMetadata,
   resolveMergedClaimTemporalMetadata,
@@ -216,6 +217,7 @@ function resolveContentMergeTemporalMetadata(
 }
 
 function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
+  const temporal = temporalMetadataFromRow(row)
   return {
     id: row.id,
     decisionRevision: row.decision_revision,
@@ -226,7 +228,7 @@ function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
     sources: { fts: true },
     sourceSession: row.source_session,
     sourceEntryIds: null,
-    temporal: temporalMetadataFromRow(row),
+    temporal,
     breakdown: {
       similarity: 0,
       recency: row.last_accessed ?? row.created_at,
@@ -235,6 +237,30 @@ function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
       rrf: 1,
       final: 1
     }
+  }
+}
+
+function temporalDecisionAnnotation(
+  temporal: MemoryTemporalMetadata,
+  now: number
+): string | undefined {
+  return evaluateMemoryTemporalPolicy(temporal, now, 'evidence').annotation ?? undefined
+}
+
+function toBatchDecisionInput(
+  prepared: PreparedCoordinateCandidate,
+  now: number
+): BatchDecisionInput {
+  return {
+    candidateIndex: prepared.candidateIndex,
+    candidate: prepared.candidate,
+    candidateTemporalAnnotation: temporalDecisionAnnotation(prepared.candidate.temporal, now),
+    neighbors: prepared.neighbors.map((neighbor) => ({
+      content: neighbor.content,
+      temporalAnnotation:
+        neighbor.temporalAnnotation ??
+        (neighbor.temporal ? temporalDecisionAnnotation(neighbor.temporal, now) : undefined)
+    }))
   }
 }
 
@@ -797,11 +823,7 @@ export class WriteCoordinator {
     )
     const initialDecisionInputs: BatchDecisionInput[] = preparedInitial
       .filter((prepared) => prepared.neighbors.length > 0)
-      .map((prepared) => ({
-        candidateIndex: prepared.candidateIndex,
-        candidate: prepared.candidate,
-        neighbors: prepared.neighbors
-      }))
+      .map((prepared) => toBatchDecisionInput(prepared, now))
     const initialBatch = await this.requestBatchDecisions(
       agentId,
       model,
@@ -904,11 +926,7 @@ export class WriteCoordinator {
       const retryByIndex = new Map(retryPrepared.map((item) => [item.candidateIndex, item]))
       const retryInputs: BatchDecisionInput[] = retryPrepared
         .filter((candidate) => candidate.neighbors.length > 0)
-        .map((candidate) => ({
-          candidateIndex: candidate.candidateIndex,
-          candidate: candidate.candidate,
-          neighbors: candidate.neighbors
-        }))
+        .map((candidate) => toBatchDecisionInput(candidate, now))
       const retryBatch = await this.requestBatchDecisions(
         agentId,
         model,
@@ -1089,7 +1107,15 @@ export class WriteCoordinator {
         model.modelId,
         buildDecisionPrompt(
           normalized,
-          neighbors.map((neighbor) => ({ content: neighbor.content }))
+          neighbors.map((neighbor) => ({
+            content: neighbor.content,
+            temporalAnnotation:
+              neighbor.temporalAnnotation ??
+              (neighbor.temporal ? temporalDecisionAnnotation(neighbor.temporal, now) : undefined)
+          })),
+          {
+            candidateTemporalAnnotation: temporalDecisionAnnotation(normalized.temporal, now)
+          }
         ),
         'decision'
       )

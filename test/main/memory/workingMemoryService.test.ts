@@ -75,6 +75,79 @@ describe('working-memory L1 (T5)', () => {
     expect(working[0].content).toContain('fact two')
   })
 
+  it('filters and qualifies temporal claims and refreshes at validity boundaries', async () => {
+    let now = 150
+    const { presenter, repo } = makePresenter(enabledConfig, undefined, {
+      clock: {
+        now: () => now,
+        timeZone: () => 'UTC'
+      }
+    })
+    repo.insert({
+      id: 'stable',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'stable preference',
+      importance: 0.7
+    })
+    repo.insert({
+      id: 'expired',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'expired state',
+      importance: 1,
+      temporal: {
+        temporalKind: 'state',
+        validFrom: 0,
+        validUntil: 100,
+        temporalConfidence: 0.95,
+        temporalPrecision: 'exact',
+        temporalTimeZone: 'UTC'
+      }
+    })
+    repo.insert({
+      id: 'uncertain',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'uncertain old state',
+      importance: 0.9,
+      temporal: {
+        temporalKind: 'state',
+        validFrom: 0,
+        validUntil: 100,
+        temporalConfidence: 0.6,
+        temporalPrecision: 'exact',
+        temporalTimeZone: 'UTC'
+      }
+    })
+    repo.insert({
+      id: 'current',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'current state',
+      importance: 0.8,
+      temporal: {
+        temporalKind: 'state',
+        validFrom: 100,
+        validUntil: 200,
+        temporalConfidence: 0.95,
+        temporalPrecision: 'exact',
+        temporalTimeZone: 'UTC'
+      }
+    })
+    presenter.refreshWorkingMemory('deepchat')
+
+    const beforeBoundary = (await presenter.buildInjection('deepchat', ''))?.payload.working ?? ''
+    expect(beforeBoundary).not.toContain('expired state')
+    expect(beforeBoundary).toContain('uncertain old state [Temporal: possibly outdated state')
+    expect(beforeBoundary).toContain('current state [Temporal: current state')
+
+    now = 200
+    const afterBoundary = (await presenter.buildInjection('deepchat', ''))?.payload.working ?? ''
+    expect(afterBoundary).toContain('stable preference')
+    expect(afterBoundary).not.toContain('current state')
+  })
+
   it('debounces mutation refreshes and lets a read synchronously flush dirty state', async () => {
     vi.useFakeTimers()
     try {

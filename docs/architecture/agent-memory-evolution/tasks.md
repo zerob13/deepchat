@@ -14,8 +14,8 @@
 - [x] Extend insert/read/management/route DTO contracts.
 - [x] Extend extraction prompt/parser with clock context and legacy response compatibility.
 - [x] Preserve temporal metadata across update, supersede, conflict, merge, and manual-edit paths.
-- [ ] Apply temporal eligibility, ranking, annotations, and trace data before access accounting.
-- [ ] Cover atemporal, current, expired, future, uncertain, plan, event, and recurring cases.
+- [x] Apply temporal eligibility, ranking, annotations, and trace data before access accounting.
+- [x] Cover atemporal, current, expired, future, uncertain, plan, event, and recurring cases.
 
 ## 2. Exact forgetting
 

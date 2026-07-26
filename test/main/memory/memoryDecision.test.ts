@@ -35,6 +35,34 @@ describe('buildDecisionPrompt', () => {
     )
     expect(prompt).toContain('(none)')
   })
+
+  it('renders temporal qualifications as untrusted decision metadata', () => {
+    const prompt = buildDecisionPrompt(
+      {
+        kind: 'semantic',
+        category: null,
+        content: 'user works in berlin',
+        importance: 0.5,
+        temporal: ATEMPORAL_MEMORY_METADATA
+      },
+      [
+        {
+          content: 'user works in paris',
+          temporalAnnotation: '[Temporal: expired state; until 2025-01-01 (UTC)]'
+        }
+      ],
+      {
+        candidateTemporalAnnotation: '[Temporal: current state; from 2026-01-01 (UTC)]'
+      }
+    )
+
+    expect(prompt).toContain(
+      'user works in berlin [Temporal: current state; from 2026-01-01 (UTC)]'
+    )
+    expect(prompt).toContain(
+      '[0] user works in paris [Temporal: expired state; until 2025-01-01 (UTC)]'
+    )
+  })
 })
 
 describe('parseDecision', () => {

@@ -11,7 +11,11 @@ import {
   distanceToSimilarity,
   normalizeForProvenanceV2
 } from '../core/scoring'
-import { resolveMergedClaimTemporalMetadata, temporalMetadataFromRow } from '../core/temporal'
+import {
+  evaluateMemoryTemporalPolicy,
+  resolveMergedClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
 import {
   ADD_DECISION,
   buildDecisionPrompt,
@@ -562,7 +566,8 @@ export class MaintenanceService {
           kind: sourceSnapshot.kind === 'episodic' ? 'episodic' : 'semantic',
           category: sourceSnapshot.category,
           content: sourceSnapshot.content,
-          importance: sourceSnapshot.importance
+          importance: sourceSnapshot.importance,
+          temporal: temporalMetadataFromRow(sourceSnapshot)
         })
         if (!promptCandidate) continue
         const estimatedPromptTokens =
@@ -570,7 +575,25 @@ export class MaintenanceService {
         if (estimatedPromptTokens > MAINTENANCE_MAX_INPUT_TOKENS - budget.snapshot().inputTokens) {
           continue
         }
-        const prompt = buildDecisionPrompt(promptCandidate, [{ content: neighborSnapshot.content }])
+        const prompt = buildDecisionPrompt(
+          promptCandidate,
+          [
+            {
+              content: neighborSnapshot.content,
+              temporalAnnotation:
+                evaluateMemoryTemporalPolicy(
+                  temporalMetadataFromRow(neighborSnapshot),
+                  now,
+                  'evidence'
+                ).annotation ?? undefined
+            }
+          ],
+          {
+            candidateTemporalAnnotation:
+              evaluateMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence').annotation ??
+              undefined
+          }
+        )
         if (!budget.reserve('merge', estimateTokens(prompt))) break
         result.calls += 1
         let decision: MemoryDecision = ADD_DECISION

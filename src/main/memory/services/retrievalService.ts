@@ -14,7 +14,7 @@ import {
 } from '../core/scoring'
 import { withSoftDeadline } from '../core/asyncDeadline'
 import { isMemoryProviderCancellationError } from '../core/providerCancellation'
-import { temporalMetadataFromRow } from '../core/temporal'
+import { evaluateMemoryTemporalPolicy, temporalMetadataFromRow } from '../core/temporal'
 import {
   buildRecallKeywordQuery,
   extractRecallKeywordCandidates,
@@ -41,6 +41,7 @@ import {
   type MemoryDecisionQueryVectorSnapshot,
   type MemoryRecallItem,
   type MemorySearchHit,
+  type MemoryTemporalPolicyMode,
   type NormalizedMemoryCandidate
 } from '../types'
 import { VectorStoreLeaseUnavailableError, VectorStoreQueryTimeoutError } from '../domain/types'
@@ -62,6 +63,31 @@ import type {
 type QueryEmbeddingInFlight = {
   startedAt: number
   promise: Promise<number[][]>
+}
+
+const LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER = 2
+const TEMPORAL_RETRIEVAL_CANDIDATE_MULTIPLIER = 4
+
+function temporalPolicyModeForPurpose(purpose: MemoryRetrievalPurpose): MemoryTemporalPolicyMode {
+  return purpose === 'recall' || purpose === 'injection' ? 'current' : 'evidence'
+}
+
+function selectTemporalCandidates<T>(
+  candidates: readonly T[],
+  rowOf: (candidate: T) => AgentMemoryRow,
+  limit: number,
+  now: number,
+  mode: MemoryTemporalPolicyMode
+): T[] {
+  if (mode === 'evidence') return candidates.slice(0, limit)
+  const selected: T[] = []
+  for (const candidate of candidates) {
+    const temporal = temporalMetadataFromRow(rowOf(candidate))
+    if (!evaluateMemoryTemporalPolicy(temporal, now, mode).eligible) continue
+    selected.push(candidate)
+    if (selected.length >= limit) break
+  }
+  return selected
 }
 
 function isLiveRecallRow(agentId: string, row: AgentMemoryRow | undefined): row is AgentMemoryRow {
@@ -399,7 +425,8 @@ export class RetrievalService {
           topK: DECISION_NEIGHBOR_TOP_S,
           rrfK,
           weights,
-          now
+          now,
+          temporalMode: 'evidence'
         })
         ftsCandidates += ftsRows.length
         vectorCandidates += currentVectorMatches.length
@@ -598,7 +625,13 @@ export class RetrievalService {
 
       const effectiveTopK =
         options.topKOverride !== undefined ? clampRetrievalTopK(options.topKOverride) : topK
-      const candidateLimit = effectiveTopK * 2
+      const temporalMode = temporalPolicyModeForPurpose(options.purpose)
+      const fusionCandidateLimit = effectiveTopK * LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER
+      const candidateLimit =
+        effectiveTopK *
+        (temporalMode === 'current'
+          ? TEMPORAL_RETRIEVAL_CANDIDATE_MULTIPLIER
+          : LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER)
       const keywordStartedAt = performance.now()
       activeStage = 'keyword'
       const keywordSearch = normalizedKeywordQuery
@@ -769,13 +802,13 @@ export class RetrievalService {
       const isEligibleRow = options.excludeConflictParticipants
         ? isLiveDecisionRow
         : isLiveRecallRow
-      const authoritativeFtsRows = ftsRows
+      const structurallyValidFtsRows = ftsRows
         .map((row) => rowsById.get(row.id))
         .filter((row): row is AgentMemoryRow => isEligibleRow(agentId, row))
       const vectorFingerprint = vectorContext
         ? embeddingFingerprint(vectorContext.embedding.providerId, vectorContext.embedding.modelId)
         : null
-      const authoritativeVecMatches = vecCandidates
+      const structurallyValidVecMatches = vecCandidates
         .map((candidate) => {
           const row = rowsById.get(candidate.memoryId)
           return vectorContext && vectorFingerprint
@@ -786,6 +819,20 @@ export class RetrievalService {
             : null
         })
         .filter((match): match is { row: AgentMemoryRow; similarity: number } => match !== null)
+      const authoritativeFtsRows = selectTemporalCandidates(
+        structurallyValidFtsRows,
+        (row) => row,
+        fusionCandidateLimit,
+        now,
+        temporalMode
+      )
+      const authoritativeVecMatches = selectTemporalCandidates(
+        structurallyValidVecMatches,
+        (match) => match.row,
+        fusionCandidateLimit,
+        now,
+        temporalMode
+      )
       throwIfAborted(options.signal)
       ftsCandidates = authoritativeFtsRows.length
       vectorCandidates = authoritativeVecMatches.length
@@ -796,7 +843,9 @@ export class RetrievalService {
         this.ctx.canContinueOperation(operationFence)
       ) {
         throwIfAborted(options.signal)
-        const liveVectorIds = new Set(authoritativeVecMatches.map((match) => match.row.id))
+        // Temporal ineligibility is not structural deletion: future states can become eligible
+        // later, so inline pruning must retain every otherwise-live vector.
+        const liveVectorIds = new Set(structurallyValidVecMatches.map((match) => match.row.id))
         const deadVectorIds = [
           ...new Set(
             vecCandidates
@@ -826,7 +875,8 @@ export class RetrievalService {
         rrfK,
         weights,
         now,
-        trace: options.trace
+        trace: options.trace,
+        temporalMode
       })
       latencyMs.assembly = performance.now() - assemblyStartedAt
       selected = results.length
@@ -921,6 +971,7 @@ export class RetrievalService {
         score: item.score,
         sources: item.sources,
         similarity: item.similarity,
+        temporalAnnotation: item.temporalAnnotation,
         breakdown: item.breakdown
       })),
       tokenBudget

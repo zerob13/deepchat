@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ATEMPORAL_MEMORY_METADATA,
+  MEMORY_TEMPORAL_PREVIOUS_PLAN_FACTOR,
+  MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR,
+  evaluateMemoryTemporalPolicy,
   normalizeMemoryTemporalMetadata,
   reconcileEquivalentClaimTemporalMetadata,
   resolveMergedClaimTemporalMetadata
@@ -136,6 +139,104 @@ describe('memory temporal metadata', () => {
         incoming: true
       })
     ).toEqual(differentState)
+  })
+
+  it('filters trustworthy stale states while uncertain states fail open with a penalty', () => {
+    const expired = normalizeMemoryTemporalMetadata({
+      temporalKind: 'state',
+      validFrom: 100,
+      validUntil: 200,
+      temporalConfidence: 0.9,
+      temporalPrecision: 'exact',
+      timeZone: 'UTC'
+    })
+    expect(evaluateMemoryTemporalPolicy(expired, 200)).toMatchObject({
+      eligible: false,
+      scoreFactor: 0,
+      status: 'expired'
+    })
+    expect(evaluateMemoryTemporalPolicy(expired, 200, 'evidence')).toMatchObject({
+      eligible: true,
+      scoreFactor: 1,
+      status: 'expired'
+    })
+
+    const uncertain = { ...expired, temporalConfidence: 0.6 }
+    const policy = evaluateMemoryTemporalPolicy(uncertain, 200)
+    expect(policy).toMatchObject({
+      eligible: true,
+      scoreFactor: MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR,
+      status: 'expired'
+    })
+    expect(policy.annotation).toContain('possibly outdated state')
+    expect(policy.annotation).toContain('confidence 0.60')
+  })
+
+  it('keeps events, plans, and recurrences semantically distinct after their intervals', () => {
+    const base = {
+      validFrom: Date.parse('2026-07-01T00:00:00+08:00'),
+      validUntil: Date.parse('2026-08-01T00:00:00+08:00'),
+      temporalConfidence: 0.95,
+      temporalPrecision: 'month' as const,
+      temporalTimeZone: 'Asia/Shanghai'
+    }
+    const now = Date.parse('2026-08-02T00:00:00+08:00')
+
+    const event = evaluateMemoryTemporalPolicy({ ...base, temporalKind: 'event' }, now)
+    expect(event).toMatchObject({ eligible: true, status: 'historical', scoreFactor: 1 })
+    expect(event.annotation).toContain('2026-07')
+    expect(event.annotation).toContain('until 2026-08')
+
+    const plan = evaluateMemoryTemporalPolicy({ ...base, temporalKind: 'plan' }, now)
+    expect(plan).toMatchObject({
+      eligible: true,
+      status: 'previously_planned',
+      scoreFactor: MEMORY_TEMPORAL_PREVIOUS_PLAN_FACTOR
+    })
+    expect(plan.annotation).toContain('previously planned')
+    expect(plan.annotation).not.toContain('completed')
+
+    const recurring = evaluateMemoryTemporalPolicy({ ...base, temporalKind: 'recurring' }, now)
+    expect(recurring).toMatchObject({ eligible: true, status: 'ended_recurrence' })
+    expect(recurring.annotation).toContain('known window ended')
+
+    const futureRecurrence = evaluateMemoryTemporalPolicy(
+      {
+        ...base,
+        temporalKind: 'recurring',
+        validFrom: Date.parse('2026-09-01T00:00:00+08:00'),
+        validUntil: Date.parse('2026-10-01T00:00:00+08:00')
+      },
+      now
+    )
+    expect(futureRecurrence).toMatchObject({ eligible: true, status: 'future_recurrence' })
+    expect(futureRecurrence.annotation).toContain('starts in the future')
+  })
+
+  it('filters trustworthy future states but retains current and atemporal claims', () => {
+    const state = normalizeMemoryTemporalMetadata({
+      temporalKind: 'state',
+      validFrom: 100,
+      validUntil: 300,
+      temporalConfidence: 0.9,
+      temporalPrecision: 'exact',
+      timeZone: 'UTC'
+    })
+    expect(evaluateMemoryTemporalPolicy(state, 50)).toMatchObject({
+      eligible: false,
+      status: 'future'
+    })
+    expect(evaluateMemoryTemporalPolicy(state, 200)).toMatchObject({
+      eligible: true,
+      scoreFactor: 1,
+      status: 'current'
+    })
+    expect(evaluateMemoryTemporalPolicy(ATEMPORAL_MEMORY_METADATA, 200)).toEqual({
+      eligible: true,
+      scoreFactor: 1,
+      status: 'atemporal',
+      annotation: null
+    })
   })
 })
 

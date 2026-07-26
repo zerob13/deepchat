@@ -12,7 +12,11 @@ import { normalizeMemoryCandidate } from '../core/candidates'
 import { estimateTokens } from '../core/injectionPort'
 import { MaintenanceBudget } from '../core/maintenanceBudget'
 import { buildMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
-import { resolveMergedClaimTemporalMetadata, temporalMetadataFromRow } from '../core/temporal'
+import {
+  evaluateMemoryTemporalPolicy,
+  resolveMergedClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
 import type {
   MemoryConflictPair,
   MemoryConflictResolution,
@@ -262,6 +266,7 @@ export class ConflictService {
     let touched = false
     let calls = 0
     let failures = 0
+    const now = this.ctx.now()
     const operationFence = this.ctx.captureOperationFence(agentId)
     const challengers = this.ports.repository.listConflictChallengersForMaintenance(agentId, 4)
     const targets = this.ports.repository.listByIds(
@@ -285,19 +290,33 @@ export class ConflictService {
         kind: pair.challenger.kind === 'episodic' ? 'episodic' : 'semantic',
         category: pair.challenger.category,
         content: pair.challenger.content,
-        importance: pair.challenger.importance
+        importance: pair.challenger.importance,
+        temporal: temporalMetadataFromRow(pair.challenger)
       })
       if (!promptCandidate) {
         this.ports.repository.setLastConsolidatedAt(pair.challenger.id)
         continue
       }
-      const estimatedPromptTokens =
-        estimateTokens(pair.challenger.content) + estimateTokens(pair.target.content) + 256
-      if (!budget.reserve('challenge', estimatedPromptTokens)) {
+      const prompt = buildDecisionPrompt(
+        promptCandidate,
+        [
+          {
+            content: pair.target.content,
+            temporalAnnotation:
+              evaluateMemoryTemporalPolicy(temporalMetadataFromRow(pair.target), now, 'evidence')
+                .annotation ?? undefined
+          }
+        ],
+        {
+          candidateTemporalAnnotation:
+            evaluateMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence').annotation ??
+            undefined
+        }
+      )
+      if (!budget.reserve('challenge', estimateTokens(prompt))) {
         this.ports.repository.setLastConsolidatedAt(pair.challenger.id)
         continue
       }
-      const prompt = buildDecisionPrompt(promptCandidate, [{ content: pair.target.content }])
       let decision: MemoryDecision = ADD_DECISION
       try {
         calls += 1

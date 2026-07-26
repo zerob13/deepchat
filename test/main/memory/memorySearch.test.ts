@@ -32,6 +32,25 @@ describe('MemoryService.searchMemories (read-only facade)', () => {
     expect(hit?.row.content).toBe('the user prefers redis')
   })
 
+  it('keeps expired states visible as evidence in management search', async () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    repo.insert({
+      ...seed('the user previously operated redis', 'expired'),
+      temporal: {
+        temporalKind: 'state',
+        validFrom: 0,
+        validUntil: 1,
+        temporalConfidence: 0.95,
+        temporalPrecision: 'exact',
+        temporalTimeZone: 'UTC'
+      }
+    })
+
+    const hits = await presenter.searchMemories('deepchat', 'redis')
+
+    expect(hits.map((hit) => hit.row.id)).toContain('expired')
+  })
+
   it('never records access while recall does (browsing must not skew fairness)', async () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     repo.insert(seed('the user prefers redis', 'm1'))

@@ -78,6 +78,34 @@ export interface MemoryTemporalMetadata {
   temporalTimeZone: string | null
 }
 
+export type MemoryTemporalPolicyMode = 'current' | 'evidence'
+export type MemoryTemporalStatus =
+  | 'atemporal'
+  | 'current'
+  | 'undated'
+  | 'future'
+  | 'expired'
+  | 'historical'
+  | 'future_event'
+  | 'planned'
+  | 'previously_planned'
+  | 'recurring'
+  | 'future_recurrence'
+  | 'ended_recurrence'
+
+export interface MemoryTemporalPolicyResult {
+  eligible: boolean
+  scoreFactor: number
+  status: MemoryTemporalStatus
+  annotation: string | null
+}
+
+export interface MemoryTemporalTrace {
+  status: MemoryTemporalStatus
+  confidence: number | null
+  factor: number
+}
+
 export interface MemoryTransitionTarget {
   agentId: string
   id: string
@@ -362,6 +390,7 @@ export interface MemoryRecallItem {
   sourceSession?: string | null
   sourceEntryIds?: number[] | null
   temporal?: MemoryTemporalMetadata
+  temporalAnnotation?: string
   breakdown?: {
     similarity: number
     recency: number
@@ -369,6 +398,7 @@ export interface MemoryRecallItem {
     confidence: number
     rrf: number
     final: number
+    temporal?: MemoryTemporalTrace
   }
 }
 
@@ -412,6 +442,7 @@ export interface FuseOptions {
   halfLifeMs?: number
   ftsBaseline?: number
   trace?: boolean
+  temporalMode?: MemoryTemporalPolicyMode
 }
 
 export interface MemoryStatus {

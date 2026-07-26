@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 
 import { buildLegacyMemoryProvenanceKey, buildMemoryProvenanceKey } from '../core/scoring'
 import { estimateTokens } from '../core/injectionPort'
+import { evaluateMemoryTemporalPolicy, temporalMetadataFromRow } from '../core/temporal'
 import {
   WORKING_BLOB_TOKEN_LIMIT,
   WORKING_CANDIDATE_PAGE_LIMIT,
@@ -20,11 +21,22 @@ import type {
 import type { AgentMemoryWorkingCandidateCursor } from '../types'
 import type { AgentMemoryRow } from '../types'
 
+interface WorkingProjection {
+  content: string
+  builtAt: number
+  nextRefreshAt: number | null
+  sourceCandidatesScanned: number
+}
+
 export class WorkingMemoryService implements WorkingMemoryReadPort {
   private readonly ctx: MemoryRuntimeContext
   private readonly workingRefreshInFlight = new Set<string>()
   private readonly workingRefreshTimers = new Map<string, NodeJS.Timeout>()
   private readonly workingMemoryDirty = new Set<string>()
+  private readonly workingProjectionFreshness = new Map<
+    string,
+    Pick<WorkingProjection, 'builtAt' | 'nextRefreshAt'>
+  >()
 
   constructor(
     private readonly ports: {
@@ -83,6 +95,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
   }
 
   deleteWorkingMemory(agentId: string): void {
+    this.workingProjectionFreshness.delete(agentId)
     const existing = this.resolveWorkingRow(agentId)
     if (existing) {
       this.ports.repository.delete(existing.id)
@@ -95,6 +108,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
   }
 
   markWorkingMemoryDirty(agentId: string): void {
+    this.workingProjectionFreshness.delete(agentId)
     this.workingMemoryDirty.add(agentId)
     this.scheduleDirtyRefresh(agentId)
   }
@@ -103,14 +117,17 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     const timer = this.workingRefreshTimers.get(agentId)
     if (timer) clearTimeout(timer)
     this.workingRefreshTimers.delete(agentId)
-    if (!this.workingMemoryDirty.delete(agentId)) return
-    try {
-      if (this.ctx.canReadAgentMemory(agentId)) this.refreshWorkingMemory(agentId)
-      else this.deleteWorkingMemory(agentId)
-    } catch (error) {
-      this.workingMemoryDirty.add(agentId)
-      throw error
+    if (this.workingMemoryDirty.delete(agentId)) {
+      try {
+        if (this.ctx.canReadAgentMemory(agentId)) this.refreshWorkingMemory(agentId)
+        else this.deleteWorkingMemory(agentId)
+      } catch (error) {
+        this.workingMemoryDirty.add(agentId)
+        throw error
+      }
+      return
     }
+    this.refreshWorkingMemoryAtTemporalBoundary(agentId)
   }
 
   scheduleWorkingRefresh(agentId: string): void {
@@ -141,41 +158,56 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     this.workingRefreshTimers.set(agentId, timer)
   }
 
-  refreshWorkingMemory(agentId: string): void {
+  refreshWorkingMemory(
+    agentId: string,
+    options: { preserveOrphanedExisting?: boolean } = {}
+  ): void {
     if (!this.ctx.canReadAgentMemory(agentId)) return
     const workingKey = this.workingMemoryKey(agentId)
     let existing = this.resolveWorkingRow(agentId)
-    let blob = this.buildWorkingBlob(agentId)
-    if (!blob) {
-      if (existing) {
+    let projection = this.buildWorkingProjection(agentId)
+    if (!projection.content) {
+      if (
+        existing &&
+        (!options.preserveOrphanedExisting || projection.sourceCandidatesScanned > 0)
+      ) {
         this.ports.repository.delete(existing.id)
         this.ctx.markDomainMutationCommitted(agentId)
       }
+      this.recordProjectionFreshness(agentId, projection)
       return
     }
     if (existing) {
       for (let attempt = 0; attempt < 2 && existing; attempt += 1) {
-        if (existing.content === blob) return
+        if (existing.content === projection.content) {
+          this.recordProjectionFreshness(agentId, projection)
+          return
+        }
         if (
           this.ports.repository.updateInternalContent({
             agentId,
             id: existing.id,
             expectedRevision: existing.decision_revision,
-            content: blob,
+            content: projection.content,
             provenanceKey: workingKey,
             at: this.ctx.now()
           })
         ) {
           this.ctx.markDomainMutationCommitted(agentId)
+          this.recordProjectionFreshness(agentId, projection)
           return
         }
         existing = this.resolveWorkingRow(agentId)
-        blob = this.buildWorkingBlob(agentId)
-        if (!blob) {
-          if (existing) {
+        projection = this.buildWorkingProjection(agentId)
+        if (!projection.content) {
+          if (
+            existing &&
+            (!options.preserveOrphanedExisting || projection.sourceCandidatesScanned > 0)
+          ) {
             this.ports.repository.delete(existing.id)
             this.ctx.markDomainMutationCommitted(agentId)
           }
+          this.recordProjectionFreshness(agentId, projection)
           return
         }
       }
@@ -192,7 +224,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
         id: `working-${nanoid(12)}`,
         agentId,
         kind: 'working',
-        content: blob,
+        content: projection.content,
         importance: 0,
         lifecycleState: 'active',
         embeddingState: 'not_applicable',
@@ -200,15 +232,25 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
         createdAt: now
       })
       this.ctx.markDomainMutationCommitted(agentId)
+      this.recordProjectionFreshness(agentId, projection)
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
+      const owner = this.resolveWorkingRow(agentId)
+      if (owner?.content === projection.content) {
+        this.recordProjectionFreshness(agentId, projection)
+      } else {
+        this.workingMemoryDirty.add(agentId)
+        this.scheduleDirtyRefresh(agentId)
+      }
     }
   }
 
-  buildWorkingBlob(agentId: string): string {
+  private buildWorkingProjection(agentId: string): WorkingProjection {
+    const now = this.ctx.now()
     const lines: string[] = []
     let tokens = 0
     let scanned = 0
+    let nextRefreshAt: number | null = null
     let cursor: AgentMemoryWorkingCandidateCursor | undefined
     while (scanned < WORKING_CANDIDATE_SCAN_LIMIT && tokens < WORKING_BLOB_TOKEN_LIMIT) {
       const pageLimit = Math.min(
@@ -219,9 +261,20 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
       if (!units.length) break
       scanned += units.length
       for (const unit of units) {
+        const temporal = temporalMetadataFromRow(unit)
+        for (const boundary of [temporal.validFrom, temporal.validUntil]) {
+          if (boundary !== null && boundary > now) {
+            nextRefreshAt = nextRefreshAt === null ? boundary : Math.min(nextRefreshAt, boundary)
+          }
+        }
+        const temporalPolicy = evaluateMemoryTemporalPolicy(temporal, now, 'current')
+        if (!temporalPolicy.eligible) continue
         const content = unit.content.trim()
         if (!content) continue
-        const line = `- ${content}`
+        const rendered = temporalPolicy.annotation
+          ? `${content} ${temporalPolicy.annotation}`
+          : content
+        const line = `- ${rendered}`
         const cost = estimateTokens(line)
         if (tokens + cost > WORKING_BLOB_TOKEN_LIMIT) continue
         lines.push(line)
@@ -237,7 +290,35 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
       }
       if (units.length < pageLimit) break
     }
-    return lines.join('\n').trim()
+    return {
+      content: lines.join('\n').trim(),
+      builtAt: now,
+      nextRefreshAt,
+      sourceCandidatesScanned: scanned
+    }
+  }
+
+  private recordProjectionFreshness(agentId: string, projection: WorkingProjection): void {
+    this.workingProjectionFreshness.set(agentId, {
+      builtAt: projection.builtAt,
+      nextRefreshAt: projection.nextRefreshAt
+    })
+  }
+
+  private refreshWorkingMemoryAtTemporalBoundary(agentId: string): void {
+    if (!this.ctx.canReadAgentMemory(agentId)) return
+    const existing = this.resolveWorkingRow(agentId)
+    if (!existing) return
+    const freshness = this.workingProjectionFreshness.get(agentId)
+    const now = this.ctx.now()
+    if (
+      freshness &&
+      now >= freshness.builtAt &&
+      (freshness.nextRefreshAt === null || now < freshness.nextRefreshAt)
+    ) {
+      return
+    }
+    this.refreshWorkingMemory(agentId, { preserveOrphanedExisting: true })
   }
 
   cleanupAgent(agentId: string): void {
@@ -246,6 +327,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     this.workingRefreshTimers.delete(agentId)
     this.workingRefreshInFlight.delete(agentId)
     this.workingMemoryDirty.delete(agentId)
+    this.workingProjectionFreshness.delete(agentId)
   }
 
   clearAll(): void {
@@ -253,5 +335,6 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     this.workingRefreshTimers.clear()
     this.workingRefreshInFlight.clear()
     this.workingMemoryDirty.clear()
+    this.workingProjectionFreshness.clear()
   }
 }

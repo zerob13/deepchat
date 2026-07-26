@@ -11,6 +11,7 @@ import {
   resolveRetrieval,
   retrievalScore
 } from '@/memory/core/scoring'
+import { MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR } from '@/memory/core/temporal'
 import { createMemoryProviderCapacityError } from '@/memory/core/providerCancellation'
 import { FTS_SIMILARITY_BASELINE } from '@/memory/types'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
@@ -171,6 +172,50 @@ describe('memory fuse (RRF)', () => {
     expect(item.sourceEntryIds).toEqual([7, 8])
   })
 
+  it('filters stale current-state claims and traces uncertain temporal penalties', () => {
+    const current = makeRow('current', {
+      temporal_kind: 'state',
+      valid_from: 500,
+      valid_until: 1_500,
+      temporal_confidence: 0.9,
+      temporal_precision: 'exact',
+      temporal_timezone: 'UTC'
+    })
+    const uncertain = makeRow('uncertain', {
+      temporal_kind: 'state',
+      valid_from: 0,
+      valid_until: 500,
+      temporal_confidence: 0.6,
+      temporal_precision: 'exact',
+      temporal_timezone: 'UTC'
+    })
+    const expired = makeRow('expired', {
+      temporal_kind: 'state',
+      valid_from: 0,
+      valid_until: 500,
+      temporal_confidence: 0.9,
+      temporal_precision: 'exact',
+      temporal_timezone: 'UTC'
+    })
+
+    const result = fuse([uncertain, expired, current], [], {
+      ...opts,
+      temporalMode: 'current',
+      trace: true
+    })
+
+    expect(result.map((item) => item.id)).toEqual(['current', 'uncertain'])
+    expect(result[1].temporalAnnotation).toContain('possibly outdated state')
+    expect(result[1].breakdown?.temporal).toEqual({
+      status: 'expired',
+      confidence: 0.6,
+      factor: MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR
+    })
+    expect(
+      fuse([expired], [], { ...opts, temporalMode: 'evidence' }).map((item) => item.id)
+    ).toEqual(['expired'])
+  })
+
   it('decays reflections slower than semantic units via per-kind half-life', () => {
     const day = 24 * 60 * 60 * 1000
     const semantic = makeRow('semantic', { kind: 'semantic', created_at: 0 })
@@ -206,6 +251,24 @@ describe('buildMemorySection / appendMemorySection', () => {
     expect(section).toContain('I am concise')
     expect(section).toContain('## Relevant Memories')
     expect(section).toContain('user likes redis')
+  })
+
+  it('renders temporal qualification without changing stored claim content', () => {
+    const section = buildMemorySection({
+      selfModel: null,
+      memories: [
+        {
+          id: 'plan',
+          kind: 'semantic',
+          content: 'The release was planned for July.',
+          temporalAnnotation: '[Temporal: previously planned; 2026-07 (UTC)]'
+        }
+      ]
+    })
+
+    expect(section).toContain(
+      'The release was planned for July. [Temporal: previously planned; 2026-07 (UTC)]'
+    )
   })
 
   it('appends to existing prompt without overwriting', () => {
@@ -264,6 +327,49 @@ describe('MemoryService recall + injection', () => {
     presenter.recordInjectionAccess('a', [id, id], 1234)
     expect(repo.getById(id)?.access_count).toBe(1)
     expect(repo.getById(id)?.last_accessed).toBe(1234)
+  })
+
+  it('backfills bounded recall candidates after filtering expired states', async () => {
+    const config: DeepChatAgentConfig = {
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 2 }
+    }
+    const { presenter, repo } = makePresenter(config)
+    for (let index = 0; index < 4; index += 1) {
+      repo.insert({
+        id: `expired-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis expired state ${index}`,
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 0,
+          validUntil: 1,
+          temporalConfidence: 0.95,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+    }
+    repo.insert({
+      id: 'current-a',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis current fact a'
+    })
+    repo.insert({
+      id: 'current-b',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis current fact b'
+    })
+    const recordAccess = vi.spyOn(repo, 'recordAccessBatch')
+
+    const recalled = await presenter.recall('a', 'redis')
+
+    expect(recalled.map((item) => item.id)).toEqual(['current-a', 'current-b'])
+    expect(recordAccess).toHaveBeenCalledWith(['current-a', 'current-b'], expect.any(Number))
   })
 
   it('records injection access only for rows owned by the requested agent', () => {

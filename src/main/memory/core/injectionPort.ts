@@ -1,6 +1,6 @@
 import type { MemoryRetrievalDegradationCause } from '@shared/types/agent-memory'
 
-import type { AgentMemoryKind } from '../domain/types'
+import type { AgentMemoryKind, MemoryTemporalTrace } from '../domain/types'
 import type { MemoryExecutionToken } from './executionIdentity'
 import type {
   MemoryExtractionResult,
@@ -15,6 +15,7 @@ export interface MemoryInjectionMemory {
   score?: number
   sources?: { vec?: boolean; fts?: boolean }
   similarity?: number
+  temporalAnnotation?: string
   breakdown?: {
     similarity: number
     recency: number
@@ -22,6 +23,7 @@ export interface MemoryInjectionMemory {
     confidence: number
     rrf: number
     final: number
+    temporal?: MemoryTemporalTrace
   }
 }
 
@@ -309,7 +311,10 @@ function assembleMemorySection(payload: MemoryInjectionPayload | null): {
   const selected: MemoryInjectionManifest['selected'] = []
   const dropped: MemoryInjectionManifest['dropped'] = []
   for (const memory of ordered) {
-    const candidate = [...lines, `- ${sanitizeForInjection(memory.content)}`]
+    const rendered = memory.temporalAnnotation
+      ? `${memory.content} ${memory.temporalAnnotation}`
+      : memory.content
+    const candidate = [...lines, `- ${sanitizeForInjection(rendered)}`]
     const projected = [...sections, buildSection(MEMORIES_HEADER, candidate.join('\n'))].join(
       '\n\n'
     )

@@ -1313,6 +1313,41 @@ describe('MemoryService management', () => {
     await waitForMemoryCondition(() => !store.vectors.has(id), 'dead vector was not pruned')
   })
 
+  it('does not prune a live vector solely because its state is not yet effective', async () => {
+    const now = Date.parse('2026-07-26T00:00:00Z')
+    const { presenter, repo, store } = makePresenter(enabledConfig, undefined, {
+      clock: {
+        now: () => now,
+        timeZone: () => 'UTC'
+      }
+    })
+    const [id] = presenter.writeMemoriesSync(
+      [
+        {
+          kind: 'semantic',
+          content: 'redis migration starts next year',
+          temporal: {
+            temporalKind: 'state',
+            validFrom: now + 365 * DAY,
+            validUntil: null,
+            temporalConfidence: 0.95,
+            temporalPrecision: 'year',
+            temporalTimeZone: 'UTC'
+          }
+        }
+      ],
+      { agentId: 'a' }
+    )
+    await presenter.processPendingEmbeddings('a')
+    const filterPrunable = vi.spyOn(repo, 'filterPrunableVectorRefs')
+
+    expect(await presenter.recall('a', 'redis migration')).toEqual([])
+    await Promise.resolve()
+
+    expect(filterPrunable).not.toHaveBeenCalled()
+    expect(store.vectors.has(id)).toBe(true)
+  })
+
   it('does not delete restored vectors from an in-flight inline prune', async () => {
     const { presenter, repo, store } = makePresenter(enabledConfig)
     const [id] = presenter.writeMemoriesSync([{ kind: 'semantic', content: 'redis cache' }], {

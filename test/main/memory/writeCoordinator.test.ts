@@ -114,6 +114,60 @@ describe('MemoryService write + two-phase embedding', () => {
     ])
   })
 
+  it('supplies temporal context to correction decisions', async () => {
+    const now = Date.parse('2026-07-26T00:00:00Z')
+    const repo = createFakeRepository()
+    let decisionPrompt = ''
+    const presenter = new MemoryService({
+      repository: repo,
+      resolveAgentConfig: () => ({ memoryEnabled: true, memoryEmbedding: null }),
+      getEmbeddings: async () => [],
+      generateText: async (_providerId, _modelId, prompt) => {
+        decisionPrompt = prompt
+        return '{"decision":"ADD","targetIndex":null}'
+      },
+      createVectorStore: async () => new FakeVectorStore(),
+      clock: {
+        now: () => now,
+        timeZone: () => 'UTC'
+      }
+    })
+    repo.insert({
+      id: 'previous-location',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user works in paris',
+      temporal: {
+        temporalKind: 'state',
+        validFrom: Date.parse('2025-01-01T00:00:00Z'),
+        validUntil: Date.parse('2026-01-01T00:00:00Z'),
+        temporalConfidence: 0.95,
+        temporalPrecision: 'day',
+        temporalTimeZone: 'UTC'
+      }
+    })
+
+    await presenter.rememberMemory(
+      {
+        kind: 'semantic',
+        content: 'user works in berlin',
+        temporal: {
+          temporalKind: 'state',
+          validFrom: Date.parse('2026-07-01T00:00:00Z'),
+          validUntil: null,
+          temporalConfidence: 0.95,
+          temporalPrecision: 'day',
+          temporalTimeZone: 'UTC'
+        }
+      },
+      { agentId: 'a' },
+      { providerId: 'p', modelId: 'm' }
+    )
+
+    expect(decisionPrompt).toContain('user works in berlin [Temporal: current state')
+    expect(decisionPrompt).toContain('user works in paris [Temporal: expired state')
+  })
+
   it('lazy re-keys a matching legacy provenance owner without bumping its decision revision', () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     const content = 'User likes Redis'

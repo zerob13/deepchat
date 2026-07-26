@@ -16,7 +16,8 @@ export const DECISION_RETRY_MAX_CANDIDATES = 4
 export interface BatchDecisionInput {
   candidateIndex: number
   candidate: NormalizedMemoryCandidate
-  neighbors: readonly { content: string }[]
+  candidateTemporalAnnotation?: string
+  neighbors: readonly { content: string; temporalAnnotation?: string }[]
 }
 
 export interface BatchDecisionPartition {
@@ -42,11 +43,19 @@ function truncateNeighbor(content: string): string {
 
 function renderCandidate(input: BatchDecisionInput): string {
   const neighbors = input.neighbors
-    .map((neighbor, index) => `[${index}] ${truncateNeighbor(neighbor.content)}`)
+    .map(
+      (neighbor, index) =>
+        `[${index}] ${truncateNeighbor(neighbor.content)}${
+          neighbor.temporalAnnotation ? ` ${neighbor.temporalAnnotation}` : ''
+        }`
+    )
     .join('\n')
+  const candidateTemporal = input.candidateTemporalAnnotation
+    ? ` ${input.candidateTemporalAnnotation}`
+    : ''
   return [
     `Candidate ${input.candidateIndex} (${input.candidate.kind}):`,
-    input.candidate.content,
+    `${input.candidate.content}${candidateTemporal}`,
     'Known memories:',
     neighbors || '(none)'
   ].join('\n')

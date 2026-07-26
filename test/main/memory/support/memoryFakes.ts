@@ -2008,6 +2008,7 @@ export function makePresenter(
     isManagedAgent?: (agentId: string) => boolean
     markVectorStoreQuarantined?: MemoryServiceDeps['markVectorStoreQuarantined']
     onMemoryChanged?: MemoryServiceDeps['onMemoryChanged']
+    clock?: MemoryServiceDeps['clock']
   } = {}
 ) {
   const store = new FakeVectorStore()
@@ -2036,7 +2037,8 @@ export function makePresenter(
     getDimensions,
     generateText: vi.fn(async () => ''),
     createVectorStore: async () => store,
-    resetVectorStore
+    resetVectorStore,
+    clock: options.clock
   })
   return { presenter, repo, auditRepo, store, getEmbeddings, getDimensions, resetVectorStore }
 }
