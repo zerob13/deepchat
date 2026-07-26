@@ -253,6 +253,16 @@ function dropV42CanonicalArtifacts(db: InstanceType<typeof DatabaseCtor>): void 
   `)
 }
 
+function dropV48DerivedArtifacts(db: InstanceType<typeof DatabaseCtor>): void {
+  db.exec(`
+    DROP TRIGGER IF EXISTS agent_memory_dirty_ai;
+    DROP TRIGGER IF EXISTS agent_memory_dirty_au;
+    DROP TRIGGER IF EXISTS agent_memory_dirty_ad;
+    DROP TABLE IF EXISTS agent_memory_dirty;
+    DROP TABLE IF EXISTS agent_memory_derivation;
+  `)
+}
+
 describeIfSqlite('AgentMemoryTable', () => {
   it('uses the conflict target index for participant lookup in a 50k-row agent', () => {
     const db = new DatabaseCtor(':memory:')
@@ -2059,6 +2069,117 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('persists idempotent derivations after parent deletion', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'parent',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'source claim'
+      })
+      table.insert({
+        id: 'child',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'derived claim'
+      })
+      const edge = {
+        agentId: 'a',
+        parentMemoryId: 'parent',
+        childMemoryId: 'child',
+        derivationKind: 'reflection' as const,
+        createdAt: 2_000
+      }
+
+      expect(table.insertDerivations([edge, edge])).toBe(1)
+      expect(table.listDerivationsByChild('a', 'child')).toEqual([
+        {
+          agent_id: 'a',
+          parent_memory_id: 'parent',
+          child_memory_id: 'child',
+          derivation_kind: 'reflection',
+          created_at: 2_000
+        }
+      ])
+      table.delete('parent')
+      expect(table.listDerivationsByParent('a', 'parent')).toHaveLength(1)
+      expect(table.listDerivationsByChild('other', 'child')).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('uses generation-checked dirty seeds and discards derived state on Agent retirement', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const claim = table.insert({
+        id: 'claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'claim',
+        status: 'embedded',
+        createdAt: 1_000
+      })
+      table.insert({
+        id: 'reflection',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'reflection',
+        status: 'embedded',
+        createdAt: 1_100
+      })
+      expect(table.countDirtySeeds('a')).toBe(1)
+      const staleSeed = table.listDirtySeeds('a', 10)[0]
+      expect(staleSeed).toEqual({
+        memoryId: claim.id,
+        generation: 1,
+        claimRevision: 1,
+        enqueuedAt: 1_000
+      })
+
+      expect(
+        table.updateUserMetadataIfRevision({
+          agentId: 'a',
+          id: claim.id,
+          expectedRevision: claim.decision_revision,
+          importance: 0.9,
+          lastAccessedAt: 2_000
+        })
+      ).toBe(true)
+      const currentSeed = table.listDirtySeeds('a', 10)[0]
+      expect(currentSeed).toEqual({
+        memoryId: claim.id,
+        generation: 2,
+        claimRevision: 2,
+        enqueuedAt: 2_000
+      })
+      expect(table.listDirtySeeds('a', Number.NaN)).toEqual([])
+      expect(table.listDirtySeeds('a', Number.POSITIVE_INFINITY)).toEqual([currentSeed])
+      expect(table.settleDirtySeeds('a', [staleSeed])).toBe(0)
+      expect(table.settleDirtySeeds('a', [currentSeed, staleSeed])).toBe(1)
+
+      table.insertDerivations([
+        {
+          agentId: 'a',
+          parentMemoryId: claim.id,
+          childMemoryId: claim.id,
+          derivationKind: 'manual_edit',
+          createdAt: 2_000
+        }
+      ])
+      expect(table.retireAgentMemoryNamespace('a')).toBe(2)
+      expect(table.countDirtySeeds('a')).toBe(0)
+      expect(table.listDerivationsByChild('a', claim.id)).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
   it('rejects stale or conflicted tombstone deletes without side effects', () => {
     const db = new DatabaseCtor(':memory:')
     try {
@@ -2149,6 +2270,7 @@ describeIfSqlite('AgentMemoryTable', () => {
 
       expect(table.tombstoneAndClearByAgent('a', 2_000)).toBe(4)
       expect(table.countByAgent('a')).toBe(0)
+      expect(table.countDirtySeeds('a')).toBe(0)
       expect(table.getById('other')).toBeDefined()
       expect(
         db
@@ -2651,7 +2773,10 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain("temporal_kind TEXT NOT NULL DEFAULT 'atemporal'")
       expect(createSql).toContain('temporal_confidence REAL')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_tombstone')
-      expect(table.getLatestVersion()).toBe(47)
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_derivation')
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_dirty')
+      expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai')
+      expect(table.getLatestVersion()).toBe(48)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
@@ -2660,6 +2785,9 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(table.getMigrationSQL(41)).toMatch(/ADD COLUMN decision_revision/)
       expect(table.getMigrationSQL(46)).toMatch(/ADD COLUMN temporal_kind/)
       expect(table.getMigrationSQL(47)).toMatch(/CREATE TABLE IF NOT EXISTS agent_memory_tombstone/)
+      expect(table.getMigrationSQL(48)).toMatch(
+        /CREATE TABLE IF NOT EXISTS agent_memory_derivation/
+      )
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()
@@ -3571,6 +3699,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
     try {
       const table = new AgentMemoryTableCtor(db)
       table.createTable()
+      dropV48DerivedArtifacts(db)
       db.exec('ALTER TABLE agent_memory DROP COLUMN decision_revision')
       db.prepare(
         'INSERT INTO agent_memory (id, agent_id, kind, content, created_at) VALUES (?, ?, ?, ?, ?)'

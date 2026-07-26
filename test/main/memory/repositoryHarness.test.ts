@@ -266,6 +266,95 @@ describe('memory repository fakes', () => {
     expect(repo.getById(claim.id)).toBeDefined()
   })
 
+  it('matches durable lineage and generation-checked dirty work behavior', () => {
+    const repo = createFakeRepository()
+    const parent = repo.insert({
+      id: 'parent',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'source claim',
+      status: 'embedded',
+      createdAt: 1_000
+    })
+    repo.insert({
+      id: 'child',
+      agentId: 'a',
+      kind: 'reflection',
+      content: 'derived claim',
+      createdAt: 1_100
+    })
+    const edge = {
+      agentId: 'a',
+      parentMemoryId: parent.id,
+      childMemoryId: 'child',
+      derivationKind: 'reflection' as const,
+      createdAt: 1_100
+    }
+
+    expect(repo.insertDerivations([edge, edge])).toBe(1)
+    expect(repo.listDerivationsByChild('a', 'child')).toHaveLength(1)
+    const staleSeed = repo.listDirtySeeds('a', 10)[0]
+    expect(
+      repo.updateUserMetadataIfRevision({
+        agentId: 'a',
+        id: parent.id,
+        expectedRevision: parent.decision_revision,
+        importance: 0.9,
+        lastAccessedAt: 2_000
+      })
+    ).toBe(true)
+    const currentSeed = repo.listDirtySeeds('a', 10)[0]
+    expect(currentSeed.generation).toBe(staleSeed.generation + 1)
+    expect(repo.settleDirtySeeds('a', [staleSeed])).toBe(0)
+    expect(repo.settleDirtySeeds('a', [currentSeed])).toBe(1)
+
+    repo.delete(parent.id)
+    expect(repo.listDerivationsByParent('a', parent.id)).toHaveLength(1)
+    expect(repo.countDirtySeeds('a')).toBe(1)
+    expect(repo.retireAgentMemoryNamespace('a')).toBe(1)
+    expect(repo.listDerivationsByChild('a', 'child')).toEqual([])
+    expect(repo.countDirtySeeds('a')).toBe(0)
+  })
+
+  it('rolls back claims, tombstones, lineage, and dirty work together', () => {
+    const repo = createFakeRepository()
+    const claim = repo.insert({
+      id: 'claim',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'source claim',
+      provenanceKey: 'source',
+      createdAt: 1_000
+    })
+    const initialSeed = repo.listDirtySeeds('a', 10)[0]
+
+    expect(() =>
+      repo.runInTransaction(() => {
+        repo.insertDerivations([
+          {
+            agentId: 'a',
+            parentMemoryId: claim.id,
+            childMemoryId: claim.id,
+            derivationKind: 'manual_edit',
+            createdAt: 2_000
+          }
+        ])
+        repo.tombstoneAndDelete({
+          agentId: 'a',
+          id: claim.id,
+          expectedRevision: claim.decision_revision,
+          createdAt: 2_000
+        })
+        throw new Error('rollback')
+      })
+    ).toThrow('rollback')
+
+    expect(repo.getById(claim.id)).toEqual(claim)
+    expect(repo.tombstones.size).toBe(0)
+    expect(repo.listDerivationsByChild('a', claim.id)).toEqual([])
+    expect(repo.listDirtySeeds('a', 10)).toEqual([initialSeed])
+  })
+
   it('matches AgentMemoryAuditTable list limit defaults and caps', () => {
     const auditRepo = new FakeAuditRepository()
     for (let index = 0; index < 505; index += 1) {

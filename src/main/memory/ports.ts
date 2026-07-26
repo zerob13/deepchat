@@ -10,6 +10,7 @@ import type {
 } from './domain/audit'
 import type {
   AgentMemoryHealthStats,
+  AgentMemoryDerivationRow,
   AgentMemoryEmbeddingState,
   AgentMemoryInsertInput,
   AgentMemoryKind,
@@ -28,6 +29,8 @@ import type {
   ManualEditFieldFlags,
   MemoryCognitiveMaintenanceInput,
   MemoryManagementPageCursor,
+  MemoryDerivationInsertInput,
+  MemoryDirtySeed,
   MemoryModelRef,
   MemoryClaimContentUpdateResult,
   MemoryClaimInsertResult,
@@ -260,6 +263,18 @@ export interface MemoryTransactionPort {
   runInTransaction<T>(fn: () => T): T
 }
 
+export interface MemoryLineageRepositoryPort {
+  insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number
+  listDerivationsByChild(agentId: string, childMemoryId: string): AgentMemoryDerivationRow[]
+  listDerivationsByParent(agentId: string, parentMemoryId: string): AgentMemoryDerivationRow[]
+}
+
+export interface MemoryDirtyRepositoryPort {
+  listDirtySeeds(agentId: string, limit: number): MemoryDirtySeed[]
+  settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number
+  countDirtySeeds(agentId: string): number
+}
+
 export interface MemoryRepositoryPort
   extends
     MemoryReadRepositoryPort,
@@ -268,6 +283,8 @@ export interface MemoryRepositoryPort
     MemoryEmbeddingRepositoryPort,
     MemoryLifecycleRepositoryPort,
     MemoryHealthRepositoryPort,
+    MemoryLineageRepositoryPort,
+    MemoryDirtyRepositoryPort,
     MemoryTransactionPort {}
 
 export interface MemoryAuditReadPort {

@@ -27,7 +27,9 @@ import type {
   MemoryAccessRepositoryPort,
   MemoryEmbeddingRepositoryPort,
   MemoryHealthRepositoryPort,
+  MemoryDirtyRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTransactionPort
@@ -45,10 +47,13 @@ import {
 } from '@/memory/domain/stateModel'
 import type {
   AgentMemoryEmbeddingState,
+  AgentMemoryDerivationRow,
   AgentMemoryRow,
   InternalMemoryInsertInput,
   MemoryTemporalMetadata,
   MemoryClaimContentUpdateResult,
+  MemoryDerivationInsertInput,
+  MemoryDirtySeed,
   MemoryTombstoneDeleteInput,
   MemoryTombstoneIdentityKind,
   MemoryTombstoneReason,
@@ -91,6 +96,8 @@ function toLifecycleRow(row: AgentMemoryRow): AgentMemoryLifecycleRow {
 // exercise the presenter without a native database.
 class FakeRepositoryBehavior implements MemoryRepositoryPort {
   rows = new MemoryRowMap()
+  derivations = new Map<string, AgentMemoryDerivationRow>()
+  dirtySeeds = new Map<string, MemoryDirtySeed & { agentId: string }>()
   tombstones = new Map<
     string,
     {
@@ -102,6 +109,37 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
   >()
   transactionCalls = 0
+
+  private derivationKey(input: {
+    agentId: string
+    parentMemoryId: string
+    childMemoryId: string
+    derivationKind: string
+  }): string {
+    return JSON.stringify([
+      input.agentId,
+      input.parentMemoryId,
+      input.childMemoryId,
+      input.derivationKind
+    ])
+  }
+
+  private dirtyKey(agentId: string, memoryId: string): string {
+    return JSON.stringify([agentId, memoryId])
+  }
+
+  private touchDirty(row: AgentMemoryRow): void {
+    if (row.kind !== 'episodic' && row.kind !== 'semantic') return
+    const key = this.dirtyKey(row.agent_id, row.id)
+    const existing = this.dirtySeeds.get(key)
+    this.dirtySeeds.set(key, {
+      agentId: row.agent_id,
+      memoryId: row.id,
+      generation: (existing?.generation ?? 0) + 1,
+      claimRevision: Math.max(1, row.decision_revision),
+      enqueuedAt: Math.max(existing?.enqueuedAt ?? 0, row.last_accessed ?? row.created_at)
+    })
+  }
 
   private tombstoneKey(
     agentId: string,
@@ -211,6 +249,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       decision_revision: 1
     }
     this.rows.set(row.id, row)
+    this.touchDirty(row)
     return row
   }
 
@@ -224,6 +263,86 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
     if (this.hasTombstoneForClaim(input)) return null
     return this.insert(input)
+  }
+
+  insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number {
+    let inserted = 0
+    for (const input of inputs) {
+      const key = this.derivationKey(input)
+      if (this.derivations.has(key)) continue
+      this.derivations.set(key, {
+        agent_id: input.agentId,
+        parent_memory_id: input.parentMemoryId,
+        child_memory_id: input.childMemoryId,
+        derivation_kind: input.derivationKind,
+        created_at: input.createdAt
+      })
+      inserted += 1
+    }
+    return inserted
+  }
+
+  listDerivationsByChild(agentId: string, childMemoryId: string) {
+    return [...this.derivations.values()]
+      .filter((row) => row.agent_id === agentId && row.child_memory_id === childMemoryId)
+      .sort(
+        (left, right) =>
+          left.created_at - right.created_at ||
+          left.parent_memory_id.localeCompare(right.parent_memory_id) ||
+          left.derivation_kind.localeCompare(right.derivation_kind)
+      )
+  }
+
+  listDerivationsByParent(agentId: string, parentMemoryId: string) {
+    return [...this.derivations.values()]
+      .filter((row) => row.agent_id === agentId && row.parent_memory_id === parentMemoryId)
+      .sort(
+        (left, right) =>
+          left.created_at - right.created_at ||
+          left.child_memory_id.localeCompare(right.child_memory_id) ||
+          left.derivation_kind.localeCompare(right.derivation_kind)
+      )
+  }
+
+  listDirtySeeds(agentId: string, limit: number): MemoryDirtySeed[] {
+    const cappedLimit = Number.isFinite(limit)
+      ? Math.min(256, Math.max(0, Math.floor(limit)))
+      : limit === Number.POSITIVE_INFINITY
+        ? 256
+        : 0
+    return [...this.dirtySeeds.values()]
+      .filter((seed) => seed.agentId === agentId)
+      .sort(
+        (left, right) =>
+          left.enqueuedAt - right.enqueuedAt || left.memoryId.localeCompare(right.memoryId)
+      )
+      .slice(0, cappedLimit)
+      .map(({ memoryId, generation, claimRevision, enqueuedAt }) => ({
+        memoryId,
+        generation,
+        claimRevision,
+        enqueuedAt
+      }))
+  }
+
+  settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number {
+    let removed = 0
+    const unique = [
+      ...new Map(
+        seeds.map((seed) => [JSON.stringify([seed.memoryId, seed.generation]), seed] as const)
+      ).values()
+    ].slice(0, 256)
+    for (const seed of unique) {
+      const key = this.dirtyKey(agentId, seed.memoryId)
+      if (this.dirtySeeds.get(key)?.generation !== seed.generation) continue
+      this.dirtySeeds.delete(key)
+      removed += 1
+    }
+    return removed
+  }
+
+  countDirtySeeds(agentId: string): number {
+    return [...this.dirtySeeds.values()].filter((seed) => seed.agentId === agentId).length
   }
 
   getById(id: string) {
@@ -371,6 +490,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.persona_state = state
     if (supersededBy !== undefined) row.superseded_by = supersededBy
     row.decision_revision += 1
+    this.touchDirty(row)
   }
 
   setAnchor(id: string, anchored: boolean) {
@@ -378,6 +498,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.is_anchor = anchored ? 1 : 0
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -461,6 +582,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_id = embedding?.embeddingId ?? null
     row.embedding_dim = embedding?.embeddingDim ?? null
     row.embedding_model = embedding?.embeddingModel ?? null
+    this.touchDirty(row)
   }
 
   activateForEmbedding(id: string) {
@@ -473,6 +595,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
+    this.touchDirty(row)
   }
 
   activateForEmbeddingIfRevision(agentId: string, id: string, expectedRevision: number) {
@@ -560,6 +683,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (retiredHead) {
       retiredHead.superseded_by = row.id
       retiredHead.decision_revision += 1
+      this.touchDirty(retiredHead)
     }
     row.superseded_by = null
     row.embedding_state = 'pending'
@@ -568,6 +692,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -626,6 +751,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.last_accessed = input.at ?? 0
     }
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -661,6 +787,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.conflict_with = null
     row.superseded_by = input.winnerId
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -687,6 +814,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.conflict_state = null
     row.superseded_by = input.challengerId
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -720,6 +848,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = update.embeddingId
       row.embedding_dim = update.embeddingDim
       row.embedding_model = update.embeddingModel
+      this.touchDirty(row)
       updated.push(row.id)
     }
     return updated
@@ -750,6 +879,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = null
       row.embedding_dim = null
       row.embedding_model = null
+      this.touchDirty(row)
       updated.push(row.id)
     }
     return updated
@@ -789,6 +919,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = null
       row.embedding_dim = null
       row.embedding_model = null
+      this.touchDirty(row)
       changed += 1
     }
     return changed
@@ -846,6 +977,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.superseded_by = supersededBy
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -871,6 +1003,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     row.superseded_by = supersededBy
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -910,6 +1043,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.last_accessed = at
       if (category !== undefined) row.category = category
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -1001,6 +1135,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
+    this.touchDirty(row)
     return { action: 'updated' }
   }
 
@@ -1046,6 +1181,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.temporal_timezone = temporal.temporalTimeZone
     }
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -1060,6 +1196,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.conflict_state = state
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -1083,6 +1220,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     row.conflict_state = state
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -1091,6 +1229,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.conflict_with = targetId
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -1196,6 +1335,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.lifecycle_state = 'archived'
       row.status = 'archived'
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -1311,6 +1451,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   delete(id: string) {
+    const row = this.rows.get(id)
+    if (row) this.touchDirty(row)
     this.rows.delete(id)
   }
 
@@ -1319,7 +1461,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (!row || row.agent_id !== agentId || (row.kind !== 'persona' && row.kind !== 'working')) {
       return false
     }
-    this.rows.delete(id)
+    this.delete(id)
     return true
   }
 
@@ -1334,7 +1476,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       return null
     }
     this.addTombstonesForRow(row, input.createdAt, 'selective_delete')
-    this.rows.delete(row.id)
+    this.delete(row.id)
     return row
   }
 
@@ -1342,7 +1484,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     let removed = 0
     for (const [id, row] of this.rows) {
       if (row.agent_id === agentId) {
-        this.rows.delete(id)
+        this.delete(id)
         removed += 1
       }
     }
@@ -1355,13 +1497,23 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         this.addTombstonesForRow(row, createdAt, 'agent_clear')
       }
     }
-    return this.clearByAgent(agentId)
+    const removed = this.clearByAgent(agentId)
+    for (const [key, seed] of this.dirtySeeds) {
+      if (seed.agentId === agentId) this.dirtySeeds.delete(key)
+    }
+    return removed
   }
 
   retireAgentMemoryNamespace(agentId: string): number {
     const removed = this.clearByAgent(agentId)
     for (const [key, tombstone] of this.tombstones) {
       if (tombstone.agentId === agentId) this.tombstones.delete(key)
+    }
+    for (const [key, derivation] of this.derivations) {
+      if (derivation.agent_id === agentId) this.derivations.delete(key)
+    }
+    for (const [key, seed] of this.dirtySeeds) {
+      if (seed.agentId === agentId) this.dirtySeeds.delete(key)
     }
     return removed
   }
@@ -1520,6 +1672,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       if (row.status !== 'conflicted' && row.conflict_with !== null) {
         row.conflict_with = null
         row.decision_revision += 1
+        this.touchDirty(row)
         result.clearedLinks += 1
       }
     }
@@ -1588,12 +1741,24 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
   runInTransaction<T>(fn: () => T): T {
     this.transactionCalls += 1
-    const snapshot = new MemoryRowMap()
-    for (const [id, row] of this.rows) snapshot.set(id, { ...row })
+    const rowSnapshot = new MemoryRowMap()
+    for (const [id, row] of this.rows) rowSnapshot.set(id, { ...row })
+    const tombstoneSnapshot = new Map(
+      [...this.tombstones].map(([key, tombstone]) => [key, { ...tombstone }])
+    )
+    const derivationSnapshot = new Map(
+      [...this.derivations].map(([key, derivation]) => [key, { ...derivation }])
+    )
+    const dirtySeedSnapshot = new Map(
+      [...this.dirtySeeds].map(([key, dirtySeed]) => [key, { ...dirtySeed }])
+    )
     try {
       return fn()
     } catch (error) {
-      this.rows = snapshot
+      this.rows = rowSnapshot
+      this.tombstones = tombstoneSnapshot
+      this.derivations = derivationSnapshot
+      this.dirtySeeds = dirtySeedSnapshot
       throw error
     }
   }
@@ -1770,6 +1935,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = null
       row.embedding_dim = null
       row.embedding_model = null
+      this.touchDirty(row)
       changed += 1
     }
     return changed
@@ -1779,6 +1945,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 export interface FakeRepositoryState {
   rows: Map<string, AgentMemoryRow>
   tombstones: FakeRepositoryBehavior['tombstones']
+  derivations: FakeRepositoryBehavior['derivations']
+  dirtySeeds: FakeRepositoryBehavior['dirtySeeds']
   transactionCalls: number
 }
 
@@ -1823,6 +1991,8 @@ export interface FakeRepositoryHarness {
   embedding: MemoryEmbeddingRepositoryPort
   lifecycle: MemoryLifecycleRepositoryPort
   health: MemoryHealthRepositoryPort
+  lineage: MemoryLineageRepositoryPort
+  dirty: MemoryDirtyRepositoryPort
   transaction: MemoryTransactionPort
 }
 
@@ -1930,6 +2100,18 @@ const HEALTH_CAPABILITY_KEYS = [
   'countLegacyShadowMismatches'
 ] as const satisfies readonly (keyof MemoryHealthRepositoryPort)[]
 
+const LINEAGE_CAPABILITY_KEYS = [
+  'insertDerivations',
+  'listDerivationsByChild',
+  'listDerivationsByParent'
+] as const satisfies readonly (keyof MemoryLineageRepositoryPort)[]
+
+const DIRTY_CAPABILITY_KEYS = [
+  'listDirtySeeds',
+  'settleDirtySeeds',
+  'countDirtySeeds'
+] as const satisfies readonly (keyof MemoryDirtyRepositoryPort)[]
+
 const TRANSACTION_CAPABILITY_KEYS = [
   'runInTransaction'
 ] as const satisfies readonly (keyof MemoryTransactionPort)[]
@@ -1944,6 +2126,8 @@ export function createFakeRepositoryHarness(): FakeRepositoryHarness {
     embedding: bindCapability(state, EMBEDDING_CAPABILITY_KEYS),
     lifecycle: bindCapability(state, LIFECYCLE_CAPABILITY_KEYS),
     health: bindCapability(state, HEALTH_CAPABILITY_KEYS),
+    lineage: bindCapability(state, LINEAGE_CAPABILITY_KEYS),
+    dirty: bindCapability(state, DIRTY_CAPABILITY_KEYS),
     transaction: bindCapability(state, TRANSACTION_CAPABILITY_KEYS)
   }
 }
@@ -1958,6 +2142,8 @@ export function createFakeRepository(): FakeRepository {
     harness.embedding,
     harness.lifecycle,
     harness.health,
+    harness.lineage,
+    harness.dirty,
     harness.transaction
   ) as FakeRepository
 }

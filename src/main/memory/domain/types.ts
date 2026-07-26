@@ -108,6 +108,7 @@ export interface MemoryTemporalTrace {
 
 export type MemoryTombstoneIdentityKind = 'provenance' | 'content'
 export type MemoryTombstoneReason = 'selective_delete' | 'agent_clear'
+export type MemoryDerivationKind = 'merge' | 'reflection' | 'supersede' | 'manual_edit'
 
 export interface MemoryTombstoneIdentity {
   identityKind: MemoryTombstoneIdentityKind
@@ -119,6 +120,29 @@ export interface MemoryTombstoneDeleteInput {
   id: string
   expectedRevision: number
   createdAt: number
+}
+
+export interface MemoryDerivationInsertInput {
+  agentId: string
+  parentMemoryId: string
+  childMemoryId: string
+  derivationKind: MemoryDerivationKind
+  createdAt: number
+}
+
+export interface AgentMemoryDerivationRow {
+  agent_id: string
+  parent_memory_id: string
+  child_memory_id: string
+  derivation_kind: MemoryDerivationKind
+  created_at: number
+}
+
+export interface MemoryDirtySeed {
+  memoryId: string
+  generation: number
+  claimRevision: number
+  enqueuedAt: number
 }
 
 export type MemoryClaimInsertResult =

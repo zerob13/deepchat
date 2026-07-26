@@ -11,6 +11,7 @@ import { MEMORY_PAGE_MAX_LIMIT } from '@shared/contracts/routes/memory.routes'
 import type { MemoryPerfObserver, MemoryRepositoryPort } from '../../../memory/ports'
 import type {
   AgentMemoryHealthStats,
+  AgentMemoryDerivationRow,
   AgentMemoryEmbeddingState,
   AgentMemoryInsertInput,
   AgentMemoryConflictState,
@@ -27,6 +28,8 @@ import type {
   InternalMemoryInsertInput,
   MemoryTransitionTarget,
   MemoryClaimContentUpdateResult,
+  MemoryDerivationInsertInput,
+  MemoryDirtySeed,
   ResolveChallengerTransition,
   ReviveSupersededTransition,
   UserContentTransition,
@@ -73,11 +76,13 @@ import type { MemoryTombstoneDeleteInput, MemoryTombstoneReason } from '../../do
 // persona lifecycle column; v35 adds conflict linkage; v37 adds agentic category; v41 adds
 // optimistic concurrency control for semantic decision writes; v42 normalizes lifecycle and
 // embedding state while retaining the legacy status shadow; v46 adds temporal claim metadata; v47
-// adds privacy-preserving exact-forgetting tombstones.
+// adds privacy-preserving exact-forgetting tombstones; v48 adds durable derivation edges and the
+// rebuildable dirty-work index.
 const AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION = 42
 const AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION = 46
 const AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION = 47
-const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION
+const AGENT_MEMORY_LINEAGE_SCHEMA_VERSION = 48
+const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_LINEAGE_SCHEMA_VERSION
 
 const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
@@ -101,6 +106,100 @@ const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
     PRIMARY KEY (agent_id, identity_kind, identity_hash)
   ) WITHOUT ROWID;
 `
+
+const AGENT_MEMORY_DERIVATION_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS agent_memory_derivation (
+    agent_id TEXT NOT NULL,
+    parent_memory_id TEXT NOT NULL,
+    child_memory_id TEXT NOT NULL,
+    derivation_kind TEXT NOT NULL
+      CHECK (derivation_kind IN ('merge', 'reflection', 'supersede', 'manual_edit')),
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, parent_memory_id, child_memory_id, derivation_kind)
+  ) WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS idx_agent_memory_derivation_child_v1
+    ON agent_memory_derivation(agent_id, child_memory_id, created_at, parent_memory_id);
+`
+
+const AGENT_MEMORY_DIRTY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS agent_memory_dirty (
+    agent_id TEXT NOT NULL,
+    memory_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation >= 1),
+    claim_revision INTEGER NOT NULL CHECK (claim_revision >= 1),
+    enqueued_at INTEGER NOT NULL CHECK (enqueued_at >= 0),
+    PRIMARY KEY (agent_id, memory_id)
+  ) WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS idx_agent_memory_dirty_order_v1
+    ON agent_memory_dirty(agent_id, enqueued_at, memory_id);
+`
+
+const AGENT_MEMORY_DIRTY_BACKFILL_SQL = `
+  INSERT INTO agent_memory_dirty (
+    agent_id, memory_id, generation, claim_revision, enqueued_at
+  )
+  SELECT agent_id, id, 1, max(1, decision_revision),
+         max(0, COALESCE(last_accessed, created_at))
+  FROM agent_memory
+  WHERE kind IN ('episodic', 'semantic')
+  ON CONFLICT (agent_id, memory_id) DO NOTHING;
+`
+
+const AGENT_MEMORY_DIRTY_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai
+  AFTER INSERT ON agent_memory
+  WHEN NEW.kind IN ('episodic', 'semantic')
+  BEGIN
+    INSERT INTO agent_memory_dirty (
+      agent_id, memory_id, generation, claim_revision, enqueued_at
+    )
+    VALUES (
+      NEW.agent_id, NEW.id, 1, max(1, NEW.decision_revision),
+      max(0, COALESCE(NEW.last_accessed, NEW.created_at))
+    )
+    ON CONFLICT (agent_id, memory_id) DO UPDATE SET
+      generation = agent_memory_dirty.generation + 1,
+      claim_revision = excluded.claim_revision,
+      enqueued_at = max(agent_memory_dirty.enqueued_at, excluded.enqueued_at);
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_au
+  AFTER UPDATE OF decision_revision, embedding_state, embedding_dim, embedding_model
+  ON agent_memory
+  WHEN NEW.kind IN ('episodic', 'semantic')
+  BEGIN
+    INSERT INTO agent_memory_dirty (
+      agent_id, memory_id, generation, claim_revision, enqueued_at
+    )
+    VALUES (
+      NEW.agent_id, NEW.id, 1, max(1, NEW.decision_revision),
+      max(0, COALESCE(NEW.last_accessed, NEW.created_at))
+    )
+    ON CONFLICT (agent_id, memory_id) DO UPDATE SET
+      generation = agent_memory_dirty.generation + 1,
+      claim_revision = excluded.claim_revision,
+      enqueued_at = max(agent_memory_dirty.enqueued_at, excluded.enqueued_at);
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ad
+  AFTER DELETE ON agent_memory
+  WHEN OLD.kind IN ('episodic', 'semantic')
+  BEGIN
+    INSERT INTO agent_memory_dirty (
+      agent_id, memory_id, generation, claim_revision, enqueued_at
+    )
+    VALUES (
+      OLD.agent_id, OLD.id, 1, max(1, OLD.decision_revision),
+      max(0, COALESCE(OLD.last_accessed, OLD.created_at))
+    )
+    ON CONFLICT (agent_id, memory_id) DO UPDATE SET
+      generation = agent_memory_dirty.generation + 1,
+      claim_revision = excluded.claim_revision,
+      enqueued_at = max(agent_memory_dirty.enqueued_at, excluded.enqueued_at);
+  END;
+`
+
+const DIRTY_SEED_REPOSITORY_LIMIT = 256
 
 function embeddingRefsState(
   row: Pick<AgentMemoryRow, 'embedding_id' | 'embedding_dim' | 'embedding_model'>
@@ -550,6 +649,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         )
       );
       ${AGENT_MEMORY_TOMBSTONE_TABLE_SQL}
+      ${AGENT_MEMORY_DERIVATION_TABLE_SQL}
+      ${AGENT_MEMORY_DIRTY_TABLE_SQL}
+      ${AGENT_MEMORY_DIRTY_BACKFILL_SQL}
+      ${AGENT_MEMORY_DIRTY_TRIGGER_SQL}
       ${AGENT_MEMORY_BASE_INDEX_SQL}
       ${AGENT_MEMORY_CONFLICT_INDEX_SQL}
       ${AGENT_MEMORY_CANONICAL_INDEX_SQL}
@@ -572,6 +675,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       if (columns.some((column) => column.name === 'conflict_with')) {
         this.db.exec(AGENT_MEMORY_CONFLICT_INDEX_SQL)
       }
+      if (
+        columns.some((column) => column.name === 'decision_revision') &&
+        columns.some((column) => column.name === 'lifecycle_state') &&
+        columns.some((column) => column.name === 'embedding_state')
+      ) {
+        this.ensureLineageAndDirtyArtifacts()
+      }
     }
     const currentColumns = this.db.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
       name: string
@@ -582,6 +692,18 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       this.ensureFtsIndex()
     }
+  }
+
+  private ensureLineageAndDirtyArtifacts(): void {
+    const dirtyTableExists = !!this.db
+      .prepare(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_dirty'"
+      )
+      .get()
+    this.db.exec(AGENT_MEMORY_DERIVATION_TABLE_SQL)
+    this.db.exec(AGENT_MEMORY_DIRTY_TABLE_SQL)
+    if (!dirtyTableExists) this.db.exec(AGENT_MEMORY_DIRTY_BACKFILL_SQL)
+    this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
   }
 
   private insertTombstonesForRows(
@@ -843,10 +965,83 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       throw new Error('[Memory] agent_memory_tombstone constraints are incomplete')
     }
+    const derivationSql = (
+      this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_derivation'"
+        )
+        .get() as { sql: string | null } | undefined
+    )?.sql
+    const normalizedDerivationSql = derivationSql?.replace(/\s+/gu, ' ').trim()
+    if (
+      !normalizedDerivationSql?.includes(
+        "CHECK (derivation_kind IN ('merge', 'reflection', 'supersede', 'manual_edit'))"
+      ) ||
+      !normalizedDerivationSql.includes(
+        'PRIMARY KEY (agent_id, parent_memory_id, child_memory_id, derivation_kind)'
+      ) ||
+      !normalizedDerivationSql.endsWith('WITHOUT ROWID')
+    ) {
+      throw new Error('[Memory] agent_memory_derivation constraints are incomplete')
+    }
+    const dirtySql = (
+      this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_dirty'"
+        )
+        .get() as { sql: string | null } | undefined
+    )?.sql
+    const normalizedDirtySql = dirtySql?.replace(/\s+/gu, ' ').trim()
+    if (
+      !normalizedDirtySql?.includes('CHECK (generation >= 1)') ||
+      !normalizedDirtySql.includes('CHECK (claim_revision >= 1)') ||
+      !normalizedDirtySql.includes('PRIMARY KEY (agent_id, memory_id)') ||
+      !normalizedDirtySql.endsWith('WITHOUT ROWID')
+    ) {
+      throw new Error('[Memory] agent_memory_dirty constraints are incomplete')
+    }
+    for (const [name, signature] of [
+      ['agent_memory_dirty_ai', 'AFTER INSERT ON agent_memory'],
+      [
+        'agent_memory_dirty_au',
+        'AFTER UPDATE OF decision_revision, embedding_state, embedding_dim, embedding_model ON agent_memory'
+      ],
+      ['agent_memory_dirty_ad', 'AFTER DELETE ON agent_memory']
+    ] as const) {
+      const triggerSql = (
+        this.db
+          .prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+          .get(name) as { sql: string | null } | undefined
+      )?.sql
+      const normalizedTriggerSql = triggerSql?.replace(/\s+/gu, ' ')
+      if (
+        !normalizedTriggerSql?.includes(signature) ||
+        !normalizedTriggerSql.includes('INSERT INTO agent_memory_dirty') ||
+        !normalizedTriggerSql.includes('generation = agent_memory_dirty.generation + 1')
+      ) {
+        throw new Error(`[Memory] ${name} is incomplete`)
+      }
+    }
+    for (const indexName of [
+      'idx_agent_memory_derivation_child_v1',
+      'idx_agent_memory_dirty_order_v1'
+    ]) {
+      if (
+        !this.db
+          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?")
+          .get(indexName)
+      ) {
+        throw new Error(`[Memory] required index is missing: ${indexName}`)
+      }
+    }
     this.ensureFtsIndex()
   }
 
   finalizeMigration(version: number): void {
+    if (version === AGENT_MEMORY_LINEAGE_SCHEMA_VERSION) {
+      this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
+      return
+    }
     if (version !== AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION) return
     this.replaceLegacyStatusBridge()
     const markerExists = this.db
@@ -953,6 +1148,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     }
     if (version === AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION) {
       return AGENT_MEMORY_TOMBSTONE_TABLE_SQL
+    }
+    if (version === AGENT_MEMORY_LINEAGE_SCHEMA_VERSION) {
+      return [
+        AGENT_MEMORY_DERIVATION_TABLE_SQL,
+        AGENT_MEMORY_DIRTY_TABLE_SQL,
+        AGENT_MEMORY_DIRTY_BACKFILL_SQL
+      ].join('\n')
     }
     return null
   }
@@ -1420,6 +1622,107 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       if (this.hasTombstoneForClaim(input)) return null
       return this.insert(input)
     })()
+  }
+
+  insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number {
+    if (!inputs.length) return 0
+    const insert = this.db.prepare(
+      `INSERT INTO agent_memory_derivation (
+         agent_id, parent_memory_id, child_memory_id, derivation_kind, created_at
+       ) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (agent_id, parent_memory_id, child_memory_id, derivation_kind) DO NOTHING`
+    )
+    return this.db.transaction(() => {
+      let inserted = 0
+      const seen = new Set<string>()
+      for (const input of inputs) {
+        const key = JSON.stringify([
+          input.agentId,
+          input.parentMemoryId,
+          input.childMemoryId,
+          input.derivationKind
+        ])
+        if (seen.has(key)) continue
+        seen.add(key)
+        inserted += insert.run(
+          input.agentId,
+          input.parentMemoryId,
+          input.childMemoryId,
+          input.derivationKind,
+          input.createdAt
+        ).changes
+      }
+      return inserted
+    })()
+  }
+
+  listDerivationsByChild(agentId: string, childMemoryId: string): AgentMemoryDerivationRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM agent_memory_derivation INDEXED BY idx_agent_memory_derivation_child_v1
+         WHERE agent_id = ? AND child_memory_id = ?
+         ORDER BY created_at ASC, parent_memory_id ASC, derivation_kind ASC`
+      )
+      .all(agentId, childMemoryId) as AgentMemoryDerivationRow[]
+  }
+
+  listDerivationsByParent(agentId: string, parentMemoryId: string): AgentMemoryDerivationRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM agent_memory_derivation
+         WHERE agent_id = ? AND parent_memory_id = ?
+         ORDER BY created_at ASC, child_memory_id ASC, derivation_kind ASC`
+      )
+      .all(agentId, parentMemoryId) as AgentMemoryDerivationRow[]
+  }
+
+  listDirtySeeds(agentId: string, limit: number): MemoryDirtySeed[] {
+    const cappedLimit = Number.isFinite(limit)
+      ? Math.min(DIRTY_SEED_REPOSITORY_LIMIT, Math.max(0, Math.floor(limit)))
+      : limit === Number.POSITIVE_INFINITY
+        ? DIRTY_SEED_REPOSITORY_LIMIT
+        : 0
+    if (cappedLimit === 0) return []
+    return this.db
+      .prepare(
+        `SELECT memory_id AS memoryId,
+                generation,
+                claim_revision AS claimRevision,
+                enqueued_at AS enqueuedAt
+         FROM agent_memory_dirty INDEXED BY idx_agent_memory_dirty_order_v1
+         WHERE agent_id = ?
+         ORDER BY enqueued_at ASC, memory_id ASC
+         LIMIT ?`
+      )
+      .all(agentId, cappedLimit) as MemoryDirtySeed[]
+  }
+
+  settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number {
+    if (!seeds.length) return 0
+    const unique = [
+      ...new Map(
+        seeds.map((seed) => [JSON.stringify([seed.memoryId, seed.generation]), seed] as const)
+      ).values()
+    ].slice(0, DIRTY_SEED_REPOSITORY_LIMIT)
+    const remove = this.db.prepare(
+      `DELETE FROM agent_memory_dirty
+       WHERE agent_id = ? AND memory_id = ? AND generation = ?`
+    )
+    return this.db.transaction(() =>
+      unique.reduce(
+        (removed, seed) => removed + remove.run(agentId, seed.memoryId, seed.generation).changes,
+        0
+      )
+    )()
+  }
+
+  countDirtySeeds(agentId: string): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS count FROM agent_memory_dirty WHERE agent_id = ?')
+      .get(agentId) as { count: number } | undefined
+    return row?.count ?? 0
   }
 
   getById(id: string): AgentMemoryRow | undefined {
@@ -3078,7 +3381,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         .prepare('SELECT * FROM agent_memory WHERE agent_id = ?')
         .all(agentId) as AgentMemoryRow[]
       this.insertTombstonesForRows(rows, createdAt, 'agent_clear')
-      return this.clearByAgent(agentId)
+      const removed = this.clearByAgent(agentId)
+      this.db.prepare('DELETE FROM agent_memory_dirty WHERE agent_id = ?').run(agentId)
+      return removed
     })()
   }
 
@@ -3086,6 +3391,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     return this.db.transaction(() => {
       const removed = this.clearByAgent(agentId)
       this.db.prepare('DELETE FROM agent_memory_tombstone WHERE agent_id = ?').run(agentId)
+      this.db.prepare('DELETE FROM agent_memory_derivation WHERE agent_id = ?').run(agentId)
+      this.db.prepare('DELETE FROM agent_memory_dirty WHERE agent_id = ?').run(agentId)
       return removed
     })()
   }

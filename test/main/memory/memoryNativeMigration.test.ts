@@ -64,6 +64,16 @@ function dropV42CanonicalArtifacts(db: InstanceType<typeof DatabaseCtor>): void 
   `)
 }
 
+function dropV48DerivedArtifacts(db: InstanceType<typeof DatabaseCtor>): void {
+  db.exec(`
+    DROP TRIGGER IF EXISTS agent_memory_dirty_ai;
+    DROP TRIGGER IF EXISTS agent_memory_dirty_au;
+    DROP TRIGGER IF EXISTS agent_memory_dirty_ad;
+    DROP TABLE IF EXISTS agent_memory_dirty;
+    DROP TABLE IF EXISTS agent_memory_derivation;
+  `)
+}
+
 function seedReadyEmbedding(
   db: InstanceType<typeof DatabaseCtor>,
   id: string,
@@ -117,6 +127,68 @@ describeIfNative('Memory native SQLite migration', () => {
 
       const reopened = new MainDatabaseCtor(databasePath)
       expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(46)
+      reopened.close()
+    })
+  })
+
+  it('migrates v47 claims into durable lineage and dirty work exactly once', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      memoryTable(seeded).insert({
+        id: 'legacy-claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'legacy claim',
+        createdAt: 1_000
+      })
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      dropV48DerivedArtifacts(legacy)
+      legacy.prepare('UPDATE agent_memory SET created_at = ? WHERE id = ?').run(-1, 'legacy-claim')
+      legacy.exec('DELETE FROM schema_versions')
+      legacy.exec('INSERT INTO schema_versions (version, applied_at) VALUES (47, 1)')
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const table = memoryTable(migrated)
+      expect(
+        migrated
+          .getDatabase()
+          .prepare('SELECT version FROM schema_versions WHERE version = 48')
+          .get()
+      ).toEqual({ version: 48 })
+      expect(table.listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'legacy-claim',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 0
+        }
+      ])
+      expect(
+        table.insertDerivations([
+          {
+            agentId: 'a',
+            parentMemoryId: 'legacy-claim',
+            childMemoryId: 'legacy-claim',
+            derivationKind: 'merge',
+            createdAt: 2_000
+          }
+        ])
+      ).toBe(1)
+      migrated.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(memoryTable(reopened).listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'legacy-claim',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 0
+        }
+      ])
+      expect(memoryTable(reopened).listDerivationsByParent('a', 'legacy-claim')).toHaveLength(1)
       reopened.close()
     })
   })
@@ -452,6 +524,7 @@ describeIfNative('Memory native SQLite migration', () => {
         seeded.close()
 
         const legacy = new DatabaseCtor(databasePath)
+        dropV48DerivedArtifacts(legacy)
         dropV42CanonicalArtifacts(legacy)
         legacy.exec('ALTER TABLE agent_memory DROP COLUMN embedding_state')
         if (variant !== 'partial') {
@@ -744,6 +817,7 @@ describeIfNative('Memory native SQLite migration', () => {
         seeded.close()
 
         const legacy = new DatabaseCtor(databasePath)
+        dropV48DerivedArtifacts(legacy)
         dropV42CanonicalArtifacts(legacy)
         legacy.exec('DROP INDEX IF EXISTS idx_agent_memory_active_recall')
         legacy.exec('DROP INDEX IF EXISTS idx_agent_memory_recall_importance_v5')
