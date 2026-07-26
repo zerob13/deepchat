@@ -519,14 +519,17 @@ export class HookService implements HookObserver {
   }
 }
 
+const isHookRunnable = (hook: HookCommandItem): boolean =>
+  Boolean(hook.enabled && hook.command.trim())
+
 const shouldDispatchHook = (hook: HookCommandItem, event: HookEventName): boolean =>
-  Boolean(hook.enabled && hook.command.trim() && hook.events.includes(event))
+  isHookRunnable(hook) && hook.events.includes(event)
 
 const buildConfigSnapshot = (config: HooksNotificationsSettings): HookConfigSnapshot => {
   const subscribedEvents = new Set<HookEventName>()
   for (const hook of config.hooks) {
     Object.freeze(Object.freeze(hook).events)
-    if (!hook.enabled || !hook.command.trim()) {
+    if (!isHookRunnable(hook)) {
       continue
     }
     for (const event of hook.events) {
