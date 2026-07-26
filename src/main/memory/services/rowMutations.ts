@@ -109,7 +109,8 @@ export class MemoryRowMutations {
     candidate: NormalizedMemoryCandidate,
     content: string,
     provenanceKey: string,
-    options: WriteMemoriesOptions
+    options: WriteMemoriesOptions,
+    createdAt: number
   ): string | null {
     const sourceSession = options.sourceSession ?? null
     const sourceEntryIds = sourceSession ? (options.sourceEntryIds ?? null) : null
@@ -127,7 +128,8 @@ export class MemoryRowMutations {
         sourceSession,
         userScope: options.userScope ?? null,
         provenanceKey,
-        sourceEntryIds
+        sourceEntryIds,
+        createdAt
       })
       return id
     } catch (error) {
@@ -143,7 +145,8 @@ export class MemoryRowMutations {
     content: string,
     provenanceKey: string,
     targetId: string,
-    options: WriteMemoriesOptions
+    options: WriteMemoriesOptions,
+    createdAt: number
   ): string | null {
     const sourceSession = options.sourceSession ?? null
     const sourceEntryIds = sourceSession ? (options.sourceEntryIds ?? null) : null
@@ -162,7 +165,8 @@ export class MemoryRowMutations {
         userScope: options.userScope ?? null,
         provenanceKey,
         sourceEntryIds,
-        conflictWith: targetId
+        conflictWith: targetId,
+        createdAt
       })
       return id
     } catch (error) {
@@ -213,7 +217,7 @@ export class MemoryRowMutations {
 
     let newId: string | null = null
     const insertedAndSuperseded = this.runAtomicTransition(() => {
-      newId = this.insertMemory(agentId, candidate, content, newKey, options)
+      newId = this.insertMemory(agentId, candidate, content, newKey, options, now)
       if (!newId) return false
       return this.ports.repository.markSupersededIfRevision(
         agentId,

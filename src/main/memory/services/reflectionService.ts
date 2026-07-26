@@ -119,9 +119,10 @@ export class ReflectionService {
       }
       if (!this.ctx.canContinueOperation(operationFence)) return finish(null)
       const insights = parseReflectionInsights(raw)
+      const now = this.ctx.now()
       const reflectionIds = this.ports.repository.runInTransaction(() =>
         insights.flatMap((insight) => {
-          const id = this.insertReflection(agentId, insight, sourceSession ?? null)
+          const id = this.insertReflection(agentId, insight, sourceSession ?? null, now)
           return id ? [id] : []
         })
       )
@@ -147,7 +148,8 @@ export class ReflectionService {
   private insertReflection(
     agentId: string,
     content: string,
-    sourceSession: string | null
+    sourceSession: string | null,
+    createdAt: number
   ): string | null {
     if (!this.ctx.canWriteAgentMemory(agentId)) return null
     const trimmed = content.trim()
@@ -165,7 +167,8 @@ export class ReflectionService {
         lifecycleState: 'active',
         embeddingState: 'pending',
         sourceSession,
-        provenanceKey
+        provenanceKey,
+        createdAt
       })
       return id
     } catch (error) {

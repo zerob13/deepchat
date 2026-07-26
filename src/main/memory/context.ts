@@ -20,6 +20,7 @@ import type {
   MemoryChangeSinkPort,
   MemoryProviderControlPort
 } from './ports'
+import { systemMemoryDomainClock, type MemoryDomainClock } from './domain/clock'
 
 export type { MemoryModelRef } from './domain/types'
 
@@ -36,6 +37,7 @@ export interface MemoryRuntimeContextOptions {
   changeSink?: MemoryChangeSinkPort
   onAgentMemoryMutated?: (agentId: string) => void
   providerControl: MemoryProviderControlPort
+  clock?: MemoryDomainClock
 }
 
 export function embeddingFingerprint(providerId: string, modelId: string): string {
@@ -53,11 +55,27 @@ export class MemoryRuntimeContext {
   private disposed = false
   private readonly readEpochByAgent = new Map<string, number>()
   private readonly executionStateByAgent = new Map<string, MemoryExecutionState>()
+  private readonly clock: MemoryDomainClock
 
-  constructor(private readonly options: MemoryRuntimeContextOptions) {}
+  constructor(private readonly options: MemoryRuntimeContextOptions) {
+    this.clock = options.clock ?? systemMemoryDomainClock
+  }
 
   get isDisposed(): boolean {
     return this.disposed
+  }
+
+  now(): number {
+    const now = this.clock.now()
+    if (!Number.isFinite(now)) {
+      throw new Error(`[Memory] domain clock returned a non-finite timestamp: ${String(now)}`)
+    }
+    return Math.trunc(now)
+  }
+
+  timeZone(): string {
+    const timeZone = this.clock.timeZone().trim()
+    return timeZone || 'UTC'
   }
 
   markDisposed(): void {
@@ -225,7 +243,7 @@ export class MemoryRuntimeContext {
       modelProviderId: input.model?.providerId ?? null,
       modelId: input.model?.modelId ?? null,
       sessionId: input.sessionId ?? null,
-      createdAt: input.createdAt
+      createdAt: input.createdAt ?? this.now()
     })
   }
 

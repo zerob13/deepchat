@@ -303,10 +303,11 @@ export class MaintenanceService {
     this.consolidationTimerDueAt.set(agentId, dueAt)
   }
 
-  async runConsolidationPass(agentId: string, now: number = Date.now()): Promise<void> {
+  async runConsolidationPass(agentId: string, now?: number): Promise<void> {
+    const effectiveNow = now ?? this.ctx.now()
     const existing = this.consolidationPasses.get(agentId)
     if (existing) return existing
-    const tracked = this.runConsolidationPassInternal(agentId, now).finally(() => {
+    const tracked = this.runConsolidationPassInternal(agentId, effectiveNow).finally(() => {
       if (this.consolidationPasses.get(agentId) === tracked) {
         this.consolidationPasses.delete(agentId)
       }
@@ -814,12 +815,13 @@ export class MaintenanceService {
     }
   }
 
-  archiveStale(agentId: string, now: number = Date.now()): number {
+  archiveStale(agentId: string, now?: number): number {
+    const effectiveNow = now ?? this.ctx.now()
     const minimumBaseAgeMs =
       FORGET_HALF_LIFE_MS * (Math.log(ARCHIVE_DECAY_THRESHOLD) / Math.log(0.5))
     const archivedIds = this.ports.repository.archiveEligibleBatch(agentId, {
-      now,
-      createdBefore: now - ARCHIVE_AGE_MS,
+      now: effectiveNow,
+      createdBefore: effectiveNow - ARCHIVE_AGE_MS,
       minimumBaseAgeMs,
       limit: 256
     })

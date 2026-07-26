@@ -163,7 +163,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
             expectedRevision: existing.decision_revision,
             content: blob,
             provenanceKey: workingKey,
-            at: Date.now()
+            at: this.ctx.now()
           })
         ) {
           this.ctx.markDomainMutationCommitted(agentId)
@@ -186,7 +186,7 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
         return
       }
     }
-    const now = Date.now()
+    const now = this.ctx.now()
     try {
       this.ports.repository.insert({
         id: `working-${nanoid(12)}`,

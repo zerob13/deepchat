@@ -265,6 +265,7 @@ export class WriteCoordinator {
   writeMemoriesSync(candidates: MemoryCandidate[], options: WriteMemoriesOptions): string[] {
     if (!candidates.length) return []
     const created: string[] = []
+    const now = this.ctx.now()
     for (const candidate of candidates) {
       const normalized = normalizeMemoryCandidate(candidate)
       if (!normalized) continue
@@ -285,7 +286,8 @@ export class WriteCoordinator {
         normalized,
         content,
         provenanceKey,
-        options
+        options,
+        now
       )
       if (id) created.push(id)
     }
@@ -353,7 +355,7 @@ export class WriteCoordinator {
         sourceSession: input.sourceSession ?? null,
         sourceEntryIds: input.sourceEntryIds ?? null
       }
-      const now = Date.now()
+      const now = this.ctx.now()
       const batch = await this.coordinateBatchWrites(
         input.agentId,
         candidateStats.candidates,
@@ -570,7 +572,8 @@ export class WriteCoordinator {
         candidate,
         candidate.content,
         provenanceKey,
-        options
+        options,
+        now
       )
       outcome = id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
     })
@@ -1115,7 +1118,14 @@ export class WriteCoordinator {
           let newId: string | null = null
           try {
             this.ports.repository.runInTransaction(() => {
-              newId = this.ports.rows.insertMemory(agentId, normalized, merged, mergedKey, options)
+              newId = this.ports.rows.insertMemory(
+                agentId,
+                normalized,
+                merged,
+                mergedKey,
+                options,
+                now
+              )
               if (!newId) throw new DecisionInsertCollisionError()
               if (
                 !this.ports.repository.markSupersededIfRevision(
@@ -1169,7 +1179,8 @@ export class WriteCoordinator {
                 content,
                 provenanceKey,
                 target.id,
-                options
+                options,
+                now
               )
               if (!challengerId) throw new DecisionInsertCollisionError()
               if (
@@ -1303,10 +1314,10 @@ export class WriteCoordinator {
           candidate,
           resolvedModel,
           options,
-          Date.now(),
+          this.ctx.now(),
           operationFence
         )
-      : this.directAddMemory(options.agentId, candidate, options)
+      : this.directAddMemory(options.agentId, candidate, options, this.ctx.now())
     if (!this.ctx.canContinueOperation(operationFence)) {
       return { action: 'noop', reason: 'disposed' }
     }
@@ -1327,7 +1338,8 @@ export class WriteCoordinator {
   private directAddMemory(
     agentId: string,
     candidate: MemoryCandidate,
-    options: WriteMemoriesOptions
+    options: WriteMemoriesOptions,
+    now: number
   ): MemoryWriteOutcome {
     const normalized = normalizeMemoryCandidate(candidate)
     if (!normalized) return { action: 'noop', reason: 'empty' }
@@ -1344,7 +1356,14 @@ export class WriteCoordinator {
       const reason = hit.action === 'noop' ? hit.reason : 'duplicate'
       return { action: 'noop', reason, id: duplicate.id }
     }
-    const id = this.ports.rows.insertMemory(agentId, normalized, content, provenanceKey, options)
+    const id = this.ports.rows.insertMemory(
+      agentId,
+      normalized,
+      content,
+      provenanceKey,
+      options,
+      now
+    )
     return id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
   }
 

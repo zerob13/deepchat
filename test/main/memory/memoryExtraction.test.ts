@@ -173,6 +173,10 @@ describe('MemoryService.extractAndStore', () => {
         id === 'on' ? { memoryEnabled: true } : { memoryEnabled: false },
       getEmbeddings: async () => [],
       generateText,
+      clock: {
+        now: () => 1_725_192_000_123,
+        timeZone: () => 'UTC'
+      },
       createVectorStore: async () => ({
         upsert: async () => {},
         query: async () => [],
@@ -215,6 +219,7 @@ describe('MemoryService.extractAndStore', () => {
     // listByAgent hides the internal working-memory cache row a mutation rebuilds, so this counts
     // only the extracted memory (countByAgent would also include that internal row).
     expect(repo.listByAgent('on').length).toBe(1)
+    expect(repo.listByAgent('on')[0].created_at).toBe(1_725_192_000_123)
 
     // second identical extraction succeeds but dedupes → no new ids
     const again = await presenter.extractAndStore({

@@ -365,7 +365,7 @@ export class ManagementService {
   } {
     const config = this.ports.policy.resolveAgentConfig(agentId)
     return {
-      now: Date.now(),
+      now: this.ctx.now(),
       options: {
         weights: resolveRetrieval(config?.memoryRetrieval).weights,
         archiveAgeMs: ARCHIVE_AGE_MS,
@@ -403,7 +403,7 @@ export class ManagementService {
       .map(toHealthTopAccessedItem)
       .filter((item): item is MemoryHealthDto['access']['topAccessed'][number] => item !== null)
 
-    const now = Date.now()
+    const now = this.ctx.now()
     const minimumBaseAgeMs =
       FORGET_HALF_LIFE_MS * (Math.log(ARCHIVE_DECAY_THRESHOLD) / Math.log(0.5))
     return {
@@ -572,7 +572,7 @@ export class ManagementService {
         row,
         candidate,
         content,
-        Date.now(),
+        this.ctx.now(),
         {
           agentId,
           sourceSession: row.source_session,

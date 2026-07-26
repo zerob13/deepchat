@@ -73,7 +73,8 @@ export class PersonaService {
       lifecycleState: 'active',
       embeddingState: 'not_applicable',
       sourceSession: sourceSession ?? null,
-      personaState: 'draft'
+      personaState: 'draft',
+      createdAt: this.ctx.now()
     })
     this.ctx.markDomainMutationCommitted(agentId)
     this.ctx.emitChanged(agentId, 'persona-draft')

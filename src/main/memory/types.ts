@@ -3,6 +3,7 @@ import type { LLM_EMBEDDING_ATTRS } from '@shared/types/provider'
 import type { MemoryUpdateReason } from '@shared/contracts/events/memory.events'
 
 import type { MemoryUpdateContext } from './domain/types'
+import type { MemoryDomainClock } from './domain/clock'
 import type {
   IMemoryVectorStore,
   MemoryAgentPolicyPort,
@@ -79,6 +80,7 @@ export type {
   MemoryRetrievalPort
 } from './ports'
 export type { MemoryUpdateReason } from '@shared/contracts/events/memory.events'
+export type { MemoryDomainClock } from './domain/clock'
 
 export type {
   MemoryInjectionPayload,
@@ -129,6 +131,7 @@ export interface MemoryServiceDeps {
     reason: MemoryUpdateReason,
     context?: MemoryUpdateContext
   ) => void
+  clock?: MemoryDomainClock
 }
 
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.2

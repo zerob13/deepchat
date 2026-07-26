@@ -166,7 +166,8 @@ export class MemoryService implements MemoryRuntimePort {
       policy,
       auditWriter: deps.auditRepository,
       changeSink: { onMemoryChanged: deps.onMemoryChanged },
-      providerControl: providerGateway
+      providerControl: providerGateway,
+      clock: deps.clock
     })
     this.rows = new MemoryRowMutations({
       repository,
@@ -418,11 +419,11 @@ export class MemoryService implements MemoryRuntimePort {
     return { observation, embeddingIdentityChanged }
   }
 
-  async runConsolidationPass(agentId: string, now: number = Date.now()): Promise<void> {
+  async runConsolidationPass(agentId: string, now?: number): Promise<void> {
     return this.maintenance.runConsolidationPass(agentId, now)
   }
 
-  archiveStale(agentId: string, now: number = Date.now()): number {
+  archiveStale(agentId: string, now?: number): number {
     return this.maintenance.archiveStale(agentId, now)
   }
 
@@ -466,7 +467,7 @@ export class MemoryService implements MemoryRuntimePort {
     return this.writeCoordinator.rememberMemory(candidate, options, model)
   }
 
-  async recall(agentId: string, query: string, now = Date.now()): Promise<MemoryRecallItem[]> {
+  async recall(agentId: string, query: string, now?: number): Promise<MemoryRecallItem[]> {
     if (isSafeAgentId(agentId) && this.runtime.isManagedAgent(agentId)) {
       this.syncAgentExecutionConfig(agentId)
     }
@@ -522,17 +523,13 @@ export class MemoryService implements MemoryRuntimePort {
     return this.retrieval.buildInjection(agentId, query, options)
   }
 
-  recordInjectionAccess(
-    agentId: string,
-    memoryIds: string[],
-    accessedAt: number = Date.now()
-  ): void {
+  recordInjectionAccess(agentId: string, memoryIds: string[], accessedAt?: number): void {
     if (!this.runtime.canReadAgentMemory(agentId)) return
     const uniqueIds = [...new Set(memoryIds.map((id) => id.trim()).filter(Boolean))]
     if (!uniqueIds.length) return
     const ownedIds = this.repository.listByIds(agentId, uniqueIds).map((row) => row.id)
     if (!ownedIds.length) return
-    this.repository.recordAccessBatch(ownedIds, accessedAt)
+    this.repository.recordAccessBatch(ownedIds, accessedAt ?? this.runtime.now())
   }
 
   refreshWorkingMemory(agentId: string): void {

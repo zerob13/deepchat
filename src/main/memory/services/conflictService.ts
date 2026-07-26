@@ -173,7 +173,7 @@ export class ConflictService {
     outcome: MemoryConflictResolution,
     options: ConflictResolutionOptions = {}
   ): void {
-    const now = Date.now()
+    const now = this.ctx.now()
     switch (outcome) {
       case 'keep_challenger': {
         const content = options.mergedContent?.trim()

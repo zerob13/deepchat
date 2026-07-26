@@ -174,8 +174,8 @@ export class RetrievalService {
     this.ctx = ports.ctx
   }
 
-  async recall(agentId: string, query: string, now = Date.now()): Promise<MemoryRecallItem[]> {
-    return this.retrieve(agentId, query, now, true, {
+  async recall(agentId: string, query: string, now?: number): Promise<MemoryRecallItem[]> {
+    return this.retrieve(agentId, query, now ?? this.ctx.now(), true, {
       purpose: 'recall',
       keywordQuery: this.buildAgentFacingRecallKeywordQuery(query),
       keywordMatchMode: 'any'
@@ -536,7 +536,7 @@ export class RetrievalService {
     if (limit === 0) return []
     if (!this.ctx.canReadAgentMemory(agentId)) return []
     const operationFence = this.ctx.captureOperationFence(agentId)
-    const hits = await this.retrieve(agentId, query, Date.now(), false, {
+    const hits = await this.retrieve(agentId, query, this.ctx.now(), false, {
       purpose: 'search',
       topKOverride: limit,
       enableInlinePrune: false
@@ -876,7 +876,7 @@ export class RetrievalService {
     const readEpoch = this.ctx.captureReadEpoch(agentId)
     const config = this.ports.policy.resolveAgentConfig(agentId)
     const degradations = new Set<MemoryRetrievalDegradationCause>()
-    const recalled = await this.retrieve(agentId, query, Date.now(), false, {
+    const recalled = await this.retrieve(agentId, query, this.ctx.now(), false, {
       purpose: 'injection',
       keywordQuery: this.buildAgentFacingRecallKeywordQuery(query),
       keywordMatchMode: 'any',

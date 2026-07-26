@@ -405,7 +405,8 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     candidate: NormalizedMemoryCandidate,
     content: string,
     provenanceKey: string,
-    options: WriteMemoriesOptions
+    options: WriteMemoriesOptions,
+    createdAt: number
   ): string | null
   insertConflictedMemory(
     agentId: string,
@@ -413,7 +414,8 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     content: string,
     provenanceKey: string,
     targetId: string,
-    options: WriteMemoriesOptions
+    options: WriteMemoriesOptions,
+    createdAt: number
   ): string | null
   bumpConfidence(id: string): void
   supersedeHead(agentId: string, row: AgentMemoryRow): AgentMemoryRow
