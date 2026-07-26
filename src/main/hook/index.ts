@@ -500,6 +500,13 @@ export class HookService implements HookObserver {
         resolve(result)
       }
 
+      // Every settlement path reports diagnostics through here, so redaction cannot be forgotten
+      // on one of them.
+      const diagnostics = () => ({
+        stdout: redactSensitiveText(truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT), secrets),
+        stderr: redactSensitiveText(truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT), secrets)
+      })
+
       const timeout = setTimeout(() => {
         timedOut = true
         try {
@@ -513,8 +520,7 @@ export class HookService implements HookObserver {
           success: false,
           durationMs: Date.now() - start,
           exitCode: null,
-          stdout: redactSensitiveText(truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT), secrets),
-          stderr: redactSensitiveText(truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT), secrets),
+          ...diagnostics(),
           error: 'Command timed out'
         })
       }, COMMAND_TIMEOUT_MS)
@@ -526,8 +532,7 @@ export class HookService implements HookObserver {
           success: false,
           durationMs: Date.now() - start,
           exitCode: null,
-          stdout: truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT),
-          stderr: truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT),
+          ...diagnostics(),
           error: error instanceof Error ? error.message : String(error)
         })
       })
@@ -546,8 +551,7 @@ export class HookService implements HookObserver {
           success: !timedOut && code === 0,
           durationMs: Date.now() - start,
           exitCode: code ?? null,
-          stdout: redactSensitiveText(truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT), secrets),
-          stderr: redactSensitiveText(truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT), secrets),
+          ...diagnostics(),
           error: timedOut ? 'Command timed out' : code === 0 ? undefined : 'Command failed'
         })
       })
@@ -571,8 +575,7 @@ export class HookService implements HookObserver {
           success: false,
           durationMs: Date.now() - start,
           exitCode: null,
-          stdout: truncateText(stdout, DIAGNOSTIC_TEXT_LIMIT),
-          stderr: truncateText(stderr, DIAGNOSTIC_TEXT_LIMIT),
+          ...diagnostics(),
           error: error instanceof Error ? error.message : String(error)
         })
       }

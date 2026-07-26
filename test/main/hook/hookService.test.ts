@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   HookCommandItem,
   HookEventName,
@@ -234,16 +234,20 @@ const toolEvent = (sessionId: string, callId: string): HookEvent => ({
   tool: { callId, name: 'read_file', params: '{"path":"a.txt"}', response: 'ok' }
 })
 
-describe('HookService subscription index', () => {
-  beforeEach(() => {
-    spawnMock.mockReset()
-    spawnMock.mockImplementation(() => {
-      const child = new FakeChild()
-      queueMicrotask(() => child.emit('close', 0))
-      return child
-    })
+beforeEach(() => {
+  spawnMock.mockReset()
+  spawnMock.mockImplementation(() => {
+    const child = new FakeChild()
+    queueMicrotask(() => child.emit('close', 0))
+    return child
   })
+})
 
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('HookService subscription index', () => {
   it('does nothing but one index lookup when no hook subscribes', async () => {
     const { service, getSession, getHooksNotificationsConfig } = createHarness()
 
@@ -399,15 +403,6 @@ describe('HookService subscription index', () => {
 })
 
 describe('HookService delivery ordering', () => {
-  beforeEach(() => {
-    spawnMock.mockReset()
-    spawnMock.mockImplementation(() => {
-      const child = new FakeChild()
-      queueMicrotask(() => child.emit('close', 0))
-      return child
-    })
-  })
-
   it('keeps one session in emission order even when enrichment is slow', async () => {
     const { service, getSession } = createHarness([enabledHook('a', ['PostToolUse'])])
     let releaseSession: (value: null) => void = () => undefined
@@ -526,6 +521,21 @@ describe('HookService delivery ordering', () => {
     expect(result.stdout?.endsWith(' ...(truncated)')).toBe(true)
   })
 
+  it('redacts diagnostics on every settlement path', async () => {
+    const { service } = createHarness([enabledHook('a', ['SessionStart'])])
+    const child = new FakeChild()
+    spawnMock.mockImplementationOnce(() => child)
+
+    const pending = service.testHookCommand('a')
+    await flush()
+    child.stderr.emit('data', 'Authorization: Bearer sk-secret-token\n')
+    child.emit('error', new Error('spawn ENOENT'))
+
+    const result = await pending
+    expect(result.error).toBe('spawn ENOENT')
+    expect(result.stderr).toBe('Authorization: ***REDACTED***\n')
+  })
+
   it('kills running hook commands on stop', async () => {
     const { service } = createHarness([enabledHook('a', ['PostToolUse'])])
     const child = new FakeChild()
@@ -540,15 +550,6 @@ describe('HookService delivery ordering', () => {
 })
 
 describe('HookService payload projection', () => {
-  beforeEach(() => {
-    spawnMock.mockReset()
-    spawnMock.mockImplementation(() => {
-      const child = new FakeChild()
-      queueMicrotask(() => child.emit('close', 0))
-      return child
-    })
-  })
-
   it('truncates tool previews before any clone runs', async () => {
     const { service } = createHarness([enabledHook('a', ['PostToolUse'])])
     const clone = vi.spyOn(globalThis, 'structuredClone')
@@ -565,7 +566,6 @@ describe('HookService payload projection', () => {
     expect(payload.tool?.paramsPreview).toHaveLength(1200)
     expect(payload.tool?.responsePreview).toHaveLength(1200)
     expect(clone).not.toHaveBeenCalled()
-    clone.mockRestore()
   })
 
   it('clones only the permission record and detaches it from later mutation', async () => {
@@ -587,7 +587,6 @@ describe('HookService payload projection', () => {
       permissionType: 'write',
       metadata: { path: 'before.txt' }
     })
-    clone.mockRestore()
   })
 
   it('emits the version 1 payload shape', async () => {
@@ -728,15 +727,6 @@ describe('HookService payload projection', () => {
 })
 
 describe('HookService detachment', () => {
-  beforeEach(() => {
-    spawnMock.mockReset()
-    spawnMock.mockImplementation(() => {
-      const child = new FakeChild()
-      queueMicrotask(() => child.emit('close', 0))
-      return child
-    })
-  })
-
   it('detaches session facts mutated after the event was accepted', async () => {
     const { service, getSession } = createHarness([enabledHook('a', ['Stop'])])
     let releaseSession: (value: null) => void = () => undefined
