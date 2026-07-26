@@ -1,10 +1,13 @@
 import type { DeepchatBridge } from '@shared/contracts/bridge'
 import {
   memoryAddRoute,
+  memoryApproveDirectiveRoute,
   memoryArchiveRoute,
   memoryApprovePersonaDraftRoute,
   memoryClearRoute,
+  memoryCreateDirectiveRoute,
   memoryDeleteRoute,
+  memoryDeleteDirectiveRoute,
   memoryGetArchiveCandidateLifecyclePreviewRoute,
   memoryGetByIdsRoute,
   memoryGetSourceSpanRoute,
@@ -13,11 +16,13 @@ import {
   memoryGetStatusRoute,
   memoryListAuditEventsRoute,
   memoryListConflictsRoute,
+  memoryListDirectivesRoute,
   memoryListPersonaDraftsRoute,
   memoryListPersonaVersionsRoute,
   memoryPageRoute,
   memoryListRoute,
   memoryListViewManifestsRoute,
+  memoryRejectDirectiveRoute,
   memoryRejectPersonaDraftRoute,
   memoryReindexRoute,
   memoryResolveConflictRoute,
@@ -30,6 +35,8 @@ import {
   type MemoryArchiveCandidateLifecyclePreview,
   type MemoryConflictItem,
   type MemoryAuditEvent,
+  type MemoryDirectiveCreateInput,
+  type MemoryDirectiveItem,
   type MemoryHealthDto,
   type MemoryItem,
   type MemoryPage,
@@ -276,6 +283,50 @@ export function createMemoryClient(bridge: DeepchatBridge = getDeepchatBridge())
     return result.ok
   }
 
+  async function listDirectives(
+    agentId: string,
+    options: {
+      statuses?: MemoryDirectiveItem['status'][]
+      limit?: number
+    } = {}
+  ): Promise<MemoryDirectiveItem[]> {
+    const result = await bridge.invoke(memoryListDirectivesRoute.name, {
+      agentId,
+      statuses: options.statuses,
+      limit: options.limit
+    })
+    return result.directives
+  }
+
+  async function createDirective(
+    agentId: string,
+    directive: MemoryDirectiveCreateInput
+  ): Promise<MemoryDirectiveItem | null> {
+    const result = await bridge.invoke(memoryCreateDirectiveRoute.name, { agentId, directive })
+    return result.directive
+  }
+
+  async function approveDirective(
+    agentId: string,
+    directiveId: string
+  ): Promise<MemoryDirectiveItem | null> {
+    const result = await bridge.invoke(memoryApproveDirectiveRoute.name, { agentId, directiveId })
+    return result.directive
+  }
+
+  async function rejectDirective(
+    agentId: string,
+    directiveId: string
+  ): Promise<MemoryDirectiveItem | null> {
+    const result = await bridge.invoke(memoryRejectDirectiveRoute.name, { agentId, directiveId })
+    return result.directive
+  }
+
+  async function deleteDirective(agentId: string, directiveId: string): Promise<boolean> {
+    const result = await bridge.invoke(memoryDeleteDirectiveRoute.name, { agentId, directiveId })
+    return result.ok
+  }
+
   function onUpdated(listener: (payload: MemoryUpdatedPayload) => void): () => void {
     return bridge.on(memoryUpdatedEvent.name, listener)
   }
@@ -307,6 +358,11 @@ export function createMemoryClient(bridge: DeepchatBridge = getDeepchatBridge())
     approvePersonaDraft,
     rejectPersonaDraft,
     setPersonaAnchor,
+    listDirectives,
+    createDirective,
+    approveDirective,
+    rejectDirective,
+    deleteDirective,
     onUpdated
   }
 }

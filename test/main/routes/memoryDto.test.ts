@@ -1,26 +1,36 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatMemorySourceRecordContent, toMemoryItemDto } from '@/memory/routes'
+import {
+  formatMemorySourceRecordContent,
+  toMemoryDirectiveDto,
+  toMemoryItemDto
+} from '@/memory/routes'
 import {
   createEmptyMemoryHealth,
   createEmptyMemoryRuntimeDiagnostics,
   decodeMemoryPageCursor,
   encodeMemoryPageCursor,
   memoryAddRoute,
+  memoryApproveDirectiveRoute,
   memoryArchiveRoute,
+  memoryCreateDirectiveRoute,
+  memoryDeleteDirectiveRoute,
   memoryGetArchiveCandidateLifecyclePreviewRoute,
   memoryGetByIdsRoute,
   memoryGetHealthRoute,
   memoryGetLifecycleRoute,
   memoryGetStatusRoute,
   memoryListRoute,
+  memoryListDirectivesRoute,
   memoryPageRoute,
+  memoryRejectDirectiveRoute,
   memoryReindexRoute,
   memoryRestoreRoute,
   memorySearchRoute,
   memoryUpdateRoute
 } from '@shared/contracts/routes'
 import {
+  AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
   AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
   MEMORY_MAINTENANCE_BUDGET_STEPS,
   MEMORY_RECALL_LATENCY_STAGES,
@@ -809,6 +819,96 @@ describe('memory.archive route contract', () => {
     expect(memoryArchiveRoute.input.safeParse({ agentId: 'bad/id', memoryId: 'm1' }).success).toBe(
       false
     )
+  })
+})
+
+describe('memory directive route contracts', () => {
+  it('maps persistence rows without exposing stable identity hashes', () => {
+    const directive = toMemoryDirectiveDto({
+      agent_id: 'deepchat',
+      id: 'directive-1',
+      kind: 'suppress_topic',
+      status: 'draft',
+      source: 'derived_suggestion',
+      content: 'Do not mention Project Saffron.',
+      normalized_topic: 'project saffron',
+      identity_hash: 'a'.repeat(64),
+      created_at: 1_000,
+      updated_at: 2_000
+    })
+
+    expect(memoryListDirectivesRoute.output.parse({ directives: [directive] })).toEqual({
+      directives: [
+        {
+          id: 'directive-1',
+          agentId: 'deepchat',
+          kind: 'suppress_topic',
+          status: 'draft',
+          source: 'derived_suggestion',
+          content: 'Do not mention Project Saffron.',
+          topic: 'project saffron',
+          createdAt: 1_000,
+          updatedAt: 2_000
+        }
+      ]
+    })
+    expect(directive).not.toHaveProperty('identityHash')
+  })
+
+  it('enforces closed directive inputs and bounded identifiers', () => {
+    expect(
+      memoryCreateDirectiveRoute.input.parse({
+        agentId: 'deepchat',
+        directive: {
+          kind: 'suppress_topic',
+          content: 'Do not mention Project Saffron.',
+          topic: 'Project Saffron'
+        }
+      })
+    ).toEqual({
+      agentId: 'deepchat',
+      directive: {
+        kind: 'suppress_topic',
+        content: 'Do not mention Project Saffron.',
+        topic: 'Project Saffron'
+      }
+    })
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: { kind: 'instruction', content: 'Be concise.', topic: 'unexpected' }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: { kind: 'suppress_topic', content: 'Hide it.' }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: {
+          kind: 'instruction',
+          content: '😀'.repeat(AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS + 1)
+        }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryListDirectivesRoute.input.parse({
+        agentId: 'deepchat',
+        statuses: ['draft', 'active']
+      })
+    ).toEqual({ agentId: 'deepchat', statuses: ['draft', 'active'], limit: 200 })
+    for (const route of [
+      memoryApproveDirectiveRoute,
+      memoryRejectDirectiveRoute,
+      memoryDeleteDirectiveRoute
+    ]) {
+      expect(
+        route.input.safeParse({ agentId: 'deepchat', directiveId: 'x'.repeat(129) }).success
+      ).toBe(false)
+    }
   })
 })
 

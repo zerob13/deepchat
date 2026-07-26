@@ -966,6 +966,43 @@ describe('renderer api clients', () => {
               return { ok: true }
             case 'memory.reindex':
               return { started: true }
+            case 'memory.listDirectives':
+              return {
+                directives: [
+                  {
+                    id: 'directive-1',
+                    agentId: payload?.agentId ?? 'agent-1',
+                    kind: 'instruction',
+                    status: 'active',
+                    source: 'manual',
+                    content: 'Be concise.',
+                    topic: null,
+                    createdAt: 1_000,
+                    updatedAt: 1_000
+                  }
+                ]
+              }
+            case 'memory.createDirective':
+            case 'memory.approveDirective':
+            case 'memory.rejectDirective':
+              return {
+                directive: {
+                  id:
+                    typeof payload?.directiveId === 'string'
+                      ? payload.directiveId
+                      : 'directive-created',
+                  agentId: payload?.agentId ?? 'agent-1',
+                  kind: 'instruction',
+                  status: routeName === 'memory.rejectDirective' ? 'rejected' : 'active',
+                  source: 'manual',
+                  content: 'Be concise.',
+                  topic: null,
+                  createdAt: 1_000,
+                  updatedAt: 2_000
+                }
+              }
+            case 'memory.deleteDirective':
+              return { ok: true }
             case 'memory.getHealth':
               return {
                 health: {
@@ -1561,6 +1598,50 @@ describe('renderer api clients', () => {
     expect(page.items[0].id).toBe('mem-page')
     expect(bridge.on).toHaveBeenCalledWith('memory.updated', expect.any(Function))
     expect(typeof off).toBe('function')
+  })
+
+  it('routes directive management through typed memory endpoints', async () => {
+    const bridge = createBridge()
+    const memoryClient = createMemoryClient(bridge)
+
+    const listed = await memoryClient.listDirectives('agent-1', {
+      statuses: ['draft', 'active'],
+      limit: 25
+    })
+    const created = await memoryClient.createDirective('agent-1', {
+      kind: 'instruction',
+      content: 'Be concise.'
+    })
+    const approved = await memoryClient.approveDirective('agent-1', 'directive-1')
+    const rejected = await memoryClient.rejectDirective('agent-1', 'directive-2')
+    const deleted = await memoryClient.deleteDirective('agent-1', 'directive-3')
+
+    expect(bridge.invoke).toHaveBeenNthCalledWith(1, 'memory.listDirectives', {
+      agentId: 'agent-1',
+      statuses: ['draft', 'active'],
+      limit: 25
+    })
+    expect(bridge.invoke).toHaveBeenNthCalledWith(2, 'memory.createDirective', {
+      agentId: 'agent-1',
+      directive: { kind: 'instruction', content: 'Be concise.' }
+    })
+    expect(bridge.invoke).toHaveBeenNthCalledWith(3, 'memory.approveDirective', {
+      agentId: 'agent-1',
+      directiveId: 'directive-1'
+    })
+    expect(bridge.invoke).toHaveBeenNthCalledWith(4, 'memory.rejectDirective', {
+      agentId: 'agent-1',
+      directiveId: 'directive-2'
+    })
+    expect(bridge.invoke).toHaveBeenNthCalledWith(5, 'memory.deleteDirective', {
+      agentId: 'agent-1',
+      directiveId: 'directive-3'
+    })
+    expect(listed[0]).toMatchObject({ id: 'directive-1', status: 'active' })
+    expect(created?.id).toBe('directive-created')
+    expect(approved?.status).toBe('active')
+    expect(rejected?.status).toBe('rejected')
+    expect(deleted).toBe(true)
   })
 
   it('routes agent dashboard calls through the shared registry names', async () => {

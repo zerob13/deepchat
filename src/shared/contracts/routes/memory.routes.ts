@@ -6,6 +6,11 @@ import {
   AGENT_MEMORY_AUDIT_STATUSES,
   AGENT_MEMORY_CATEGORIES,
   AGENT_MEMORY_AGENT_ID_PATTERN,
+  AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
+  AGENT_MEMORY_DIRECTIVE_KINDS,
+  AGENT_MEMORY_DIRECTIVE_SOURCES,
+  AGENT_MEMORY_DIRECTIVE_STATUSES,
+  AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
   AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
   AGENT_MEMORY_HEALTH_CATEGORY_KEYS,
   AGENT_MEMORY_HEALTH_KIND_KEYS,
@@ -25,6 +30,25 @@ const ManualMemoryContentSchema = z
   .string()
   .refine((content) => unicodeCodePointLength(content) <= AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS, {
     message: `content must be at most ${AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS} Unicode code points`
+  })
+
+const DirectiveContentSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (content) => unicodeCodePointLength(content) <= AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
+    {
+      message: `content must be at most ${AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS} Unicode code points`
+    }
+  )
+
+const DirectiveTopicSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((topic) => unicodeCodePointLength(topic) <= AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS, {
+    message: `topic must be at most ${AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS} Unicode code points`
   })
 
 /** URL-safe agent ids, matching the main-process memory storage guard. */
@@ -131,6 +155,34 @@ export const MemoryStatusSchema = z.object({
     })
     .optional()
 })
+
+export const MemoryDirectiveItemSchema = z.object({
+  id: z.string().min(1).max(128),
+  agentId: AgentIdSchema,
+  kind: z.enum(AGENT_MEMORY_DIRECTIVE_KINDS),
+  status: z.enum(AGENT_MEMORY_DIRECTIVE_STATUSES),
+  source: z.enum(AGENT_MEMORY_DIRECTIVE_SOURCES),
+  content: DirectiveContentSchema,
+  topic: DirectiveTopicSchema.nullable(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative()
+})
+
+export const MemoryDirectiveInputSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('instruction'),
+      content: DirectiveContentSchema
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('suppress_topic'),
+      content: DirectiveContentSchema,
+      topic: DirectiveTopicSchema
+    })
+    .strict()
+])
 
 export const MEMORY_HEALTH_DEFAULT_AUDIT_SCAN_LIMIT = 200
 export const MEMORY_ARCHIVE_CANDIDATE_LIFECYCLE_PREVIEW_LIMIT = 25
@@ -849,6 +901,43 @@ export const memorySetPersonaAnchorRoute = defineRouteContract({
   output: z.object({ ok: z.boolean() })
 })
 
+export const memoryListDirectivesRoute = defineRouteContract({
+  name: 'memory.listDirectives',
+  input: z.object({
+    agentId: AgentIdSchema,
+    statuses: z.array(z.enum(AGENT_MEMORY_DIRECTIVE_STATUSES)).max(3).optional(),
+    limit: z.number().int().positive().max(200).optional().default(200)
+  }),
+  output: z.object({ directives: z.array(MemoryDirectiveItemSchema).max(200) })
+})
+
+export const memoryCreateDirectiveRoute = defineRouteContract({
+  name: 'memory.createDirective',
+  input: z.object({
+    agentId: AgentIdSchema,
+    directive: MemoryDirectiveInputSchema
+  }),
+  output: z.object({ directive: MemoryDirectiveItemSchema.nullable() })
+})
+
+export const memoryApproveDirectiveRoute = defineRouteContract({
+  name: 'memory.approveDirective',
+  input: z.object({ agentId: AgentIdSchema, directiveId: z.string().trim().min(1).max(128) }),
+  output: z.object({ directive: MemoryDirectiveItemSchema.nullable() })
+})
+
+export const memoryRejectDirectiveRoute = defineRouteContract({
+  name: 'memory.rejectDirective',
+  input: z.object({ agentId: AgentIdSchema, directiveId: z.string().trim().min(1).max(128) }),
+  output: z.object({ directive: MemoryDirectiveItemSchema.nullable() })
+})
+
+export const memoryDeleteDirectiveRoute = defineRouteContract({
+  name: 'memory.deleteDirective',
+  input: z.object({ agentId: AgentIdSchema, directiveId: z.string().trim().min(1).max(128) }),
+  output: z.object({ ok: z.boolean() })
+})
+
 export type MemoryItem = z.infer<typeof MemoryItemSchema>
 export type MemoryPage = z.infer<typeof memoryPageRoute.output>
 export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>
@@ -858,6 +947,8 @@ export type MemoryStatusDto = z.infer<typeof MemoryStatusSchema>
 export type MemoryAuditEvent = z.infer<typeof MemoryAuditEventSchema>
 export type MemoryViewManifest = z.infer<typeof MemoryViewManifestSchema>
 export type MemorySourceSpan = z.infer<typeof memoryGetSourceSpanRoute.output>['span']
+export type MemoryDirectiveItem = z.infer<typeof MemoryDirectiveItemSchema>
+export type MemoryDirectiveCreateInput = z.infer<typeof MemoryDirectiveInputSchema>
 export type MemoryConflictItem = z.infer<
   typeof memoryListConflictsRoute.output
 >['conflicts'][number]

@@ -5,10 +5,13 @@ import {
   decodeMemoryPageCursor,
   encodeMemoryPageCursor,
   memoryAddRoute,
+  memoryApproveDirectiveRoute,
   memoryApprovePersonaDraftRoute,
   memoryArchiveRoute,
   memoryClearRoute,
+  memoryCreateDirectiveRoute,
   memoryDeleteRoute,
+  memoryDeleteDirectiveRoute,
   memoryGetArchiveCandidateLifecyclePreviewRoute,
   memoryGetByIdsRoute,
   memoryGetHealthRoute,
@@ -17,11 +20,13 @@ import {
   memoryGetStatusRoute,
   memoryListAuditEventsRoute,
   memoryListConflictsRoute,
+  memoryListDirectivesRoute,
   memoryListPersonaDraftsRoute,
   memoryListPersonaVersionsRoute,
   memoryListRoute,
   memoryListViewManifestsRoute,
   memoryPageRoute,
+  memoryRejectDirectiveRoute,
   memoryRejectPersonaDraftRoute,
   memoryReindexRoute,
   memoryResolveConflictRoute,
@@ -49,6 +54,7 @@ import type {
   MemoryStatus,
   MemoryWriteOutcome
 } from './types'
+import type { AgentMemoryDirectiveRow, MemoryDirectiveInput } from './domain/directives'
 import type { CanonicalAgentMemoryRow as AgentMemoryRow, MemoryClearResult } from './domain/types'
 import { projectLegacyStatus } from './domain/stateModel'
 import type { AgentMemoryAuditRow, MemoryAuditListOptions } from './domain/audit'
@@ -110,6 +116,20 @@ export function toMemoryItemDto(row: AgentMemoryRow) {
     conflictWith: row.conflict_with,
     personaState: normalizeMemoryPersonaState(row.persona_state),
     isAnchor: row.is_anchor === 1
+  }
+}
+
+export function toMemoryDirectiveDto(row: AgentMemoryDirectiveRow) {
+  return {
+    id: row.id,
+    agentId: row.agent_id,
+    kind: row.kind,
+    status: row.status,
+    source: row.source,
+    content: row.content,
+    topic: row.normalized_topic,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 
@@ -246,6 +266,21 @@ interface MemoryRouteService {
   approvePersonaDraft(agentId: string, draftId: string): Promise<boolean>
   rejectPersonaDraft(agentId: string, draftId: string): Promise<boolean>
   setPersonaAnchor(agentId: string, versionId: string, anchored: boolean): Promise<boolean>
+  listDirectives(
+    agentId: string,
+    options?: {
+      statuses?: readonly AgentMemoryDirectiveRow['status'][]
+      limit?: number
+    }
+  ): AgentMemoryDirectiveRow[]
+  createDirective(
+    agentId: string,
+    input: MemoryDirectiveInput,
+    source?: 'explicit_user' | 'manual'
+  ): AgentMemoryDirectiveRow | null
+  approveDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
+  rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
+  deleteDirective(agentId: string, directiveId: string): boolean
 }
 
 export function createMemoryRoutes(deps: {
@@ -591,6 +626,73 @@ export function createMemoryRoutes(deps: {
         const input = memorySetPersonaAnchorRoute.input.parse(rawInput)
         return memorySetPersonaAnchorRoute.output.parse({
           ok: await memoryService.setPersonaAnchor(input.agentId, input.versionId, input.anchored)
+        })
+      }
+    ],
+    [
+      memoryListDirectivesRoute.name,
+      async (rawInput) => {
+        const input = memoryListDirectivesRoute.input.parse(rawInput)
+        if ((await deps.getAgentType(input.agentId)) !== 'deepchat') {
+          return memoryListDirectivesRoute.output.parse({ directives: [] })
+        }
+        return memoryListDirectivesRoute.output.parse({
+          directives: memoryService
+            .listDirectives(input.agentId, {
+              statuses: input.statuses,
+              limit: input.limit
+            })
+            .map(toMemoryDirectiveDto)
+        })
+      }
+    ],
+    [
+      memoryCreateDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryCreateDirectiveRoute.input.parse(rawInput)
+        const directive =
+          (await deps.getAgentType(input.agentId)) === 'deepchat'
+            ? memoryService.createDirective(input.agentId, input.directive, 'manual')
+            : null
+        return memoryCreateDirectiveRoute.output.parse({
+          directive: directive ? toMemoryDirectiveDto(directive) : null
+        })
+      }
+    ],
+    [
+      memoryApproveDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryApproveDirectiveRoute.input.parse(rawInput)
+        const directive =
+          (await deps.getAgentType(input.agentId)) === 'deepchat'
+            ? memoryService.approveDirective(input.agentId, input.directiveId)
+            : null
+        return memoryApproveDirectiveRoute.output.parse({
+          directive: directive ? toMemoryDirectiveDto(directive) : null
+        })
+      }
+    ],
+    [
+      memoryRejectDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryRejectDirectiveRoute.input.parse(rawInput)
+        const directive =
+          (await deps.getAgentType(input.agentId)) === 'deepchat'
+            ? memoryService.rejectDirective(input.agentId, input.directiveId)
+            : null
+        return memoryRejectDirectiveRoute.output.parse({
+          directive: directive ? toMemoryDirectiveDto(directive) : null
+        })
+      }
+    ],
+    [
+      memoryDeleteDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryDeleteDirectiveRoute.input.parse(rawInput)
+        return memoryDeleteDirectiveRoute.output.parse({
+          ok:
+            (await deps.getAgentType(input.agentId)) === 'deepchat' &&
+            memoryService.deleteDirective(input.agentId, input.directiveId)
         })
       }
     ]
