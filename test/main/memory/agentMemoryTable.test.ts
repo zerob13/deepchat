@@ -1864,6 +1864,265 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('atomically tombstones an exact claim without retaining its plaintext', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten',
+        agentId: 'a',
+        kind: 'semantic',
+        content: '  Secret   launch plan  ',
+        provenanceKey: 'session:secret-span'
+      })
+
+      db.exec(`
+        CREATE TRIGGER fail_forgotten_delete
+        BEFORE DELETE ON agent_memory
+        WHEN OLD.id = 'forgotten'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced delete failure');
+        END;
+      `)
+      expect(() =>
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toThrow(/forced delete failure/)
+      expect(table.getById(original.id)).toBeDefined()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+      db.exec('DROP TRIGGER fail_forgotten_delete')
+
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: original.id })
+      expect(table.getById(original.id)).toBeUndefined()
+
+      const tombstones = db
+        .prepare(
+          `SELECT agent_id, identity_kind, identity_hash, created_at, reason
+           FROM agent_memory_tombstone
+           ORDER BY identity_kind`
+        )
+        .all() as Array<{
+        agent_id: string
+        identity_kind: string
+        identity_hash: string
+        created_at: number
+        reason: string
+      }>
+      expect(tombstones).toHaveLength(2)
+      expect(tombstones.map((row) => row.identity_kind)).toEqual(['content', 'provenance'])
+      expect(tombstones.every((row) => /^[0-9a-f]{64}$/u.test(row.identity_hash))).toBe(true)
+      expect(tombstones.every((row) => row.created_at === 1_000)).toBe(true)
+      expect(tombstones.every((row) => row.reason === 'selective_delete')).toBe(true)
+      expect(JSON.stringify(tombstones)).not.toContain('Secret')
+      expect(JSON.stringify(tombstones)).not.toContain('session:secret-span')
+
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'same-content',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Secret launch plan',
+          provenanceKey: 'different-source'
+        })
+      ).toBeNull()
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'same-source',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Different content',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toBeNull()
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'similar-content',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Secret launch plan.',
+          provenanceKey: 'independent-source'
+        })
+      ).toMatchObject({ id: 'similar-content' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'other-agent',
+          agentId: 'b',
+          kind: 'semantic',
+          content: 'Secret launch plan',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toMatchObject({ id: 'other-agent' })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects stale or conflicted tombstone deletes without side effects', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const target = table.insert({
+        id: 'target',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'target fact',
+        provenanceKey: 'target-source'
+      })
+
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: target.id,
+          expectedRevision: target.decision_revision + 1,
+          createdAt: 1_000
+        })
+      ).toBeNull()
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'b',
+          id: target.id,
+          expectedRevision: target.decision_revision,
+          createdAt: 1_000
+        })
+      ).toBeNull()
+
+      table.insert({
+        id: 'challenger',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'challenger fact',
+        status: 'conflicted',
+        conflictWith: target.id
+      })
+      seedTestConflictState(db, target.id, 'challenged')
+      const challenged = table.getById(target.id)!
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: challenged.id,
+          expectedRevision: challenged.decision_revision,
+          createdAt: 1_000
+        })
+      ).toBeNull()
+
+      expect(table.getById(target.id)).toBeDefined()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('tombstones claims on clear and retires the namespace for agent deletion', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'remembered claim',
+        provenanceKey: 'claim-source'
+      })
+      table.insert({
+        id: 'archived',
+        agentId: 'a',
+        kind: 'episodic',
+        content: 'archived claim',
+        provenanceKey: 'archived-source'
+      })
+      archiveTestMemory(table, 'archived')
+      table.insert({ id: 'persona', agentId: 'a', kind: 'persona', content: 'persona text' })
+      table.insert({ id: 'working', agentId: 'a', kind: 'working', content: 'working text' })
+      table.insert({
+        id: 'other',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'remembered claim',
+        provenanceKey: 'claim-source'
+      })
+
+      expect(table.tombstoneAndClearByAgent('a', 2_000)).toBe(4)
+      expect(table.countByAgent('a')).toBe(0)
+      expect(table.getById('other')).toBeDefined()
+      expect(
+        db
+          .prepare(
+            `SELECT identity_kind, COUNT(*) AS count
+             FROM agent_memory_tombstone
+             WHERE agent_id = 'a'
+             GROUP BY identity_kind
+             ORDER BY identity_kind`
+          )
+          .all()
+      ).toEqual([
+        { identity_kind: 'content', count: 2 },
+        { identity_kind: 'provenance', count: 2 }
+      ])
+
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'claim-replay',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'remembered claim',
+          provenanceKey: 'claim-source'
+        })
+      ).toBeNull()
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'persona-replay',
+          agentId: 'a',
+          kind: 'persona',
+          content: 'persona text'
+        })
+      ).toMatchObject({ id: 'persona-replay' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'working-replay',
+          agentId: 'a',
+          kind: 'working',
+          content: 'working text'
+        })
+      ).toMatchObject({ id: 'working-replay' })
+
+      expect(table.retireAgentMemoryNamespace('a')).toBe(2)
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS count FROM agent_memory_tombstone WHERE agent_id = 'a'")
+          .get()
+      ).toEqual({ count: 0 })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'claim-after-retirement',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'remembered claim',
+          provenanceKey: 'claim-source'
+        })
+      ).toMatchObject({ id: 'claim-after-retirement' })
+    } finally {
+      db.close()
+    }
+  })
+
   it('round-trips source_entry_ids lineage and leaves it null when absent', () => {
     const db = new DatabaseCtor(':memory:')
     try {
@@ -2303,7 +2562,8 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain('decision_revision INTEGER NOT NULL DEFAULT 1')
       expect(createSql).toContain("temporal_kind TEXT NOT NULL DEFAULT 'atemporal'")
       expect(createSql).toContain('temporal_confidence REAL')
-      expect(table.getLatestVersion()).toBe(46)
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_tombstone')
+      expect(table.getLatestVersion()).toBe(47)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
@@ -2311,6 +2571,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(table.getMigrationSQL(37)).toMatch(/ADD COLUMN category/)
       expect(table.getMigrationSQL(41)).toMatch(/ADD COLUMN decision_revision/)
       expect(table.getMigrationSQL(46)).toMatch(/ADD COLUMN temporal_kind/)
+      expect(table.getMigrationSQL(47)).toMatch(/CREATE TABLE IF NOT EXISTS agent_memory_tombstone/)
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()
@@ -2328,6 +2589,13 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(columns).toContain('temporal_confidence')
       expect(columns).toContain('temporal_precision')
       expect(columns).toContain('temporal_timezone')
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_tombstone'"
+          )
+          .get()
+      ).toEqual({ name: 'agent_memory_tombstone' })
 
       const row = table.insert({
         id: 'temporal',
@@ -2395,6 +2663,41 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(() =>
         db.prepare('UPDATE agent_memory SET temporal_confidence = 2 WHERE id = ?').run('legacy')
       ).toThrow(/CHECK constraint failed/)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies the exact-forgetting tombstone migration to an existing memory schema', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE agent_memory (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `)
+      const table = new AgentMemoryTableCtor(db)
+      const migration = table.getMigrationSQL(47)
+      if (!migration) throw new Error('expected tombstone migration')
+
+      db.exec(migration)
+
+      const sql = (
+        db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_tombstone'"
+          )
+          .get() as { sql: string }
+      ).sql
+      expect(sql).toContain("identity_kind IN ('provenance', 'content')")
+      expect(sql).toContain("length(identity_hash) = 64 AND identity_hash NOT GLOB '*[^0-9a-f]*'")
+      expect(sql).toContain("reason IN ('selective_delete', 'agent_clear')")
+      expect(sql).toContain('PRIMARY KEY (agent_id, identity_kind, identity_hash)')
+      expect(sql).toMatch(/WITHOUT ROWID$/u)
     } finally {
       db.close()
     }

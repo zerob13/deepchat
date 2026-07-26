@@ -31,6 +31,7 @@ import type {
   MemoryModelRef,
   MemoryTransitionTarget,
   MemoryTemporalMetadata,
+  MemoryTombstoneDeleteInput,
   ResolveChallengerTransition,
   ReviveSupersededTransition,
   ArchiveChallengerTransition,
@@ -86,6 +87,7 @@ export interface MemoryReadRepositoryPort {
 
 export interface MemoryMutationRepositoryPort {
   insert(input: AgentMemoryInsertInput): AgentMemoryRow
+  insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null
   rekeyProvenance(agentId: string, id: string, expectedKey: string, nextKey: string): boolean
   updateInternalContent(input: InternalContentTransition): boolean
   updateUserContentAndInvalidateEmbedding(input: UserContentTransition): boolean
@@ -107,6 +109,9 @@ export interface MemoryMutationRepositoryPort {
   ): boolean
   delete(id: string): void
   clearByAgent(agentId: string): number
+  tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null
+  tombstoneAndClearByAgent(agentId: string, createdAt: number): number
+  retireAgentMemoryNamespace(agentId: string): number
 }
 
 export interface MemoryAccessRepositoryPort {

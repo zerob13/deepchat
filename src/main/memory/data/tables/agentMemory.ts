@@ -59,6 +59,8 @@ import {
   buildStatusProjectionFromExpressionsSql
 } from './agentMemoryStateSql'
 import { normalizeMemoryTemporalMetadata } from '../../core/temporal'
+import { buildMemoryTombstoneIdentities, isTombstoneEligibleMemoryKind } from '../../core/tombstone'
+import type { MemoryTombstoneDeleteInput, MemoryTombstoneReason } from '../../domain/types'
 
 // 'working' is an internal session-open injection cache (a single blob row per agent); it is never
 // recalled, embedded, reflected on, or archived. A 'crystal' kind (3+ corroborated sources) is a
@@ -68,10 +70,12 @@ import { normalizeMemoryTemporalMetadata } from '../../core/temporal'
 // embedding_model + source_entry_ids; v33 adds the consolidation/forgetting columns; v34 adds the
 // persona lifecycle column; v35 adds conflict linkage; v37 adds agentic category; v41 adds
 // optimistic concurrency control for semantic decision writes; v42 normalizes lifecycle and
-// embedding state while retaining the legacy status shadow.
+// embedding state while retaining the legacy status shadow; v46 adds temporal claim metadata; v47
+// adds privacy-preserving exact-forgetting tombstones.
 const AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION = 42
 const AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION = 46
-const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION
+const AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION = 47
+const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION
 
 const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
@@ -81,6 +85,20 @@ const PREVIOUS_AGENT_MEMORY_FTS_POLICY_VERSION = 2
 type FtsCapability = { available: boolean; tokenizer: 'trigram' | 'unicode61' }
 type SearchMatchMode = 'all' | 'any'
 type FtsMirrorRow = AgentMemoryRow & { rowid: number }
+
+const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS agent_memory_tombstone (
+    agent_id TEXT NOT NULL,
+    identity_kind TEXT NOT NULL
+      CHECK (identity_kind IN ('provenance', 'content')),
+    identity_hash TEXT NOT NULL
+      CHECK (length(identity_hash) = 64 AND identity_hash NOT GLOB '*[^0-9a-f]*'),
+    created_at INTEGER NOT NULL,
+    reason TEXT NOT NULL
+      CHECK (reason IN ('selective_delete', 'agent_clear')),
+    PRIMARY KEY (agent_id, identity_kind, identity_hash)
+  ) WITHOUT ROWID;
+`
 
 function embeddingRefsState(
   row: Pick<AgentMemoryRow, 'embedding_id' | 'embedding_dim' | 'embedding_model'>
@@ -529,6 +547,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
             AND temporal_precision IS NOT NULL AND temporal_timezone IS NOT NULL)
         )
       );
+      ${AGENT_MEMORY_TOMBSTONE_TABLE_SQL}
       ${AGENT_MEMORY_BASE_INDEX_SQL}
       ${AGENT_MEMORY_CONFLICT_INDEX_SQL}
       ${AGENT_MEMORY_CANONICAL_INDEX_SQL}
@@ -543,6 +562,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     if (!this.tableExists()) {
       this.db.exec(this.getCreateTableSQL())
     } else {
+      this.db.exec(AGENT_MEMORY_TOMBSTONE_TABLE_SQL)
       this.db.exec(AGENT_MEMORY_BASE_INDEX_SQL)
       const columns = this.db.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
         name: string
@@ -560,6 +580,46 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       this.ensureFtsIndex()
     }
+  }
+
+  private insertTombstonesForRows(
+    rows: readonly AgentMemoryRow[],
+    createdAt: number,
+    reason: MemoryTombstoneReason
+  ): void {
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO agent_memory_tombstone (
+         agent_id, identity_kind, identity_hash, created_at, reason
+       ) VALUES (?, ?, ?, ?, ?)`
+    )
+    for (const row of rows) {
+      if (!isTombstoneEligibleMemoryKind(row.kind)) continue
+      for (const identity of buildMemoryTombstoneIdentities({
+        agentId: row.agent_id,
+        content: row.content,
+        provenanceKey: row.provenance_key
+      })) {
+        insert.run(row.agent_id, identity.identityKind, identity.identityHash, createdAt, reason)
+      }
+    }
+  }
+
+  private hasTombstoneForClaim(input: AgentMemoryInsertInput): boolean {
+    if (!isTombstoneEligibleMemoryKind(input.kind)) return false
+    const identities = buildMemoryTombstoneIdentities({
+      agentId: input.agentId,
+      content: input.content,
+      provenanceKey: input.provenanceKey ?? null
+    })
+    const find = this.db.prepare(
+      `SELECT 1 AS present
+       FROM agent_memory_tombstone
+       WHERE agent_id = ? AND identity_kind = ? AND identity_hash = ?
+       LIMIT 1`
+    )
+    return identities.some((identity) =>
+      find.get(input.agentId, identity.identityKind, identity.identityHash)
+    )
   }
 
   private replaceLegacyStatusBridge(): void {
@@ -760,6 +820,25 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     this.db.exec(AGENT_MEMORY_CONFLICT_INDEX_SQL)
     this.db.exec(AGENT_MEMORY_CANONICAL_INDEX_SQL)
     this.ensureCurrentLegacyStatusBridge(options?.backupBeforeLegacyBridgeRecovery)
+    const tombstoneSql = (
+      this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_tombstone'"
+        )
+        .get() as { sql: string | null } | undefined
+    )?.sql
+    const normalizedTombstoneSql = tombstoneSql?.replace(/\s+/gu, ' ').trim()
+    if (
+      !normalizedTombstoneSql?.includes("CHECK (identity_kind IN ('provenance', 'content'))") ||
+      !normalizedTombstoneSql.includes(
+        "CHECK (length(identity_hash) = 64 AND identity_hash NOT GLOB '*[^0-9a-f]*')"
+      ) ||
+      !normalizedTombstoneSql.includes("CHECK (reason IN ('selective_delete', 'agent_clear'))") ||
+      !normalizedTombstoneSql.includes('PRIMARY KEY (agent_id, identity_kind, identity_hash)') ||
+      !normalizedTombstoneSql.endsWith('WITHOUT ROWID')
+    ) {
+      throw new Error('[Memory] agent_memory_tombstone constraints are incomplete')
+    }
     this.ensureFtsIndex()
   }
 
@@ -867,6 +946,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         "ALTER TABLE agent_memory ADD COLUMN temporal_precision TEXT CHECK (temporal_precision IS NULL OR temporal_precision IN ('exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown'));",
         'ALTER TABLE agent_memory ADD COLUMN temporal_timezone TEXT CHECK (temporal_timezone IS NULL OR (length(temporal_timezone) BETWEEN 1 AND 128 AND temporal_timezone = trim(temporal_timezone)));'
       ].join('\n')
+    }
+    if (version === AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION) {
+      return AGENT_MEMORY_TOMBSTONE_TABLE_SQL
     }
     return null
   }
@@ -1320,6 +1402,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     })
 
     return row
+  }
+
+  insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
+    return this.db.transaction(() => {
+      if (this.hasTombstoneForClaim(input)) return null
+      return this.insert(input)
+    })()
   }
 
   getById(id: string): AgentMemoryRow | undefined {
@@ -2880,6 +2969,26 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     })
   }
 
+  tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null {
+    return this.db.transaction(() => {
+      const row = this.getById(input.id)
+      if (
+        !row ||
+        row.agent_id !== input.agentId ||
+        row.decision_revision !== input.expectedRevision ||
+        this.isUnresolvedConflictParticipant(input.agentId, input.id)
+      ) {
+        return null
+      }
+      this.insertTombstonesForRows([row], input.createdAt, 'selective_delete')
+      this.delete(row.id)
+      if (this.getById(row.id)) {
+        throw new Error(`[Memory] tombstoned row was not deleted: ${row.id}`)
+      }
+      return row
+    })()
+  }
+
   clearByAgent(agentId: string): number {
     const result = this.runRecallBulkDelete(
       () =>
@@ -2894,6 +3003,24 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       () => this.db.prepare('DELETE FROM agent_memory WHERE agent_id = ?').run(agentId)
     )
     return result.changes
+  }
+
+  tombstoneAndClearByAgent(agentId: string, createdAt: number): number {
+    return this.db.transaction(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM agent_memory WHERE agent_id = ?')
+        .all(agentId) as AgentMemoryRow[]
+      this.insertTombstonesForRows(rows, createdAt, 'agent_clear')
+      return this.clearByAgent(agentId)
+    })()
+  }
+
+  retireAgentMemoryNamespace(agentId: string): number {
+    return this.db.transaction(() => {
+      const removed = this.clearByAgent(agentId)
+      this.db.prepare('DELETE FROM agent_memory_tombstone WHERE agent_id = ?').run(agentId)
+      return removed
+    })()
   }
 
   countByAgent(agentId: string): number {

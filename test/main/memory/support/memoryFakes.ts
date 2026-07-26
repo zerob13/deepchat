@@ -35,6 +35,10 @@ import type {
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
 import { normalizeMemoryTemporalMetadata } from '@/memory/core/temporal'
 import {
+  buildMemoryTombstoneIdentities,
+  isTombstoneEligibleMemoryKind
+} from '@/memory/core/tombstone'
+import {
   assertValidMemoryInsertState,
   deriveCanonicalStateFromLegacy,
   projectLegacyStatus
@@ -43,6 +47,9 @@ import type {
   AgentMemoryEmbeddingState,
   AgentMemoryRow,
   MemoryTemporalMetadata,
+  MemoryTombstoneDeleteInput,
+  MemoryTombstoneIdentityKind,
+  MemoryTombstoneReason,
   ResolveChallengerTransition
 } from '@/memory/domain/types'
 
@@ -82,7 +89,61 @@ function toLifecycleRow(row: AgentMemoryRow): AgentMemoryLifecycleRow {
 // exercise the presenter without a native database.
 class FakeRepositoryBehavior implements MemoryRepositoryPort {
   rows = new MemoryRowMap()
+  tombstones = new Map<
+    string,
+    {
+      agentId: string
+      identityKind: MemoryTombstoneIdentityKind
+      identityHash: string
+      createdAt: number
+      reason: MemoryTombstoneReason
+    }
+  >()
   transactionCalls = 0
+
+  private tombstoneKey(
+    agentId: string,
+    identityKind: MemoryTombstoneIdentityKind,
+    identityHash: string
+  ): string {
+    return `${agentId}\0${identityKind}\0${identityHash}`
+  }
+
+  private addTombstonesForRow(
+    row: AgentMemoryRow,
+    createdAt: number,
+    reason: MemoryTombstoneReason
+  ): void {
+    if (!isTombstoneEligibleMemoryKind(row.kind)) return
+    for (const identity of buildMemoryTombstoneIdentities({
+      agentId: row.agent_id,
+      content: row.content,
+      provenanceKey: row.provenance_key
+    })) {
+      const key = this.tombstoneKey(row.agent_id, identity.identityKind, identity.identityHash)
+      if (this.tombstones.has(key)) continue
+      this.tombstones.set(key, {
+        agentId: row.agent_id,
+        identityKind: identity.identityKind,
+        identityHash: identity.identityHash,
+        createdAt,
+        reason
+      })
+    }
+  }
+
+  private hasTombstoneForClaim(input: AgentMemoryInsertInput): boolean {
+    if (!isTombstoneEligibleMemoryKind(input.kind)) return false
+    return buildMemoryTombstoneIdentities({
+      agentId: input.agentId,
+      content: input.content,
+      provenanceKey: input.provenanceKey ?? null
+    }).some((identity) =>
+      this.tombstones.has(
+        this.tombstoneKey(input.agentId, identity.identityKind, identity.identityHash)
+      )
+    )
+  }
 
   insert(input: AgentMemoryInsertInput): AgentMemoryRow {
     if ((input.lifecycleState === undefined) !== (input.embeddingState === undefined)) {
@@ -147,6 +208,11 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     this.rows.set(row.id, row)
     return row
+  }
+
+  insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
+    if (this.hasTombstoneForClaim(input)) return null
+    return this.insert(input)
   }
 
   getById(id: string) {
@@ -1196,6 +1262,21 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     this.rows.delete(id)
   }
 
+  tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null {
+    const row = this.rows.get(input.id)
+    if (
+      !row ||
+      row.agent_id !== input.agentId ||
+      row.decision_revision !== input.expectedRevision ||
+      this.isUnresolvedConflictParticipant(input.agentId, input.id)
+    ) {
+      return null
+    }
+    this.addTombstonesForRow(row, input.createdAt, 'selective_delete')
+    this.rows.delete(row.id)
+    return row
+  }
+
   clearByAgent(agentId: string) {
     let removed = 0
     for (const [id, row] of this.rows) {
@@ -1203,6 +1284,23 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         this.rows.delete(id)
         removed += 1
       }
+    }
+    return removed
+  }
+
+  tombstoneAndClearByAgent(agentId: string, createdAt: number): number {
+    for (const row of this.rows.values()) {
+      if (row.agent_id === agentId) {
+        this.addTombstonesForRow(row, createdAt, 'agent_clear')
+      }
+    }
+    return this.clearByAgent(agentId)
+  }
+
+  retireAgentMemoryNamespace(agentId: string): number {
+    const removed = this.clearByAgent(agentId)
+    for (const [key, tombstone] of this.tombstones) {
+      if (tombstone.agentId === agentId) this.tombstones.delete(key)
     }
     return removed
   }
@@ -1619,6 +1717,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
 export interface FakeRepositoryState {
   rows: Map<string, AgentMemoryRow>
+  tombstones: FakeRepositoryBehavior['tombstones']
   transactionCalls: number
 }
 
@@ -1697,6 +1796,7 @@ const READ_CAPABILITY_KEYS = [
 
 const MUTATION_CAPABILITY_KEYS = [
   'insert',
+  'insertClaimUnlessTombstoned',
   'rekeyProvenance',
   'updateInternalContent',
   'updateUserContentAndInvalidateEmbedding',
@@ -1707,7 +1807,10 @@ const MUTATION_CAPABILITY_KEYS = [
   'markSupersededIfRevision',
   'markConflictIfRevision',
   'delete',
-  'clearByAgent'
+  'clearByAgent',
+  'tombstoneAndDelete',
+  'tombstoneAndClearByAgent',
+  'retireAgentMemoryNamespace'
 ] as const satisfies readonly (keyof MemoryMutationRepositoryPort)[]
 
 const ACCESS_CAPABILITY_KEYS = [

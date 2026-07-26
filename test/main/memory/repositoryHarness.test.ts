@@ -184,6 +184,59 @@ describe('memory repository fakes', () => {
     expect(repo.getCurrentEmbeddingDimension('a', 'p:m')).toBe(4)
   })
 
+  it('matches AgentMemoryTable exact-forgetting tombstone behavior', () => {
+    const repo = createFakeRepository()
+    const claim = repo.insert({
+      id: 'forgotten',
+      agentId: 'a',
+      kind: 'semantic',
+      content: '  private   fact ',
+      provenanceKey: 'private-source'
+    })
+
+    expect(
+      repo.tombstoneAndDelete({
+        agentId: 'a',
+        id: claim.id,
+        expectedRevision: claim.decision_revision,
+        createdAt: 1_000
+      })
+    ).toMatchObject({ id: claim.id })
+    expect(repo.tombstones.size).toBe(2)
+    expect(JSON.stringify([...repo.tombstones.values()])).not.toContain('private fact')
+    expect(JSON.stringify([...repo.tombstones.values()])).not.toContain('private-source')
+    expect(
+      repo.insertClaimUnlessTombstoned({
+        id: 'replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'private fact',
+        provenanceKey: 'new-source'
+      })
+    ).toBeNull()
+    expect(
+      repo.insertClaimUnlessTombstoned({
+        id: 'other-agent',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'private fact',
+        provenanceKey: 'private-source'
+      })
+    ).toMatchObject({ id: 'other-agent' })
+
+    expect(repo.retireAgentMemoryNamespace('a')).toBe(0)
+    expect(repo.tombstones.size).toBe(0)
+    expect(
+      repo.insertClaimUnlessTombstoned({
+        id: 'after-retirement',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'private fact',
+        provenanceKey: 'new-source'
+      })
+    ).toMatchObject({ id: 'after-retirement' })
+  })
+
   it('matches AgentMemoryAuditTable list limit defaults and caps', () => {
     const auditRepo = new FakeAuditRepository()
     for (let index = 0; index < 505; index += 1) {

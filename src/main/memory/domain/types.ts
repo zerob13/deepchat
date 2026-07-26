@@ -106,6 +106,21 @@ export interface MemoryTemporalTrace {
   factor: number
 }
 
+export type MemoryTombstoneIdentityKind = 'provenance' | 'content'
+export type MemoryTombstoneReason = 'selective_delete' | 'agent_clear'
+
+export interface MemoryTombstoneIdentity {
+  identityKind: MemoryTombstoneIdentityKind
+  identityHash: string
+}
+
+export interface MemoryTombstoneDeleteInput {
+  agentId: string
+  id: string
+  expectedRevision: number
+  createdAt: number
+}
+
 export interface MemoryTransitionTarget {
   agentId: string
   id: string
