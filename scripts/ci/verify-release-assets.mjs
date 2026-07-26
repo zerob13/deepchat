@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 
 import {
   compareFileNames,
+  DARWIN_DISTRIBUTION_CHECK_NAMES,
   expectedReleaseAssetCount,
   getPublicRoles,
   getRoleDefinition,
@@ -114,7 +115,7 @@ function validateReleaseTargets(index) {
     }
     const requiredChecks = ['packageSmoke', 'componentSize', 'installerSize']
     if (definition.platform === 'darwin') {
-      requiredChecks.push('macAppDistribution', 'macDmgDistribution')
+      requiredChecks.push(...DARWIN_DISTRIBUTION_CHECK_NAMES)
     }
     const checks = assertObject(target.checks, `${definition.id} checks`)
     assertExactKeys(checks, requiredChecks, `${definition.id} checks`)

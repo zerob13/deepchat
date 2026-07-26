@@ -20,6 +20,30 @@ async function loadBuildRuntime() {
     darwinHelperAppDirName: string
     darwinHelperBinaryName: string
     darwinHelperBundleIdentifier: string
+    enforceDarwinLoadPathContract: (
+      executable: string,
+      options: {
+        inspectExecutable: (targetPath: string) => {
+          rpaths: string[]
+          linkedLibraries: string[]
+        }
+        inspectArchitectures: (targetPath: string) => string[]
+        ensureToolAvailable?: (command: string, args: string[]) => void
+        runCommand: (command: string, args: string[]) => void
+        enforceSlice?: (
+          slicePath: string,
+          initialInspection?: {
+            rpaths: string[]
+            linkedLibraries: string[]
+          }
+        ) => { removedRpaths: string[] }
+        makeTemporaryDirectory?: (prefix: string) => string
+        readMode?: (targetPath: string) => number
+        applyMode?: (targetPath: string, mode: number) => void
+        replaceFile?: (sourcePath: string, targetPath: string) => void
+        removeTemporaryDirectory?: (targetPath: string) => void
+      }
+    ) => { removedRpaths: string[] }
     stageDarwinRuntime: (extractDir: string, runtimeDir: string) => Promise<void>
   }
 }
@@ -91,5 +115,244 @@ describe('build-cua-plugin-runtime', () => {
     expect(plist).toContain('<key>CFBundleName</key>\n    <string>DeepChat Computer Use</string>')
     expect(plist).toContain('<key>CFBundleDisplayName</key>')
     expect(plist).toContain(`<string>${darwinHelperBinaryName}</string>`)
+  })
+
+  it('removes duplicate build-machine RPATHs before signing', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const executable = path.join(tempRoot, 'deepchat-cua-driver')
+    const xcodeRpath =
+      '/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx'
+    const inspectExecutable = vi
+      .fn()
+      .mockReturnValueOnce({
+        rpaths: ['/usr/lib/swift', xcodeRpath, xcodeRpath],
+        linkedLibraries: [
+          '/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit',
+          '@rpath/libswiftCore.dylib'
+        ]
+      })
+      .mockReturnValueOnce({
+        rpaths: ['/usr/lib/swift'],
+        linkedLibraries: [
+          '/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit',
+          '@rpath/libswiftCore.dylib'
+        ]
+      })
+    const runCommand = vi.fn()
+    const ensureToolAvailable = vi.fn()
+
+    expect(
+      enforceDarwinLoadPathContract(executable, {
+        inspectExecutable,
+        inspectArchitectures: () => ['arm64'],
+        ensureToolAvailable,
+        runCommand
+      })
+    ).toEqual({ removedRpaths: [xcodeRpath] })
+    expect(ensureToolAvailable).toHaveBeenCalledWith('/usr/bin/install_name_tool', [
+      '-help'
+    ])
+    expect(ensureToolAvailable).toHaveBeenCalledWith('/usr/bin/lipo', [
+      '-info',
+      process.execPath
+    ])
+    expect(runCommand).toHaveBeenCalledTimes(1)
+    expect(runCommand).toHaveBeenCalledWith('/usr/bin/install_name_tool', [
+      '-delete_rpath',
+      xcodeRpath,
+      executable
+    ])
+  })
+
+  it('sanitizes asymmetric universal RPATHs one architecture at a time', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const executable = path.join(tempRoot, 'deepchat-cua-driver')
+    const temporaryDirectory = path.join(tempRoot, 'load-path-slices')
+    const x64Slice = path.join(temporaryDirectory, 'x86_64-deepchat-cua-driver')
+    const arm64Slice = path.join(temporaryDirectory, 'arm64-deepchat-cua-driver')
+    const rebuiltExecutable = path.join(temporaryDirectory, 'deepchat-cua-driver')
+    const runCommand = vi.fn()
+    const enforceSlice = vi.fn((slicePath: string) => ({
+      removedRpaths: [
+        slicePath === x64Slice
+          ? '/Applications/Xcode-x64.app/usr/lib/swift'
+          : '/Applications/Xcode-arm64.app/usr/lib/swift'
+      ]
+    }))
+    const applyMode = vi.fn()
+    const replaceFile = vi.fn()
+    const removeTemporaryDirectory = vi.fn()
+
+    expect(
+      enforceDarwinLoadPathContract(executable, {
+        inspectExecutable: (targetPath: string) => ({
+          rpaths:
+            targetPath === executable
+              ? ['/Applications/Xcode.app/usr/lib/swift']
+              : ['/usr/lib/swift'],
+          linkedLibraries: ['/usr/lib/libSystem.B.dylib']
+        }),
+        inspectArchitectures: () => ['x86_64', 'arm64'],
+        ensureToolAvailable: vi.fn(),
+        runCommand,
+        enforceSlice,
+        makeTemporaryDirectory: () => temporaryDirectory,
+        readMode: () => 0o100755,
+        applyMode,
+        replaceFile,
+        removeTemporaryDirectory
+      })
+    ).toEqual({
+      removedRpaths: [
+        '/Applications/Xcode-x64.app/usr/lib/swift',
+        '/Applications/Xcode-arm64.app/usr/lib/swift'
+      ]
+    })
+    expect(runCommand).toHaveBeenNthCalledWith(1, '/usr/bin/lipo', [
+      '-thin',
+      'x86_64',
+      executable,
+      '-output',
+      x64Slice
+    ])
+    expect(runCommand).toHaveBeenNthCalledWith(2, '/usr/bin/lipo', [
+      '-thin',
+      'arm64',
+      executable,
+      '-output',
+      arm64Slice
+    ])
+    expect(runCommand).toHaveBeenNthCalledWith(3, '/usr/bin/lipo', [
+      '-create',
+      x64Slice,
+      arm64Slice,
+      '-output',
+      rebuiltExecutable
+    ])
+    expect(enforceSlice).toHaveBeenCalledTimes(2)
+    expect(applyMode).toHaveBeenCalledWith(rebuiltExecutable, 0o755)
+    expect(replaceFile).toHaveBeenCalledWith(rebuiltExecutable, executable)
+    expect(removeTemporaryDirectory).toHaveBeenCalledWith(temporaryDirectory)
+  })
+
+  it('rejects a universal rebuild that loses an architecture', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const executable = path.join(tempRoot, 'deepchat-cua-driver')
+    const temporaryDirectory = path.join(tempRoot, 'load-path-slices')
+    const rebuiltExecutable = path.join(temporaryDirectory, 'deepchat-cua-driver')
+    const replaceFile = vi.fn()
+    const removeTemporaryDirectory = vi.fn()
+
+    expect(() =>
+      enforceDarwinLoadPathContract(executable, {
+        inspectExecutable: (targetPath: string) => ({
+          rpaths:
+            targetPath === executable
+              ? ['/Applications/Xcode.app/usr/lib/swift']
+              : ['/usr/lib/swift'],
+          linkedLibraries: ['/usr/lib/libSystem.B.dylib']
+        }),
+        inspectArchitectures: (targetPath: string) =>
+          targetPath === rebuiltExecutable ? ['arm64'] : ['x86_64', 'arm64'],
+        ensureToolAvailable: vi.fn(),
+        runCommand: vi.fn(),
+        enforceSlice: () => ({ removedRpaths: [] }),
+        makeTemporaryDirectory: () => temporaryDirectory,
+        readMode: () => 0o100755,
+        applyMode: vi.fn(),
+        replaceFile,
+        removeTemporaryDirectory
+      })
+    ).toThrow(/architecture set changed during sanitation/)
+    expect(replaceFile).not.toHaveBeenCalled()
+    expect(removeTemporaryDirectory).toHaveBeenCalledWith(temporaryDirectory)
+  })
+
+  it('does not rewrite a universal executable that already satisfies the contract', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const inspectArchitectures = vi.fn(() => ['x86_64', 'arm64'])
+    const runCommand = vi.fn()
+
+    expect(
+      enforceDarwinLoadPathContract('/tmp/deepchat-cua-driver', {
+        inspectExecutable: () => ({
+          rpaths: ['/usr/lib/swift'],
+          linkedLibraries: ['/usr/lib/libSystem.B.dylib']
+        }),
+        inspectArchitectures,
+        runCommand
+      })
+    ).toEqual({ removedRpaths: [] })
+    expect(inspectArchitectures).not.toHaveBeenCalled()
+    expect(runCommand).not.toHaveBeenCalled()
+  })
+
+  it('rejects non-system linked libraries instead of rewriting them', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const runCommand = vi.fn()
+
+    expect(() =>
+      enforceDarwinLoadPathContract('/tmp/deepchat-cua-driver', {
+        inspectExecutable: () => ({
+          rpaths: ['/usr/lib/swift'],
+          linkedLibraries: ['/Users/runner/build/libInjected.dylib']
+        }),
+        inspectArchitectures: () => ['arm64'],
+        runCommand
+      })
+    ).toThrow(/non-system linked libraries.*libInjected/)
+    expect(runCommand).not.toHaveBeenCalled()
+  })
+
+  it('preserves sanitation and temporary-slice cleanup failures', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const sanitationError = new Error('slice sanitation failed')
+    const cleanupError = new Error('slice cleanup failed')
+
+    let error: unknown
+    try {
+      enforceDarwinLoadPathContract('/tmp/deepchat-cua-driver', {
+        inspectExecutable: () => ({
+          rpaths: ['/Applications/Xcode.app/usr/lib/swift'],
+          linkedLibraries: []
+        }),
+        inspectArchitectures: () => ['x86_64', 'arm64'],
+        ensureToolAvailable: vi.fn(),
+        runCommand: vi.fn(),
+        enforceSlice: () => {
+          throw sanitationError
+        },
+        makeTemporaryDirectory: () => '/tmp/deepchat-cua-slices',
+        readMode: () => 0o755,
+        applyMode: vi.fn(),
+        replaceFile: vi.fn(),
+        removeTemporaryDirectory: () => {
+          throw cleanupError
+        }
+      })
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(AggregateError)
+    expect((error as AggregateError).errors).toEqual([sanitationError, cleanupError])
+  })
+
+  it('fails if a disallowed RPATH remains after sanitation', async () => {
+    const { enforceDarwinLoadPathContract } = await loadBuildRuntime()
+    const xcodeRpath = '/Applications/Xcode.app/Contents/Developer/usr/lib/swift/macosx'
+    const inspectExecutable = vi.fn(() => ({
+      rpaths: [xcodeRpath],
+      linkedLibraries: ['/usr/lib/libSystem.B.dylib']
+    }))
+
+    expect(() =>
+      enforceDarwinLoadPathContract('/tmp/deepchat-cua-driver', {
+        inspectExecutable,
+        inspectArchitectures: () => ['arm64'],
+        ensureToolAvailable: vi.fn(),
+        runCommand: vi.fn()
+      })
+    ).toThrow(/still contains non-system RPATHs/)
   })
 })

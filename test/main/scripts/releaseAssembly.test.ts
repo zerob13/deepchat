@@ -16,6 +16,8 @@ import { assembleRelease } from '../../../scripts/ci/assemble-release.mjs'
 import {
   getMeasuredRoles,
   getUpdaterPayloadRole,
+  PACKAGE_MANIFEST_SCHEMA_VERSION,
+  RELEASE_INDEX_SCHEMA_VERSION,
   TARGET_DEFINITIONS
 } from '../../../scripts/ci/package-contract.mjs'
 import { inspectRegularFile } from '../../../scripts/ci/package-files.mjs'
@@ -180,10 +182,13 @@ describe('fail-closed release assembly', () => {
 
     const windowsTarget = releaseIndex.targets.find(({ id }) => id === 'win32-x64')
     const macTarget = releaseIndex.targets.find(({ id }) => id === 'darwin-x64')
+    expect(releaseIndex.schemaVersion).toBe(RELEASE_INDEX_SCHEMA_VERSION)
     expect(windowsTarget?.checks).not.toHaveProperty('signed')
     expect(windowsTarget?.checks).not.toHaveProperty('macAppDistribution')
     expect(macTarget?.checks).toMatchObject({
+      cuaMacHelperDistribution: 'passed',
       macAppDistribution: 'passed',
+      macZipDistribution: 'passed',
       macDmgDistribution: 'passed'
     })
   })
@@ -198,6 +203,28 @@ describe('fail-closed release assembly', () => {
       workflowRunAttempt
     })
     expect(verified.files).toHaveLength(19)
+
+    const releaseIndexPath = path.join(outputDirectory, 'release-index.json')
+    const originalReleaseIndex = await readFile(releaseIndexPath, 'utf8')
+    const releaseIndex = JSON.parse(originalReleaseIndex)
+    const macTarget = releaseIndex.targets.find(
+      ({ id }: { id: string }) => id === 'darwin-arm64'
+    )
+    delete macTarget.checks.cuaMacHelperDistribution
+    await writeFile(releaseIndexPath, JSON.stringify(releaseIndex))
+    try {
+      await expect(
+        verifyReleaseAssets({
+          directory: outputDirectory,
+          sourceSha,
+          version,
+          workflowRunId,
+          workflowRunAttempt
+        })
+      ).rejects.toThrow(/cuaMacHelperDistribution/)
+    } finally {
+      await writeFile(releaseIndexPath, originalReleaseIndex)
+    }
 
     const packageAsset = verified.files.find(
       ({ name }) => name !== 'release-index.json'
@@ -388,6 +415,18 @@ describe('fail-closed release assembly', () => {
 
     await resetFixtures()
     await updateManifest('darwin-arm64', (manifest) => {
+      delete manifest.checks.cuaMacHelperDistribution
+    })
+    await expect(assemble()).rejects.toThrow(/cuaMacHelperDistribution did not pass/)
+
+    await resetFixtures()
+    await updateManifest('darwin-arm64', (manifest) => {
+      delete manifest.checks.macZipDistribution
+    })
+    await expect(assemble()).rejects.toThrow(/macZipDistribution did not pass/)
+
+    await resetFixtures()
+    await updateManifest('darwin-arm64', (manifest) => {
       delete manifest.checks.macDmgDistribution
     })
     await expect(assemble()).rejects.toThrow(/macDmgDistribution did not pass/)
@@ -544,11 +583,13 @@ async function createOnePackageArtifact(
     installerSize: 'passed'
   }
   if (definition.platform === 'darwin') {
+    checks.cuaMacHelperDistribution = 'passed'
     checks.macAppDistribution = 'passed'
+    checks.macZipDistribution = 'passed'
     checks.macDmgDistribution = 'passed'
   }
   const manifest: PackageManifest = {
-    schemaVersion: 1,
+    schemaVersion: PACKAGE_MANIFEST_SCHEMA_VERSION,
     target: {
       id: definition.id,
       platform: definition.platform,

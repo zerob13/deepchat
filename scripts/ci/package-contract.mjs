@@ -1,9 +1,9 @@
 import path from 'node:path'
 
-export const PACKAGE_MANIFEST_SCHEMA_VERSION = 1
+export const PACKAGE_MANIFEST_SCHEMA_VERSION = 2
 export const PACKAGE_SIZE_BASELINE_SCHEMA_VERSION = 1
 export const PACKAGE_SIZE_POLICY_SCHEMA_VERSION = 1
-export const RELEASE_INDEX_SCHEMA_VERSION = 1
+export const RELEASE_INDEX_SCHEMA_VERSION = 2
 
 export const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}$/
 export const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -11,6 +11,12 @@ export const SHA512_BASE64_PATTERN = /^[A-Za-z0-9+/]{86}==$/
 
 export const SUPPORTED_ARCHITECTURES = Object.freeze(['x64', 'arm64'])
 export const SUPPORTED_ARTIFACT_PURPOSES = Object.freeze(['distribution', 'verification'])
+export const DARWIN_DISTRIBUTION_CHECK_NAMES = Object.freeze([
+  'cuaMacHelperDistribution',
+  'macAppDistribution',
+  'macZipDistribution',
+  'macDmgDistribution'
+])
 
 const MIB = 1024 * 1024
 export const DEFAULT_INSTALLER_DELTA_BYTES = 90 * MIB

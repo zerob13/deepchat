@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   mkdir,
   mkdtemp,
+  lstat,
   readFile,
   readdir,
   rm,
@@ -31,12 +32,16 @@ import {
   expectedReleaseAssetCount,
   getMeasuredRoles,
   getTargetDefinition,
+  PACKAGE_MANIFEST_SCHEMA_VERSION,
+  RELEASE_INDEX_SCHEMA_VERSION,
   SHA512_BASE64_PATTERN,
   TARGET_DEFINITIONS
 } from '../../../scripts/ci/package-contract.mjs'
 import {
   createPackageManifest,
-  verifyMacAppDistribution
+  validateMacZipEntries,
+  verifyMacAppDistribution,
+  verifyMacZipDistribution
 } from '../../../scripts/ci/package-manifest.mjs'
 import { prepareReleaseContext } from '../../../scripts/ci/release-preflight.mjs'
 
@@ -65,6 +70,8 @@ describe('CI package contract', () => {
       'darwin-arm64'
     ])
     expect(expectedReleaseAssetCount()).toBe(19)
+    expect(PACKAGE_MANIFEST_SCHEMA_VERSION).toBe(2)
+    expect(RELEASE_INDEX_SCHEMA_VERSION).toBe(2)
     expect(SHA512_BASE64_PATTERN.test(Buffer.alloc(64).toString('base64'))).toBe(true)
   })
 
@@ -101,6 +108,19 @@ describe('CI package contract', () => {
       linux: false,
       macos: true
     })
+    for (const cuaMacosPath of [
+      'scripts/cua-macos-contract.mjs',
+      'scripts/ci/verify-cua-macos-helper.mjs',
+      'scripts/macos-release-contract.mjs',
+      'scripts/sign-cua-helper.mjs'
+    ]) {
+      expect(classifyPackageImpact([cuaMacosPath])).toMatchObject({
+        required: true,
+        windows: false,
+        linux: false,
+        macos: true
+      })
+    }
     for (const backgroundPath of [
       'build/dmg-background.png',
       'build/dmg-background@2x.png'
@@ -358,6 +378,11 @@ describe('CI package contract', () => {
       ['--assess', '--type', 'execute', '--verbose=4', appPath],
       expect.any(Object)
     )
+    expect(runCommand).toHaveBeenCalledWith(
+      '/usr/bin/syspolicy_check',
+      ['distribution', appPath],
+      expect.any(Object)
+    )
 
     const unsignedCommand = vi.fn(async () => ({ stdout: '', stderr: 'Signature=adhoc\n' }))
     await expect(
@@ -366,6 +391,99 @@ describe('CI package contract', () => {
         runCommand: unsignedCommand
       })
     ).rejects.toThrow(/Developer ID Application/)
+  })
+
+  it('verifies the updater ZIP after extracting its sole application payload', async () => {
+    const zipPath = '/tmp/DeepChat-1.2.3-mac-arm64.zip'
+    let extractionRoot = ''
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === '/usr/bin/unzip') {
+        return {
+          stdout: 'DeepChat.app/\nDeepChat.app/Contents/Info.plist\n',
+          stderr: ''
+        }
+      }
+      expect(command).toBe('/usr/bin/ditto')
+      extractionRoot = args.at(-1)!
+      await mkdir(path.join(extractionRoot, 'DeepChat.app'))
+      return { stdout: '', stderr: '' }
+    })
+    const verifyCuaMacHelper = vi.fn(async () => {})
+    const verifyMacApp = vi.fn(async () => {})
+
+    await expect(
+      verifyMacZipDistribution(zipPath, {
+        teamId: 'Y7P5QLKLYG',
+        runCommand,
+        verifyCuaMacHelper,
+        verifyMacApp
+      })
+    ).resolves.toBe(true)
+    expect(runCommand).toHaveBeenCalledWith(
+      '/usr/bin/ditto',
+      ['-x', '-k', zipPath, extractionRoot],
+      expect.any(Object)
+    )
+    expect(extractionRoot).not.toBe('')
+    const extractedAppPath = path.join(extractionRoot, 'DeepChat.app')
+    expect(verifyCuaMacHelper).toHaveBeenCalledWith(extractedAppPath, {
+      teamId: 'Y7P5QLKLYG',
+      runCommand
+    })
+    expect(verifyMacApp).toHaveBeenCalledWith(extractedAppPath, {
+      teamId: 'Y7P5QLKLYG',
+      runCommand
+    })
+    await expect(lstat(extractionRoot)).rejects.toThrow()
+  })
+
+  it('rejects updater ZIPs with an unexpected root payload', async () => {
+    const verifyCuaMacHelper = vi.fn(async () => {})
+    const verifyMacApp = vi.fn(async () => {})
+    let extractionRoot = ''
+
+    await expect(
+      verifyMacZipDistribution('/tmp/DeepChat.zip', {
+        teamId: 'Y7P5QLKLYG',
+        runCommand: async (command: string, args: string[]) => {
+          if (command === '/usr/bin/unzip') {
+            return {
+              stdout: 'DeepChat.app/\nDeepChat.app/Contents/Info.plist\n',
+              stderr: ''
+            }
+          }
+          extractionRoot = args.at(-1)!
+          await Promise.all([
+            mkdir(path.join(extractionRoot, 'DeepChat.app')),
+            writeFile(path.join(extractionRoot, 'unexpected.txt'), 'unexpected')
+          ])
+          return { stdout: '', stderr: '' }
+        },
+        verifyCuaMacHelper,
+        verifyMacApp
+      })
+    ).rejects.toThrow(/exactly one root DeepChat.app/)
+    expect(verifyCuaMacHelper).not.toHaveBeenCalled()
+    expect(verifyMacApp).not.toHaveBeenCalled()
+    expect(extractionRoot).not.toBe('')
+    await expect(lstat(extractionRoot)).rejects.toThrow()
+  })
+
+  it('rejects unsafe or ambiguous updater ZIP entry paths before extraction', () => {
+    expect(
+      validateMacZipEntries('DeepChat.app/\nDeepChat.app/Contents/Info.plist\n')
+    ).toEqual(['DeepChat.app/', 'DeepChat.app/Contents/Info.plist'])
+
+    for (const unsafeEntries of [
+      '../DeepChat.app/Contents/Info.plist\n',
+      '/DeepChat.app/Contents/Info.plist\n',
+      'DeepChat.app\\Contents\\Info.plist\n',
+      'Other.app/Contents/Info.plist\n',
+      'DeepChat.app/Contents/../escape\n',
+      'DeepChat.app/Contents/Info.plist\nDeepChat.app/Contents/Info.plist\n'
+    ]) {
+      expect(() => validateMacZipEntries(unsafeEntries)).toThrow(/unsafe entry|duplicate entry/)
+    }
   })
 })
 
@@ -632,6 +750,44 @@ describe('package manifest staging', () => {
     return { installerName, smokePath, sizePath }
   }
 
+  async function prepareMacPackage() {
+    const dmgName = `DeepChat-${version}-mac-arm64.dmg`
+    const zipName = `DeepChat-${version}-mac-arm64.zip`
+    const zip = Buffer.from('updater zip')
+    const smokePath = path.join(distDirectory, 'light-ocr-smoke-darwin-arm64.json')
+    await Promise.all([
+      writeFile(path.join(distDirectory, dmgName), 'dmg'),
+      writeFile(path.join(distDirectory, zipName), zip),
+      writeFile(path.join(distDirectory, `${zipName}.blockmap`), 'blockmap'),
+      writeFile(
+        path.join(distDirectory, 'latest-mac.yml'),
+        stringify({
+          version,
+          files: [
+            {
+              url: zipName,
+              sha512: sha512(zip),
+              size: zip.length
+            }
+          ],
+          path: zipName,
+          sha512: sha512(zip),
+          releaseDate: '2026-07-23T00:00:00.000Z'
+        })
+      ),
+      writeFile(
+        smokePath,
+        JSON.stringify({
+          schemaVersion: 2,
+          target: { platform: 'darwin', arch: 'arm64' },
+          executed: true,
+          componentMetrics: { ocrAssets: {}, nodeRuntime: {}, otherRuntime: {} }
+        })
+      )
+    ])
+    return { dmgName, zipName, smokePath }
+  }
+
   it('stages only allowlisted files and never adds Windows signing claims', async () => {
     const { installerName, smokePath, sizePath } = await prepareWindowsPackage()
     const outputDirectory = path.join(tempDirectory, 'output')
@@ -684,5 +840,43 @@ describe('package manifest staging', () => {
         actualSourceSha: sourceSha
       })
     ).rejects.toThrow(/Duplicate diagnostic report basename/)
+  })
+
+  it('derives macOS ZIP evidence from the staged updater payload', async () => {
+    const { zipName, smokePath } = await prepareMacPackage()
+    const outputDirectory = path.join(tempDirectory, 'mac-output')
+    const verifyCuaMacHelper = vi.fn(async () => {})
+    const verifyMacApp = vi.fn(async () => {})
+    const verifyMacZip = vi.fn(async () => {})
+    const verifyMacDmg = vi.fn(async () => {})
+
+    const manifest = await createPackageManifest({
+      projectDirectory,
+      distDirectory,
+      outputDirectory,
+      platform: 'darwin',
+      arch: 'arm64',
+      sourceSha,
+      purpose: 'distribution',
+      reportPaths: [smokePath],
+      actualSourceSha: sourceSha,
+      macAppPath: '/tmp/DeepChat.app',
+      appleTeamId: 'Y7P5QLKLYG',
+      verifyCuaMacHelper,
+      verifyMacApp,
+      verifyMacZip,
+      verifyMacDmg
+    })
+
+    expect(verifyMacZip).toHaveBeenCalledWith(
+      path.join(outputDirectory, 'files', zipName),
+      { teamId: 'Y7P5QLKLYG' }
+    )
+    expect(manifest.checks).toMatchObject({
+      cuaMacHelperDistribution: 'passed',
+      macAppDistribution: 'passed',
+      macZipDistribution: 'passed',
+      macDmgDistribution: 'passed'
+    })
   })
 })
