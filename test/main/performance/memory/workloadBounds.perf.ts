@@ -119,7 +119,7 @@ describe('Agent Memory #28 bounded workloads', () => {
       return ''
     })
     const search = vi.spyOn(repo, 'search')
-    const listByIds = vi.spyOn(repo, 'listByIds')
+    const listApplicableByIds = vi.spyOn(repo, 'listApplicableByIds')
     const presenter = new MemoryService({
       executeWithRateLimit: async () => undefined,
       repository: repo,
@@ -142,7 +142,7 @@ describe('Agent Memory #28 bounded workloads', () => {
       if (!result.ok) throw new Error('expected extraction to succeed')
       expect(result.createdIds).toHaveLength(8)
       expect(search).toHaveBeenCalledTimes(8)
-      expect(listByIds).toHaveBeenCalledTimes(1)
+      expect(listApplicableByIds).toHaveBeenCalledTimes(1)
       expect(decisionPrompts).toHaveLength(2)
       expect(
         decisionPrompts.map((prompt) => [...prompt.matchAll(/^Candidate (\d+) \(/gmu)].length)

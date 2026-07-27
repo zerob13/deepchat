@@ -431,6 +431,10 @@
       "specifier": "@/components/use-toast"
     },
     {
+      "file": "src/renderer/settings/components/MemoryDirectivesPanel.vue",
+      "specifier": "@/components/use-toast"
+    },
+    {
       "file": "src/renderer/settings/components/MemoryInboxBar.vue",
       "specifier": "@/components/use-toast"
     },
@@ -715,5 +719,5 @@
       "specifier": "@/i18n/bootstrap"
     }
   ],
-  "settingsToChatAppImportCount": 168
+  "settingsToChatAppImportCount": 169
 }
