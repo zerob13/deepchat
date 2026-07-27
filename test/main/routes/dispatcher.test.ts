@@ -2672,6 +2672,8 @@ describe('dispatchDeepchatRoute', () => {
         id: 'm2',
         agent_id: 'deepchat',
         user_scope: null,
+        scope_type: 'agent',
+        scope_id: null,
         kind: 'semantic',
         category: 'project_fact',
         content: 'archived memory',
@@ -2700,6 +2702,8 @@ describe('dispatchDeepchatRoute', () => {
         id: 'm1',
         agent_id: 'deepchat',
         user_scope: null,
+        scope_type: 'agent',
+        scope_id: null,
         kind: 'semantic',
         category: null,
         content: 'active memory',
@@ -2746,8 +2750,18 @@ describe('dispatchDeepchatRoute', () => {
     expect(getByIds).toHaveBeenCalledWith('deepchat', ['m2', 'm1'])
     expect(result).toEqual({
       memories: [
-        expect.objectContaining({ id: 'm2', status: 'archived' }),
-        expect.objectContaining({ id: 'm1', status: 'embedded' })
+        expect.objectContaining({
+          id: 'm2',
+          scopeType: 'agent',
+          scopeId: null,
+          status: 'archived'
+        }),
+        expect.objectContaining({
+          id: 'm1',
+          scopeType: 'agent',
+          scopeId: null,
+          status: 'embedded'
+        })
       ]
     })
   })
@@ -2878,6 +2892,8 @@ describe('dispatchDeepchatRoute', () => {
           id: 'm1',
           agent_id: 'deepchat',
           user_scope: null,
+          scope_type: 'agent',
+          scope_id: null,
           kind: 'semantic',
           category: null,
           content: 'paged fact',
@@ -2916,7 +2932,9 @@ describe('dispatchDeepchatRoute', () => {
     )
 
     expect(pageMemories).toHaveBeenCalledWith('deepchat', null, 25)
-    expect(result.items.map((item) => item.id)).toEqual(['m1'])
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: 'm1', scopeType: 'agent', scopeId: null })
+    ])
     expect(decodeMemoryPageCursor(result.nextCursor!)).toEqual({
       v: 1,
       createdAt: 1000,
