@@ -17,6 +17,14 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`)
 }
 
+async function sendFragmented(message) {
+  const serialized = `${JSON.stringify(message)}\n`
+  for (let offset = 0; offset < serialized.length; offset += 7) {
+    process.stdout.write(serialized.slice(offset, offset + 7))
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
 function engineStatus(strategy, backend) {
   return {
     coreVersion: 'fake-core',
@@ -70,6 +78,21 @@ function recognitionResult(text, engine) {
   }
 }
 
+function documentPage(index, text) {
+  return {
+    index,
+    width: 100,
+    height: 200,
+    lines: text ? [text] : [],
+    modelBundleId: expectedBundleId,
+    timingUs: {
+      total: 3,
+      decode: 1,
+      ocr: 2
+    }
+  }
+}
+
 let configured = null
 
 if (process.env.FAKE_OCR_START_COUNTER) {
@@ -78,7 +101,7 @@ if (process.env.FAKE_OCR_START_COUNTER) {
 
 send({
   type: 'hello',
-  protocolVersion: Number(process.env.FAKE_OCR_PROTOCOL_VERSION ?? 1),
+  protocolVersion: Number(process.env.FAKE_OCR_PROTOCOL_VERSION ?? 2),
   nodeVersion: process.env.FAKE_OCR_NODE_VERSION ?? 'v24.14.1',
   pid: process.pid
 })
@@ -107,7 +130,7 @@ lines.on('line', async (line) => {
     }
     if (behavior === 'hang') return
     if (behavior === 'cancellable') {
-      active.set(request.id, true)
+      active.set(request.id, { kind: 'image', cancelled: false, stopped: false })
       return
     }
 
@@ -116,8 +139,113 @@ lines.on('line', async (line) => {
     return
   }
 
+  if (request.type === 'recognize_document') {
+    if (behavior === 'document-crash-before-page') process.exit(18)
+    if (behavior === 'invalid-protocol') {
+      process.stdout.write('not-json\n')
+      return
+    }
+    if (behavior === 'hang') return
+
+    const text = await readFile(request.filePath, 'utf8')
+    const pages = text.split('\f')
+    const state = { kind: 'document', cancelled: false, stopped: false }
+    active.set(request.id, state)
+    let emittedPages = 0
+
+    if (behavior === 'document-resource-before-page') {
+      active.delete(request.id)
+      send({
+        type: 'error',
+        id: request.id,
+        error: {
+          code: 'resource_limit_exceeded',
+          message: 'fake document resource limit'
+        }
+      })
+      return
+    }
+
+    for (let index = 0; index < pages.length; index += 1) {
+      if (state.cancelled || state.stopped) break
+      const pageIndex = behavior === 'document-invalid-sequence' && index === 1 ? index + 1 : index
+      const page = documentPage(pageIndex, pages[index])
+      if (behavior === 'document-invalid-model') page.modelBundleId = 'unexpected-bundle'
+      const pageMessage = { type: 'document_page', id: request.id, page }
+      if (behavior === 'document-fragmented-page') await sendFragmented(pageMessage)
+      else send(pageMessage)
+      emittedPages += 1
+
+      if (behavior === 'document-crash-after-page') process.exit(19)
+      if (behavior === 'document-resource-after-page') {
+        active.delete(request.id)
+        send({
+          type: 'error',
+          id: request.id,
+          error: {
+            code: 'resource_limit_exceeded',
+            message: 'fake document resource limit'
+          }
+        })
+        return
+      }
+      if (behavior === 'document-error-after-page') {
+        active.delete(request.id)
+        send({
+          type: 'error',
+          id: request.id,
+          error: {
+            code: 'runtime_failure',
+            message: 'fake document failure'
+          }
+        })
+        return
+      }
+      if (behavior === 'document-hang-after-page') return
+      if (behavior !== 'document-stop-race') {
+        const delay = Number(process.env.FAKE_OCR_DOCUMENT_PAGE_DELAY_MS ?? 10)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+    }
+
+    active.delete(request.id)
+    send({
+      type: 'request_complete',
+      id: request.id,
+      emittedPages: behavior === 'document-invalid-completion' ? emittedPages + 1 : emittedPages
+    })
+    if (behavior === 'document-page-after-completion') {
+      send({
+        type: 'document_page',
+        id: request.id,
+        page: documentPage(emittedPages, 'late page')
+      })
+    }
+    return
+  }
+
+  if (request.type === 'document_stop') {
+    const target = active.get(request.targetId)
+    const stopped = target?.kind === 'document'
+    if (stopped) target.stopped = true
+    const response = {
+      type: 'result',
+      id: request.id,
+      data: behavior === 'document-invalid-stop-result' ? { stopped: 'invalid' } : { stopped }
+    }
+    if (behavior === 'document-page-after-completion') {
+      setTimeout(() => send(response), 30)
+    } else {
+      send(response)
+    }
+    return
+  }
+
   if (request.type === 'cancel') {
-    const cancelled = active.delete(request.targetId)
+    const target = active.get(request.targetId)
+    const cancelled = Boolean(target)
+    if (target) target.cancelled = true
+    active.delete(request.targetId)
     send({ type: 'result', id: request.id, data: { cancelled } })
     if (cancelled) {
       send({

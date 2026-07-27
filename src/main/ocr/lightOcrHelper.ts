@@ -1,18 +1,25 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
+import { once } from 'node:events'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import {
+  LIGHT_OCR_DOCUMENT_MAX_LINE_CHARACTERS,
+  LIGHT_OCR_DOCUMENT_MAX_LINES_PER_PAGE,
+  LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
   LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES,
   LIGHT_OCR_PROTOCOL_VERSION,
+  isLightOcrDocumentPage,
+  isLightOcrHelperRequest,
   type LightOcrBackendPreference,
+  type LightOcrDocumentOptions,
+  type LightOcrDocumentPage,
   type LightOcrEngineStatus,
   type LightOcrHelperRequest,
   type LightOcrRecognitionResult,
   type LightOcrRecognitionStrategy
 } from './lightOcrProtocol'
 
-const MAX_HELPER_INPUT_BYTES = 50 * 1024 * 1024
 const LIGHT_OCR_MODULE_NAME = '@arcships/light-ocr'
 
 interface UpstreamEngine {
@@ -57,6 +64,29 @@ interface UpstreamRecognitionResult {
   timingUs: LightOcrRecognitionResult['timingUs']
 }
 
+interface UpstreamDocumentPage {
+  index: number
+  width: number
+  height: number
+  lines: ReadonlyArray<{
+    text: string
+  }>
+  timingUs: {
+    total: number
+    decode: number
+    ocr: number
+  }
+  modelBundleId?: string
+}
+
+interface UpstreamDocumentEngine {
+  recognizeDocument(
+    source: string,
+    options: LightOcrDocumentOptions & { signal: AbortSignal }
+  ): AsyncGenerator<UpstreamDocumentPage>
+  close(): Promise<void>
+}
+
 type CreateEngine = (options: {
   bundlePath: string
   queueCapacity: number
@@ -70,11 +100,14 @@ type CreateEngine = (options: {
   }
 }) => Promise<UpstreamEngine>
 
+type CreateDocumentEngine = (options: { engine: UpstreamEngine }) => Promise<UpstreamDocumentEngine>
+
 export interface LightOcrHelperOptions {
   bundlePath: string
   expectedBundleId: string
   tempRoot: string
   createEngine?: CreateEngine
+  createDocumentEngine?: CreateDocumentEngine
   stdin?: NodeJS.ReadableStream
   stdout?: NodeJS.WritableStream
   stderr?: NodeJS.WritableStream
@@ -92,6 +125,18 @@ interface ConfiguredEngine {
   engine: UpstreamEngine
   status: LightOcrEngineStatus
 }
+
+interface ActiveRecognition {
+  controller: AbortController
+  kind: 'image' | 'document'
+  stopRequested: boolean
+  cancelRequested: boolean
+}
+
+type QueuedHelperRequest = Exclude<
+  LightOcrHelperRequest,
+  { type: 'cancel' } | { type: 'document_stop' }
+>
 
 export function parseLightOcrHelperArguments(argv: string[]): LightOcrHelperArguments {
   const values = new Map<string, string>()
@@ -133,7 +178,7 @@ export async function resolvePrivateInputPath(
   if (!inputStat.isFile()) {
     throw helperError('invalid_input_path', 'OCR input must be a regular file')
   }
-  if (inputStat.size > MAX_HELPER_INPUT_BYTES) {
+  if (inputStat.size > LIGHT_OCR_HELPER_MAX_INPUT_BYTES) {
     throw helperError('resource_limit_exceeded', 'OCR input exceeds the helper byte limit')
   }
   return resolvedInput
@@ -145,6 +190,19 @@ async function loadCreateEngine(): Promise<CreateEngine> {
     throw helperError('package_load_failed', 'Light OCR facade does not export createEngine')
   }
   return lightOcr.createEngine
+}
+
+async function loadCreateDocumentEngine(): Promise<CreateDocumentEngine> {
+  const lightOcr = (await import(LIGHT_OCR_MODULE_NAME)) as {
+    createDocumentEngine?: CreateDocumentEngine
+  }
+  if (typeof lightOcr.createDocumentEngine !== 'function') {
+    throw helperError(
+      'package_load_failed',
+      'Light OCR facade does not export createDocumentEngine'
+    )
+  }
+  return lightOcr.createDocumentEngine
 }
 
 export async function validateConfiguredPdfiumModule(tempRoot: string): Promise<void> {
@@ -192,7 +250,7 @@ export class LightOcrHelperServer {
   private readonly stdin: NodeJS.ReadableStream
   private readonly stdout: NodeJS.WritableStream
   private readonly stderr: NodeJS.WritableStream
-  private readonly activeRecognitions = new Map<string, AbortController>()
+  private readonly activeRecognitions = new Map<string, ActiveRecognition>()
   private configured: ConfiguredEngine | null = null
   private requestChain: Promise<void> = Promise.resolve()
   private pendingInput = Buffer.alloc(0)
@@ -221,7 +279,7 @@ export class LightOcrHelperServer {
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return
     this.shuttingDown = true
-    for (const controller of this.activeRecognitions.values()) controller.abort()
+    for (const active of this.activeRecognitions.values()) active.controller.abort()
     await this.requestChain.catch(() => undefined)
     await this.closeEngine()
   }
@@ -260,7 +318,7 @@ export class LightOcrHelperServer {
     let request: LightOcrHelperRequest
     try {
       const parsed = JSON.parse(line) as unknown
-      if (!isHelperRequest(parsed)) {
+      if (!isLightOcrHelperRequest(parsed)) {
         throw new Error('Invalid Light OCR helper request shape')
       }
       request = parsed
@@ -273,6 +331,10 @@ export class LightOcrHelperServer {
       this.handleCancel(request)
       return
     }
+    if (request.type === 'document_stop') {
+      this.handleDocumentStop(request)
+      return
+    }
 
     this.requestChain = this.requestChain
       .then(() => this.handleRequest(request))
@@ -281,7 +343,7 @@ export class LightOcrHelperServer {
       })
   }
 
-  private async handleRequest(request: Exclude<LightOcrHelperRequest, { type: 'cancel' }>) {
+  private async handleRequest(request: QueuedHelperRequest) {
     if (this.shuttingDown && request.type !== 'shutdown') {
       this.sendError(request.id, helperError('environment_closing', 'OCR helper is shutting down'))
       return
@@ -294,6 +356,9 @@ export class LightOcrHelperServer {
           return
         case 'recognize':
           this.sendResult(request.id, await this.recognize(request.id, request.filePath))
+          return
+        case 'recognize_document':
+          await this.recognizeDocument(request)
           return
         case 'shutdown':
           this.shuttingDown = true
@@ -324,7 +389,7 @@ export class LightOcrHelperServer {
     const engine = await createEngine({
       bundlePath: this.options.bundlePath,
       queueCapacity: 1,
-      maxPendingInputBytes: MAX_HELPER_INPUT_BYTES,
+      maxPendingInputBytes: LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
       detection:
         strategy === 'bounded-960' ? { strategy: 'bounded', maxSide: 960 } : { strategy: 'tiled' },
       execution: {
@@ -384,11 +449,16 @@ export class LightOcrHelperServer {
       throw helperError('input_read_failed', 'Unable to read OCR input')
     }
 
-    const controller = new AbortController()
-    this.activeRecognitions.set(requestId, controller)
+    const active: ActiveRecognition = {
+      controller: new AbortController(),
+      kind: 'image',
+      stopRequested: false,
+      cancelRequested: false
+    }
+    this.activeRecognitions.set(requestId, active)
     try {
       const result = await this.configured.engine.recognizeEncoded(input, {
-        signal: controller.signal,
+        signal: active.controller.signal,
         includeDiagnostics: false
       })
       return toRecognitionResult(result, this.configured.status)
@@ -397,10 +467,106 @@ export class LightOcrHelperServer {
     }
   }
 
+  private async recognizeDocument(
+    request: Extract<LightOcrHelperRequest, { type: 'recognize_document' }>
+  ): Promise<void> {
+    const configured = this.configured
+    if (!configured || this.enginePoisoned) {
+      throw helperError('invalid_engine', 'OCR helper must be configured before recognition')
+    }
+    if (configured.backend !== request.backend || configured.strategy !== request.strategy) {
+      throw helperError(
+        'invalid_engine',
+        'Document recognition does not match the configured OCR engine'
+      )
+    }
+
+    let inputPath: string
+    try {
+      inputPath = await resolvePrivateInputPath(this.options.tempRoot, request.filePath)
+    } catch (error) {
+      if (isHelperError(error)) throw error
+      throw helperError('invalid_input_path', 'Unable to validate OCR input')
+    }
+
+    const active: ActiveRecognition = {
+      controller: new AbortController(),
+      kind: 'document',
+      stopRequested: false,
+      cancelRequested: false
+    }
+    this.activeRecognitions.set(request.id, active)
+    let documentEngine: UpstreamDocumentEngine | null = null
+    let emittedPages = 0
+    let terminalError: unknown
+    let hasTerminalError = false
+    try {
+      const createDocumentEngine =
+        this.options.createDocumentEngine ?? (await loadCreateDocumentEngine())
+      documentEngine = await createDocumentEngine({ engine: configured.engine })
+      try {
+        for await (const upstreamPage of documentEngine.recognizeDocument(inputPath, {
+          ...request.options,
+          signal: active.controller.signal
+        })) {
+          if (active.cancelRequested) {
+            throw new DOMException('The operation was aborted', 'AbortError')
+          }
+          if (active.stopRequested) break
+          const page = toDocumentPage(upstreamPage, configured.status)
+          await this.sendDocumentPage(request.id, page)
+          emittedPages += 1
+        }
+      } catch (error) {
+        if (!active.stopRequested || active.cancelRequested || !isAbortError(error)) throw error
+      }
+    } catch (error) {
+      terminalError = error
+      hasTerminalError = true
+    } finally {
+      this.activeRecognitions.delete(request.id)
+      if (documentEngine) {
+        try {
+          await documentEngine.close()
+        } catch (error) {
+          if (!hasTerminalError) {
+            terminalError = helperError(
+              'document_engine_close_failed',
+              `Unable to close the OCR document engine: ${safeMessage(error)}`
+            )
+            hasTerminalError = true
+          } else {
+            this.stderr.write(
+              `Light OCR document engine cleanup failed after recognition: ${safeMessage(error)}\n`
+            )
+          }
+        }
+      }
+    }
+
+    if (hasTerminalError) throw terminalError
+    this.send({ type: 'request_complete', id: request.id, emittedPages })
+  }
+
   private handleCancel(request: Extract<LightOcrHelperRequest, { type: 'cancel' }>): void {
-    const controller = this.activeRecognitions.get(request.targetId)
-    controller?.abort()
-    this.sendResult(request.id, { cancelled: Boolean(controller) })
+    const active = this.activeRecognitions.get(request.targetId)
+    if (active) {
+      active.cancelRequested = true
+      active.controller.abort()
+    }
+    this.sendResult(request.id, { cancelled: Boolean(active) })
+  }
+
+  private handleDocumentStop(
+    request: Extract<LightOcrHelperRequest, { type: 'document_stop' }>
+  ): void {
+    const active = this.activeRecognitions.get(request.targetId)
+    const stopped = Boolean(active?.kind === 'document' && !active.cancelRequested)
+    if (active && stopped) {
+      active.stopRequested = true
+      active.controller.abort()
+    }
+    this.sendResult(request.id, { stopped })
   }
 
   private async closeEngine(suppressErrors = true): Promise<void> {
@@ -431,6 +597,19 @@ export class LightOcrHelperServer {
     this.send({ type: 'error', id, error: normalized })
   }
 
+  private async sendDocumentPage(id: string, page: LightOcrDocumentPage): Promise<void> {
+    const serialized = JSON.stringify({ type: 'document_page', id, page })
+    if (Buffer.byteLength(serialized) > LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES) {
+      throw helperError(
+        'resource_limit_exceeded',
+        `OCR output for document page ${page.index + 1} exceeds the protocol limit`
+      )
+    }
+    if (!this.stdout.write(`${serialized}\n`)) {
+      await once(this.stdout, 'drain')
+    }
+  }
+
   private send(message: unknown): void {
     this.stdout.write(`${JSON.stringify(message)}\n`)
   }
@@ -438,7 +617,7 @@ export class LightOcrHelperServer {
   private fatalProtocolError(message: string): void {
     this.stderr.write(`${message}\n`)
     this.shuttingDown = true
-    for (const controller of this.activeRecognitions.values()) controller.abort()
+    for (const active of this.activeRecognitions.values()) active.controller.abort()
     this.stdin.pause()
     void this.closeEngine().finally(() => {
       process.exit(2)
@@ -501,25 +680,50 @@ function toRecognitionResult(
   }
 }
 
-function isHelperRequest(value: unknown): value is LightOcrHelperRequest {
-  if (!value || typeof value !== 'object') return false
-  const request = value as Record<string, unknown>
-  if (typeof request.id !== 'string' || request.id.length === 0) return false
-  switch (request.type) {
-    case 'configure':
-      return (
-        (request.backend === 'auto' || request.backend === 'cpu') &&
-        (request.strategy === 'bounded-960' || request.strategy === 'tiled-v1')
-      )
-    case 'recognize':
-      return typeof request.filePath === 'string' && request.filePath.length > 0
-    case 'cancel':
-      return typeof request.targetId === 'string' && request.targetId.length > 0
-    case 'shutdown':
-      return true
-    default:
-      return false
+function toDocumentPage(value: unknown, engine: LightOcrEngineStatus): LightOcrDocumentPage {
+  if (!value || typeof value !== 'object') {
+    throw helperError('invalid_result', 'Document OCR returned an invalid page')
   }
+  const page = value as UpstreamDocumentPage
+  if (!Array.isArray(page.lines)) {
+    throw helperError('invalid_result', 'Document OCR returned invalid page lines')
+  }
+  const pageLabel = Number.isSafeInteger(page.index) ? String(page.index + 1) : 'unknown'
+  if (page.lines.length > LIGHT_OCR_DOCUMENT_MAX_LINES_PER_PAGE) {
+    throw helperError(
+      'resource_limit_exceeded',
+      `OCR output for document page ${pageLabel} has too many lines`
+    )
+  }
+  if (
+    page.lines.some((line) => !line || typeof line !== 'object' || typeof line.text !== 'string')
+  ) {
+    throw helperError('invalid_result', 'Document OCR returned invalid page lines')
+  }
+  if (page.lines.some((line) => line.text.length > LIGHT_OCR_DOCUMENT_MAX_LINE_CHARACTERS)) {
+    throw helperError(
+      'resource_limit_exceeded',
+      `OCR output for document page ${pageLabel} has an oversized line`
+    )
+  }
+
+  const modelBundleId = page.modelBundleId ?? engine.modelBundleId
+  if (modelBundleId !== engine.modelBundleId) {
+    throw helperError('invalid_result', 'Document OCR returned an unexpected model identity')
+  }
+
+  const result: LightOcrDocumentPage = {
+    index: page.index,
+    width: page.width,
+    height: page.height,
+    lines: page.lines.map((line) => line.text),
+    modelBundleId,
+    timingUs: { ...page.timingUs }
+  }
+  if (!isLightOcrDocumentPage(result)) {
+    throw helperError('invalid_result', 'Document OCR returned an invalid page')
+  }
+  return result
 }
 
 function helperError(
@@ -532,6 +736,10 @@ function helperError(
 
 function isHelperError(error: unknown): error is Error & { code: string; detail?: string } {
   return error instanceof Error && typeof (error as { code?: unknown }).code === 'string'
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }
 
 function normalizeHelperError(error: unknown): { code: string; message: string; detail?: string } {

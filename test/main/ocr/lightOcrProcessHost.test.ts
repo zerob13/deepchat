@@ -15,11 +15,25 @@ import {
   resolveBundledNodeExecutable,
   type LightOcrProcessHostOptions
 } from '../../../src/main/ocr/lightOcrProcessHost'
+import {
+  LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS,
+  LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+  type LightOcrDocumentOptions
+} from '../../../src/main/ocr/lightOcrProtocol'
 
 const fixturePath = fileURLToPath(
   new URL('../../fixtures/light-ocr/fake-helper.mjs', import.meta.url)
 )
 const bundleId = 'ppocrv6-small-native-20260719.1'
+const documentOptions: LightOcrDocumentOptions = {
+  dpi: 150,
+  pageRange: { start: 1, end: 100 },
+  maxPages: 100,
+  maxFileBytes: LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+  maxPagePixels: LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  maxTotalPixels: LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS
+}
 
 describe('LightOcrProcessHost', () => {
   let tempDir: string
@@ -47,6 +61,8 @@ describe('LightOcrProcessHost', () => {
       tempBaseDir: tempDir,
       initializationTimeoutMs: 2_000,
       recognitionTimeoutMs: 2_000,
+      documentIdleTimeoutMs: 2_000,
+      documentTotalTimeoutMs: 5_000,
       idleTimeoutMs: 10_000,
       cancelGraceMs: 100,
       shutdownGraceMs: 100,
@@ -256,6 +272,356 @@ describe('LightOcrProcessHost', () => {
       recognition: { actualProviderChain: ['cpu'], precision: 'fp32' }
     })
     expect(result.engine).toEqual(prepared)
+  })
+
+  it('streams validated document pages in order and reports natural completion', async () => {
+    const host = createHost()
+    const pages: string[] = []
+
+    const outcome = await host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond\fthird'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'continue'
+      }
+    })
+
+    expect(pages).toEqual(['first', 'second', 'third'])
+    expect(outcome).toEqual({
+      artifactTermination: 'request_complete',
+      emittedPages: 3,
+      generationOutputLimitReached: false
+    })
+  })
+
+  it('frames document messages split across arbitrary stdout chunks', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-fragmented-page' }
+    })
+    const pages: string[] = []
+
+    const outcome = await host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'continue'
+      }
+    })
+
+    expect(pages).toEqual(['first', 'second'])
+    expect(outcome.emittedPages).toBe(2)
+  })
+
+  it('stops document generation after the page consumer reaches its output limit', async () => {
+    const host = createHost()
+    const pages: string[] = []
+
+    const outcome = await host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond\fthird'),
+      backend: 'auto',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'output_limit_reached'
+      }
+    })
+
+    expect(pages).toEqual(['first'])
+    expect(outcome).toEqual({
+      artifactTermination: 'stopped_by_output_limit',
+      emittedPages: 1,
+      generationOutputLimitReached: true
+    })
+  })
+
+  it('keeps stream completion separate from a raced output-limit stop', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-stop-race' }
+    })
+    const pages: string[] = []
+
+    const outcome = await host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond\fthird'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'output_limit_reached'
+      }
+    })
+
+    expect(pages).toEqual(['first'])
+    expect(outcome).toEqual({
+      artifactTermination: 'request_complete',
+      emittedPages: 3,
+      generationOutputLimitReached: true
+    })
+  })
+
+  it('returns a deterministic resource-limited prefix only after a validated page', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-after-page' }
+    })
+    const pages: string[] = []
+
+    const outcome = await host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'continue'
+      }
+    })
+
+    expect(pages).toEqual(['first'])
+    expect(outcome).toMatchObject({
+      artifactTermination: 'resource_limited',
+      emittedPages: 1,
+      generationOutputLimitReached: false,
+      resourceLimit: { code: 'resource_limit_exceeded' }
+    })
+  })
+
+  it('records output-limit and resource-limit facts independently', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-after-page' }
+    })
+
+    const outcome = await host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: () => 'output_limit_reached'
+    })
+
+    expect(outcome).toMatchObject({
+      artifactTermination: 'resource_limited',
+      emittedPages: 1,
+      generationOutputLimitReached: true
+    })
+  })
+
+  it('rejects a resource limit before the helper emits any document page', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-before-page' }
+    })
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'continue'
+      })
+    ).rejects.toMatchObject({
+      code: 'helper_error',
+      helperCode: 'resource_limit_exceeded'
+    })
+  })
+
+  it('rejects non-resource helper errors even after document pages were emitted', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-error-after-page' }
+    })
+    const pages: string[] = []
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'helper_error', helperCode: 'runtime_failure' })
+    expect(pages).toEqual(['first'])
+  })
+
+  it.each(['document-invalid-sequence', 'document-invalid-completion', 'document-invalid-model'])(
+    'rejects invalid document protocol behavior: %s',
+    async (behavior) => {
+      const host = createHost({ testEnvironment: { FAKE_OCR_BEHAVIOR: behavior } })
+
+      await expect(
+        host.recognizeDocument({
+          encoded: Buffer.from('first\fsecond'),
+          backend: 'cpu',
+          strategy: 'bounded-960',
+          options: documentOptions,
+          onPage: () => 'continue'
+        })
+      ).rejects.toMatchObject({ code: 'invalid_protocol' })
+    }
+  )
+
+  it('rejects document pages that exceed cumulative request pixel accounting', async () => {
+    const host = createHost()
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: { ...documentOptions, maxTotalPixels: 30_000 },
+        onPage: () => 'continue'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+  })
+
+  it('uses an idle timeout that resets after each valid document page', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-hang-after-page' },
+      documentIdleTimeoutMs: 50
+    })
+    const pages: string[] = []
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'timeout' })
+    expect(pages).toEqual(['first'])
+  })
+
+  it('enforces a total document timeout independently of page activity', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_DOCUMENT_PAGE_DELAY_MS: '30' },
+      documentIdleTimeoutMs: 100,
+      documentTotalTimeoutMs: 70
+    })
+    const pages: string[] = []
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('one\ftwo\fthree\ffour\ffive'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'timeout' })
+    expect(pages.length).toBeGreaterThan(0)
+    expect(pages.length).toBeLessThan(5)
+  })
+
+  it('rejects a malformed output-stop acknowledgement', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-invalid-stop-result' }
+    })
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'output_limit_reached'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+  })
+
+  it('rejects document output emitted after a completion terminal', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-page-after-completion' }
+    })
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'output_limit_reached'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+  })
+
+  it('cancels document recognition as control flow and discards the stream owner', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-hang-after-page' }
+    })
+    const controller = new AbortController()
+
+    const recognition = host.recognizeDocument({
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      signal: controller.signal,
+      onPage: () => {
+        controller.abort()
+        return 'continue'
+      }
+    })
+
+    await expect(recognition).rejects.toMatchObject({ code: 'cancelled' })
+    expect(host.getStatus().pendingInputBytes).toBe(0)
+  })
+
+  it('does not replay a document stream after the helper crashes with emitted pages', async () => {
+    const counter = path.join(tempDir, 'document-start-counter')
+    const host = createHost({
+      testEnvironment: {
+        FAKE_OCR_BEHAVIOR: 'document-crash-after-page',
+        FAKE_OCR_START_COUNTER: counter
+      }
+    })
+    const pages: string[] = []
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'unexpected_exit' })
+    expect(pages).toEqual(['first'])
+    expect((await readFile(counter, 'utf8')).trim().split('\n')).toHaveLength(1)
+  })
+
+  it('rejects invalid document resource options before starting the helper', async () => {
+    const host = createHost()
+
+    await expect(
+      host.recognizeDocument({
+        encoded: Buffer.from('first'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: { ...documentOptions, maxPages: 101 },
+        onPage: () => 'continue'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+    expect(host.getStatus().pid).toBeNull()
   })
 
   it('restarts once after an abnormal helper exit', async () => {

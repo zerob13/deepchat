@@ -23,12 +23,12 @@
 
 ## Streaming Document OCR
 
-- [ ] Add protocol-v2 document request/page/completion/stop contracts.
-- [ ] Add helper document-engine reuse, structured errors, PDF capability validation, and separate
+- [x] Add protocol-v2 document request/page/completion/stop contracts.
+- [x] Add helper document-engine reuse, structured errors, PDF capability validation, and separate
   output-stop/user-cancel behavior.
-- [ ] Add host streaming pending state with idle and total timeouts.
-- [ ] Add queue accounting, cancellation cleanup, monotonic page validation, and crash behavior.
-- [ ] Add protocol/helper/host tests for every legal and illegal terminal combination.
+- [x] Add host streaming pending state with idle and total timeouts.
+- [x] Add queue accounting, cancellation cleanup, monotonic page validation, and crash behavior.
+- [x] Add protocol/helper/host tests for every legal and illegal terminal combination.
 
 ## Document Artifacts
 

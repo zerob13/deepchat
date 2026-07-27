@@ -11,12 +11,17 @@ import {
   type LightOcrNativeRuntimeOverride
 } from './lightOcrNativePayload'
 import {
+  LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
   LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES,
   LIGHT_OCR_PROTOCOL_VERSION,
+  isLightOcrDocumentOptions,
+  isLightOcrDocumentPage,
   isLightOcrEngineStatus,
   isLightOcrHelperMessage,
   isLightOcrRecognitionResult,
   type LightOcrBackendPreference,
+  type LightOcrDocumentOptions,
+  type LightOcrDocumentPage,
   type LightOcrEngineStatus,
   type LightOcrHelperMessage,
   type LightOcrHelperRequest,
@@ -26,10 +31,12 @@ import {
 
 const DEFAULT_INITIALIZATION_TIMEOUT_MS = 60_000
 const DEFAULT_RECOGNITION_TIMEOUT_MS = 120_000
+const DEFAULT_DOCUMENT_IDLE_TIMEOUT_MS = 120_000
+const DEFAULT_DOCUMENT_TOTAL_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000
 const DEFAULT_CANCEL_GRACE_MS = 1_000
 const DEFAULT_SHUTDOWN_GRACE_MS = 2_000
-const DEFAULT_MAX_INPUT_BYTES = 50 * 1024 * 1024
+const DEFAULT_MAX_INPUT_BYTES = LIGHT_OCR_HELPER_MAX_INPUT_BYTES
 const DEFAULT_MAX_PENDING_INPUT_BYTES = 120 * 1024 * 1024
 const DEFAULT_MAX_PENDING_REQUESTS = 8
 const MAX_STDERR_BYTES = 16 * 1024
@@ -52,7 +59,9 @@ const FATAL_HELPER_ERROR_CODES = new Set([
   'bundle_io_failed',
   'bundle_identity_mismatch',
   'engine_close_failed',
+  'document_engine_close_failed',
   'invalid_model_bundle',
+  'invalid_result',
   'model_integrity_failed',
   'package_load_failed',
   'runtime_initialization_failed',
@@ -101,6 +110,8 @@ export interface LightOcrProcessHostOptions {
   expectedNodeVersion?: string
   initializationTimeoutMs?: number
   recognitionTimeoutMs?: number
+  documentIdleTimeoutMs?: number
+  documentTotalTimeoutMs?: number
   idleTimeoutMs?: number
   cancelGraceMs?: number
   shutdownGraceMs?: number
@@ -130,10 +141,37 @@ export interface LightOcrRecognizeInput {
 
 export type LightOcrPrepareInput = Omit<LightOcrRecognizeInput, 'encoded'>
 
-type QueueResult = LightOcrEngineStatus | LightOcrRecognitionResult
+export type LightOcrDocumentPageAction = 'continue' | 'output_limit_reached'
+
+export interface LightOcrRecognizeDocumentInput extends LightOcrPrepareInput {
+  encoded: Uint8Array
+  options: LightOcrDocumentOptions
+  onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
+}
+
+export type LightOcrDocumentArtifactTermination =
+  | 'request_complete'
+  | 'stopped_by_output_limit'
+  | 'resource_limited'
+
+export interface LightOcrDocumentRecognitionOutcome {
+  artifactTermination: LightOcrDocumentArtifactTermination
+  emittedPages: number
+  generationOutputLimitReached: boolean
+  resourceLimit?: {
+    code: 'resource_limit_exceeded'
+    message: string
+    detail?: string
+  }
+}
+
+type QueueResult =
+  | LightOcrEngineStatus
+  | LightOcrRecognitionResult
+  | LightOcrDocumentRecognitionOutcome
 
 interface QueueItem {
-  operation: 'configure' | 'recognize'
+  operation: 'configure' | 'recognize' | 'recognize_document'
   encoded: Buffer | null
   backend: LightOcrBackendPreference
   strategy: LightOcrRecognitionStrategy
@@ -143,6 +181,8 @@ interface QueueItem {
   resolve: (value: QueueResult) => void
   reject: (error: unknown) => void
   abortListener?: () => void
+  documentOptions?: LightOcrDocumentOptions
+  onDocumentPage?: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
 }
 
 interface PendingResponse {
@@ -157,6 +197,27 @@ interface HandshakeWaiter {
   timeout: NodeJS.Timeout
 }
 
+interface PendingDocumentResponse {
+  request: Extract<LightOcrHelperRequest, { type: 'recognize_document' }>
+  onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
+  resolve: (value: LightOcrDocumentRecognitionOutcome) => void
+  reject: (error: unknown) => void
+  idleTimeout: NodeJS.Timeout
+  totalTimeout: NodeJS.Timeout
+  expectedNextPageIndex: number
+  receivedPages: number
+  receivedPixels: number
+  generationOutputLimitReached: boolean
+  stopRequestId: string | null
+  stopAcknowledged: boolean | null
+  completion: { emittedPages: number } | null
+}
+
+interface PendingDocumentStop {
+  documentRequestId: string
+  timeout: NodeJS.Timeout
+}
+
 export class LightOcrProcessHostError extends Error {
   constructor(
     readonly code:
@@ -165,6 +226,7 @@ export class LightOcrProcessHostError extends Error {
       | 'helper_error'
       | 'input_too_large'
       | 'invalid_protocol'
+      | 'page_handler_failed'
       | 'queue_full'
       | 'runtime_missing'
       | 'timeout'
@@ -186,6 +248,8 @@ export class LightOcrProcessHost {
   private readonly expectedNodeVersion: string
   private readonly initializationTimeoutMs: number
   private readonly recognitionTimeoutMs: number
+  private readonly documentIdleTimeoutMs: number
+  private readonly documentTotalTimeoutMs: number
   private readonly idleTimeoutMs: number
   private readonly cancelGraceMs: number
   private readonly shutdownGraceMs: number
@@ -195,6 +259,8 @@ export class LightOcrProcessHost {
   private readonly spawnProcess: SpawnProcess
   private readonly queue: QueueItem[] = []
   private readonly pendingResponses = new Map<string, PendingResponse>()
+  private readonly pendingDocumentResponses = new Map<string, PendingDocumentResponse>()
+  private readonly pendingDocumentStops = new Map<string, PendingDocumentStop>()
   private readonly ignoredResponseIds = new Set<string>()
   private readonly terminatingChildren = new Set<Promise<void>>()
   private child: ChildProcessWithoutNullStreams | null = null
@@ -208,7 +274,8 @@ export class LightOcrProcessHost {
   private configuredKey: string | null = null
   private engineStatus: LightOcrEngineStatus | null = null
   private nodeVersion: string | null = null
-  private stdoutBuffer = Buffer.alloc(0)
+  private stdoutSegments: Buffer[] = []
+  private stdoutBufferedBytes = 0
   private stderrTail = Buffer.alloc(0)
   private stderrBytesCaptured = 0
   private pendingInputBytes = 0
@@ -223,6 +290,9 @@ export class LightOcrProcessHost {
     this.initializationTimeoutMs =
       options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS
     this.recognitionTimeoutMs = options.recognitionTimeoutMs ?? DEFAULT_RECOGNITION_TIMEOUT_MS
+    this.documentIdleTimeoutMs = options.documentIdleTimeoutMs ?? DEFAULT_DOCUMENT_IDLE_TIMEOUT_MS
+    this.documentTotalTimeoutMs =
+      options.documentTotalTimeoutMs ?? DEFAULT_DOCUMENT_TOTAL_TIMEOUT_MS
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.cancelGraceMs = options.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS
     this.shutdownGraceMs = options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS
@@ -257,10 +327,52 @@ export class LightOcrProcessHost {
     })
   }
 
+  recognizeDocument(
+    input: LightOcrRecognizeDocumentInput
+  ): Promise<LightOcrDocumentRecognitionOutcome> {
+    if (
+      !isLightOcrDocumentOptions(input.options) ||
+      input.options.maxFileBytes > this.maxInputBytes ||
+      typeof input.onPage !== 'function'
+    ) {
+      return Promise.reject(
+        new LightOcrProcessHostError(
+          'invalid_protocol',
+          'OCR document request has invalid resource options'
+        )
+      )
+    }
+    if (
+      input.encoded.byteLength > this.maxInputBytes ||
+      input.encoded.byteLength > input.options.maxFileBytes
+    ) {
+      return Promise.reject(
+        new LightOcrProcessHostError(
+          'input_too_large',
+          'OCR document exceeds the effective file byte limit'
+        )
+      )
+    }
+
+    return this.enqueue('recognize_document', input.encoded, input, {
+      options: structuredClone(input.options),
+      onPage: input.onPage
+    }).then((result) => {
+      if (!isDocumentRecognitionOutcome(result)) {
+        throw this.failProtocol('OCR process queue returned an invalid document outcome')
+      }
+      return result
+    })
+  }
+
   private enqueue(
     operation: QueueItem['operation'],
     encoded: Uint8Array | null,
-    input: LightOcrPrepareInput
+    input: LightOcrPrepareInput,
+    document?: {
+      options: LightOcrDocumentOptions
+      onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
+    }
   ): Promise<QueueResult> {
     if (this.closed) {
       return Promise.reject(new LightOcrProcessHostError('closed', 'OCR process host is closed'))
@@ -290,7 +402,9 @@ export class LightOcrProcessHost {
         cancelled: false,
         settled: false,
         resolve,
-        reject
+        reject,
+        documentOptions: document?.options,
+        onDocumentPage: document?.onPage
       }
       if (input.signal) {
         item.abortListener = () => this.cancelQueueItem(item)
@@ -368,10 +482,18 @@ export class LightOcrProcessHost {
       this.activeItem = item
       try {
         if (item.cancelled || item.signal?.aborted) throw cancelledError()
-        const result =
-          item.operation === 'configure'
-            ? await this.configureQueueItem(item)
-            : await this.recognizeQueueItem(item)
+        let result: QueueResult
+        switch (item.operation) {
+          case 'configure':
+            result = await this.configureQueueItem(item)
+            break
+          case 'recognize':
+            result = await this.recognizeQueueItem(item)
+            break
+          case 'recognize_document':
+            result = await this.recognizeDocumentQueueItem(item)
+            break
+        }
         if (item.cancelled || item.signal?.aborted) throw cancelledError()
         this.settleQueueItem(item, 'resolve', result)
       } catch (error) {
@@ -430,6 +552,50 @@ export class LightOcrProcessHost {
     }
   }
 
+  private async recognizeDocumentQueueItem(
+    item: QueueItem
+  ): Promise<LightOcrDocumentRecognitionOutcome> {
+    if (!item.encoded || !item.documentOptions || !item.onDocumentPage) {
+      throw this.failProtocol('OCR document queue item is incomplete')
+    }
+    const inputPath = await this.materializeInput(item.encoded, '.pdf')
+    let observedPage = false
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          if (item.cancelled || item.signal?.aborted) throw cancelledError()
+          await this.ensureProcess()
+          if (item.cancelled || item.signal?.aborted) throw cancelledError()
+          await this.ensureConfigured(item.backend, item.strategy)
+          if (item.cancelled || item.signal?.aborted) throw cancelledError()
+
+          const outcome = await this.sendDocumentRequest(
+            {
+              type: 'recognize_document',
+              id: randomUUID(),
+              filePath: inputPath,
+              backend: item.backend,
+              strategy: item.strategy,
+              options: item.documentOptions
+            },
+            (page) => {
+              observedPage = true
+              return item.onDocumentPage!(page)
+            }
+          )
+          return outcome
+        } catch (error) {
+          if (item.cancelled || item.signal?.aborted) throw cancelledError()
+          if (isUnexpectedExit(error) && !observedPage && attempt === 0 && !this.closed) continue
+          throw error
+        }
+      }
+      throw new LightOcrProcessHostError('unexpected_exit', 'OCR helper did not recover')
+    } finally {
+      await rm(inputPath, { force: true })
+    }
+  }
+
   private async ensureProcess(): Promise<void> {
     if (this.stopping) await this.stopping
     if (this.terminatingChildren.size > 0) await Promise.all(this.terminatingChildren)
@@ -477,7 +643,8 @@ export class LightOcrProcessHost {
     )
 
     this.child = child
-    this.stdoutBuffer = Buffer.alloc(0)
+    this.stdoutSegments = []
+    this.stdoutBufferedBytes = 0
     this.stderrTail = Buffer.alloc(0)
     this.stderrBytesCaptured = 0
     this.configuredKey = null
@@ -533,6 +700,66 @@ export class LightOcrProcessHost {
     return structuredClone(result)
   }
 
+  private sendDocumentRequest(
+    request: Extract<LightOcrHelperRequest, { type: 'recognize_document' }>,
+    onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
+  ): Promise<LightOcrDocumentRecognitionOutcome> {
+    const child = this.child
+    if (!child) {
+      return Promise.reject(
+        new LightOcrProcessHostError('unexpected_exit', 'OCR helper is not running')
+      )
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeoutDocument = (kind: 'idle' | 'total') => {
+        if (!this.pendingDocumentResponses.has(request.id)) return
+        const error = new LightOcrProcessHostError(
+          'timeout',
+          `OCR helper document request exceeded its ${kind} timeout`
+        )
+        this.disposeProcess(error, true)
+      }
+      const pending: PendingDocumentResponse = {
+        request,
+        onPage,
+        resolve,
+        reject,
+        idleTimeout: setTimeout(() => timeoutDocument('idle'), this.documentIdleTimeoutMs),
+        totalTimeout: setTimeout(() => timeoutDocument('total'), this.documentTotalTimeoutMs),
+        expectedNextPageIndex: request.options.pageRange.start - 1,
+        receivedPages: 0,
+        receivedPixels: 0,
+        generationOutputLimitReached: false,
+        stopRequestId: null,
+        stopAcknowledged: null,
+        completion: null
+      }
+      this.pendingDocumentResponses.set(request.id, pending)
+      this.activeWireRequestId = request.id
+      this.activeWireRequestType = request.type
+
+      try {
+        child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
+          if (!error) return
+          this.disposeProcess(
+            new LightOcrProcessHostError('unexpected_exit', 'Unable to write to OCR helper', {
+              cause: error
+            }),
+            true
+          )
+        })
+      } catch (error) {
+        this.disposeProcess(
+          new LightOcrProcessHostError('unexpected_exit', 'Unable to write to OCR helper', {
+            cause: error
+          }),
+          true
+        )
+      }
+    })
+  }
+
   private sendRequest(request: LightOcrHelperRequest, timeoutMs: number): Promise<unknown> {
     const child = this.child
     if (!child) {
@@ -580,28 +807,32 @@ export class LightOcrProcessHost {
 
   private acceptStdout(chunk: Buffer, child: ChildProcessWithoutNullStreams): void {
     if (this.child !== child) return
-    this.stdoutBuffer = Buffer.concat([this.stdoutBuffer, chunk])
-    if (
-      this.stdoutBuffer.byteLength > LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES &&
-      !this.stdoutBuffer.includes(0x0a)
-    ) {
-      this.failProtocol('OCR helper response exceeded the protocol line limit')
-      return
-    }
-
-    let newlineIndex = this.stdoutBuffer.indexOf(0x0a)
-    while (newlineIndex >= 0) {
-      const line = this.stdoutBuffer.subarray(0, newlineIndex)
-      this.stdoutBuffer = this.stdoutBuffer.subarray(newlineIndex + 1)
-      if (line.byteLength > LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES) {
+    let offset = 0
+    while (offset < chunk.byteLength) {
+      const newlineIndex = chunk.indexOf(0x0a, offset)
+      const segmentEnd = newlineIndex >= 0 ? newlineIndex : chunk.byteLength
+      const segment = chunk.subarray(offset, segmentEnd)
+      if (segment.byteLength > 0) {
+        this.stdoutSegments.push(segment)
+        this.stdoutBufferedBytes += segment.byteLength
+      }
+      if (this.stdoutBufferedBytes > LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES) {
         this.failProtocol('OCR helper response exceeded the protocol line limit')
         return
       }
-      if (line.byteLength > 0) this.acceptMessageLine(line.toString('utf8'))
-      newlineIndex = this.stdoutBuffer.indexOf(0x0a)
-    }
-    if (this.stdoutBuffer.byteLength > LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES) {
-      this.failProtocol('OCR helper response exceeded the protocol line limit')
+
+      if (newlineIndex < 0) return
+      if (this.stdoutBufferedBytes > 0) {
+        const line =
+          this.stdoutSegments.length === 1
+            ? this.stdoutSegments[0]
+            : Buffer.concat(this.stdoutSegments, this.stdoutBufferedBytes)
+        this.stdoutSegments = []
+        this.stdoutBufferedBytes = 0
+        this.acceptMessageLine(line.toString('utf8'))
+        if (this.child !== child) return
+      }
+      offset = newlineIndex + 1
     }
   }
 
@@ -624,6 +855,27 @@ export class LightOcrProcessHost {
 
     if (message.type === 'hello') {
       this.acceptHandshake(message)
+      return
+    }
+
+    if (message.type === 'document_page') {
+      this.acceptDocumentPage(message)
+      return
+    }
+    if (message.type === 'request_complete') {
+      this.acceptDocumentCompletion(message)
+      return
+    }
+    if (this.pendingDocumentResponses.has(message.id)) {
+      if (message.type !== 'error') {
+        this.failProtocol('OCR helper emitted an invalid document terminal response')
+        return
+      }
+      this.acceptDocumentError(message)
+      return
+    }
+    if (this.pendingDocumentStops.has(message.id)) {
+      this.acceptDocumentStopResponse(message)
       return
     }
 
@@ -651,6 +903,240 @@ export class LightOcrProcessHost {
     })
     pending.reject(helperError)
     if (isFatalHelperError(message.error.code)) this.disposeProcess(helperError, true)
+  }
+
+  private acceptDocumentPage(
+    message: Extract<LightOcrHelperMessage, { type: 'document_page' }>
+  ): void {
+    const pending = this.pendingDocumentResponses.get(message.id)
+    if (!pending) {
+      this.failProtocol('OCR helper emitted a document page with an unknown id')
+      return
+    }
+    if (pending.completion) {
+      this.failProtocol('OCR helper emitted a document page after completion')
+      return
+    }
+    const { page } = message
+    const renderedPixels = page.width * page.height
+    if (
+      !isLightOcrDocumentPage(page) ||
+      page.index !== pending.expectedNextPageIndex ||
+      page.index > pending.request.options.pageRange.end - 1 ||
+      pending.receivedPages >= pending.request.options.maxPages ||
+      renderedPixels > pending.request.options.maxPagePixels ||
+      !Number.isSafeInteger(pending.receivedPixels + renderedPixels) ||
+      pending.receivedPixels + renderedPixels > pending.request.options.maxTotalPixels ||
+      page.modelBundleId !== this.options.expectedBundleId
+    ) {
+      this.failProtocol('OCR helper emitted an invalid document page sequence')
+      return
+    }
+
+    pending.expectedNextPageIndex += 1
+    pending.receivedPages += 1
+    pending.receivedPixels += renderedPixels
+    this.resetDocumentIdleTimeout(pending)
+
+    if (pending.generationOutputLimitReached) return
+
+    let action: LightOcrDocumentPageAction
+    try {
+      action = pending.onPage(page)
+    } catch (error) {
+      const failure = new LightOcrProcessHostError(
+        'page_handler_failed',
+        'OCR document page handler failed',
+        { cause: error }
+      )
+      this.settleDocumentResponse(pending, 'reject', failure)
+      this.disposeProcess(failure, true)
+      return
+    }
+    if (action !== 'continue' && action !== 'output_limit_reached') {
+      const failure = new LightOcrProcessHostError(
+        'page_handler_failed',
+        'OCR document page handler returned an invalid action'
+      )
+      this.settleDocumentResponse(pending, 'reject', failure)
+      this.disposeProcess(failure, true)
+      return
+    }
+    if (action === 'output_limit_reached') {
+      pending.generationOutputLimitReached = true
+      this.sendDocumentStop(pending)
+    }
+  }
+
+  private acceptDocumentCompletion(
+    message: Extract<LightOcrHelperMessage, { type: 'request_complete' }>
+  ): void {
+    const pending = this.pendingDocumentResponses.get(message.id)
+    if (!pending) {
+      this.failProtocol('OCR helper emitted document completion with an unknown id')
+      return
+    }
+    if (message.emittedPages !== pending.receivedPages || pending.completion) {
+      this.failProtocol('OCR helper emitted invalid document completion accounting')
+      return
+    }
+
+    pending.completion = { emittedPages: message.emittedPages }
+    this.clearDocumentResponseTimers(pending)
+    this.finishCompletedDocument(pending)
+  }
+
+  private acceptDocumentError(message: Extract<LightOcrHelperMessage, { type: 'error' }>): void {
+    const pending = this.pendingDocumentResponses.get(message.id)
+    if (!pending) {
+      this.failProtocol('OCR helper emitted a document error with an unknown id')
+      return
+    }
+    if (pending.completion) {
+      this.failProtocol('OCR helper emitted a document error after completion')
+      return
+    }
+    const error = new LightOcrProcessHostError('helper_error', message.error.message, {
+      helperCode: message.error.code,
+      detail: message.error.detail
+    })
+
+    if (message.error.code === 'resource_limit_exceeded' && pending.receivedPages > 0) {
+      this.settleDocumentResponse(pending, 'resolve', {
+        artifactTermination: 'resource_limited',
+        emittedPages: pending.receivedPages,
+        generationOutputLimitReached: pending.generationOutputLimitReached,
+        resourceLimit: {
+          code: 'resource_limit_exceeded',
+          message: message.error.message,
+          ...(message.error.detail ? { detail: message.error.detail } : {})
+        }
+      })
+      return
+    }
+
+    this.settleDocumentResponse(pending, 'reject', error)
+    if (isFatalHelperError(message.error.code)) this.disposeProcess(error, true)
+  }
+
+  private acceptDocumentStopResponse(
+    message: Extract<LightOcrHelperMessage, { type: 'result' | 'error' }>
+  ): void {
+    const stop = this.pendingDocumentStops.get(message.id)
+    if (!stop) {
+      this.failProtocol('OCR helper emitted a document-stop response with an unknown id')
+      return
+    }
+    this.pendingDocumentStops.delete(message.id)
+    clearTimeout(stop.timeout)
+
+    const pending = this.pendingDocumentResponses.get(stop.documentRequestId)
+    if (!pending) return
+    if (
+      pending.stopRequestId !== message.id ||
+      message.type !== 'result' ||
+      !isDocumentStopResult(message.data)
+    ) {
+      this.failProtocol('OCR helper emitted an invalid document-stop response')
+      return
+    }
+    pending.stopAcknowledged = message.data.stopped
+    this.finishCompletedDocument(pending)
+  }
+
+  private finishCompletedDocument(pending: PendingDocumentResponse): void {
+    if (!pending.completion) return
+    if (pending.stopRequestId && pending.stopAcknowledged === null) return
+
+    this.settleDocumentResponse(pending, 'resolve', {
+      artifactTermination:
+        pending.stopAcknowledged === true ? 'stopped_by_output_limit' : 'request_complete',
+      emittedPages: pending.completion.emittedPages,
+      generationOutputLimitReached: pending.generationOutputLimitReached
+    })
+  }
+
+  private sendDocumentStop(pending: PendingDocumentResponse): void {
+    const child = this.child
+    if (!child || pending.stopRequestId) return
+
+    const stopRequestId = randomUUID()
+    pending.stopRequestId = stopRequestId
+    const timeout = setTimeout(() => {
+      this.pendingDocumentStops.delete(stopRequestId)
+      if (!this.pendingDocumentResponses.has(pending.request.id)) return
+      this.disposeProcess(
+        new LightOcrProcessHostError('timeout', 'OCR helper document-stop request timed out'),
+        true
+      )
+    }, this.cancelGraceMs)
+    this.pendingDocumentStops.set(stopRequestId, {
+      documentRequestId: pending.request.id,
+      timeout
+    })
+
+    try {
+      child.stdin.write(
+        `${JSON.stringify({
+          type: 'document_stop',
+          id: stopRequestId,
+          targetId: pending.request.id
+        })}\n`,
+        (error) => {
+          if (!error || !this.pendingDocumentResponses.has(pending.request.id)) return
+          this.disposeProcess(
+            new LightOcrProcessHostError('unexpected_exit', 'Unable to stop OCR document output', {
+              cause: error
+            }),
+            true
+          )
+        }
+      )
+    } catch (error) {
+      if (!this.pendingDocumentResponses.has(pending.request.id)) return
+      this.disposeProcess(
+        new LightOcrProcessHostError('unexpected_exit', 'Unable to stop OCR document output', {
+          cause: error
+        }),
+        true
+      )
+    }
+  }
+
+  private resetDocumentIdleTimeout(pending: PendingDocumentResponse): void {
+    clearTimeout(pending.idleTimeout)
+    pending.idleTimeout = setTimeout(() => {
+      if (!this.pendingDocumentResponses.has(pending.request.id)) return
+      this.disposeProcess(
+        new LightOcrProcessHostError(
+          'timeout',
+          'OCR helper document request exceeded its idle timeout'
+        ),
+        true
+      )
+    }, this.documentIdleTimeoutMs)
+  }
+
+  private clearDocumentResponseTimers(pending: PendingDocumentResponse): void {
+    clearTimeout(pending.idleTimeout)
+    clearTimeout(pending.totalTimeout)
+  }
+
+  private settleDocumentResponse(
+    pending: PendingDocumentResponse,
+    action: 'resolve' | 'reject',
+    value: LightOcrDocumentRecognitionOutcome | unknown
+  ): void {
+    if (this.pendingDocumentResponses.get(pending.request.id) !== pending) return
+    this.pendingDocumentResponses.delete(pending.request.id)
+    this.clearDocumentResponseTimers(pending)
+    if (this.activeWireRequestId === pending.request.id) {
+      this.activeWireRequestId = null
+      this.activeWireRequestType = null
+      this.clearCancelFallback()
+    }
+    if (action === 'resolve') pending.resolve(value as LightOcrDocumentRecognitionOutcome)
+    else pending.reject(value)
   }
 
   private acceptHandshake(message: Extract<LightOcrHelperMessage, { type: 'hello' }>): void {
@@ -689,7 +1175,8 @@ export class LightOcrProcessHost {
     this.configuredKey = null
     this.engineStatus = null
     this.nodeVersion = null
-    this.stdoutBuffer = Buffer.alloc(0)
+    this.stdoutSegments = []
+    this.stdoutBufferedBytes = 0
     this.clearIdleTimer()
     this.clearCancelFallback()
 
@@ -704,6 +1191,13 @@ export class LightOcrProcessHost {
       pending.reject(error)
     }
     this.pendingResponses.clear()
+    for (const pending of this.pendingDocumentResponses.values()) {
+      this.clearDocumentResponseTimers(pending)
+      pending.reject(error)
+    }
+    this.pendingDocumentResponses.clear()
+    for (const stop of this.pendingDocumentStops.values()) clearTimeout(stop.timeout)
+    this.pendingDocumentStops.clear()
     this.ignoredResponseIds.clear()
     this.activeWireRequestId = null
     this.activeWireRequestType = null
@@ -723,7 +1217,12 @@ export class LightOcrProcessHost {
     }
     if (this.activeItem !== item) return
 
-    if (this.activeWireRequestType === 'recognize' && this.activeWireRequestId && this.child) {
+    if (
+      (this.activeWireRequestType === 'recognize' ||
+        this.activeWireRequestType === 'recognize_document') &&
+      this.activeWireRequestId &&
+      this.child
+    ) {
       const cancelId = randomUUID()
       this.ignoredResponseIds.add(cancelId)
       try {
@@ -762,9 +1261,9 @@ export class LightOcrProcessHost {
     else item.reject(value)
   }
 
-  private async materializeInput(encoded: Buffer): Promise<string> {
+  private async materializeInput(encoded: Buffer, extension = '.img'): Promise<string> {
     const tempRoot = await this.ensureTempRoot()
-    const inputPath = path.join(tempRoot, `${randomUUID()}.img`)
+    const inputPath = path.join(tempRoot, `${randomUUID()}${extension}`)
     const handle = await open(inputPath, 'wx', 0o600)
     let written = false
     try {
@@ -923,6 +1422,46 @@ function isUnexpectedExit(error: unknown): boolean {
 
 function isFatalHelperError(code: string): boolean {
   return FATAL_HELPER_ERROR_CODES.has(code)
+}
+
+function isDocumentStopResult(value: unknown): value is { stopped: boolean } {
+  return (
+    Boolean(value) &&
+    typeof value === 'object' &&
+    typeof (value as Record<string, unknown>).stopped === 'boolean'
+  )
+}
+
+function isDocumentRecognitionOutcome(value: unknown): value is LightOcrDocumentRecognitionOutcome {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  if (
+    (candidate.artifactTermination !== 'request_complete' &&
+      candidate.artifactTermination !== 'stopped_by_output_limit' &&
+      candidate.artifactTermination !== 'resource_limited') ||
+    typeof candidate.emittedPages !== 'number' ||
+    !Number.isSafeInteger(candidate.emittedPages) ||
+    candidate.emittedPages < 0 ||
+    typeof candidate.generationOutputLimitReached !== 'boolean'
+  ) {
+    return false
+  }
+  if (
+    candidate.artifactTermination === 'stopped_by_output_limit' &&
+    !candidate.generationOutputLimitReached
+  ) {
+    return false
+  }
+  if (candidate.artifactTermination === 'resource_limited') {
+    if (candidate.emittedPages < 1 || !candidate.resourceLimit) return false
+    const resourceLimit = candidate.resourceLimit as Record<string, unknown>
+    return (
+      resourceLimit.code === 'resource_limit_exceeded' &&
+      typeof resourceLimit.message === 'string' &&
+      (resourceLimit.detail === undefined || typeof resourceLimit.detail === 'string')
+    )
+  }
+  return candidate.resourceLimit === undefined
 }
 
 function cancelledError(): LightOcrProcessHostError {
