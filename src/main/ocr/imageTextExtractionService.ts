@@ -34,6 +34,7 @@ import {
   type LightOcrPrepareInput,
   type LightOcrRecognizeInput
 } from './lightOcrProcessHost'
+import { OcrSourceSnapshotBudget, OcrSourceSnapshotBudgetError } from './ocrSourceSnapshotBudget'
 import {
   ATTACHMENT_OCR_MAX_TEXT_CHARACTERS,
   ATTACHMENT_OCR_MAX_TOKENS
@@ -41,8 +42,6 @@ import {
 
 const MAX_TURN_IMAGES = 8
 const MAX_TURN_SOURCE_BYTES = 120 * 1024 * 1024
-const MAX_PENDING_SOURCE_IMAGES = 8
-const MAX_PENDING_SOURCE_BYTES = 120 * 1024 * 1024
 const MAX_IMAGE_TEXT_TOKENS = ATTACHMENT_OCR_MAX_TOKENS
 const MAX_BATCH_TEXT_TOKENS = 16_000
 const TRUNCATION_MARKER = '[… OCR text truncated …]'
@@ -110,6 +109,8 @@ export interface ImageTextExtractionServiceOptions {
   processHost: LightOcrRecognitionPort
   artifactStore: OcrArtifactStorePort
   scheduler?: OcrExtractionScheduler
+  closeSchedulerOnClose?: boolean
+  snapshotBudget?: OcrSourceSnapshotBudget
   lightOcrVersion?: string
   bundleId?: string
   preprocessingRevision?: string
@@ -127,18 +128,20 @@ interface SharedExtractionFlight {
 
 export class ImageTextExtractionService implements ImageTextExtractionPort {
   private readonly scheduler: OcrExtractionScheduler
+  private readonly closeSchedulerOnClose: boolean
+  private readonly snapshotBudget: OcrSourceSnapshotBudget
   private readonly lightOcrVersion: string
   private readonly bundleId: string
   private readonly preprocessingRevision: string
   private readonly snapshotReader: typeof readImmutableImageSnapshot
   private readonly preprocessor: typeof preprocessImageForOcr
   private readonly flights = new Map<string, SharedExtractionFlight>()
-  private reservedSourceBytes = 0
-  private reservedSourceImages = 0
   private closed = false
 
   constructor(private readonly options: ImageTextExtractionServiceOptions) {
     this.scheduler = options.scheduler ?? new OcrExtractionScheduler()
+    this.closeSchedulerOnClose = options.closeSchedulerOnClose ?? true
+    this.snapshotBudget = options.snapshotBudget ?? new OcrSourceSnapshotBudget()
     this.lightOcrVersion = options.lightOcrVersion ?? runtimeVersions.lightOcr.facadeVersion
     this.bundleId = options.bundleId ?? runtimeVersions.lightOcr.bundleId
     this.preprocessingRevision = options.preprocessingRevision ?? OCR_PREPROCESSING_REVISION
@@ -260,7 +263,7 @@ export class ImageTextExtractionService implements ImageTextExtractionPort {
     if (this.closed) return
     this.closed = true
     for (const flight of this.flights.values()) flight.controller.abort()
-    this.scheduler.close()
+    if (this.closeSchedulerOnClose) this.scheduler.close()
   }
 
   hasActiveExtractions(): boolean {
@@ -468,22 +471,19 @@ export class ImageTextExtractionService implements ImageTextExtractionPort {
   }
 
   private reserveSnapshot(snapshot: ImmutableImageSnapshot): void {
-    if (
-      this.reservedSourceImages >= MAX_PENDING_SOURCE_IMAGES ||
-      this.reservedSourceBytes + snapshot.bytes.byteLength > MAX_PENDING_SOURCE_BYTES
-    ) {
+    try {
+      this.snapshotBudget.reserve(snapshot.bytes.byteLength)
+    } catch (error) {
+      if (!(error instanceof OcrSourceSnapshotBudgetError)) throw error
       throw new ImageTextExtractionError(
         'queue_full',
         'OCR extraction queue has reached its source snapshot limit'
       )
     }
-    this.reservedSourceImages += 1
-    this.reservedSourceBytes += snapshot.bytes.byteLength
   }
 
   private releaseSnapshot(snapshot: ImmutableImageSnapshot): void {
-    this.reservedSourceImages = Math.max(0, this.reservedSourceImages - 1)
-    this.reservedSourceBytes = Math.max(0, this.reservedSourceBytes - snapshot.bytes.byteLength)
+    this.snapshotBudget.release(snapshot.bytes.byteLength)
   }
 
   private assertOpen(): void {

@@ -158,6 +158,7 @@ export interface LightOcrDocumentRecognitionOutcome {
   artifactTermination: LightOcrDocumentArtifactTermination
   emittedPages: number
   generationOutputLimitReached: boolean
+  engine: LightOcrEngineStatus
   resourceLimit?: {
     code: 'resource_limit_exceeded'
     message: string
@@ -199,6 +200,7 @@ interface HandshakeWaiter {
 
 interface PendingDocumentResponse {
   request: Extract<LightOcrHelperRequest, { type: 'recognize_document' }>
+  engine: LightOcrEngineStatus
   onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
   resolve: (value: LightOcrDocumentRecognitionOutcome) => void
   reject: (error: unknown) => void
@@ -710,6 +712,12 @@ export class LightOcrProcessHost {
         new LightOcrProcessHostError('unexpected_exit', 'OCR helper is not running')
       )
     }
+    if (!this.engineStatus) {
+      return Promise.reject(
+        this.failProtocol('OCR helper document request has no configured engine status')
+      )
+    }
+    const engine = structuredClone(this.engineStatus)
 
     return new Promise((resolve, reject) => {
       const timeoutDocument = (kind: 'idle' | 'total') => {
@@ -722,6 +730,7 @@ export class LightOcrProcessHost {
       }
       const pending: PendingDocumentResponse = {
         request,
+        engine,
         onPage,
         resolve,
         reject,
@@ -1006,6 +1015,7 @@ export class LightOcrProcessHost {
         artifactTermination: 'resource_limited',
         emittedPages: pending.receivedPages,
         generationOutputLimitReached: pending.generationOutputLimitReached,
+        engine: structuredClone(pending.engine),
         resourceLimit: {
           code: 'resource_limit_exceeded',
           message: message.error.message,
@@ -1052,7 +1062,8 @@ export class LightOcrProcessHost {
       artifactTermination:
         pending.stopAcknowledged === true ? 'stopped_by_output_limit' : 'request_complete',
       emittedPages: pending.completion.emittedPages,
-      generationOutputLimitReached: pending.generationOutputLimitReached
+      generationOutputLimitReached: pending.generationOutputLimitReached,
+      engine: structuredClone(pending.engine)
     })
   }
 
@@ -1442,7 +1453,8 @@ function isDocumentRecognitionOutcome(value: unknown): value is LightOcrDocument
     typeof candidate.emittedPages !== 'number' ||
     !Number.isSafeInteger(candidate.emittedPages) ||
     candidate.emittedPages < 0 ||
-    typeof candidate.generationOutputLimitReached !== 'boolean'
+    typeof candidate.generationOutputLimitReached !== 'boolean' ||
+    !isLightOcrEngineStatus(candidate.engine)
   ) {
     return false
   }

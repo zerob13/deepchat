@@ -4,6 +4,13 @@ import { rm } from 'node:fs/promises'
 import type Database from 'better-sqlite3-multiple-ciphers'
 
 import { openSQLiteDatabase } from '@/data/databaseConnection'
+import {
+  compareDocumentOcrCoverage,
+  isValidDocumentOcrArtifact,
+  type DocumentOcrArtifact,
+  type DocumentOcrArtifactIdentity,
+  type DocumentOcrArtifactValue
+} from './documentOcrArtifact'
 import type {
   LightOcrBackendPreference,
   LightOcrEngineStatus,
@@ -35,6 +42,16 @@ const OCR_ARTIFACT_COLUMNS = [
   'image_width',
   'image_height',
   'engine_json',
+  'logical_bytes',
+  'created_at',
+  'last_accessed_at',
+  'expires_at',
+  'lease_until'
+] as const
+const DOCUMENT_OCR_ARTIFACT_COLUMNS = [
+  'cache_key',
+  'identity_json',
+  'artifact_json',
   'logical_bytes',
   'created_at',
   'last_accessed_at',
@@ -89,6 +106,14 @@ export interface OcrArtifactStorePort {
   close(): Promise<void>
 }
 
+export interface DocumentOcrArtifactStorePort {
+  findDocument(identity: DocumentOcrArtifactIdentity): Promise<DocumentOcrArtifact | null>
+  putDocument(
+    identity: DocumentOcrArtifactIdentity,
+    value: DocumentOcrArtifactValue
+  ): Promise<DocumentOcrArtifact>
+}
+
 export interface OcrArtifactStoreOptions {
   dbPath: string
   keyProvider: OcrCacheKeyProvider
@@ -103,6 +128,11 @@ interface OcrArtifactBackend {
   readonly persistenceUnavailableReason?: OcrArtifactStoreStats['persistenceUnavailableReason']
   find(identity: OcrArtifactIdentity): OcrArtifact | null
   put(identity: OcrArtifactIdentity, value: OcrArtifactValue): OcrArtifact
+  findDocument(identity: DocumentOcrArtifactIdentity): DocumentOcrArtifact | null
+  putDocument(
+    identity: DocumentOcrArtifactIdentity,
+    value: DocumentOcrArtifactValue
+  ): DocumentOcrArtifact
   clear(): void
   runMaintenance(): void
   getStats(): OcrArtifactStoreStats
@@ -118,6 +148,12 @@ interface StoredArtifactRow {
   image_width: number
   image_height: number
   engine_json: string
+}
+
+interface StoredDocumentArtifactRow {
+  cache_key: string
+  identity_json: string
+  artifact_json: string
 }
 
 export class OcrArtifactStore implements OcrArtifactStorePort {
@@ -136,6 +172,17 @@ export class OcrArtifactStore implements OcrArtifactStorePort {
 
   async put(identity: OcrArtifactIdentity, value: OcrArtifactValue): Promise<OcrArtifact> {
     return (await this.getBackend()).put(identity, value)
+  }
+
+  async findDocument(identity: DocumentOcrArtifactIdentity): Promise<DocumentOcrArtifact | null> {
+    return (await this.getBackend()).findDocument(identity)
+  }
+
+  async putDocument(
+    identity: DocumentOcrArtifactIdentity,
+    value: DocumentOcrArtifactValue
+  ): Promise<DocumentOcrArtifact> {
+    return (await this.getBackend()).putDocument(identity, value)
   }
 
   async clear(): Promise<void> {
@@ -207,6 +254,35 @@ export function computeOcrArtifactCacheKey(identity: OcrArtifactIdentity): strin
     identity.recognitionPrecision
   ])
   return createHash('sha256').update(serialized).digest('hex')
+}
+
+export function computeDocumentOcrArtifactCacheKey(identity: DocumentOcrArtifactIdentity): string {
+  return createHash('sha256').update(serializeDocumentIdentity(identity)).digest('hex')
+}
+
+function serializeDocumentIdentity(identity: DocumentOcrArtifactIdentity): string {
+  return JSON.stringify([
+    identity.sourceSha256,
+    identity.facadeVersion,
+    identity.runtimeVersion,
+    identity.nativeVersion,
+    identity.modelVersion,
+    identity.bundleId,
+    identity.artifactRevision,
+    identity.strategy,
+    identity.requestedBackend,
+    identity.detectionProviderChain,
+    identity.detectionPrecision,
+    identity.recognitionProviderChain,
+    identity.recognitionPrecision,
+    identity.dpi,
+    identity.pageRangeStart,
+    identity.pageRangeEnd,
+    identity.maxPages,
+    identity.maxFileBytes,
+    identity.maxPagePixels,
+    identity.maxTotalPixels
+  ])
 }
 
 async function openPersistentBackend(
@@ -374,9 +450,114 @@ class SqliteOcrArtifactBackend implements OcrArtifactBackend {
     return { cacheKey, ...value }
   }
 
+  findDocument(identity: DocumentOcrArtifactIdentity): DocumentOcrArtifact | null {
+    this.assertOpen()
+    const now = this.options.now()
+    const cacheKey = computeDocumentOcrArtifactCacheKey(identity)
+    const identityJson = serializeDocumentIdentity(identity)
+    const row = this.db
+      .prepare(
+        `SELECT cache_key, identity_json, artifact_json
+           FROM document_ocr_artifacts
+          WHERE cache_key = ?
+            AND expires_at > ?
+          LIMIT 1`
+      )
+      .get(cacheKey, now) as StoredDocumentArtifactRow | undefined
+    if (!row) return null
+
+    const artifact =
+      row.identity_json === identityJson ? parseStoredDocumentArtifact(row, identity) : null
+    if (!artifact) {
+      this.db.prepare('DELETE FROM document_ocr_artifacts WHERE cache_key = ?').run(row.cache_key)
+      return null
+    }
+    this.db
+      .prepare(
+        `UPDATE document_ocr_artifacts
+            SET last_accessed_at = ?, expires_at = ?, lease_until = ?
+          WHERE cache_key = ?`
+      )
+      .run(now, now + this.options.ttlMs, now + this.options.leaseMs, row.cache_key)
+    return artifact
+  }
+
+  putDocument(
+    identity: DocumentOcrArtifactIdentity,
+    value: DocumentOcrArtifactValue
+  ): DocumentOcrArtifact {
+    this.assertOpen()
+    if (!isValidDocumentOcrArtifact(value, identity)) {
+      throw new Error('Invalid document OCR artifact')
+    }
+    const now = this.options.now()
+    const cacheKey = computeDocumentOcrArtifactCacheKey(identity)
+    const identityJson = serializeDocumentIdentity(identity)
+    const artifactJson = JSON.stringify(value)
+    const logicalBytes =
+      Buffer.byteLength(identityJson, 'utf8') + Buffer.byteLength(artifactJson, 'utf8') + 128
+
+    const write = this.db.transaction(() => {
+      const existingRow = this.db
+        .prepare(
+          `SELECT cache_key, identity_json, artifact_json
+             FROM document_ocr_artifacts
+            WHERE cache_key = ?
+              AND expires_at > ?
+            LIMIT 1`
+        )
+        .get(cacheKey, now) as StoredDocumentArtifactRow | undefined
+      const existing =
+        existingRow?.identity_json === identityJson
+          ? parseStoredDocumentArtifact(existingRow, identity)
+          : null
+      if (existing && compareDocumentOcrCoverage(value, existing) <= 0) {
+        this.db
+          .prepare(
+            `UPDATE document_ocr_artifacts
+                SET last_accessed_at = ?, expires_at = ?, lease_until = ?
+              WHERE cache_key = ?`
+          )
+          .run(now, now + this.options.ttlMs, now + this.options.leaseMs, cacheKey)
+        return existing
+      }
+
+      this.db
+        .prepare(
+          `INSERT INTO document_ocr_artifacts (
+             cache_key, identity_json, artifact_json, logical_bytes, created_at, last_accessed_at,
+             expires_at, lease_until
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(cache_key) DO UPDATE SET
+             identity_json = excluded.identity_json,
+             artifact_json = excluded.artifact_json,
+             logical_bytes = excluded.logical_bytes,
+             created_at = excluded.created_at,
+             last_accessed_at = excluded.last_accessed_at,
+             expires_at = excluded.expires_at,
+             lease_until = excluded.lease_until`
+        )
+        .run(
+          cacheKey,
+          identityJson,
+          artifactJson,
+          logicalBytes,
+          now,
+          now,
+          now + this.options.ttlMs,
+          now + this.options.leaseMs
+        )
+      return { cacheKey, ...cloneDocumentArtifactValue(value) }
+    })
+
+    const artifact = write()
+    this.runMaintenance()
+    return artifact
+  }
+
   clear(): void {
     this.assertOpen()
-    this.db.exec('DELETE FROM ocr_artifacts')
+    this.db.exec('DELETE FROM ocr_artifacts; DELETE FROM document_ocr_artifacts')
     this.db.pragma('wal_checkpoint(TRUNCATE)')
     this.db.exec('VACUUM')
   }
@@ -387,21 +568,41 @@ class SqliteOcrArtifactBackend implements OcrArtifactBackend {
     let removedArtifacts = this.db
       .prepare('DELETE FROM ocr_artifacts WHERE expires_at <= ? AND lease_until <= ?')
       .run(now, now).changes
+    removedArtifacts += this.db
+      .prepare('DELETE FROM document_ocr_artifacts WHERE expires_at <= ? AND lease_until <= ?')
+      .run(now, now).changes
 
     let logicalBytes = this.readLogicalBytes()
     if (logicalBytes > this.options.maxBytes) {
       const candidates = this.db
         .prepare(
-          `SELECT cache_key, logical_bytes
-           FROM ocr_artifacts
-          WHERE lease_until <= ?
-          ORDER BY last_accessed_at ASC, created_at ASC`
+          `SELECT artifact_kind, cache_key, logical_bytes
+             FROM (
+               SELECT 'image' AS artifact_kind, cache_key, logical_bytes, last_accessed_at,
+                      created_at
+                 FROM ocr_artifacts
+                WHERE lease_until <= ?
+               UNION ALL
+               SELECT 'document' AS artifact_kind, cache_key, logical_bytes, last_accessed_at,
+                      created_at
+                 FROM document_ocr_artifacts
+                WHERE lease_until <= ?
+             )
+            ORDER BY last_accessed_at ASC, created_at ASC`
         )
-        .all(now) as Array<{ cache_key: string; logical_bytes: number }>
-      const remove = this.db.prepare('DELETE FROM ocr_artifacts WHERE cache_key = ?')
+        .all(now, now) as Array<{
+        artifact_kind: 'image' | 'document'
+        cache_key: string
+        logical_bytes: number
+      }>
+      const removeImage = this.db.prepare('DELETE FROM ocr_artifacts WHERE cache_key = ?')
+      const removeDocument = this.db.prepare(
+        'DELETE FROM document_ocr_artifacts WHERE cache_key = ?'
+      )
       const evict = this.db.transaction(() => {
         for (const candidate of candidates) {
           if (logicalBytes <= this.options.maxBytes) break
+          const remove = candidate.artifact_kind === 'image' ? removeImage : removeDocument
           removedArtifacts += remove.run(candidate.cache_key).changes
           logicalBytes -= candidate.logical_bytes
         }
@@ -416,7 +617,14 @@ class SqliteOcrArtifactBackend implements OcrArtifactBackend {
     this.runMaintenance()
     const row = this.db
       .prepare(
-        'SELECT COUNT(*) AS count, COALESCE(SUM(logical_bytes), 0) AS bytes FROM ocr_artifacts'
+        `SELECT SUM(count) AS count, SUM(bytes) AS bytes
+           FROM (
+             SELECT COUNT(*) AS count, COALESCE(SUM(logical_bytes), 0) AS bytes
+               FROM ocr_artifacts
+             UNION ALL
+             SELECT COUNT(*) AS count, COALESCE(SUM(logical_bytes), 0) AS bytes
+               FROM document_ocr_artifacts
+           )`
       )
       .get() as { count: number; bytes: number }
     return {
@@ -435,7 +643,7 @@ class SqliteOcrArtifactBackend implements OcrArtifactBackend {
 
   private initialize(): void {
     const schemaVersion = this.db.pragma('user_version', { simple: true }) as number
-    if (schemaVersion !== 0 && schemaVersion !== 1) {
+    if (schemaVersion !== 0 && schemaVersion !== 2) {
       throw new OcrArtifactDatabaseError('schema_mismatch', 'Unsupported OCR cache schema')
     }
     if (schemaVersion === 0) this.db.pragma('auto_vacuum = INCREMENTAL')
@@ -473,20 +681,49 @@ class SqliteOcrArtifactBackend implements OcrArtifactBackend {
         );
       CREATE INDEX IF NOT EXISTS idx_ocr_artifacts_gc
         ON ocr_artifacts (last_accessed_at ASC, lease_until, expires_at);
+      CREATE TABLE IF NOT EXISTS document_ocr_artifacts (
+        cache_key TEXT PRIMARY KEY,
+        identity_json TEXT NOT NULL,
+        artifact_json TEXT NOT NULL,
+        logical_bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_accessed_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        lease_until INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_document_ocr_artifacts_gc
+        ON document_ocr_artifacts (last_accessed_at ASC, lease_until, expires_at);
     `)
     const columns = this.db.pragma('table_info(ocr_artifacts)') as Array<{ name: string }>
     const columnNames = new Set(columns.map((column) => column.name))
     if (!OCR_ARTIFACT_COLUMNS.every((column) => columnNames.has(column))) {
       throw new OcrArtifactDatabaseError('schema_mismatch', 'OCR cache schema is incomplete')
     }
-    if (schemaVersion === 0) this.db.pragma('user_version = 1')
+    const documentColumns = this.db.pragma('table_info(document_ocr_artifacts)') as Array<{
+      name: string
+    }>
+    const documentColumnNames = new Set(documentColumns.map((column) => column.name))
+    if (!DOCUMENT_OCR_ARTIFACT_COLUMNS.every((column) => documentColumnNames.has(column))) {
+      throw new OcrArtifactDatabaseError(
+        'schema_mismatch',
+        'Document OCR cache schema is incomplete'
+      )
+    }
+    if (schemaVersion === 0) this.db.pragma('user_version = 2')
     this.db.prepare('SELECT COUNT(*) AS count FROM ocr_artifacts').get()
     this.runMaintenance()
   }
 
   private readLogicalBytes(): number {
     const row = this.db
-      .prepare('SELECT COALESCE(SUM(logical_bytes), 0) AS bytes FROM ocr_artifacts')
+      .prepare(
+        `SELECT SUM(bytes) AS bytes
+           FROM (
+             SELECT COALESCE(SUM(logical_bytes), 0) AS bytes FROM ocr_artifacts
+             UNION ALL
+             SELECT COALESCE(SUM(logical_bytes), 0) AS bytes FROM document_ocr_artifacts
+           )`
+      )
       .get() as { bytes: number }
     return row.bytes
   }
@@ -496,8 +733,8 @@ class SqliteOcrArtifactBackend implements OcrArtifactBackend {
   }
 }
 
-interface MemoryArtifactRecord {
-  artifact: OcrArtifact
+interface MemoryArtifactRecord<T> {
+  artifact: T
   logicalBytes: number
   createdAt: number
   lastAccessedAt: number
@@ -508,7 +745,8 @@ interface MemoryArtifactRecord {
 class MemoryOcrArtifactBackend implements OcrArtifactBackend {
   readonly mode = 'memory' as const
   readonly persistenceUnavailableReason: OcrArtifactStoreStats['persistenceUnavailableReason']
-  private readonly records = new Map<string, MemoryArtifactRecord>()
+  private readonly records = new Map<string, MemoryArtifactRecord<OcrArtifact>>()
+  private readonly documentRecords = new Map<string, MemoryArtifactRecord<DocumentOcrArtifact>>()
 
   constructor(private readonly options: BackendOptions) {
     this.persistenceUnavailableReason = options.persistenceUnavailableReason
@@ -549,8 +787,68 @@ class MemoryOcrArtifactBackend implements OcrArtifactBackend {
     return cloneArtifact(artifact)
   }
 
+  findDocument(identity: DocumentOcrArtifactIdentity): DocumentOcrArtifact | null {
+    const now = this.options.now()
+    const key = computeDocumentOcrArtifactCacheKey(identity)
+    const match = this.documentRecords.get(key) ?? null
+    if (match && match.expiresAt <= now) {
+      this.documentRecords.delete(key)
+      return null
+    }
+    if (!match) return null
+    const artifact = match.artifact
+    if (!isValidDocumentOcrArtifact(artifact, identity)) {
+      this.documentRecords.delete(key)
+      return null
+    }
+    match.lastAccessedAt = now
+    match.expiresAt = now + this.options.ttlMs
+    match.leaseUntil = now + this.options.leaseMs
+    return cloneDocumentArtifact(artifact)
+  }
+
+  putDocument(
+    identity: DocumentOcrArtifactIdentity,
+    value: DocumentOcrArtifactValue
+  ): DocumentOcrArtifact {
+    if (!isValidDocumentOcrArtifact(value, identity)) {
+      throw new Error('Invalid document OCR artifact')
+    }
+    const now = this.options.now()
+    const cacheKey = computeDocumentOcrArtifactCacheKey(identity)
+    const existing = this.documentRecords.get(cacheKey)
+    if (existing) {
+      const existingArtifact = existing.artifact
+      if (
+        isValidDocumentOcrArtifact(existingArtifact, identity) &&
+        compareDocumentOcrCoverage(value, existingArtifact) <= 0
+      ) {
+        existing.lastAccessedAt = now
+        existing.expiresAt = now + this.options.ttlMs
+        existing.leaseUntil = now + this.options.leaseMs
+        return cloneDocumentArtifact(existingArtifact)
+      }
+    }
+
+    const artifact = { cacheKey, ...cloneDocumentArtifactValue(value) }
+    const identityJson = serializeDocumentIdentity(identity)
+    const artifactJson = JSON.stringify(value)
+    this.documentRecords.set(cacheKey, {
+      artifact,
+      logicalBytes:
+        Buffer.byteLength(identityJson, 'utf8') + Buffer.byteLength(artifactJson, 'utf8') + 128,
+      createdAt: now,
+      lastAccessedAt: now,
+      expiresAt: now + this.options.ttlMs,
+      leaseUntil: now + this.options.leaseMs
+    })
+    this.runMaintenance()
+    return cloneDocumentArtifact(artifact)
+  }
+
   clear(): void {
     this.records.clear()
+    this.documentRecords.clear()
   }
 
   runMaintenance(): void {
@@ -558,17 +856,35 @@ class MemoryOcrArtifactBackend implements OcrArtifactBackend {
     for (const [key, record] of this.records) {
       if (record.expiresAt <= now && record.leaseUntil <= now) this.records.delete(key)
     }
+    for (const [key, record] of this.documentRecords) {
+      if (record.expiresAt <= now && record.leaseUntil <= now) {
+        this.documentRecords.delete(key)
+      }
+    }
 
     let logicalBytes = this.logicalBytes()
-    const candidates = [...this.records.entries()]
-      .filter(([, record]) => record.leaseUntil <= now)
+    const candidates = [
+      ...[...this.records.entries()].map(([key, record]) => ({
+        kind: 'image' as const,
+        key,
+        record
+      })),
+      ...[...this.documentRecords.entries()].map(([key, record]) => ({
+        kind: 'document' as const,
+        key,
+        record
+      }))
+    ]
+      .filter(({ record }) => record.leaseUntil <= now)
       .sort(
-        ([, left], [, right]) =>
-          left.lastAccessedAt - right.lastAccessedAt || left.createdAt - right.createdAt
+        (left, right) =>
+          left.record.lastAccessedAt - right.record.lastAccessedAt ||
+          left.record.createdAt - right.record.createdAt
       )
-    for (const [key, record] of candidates) {
+    for (const { kind, key, record } of candidates) {
       if (logicalBytes <= this.options.maxBytes) break
-      this.records.delete(key)
+      if (kind === 'image') this.records.delete(key)
+      else this.documentRecords.delete(key)
       logicalBytes -= record.logicalBytes
     }
   }
@@ -578,7 +894,7 @@ class MemoryOcrArtifactBackend implements OcrArtifactBackend {
     return {
       mode: this.mode,
       persistenceUnavailableReason: this.persistenceUnavailableReason,
-      entryCount: this.records.size,
+      entryCount: this.records.size + this.documentRecords.size,
       logicalBytes: this.logicalBytes(),
       maxBytes: this.options.maxBytes
     }
@@ -586,11 +902,13 @@ class MemoryOcrArtifactBackend implements OcrArtifactBackend {
 
   close(): void {
     this.records.clear()
+    this.documentRecords.clear()
   }
 
   private logicalBytes(): number {
     let bytes = 0
     for (const record of this.records.values()) bytes += record.logicalBytes
+    for (const record of this.documentRecords.values()) bytes += record.logicalBytes
     return bytes
   }
 }
@@ -640,6 +958,19 @@ function parseStoredArtifact(row: StoredArtifactRow): OcrArtifact | null {
   }
 }
 
+function parseStoredDocumentArtifact(
+  row: StoredDocumentArtifactRow,
+  identity: DocumentOcrArtifactIdentity
+): DocumentOcrArtifact | null {
+  try {
+    const value = JSON.parse(row.artifact_json) as unknown
+    if (!isValidDocumentOcrArtifact(value, identity)) return null
+    return { cacheKey: row.cache_key, ...cloneDocumentArtifactValue(value) }
+  } catch {
+    return null
+  }
+}
+
 function calculateArtifactBytes(
   identity: OcrArtifactIdentity,
   value: OcrArtifactValue,
@@ -677,6 +1008,22 @@ function cloneArtifact(value: OcrArtifact): OcrArtifact {
   return {
     ...value,
     engine: structuredClone(value.engine)
+  }
+}
+
+function cloneDocumentArtifactValue(value: DocumentOcrArtifactValue): DocumentOcrArtifactValue {
+  return {
+    ...value,
+    pageSpans: value.pageSpans.map((span) => ({ ...span })),
+    engine: structuredClone(value.engine),
+    ...(value.resourceLimit ? { resourceLimit: { ...value.resourceLimit } } : {})
+  }
+}
+
+function cloneDocumentArtifact(value: DocumentOcrArtifact): DocumentOcrArtifact {
+  return {
+    cacheKey: value.cacheKey,
+    ...cloneDocumentArtifactValue(value)
   }
 }
 

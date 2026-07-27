@@ -32,12 +32,12 @@
 
 ## Document Artifacts
 
-- [ ] Add immutable bounded PDF snapshots and shared scheduler ownership.
-- [ ] Add page-aware prefix assembly and lower-budget truncation.
-- [ ] Add exact document identity and schema-v2 storage.
-- [ ] Add persisted `generationOutputLimitReached` compatibility logic.
-- [ ] Add retained-text coverage dominance replacement.
-- [ ] Cover empty, complete, output-limited, resource-limited, cancel, timeout, and invalid-cache
+- [x] Add immutable bounded PDF snapshots and shared scheduler ownership.
+- [x] Add page-aware prefix assembly and lower-budget truncation.
+- [x] Add exact document identity and schema-v2 storage.
+- [x] Add persisted `generationOutputLimitReached` compatibility logic.
+- [x] Add retained-text coverage dominance replacement.
+- [x] Cover empty, complete, output-limited, resource-limited, cancel, timeout, and invalid-cache
   outcomes.
 
 ## Routing And Persistence

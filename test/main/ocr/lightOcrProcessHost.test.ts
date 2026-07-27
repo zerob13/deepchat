@@ -290,10 +290,15 @@ describe('LightOcrProcessHost', () => {
     })
 
     expect(pages).toEqual(['first', 'second', 'third'])
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       artifactTermination: 'request_complete',
       emittedPages: 3,
-      generationOutputLimitReached: false
+      generationOutputLimitReached: false,
+      engine: {
+        modelBundleId: bundleId,
+        requestedProvider: 'cpu',
+        strategy: 'bounded-960'
+      }
     })
   })
 
@@ -334,10 +339,11 @@ describe('LightOcrProcessHost', () => {
     })
 
     expect(pages).toEqual(['first'])
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       artifactTermination: 'stopped_by_output_limit',
       emittedPages: 1,
-      generationOutputLimitReached: true
+      generationOutputLimitReached: true,
+      engine: { requestedProvider: 'auto' }
     })
   })
 
@@ -359,10 +365,11 @@ describe('LightOcrProcessHost', () => {
     })
 
     expect(pages).toEqual(['first'])
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       artifactTermination: 'request_complete',
       emittedPages: 3,
-      generationOutputLimitReached: true
+      generationOutputLimitReached: true,
+      engine: { requestedProvider: 'cpu' }
     })
   })
 
