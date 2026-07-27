@@ -111,6 +111,12 @@ type TombstoneSourceRow = Pick<
   'agent_id' | 'scope_type' | 'scope_id' | 'kind' | 'content' | 'provenance_key'
 >
 type TombstoneSourcePageRow = TombstoneSourceRow & { storage_rowid: number }
+type TombstoneClaimIdentityInput = Pick<
+  AgentMemoryInsertInput,
+  'agentId' | 'kind' | 'content' | 'provenanceKey'
+> & {
+  scope: MemoryScope
+}
 
 const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS agent_memory_tombstone (
@@ -1017,7 +1023,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   private findTombstoneIdentitiesForClaim(
-    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey' | 'scope'>
+    input: TombstoneClaimIdentityInput
   ): ReturnType<typeof buildMemoryTombstoneIdentities> {
     if (!isTombstoneEligibleMemoryKind(input.kind)) return []
     const identities = buildMemoryTombstoneIdentities({
@@ -1037,9 +1043,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )
   }
 
-  private hasTombstoneForClaim(
-    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey' | 'scope'>
-  ): boolean {
+  private hasTombstoneForClaim(input: TombstoneClaimIdentityInput): boolean {
     return this.findTombstoneIdentitiesForClaim(input).length > 0
   }
 
@@ -2035,14 +2039,30 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
 
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
     return this.db.transaction(() => {
-      if (this.hasTombstoneForClaim(input)) return null
+      if (
+        this.hasTombstoneForClaim({
+          agentId: input.agentId,
+          kind: input.kind,
+          content: input.content,
+          provenanceKey: input.provenanceKey,
+          scope: normalizeMemoryScope(input.scope)
+        })
+      ) {
+        return null
+      }
       return this.insert(input)
     })()
   }
 
   insertExplicitlyReauthorizedClaim(input: AgentMemoryInsertInput): AgentMemoryRow | null {
     return this.db.transaction(() => {
-      const identities = this.findTombstoneIdentitiesForClaim(input)
+      const identities = this.findTombstoneIdentitiesForClaim({
+        agentId: input.agentId,
+        kind: input.kind,
+        content: input.content,
+        provenanceKey: input.provenanceKey,
+        scope: normalizeMemoryScope(input.scope)
+      })
       if (identities.length === 0) return null
       const remove = this.db.prepare(
         `DELETE FROM agent_memory_tombstone
@@ -2691,7 +2711,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         agentId: input.agentId,
         kind: before.kind,
         content: before.content,
-        provenanceKey: before.provenance_key
+        provenanceKey: before.provenance_key,
+        scope: memoryScopeFromRow(before)
       })
     ) {
       return false
@@ -2782,7 +2803,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         agentId: input.agentId,
         kind: before.kind,
         content: before.content,
-        provenanceKey: before.provenance_key
+        provenanceKey: before.provenance_key,
+        scope: memoryScopeFromRow(before)
       })
     ) {
       return false
@@ -2840,7 +2862,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         kind: before.kind,
         content: input.content ?? before.content,
         provenanceKey:
-          input.content === undefined ? before.provenance_key : (input.provenanceKey ?? null)
+          input.content === undefined ? before.provenance_key : (input.provenanceKey ?? null),
+        scope: memoryScopeFromRow(before)
       })
     ) {
       return false
@@ -3391,7 +3414,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
           agentId: input.agentId,
           kind: before.kind,
           content: input.content,
-          provenanceKey: input.provenanceKey
+          provenanceKey: input.provenanceKey,
+          scope: memoryScopeFromRow(before)
         })
       ) {
         return { action: 'suppressed', reason: 'forgotten' }

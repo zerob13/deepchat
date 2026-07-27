@@ -2257,13 +2257,15 @@ describeIfSqlite('AgentMemoryTable', () => {
     try {
       const table = new AgentMemoryTableCtor(db)
       table.createTable()
+      const forgottenScope = { type: 'project', id: 'project-1' } as const
+      const otherScope = { type: 'project', id: 'project-2' } as const
       const original = table.insert({
         id: 'forgotten-project',
         agentId: 'a',
         kind: 'semantic',
         content: 'Project Saffron is paused',
         provenanceKey: 'project-1-source',
-        scope: { type: 'project', id: 'project-1' }
+        scope: forgottenScope
       })
       expect(
         table.tombstoneAndDelete({
@@ -2281,19 +2283,19 @@ describeIfSqlite('AgentMemoryTable', () => {
           kind: 'semantic',
           content: ' Project   Saffron is paused ',
           provenanceKey: 'project-1-independent-source',
-          scope: { type: 'project', id: 'project-1' }
+          scope: forgottenScope
         })
       ).toBeNull()
-      expect(
-        table.insertClaimUnlessTombstoned({
-          id: 'other-project',
-          agentId: 'a',
-          kind: 'semantic',
-          content: 'Project Saffron is paused',
-          provenanceKey: 'project-2-source',
-          scope: { type: 'project', id: 'project-2' }
-        })
-      ).toMatchObject({ id: 'other-project' })
+      const otherProject = table.insertClaimUnlessTombstoned({
+        id: 'other-project',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-2-source',
+        scope: otherScope
+      })
+      expect(otherProject).toMatchObject({ id: 'other-project' })
+      if (!otherProject) throw new Error('expected cross-scope insert to succeed')
       expect(
         table.insertClaimUnlessTombstoned({
           id: 'agent-scope',
@@ -2303,6 +2305,117 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: 'agent-source'
         })
       ).toMatchObject({ id: 'agent-scope' })
+
+      const editableReplay = table.insert({
+        id: 'project-edit-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Unrelated project claim',
+        provenanceKey: 'project-edit-source',
+        scope: forgottenScope
+      })
+      expect(
+        table.updateUserContentAndInvalidateEmbedding({
+          agentId: 'a',
+          id: editableReplay.id,
+          expectedRevision: editableReplay.decision_revision,
+          content: 'Project Saffron is paused',
+          provenanceKey: 'project-edit-replay-source',
+          at: 1_001
+        })
+      ).toEqual({ action: 'suppressed', reason: 'forgotten' })
+      expect(table.getById(editableReplay.id)).toMatchObject({
+        content: 'Unrelated project claim',
+        provenance_key: 'project-edit-source',
+        decision_revision: editableReplay.decision_revision
+      })
+
+      const archivedReplay = table.insert({
+        id: 'project-archived-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-archived-source',
+        status: 'archived',
+        scope: forgottenScope
+      })
+      expect(
+        table.restoreArchivedMemory({
+          agentId: 'a',
+          id: archivedReplay.id,
+          expectedRevision: archivedReplay.decision_revision
+        })
+      ).toBe(false)
+
+      const supersessionHead = table.insert({
+        id: 'project-supersession-head',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Current project status',
+        scope: forgottenScope
+      })
+      const supersededReplay = table.insert({
+        id: 'project-superseded-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-superseded-source',
+        supersededBy: supersessionHead.id,
+        scope: forgottenScope
+      })
+      expect(
+        table.reviveSupersededMemory({
+          agentId: 'a',
+          id: supersededReplay.id,
+          expectedRevision: supersededReplay.decision_revision
+        })
+      ).toBe(false)
+
+      const conflictTarget = table.insert({
+        id: 'project-conflict-target',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Current conflict target',
+        scope: forgottenScope
+      })
+      expect(
+        table.markConflictIfRevision(
+          'a',
+          conflictTarget.id,
+          conflictTarget.decision_revision,
+          'challenged'
+        )
+      ).toBe(true)
+      const conflictedReplay = table.insert({
+        id: 'project-conflicted-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-conflicted-source',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: conflictTarget.id,
+        scope: forgottenScope
+      })
+      expect(
+        table.activateResolvedChallenger({
+          agentId: 'a',
+          id: conflictedReplay.id,
+          targetId: conflictTarget.id,
+          expectedRevision: conflictedReplay.decision_revision
+        })
+      ).toBe(false)
+
+      expect(
+        table.updateUserContentAndInvalidateEmbedding({
+          agentId: 'a',
+          id: otherProject.id,
+          expectedRevision: otherProject.decision_revision,
+          content: 'Project Saffron is paused',
+          provenanceKey: 'project-2-updated-source',
+          at: 1_002
+        })
+      ).toEqual({ action: 'updated' })
     } finally {
       db.close()
     }
