@@ -543,9 +543,9 @@ describe('MemoryService recall + injection', () => {
     expect((await presenter.recall('a', 'redis')).map((item) => item.id)).toContain('saffron')
     const suppressedAccessBeforeApproval = repo.getById('saffron')?.access_count
     expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
-    expect((await presenter.searchMemories('a', 'redis')).map((item) => item.row.id)).toEqual([
-      'safe'
-    ])
+    expect((await presenter.searchMemories('a', 'redis')).map((item) => item.row.id)).toEqual(
+      expect.arrayContaining(['saffron', 'safe'])
+    )
     const injection = await presenter.buildInjection('a', 'redis')
     expect(injection?.payload.memories.map((memory) => memory.id)).toEqual(['safe'])
 

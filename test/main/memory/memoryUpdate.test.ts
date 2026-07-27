@@ -82,13 +82,7 @@ describe('MemoryService.updateMemory', () => {
     expect(repo.getById('m1')).toMatchObject({ category: null, importance: 0.2 })
     expect(getEmbeddings).not.toHaveBeenCalled()
     expect(auditRepo.listByAgent('deepchat', { eventType: 'memory/manual_edit' })).toHaveLength(1)
-    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([
-      expect.objectContaining({
-        parent_memory_id: 'm1',
-        child_memory_id: 'm1',
-        derivation_kind: 'manual_edit'
-      })
-    ])
+    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([])
     expect(onMemoryChanged).toHaveBeenCalledWith('deepchat', 'manual-edit', { memoryId: 'm1' })
   })
 
@@ -163,13 +157,7 @@ describe('MemoryService.updateMemory', () => {
       superseded_by: null
     })
     expect(repo.listByAgent('deepchat', { includeSuperseded: true })).toHaveLength(1)
-    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([
-      expect.objectContaining({
-        parent_memory_id: 'm1',
-        child_memory_id: 'm1',
-        derivation_kind: 'manual_edit'
-      })
-    ])
+    expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([])
   })
 
   it('returns an empty noop for blank content edits without mutating the row', () => {
@@ -235,7 +223,7 @@ describe('MemoryService.updateMemory', () => {
     ])
   })
 
-  it('rolls back a metadata edit when its durable lineage cannot be written', () => {
+  it('records an in-place metadata edit in audit without synthesizing lineage', () => {
     const { presenter, repo, auditRepo } = makePresenter(enabledConfig)
     insertMemory(repo, {
       id: 'm1',
@@ -243,25 +231,20 @@ describe('MemoryService.updateMemory', () => {
       category: 'user_preference',
       importance: 0.6
     })
-    const before = { ...repo.getById('m1')! }
-    vi.spyOn(repo, 'insertDerivations').mockImplementation(() => {
-      throw new Error('injected lineage failure')
-    })
 
-    expect(() =>
+    expect(
       presenter.updateMemory('deepchat', 'm1', {
         category: 'project_fact',
         importance: 0.2
       })
-    ).toThrow('injected lineage failure')
+    ).toEqual({ action: 'updated', memoryId: 'm1' })
 
     expect(repo.getById('m1')).toMatchObject({
-      category: before.category,
-      importance: before.importance,
-      decision_revision: before.decision_revision
+      category: 'project_fact',
+      importance: 0.2
     })
     expect(repo.listDerivationsByChild('deepchat', 'm1')).toEqual([])
-    expect(auditRepo.listByAgent('deepchat')).toEqual([])
+    expect(auditRepo.listByAgent('deepchat', { eventType: 'memory/manual_edit' })).toHaveLength(1)
   })
 
   it('folds into a live duplicate without overwriting metadata fields the patch omitted', () => {

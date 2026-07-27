@@ -108,9 +108,9 @@ Memory-owned entries to the shared schema catalog.
 - [x] Reject malformed extracted temporal candidates independently.
 - [x] Allow explicit relearning to atomically supersede exact tombstones.
 - [x] Strip invisible directive controls and return typed capacity failures.
-- [ ] Preserve indexed ordering for multi-scope FTS importance candidates.
-- [ ] Keep suppressed claims visible to management search.
-- [ ] Remove and prevent persistent lineage self-edges.
+- [x] Preserve indexed ordering for multi-scope FTS importance candidates.
+- [x] Keep suppressed claims visible to management search.
+- [x] Remove and prevent persistent lineage self-edges.
 - [x] Shed directive contributions as the final optional context-pressure fallback.
 - [ ] Add working/reflection scope, migration, temporal boundary, idempotency, and precision tests.
 - [ ] Localize new Memory strings for maintained Chinese variants.

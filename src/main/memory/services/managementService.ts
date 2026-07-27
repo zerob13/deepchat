@@ -521,7 +521,6 @@ export class ManagementService {
       return { action: 'noop', memoryId: row.id }
     }
 
-    const now = this.ctx.now()
     const updated = this.ports.repository.runInTransaction(() => {
       if (
         !this.ports.repository.updateUserMetadataIfRevision({
@@ -533,15 +532,6 @@ export class ManagementService {
       ) {
         return false
       }
-      this.ports.repository.insertDerivations([
-        {
-          agentId,
-          parentMemoryId: row.id,
-          childMemoryId: row.id,
-          derivationKind: 'manual_edit',
-          createdAt: now
-        }
-      ])
       this.ctx.writeAudit(agentId, {
         eventType: 'memory/manual_edit',
         actorType: 'user',
@@ -615,15 +605,18 @@ export class ManagementService {
             ? { action: 'superseded', memoryId, supersededId: update.supersededId }
             : { action: 'updated', memoryId }
 
-      const derivations: MemoryDerivationInsertInput[] = [
-        {
-          agentId,
-          parentMemoryId: row.id,
-          childMemoryId: memoryId,
-          derivationKind: 'manual_edit' as const,
-          createdAt: now
-        }
-      ]
+      const derivations: MemoryDerivationInsertInput[] =
+        row.id === memoryId
+          ? []
+          : [
+              {
+                agentId,
+                parentMemoryId: row.id,
+                childMemoryId: memoryId,
+                derivationKind: 'manual_edit' as const,
+                createdAt: now
+              }
+            ]
       if ((update.action === 'folded' || update.action === 'superseded') && update.retiredHeadId) {
         derivations.push({
           agentId,

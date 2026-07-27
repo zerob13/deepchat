@@ -101,9 +101,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(active).toHaveLength(1)
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
     const derivations = repo.listDerivationsByChild('a', newId)
-    expect(new Set(derivations.map((edge) => edge.parent_memory_id))).toEqual(
-      new Set([oldId, newId])
-    )
+    expect(derivations.map((edge) => edge.parent_memory_id)).toEqual([oldId])
     expect(derivations.every((edge) => edge.derivation_kind === 'merge')).toBe(true)
   })
 

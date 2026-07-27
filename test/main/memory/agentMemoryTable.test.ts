@@ -13,6 +13,7 @@ const ftsPolicyModule = Database
 
 const AgentMemoryTable = tableModule?.AgentMemoryTable
 const buildPendingEmbeddingSelectSql = tableModule?.buildPendingEmbeddingSelectSql
+const buildScopedImportanceCandidatesSql = tableModule?.buildScopedImportanceCandidatesSql
 const AgentMemoryAuditTable = auditTableModule?.AgentMemoryAuditTable
 const agentFtsScope = ftsPolicyModule?.agentFtsScope
 const buildRecallablePredicate = ftsPolicyModule?.buildRecallablePredicate
@@ -24,6 +25,7 @@ const describeIfSqlite = nativeSqliteDescribeIf(
   Boolean(
     AgentMemoryTable &&
     buildPendingEmbeddingSelectSql &&
+    buildScopedImportanceCandidatesSql &&
     AgentMemoryAuditTable &&
     agentFtsScope &&
     buildRecallablePredicate &&
@@ -2436,7 +2438,16 @@ describeIfSqlite('AgentMemoryTable', () => {
         createdAt: 2_000
       }
 
-      expect(table.insertDerivations([edge, edge])).toBe(1)
+      expect(
+        table.insertDerivations([
+          edge,
+          edge,
+          {
+            ...edge,
+            parentMemoryId: 'child'
+          }
+        ])
+      ).toBe(1)
       expect(table.listDerivationsByChild('a', 'child')).toEqual([
         {
           agent_id: 'a',
@@ -2449,6 +2460,53 @@ describeIfSqlite('AgentMemoryTable', () => {
       table.delete('parent')
       expect(table.listDerivationsByParent('a', 'parent')).toHaveLength(1)
       expect(table.listDerivationsByChild('other', 'child')).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects new lineage self-edges and removes historical ones on reopen', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({ id: 'claim', agentId: 'a', kind: 'semantic', content: 'source claim' })
+      table.insert({ id: 'child', agentId: 'a', kind: 'reflection', content: 'derived claim' })
+
+      expect(
+        table.insertDerivations([
+          {
+            agentId: 'a',
+            parentMemoryId: 'claim',
+            childMemoryId: 'claim',
+            derivationKind: 'manual_edit',
+            createdAt: 1_000
+          },
+          {
+            agentId: 'a',
+            parentMemoryId: 'claim',
+            childMemoryId: 'child',
+            derivationKind: 'reflection',
+            createdAt: 1_000
+          }
+        ])
+      ).toBe(1)
+      db.prepare(
+        `INSERT INTO agent_memory_derivation (
+           agent_id, parent_memory_id, child_memory_id, derivation_kind, created_at
+         ) VALUES ('a', 'child', 'child', 'manual_edit', 2_000)`
+      ).run()
+
+      table.createTable()
+
+      expect(table.listDerivationsByChild('a', 'claim')).toEqual([])
+      expect(table.listDerivationsByChild('a', 'child')).toEqual([
+        expect.objectContaining({
+          parent_memory_id: 'claim',
+          child_memory_id: 'child',
+          derivation_kind: 'reflection'
+        })
+      ])
     } finally {
       db.close()
     }
@@ -2536,14 +2594,14 @@ describeIfSqlite('AgentMemoryTable', () => {
         {
           agentId: 'a',
           parentMemoryId: claim.id,
-          childMemoryId: claim.id,
+          childMemoryId: 'reflection',
           derivationKind: 'manual_edit',
           createdAt: 2_000
         }
       ])
       expect(table.retireAgentMemoryNamespace('a')).toBe(3)
       expect(table.countDirtySeeds('a')).toBe(0)
-      expect(table.listDerivationsByChild('a', claim.id)).toEqual([])
+      expect(table.listDerivationsByChild('a', 'reflection')).toEqual([])
     } finally {
       db.close()
     }
@@ -3108,6 +3166,71 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
 
       expect(sqlIds).toEqual(jsIds)
       expect(sqlScope.scope).toBe(agentFtsScope!('agent/with unicode/记忆'))
+    } finally {
+      db.close()
+    }
+  })
+
+  it('keeps each scoped importance branch on the ordered recall index', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'global-high',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'global high',
+        importance: 0.9,
+        createdAt: 100
+      })
+      table.insert({
+        id: 'global-low',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'global low',
+        importance: 0.1,
+        createdAt: 100
+      })
+      table.insert({
+        id: 'session-applicable',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'session applicable',
+        importance: 0.8,
+        createdAt: 100,
+        scope: { type: 'session', id: 'session-1' }
+      })
+      table.insert({
+        id: 'session-hidden',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'session hidden',
+        importance: 1,
+        createdAt: 100,
+        scope: { type: 'session', id: 'session-2' }
+      })
+      const query = buildScopedImportanceCandidatesSql!(
+        'a',
+        [{ type: 'agent' }, { type: 'session', id: 'session-1' }],
+        3
+      )
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params) as Array<{
+        detail: string
+      }>
+      const scopedIndexSearches = plan
+        .map((row) => row.detail)
+        .filter((detail) => detail.includes('idx_agent_memory_recall_scope_v6'))
+
+      expect(scopedIndexSearches).toHaveLength(2)
+      expect(scopedIndexSearches.every((detail) => detail.includes('scope_type='))).toBe(true)
+      expect(
+        (
+          db.prepare(query.sql).all(...query.params) as Array<{
+            id: string
+          }>
+        ).map((row) => row.id)
+      ).toEqual(['global-high', 'session-applicable', 'global-low'])
     } finally {
       db.close()
     }
@@ -3704,6 +3827,48 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
           .get() as { tokenizer?: string } | undefined
         if (meta?.tokenizer === 'trigram') expect(likeSpy).not.toHaveBeenCalled()
       }
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies multi-scope filtering to both lexical and importance FTS legs', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'global',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'redis global fact',
+        importance: 0.7
+      })
+      table.insert({
+        id: 'session-applicable',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'redis session fact',
+        importance: 0.9,
+        scope: { type: 'session', id: 'session-1' }
+      })
+      table.insert({
+        id: 'session-hidden',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'redis hidden fact',
+        importance: 1,
+        scope: { type: 'session', id: 'session-2' }
+      })
+
+      const ids = table
+        .search('a', 'redis', 2, {
+          scopeFilter: [{ type: 'agent' }, { type: 'session', id: 'session-1' }]
+        })
+        .map((row) => row.id)
+
+      expect(ids).toEqual(expect.arrayContaining(['global', 'session-applicable']))
+      expect(ids).not.toContain('session-hidden')
     } finally {
       db.close()
     }

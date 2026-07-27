@@ -763,15 +763,15 @@ export class MaintenanceService {
           throw new MaintenanceRevisionConflictError()
         }
         this.ports.rows.bumpConfidence(survivor.id)
-        this.ports.repository.insertDerivations(
-          [survivor.id, retired.id].map((parentMemoryId) => ({
+        this.ports.repository.insertDerivations([
+          {
             agentId,
-            parentMemoryId,
+            parentMemoryId: retired.id,
             childMemoryId: survivor.id,
-            derivationKind: 'merge' as const,
+            derivationKind: 'merge',
             createdAt: now
-          }))
-        )
+          }
+        ])
       })
     } catch (error) {
       if (

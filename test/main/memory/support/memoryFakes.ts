@@ -311,6 +311,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number {
     let inserted = 0
     for (const input of inputs) {
+      if (input.parentMemoryId === input.childMemoryId) continue
       const key = this.derivationKey(input)
       if (this.derivations.has(key)) continue
       this.derivations.set(key, {
@@ -327,7 +328,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
   listDerivationsByChild(agentId: string, childMemoryId: string) {
     return [...this.derivations.values()]
-      .filter((row) => row.agent_id === agentId && row.child_memory_id === childMemoryId)
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.child_memory_id === childMemoryId &&
+          row.parent_memory_id !== row.child_memory_id
+      )
       .sort(
         (left, right) =>
           left.created_at - right.created_at ||
@@ -338,7 +344,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
   listDerivationsByParent(agentId: string, parentMemoryId: string) {
     return [...this.derivations.values()]
-      .filter((row) => row.agent_id === agentId && row.parent_memory_id === parentMemoryId)
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.parent_memory_id === parentMemoryId &&
+          row.parent_memory_id !== row.child_memory_id
+      )
       .sort(
         (left, right) =>
           left.created_at - right.created_at ||

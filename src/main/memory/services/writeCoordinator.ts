@@ -1293,15 +1293,6 @@ export class WriteCoordinator {
                   throw new DecisionRevisionConflictError()
                 }
                 this.ports.rows.bumpConfidence(targetRow.id)
-                this.ports.repository.insertDerivations([
-                  {
-                    agentId,
-                    parentMemoryId: targetRow.id,
-                    childMemoryId: targetRow.id,
-                    derivationKind: 'supersede',
-                    createdAt: now
-                  }
-                ])
               })
             } catch (error) {
               if (error instanceof DecisionForgottenClaimError) {

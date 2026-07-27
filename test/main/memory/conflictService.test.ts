@@ -167,13 +167,7 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(repo.countByAgent('a')).toBe(1)
     expect(repo.getById(neighborId)?.content).toBe('user prefers redis 7')
     expect(repo.getById(neighborId)?.status).toBe('pending_embedding')
-    expect(repo.listDerivationsByChild('a', neighborId)).toEqual([
-      expect.objectContaining({
-        parent_memory_id: neighborId,
-        child_memory_id: neighborId,
-        derivation_kind: 'supersede'
-      })
-    ])
+    expect(repo.listDerivationsByChild('a', neighborId)).toEqual([])
   })
 
   it('rolls back decision content and embedding reset when confidence update fails', async () => {

@@ -329,7 +329,16 @@ describe('memory repository fakes', () => {
       createdAt: 1_100
     }
 
-    expect(repo.insertDerivations([edge, edge])).toBe(1)
+    expect(
+      repo.insertDerivations([
+        edge,
+        edge,
+        {
+          ...edge,
+          parentMemoryId: 'child'
+        }
+      ])
+    ).toBe(1)
     expect(repo.listDerivationsByChild('a', 'child')).toHaveLength(1)
     const staleSeed = repo.listDirtySeeds('a', 10)[0]
     expect(
@@ -378,7 +387,7 @@ describe('memory repository fakes', () => {
           {
             agentId: 'a',
             parentMemoryId: claim.id,
-            childMemoryId: claim.id,
+            childMemoryId: 'derived-claim',
             derivationKind: 'manual_edit',
             createdAt: 2_000
           }

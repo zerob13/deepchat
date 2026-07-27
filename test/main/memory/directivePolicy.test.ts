@@ -44,9 +44,9 @@ describe('memory directive suppression policy', () => {
     expect(policy.topics).toEqual(['alpha'])
   })
 
-  it('never hides evidence used for write decisions', () => {
+  it('applies only to model-facing recall and injection', () => {
     expect(directiveSuppressionAppliesToPurpose('recall')).toBe(true)
-    expect(directiveSuppressionAppliesToPurpose('search')).toBe(true)
+    expect(directiveSuppressionAppliesToPurpose('search')).toBe(false)
     expect(directiveSuppressionAppliesToPurpose('injection')).toBe(true)
     expect(directiveSuppressionAppliesToPurpose('decision')).toBe(false)
   })

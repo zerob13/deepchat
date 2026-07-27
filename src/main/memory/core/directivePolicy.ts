@@ -18,7 +18,7 @@ export interface MemoryTopicSuppressionPolicy {
 }
 
 export function directiveSuppressionAppliesToPurpose(purpose: MemoryRetrievalPurpose): boolean {
-  return purpose === 'recall' || purpose === 'search' || purpose === 'injection'
+  return purpose === 'recall' || purpose === 'injection'
 }
 
 function escapeRegExp(value: string): string {

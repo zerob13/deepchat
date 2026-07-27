@@ -51,6 +51,22 @@ describe('MemoryService.searchMemories (read-only facade)', () => {
     expect(hits.map((hit) => hit.row.id)).toContain('expired')
   })
 
+  it('keeps suppressed topics visible for management', async () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    repo.insert(seed('redis Project Saffron detail', 'suppressed'))
+    presenter.createDirective('deepchat', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+
+    const searchIds = (await presenter.searchMemories('deepchat', 'redis')).map((hit) => hit.row.id)
+    const recallIds = (await presenter.recall('deepchat', 'redis')).map((hit) => hit.id)
+
+    expect(searchIds).toContain('suppressed')
+    expect(recallIds).not.toContain('suppressed')
+  })
+
   it('never records access while recall does (browsing must not skew fairness)', async () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     repo.insert(seed('the user prefers redis', 'm1'))

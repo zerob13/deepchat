@@ -252,7 +252,7 @@ describeIfNative('Memory native SQLite migration', () => {
         table.insertDerivations([
           {
             agentId: 'a',
-            parentMemoryId: 'legacy-claim',
+            parentMemoryId: 'source-claim',
             childMemoryId: 'legacy-claim',
             derivationKind: 'merge',
             createdAt: 2_000
@@ -270,7 +270,7 @@ describeIfNative('Memory native SQLite migration', () => {
           enqueuedAt: 0
         }
       ])
-      expect(memoryTable(reopened).listDerivationsByParent('a', 'legacy-claim')).toHaveLength(1)
+      expect(memoryTable(reopened).listDerivationsByParent('a', 'source-claim')).toHaveLength(1)
       reopened.close()
     })
   })

@@ -414,6 +414,55 @@ export function buildManagementPageSelectSql(hasCursor: boolean): string {
           LIMIT ?`
 }
 
+export function buildScopedImportanceCandidatesSql(
+  agentId: string,
+  scopeFilter: readonly MemoryScope[],
+  limit: number
+): { sql: string; params: Array<string | number> } {
+  const scopes = normalizeMemoryScopeFilter(scopeFilter, [])
+  const cappedLimit = Number.isFinite(limit) ? Math.min(800, Math.max(1, Math.floor(limit))) : 1
+  if (!scopes.length) {
+    return {
+      sql: `SELECT am.rowid AS memory_rowid,
+                   am.id,
+                   am.importance,
+                   am.created_at
+            FROM agent_memory am
+            WHERE 0`,
+      params: []
+    }
+  }
+
+  const params: Array<string | number> = []
+  const branches = scopes.map((scope) => {
+    const scopePredicate = buildMemoryScopePredicateSql('am', [scope])
+    params.push(agentId, ...scopePredicate.params, cappedLimit)
+    return `SELECT *
+            FROM (
+              SELECT am.rowid AS memory_rowid,
+                     am.id,
+                     am.importance,
+                     am.created_at
+              FROM agent_memory am INDEXED BY idx_agent_memory_recall_scope_v6
+              WHERE am.agent_id = ?
+                AND ${buildRecallablePredicate('am')}
+                AND ${scopePredicate.sql}
+              ORDER BY am.importance DESC, am.created_at DESC, am.id ASC
+              LIMIT ?
+            )`
+  })
+  params.push(cappedLimit)
+  return {
+    sql: `SELECT memory_rowid, id, importance, created_at
+          FROM (
+            ${branches.join('\nUNION ALL\n')}
+          )
+          ORDER BY importance DESC, created_at DESC, id ASC
+          LIMIT ?`,
+    params
+  }
+}
+
 function isTransientFtsError(error: unknown): boolean {
   const code = (error as { code?: string } | null)?.code
   return code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED' || code === 'SQLITE_INTERRUPT'
@@ -871,6 +920,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       )
       .get()
     this.db.exec(AGENT_MEMORY_DERIVATION_TABLE_SQL)
+    this.db
+      .prepare(
+        `DELETE FROM agent_memory_derivation
+         WHERE parent_memory_id = child_memory_id`
+      )
+      .run()
     this.db.exec(AGENT_MEMORY_DIRTY_TABLE_SQL)
     if (!dirtyTableExists) this.db.exec(AGENT_MEMORY_DIRTY_BACKFILL_SQL)
     this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
@@ -2005,6 +2060,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       let inserted = 0
       const seen = new Set<string>()
       for (const input of inputs) {
+        if (input.parentMemoryId === input.childMemoryId) continue
         const key = JSON.stringify([
           input.agentId,
           input.parentMemoryId,
@@ -2031,6 +2087,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         `SELECT *
          FROM agent_memory_derivation INDEXED BY idx_agent_memory_derivation_child_v1
          WHERE agent_id = ? AND child_memory_id = ?
+           AND parent_memory_id != child_memory_id
          ORDER BY created_at ASC, parent_memory_id ASC, derivation_kind ASC`
       )
       .all(agentId, childMemoryId) as AgentMemoryDerivationRow[]
@@ -2042,6 +2099,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         `SELECT *
          FROM agent_memory_derivation
          WHERE agent_id = ? AND parent_memory_id = ?
+           AND parent_memory_id != child_memory_id
          ORDER BY created_at ASC, child_memory_id ASC, derivation_kind ASC`
       )
       .all(agentId, parentMemoryId) as AgentMemoryDerivationRow[]
@@ -2398,6 +2456,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     const cappedLimit = Math.min(Math.max(Math.floor(limit), 1), 100)
     const matchMode = options.matchMode ?? 'all'
     const scopeFilter = normalizeMemoryScopeFilter(options.scopeFilter)
+    if (!scopeFilter.length) {
+      return finish({ rows: [], strategy: this.ftsReady ? 'fts-only' : 'like-fallback' })
+    }
     const terms = tokenizeSearchQuery(normalized)
     if (!terms.length) {
       return finish({ rows: [], strategy: this.ftsReady ? 'fts-only' : 'like-fallback' })
@@ -2452,6 +2513,11 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     const lexicalScanLimit = Math.min(100, Math.max(1, limit))
     const importanceCandidateLimit = Math.min(800, Math.max(64, limit * 8))
     const scopePredicate = buildMemoryScopePredicateSql('am', scopeFilter)
+    const importanceCandidates = buildScopedImportanceCandidatesSql(
+      agentId,
+      scopeFilter,
+      importanceCandidateLimit
+    )
     return this.db
       .prepare(
         `WITH lexical_hits AS MATERIALIZED (
@@ -2485,16 +2551,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                     id ASC
            LIMIT ?
          ), importance_candidates AS MATERIALIZED (
-           SELECT am.rowid AS memory_rowid,
-                  am.id,
-                  am.importance,
-                  am.created_at
-           FROM agent_memory am INDEXED BY idx_agent_memory_recall_scope_v6
-           WHERE am.agent_id = ?
-             AND ${buildRecallablePredicate('am')}
-             AND ${scopePredicate.sql}
-           ORDER BY am.importance DESC, am.created_at DESC, am.id ASC
-           LIMIT ?
+           ${importanceCandidates.sql}
          ), importance AS MATERIALIZED (
            SELECT candidate.memory_rowid,
                   candidate.id,
@@ -2534,9 +2591,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         ...scopePredicate.params,
         lexicalScanLimit,
         limit,
-        agentId,
-        ...scopePredicate.params,
-        importanceCandidateLimit,
+        ...importanceCandidates.params,
         match,
         limit
       ) as AgentMemoryRow[]
