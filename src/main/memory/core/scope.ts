@@ -14,7 +14,10 @@ export const AGENT_MEMORY_AGENT_SCOPE_FILTER: readonly MemoryScope[] = Object.fr
 
 const SCOPE_TYPE_SET: ReadonlySet<string> = new Set(AGENT_MEMORY_SCOPE_TYPES)
 
-function normalizeScopeId(scopeType: Exclude<AgentMemoryScopeType, 'agent'>, value: unknown): string {
+function normalizeScopeId(
+  scopeType: Exclude<AgentMemoryScopeType, 'agent'>,
+  value: unknown
+): string {
   if (typeof value !== 'string') {
     throw new Error(`[Memory] ${scopeType} scope requires an id`)
   }
@@ -89,9 +92,7 @@ export function normalizeMemoryScopeFilter(
   return [...normalized.values()]
 }
 
-export function memoryScopeFilterFromContext(
-  context?: MemoryScopeContext
-): readonly MemoryScope[] {
+export function memoryScopeFilterFromContext(context?: MemoryScopeContext): readonly MemoryScope[] {
   const scopes: MemoryScope[] = [AGENT_MEMORY_AGENT_SCOPE]
   if (context?.userId !== undefined) {
     scopes.push({ type: 'user', id: normalizeScopeId('user', context.userId) })

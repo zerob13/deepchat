@@ -9,10 +9,7 @@ import {
   normalizeMemoryScopeFilter,
   rowMatchesMemoryScopeFilter
 } from '@/memory/core/scope'
-import {
-  buildMemoryProvenanceKey,
-  buildScopedMemoryProvenanceKey
-} from '@/memory/core/scoring'
+import { buildMemoryProvenanceKey, buildScopedMemoryProvenanceKey } from '@/memory/core/scoring'
 import { AGENT_MEMORY_SCOPE_ID_MAX_CHARS } from '@shared/types/agent-memory'
 
 describe('memory applicability scopes', () => {
@@ -32,12 +29,10 @@ describe('memory applicability scopes', () => {
       type: 'project',
       id: '😀'.repeat(AGENT_MEMORY_SCOPE_ID_MAX_CHARS)
     })
-    expect(() => normalizeMemoryScope({ type: 'user', id: '   ' })).toThrow(
-      /invalid user scope id/
+    expect(() => normalizeMemoryScope({ type: 'user', id: '   ' })).toThrow(/invalid user scope id/)
+    expect(() => normalizeMemoryScope({ type: 'agent', id: 'unexpected' } as never)).toThrow(
+      /agent scope must not include an id/
     )
-    expect(() =>
-      normalizeMemoryScope({ type: 'agent', id: 'unexpected' } as never)
-    ).toThrow(/agent scope must not include an id/)
     expect(() =>
       normalizeMemoryScope({
         type: 'project',
@@ -69,13 +64,8 @@ describe('memory applicability scopes', () => {
   })
 
   it('uses the same exact applicability semantics in JavaScript and SQL', () => {
-    const filter = [
-      { type: 'agent' as const },
-      { type: 'session' as const, id: 'session-1' }
-    ]
-    expect(
-      rowMatchesMemoryScopeFilter({ scope_type: 'agent', scope_id: null }, filter)
-    ).toBe(true)
+    const filter = [{ type: 'agent' as const }, { type: 'session' as const, id: 'session-1' }]
+    expect(rowMatchesMemoryScopeFilter({ scope_type: 'agent', scope_id: null }, filter)).toBe(true)
     expect(
       rowMatchesMemoryScopeFilter({ scope_type: 'session', scope_id: 'session-1' }, filter)
     ).toBe(true)
@@ -94,15 +84,15 @@ describe('memory applicability scopes', () => {
   })
 
   it('fails closed for malformed persisted scope pairs', () => {
-    expect(() =>
-      memoryScopeFromRow({ scope_type: 'project', scope_id: ' project-1 ' })
-    ).toThrow(/non-canonical persisted scope id/)
-    expect(() =>
-      memoryScopeFromRow({ scope_type: 'agent', scope_id: 'unexpected' })
-    ).toThrow(/invalid persisted agent scope/)
-    expect(() =>
-      memoryScopeFromRow({ scope_type: 'session', scope_id: null })
-    ).toThrow(/session scope requires an id/)
+    expect(() => memoryScopeFromRow({ scope_type: 'project', scope_id: ' project-1 ' })).toThrow(
+      /non-canonical persisted scope id/
+    )
+    expect(() => memoryScopeFromRow({ scope_type: 'agent', scope_id: 'unexpected' })).toThrow(
+      /invalid persisted agent scope/
+    )
+    expect(() => memoryScopeFromRow({ scope_type: 'session', scope_id: null })).toThrow(
+      /session scope requires an id/
+    )
   })
 
   it('preserves legacy agent provenance while separating narrow scopes', () => {
