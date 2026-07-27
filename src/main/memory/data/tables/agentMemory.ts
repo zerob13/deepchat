@@ -197,6 +197,17 @@ const AGENT_MEMORY_CLEAR_ARTIFACT_SQL = `
   ${AGENT_MEMORY_CLEAR_GUARD_TRIGGER_SQL}
 `
 
+// Read and maintenance work can finish after a durable clear job has fenced its Agent. Keep
+// bookkeeping updates atomic with that fence so stale completions become no-ops; the triggers
+// remain the final defense for domain writes that bypass their runtime gate.
+const AGENT_MEMORY_CLEAR_BOOKKEEPING_FENCE_SQL = `
+  NOT EXISTS (
+    SELECT 1
+    FROM agent_memory_clear_job AS clear_job
+    WHERE clear_job.agent_id = memory.agent_id
+  )
+`
+
 const AGENT_MEMORY_DERIVATION_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS agent_memory_derivation (
     agent_id TEXT NOT NULL,
@@ -3492,9 +3503,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   recordAccess(id: string, accessedAt: number = Date.now()): void {
     this.db
       .prepare(
-        `UPDATE agent_memory
+        `UPDATE agent_memory AS memory
          SET last_accessed = ?, access_count = access_count + 1
-         WHERE id = ?`
+         WHERE memory.id = ?
+           AND ${AGENT_MEMORY_CLEAR_BOOKKEEPING_FENCE_SQL}`
       )
       .run(accessedAt, id)
   }
@@ -3505,9 +3517,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     const placeholders = uniqueIds.map(() => '?').join(', ')
     this.db
       .prepare(
-        `UPDATE agent_memory
+        `UPDATE agent_memory AS memory
          SET last_accessed = ?, access_count = access_count + 1
-         WHERE id IN (${placeholders})`
+         WHERE memory.id IN (${placeholders})
+           AND ${AGENT_MEMORY_CLEAR_BOOKKEEPING_FENCE_SQL}`
       )
       .run(accessedAt, ...uniqueIds)
   }
@@ -3521,9 +3534,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   ): void {
     this.db
       .prepare(
-        `UPDATE agent_memory
+        `UPDATE agent_memory AS memory
          SET decay_score = ?, last_consolidated_at = COALESCE(?, last_consolidated_at)
-         WHERE id = ?`
+         WHERE memory.id = ?
+           AND ${AGENT_MEMORY_CLEAR_BOOKKEEPING_FENCE_SQL}`
       )
       .run(decayScore, consolidatedAt, id)
   }
@@ -3717,9 +3731,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   setConfidence(id: string, confidence: number): void {
     this.db
       .prepare(
-        `UPDATE agent_memory
+        `UPDATE agent_memory AS memory
          SET confidence = CASE WHEN confidence IS NULL THEN ? ELSE max(confidence, ?) END
-         WHERE id = ?`
+         WHERE memory.id = ?
+           AND ${AGENT_MEMORY_CLEAR_BOOKKEEPING_FENCE_SQL}`
       )
       .run(confidence, confidence, id)
   }
@@ -3743,7 +3758,14 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   setLastConsolidatedAt(id: string, at: number = Date.now()): void {
-    this.db.prepare('UPDATE agent_memory SET last_consolidated_at = ? WHERE id = ?').run(at, id)
+    this.db
+      .prepare(
+        `UPDATE agent_memory AS memory
+         SET last_consolidated_at = ?
+         WHERE memory.id = ?
+           AND ${AGENT_MEMORY_CLEAR_BOOKKEEPING_FENCE_SQL}`
+      )
+      .run(at, id)
   }
 
   // Most recent row-level LLM consolidation timestamp across the agent's rows.

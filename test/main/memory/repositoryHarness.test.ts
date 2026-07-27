@@ -154,6 +154,41 @@ describe('memory repository fakes', () => {
     expect(repo.listTopAccessed('a', 5).map((row) => row.id)).toEqual(['active'])
   })
 
+  it('matches AgentMemoryTable pending-clear bookkeeping fences', () => {
+    const repo = createFakeRepository()
+    for (const id of ['access', 'decay', 'confidence', 'consolidated']) {
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `${id} claim`
+      })
+    }
+    repo.insert({
+      id: 'other-agent',
+      agentId: 'b',
+      kind: 'semantic',
+      content: 'other agent claim'
+    })
+    const before = new Map(
+      ['access', 'decay', 'confidence', 'consolidated'].map((id) => [id, { ...repo.getById(id)! }])
+    )
+
+    repo.beginMemoryClear('a', 2_000)
+    repo.recordAccessBatch(['access', 'other-agent'], 3_000)
+    repo.updateDecayScore('decay', 0.25, 3_000)
+    repo.setConfidence('confidence', 0.9)
+    repo.setLastConsolidatedAt('consolidated', 3_000)
+
+    for (const [id, row] of before) {
+      expect(repo.getById(id)).toEqual(row)
+    }
+    expect(repo.getById('other-agent')).toMatchObject({
+      last_accessed: 3_000,
+      access_count: 1
+    })
+  })
+
   it('matches AgentMemoryTable current dimension tie-break for equal timestamps', () => {
     const repo = createFakeRepository()
     repo.insert({

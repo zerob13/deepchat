@@ -167,6 +167,11 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     })
   }
 
+  private getBookkeepingWritableRow(id: string): AgentMemoryRow | undefined {
+    const row = this.rows.get(id)
+    return row && !this.clearJobs.has(row.agent_id) ? row : undefined
+  }
+
   private tombstoneKey(
     agentId: string,
     identityKind: MemoryTombstoneIdentityKind,
@@ -1156,7 +1161,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   recordAccess(id: string, accessedAt = 0) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row) {
       row.last_accessed = accessedAt
       row.access_count += 1
@@ -1170,7 +1175,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   updateDecayScore(id: string, decayScore: number | null, consolidatedAt: number | null = null) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row) {
       row.decay_score = decayScore
       if (consolidatedAt !== null) row.last_consolidated_at = consolidatedAt
@@ -1334,7 +1339,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   setConfidence(id: string, confidence: number) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row)
       row.confidence = row.confidence === null ? confidence : Math.max(row.confidence, confidence)
   }
@@ -1382,7 +1387,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   setLastConsolidatedAt(id: string, at = 0) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row) row.last_consolidated_at = at
   }
 

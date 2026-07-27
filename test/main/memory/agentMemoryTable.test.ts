@@ -3073,6 +3073,54 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('atomically skips stale bookkeeping writes while an Agent clear is pending', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      for (const id of ['access', 'batch', 'decay', 'confidence', 'consolidated']) {
+        table.insert({
+          id,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `${id} claim`
+        })
+      }
+      table.insert({
+        id: 'other-agent',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'other agent claim'
+      })
+      const before = new Map(
+        ['access', 'batch', 'decay', 'confidence', 'consolidated'].map((id) => [
+          id,
+          table.getById(id)
+        ])
+      )
+
+      table.beginMemoryClear('a', 2_000)
+
+      expect(() => {
+        table.recordAccess('access', 3_000)
+        table.recordAccessBatch(['batch', 'other-agent'], 3_000)
+        table.updateDecayScore('decay', 0.25, 3_000)
+        table.setConfidence('confidence', 0.9)
+        table.setLastConsolidatedAt('consolidated', 3_000)
+      }).not.toThrow()
+
+      for (const [id, row] of before) {
+        expect(table.getById(id)).toEqual(row)
+      }
+      expect(table.getById('other-agent')).toMatchObject({
+        last_accessed: 3_000,
+        access_count: 1
+      })
+    } finally {
+      db.close()
+    }
+  })
+
   it('round-trips source_entry_ids lineage and leaves it null when absent', () => {
     const db = new DatabaseCtor(':memory:')
     try {

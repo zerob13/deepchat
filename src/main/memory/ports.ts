@@ -118,6 +118,7 @@ export interface MemoryMutationRepositoryPort {
     input: UserContentTransition
   ): MemoryClaimContentUpdateResult
   updateUserMetadataIfRevision(input: UserMetadataTransition): boolean
+  // Confidence-only bookkeeping is suppressed while the row's Agent clear is pending.
   setConfidence(id: string, confidence: number): void
   setPersonaState(id: string, state: AgentMemoryPersonaState, supersededBy?: string | null): void
   setAnchor(id: string, anchored: boolean): void
@@ -142,6 +143,7 @@ export interface MemoryMutationRepositoryPort {
 }
 
 export interface MemoryAccessRepositoryPort {
+  // Bookkeeping writes atomically no-op when the owning Agent has a pending durable clear job.
   recordAccess(id: string, accessedAt?: number): void
   recordAccessBatch(ids: string[], accessedAt?: number): void
 }
@@ -200,6 +202,7 @@ export interface MemoryLifecycleRepositoryPort {
     agentId: string,
     options: { kinds: AgentMemoryKind[]; watermark: number; limit: number }
   ): MemoryCognitiveMaintenanceInput
+  // Row-only maintenance bookkeeping follows the same pending-clear no-op contract as access.
   updateDecayScore(id: string, decayScore: number | null, consolidatedAt?: number | null): void
   setLastConsolidatedAt(id: string, at?: number): void
   getLastConsolidatedAt(agentId: string): number | null
