@@ -211,7 +211,7 @@ import { scheduleStartupDeferredTask } from '@/lib/startupDeferred'
 import { isManualCompactionCommand } from '@/components/chat/mentions/utils'
 import { filterUnsupportedAudioAttachments } from '@/lib/audioInputSupport'
 import { isAbortError } from '@/lib/errors'
-import { isImageAttachment } from '@shared/utils/attachmentRepresentation'
+import { isAttachmentPreparationCandidate } from '@shared/utils/attachmentRepresentation'
 import { useSpeechRecognition } from '@/components/chat/composables/useSpeechRecognition'
 import { cancelChatInputHeroFlight, prepareChatInputHeroFlight } from '@/lib/chatInputHero'
 
@@ -840,7 +840,7 @@ async function onSubmit() {
   activeSubmission.value = submission
   isSubmittingInput.value = true
   isPreparingAttachments.value =
-    !isAcpSelectedAgent.value && attachedFiles.value.some(isImageAttachment)
+    !isAcpSelectedAgent.value && attachedFiles.value.some(isAttachmentPreparationCandidate)
 
   try {
     const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
@@ -880,7 +880,7 @@ async function onCommandSubmit(command: string) {
   activeSubmission.value = submission
   isSubmittingInput.value = true
   isPreparingAttachments.value =
-    !isAcpSelectedAgent.value && attachedFiles.value.some(isImageAttachment)
+    !isAcpSelectedAgent.value && attachedFiles.value.some(isAttachmentPreparationCandidate)
   try {
     const files = (await prepareFilesForCurrentModel([...attachedFiles.value])).map((f) => toRaw(f))
     if (submission.cancelled) return
@@ -987,7 +987,7 @@ async function submitText(
       activeSkills: messagePayload.activeSkills
     }
     const submissionOptions =
-      !isAcp && files.some(isImageAttachment)
+      !isAcp && files.some(isAttachmentPreparationCandidate)
         ? {
             submissionId: submission.submissionId,
             isCancellationRequested: () => submission.cancelled

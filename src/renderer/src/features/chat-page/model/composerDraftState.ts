@@ -22,7 +22,15 @@ export interface ComposerSubmissionSnapshot {
 export function copyComposerFiles(files: MessageFile[]): MessageFile[] {
   return files.map((file) => ({
     ...file,
-    ...(file.metadata ? { metadata: { ...file.metadata } } : {})
+    ...(file.metadata ? { metadata: { ...file.metadata } } : {}),
+    ...(file.pdfTextCoverage
+      ? {
+          pdfTextCoverage: {
+            ...file.pdfTextCoverage,
+            lowTextPageSamples: [...file.pdfTextCoverage.lowTextPageSamples]
+          }
+        }
+      : {})
   }))
 }
 

@@ -607,6 +607,43 @@ describe('NewThreadPage ACP draft session bootstrap', () => {
     )
   })
 
+  it('uses cancellable attachment preparation for an initial PDF turn', async () => {
+    const { wrapper, sessionStore, modelStore, draftStore } = await setup({
+      selectedAgentId: 'deepchat',
+      selectedAgentType: 'deepchat'
+    })
+    modelStore.enabledModels = [
+      {
+        providerId: 'openai',
+        models: [{ id: 'gpt-4', name: 'GPT-4' }]
+      }
+    ]
+    draftStore.providerId = 'openai'
+    draftStore.modelId = 'gpt-4'
+    const pdf = {
+      name: 'scan.pdf',
+      path: '/tmp/scan.pdf',
+      mimeType: 'application/pdf',
+      requestedRepresentation: 'ocr_text'
+    }
+    ;(wrapper.vm as any).attachedFiles = [pdf]
+
+    await (wrapper.vm as any).onSubmit()
+    await flushPromises()
+
+    expect(sessionStore.createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '',
+        files: [pdf],
+        agentId: 'deepchat'
+      }),
+      expect.objectContaining({
+        submissionId: expect.any(String),
+        isCancellationRequested: expect.any(Function)
+      })
+    )
+  })
+
   it('locks the new-thread editor while initial attachment preflight is in flight', async () => {
     const { wrapper, sessionStore, modelStore, draftStore } = await setup({
       selectedAgentId: 'deepchat',
@@ -834,6 +871,10 @@ describe('NewThreadPage ACP draft session bootstrap', () => {
         expect.objectContaining({
           message: 'hello deepchat',
           files: [file]
+        }),
+        expect.objectContaining({
+          submissionId: expect.any(String),
+          isCancellationRequested: expect.any(Function)
         })
       )
       expect((wrapper.vm as any).message).toBe('hello deepchat')

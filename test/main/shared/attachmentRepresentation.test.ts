@@ -7,9 +7,11 @@ import {
 } from '../../../src/shared/contracts/common'
 import { PreparedMessageFileSchema } from '../../../src/shared/contracts/domainSchemas'
 import {
+  isAttachmentPreparationCandidate,
   isImageAttachment,
   isPdfAttachment,
   normalizeAttachmentRepresentationPreference,
+  normalizeAttachmentRepresentationPreferenceForFile,
   normalizeAttachmentResolvedRepresentation,
   normalizePdfEmbeddedTextCoverage
 } from '../../../src/shared/utils/attachmentRepresentation'
@@ -111,6 +113,34 @@ describe('attachment representation contracts', () => {
       true
     )
     expect(normalizeAttachmentRepresentationPreference('embedded_text')).toBe('embedded_text')
+    expect(
+      normalizeAttachmentRepresentationPreferenceForFile(
+        { name: 'scan.pdf', path: '', mimeType: 'application/pdf' },
+        'embedded_text'
+      )
+    ).toBe('embedded_text')
+    expect(
+      normalizeAttachmentRepresentationPreferenceForFile(
+        { name: 'scan.pdf', path: '', mimeType: 'application/pdf' },
+        'image'
+      )
+    ).toBe('auto')
+    expect(
+      normalizeAttachmentRepresentationPreferenceForFile(
+        { name: 'scan.png', path: '', mimeType: 'image/png' },
+        'embedded_text'
+      )
+    ).toBe('auto')
+    expect(
+      isAttachmentPreparationCandidate({
+        name: 'scan.pdf',
+        path: '',
+        mimeType: 'application/pdf'
+      })
+    ).toBe(true)
+    expect(
+      isAttachmentPreparationCandidate({ name: 'notes.txt', path: '', mimeType: 'text/plain' })
+    ).toBe(false)
   })
 
   it('normalizes bounded PDF embedded-text coverage and rejects inconsistent samples', () => {

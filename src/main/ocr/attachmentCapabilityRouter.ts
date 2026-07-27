@@ -10,6 +10,7 @@ import {
   getAttachmentResolvedRepresentation,
   isImageAttachment,
   isPdfAttachment,
+  normalizeAttachmentRepresentationPreferenceForFile,
   normalizePdfEmbeddedTextCoverage
 } from '@shared/utils/attachmentRepresentation'
 import {
@@ -127,9 +128,10 @@ export class AttachmentCapabilityRouter {
         : undefined
       if (!imageAttachment && !pdfAttachment) continue
       if (sourceFile.requestedRepresentation) {
-        const contextualPreference = pdfAttachment
-          ? normalizePdfPreference(sourceFile.requestedRepresentation)
-          : normalizeImagePreference(sourceFile.requestedRepresentation)
+        const contextualPreference = normalizeAttachmentRepresentationPreferenceForFile(
+          sourceFile,
+          sourceFile.requestedRepresentation
+        )
         if (contextualPreference !== sourceFile.requestedRepresentation) {
           file.requestedRepresentation = contextualPreference
         }
@@ -166,7 +168,10 @@ export class AttachmentCapabilityRouter {
 
       if (pdfAttachment) {
         const coverage = file.pdfTextCoverage
-        const preference = normalizePdfPreference(file.requestedRepresentation)
+        const preference = normalizeAttachmentRepresentationPreferenceForFile(
+          file,
+          file.requestedRepresentation
+        )
 
         // Retrying a legacy sent message must reuse its persisted body instead of opening the
         // original path or silently changing representation under a historical turn.
@@ -227,7 +232,10 @@ export class AttachmentCapabilityRouter {
         continue
       }
 
-      const preference = normalizeImagePreference(file.requestedRepresentation)
+      const preference = normalizeAttachmentRepresentationPreferenceForFile(
+        file,
+        file.requestedRepresentation
+      )
       if (input.supportsVision && preference !== 'ocr_text') {
         if (!prepareLlmFriendlyImagePayload(file)) {
           this.markUnavailable(
@@ -641,18 +649,6 @@ export class AttachmentCapabilityRouter {
       // Diagnostics never influence attachment routing.
     }
   }
-}
-
-function normalizeImagePreference(
-  preference: MessageFile['requestedRepresentation']
-): 'auto' | 'image' | 'ocr_text' {
-  return preference === 'image' || preference === 'ocr_text' ? preference : 'auto'
-}
-
-function normalizePdfPreference(
-  preference: MessageFile['requestedRepresentation']
-): 'auto' | 'embedded_text' | 'ocr_text' {
-  return preference === 'embedded_text' || preference === 'ocr_text' ? preference : 'auto'
 }
 
 function hasUsableEmbeddedPdfText(file: MessageFile): boolean {

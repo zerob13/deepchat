@@ -6,7 +6,7 @@
   >
     <Icon :icon="fileIcon" class="h-3 w-3 shrink-0" />
     <span class="truncate max-w-[120px]">{{ node.attrs.fileName }}</span>
-    <DropdownMenu v-if="isImage">
+    <DropdownMenu v-if="hasRepresentationChoice">
       <DropdownMenuTrigger as-child>
         <button
           type="button"
@@ -17,24 +17,21 @@
           :aria-label="t('chat.attachments.chooseRepresentation', { name: node.attrs.fileName })"
           @mousedown.stop
         >
-          <Icon :icon="representationIcon" class="h-3 w-3" />
+          <span>{{ representationLabel }}</span>
           <Icon icon="lucide:chevron-down" class="h-2.5 w-2.5" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" class="min-w-44" @mousedown.stop>
-        <DropdownMenuLabel>{{ t('chat.attachments.representation') }}</DropdownMenuLabel>
+      <DropdownMenuContent align="start" class="min-w-40" @mousedown.stop>
         <DropdownMenuRadioGroup
           :model-value="requestedRepresentation"
           @update:model-value="handleRepresentationChange"
         >
-          <DropdownMenuRadioItem value="auto">
-            {{ t('chat.attachments.auto') }}
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="image">
-            {{ t('chat.attachments.sendImage') }}
-          </DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="ocr_text">
-            {{ t('chat.attachments.useOcrText') }}
+          <DropdownMenuRadioItem
+            v-for="option in representationOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ t(option.labelKey) }}
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
@@ -60,7 +57,6 @@ import { getMimeTypeIcon } from '@/lib/utils'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger
@@ -68,7 +64,8 @@ import {
 import type { AttachmentRepresentationPreference } from '@shared/types/attachment'
 import {
   isImageAttachment,
-  normalizeAttachmentRepresentationPreference
+  isPdfAttachment,
+  normalizeAttachmentRepresentationPreferenceForFile
 } from '@shared/utils/attachmentRepresentation'
 import { INPUT_NODE_ACTIONS, type InputNodeActions } from './symbols'
 
@@ -81,33 +78,54 @@ const fileIcon = computed(() => {
   return getMimeTypeIcon(mimeType)
 })
 
-const isImage = computed(() =>
-  isImageAttachment({
-    name: String(props.node.attrs.fileName || ''),
-    path: String(props.node.attrs.filePath || ''),
-    mimeType: String(props.node.attrs.mimeType || ''),
-    type: undefined
-  })
-)
-const requestedRepresentation = computed<AttachmentRepresentationPreference>(
-  () =>
-    normalizeAttachmentRepresentationPreference(props.node.attrs.requestedRepresentation) ?? 'auto'
-)
-const representationLabel = computed(() =>
-  t(
-    `chat.attachments.${requestedRepresentation.value === 'ocr_text' ? 'useOcrText' : requestedRepresentation.value === 'image' ? 'sendImage' : 'auto'}`
+const attachmentFile = computed(() => ({
+  name: String(props.node.attrs.fileName || ''),
+  path: String(props.node.attrs.filePath || ''),
+  mimeType: String(props.node.attrs.mimeType || ''),
+  type: undefined
+}))
+const isImage = computed(() => isImageAttachment(attachmentFile.value))
+const isPdf = computed(() => isPdfAttachment(attachmentFile.value))
+const hasRepresentationChoice = computed(() => isImage.value || isPdf.value)
+const requestedRepresentation = computed<AttachmentRepresentationPreference>(() =>
+  normalizeAttachmentRepresentationPreferenceForFile(
+    attachmentFile.value,
+    props.node.attrs.requestedRepresentation
   )
 )
-const representationIcon = computed(() => {
-  if (requestedRepresentation.value === 'ocr_text') return 'lucide:scan-text'
-  if (requestedRepresentation.value === 'image') return 'lucide:image'
-  return 'lucide:wand-sparkles'
+const representationOptions = computed<
+  Array<{ value: AttachmentRepresentationPreference; labelKey: string }>
+>(() => {
+  if (isPdf.value) {
+    return [
+      { value: 'auto', labelKey: 'chat.attachments.auto' },
+      { value: 'embedded_text', labelKey: 'chat.attachments.useEmbeddedText' },
+      { value: 'ocr_text', labelKey: 'chat.attachments.useOcrText' }
+    ]
+  }
+  if (isImage.value) {
+    return [
+      { value: 'auto', labelKey: 'chat.attachments.auto' },
+      { value: 'image', labelKey: 'chat.attachments.sendImage' },
+      { value: 'ocr_text', labelKey: 'chat.attachments.useOcrText' }
+    ]
+  }
+  return []
+})
+const representationLabel = computed(() => {
+  const labelKeys: Record<AttachmentRepresentationPreference, string> = {
+    auto: 'chat.attachments.auto',
+    image: 'chat.attachments.imageBadge',
+    embedded_text: 'chat.attachments.embeddedTextBadge',
+    ocr_text: 'chat.attachments.ocrBadge'
+  }
+  return t(labelKeys[requestedRepresentation.value])
 })
 
 function handleRepresentationChange(value: unknown) {
-  const preference = normalizeAttachmentRepresentationPreference(value)
+  const preference = normalizeAttachmentRepresentationPreferenceForFile(attachmentFile.value, value)
   const filePath = props.node.attrs.filePath as string
-  if (!preference || !filePath) {
+  if (!filePath) {
     return
   }
 

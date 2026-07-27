@@ -55,12 +55,12 @@
 
 ## Renderer And i18n
 
-- [ ] Add PDF Auto/embedded/OCR choices to attachment chips.
-- [ ] Show embedded, OCR, truncated, resource-limited, and unavailable PDF states.
-- [ ] Show included-page coverage in the OCR preview.
-- [ ] Keep default chip/control copy compact and move secondary PDF detail behind preview/expand.
-- [ ] Generalize image-only preparation copy.
-- [ ] Translate and validate every shipped locale.
+- [x] Add PDF Auto/embedded/OCR choices to attachment chips.
+- [x] Show embedded, OCR, truncated, resource-limited, and unavailable PDF states.
+- [x] Show included-page coverage in the OCR preview.
+- [x] Keep default chip/control copy compact and move secondary PDF detail behind preview/expand.
+- [x] Generalize image-only preparation copy.
+- [x] Translate and validate every shipped locale.
 
 ## Validation
 

@@ -30,7 +30,11 @@ vi.mock('@shadcn/components/ui/dialog', () => {
       template: '<div><slot /></div>'
     })
   return {
-    Dialog: passthrough('Dialog'),
+    Dialog: defineComponent({
+      name: 'Dialog',
+      props: { open: { type: Boolean, default: false } },
+      template: '<div v-if="open"><slot /></div>'
+    }),
     DialogContent: passthrough('DialogContent'),
     DialogDescription: passthrough('DialogDescription'),
     DialogHeader: passthrough('DialogHeader'),
@@ -60,6 +64,8 @@ describe('ChatAttachmentItem', () => {
     })
 
     expect(wrapper.get('[data-testid="attachment-ocr-preview-trigger"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="attachment-ocr-preview-text"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="attachment-ocr-preview-trigger"]').trigger('click')
     expect(wrapper.get('[data-testid="attachment-ocr-preview-text"]').text()).toBe(maliciousText)
     expect(wrapper.find('[data-testid="attachment-ocr-preview-text"] img').exists()).toBe(false)
     expect(wrapper.text()).toContain('chat.attachments.ocrTextTruncated')
@@ -83,5 +89,94 @@ describe('ChatAttachmentItem', () => {
     expect(wrapper.text()).toContain('chat.attachments.unavailableBadge')
     expect(wrapper.find('[data-testid="attachment-ocr-preview-trigger"]').exists()).toBe(false)
     expect(wrapper.attributes()).not.toHaveProperty('data-path')
+  })
+
+  it('shows embedded PDF text as one compact state without an OCR preview', () => {
+    const wrapper = mount(ChatAttachmentItem, {
+      props: {
+        file: {
+          name: 'report.pdf',
+          path: '/tmp/report.pdf',
+          mimeType: 'application/pdf',
+          resolvedRepresentation: { kind: 'embedded_text' }
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="attachment-representation-status"]').text()).toBe(
+      'chat.attachments.embeddedTextBadge'
+    )
+    expect(wrapper.find('[data-testid="attachment-ocr-preview-trigger"]').exists()).toBe(false)
+  })
+
+  it('keeps output-limited page coverage inside the OCR preview', async () => {
+    const text = '## Page 1\n\npartial page'
+    const wrapper = mount(ChatAttachmentItem, {
+      props: {
+        file: {
+          name: 'scan.pdf',
+          path: '/tmp/scan.pdf',
+          mimeType: 'application/pdf',
+          resolvedRepresentation: {
+            kind: 'ocr_text',
+            text,
+            tokenCount: 8,
+            truncated: true,
+            document: {
+              pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: false }],
+              includedThroughPage: 1,
+              includedThroughPageComplete: false,
+              artifactTermination: 'stopped_by_output_limit',
+              generationOutputLimitReached: true
+            }
+          }
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="attachment-representation-status"]').text()).toBe(
+      'chat.attachments.ocrPartialBadge'
+    )
+    expect(wrapper.text()).not.toContain('chat.attachments.ocrPageCoveragePartial')
+
+    await wrapper.get('[data-testid="attachment-ocr-preview-trigger"]').trigger('click')
+
+    expect(wrapper.text()).toContain('chat.attachments.ocrPageCoveragePartial')
+    expect(wrapper.text()).toContain('chat.attachments.ocrTextTruncated')
+  })
+
+  it('distinguishes resource-limited PDF OCR in the chip and preview', async () => {
+    const text = '## Page 1\n\nrecognized page'
+    const wrapper = mount(ChatAttachmentItem, {
+      props: {
+        file: {
+          name: 'plans.pdf',
+          path: '/tmp/plans.pdf',
+          mimeType: 'application/pdf',
+          resolvedRepresentation: {
+            kind: 'ocr_text',
+            text,
+            tokenCount: 8,
+            truncated: true,
+            document: {
+              pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: true }],
+              includedThroughPage: 1,
+              includedThroughPageComplete: true,
+              artifactTermination: 'resource_limited',
+              generationOutputLimitReached: false
+            }
+          }
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="attachment-representation-status"]').text()).toBe(
+      'chat.attachments.ocrLimitedBadge'
+    )
+
+    await wrapper.get('[data-testid="attachment-ocr-preview-trigger"]').trigger('click')
+
+    expect(wrapper.text()).toContain('chat.attachments.ocrPageCoverage')
+    expect(wrapper.text()).toContain('chat.attachments.reasons.ocr_resource_limited')
   })
 })

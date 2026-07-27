@@ -68,6 +68,12 @@ export function isPdfAttachment(
   )
 }
 
+export function isAttachmentPreparationCandidate(
+  file: Pick<MessageFile, 'mimeType' | 'type' | 'path' | 'name'> | null | undefined
+): boolean {
+  return isImageAttachment(file) || isPdfAttachment(file)
+}
+
 function normalizeMimeType(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   return value.split(';')[0]?.trim().toLowerCase() || undefined
@@ -92,6 +98,20 @@ export function normalizeAttachmentRepresentationPreference(
   return typeof value === 'string' && REPRESENTATION_PREFERENCES.has(value)
     ? (value as AttachmentRepresentationPreference)
     : undefined
+}
+
+export function normalizeAttachmentRepresentationPreferenceForFile(
+  file: Pick<MessageFile, 'mimeType' | 'type' | 'path' | 'name'> | null | undefined,
+  value: unknown
+): AttachmentRepresentationPreference {
+  const preference = normalizeAttachmentRepresentationPreference(value) ?? 'auto'
+  if (isPdfAttachment(file)) {
+    return preference === 'embedded_text' || preference === 'ocr_text' ? preference : 'auto'
+  }
+  if (isImageAttachment(file)) {
+    return preference === 'image' || preference === 'ocr_text' ? preference : 'auto'
+  }
+  return 'auto'
 }
 
 export function normalizeAttachmentResolvedRepresentation(
