@@ -37,11 +37,11 @@ import {
   type LightOcrDocumentRecognitionOutcome
 } from './lightOcrProcessHost'
 import { OcrSourceSnapshotBudget, OcrSourceSnapshotBudgetError } from './ocrSourceSnapshotBudget'
+import { PDF_TEXT_COVERAGE_MAX_PAGES } from '@shared/types/attachment'
 
 const PDF_OCR_DPI = 150
 const PDF_OCR_PAGE_RANGE = { start: 1, end: LIGHT_OCR_DOCUMENT_MAX_PAGES } as const
 const SNAPSHOT_READ_CHUNK_BYTES = 1024 * 1024
-const MAX_SOURCE_PAGE_COUNT_HINT = 1_000_000
 
 export type DocumentTextExtractionErrorCode =
   | 'cancelled'
@@ -645,7 +645,7 @@ function normalizeGenerationTokenLimit(value: number | undefined): number {
 
 function normalizeSourcePageCountHint(value: number | undefined): number | undefined {
   if (value === undefined) return undefined
-  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_SOURCE_PAGE_COUNT_HINT) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > PDF_TEXT_COVERAGE_MAX_PAGES) {
     throw new DocumentTextExtractionError('invalid_input', 'PDF source page count hint is invalid')
   }
   return value

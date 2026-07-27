@@ -25,12 +25,14 @@ import {
 } from '@/session/usageStats'
 import type { TapeMessageFactWriter } from '@/tape/ports/capabilities'
 import {
+  isPdfAttachment,
   normalizeAttachmentRepresentationPreference,
-  normalizeAttachmentResolvedRepresentation
+  normalizeAttachmentResolvedRepresentation,
+  normalizePdfEmbeddedTextCoverage
 } from '@shared/utils/attachmentRepresentation'
 
-const MAX_SEARCHABLE_OCR_CHARACTERS = 32_000
-const SEARCH_OCR_TRUNCATION_MARKER = '[OCR search text truncated]'
+const MAX_SEARCHABLE_ATTACHMENT_CHARACTERS = 32_000
+const SEARCH_ATTACHMENT_TRUNCATION_MARKER = '[Attachment search text truncated]'
 
 function shouldConvertPendingBlockToError(
   status: AssistantMessageBlock['status']
@@ -120,8 +122,8 @@ function extractSearchableMessageContent(rawContent: string): string {
       if (typeof parsed.text === 'string' && parsed.text.trim()) {
         segments.push(parsed.text.trim())
       }
-      const searchableOcrText = buildSearchableOcrText(parsed.files)
-      if (searchableOcrText) segments.push(searchableOcrText)
+      const searchableAttachmentText = buildSearchableAttachmentText(parsed.files)
+      if (searchableAttachmentText) segments.push(searchableAttachmentText)
       return segments.join('\n')
     }
   } catch {
@@ -131,7 +133,7 @@ function extractSearchableMessageContent(rawContent: string): string {
   return rawContent.trim()
 }
 
-function buildSearchableOcrText(files: unknown): string {
+function buildSearchableAttachmentText(files: unknown): string {
   if (!Array.isArray(files)) return ''
   const text = files
     .flatMap((file) => {
@@ -139,15 +141,30 @@ function buildSearchableOcrText(files: unknown): string {
       const resolved = normalizeAttachmentResolvedRepresentation(
         (file as Record<string, unknown>).resolvedRepresentation
       )
-      return resolved?.kind === 'ocr_text' && resolved.text.trim() ? [resolved.text.trim()] : []
+      if (resolved?.kind === 'ocr_text' && resolved.text.trim()) return [resolved.text.trim()]
+      const candidate = file as Record<string, unknown>
+      if (
+        resolved?.kind === 'embedded_text' &&
+        typeof candidate.content === 'string' &&
+        candidate.content.trim() &&
+        isPdfAttachment({
+          name: typeof candidate.name === 'string' ? candidate.name : '',
+          path: typeof candidate.path === 'string' ? candidate.path : '',
+          type: typeof candidate.type === 'string' ? candidate.type : undefined,
+          mimeType: typeof candidate.mimeType === 'string' ? candidate.mimeType : undefined
+        })
+      ) {
+        return [candidate.content.trim()]
+      }
+      return []
     })
     .join('\n')
-  if (text.length <= MAX_SEARCHABLE_OCR_CHARACTERS) return text
+  if (text.length <= MAX_SEARCHABLE_ATTACHMENT_CHARACTERS) return text
 
-  const marker = `\n${SEARCH_OCR_TRUNCATION_MARKER}\n`
+  const marker = `\n${SEARCH_ATTACHMENT_TRUNCATION_MARKER}\n`
   const retainedCharacters = Math.max(
     0,
-    Math.floor((MAX_SEARCHABLE_OCR_CHARACTERS - marker.length) / 2)
+    Math.floor((MAX_SEARCHABLE_ATTACHMENT_CHARACTERS - marker.length) / 2)
   )
   let headEnd = retainedCharacters
   if (isHighSurrogate(text.charCodeAt(headEnd - 1))) headEnd -= 1
@@ -875,6 +892,7 @@ export class SessionTranscript {
           requestedRepresentation: normalizeAttachmentRepresentationPreference(
             file.requestedRepresentation
           ),
+          pdfTextCoverage: normalizePdfEmbeddedTextCoverage(file.pdfTextCoverage),
           resolvedRepresentation: normalizeAttachmentResolvedRepresentation(
             file.resolvedRepresentation
           )
@@ -898,6 +916,7 @@ export class SessionTranscript {
       requestedRepresentation: normalizeAttachmentRepresentationPreference(
         extra.requestedRepresentation
       ),
+      pdfTextCoverage: normalizePdfEmbeddedTextCoverage(extra.pdfTextCoverage),
       resolvedRepresentation: normalizeAttachmentResolvedRepresentation(
         extra.resolvedRepresentation
       ),

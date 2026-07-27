@@ -157,6 +157,8 @@ Use the existing shadcn dropdown, badge, dialog, and alert primitives:
 - render image-specific and PDF-specific choices;
 - show embedded, OCR, truncated, resource-limited, and unavailable states;
 - include page coverage in the OCR preview;
+- keep the closed chip and dropdown trigger concise, reveal page/diagnostic detail only in the
+  preview or expanded state, and avoid repeating equivalent status copy;
 - generalize preparation dialogs from image-only wording to attachment wording.
 
 Update composer draft identity and node attributes for `embedded_text`. Translate every new key for
@@ -198,6 +200,8 @@ available. Do not claim other platform results without their native workflow run
   through the legacy non-image content path until newly submitted.
 - OCR cache schema v1 is derived data and is rebuilt once as schema v2. No message/database migration
   depends on cache availability.
+- Tape search projections advance one derived-data revision so persisted embedded PDF text is
+  indexed without reopening source files.
 - Runtime manifest schema v2 is rejected after the package upgrade; supported packages always write
   schema v3.
 - No public route removes `accepted` or changes existing cancellation semantics.

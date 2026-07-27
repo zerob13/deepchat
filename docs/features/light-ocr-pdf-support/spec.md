@@ -107,14 +107,16 @@ code points. The classifier records:
 - substantive-page count;
 - complete low-text-page count;
 - at most the first 20 one-based low-text page samples;
+- whether any embedded text exists, independently from the substantive threshold;
 - `PDF_ROUTING_REVISION`.
 
 The ratio comparison uses integer arithmetic. `file.content` remains the only embedded-text body;
 the resolved snapshot must not duplicate it. Missing or invalid page-coverage metadata makes `Auto`
 choose OCR, never a `content.trim()` heuristic.
 
-An explicit `embedded_text` request with no usable embedded body produces
-`pdf_text_unavailable`. It is deterministic for the persisted snapshot and is not retryable.
+An explicit `embedded_text` request requires both the persisted any-text fact and a usable embedded
+body; otherwise it produces `pdf_text_unavailable`. It is deterministic for the persisted snapshot
+and is not retryable.
 
 The v1 whole-document choice intentionally prefers a mostly textual 100-page document with a few
 diagram or separator pages over re-OCRing and truncating the entire document.
@@ -280,6 +282,10 @@ or a transient OCR failure; it is not inferred from whether an artifact was cach
   notice; it is never presented as complete.
 - Sent attachment chips distinguish embedded PDF text, complete OCR, truncated OCR, and
   resource-limited OCR. OCR preview shows the included page boundary.
+- PDF attachment UI follows progressive disclosure: the chip shows only the selected
+  representation and an essential warning when needed; page coverage and diagnostic detail stay in
+  the existing preview or expanded surface. Labels remain short enough for their controls, and the
+  same state is not repeated across the chip, trigger, and notice.
 - Attachment preparation copy refers to image or PDF attachments as appropriate.
 - All new user-facing strings are translated in every shipped locale.
 

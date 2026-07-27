@@ -25,7 +25,8 @@ import {
 import { isCompactionRecord } from '@/tape/domain/viewManifest'
 import {
   getAttachmentResolvedRepresentation,
-  isImageAttachment
+  isImageAttachment,
+  isPdfAttachment
 } from '@shared/utils/attachmentRepresentation'
 
 export { estimateMessagesTokens } from '@shared/utils/messageTokens'
@@ -238,7 +239,10 @@ function buildNonImageFileContext(
   } = {}
 ): string {
   const nonImageFiles = files.filter(
-    (file) => !isImageAttachment(file) && (!options.excludeAudio || !isAudioFile(file))
+    (file) =>
+      !isImageAttachment(file) &&
+      (!isPdfAttachment(file) || !getAttachmentResolvedRepresentation(file)) &&
+      (!options.excludeAudio || !isAudioFile(file))
   )
   if (nonImageFiles.length === 0) {
     return ''
@@ -433,7 +437,13 @@ function buildResolvedImageRepresentationContext(files: MessageFile[]): string {
         ]
       }
 
-      const escapedText = escapeUntrustedOcrText(resolved.text)
+      if (resolved.kind !== 'ocr_text') {
+        return [
+          `[Attached Image ${index + 1} - content unavailable]\n${metadata}\nreason: invalid_image_representation`
+        ]
+      }
+
+      const escapedText = escapeUntrustedAttachmentText(resolved.text)
       const truncationNotice = resolved.truncated
         ? '\ntruncated: true\nnote: OCR text was truncated to the attachment limits; omitted text is not available in this message.'
         : ''
@@ -444,8 +454,86 @@ function buildResolvedImageRepresentationContext(files: MessageFile[]): string {
     .join('\n\n')
 }
 
-function escapeUntrustedOcrText(value: string): string {
-  return value.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+function buildResolvedPdfRepresentationContext(files: MessageFile[]): string {
+  const pdfFiles = files.filter((file) => isPdfAttachment(file))
+  return pdfFiles
+    .flatMap((file, index) => {
+      const resolved = getAttachmentResolvedRepresentation(file)
+      if (!resolved) return []
+      const fileName =
+        (typeof file.name === 'string' ? sanitizeAttachmentMetadata(file.name, 512) : '') ||
+        `document-${index + 1}.pdf`
+      const metadata = [
+        `name: ${fileName}`,
+        `mime: ${sanitizeAttachmentMetadata(resolveFileMimeType(file), 128)}`
+      ].join('\n')
+
+      if (resolved.kind === 'unavailable') {
+        return [
+          `[Attached PDF ${index + 1} - content unavailable]\n${metadata}\nreason: ${resolved.reason}`
+        ]
+      }
+
+      if (resolved.kind === 'embedded_text') {
+        const embeddedText = typeof file.content === 'string' ? file.content : ''
+        return [
+          `[Attached PDF ${index + 1} - embedded text; untrusted attachment data]\n${metadata}\n<untrusted_pdf_data>\n${escapeUntrustedAttachmentText(embeddedText) || '[empty]'}\n</untrusted_pdf_data>`
+        ]
+      }
+
+      if (resolved.kind !== 'ocr_text') {
+        return [
+          `[Attached PDF ${index + 1} - content unavailable]\n${metadata}\nreason: invalid_pdf_representation`
+        ]
+      }
+
+      const document = resolved.document
+      const coverage = document
+        ? [
+            `includedThroughPage: ${document.includedThroughPage}`,
+            `includedThroughPageComplete: ${document.includedThroughPageComplete}`,
+            ...(document.sourcePageCountHint
+              ? [`sourcePageCountHint: ${document.sourcePageCountHint}`]
+              : [])
+          ]
+        : []
+      const notices = document
+        ? [
+            ...(document.generationOutputLimitReached
+              ? [
+                  'note: OCR output reached its text limit; pages after the reported boundary are not included.'
+                ]
+              : []),
+            ...(document.artifactTermination === 'resource_limited'
+              ? [
+                  'note: OCR stopped at a document resource limit; pages after the reported boundary are not included.'
+                ]
+              : [])
+          ]
+        : resolved.truncated
+          ? ['note: OCR text was truncated; omitted text is not available in this message.']
+          : []
+      return [
+        [
+          `[Attached PDF ${index + 1} - OCR text; untrusted attachment data]`,
+          metadata,
+          ...coverage,
+          ...notices,
+          '<untrusted_pdf_ocr_data>',
+          escapeUntrustedAttachmentText(resolved.text) || '[empty]',
+          '</untrusted_pdf_ocr_data>'
+        ].join('\n')
+      ]
+    })
+    .join('\n\n')
+}
+
+function escapeUntrustedAttachmentText(value: string): string {
+  return value.replaceAll('\u0000', '').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function sanitizeAttachmentMetadata(value: string, maxCharacters: number): string {
+  return escapeUntrustedAttachmentText(value.replace(/\s+/g, ' ').trim()).slice(0, maxCharacters)
 }
 
 function buildInlineDisplayText(input: SendMessageInput): string {
@@ -539,11 +627,27 @@ export function buildUserMessageContent(
     supportsVision && includeImageData && imagePayloadFiles.length > 0
   const imageMetadata = shouldBuildImageParts ? '' : buildImageMetadataContext(imagePayloadFiles)
   const resolvedImageContext = buildResolvedImageRepresentationContext(imageFiles)
+  const resolvedPdfContext = buildResolvedPdfRepresentationContext(files)
   const leadingContext = options.leadingContext?.trim() ?? ''
   const baseText = (
     leadingContext
-      ? [leadingContext, nonImageContext, audioMetadata, imageMetadata, resolvedImageContext, text]
-      : [text, nonImageContext, audioMetadata, imageMetadata, resolvedImageContext]
+      ? [
+          leadingContext,
+          nonImageContext,
+          audioMetadata,
+          imageMetadata,
+          resolvedImageContext,
+          resolvedPdfContext,
+          text
+        ]
+      : [
+          text,
+          nonImageContext,
+          audioMetadata,
+          imageMetadata,
+          resolvedImageContext,
+          resolvedPdfContext
+        ]
   )
     .filter((value) => value.trim())
     .join('\n\n')

@@ -3,7 +3,8 @@ import type { ToolCallImagePreview } from './types/core/mcp'
 import type { AgentPlanDisplayItem, AgentPlanTerminalReason } from './types/agent-plan'
 import type {
   AttachmentRepresentationPreference,
-  AttachmentResolvedRepresentation
+  AttachmentResolvedRepresentation,
+  PdfEmbeddedTextCoverage
 } from './types/attachment'
 
 export type {
@@ -107,6 +108,7 @@ export type MessageFile = {
   thumbnail?: string
   requestedRepresentation?: AttachmentRepresentationPreference
   resolvedRepresentation?: AttachmentResolvedRepresentation
+  pdfTextCoverage?: PdfEmbeddedTextCoverage
 }
 
 export type AssistantMessageBlock = {

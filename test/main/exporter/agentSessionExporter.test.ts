@@ -235,6 +235,39 @@ describe('AgentSessionExportService', () => {
     }
   )
 
+  it('exports the persisted embedded PDF body without exporting unrelated attachment payloads', async () => {
+    const { service, messages } = createFixture()
+    const userMessage = messages.find((message) => message.role === 'user')!
+    userMessage.content = JSON.stringify({
+      text: 'Summarize the report',
+      files: [
+        {
+          name: 'report.pdf',
+          path: '/tmp/report.pdf',
+          mimeType: 'application/pdf',
+          content: 'embedded report body',
+          resolvedRepresentation: { kind: 'embedded_text' }
+        },
+        {
+          name: 'photo.png',
+          path: '/tmp/photo.png',
+          mimeType: 'image/png',
+          content: 'data:image/png;base64,PRIVATE_IMAGE_BYTES',
+          resolvedRepresentation: { kind: 'image' }
+        }
+      ],
+      links: [],
+      search: false,
+      think: false
+    })
+
+    const result = await service.export('session-1', 'markdown')
+
+    expect(result.content).toContain('Embedded PDF text sent to the model')
+    expect(result.content).toContain('embedded report body')
+    expect(result.content).not.toContain('PRIVATE_IMAGE_BYTES')
+  })
+
   it('locks generation-settings precedence and model-config fallbacks', async () => {
     const explicit = createFixture({
       generationSettings: {

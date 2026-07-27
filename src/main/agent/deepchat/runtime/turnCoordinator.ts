@@ -381,7 +381,7 @@ export class TurnCoordinator {
             content,
             supportsVision,
             signal: preStreamAbortSignal,
-            reusePreparedOcrText: Boolean(claimedInput),
+            reusePreparedAttachmentRepresentations: Boolean(claimedInput),
             preserveResolvedRepresentations: context?.preserveResolvedRepresentations
           })
       )

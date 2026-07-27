@@ -9,7 +9,8 @@ import type {
   AttachmentFallbackPolicy,
   AttachmentPreparationSummary,
   AttachmentRepresentationPreference,
-  AttachmentResolvedRepresentation
+  AttachmentResolvedRepresentation,
+  PdfEmbeddedTextCoverage
 } from './attachment'
 
 export type {
@@ -234,6 +235,7 @@ export interface MessageFile {
   thumbnail?: string
   requestedRepresentation?: AttachmentRepresentationPreference
   resolvedRepresentation?: AttachmentResolvedRepresentation
+  pdfTextCoverage?: PdfEmbeddedTextCoverage
   metadata?: {
     fileName?: string
     fileSize?: number

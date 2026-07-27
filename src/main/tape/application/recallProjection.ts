@@ -2,11 +2,14 @@ import type { AgentTapeSearchOptions, AgentTapeViewScope } from '@shared/types/a
 import type { DeepChatTapeEntryRow, DeepChatTapeSearchInput } from '../domain/entry'
 import { parseJsonObject, parseJsonValue } from './common'
 import type { TapeSearchResult } from './contracts'
-import { normalizeAttachmentResolvedRepresentation } from '@shared/utils/attachmentRepresentation'
+import {
+  isPdfAttachment,
+  normalizeAttachmentResolvedRepresentation
+} from '@shared/utils/attachmentRepresentation'
 
-const MAX_OCR_SEARCH_CHARACTERS_PER_ATTACHMENT = 4_000
-const MAX_OCR_SEARCH_CHARACTERS_PER_MESSAGE = 16_000
-const MAX_OCR_SEARCH_ATTACHMENTS = 8
+const MAX_ATTACHMENT_SEARCH_CHARACTERS_PER_ATTACHMENT = 4_000
+const MAX_ATTACHMENT_SEARCH_CHARACTERS_PER_MESSAGE = 16_000
+const MAX_SEARCHABLE_ATTACHMENTS = 8
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -117,10 +120,10 @@ function collectUserMessageAttachmentRefs(files: unknown): {
   fileNames: string[]
 } {
   const attachmentMetadataSearchText: string[] = []
-  const ocrSearchText: string[] = []
+  const attachmentContentSearchText: string[] = []
   const filePaths: string[] = []
   const fileNames: string[] = []
-  let remainingOcrCharacters = MAX_OCR_SEARCH_CHARACTERS_PER_MESSAGE
+  let remainingAttachmentCharacters = MAX_ATTACHMENT_SEARCH_CHARACTERS_PER_MESSAGE
   if (!Array.isArray(files)) {
     return { searchText: [], filePaths, fileNames }
   }
@@ -141,26 +144,39 @@ function collectUserMessageAttachmentRefs(files: unknown): {
       attachmentMetadataSearchText.push(compactText(value, 500))
     }
     const resolved = normalizeAttachmentResolvedRepresentation(file.resolvedRepresentation)
+    const attachmentText =
+      resolved?.kind === 'ocr_text'
+        ? resolved.text
+        : resolved?.kind === 'embedded_text' &&
+            typeof file.content === 'string' &&
+            isPdfAttachment({
+              name,
+              path,
+              type: typeof file.type === 'string' ? file.type : undefined,
+              mimeType: typeof file.mimeType === 'string' ? file.mimeType : undefined
+            })
+          ? file.content
+          : ''
     if (
-      resolved?.kind === 'ocr_text' &&
-      ocrSearchText.length < MAX_OCR_SEARCH_ATTACHMENTS &&
-      remainingOcrCharacters > 3
+      attachmentText &&
+      attachmentContentSearchText.length < MAX_SEARCHABLE_ATTACHMENTS &&
+      remainingAttachmentCharacters > 3
     ) {
       const characterLimit = Math.min(
-        MAX_OCR_SEARCH_CHARACTERS_PER_ATTACHMENT,
-        remainingOcrCharacters
+        MAX_ATTACHMENT_SEARCH_CHARACTERS_PER_ATTACHMENT,
+        remainingAttachmentCharacters
       )
-      const ocrText = compactText(resolved.text, characterLimit)
-      if (ocrText) {
-        ocrSearchText.push(ocrText)
-        remainingOcrCharacters -= ocrText.length
+      const searchableText = compactText(attachmentText, characterLimit)
+      if (searchableText) {
+        attachmentContentSearchText.push(searchableText)
+        remainingAttachmentCharacters -= searchableText.length
       }
     }
   }
   return {
     searchText: uniqueStrings(
-      [...uniqueStrings(attachmentMetadataSearchText, 20), ...ocrSearchText],
-      20 + MAX_OCR_SEARCH_ATTACHMENTS
+      [...uniqueStrings(attachmentMetadataSearchText, 20), ...attachmentContentSearchText],
+      20 + MAX_SEARCHABLE_ATTACHMENTS
     ),
     filePaths: uniqueStrings(filePaths, 20),
     fileNames: uniqueStrings(fileNames, 20)

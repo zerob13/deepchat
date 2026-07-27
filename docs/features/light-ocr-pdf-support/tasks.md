@@ -42,22 +42,23 @@
 
 ## Routing And Persistence
 
-- [ ] Add PDF attachment detection and contextual representation normalization.
-- [ ] Add bounded embedded-page coverage from `PdfFileAdapter`.
-- [ ] Add the 64-code-point / 90-percent Auto classifier and routing revision.
-- [ ] Route embedded, explicit OCR, and automatic OCR PDFs.
-- [ ] Enforce one PDF OCR candidate per preparation without reducing the image OCR allowance.
-- [ ] Preserve document coverage in normalized message snapshots.
-- [ ] Apply page-aware turn packing without modifying cache artifacts.
-- [ ] Exclude embedded PDF content when an OCR snapshot is selected.
-- [ ] Keep PDF OCR blocks escaped and guarded as untrusted user data.
-- [ ] Remove `ocr_empty` from retryable reasons and keep cancellation non-emitted.
+- [x] Add PDF attachment detection and contextual representation normalization.
+- [x] Add bounded embedded-page coverage from `PdfFileAdapter`.
+- [x] Add the 64-code-point / 90-percent Auto classifier and routing revision.
+- [x] Route embedded, explicit OCR, and automatic OCR PDFs.
+- [x] Enforce one PDF OCR candidate per preparation without reducing the image OCR allowance.
+- [x] Preserve document coverage in normalized message snapshots.
+- [x] Apply page-aware turn packing without modifying cache artifacts.
+- [x] Exclude embedded PDF content when an OCR snapshot is selected.
+- [x] Keep PDF OCR blocks escaped and guarded as untrusted user data.
+- [x] Remove `ocr_empty` from retryable reasons and keep cancellation non-emitted.
 
 ## Renderer And i18n
 
 - [ ] Add PDF Auto/embedded/OCR choices to attachment chips.
 - [ ] Show embedded, OCR, truncated, resource-limited, and unavailable PDF states.
 - [ ] Show included-page coverage in the OCR preview.
+- [ ] Keep default chip/control copy compact and move secondary PDF detail behind preview/expand.
 - [ ] Generalize image-only preparation copy.
 - [ ] Translate and validate every shipped locale.
 

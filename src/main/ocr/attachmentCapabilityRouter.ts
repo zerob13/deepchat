@@ -8,11 +8,18 @@ import type {
 } from '@shared/types/agent-interface'
 import {
   getAttachmentResolvedRepresentation,
-  isImageAttachment
+  isImageAttachment,
+  isPdfAttachment,
+  normalizePdfEmbeddedTextCoverage
 } from '@shared/utils/attachmentRepresentation'
 import {
   ATTACHMENT_OCR_MAX_TOKENS,
-  ATTACHMENT_PREPARATION_MAX_ISSUES
+  ATTACHMENT_PDF_OCR_MAX_TOKENS,
+  ATTACHMENT_PREPARATION_MAX_ISSUES,
+  PDF_AUTO_EMBEDDED_COVERAGE_PERCENT,
+  PDF_ROUTING_REVISION,
+  type AttachmentDocumentOcrSnapshot,
+  type PdfEmbeddedTextCoverage
 } from '@shared/types/attachment'
 import { ImagePreprocessingError } from './imagePreprocessor'
 import {
@@ -22,14 +29,22 @@ import {
   type ImageTextExtractionInput,
   type ImageTextExtractionPort
 } from './imageTextExtractionService'
+import {
+  DocumentTextExtractionError,
+  type DocumentTextExtractionPort,
+  type DocumentTextExtractionResult
+} from './documentTextExtractionService'
+import { truncateDocumentOcrText } from './documentOcrArtifact'
 import type { LightOcrBackendPreference } from './lightOcrProtocol'
 import { LightOcrProcessHostError } from './lightOcrProcessHost'
 import type { OcrRuntimeAvailability } from './ocrRuntimeAssetResolver'
 
 const MAX_OCR_IMAGES_PER_TURN = 8
+const MAX_OCR_DOCUMENTS_PER_TURN = 1
 const MAX_TURN_OCR_TEXT_TOKENS = 16_000
 
-export interface AttachmentOcrRuntimePort extends ImageTextExtractionPort {
+export interface AttachmentOcrRuntimePort
+  extends ImageTextExtractionPort, DocumentTextExtractionPort {
   getAvailability(): Promise<OcrRuntimeAvailability>
 }
 
@@ -43,7 +58,7 @@ export interface AttachmentCapabilityRouterOptions {
 
 export interface AttachmentRoutingDiagnostic {
   attachmentIndex: number
-  representation: 'image' | 'ocr_text' | 'unavailable'
+  representation: 'image' | 'embedded_text' | 'ocr_text' | 'unavailable'
   reason?: AttachmentUnavailableReason
   tokenCount?: number
   characterCount?: number
@@ -62,7 +77,7 @@ export interface AttachmentPreparationInput {
   content: SendMessageInput
   supportsVision: boolean
   signal?: AbortSignal
-  reusePreparedOcrText?: boolean
+  reusePreparedAttachmentRepresentations?: boolean
   preserveResolvedRepresentations?: boolean
   emitDiagnostics?: boolean
 }
@@ -95,7 +110,8 @@ export class AttachmentCapabilityRouter {
       }
     })
     const issues: AttachmentPreparationIssue[] = []
-    const candidates: OcrCandidate[] = []
+    const imageCandidates: OcrCandidate[] = []
+    const documentCandidates: OcrCandidate[] = []
     const routingDiagnostics: AttachmentRoutingDiagnostic[] = []
     const ocrDiagnostics = new Map<number, OcrDiagnosticContext>()
     const automaticOcrEnabled = this.options.getAutomaticOcrEnabled()
@@ -103,14 +119,27 @@ export class AttachmentCapabilityRouter {
     for (let attachmentIndex = 0; attachmentIndex < files.length; attachmentIndex += 1) {
       const sourceFile = input.content.files?.[attachmentIndex]
       const file = files[attachmentIndex]
-      if (!sourceFile || !isImageAttachment(sourceFile)) continue
+      if (!sourceFile) continue
+      const imageAttachment = isImageAttachment(sourceFile)
+      const pdfAttachment = isPdfAttachment(sourceFile)
+      file.pdfTextCoverage = pdfAttachment
+        ? normalizePdfEmbeddedTextCoverage(sourceFile.pdfTextCoverage)
+        : undefined
+      if (!imageAttachment && !pdfAttachment) continue
+      if (sourceFile.requestedRepresentation) {
+        const contextualPreference = pdfAttachment
+          ? normalizePdfPreference(sourceFile.requestedRepresentation)
+          : normalizeImagePreference(sourceFile.requestedRepresentation)
+        if (contextualPreference !== sourceFile.requestedRepresentation) {
+          file.requestedRepresentation = contextualPreference
+        }
+      }
 
-      const preference = sourceFile.requestedRepresentation ?? 'auto'
       if (input.content.attachmentFallbackPolicy === 'send_without_image_content') {
         this.markUnavailable(
           file,
           attachmentIndex,
-          'user_skipped_image_content',
+          pdfAttachment ? 'user_skipped_attachment_content' : 'user_skipped_image_content',
           issues,
           routingDiagnostics
         )
@@ -118,19 +147,87 @@ export class AttachmentCapabilityRouter {
       }
 
       const existing = getAttachmentResolvedRepresentation(sourceFile)
-      if (input.preserveResolvedRepresentations && existing) {
+      if (
+        (input.preserveResolvedRepresentations || input.reusePreparedAttachmentRepresentations) &&
+        existing &&
         this.preserveResolvedRepresentation({
           file,
           existing,
           attachmentIndex,
+          attachmentKind: pdfAttachment ? 'pdf' : 'image',
           supportsVision: input.supportsVision,
           issues,
           routingDiagnostics,
           ocrDiagnostics
         })
+      ) {
         continue
       }
 
+      if (pdfAttachment) {
+        const coverage = file.pdfTextCoverage
+        const preference = normalizePdfPreference(file.requestedRepresentation)
+
+        // Retrying a legacy sent message must reuse its persisted body instead of opening the
+        // original path or silently changing representation under a historical turn.
+        if (input.preserveResolvedRepresentations && !existing) {
+          if (hasUsableEmbeddedPdfText(file)) {
+            file.resolvedRepresentation = { kind: 'embedded_text' }
+            routingDiagnostics.push({ attachmentIndex, representation: 'embedded_text' })
+          } else {
+            this.markUnavailable(
+              file,
+              attachmentIndex,
+              'pdf_text_unavailable',
+              issues,
+              routingDiagnostics
+            )
+          }
+          continue
+        }
+
+        if (preference === 'embedded_text') {
+          if (coverage?.hasEmbeddedText && hasUsableEmbeddedPdfText(file)) {
+            file.resolvedRepresentation = { kind: 'embedded_text' }
+            routingDiagnostics.push({ attachmentIndex, representation: 'embedded_text' })
+          } else {
+            this.markUnavailable(
+              file,
+              attachmentIndex,
+              'pdf_text_unavailable',
+              issues,
+              routingDiagnostics
+            )
+          }
+          continue
+        }
+
+        if (
+          preference === 'auto' &&
+          shouldUseEmbeddedPdfText(coverage) &&
+          hasUsableEmbeddedPdfText(file)
+        ) {
+          file.resolvedRepresentation = { kind: 'embedded_text' }
+          routingDiagnostics.push({ attachmentIndex, representation: 'embedded_text' })
+          continue
+        }
+
+        if (preference === 'auto' && !automaticOcrEnabled) {
+          this.markUnavailable(
+            file,
+            attachmentIndex,
+            'automatic_ocr_disabled',
+            issues,
+            routingDiagnostics
+          )
+          continue
+        }
+
+        documentCandidates.push({ attachmentIndex, file })
+        continue
+      }
+
+      const preference = normalizeImagePreference(file.requestedRepresentation)
       if (input.supportsVision && preference !== 'ocr_text') {
         if (!prepareLlmFriendlyImagePayload(file)) {
           this.markUnavailable(
@@ -169,18 +266,13 @@ export class AttachmentCapabilityRouter {
         continue
       }
 
-      if (input.reusePreparedOcrText && existing?.kind === 'ocr_text') {
-        file.resolvedRepresentation = existing
-        ocrDiagnostics.set(attachmentIndex, { snapshotReused: true })
-        continue
-      }
-
-      candidates.push({ attachmentIndex, file })
+      imageCandidates.push({ attachmentIndex, file })
     }
 
-    if (candidates.length > 0) {
+    if (imageCandidates.length > 0 || documentCandidates.length > 0) {
       await this.resolveOcrCandidates(
-        candidates,
+        imageCandidates,
+        documentCandidates,
         issues,
         routingDiagnostics,
         ocrDiagnostics,
@@ -212,14 +304,15 @@ export class AttachmentCapabilityRouter {
   }
 
   private async resolveOcrCandidates(
-    candidates: OcrCandidate[],
+    imageCandidates: OcrCandidate[],
+    documentCandidates: OcrCandidate[],
     issues: AttachmentPreparationIssue[],
     routingDiagnostics: AttachmentRoutingDiagnostic[],
     ocrDiagnostics: Map<number, OcrDiagnosticContext>,
     signal?: AbortSignal
   ): Promise<void> {
-    const processable = candidates.slice(0, MAX_OCR_IMAGES_PER_TURN)
-    for (const candidate of candidates.slice(MAX_OCR_IMAGES_PER_TURN)) {
+    const processableImages = imageCandidates.slice(0, MAX_OCR_IMAGES_PER_TURN)
+    for (const candidate of imageCandidates.slice(MAX_OCR_IMAGES_PER_TURN)) {
       this.markUnavailable(
         candidate.file,
         candidate.attachmentIndex,
@@ -228,11 +321,21 @@ export class AttachmentCapabilityRouter {
         routingDiagnostics
       )
     }
+    const processableDocuments = documentCandidates.slice(0, MAX_OCR_DOCUMENTS_PER_TURN)
+    for (const candidate of documentCandidates.slice(MAX_OCR_DOCUMENTS_PER_TURN)) {
+      this.markUnavailable(
+        candidate.file,
+        candidate.attachmentIndex,
+        'document_limit_exceeded',
+        issues,
+        routingDiagnostics
+      )
+    }
 
     const availability = await this.options.extraction.getAvailability()
     throwIfAborted(signal)
     if (availability.status === 'unavailable') {
-      for (const candidate of processable) {
+      for (const candidate of [...processableImages, ...processableDocuments]) {
         this.markUnavailable(
           candidate.file,
           candidate.attachmentIndex,
@@ -246,10 +349,40 @@ export class AttachmentCapabilityRouter {
 
     const backend = this.options.getBackendPreference()
     const maxFileSize = this.options.getMaxFileSize()
+    await this.resolveImageOcrCandidates(
+      processableImages,
+      backend,
+      maxFileSize,
+      issues,
+      routingDiagnostics,
+      ocrDiagnostics,
+      signal
+    )
+    await this.resolveDocumentOcrCandidates(
+      processableDocuments,
+      backend,
+      maxFileSize,
+      issues,
+      routingDiagnostics,
+      ocrDiagnostics,
+      signal
+    )
+  }
+
+  private async resolveImageOcrCandidates(
+    candidates: OcrCandidate[],
+    backend: LightOcrBackendPreference,
+    maxFileSize: number,
+    issues: AttachmentPreparationIssue[],
+    routingDiagnostics: AttachmentRoutingDiagnostic[],
+    ocrDiagnostics: Map<number, OcrDiagnosticContext>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (candidates.length === 0) return
     let results: ImageTextExtractionBatchItem[]
     try {
       results = await this.options.extraction.extractBatch(
-        processable.map(
+        candidates.map(
           (candidate): ImageTextExtractionInput => ({
             filePath: candidate.file.path,
             maxFileSize,
@@ -262,7 +395,7 @@ export class AttachmentCapabilityRouter {
     } catch (error) {
       throwIfCancelled(error, signal)
       const reason = mapExtractionFailure(error)
-      for (const candidate of processable) {
+      for (const candidate of candidates) {
         this.markUnavailable(
           candidate.file,
           candidate.attachmentIndex,
@@ -274,8 +407,8 @@ export class AttachmentCapabilityRouter {
       return
     }
 
-    for (let resultIndex = 0; resultIndex < processable.length; resultIndex += 1) {
-      const candidate = processable[resultIndex]
+    for (let resultIndex = 0; resultIndex < candidates.length; resultIndex += 1) {
+      const candidate = candidates[resultIndex]
       const result = results[resultIndex]
       if (!result || result.status === 'rejected') {
         const error = result?.reason
@@ -319,6 +452,87 @@ export class AttachmentCapabilityRouter {
     }
   }
 
+  private async resolveDocumentOcrCandidates(
+    candidates: OcrCandidate[],
+    backend: LightOcrBackendPreference,
+    maxFileSize: number,
+    issues: AttachmentPreparationIssue[],
+    routingDiagnostics: AttachmentRoutingDiagnostic[],
+    ocrDiagnostics: Map<number, OcrDiagnosticContext>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    for (const candidate of candidates) {
+      let result: DocumentTextExtractionResult
+      try {
+        result = await this.options.extraction.extractDocument({
+          filePath: candidate.file.path,
+          maxFileSize,
+          backend,
+          sourcePageCountHint: candidate.file.pdfTextCoverage?.pageCount,
+          generationTokenLimit: ATTACHMENT_PDF_OCR_MAX_TOKENS,
+          priority: 'interactive',
+          signal
+        })
+      } catch (error) {
+        throwIfCancelled(error, signal)
+        this.markUnavailable(
+          candidate.file,
+          candidate.attachmentIndex,
+          mapDocumentExtractionFailure(error),
+          issues,
+          routingDiagnostics
+        )
+        continue
+      }
+
+      if (!result.text.trim() || result.tokenCount <= 0 || result.pageSpans.length === 0) {
+        this.markUnavailable(
+          candidate.file,
+          candidate.attachmentIndex,
+          result.artifactTermination === 'resource_limited' ? 'ocr_resource_limited' : 'ocr_empty',
+          issues,
+          routingDiagnostics
+        )
+        continue
+      }
+
+      const document = buildDocumentOcrSnapshot(result, candidate.file.pdfTextCoverage)
+      candidate.file.resolvedRepresentation = {
+        kind: 'ocr_text',
+        text: result.text,
+        tokenCount: result.tokenCount,
+        truncated:
+          result.generationOutputLimitReached || result.artifactTermination === 'resource_limited',
+        document
+      }
+      if (result.artifactTermination === 'resource_limited') {
+        this.appendIssue(candidate.attachmentIndex, 'ocr_resource_limited', issues)
+      }
+      ocrDiagnostics.set(candidate.attachmentIndex, {
+        ...(result.artifactTermination === 'resource_limited'
+          ? { reason: 'ocr_resource_limited' as const }
+          : {}),
+        cacheHit: result.cacheHit,
+        strategy: result.engine.strategy,
+        detectionProviderChain: [...result.engine.detection.actualProviderChain],
+        detectionPrecision: result.engine.detection.precision,
+        recognitionProviderChain: [...result.engine.recognition.actualProviderChain],
+        recognitionPrecision: result.engine.recognition.precision,
+        durationMs: result.timingMs.total
+      })
+    }
+  }
+
+  private appendIssue(
+    attachmentIndex: number,
+    reason: AttachmentUnavailableReason,
+    issues: AttachmentPreparationIssue[]
+  ): void {
+    if (issues.length < ATTACHMENT_PREPARATION_MAX_ISSUES) {
+      issues.push({ attachmentIndex, reason })
+    }
+  }
+
   private markUnavailable(
     file: MessageFile,
     attachmentIndex: number,
@@ -327,9 +541,7 @@ export class AttachmentCapabilityRouter {
     routingDiagnostics: AttachmentRoutingDiagnostic[]
   ): void {
     file.resolvedRepresentation = { kind: 'unavailable', reason }
-    if (issues.length < ATTACHMENT_PREPARATION_MAX_ISSUES) {
-      issues.push({ attachmentIndex, reason })
-    }
+    this.appendIssue(attachmentIndex, reason, issues)
     routingDiagnostics.push({ attachmentIndex, representation: 'unavailable', reason })
   }
 
@@ -337,15 +549,18 @@ export class AttachmentCapabilityRouter {
     file: MessageFile
     existing: NonNullable<ReturnType<typeof getAttachmentResolvedRepresentation>>
     attachmentIndex: number
+    attachmentKind: 'image' | 'pdf'
     supportsVision: boolean
     issues: AttachmentPreparationIssue[]
     routingDiagnostics: AttachmentRoutingDiagnostic[]
     ocrDiagnostics: Map<number, OcrDiagnosticContext>
-  }): void {
+  }): boolean {
     if (input.existing.kind === 'ocr_text') {
+      if (input.attachmentKind === 'pdf' && !input.existing.document) return false
+      if (input.attachmentKind === 'image' && input.existing.document) return false
       input.file.resolvedRepresentation = input.existing
       input.ocrDiagnostics.set(input.attachmentIndex, { snapshotReused: true })
-      return
+      return true
     }
 
     if (input.existing.kind === 'unavailable') {
@@ -356,9 +571,22 @@ export class AttachmentCapabilityRouter {
         input.issues,
         input.routingDiagnostics
       )
-      return
+      return true
     }
 
+    if (input.attachmentKind === 'pdf') {
+      if (input.existing.kind !== 'embedded_text' || !hasUsableEmbeddedPdfText(input.file)) {
+        return false
+      }
+      input.file.resolvedRepresentation = { kind: 'embedded_text' }
+      input.routingDiagnostics.push({
+        attachmentIndex: input.attachmentIndex,
+        representation: 'embedded_text'
+      })
+      return true
+    }
+
+    if (input.existing.kind !== 'image') return false
     if (!input.supportsVision) {
       this.markUnavailable(
         input.file,
@@ -367,7 +595,7 @@ export class AttachmentCapabilityRouter {
         input.issues,
         input.routingDiagnostics
       )
-      return
+      return true
     }
     if (!prepareLlmFriendlyImagePayload(input.file)) {
       this.markUnavailable(
@@ -377,13 +605,14 @@ export class AttachmentCapabilityRouter {
         input.issues,
         input.routingDiagnostics
       )
-      return
+      return true
     }
     input.file.resolvedRepresentation = { kind: 'image' }
     input.routingDiagnostics.push({
       attachmentIndex: input.attachmentIndex,
       representation: 'image'
     })
+    return true
   }
 
   private appendOcrDiagnostics(
@@ -414,6 +643,57 @@ export class AttachmentCapabilityRouter {
   }
 }
 
+function normalizeImagePreference(
+  preference: MessageFile['requestedRepresentation']
+): 'auto' | 'image' | 'ocr_text' {
+  return preference === 'image' || preference === 'ocr_text' ? preference : 'auto'
+}
+
+function normalizePdfPreference(
+  preference: MessageFile['requestedRepresentation']
+): 'auto' | 'embedded_text' | 'ocr_text' {
+  return preference === 'embedded_text' || preference === 'ocr_text' ? preference : 'auto'
+}
+
+function hasUsableEmbeddedPdfText(file: MessageFile): boolean {
+  return typeof file.content === 'string' && file.content.trim().length > 0
+}
+
+function shouldUseEmbeddedPdfText(coverage: PdfEmbeddedTextCoverage | undefined): boolean {
+  return Boolean(
+    coverage &&
+    coverage.routingRevision === PDF_ROUTING_REVISION &&
+    coverage.substantivePageCount * 100 >= coverage.pageCount * PDF_AUTO_EMBEDDED_COVERAGE_PERCENT
+  )
+}
+
+function buildDocumentOcrSnapshot(
+  result: DocumentTextExtractionResult,
+  embeddedTextCoverage: PdfEmbeddedTextCoverage | undefined
+): AttachmentDocumentOcrSnapshot {
+  const pageSpans = result.pageSpans.map((span) => ({ ...span }))
+  const lastSpan = pageSpans.at(-1)
+  if (!lastSpan) {
+    throw new Error('Document OCR result has no retained page coverage')
+  }
+  return {
+    pageSpans,
+    ...(result.sourcePageCountHint ? { sourcePageCountHint: result.sourcePageCountHint } : {}),
+    includedThroughPage: lastSpan.pageNumber,
+    includedThroughPageComplete: lastSpan.complete,
+    artifactTermination: result.artifactTermination,
+    generationOutputLimitReached: result.generationOutputLimitReached,
+    ...(embeddedTextCoverage
+      ? {
+          embeddedTextCoverage: {
+            ...embeddedTextCoverage,
+            lowTextPageSamples: [...embeddedTextCoverage.lowTextPageSamples]
+          }
+        }
+      : {})
+  }
+}
+
 function buildPreparationSummary(input: {
   content: SendMessageInput
   files: MessageFile[]
@@ -431,6 +711,8 @@ function buildPreparationSummary(input: {
       const resolved = getAttachmentResolvedRepresentation(file)
       if (resolved?.kind === 'ocr_text') return resolved.text.trim().length > 0
       if (resolved?.kind === 'image') return input.supportsVision
+      if (resolved?.kind === 'embedded_text') return hasUsableEmbeddedPdfText(file)
+      if (resolved?.kind === 'unavailable') return false
       return !isImageAttachment(file) && Boolean(file.content?.trim())
     })
 
@@ -439,7 +721,15 @@ function buildPreparationSummary(input: {
   }
 
   const suggestedActions: AttachmentPreparationAction[] = ['send_without_image_content']
-  if (!input.supportsVision) suggestedActions.unshift('switch_to_vision_model')
+  if (
+    !input.supportsVision &&
+    input.files.some(
+      (file) =>
+        isImageAttachment(file) && getAttachmentResolvedRepresentation(file)?.kind === 'unavailable'
+    )
+  ) {
+    suggestedActions.unshift('switch_to_vision_model')
+  }
   if (
     input.files.some((file) => {
       const resolved = getAttachmentResolvedRepresentation(file)
@@ -460,10 +750,50 @@ function applyTurnOcrTextBudget(files: MessageFile[]): void {
   for (let index = 0; index < ocrFiles.length; index += 1) {
     const item = ocrFiles[index]
     const remainingItems = ocrFiles.length - index
+    const attachmentLimit = item.resolved.document
+      ? ATTACHMENT_PDF_OCR_MAX_TOKENS
+      : ATTACHMENT_OCR_MAX_TOKENS
     const budget = Math.min(
-      ATTACHMENT_OCR_MAX_TOKENS,
+      attachmentLimit,
       Math.max(0, Math.floor(remainingTokens / remainingItems))
     )
+    if (item.resolved.document) {
+      const limited = truncateDocumentOcrText(
+        {
+          text: item.resolved.text,
+          pageSpans: item.resolved.document.pageSpans
+        },
+        budget
+      )
+      const lastSpan = limited.pageSpans.at(-1)
+      if (!limited.text.trim() || limited.tokenCount <= 0 || !lastSpan) {
+        item.file.resolvedRepresentation = {
+          kind: 'unavailable',
+          reason: 'ocr_empty'
+        }
+        continue
+      }
+      const generationOutputLimitReached =
+        item.resolved.document.generationOutputLimitReached || limited.truncated
+      const document: AttachmentDocumentOcrSnapshot = {
+        ...item.resolved.document,
+        pageSpans: limited.pageSpans.map((span) => ({ ...span })),
+        includedThroughPage: lastSpan.pageNumber,
+        includedThroughPageComplete: lastSpan.complete,
+        generationOutputLimitReached
+      }
+      item.file.resolvedRepresentation = {
+        kind: 'ocr_text',
+        text: limited.text,
+        tokenCount: limited.tokenCount,
+        truncated:
+          generationOutputLimitReached || document.artifactTermination === 'resource_limited',
+        document
+      }
+      remainingTokens = Math.max(0, remainingTokens - limited.tokenCount)
+      continue
+    }
+
     const limited = truncateOcrText(item.resolved.text, budget)
     item.file.resolvedRepresentation = {
       kind: 'ocr_text',
@@ -535,11 +865,34 @@ function mapExtractionFailure(error: unknown): AttachmentUnavailableReason {
   return 'ocr_failed'
 }
 
+function mapDocumentExtractionFailure(error: unknown): AttachmentUnavailableReason {
+  if (error instanceof DocumentTextExtractionError) {
+    switch (error.code) {
+      case 'input_too_large':
+        return 'document_too_large'
+      case 'queue_full':
+        return 'ocr_queue_full'
+      default:
+        return 'ocr_failed'
+    }
+  }
+  if (error instanceof LightOcrProcessHostError) {
+    if (error.code === 'queue_full') return 'ocr_queue_full'
+    if (error.code === 'input_too_large') return 'document_too_large'
+    if (error.code === 'helper_error' && error.helperCode === 'resource_limit_exceeded') {
+      return 'ocr_resource_limited'
+    }
+  }
+  return 'ocr_failed'
+}
+
 function throwIfCancelled(error: unknown, signal?: AbortSignal): void {
   if (
     signal?.aborted ||
+    (error instanceof DocumentTextExtractionError && error.code === 'cancelled') ||
     (error instanceof ImageTextExtractionError && error.code === 'cancelled') ||
     (error instanceof ImagePreprocessingError && error.code === 'cancelled') ||
+    (error instanceof LightOcrProcessHostError && error.code === 'cancelled') ||
     (error instanceof Error && error.name === 'AbortError')
   ) {
     throw abortError(signal)
@@ -558,5 +911,5 @@ function abortError(signal?: AbortSignal): Error {
 }
 
 function isRetryableReason(reason: AttachmentUnavailableReason): boolean {
-  return reason === 'ocr_failed' || reason === 'ocr_queue_full' || reason === 'ocr_empty'
+  return reason === 'ocr_failed' || reason === 'ocr_queue_full'
 }

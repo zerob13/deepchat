@@ -8,9 +8,13 @@ import type {
 import { LIGHT_OCR_DOCUMENT_MAX_PAGES, isLightOcrEngineStatus } from './lightOcrProtocol'
 import type { LightOcrBackendPreference } from './lightOcrProtocol'
 import type { LightOcrDocumentArtifactTermination } from './lightOcrProcessHost'
-import { ATTACHMENT_OCR_MAX_TEXT_CHARACTERS } from '@shared/types/attachment'
+import {
+  ATTACHMENT_OCR_MAX_TEXT_CHARACTERS,
+  ATTACHMENT_PDF_OCR_MAX_TOKENS,
+  PDF_TEXT_COVERAGE_MAX_PAGES
+} from '@shared/types/attachment'
 
-export const PDF_OCR_GENERATION_MAX_TOKENS = 16_000
+export const PDF_OCR_GENERATION_MAX_TOKENS = ATTACHMENT_PDF_OCR_MAX_TOKENS
 export const PDF_OCR_STRATEGY: LightOcrRecognitionStrategy = 'bounded-960'
 export const PDF_OCR_TRUNCATION_MARKER = '[… PDF OCR truncated …]'
 export const PDF_OCR_ARTIFACT_REVISION = [
@@ -22,7 +26,6 @@ export const PDF_OCR_ARTIFACT_REVISION = [
   `max-characters=${ATTACHMENT_OCR_MAX_TEXT_CHARACTERS}`
 ].join(';')
 
-const MAX_SOURCE_PAGE_COUNT_HINT = 1_000_000
 const MAX_RESOURCE_ERROR_CHARACTERS = 2_048
 
 export interface DocumentOcrPageSpan {
@@ -184,8 +187,7 @@ export function truncateDocumentOcrArtifact(
   maxTokens: number,
   maxCharacters = ATTACHMENT_OCR_MAX_TEXT_CHARACTERS
 ): DocumentOcrArtifactValue {
-  const sourcePages = reconstructSourcePages(artifact.text, artifact.pageSpans)
-  const bounded = fitDocumentOcrPages(sourcePages, maxTokens, maxCharacters)
+  const bounded = truncateDocumentOcrText(artifact, maxTokens, maxCharacters)
   return {
     ...artifact,
     text: bounded.text,
@@ -196,6 +198,15 @@ export function truncateDocumentOcrArtifact(
     engine: structuredClone(artifact.engine),
     ...(artifact.resourceLimit ? { resourceLimit: { ...artifact.resourceLimit } } : {})
   }
+}
+
+export function truncateDocumentOcrText(
+  source: Pick<BoundedDocumentOcrText, 'text' | 'pageSpans'>,
+  maxTokens: number,
+  maxCharacters = ATTACHMENT_OCR_MAX_TEXT_CHARACTERS
+): BoundedDocumentOcrText {
+  const sourcePages = reconstructSourcePages(source.text, source.pageSpans)
+  return fitDocumentOcrPages(sourcePages, maxTokens, maxCharacters)
 }
 
 export function isDocumentOcrBudgetCompatible(
@@ -245,7 +256,7 @@ export function isValidDocumentOcrArtifact(
     !isIntegerInRange(candidate.generationTokenLimit, 1, PDF_OCR_GENERATION_MAX_TOKENS) ||
     !isNonNegativeInteger(candidate.emittedPages) ||
     (candidate.sourcePageCountHint !== undefined &&
-      !isIntegerInRange(candidate.sourcePageCountHint, 1, MAX_SOURCE_PAGE_COUNT_HINT)) ||
+      !isIntegerInRange(candidate.sourcePageCountHint, 1, PDF_TEXT_COVERAGE_MAX_PAGES)) ||
     !isLightOcrEngineStatus(candidate.engine)
   ) {
     return false

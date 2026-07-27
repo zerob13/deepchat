@@ -17,11 +17,15 @@ import {
   ATTACHMENT_FALLBACK_POLICIES,
   ATTACHMENT_OCR_MAX_TEXT_CHARACTERS,
   ATTACHMENT_OCR_MAX_TOKENS,
+  ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS,
+  ATTACHMENT_PDF_OCR_MAX_TOKENS,
   ATTACHMENT_PREPARATION_ACTIONS,
   ATTACHMENT_PREPARATION_MAX_ISSUES,
   ATTACHMENT_PREPARATION_STATUSES,
   ATTACHMENT_REPRESENTATION_PREFERENCES,
-  ATTACHMENT_UNAVAILABLE_REASONS
+  ATTACHMENT_UNAVAILABLE_REASONS,
+  PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT,
+  PDF_TEXT_COVERAGE_MAX_PAGES
 } from '../types/attachment'
 
 export type JsonValue =
@@ -181,22 +185,122 @@ export const AttachmentPreparationSummarySchema = z.object({
   suggestedActions: z.array(z.enum(ATTACHMENT_PREPARATION_ACTIONS)).max(3)
 })
 
-export const AttachmentResolvedRepresentationSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('image') }),
-  z.object({
-    kind: z.literal('ocr_text'),
-    text: z
-      .string()
-      .max(ATTACHMENT_OCR_MAX_TEXT_CHARACTERS)
-      .refine((value) => value.trim().length > 0, { message: 'OCR text must not be blank' }),
-    tokenCount: z.number().int().min(1).max(ATTACHMENT_OCR_MAX_TOKENS),
-    truncated: z.boolean()
-  }),
-  z.object({
-    kind: z.literal('unavailable'),
-    reason: AttachmentUnavailableReasonSchema
+export const PdfEmbeddedTextCoverageSchema = z
+  .object({
+    routingRevision: z.string().min(1).max(128),
+    pageCount: z.number().int().min(1).max(PDF_TEXT_COVERAGE_MAX_PAGES),
+    substantivePageCount: z.number().int().nonnegative(),
+    lowTextPageCount: z.number().int().nonnegative(),
+    lowTextPageSamples: z.array(z.number().int().positive()).max(PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT),
+    hasEmbeddedText: z.boolean()
   })
-])
+  .superRefine((value, context) => {
+    if (
+      value.substantivePageCount > value.pageCount ||
+      value.lowTextPageCount > value.pageCount ||
+      value.substantivePageCount + value.lowTextPageCount !== value.pageCount ||
+      value.lowTextPageSamples.length > value.lowTextPageCount ||
+      (value.substantivePageCount > 0 && !value.hasEmbeddedText)
+    ) {
+      context.addIssue({ code: 'custom', message: 'Invalid PDF embedded-text coverage' })
+    }
+    if (
+      value.lowTextPageSamples.some(
+        (pageNumber, index) =>
+          pageNumber > value.pageCount ||
+          (index > 0 && pageNumber <= value.lowTextPageSamples[index - 1])
+      )
+    ) {
+      context.addIssue({ code: 'custom', message: 'Invalid PDF low-text page samples' })
+    }
+  })
+
+const AttachmentDocumentPageSpanSchema = z.object({
+  pageNumber: z.number().int().positive(),
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+  complete: z.boolean()
+})
+
+const AttachmentDocumentOcrSnapshotSchema = z
+  .object({
+    pageSpans: z
+      .array(AttachmentDocumentPageSpanSchema)
+      .min(1)
+      .max(ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS),
+    sourcePageCountHint: z.number().int().min(1).max(PDF_TEXT_COVERAGE_MAX_PAGES).optional(),
+    includedThroughPage: z.number().int().min(1).max(PDF_TEXT_COVERAGE_MAX_PAGES),
+    includedThroughPageComplete: z.boolean(),
+    artifactTermination: z.enum([
+      'request_complete',
+      'stopped_by_output_limit',
+      'resource_limited'
+    ]),
+    generationOutputLimitReached: z.boolean(),
+    embeddedTextCoverage: PdfEmbeddedTextCoverageSchema.optional()
+  })
+  .superRefine((value, context) => {
+    const lastSpan = value.pageSpans.at(-1)
+    if (!lastSpan) {
+      context.addIssue({ code: 'custom', message: 'Document OCR coverage is empty' })
+      return
+    }
+    const invalidSpans = value.pageSpans.some(
+      (span, index) =>
+        span.pageNumber !== index + 1 ||
+        span.end < span.start ||
+        (index === 0 ? span.start !== 0 : span.start !== value.pageSpans[index - 1].end) ||
+        (!span.complete && index !== value.pageSpans.length - 1) ||
+        (!span.complete && span.end === span.start)
+    )
+    if (
+      invalidSpans ||
+      value.includedThroughPage !== lastSpan.pageNumber ||
+      value.includedThroughPageComplete !== lastSpan.complete ||
+      (value.generationOutputLimitReached && lastSpan.complete) ||
+      (value.artifactTermination === 'stopped_by_output_limit' &&
+        !value.generationOutputLimitReached)
+    ) {
+      context.addIssue({ code: 'custom', message: 'Invalid document OCR coverage' })
+    }
+  })
+
+export const AttachmentResolvedRepresentationSchema = z
+  .discriminatedUnion('kind', [
+    z.object({ kind: z.literal('image') }),
+    z.object({ kind: z.literal('embedded_text') }),
+    z.object({
+      kind: z.literal('ocr_text'),
+      text: z
+        .string()
+        .max(ATTACHMENT_OCR_MAX_TEXT_CHARACTERS)
+        .refine((value) => value.trim().length > 0, { message: 'OCR text must not be blank' }),
+      tokenCount: z.number().int().min(1).max(ATTACHMENT_PDF_OCR_MAX_TOKENS),
+      truncated: z.boolean(),
+      document: AttachmentDocumentOcrSnapshotSchema.optional()
+    }),
+    z.object({
+      kind: z.literal('unavailable'),
+      reason: AttachmentUnavailableReasonSchema
+    })
+  ])
+  .superRefine((value, context) => {
+    if (value.kind !== 'ocr_text') return
+    if (!value.document && value.tokenCount > ATTACHMENT_OCR_MAX_TOKENS) {
+      context.addIssue({ code: 'custom', message: 'Image OCR token count exceeds its limit' })
+    }
+    if (
+      value.document &&
+      value.truncated !==
+        (value.document.generationOutputLimitReached ||
+          value.document.artifactTermination === 'resource_limited')
+    ) {
+      context.addIssue({ code: 'custom', message: 'Invalid document OCR truncation state' })
+    }
+    if (value.document && value.document.pageSpans.at(-1)?.end !== value.text.length) {
+      context.addIssue({ code: 'custom', message: 'Document OCR text coverage is incomplete' })
+    }
+  })
 
 export const MessageFileSchema = z.object({
   name: z.string(),
@@ -208,6 +312,7 @@ export const MessageFileSchema = z.object({
   token: z.number().optional(),
   thumbnail: z.string().optional(),
   metadata: z.record(z.string(), FileMetadataValueSchema).optional(),
+  pdfTextCoverage: PdfEmbeddedTextCoverageSchema.optional(),
   requestedRepresentation: AttachmentRepresentationPreferenceSchema.optional()
 })
 

@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   AttachmentResolvedRepresentationSchema,
+  PdfEmbeddedTextCoverageSchema,
   SendMessageInputSchema
 } from '../../../src/shared/contracts/common'
+import { PreparedMessageFileSchema } from '../../../src/shared/contracts/domainSchemas'
 import {
   isImageAttachment,
+  isPdfAttachment,
   normalizeAttachmentRepresentationPreference,
-  normalizeAttachmentResolvedRepresentation
+  normalizeAttachmentResolvedRepresentation,
+  normalizePdfEmbeddedTextCoverage
 } from '../../../src/shared/utils/attachmentRepresentation'
 
 describe('attachment representation contracts', () => {
@@ -89,6 +93,108 @@ describe('attachment representation contracts', () => {
       true
     )
     expect(isImageAttachment({ name: 'scan.png.txt', path: '' })).toBe(false)
+  })
+
+  it('classifies PDFs consistently and accepts the contextual embedded-text preference', () => {
+    expect(isPdfAttachment({ name: 'scan', path: '/tmp/scan', mimeType: 'application/pdf' })).toBe(
+      true
+    )
+    expect(isPdfAttachment({ name: 'scan', path: '/tmp/scan', type: 'pdf' })).toBe(true)
+    expect(isPdfAttachment({ name: 'SCAN.PDF', path: '' })).toBe(true)
+    expect(isPdfAttachment({ name: 'scan.pdf.txt', path: '' })).toBe(false)
+    expect(isImageAttachment({ name: 'conflict.pdf', path: '', mimeType: 'image/png' })).toBe(true)
+    expect(isPdfAttachment({ name: 'conflict.pdf', path: '', mimeType: 'image/png' })).toBe(false)
+    expect(isImageAttachment({ name: 'conflict.png', path: '', mimeType: 'application/pdf' })).toBe(
+      false
+    )
+    expect(isPdfAttachment({ name: 'conflict.png', path: '', mimeType: 'application/pdf' })).toBe(
+      true
+    )
+    expect(normalizeAttachmentRepresentationPreference('embedded_text')).toBe('embedded_text')
+  })
+
+  it('normalizes bounded PDF embedded-text coverage and rejects inconsistent samples', () => {
+    const coverage = {
+      routingRevision: 'pdf-text-coverage-v1',
+      pageCount: 5,
+      substantivePageCount: 4,
+      lowTextPageCount: 1,
+      lowTextPageSamples: [5],
+      hasEmbeddedText: true
+    }
+
+    expect(PdfEmbeddedTextCoverageSchema.parse(coverage)).toEqual(coverage)
+    expect(normalizePdfEmbeddedTextCoverage(coverage)).toEqual(coverage)
+    expect(
+      PreparedMessageFileSchema.parse({
+        name: 'scan.pdf',
+        path: '/tmp/scan.pdf',
+        pdfTextCoverage: coverage
+      }).pdfTextCoverage
+    ).toEqual(coverage)
+    expect(
+      normalizePdfEmbeddedTextCoverage({
+        ...coverage,
+        lowTextPageCount: 2
+      })
+    ).toBeUndefined()
+    expect(
+      PdfEmbeddedTextCoverageSchema.safeParse({
+        ...coverage,
+        lowTextPageSamples: [5, 4]
+      }).success
+    ).toBe(false)
+  })
+
+  it('validates page-aware PDF OCR snapshots without raising the image OCR token cap', () => {
+    const text = '## Page 1\n\nrecognized document text'
+    const documentRepresentation = {
+      kind: 'ocr_text' as const,
+      text,
+      tokenCount: 9_000,
+      truncated: false,
+      document: {
+        pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: true }],
+        sourcePageCountHint: 1,
+        includedThroughPage: 1,
+        includedThroughPageComplete: true,
+        artifactTermination: 'request_complete' as const,
+        generationOutputLimitReached: false
+      }
+    }
+
+    expect(AttachmentResolvedRepresentationSchema.parse(documentRepresentation)).toEqual(
+      documentRepresentation
+    )
+    expect(normalizeAttachmentResolvedRepresentation(documentRepresentation)).toEqual(
+      documentRepresentation
+    )
+    expect(
+      normalizeAttachmentResolvedRepresentation({
+        ...documentRepresentation,
+        document: {
+          ...documentRepresentation.document,
+          includedThroughPage: 2
+        }
+      })
+    ).toBeUndefined()
+    expect(
+      AttachmentResolvedRepresentationSchema.safeParse({
+        kind: 'ocr_text',
+        text: 'image text',
+        tokenCount: 9_000,
+        truncated: false
+      }).success
+    ).toBe(false)
+    expect(
+      AttachmentResolvedRepresentationSchema.safeParse({
+        ...documentRepresentation,
+        document: {
+          ...documentRepresentation.document,
+          pageSpans: []
+        }
+      }).success
+    ).toBe(false)
   })
 
   it('treats malformed legacy attachment metadata as non-image data', () => {
