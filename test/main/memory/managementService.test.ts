@@ -24,14 +24,21 @@ import {
 } from './serviceTestSupport'
 
 describe('MemoryService management', () => {
-  it('clearMemories removes all and clears vectors', async () => {
+  it('clearMemories removes claims and vectors while preserving standing directives', async () => {
     const { presenter, store } = makePresenter(enabledConfig)
     presenter.writeMemoriesSync([{ kind: 'semantic', content: 'redis' }], { agentId: 'a' })
+    const directive = presenter.createDirective('a', {
+      kind: 'instruction',
+      content: 'Prefer concise answers.'
+    })
     await presenter.processPendingEmbeddings('a')
     expect(store.vectors.size).toBe(1)
     const removed = await presenter.clearMemories('a')
     expect(removed).toBe(1)
     expect(store.vectors.size).toBe(0)
+    expect(presenter.listActiveDirectives('a')).toEqual([
+      expect.objectContaining({ id: directive?.id, status: 'active' })
+    ])
   })
 
   it('clearMemories suppresses exact replay without suppressing new claims', async () => {

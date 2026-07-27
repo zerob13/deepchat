@@ -205,6 +205,12 @@ export class AgentMemoryToolHandler {
 
     const args = memoryToolSchemas[MEMORY_TOOL_NAMES.forget].parse(rawArgs)
     const ok = await this.memory.forgetMemory(agentId, args.memoryId)
-    return createMemoryResult(toolName, { ok }, ok ? 'Forgot the memory.' : 'Memory not found.')
+    return createMemoryResult(
+      toolName,
+      { ok },
+      ok
+        ? 'Archived the memory. It is retained locally but excluded from normal recall.'
+        : 'Memory not found.'
+    )
   }
 }

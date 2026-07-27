@@ -210,7 +210,12 @@ Explicit single-row deletion:
 
 Agent-wide clear is an explicit forget operation. It tombstones the cleared claims before deleting
 them and preserves those tombstones so replay of existing Tape cannot repopulate the cleared data.
-Directive clearing is explicit and independent.
+Directive clearing is explicit and independent. Every clear control must therefore name factual
+memories/persona as its target and state that standing directives are retained.
+
+`memory_forget` is a compatibility name for soft archival. Its tool definition and result must both
+say that the row remains stored locally and is excluded from normal recall; it must never claim
+permanent deletion or complete forgetting.
 
 Agent deletion is a namespace-retirement operation. It removes claims, tombstones, directives, and
 derived state, so a newly created Agent identity starts clean.

@@ -173,6 +173,9 @@ transaction 之后。Exact replay 被压制，语义近似但来源独立的新�
 row 只能由各自的状态机演进或重建。
 
 Agent clear 会 tombstone 当时存在的 claim，并保留 tombstone，防止既有 Tape replay 重新填充。
+该操作会删除 factual claim、persona 和 working projection，但不删除 standing directive；UI 必须
+明确这个边界，不能承诺“清空所有 Memory 数据”。兼容工具名 `memory_forget` 执行的是可恢复 archive，
+工具结果必须说明 row 仍在本地、只是不再参与正常 recall。
 Agent retirement 才删除整个 namespace 的 claim、directive、tombstone、lineage、dirty state 和
 vector projection，使重新创建的 Agent identity 从干净状态开始。
 

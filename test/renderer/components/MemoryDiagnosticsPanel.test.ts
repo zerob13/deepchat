@@ -9,6 +9,7 @@ import {
   type MemoryStatusDto
 } from '../../../src/shared/contracts/routes'
 import { auditSentenceKey } from '../../../src/renderer/settings/components/memoryRedesignUtils'
+import enSettings from '../../../src/renderer/src/i18n/en-US/settings.json'
 
 const passthrough = (name: string) => defineComponent({ name, template: '<div><slot /></div>' })
 
@@ -165,6 +166,14 @@ function clearAllActionButton(wrapper: Awaited<ReturnType<typeof setup>>['wrappe
 }
 
 describe('MemoryDiagnosticsPanel', () => {
+  it('states that clear preserves standing directives', () => {
+    const clearCopy = enSettings.deepchatAgents.memoryManager
+
+    expect(clearCopy.clearAll).toBe('Clear memories')
+    expect(clearCopy.clearConfirmTitle).toContain('factual memories and persona')
+    expect(clearCopy.clearConfirmBody).toContain('Standing directives are kept')
+  })
+
   it('renders Agent recall and process-wide pipeline pressure', async () => {
     const health: MemoryHealthDto = structuredClone(baseHealth)
     health.runtime.agent.retrieval.recall.latencyMs.total = {
