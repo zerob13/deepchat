@@ -793,7 +793,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     const generateText = routedLLM({
       decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"user prefers redis"}'
     })
-    const { presenter, repo } = makeLLMPresenter(generateText)
+    const { presenter, repo, auditRepo } = makeLLMPresenter(generateText)
     const now = 1_000 * DAY
     const oldId = await seedEmbedded(presenter, 'user likes redis a')
     const newId = await seedEmbedded(presenter, 'user likes redis b')
@@ -805,11 +805,23 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
 
     const callsAfterFirst = decisionCalls(generateText)
+    const derivationsAfterFirst = repo.listDerivationsByChild('a', newId)
+    const maintenanceAudits = () =>
+      auditRepo.rows.filter((row) => row.event_type === 'memory/maintenance_llm')
+    const touchedMaintenanceAudits = () =>
+      maintenanceAudits().filter((row) => JSON.parse(row.output_refs_json).touched === true)
+    expect(touchedMaintenanceAudits()).toHaveLength(1)
     await presenter.runConsolidationPass('a', now + 6 * 60 * 60 * 1000 + 1)
     expect(repo.listByAgent('a')).toHaveLength(1)
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
     expect(repo.getById(newId)?.superseded_by).toBeNull()
     expect(decisionCalls(generateText)).toBe(callsAfterFirst)
+    expect(repo.listDerivationsByChild('a', newId)).toEqual(derivationsAfterFirst)
+    expect(touchedMaintenanceAudits()).toHaveLength(1)
+    expect(JSON.parse(maintenanceAudits().at(-1)!.output_refs_json)).toMatchObject({
+      touched: false,
+      budget: { calls: 0 }
+    })
   })
 
   it('merge carries forward the higher importance of the pair (T-B5)', async () => {

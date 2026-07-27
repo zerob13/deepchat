@@ -75,6 +75,65 @@ function dropV48DerivedArtifacts(db: InstanceType<typeof DatabaseCtor>): void {
   `)
 }
 
+function replaceAgentMemoryWithV45Schema(db: InstanceType<typeof DatabaseCtor>): void {
+  db.exec(`
+    DROP TABLE IF EXISTS agent_memory_fts;
+    DROP TABLE IF EXISTS agent_memory_fts_meta;
+    DROP TABLE IF EXISTS agent_memory_dirty;
+    DROP TABLE IF EXISTS agent_memory_derivation;
+    DROP TABLE IF EXISTS agent_memory_tombstone;
+    DROP TABLE IF EXISTS agent_memory_directive;
+    DROP TABLE agent_memory;
+
+    CREATE TABLE agent_memory (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      user_scope TEXT,
+      kind TEXT NOT NULL,
+      category TEXT,
+      content TEXT NOT NULL,
+      importance REAL NOT NULL DEFAULT 0.5,
+      status TEXT NOT NULL DEFAULT 'pending_embedding',
+      embedding_id TEXT,
+      embedding_dim INTEGER,
+      embedding_model TEXT,
+      source_session TEXT,
+      provenance_key TEXT,
+      is_anchor INTEGER NOT NULL DEFAULT 0,
+      superseded_by TEXT,
+      created_at INTEGER NOT NULL,
+      last_accessed INTEGER,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      decay_score REAL,
+      source_entry_ids TEXT,
+      confidence REAL,
+      last_consolidated_at INTEGER,
+      conflict_state TEXT,
+      conflict_with TEXT,
+      persona_state TEXT,
+      decision_revision INTEGER NOT NULL DEFAULT 1,
+      lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK (lifecycle_state IN ('active', 'archived', 'conflicted')),
+      embedding_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'))
+    );
+
+    INSERT INTO agent_memory (
+      id, agent_id, user_scope, kind, category, content, importance, status,
+      provenance_key, created_at, confidence, decision_revision,
+      lifecycle_state, embedding_state
+    )
+    VALUES (
+      'v45-claim', 'a', 'legacy-user-tag', 'semantic', 'project_fact',
+      'A claim created by the v45 runtime.', 0.8, 'pending_embedding',
+      'v45-provenance', 1000, 0.7, 3, 'active', 'pending'
+    );
+
+    DELETE FROM schema_versions;
+    INSERT INTO schema_versions (version, applied_at) VALUES (45, 1);
+  `)
+}
+
 function seedReadyEmbedding(
   db: InstanceType<typeof DatabaseCtor>,
   id: string,
@@ -91,6 +150,83 @@ function seedReadyEmbedding(
 }
 
 describeIfNative('Memory native SQLite migration', () => {
+  it('migrates a genuine v45 memory table through every evolution schema exactly once', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      replaceAgentMemoryWithV45Schema(legacy)
+      const legacyColumns = legacy.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
+        name: string
+      }>
+      expect(legacyColumns.some((column) => column.name === 'temporal_kind')).toBe(false)
+      expect(legacyColumns.some((column) => column.name === 'scope_type')).toBe(false)
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const db = migrated.getDatabase()
+      expect(db.prepare('SELECT MAX(version) AS version FROM schema_versions').get()).toEqual({
+        version: migrated.getLatestSchemaVersion()
+      })
+      expect(
+        db.prepare('SELECT version FROM schema_versions WHERE version >= 46 ORDER BY version').all()
+      ).toEqual([46, 47, 48, 49, 50, 51].map((version) => ({ version })))
+      expect(
+        db
+          .prepare(
+            `SELECT user_scope, temporal_kind, valid_from, valid_until,
+                    temporal_confidence, temporal_precision, temporal_timezone,
+                    scope_type, scope_id, decision_revision
+             FROM agent_memory WHERE id = 'v45-claim'`
+          )
+          .get()
+      ).toEqual({
+        user_scope: 'legacy-user-tag',
+        temporal_kind: 'atemporal',
+        valid_from: null,
+        valid_until: null,
+        temporal_confidence: null,
+        temporal_precision: null,
+        temporal_timezone: null,
+        scope_type: 'agent',
+        scope_id: null,
+        decision_revision: 3
+      })
+      expect(memoryTable(migrated).listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'v45-claim',
+          generation: 1,
+          claimRevision: 3,
+          enqueuedAt: 1_000
+        }
+      ])
+      for (const tableName of [
+        'agent_memory_tombstone',
+        'agent_memory_derivation',
+        'agent_memory_dirty',
+        'agent_memory_directive'
+      ]) {
+        expect(
+          db
+            .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .get(tableName)
+        ).toEqual({ present: 1 })
+      }
+      migrated.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(memoryTable(reopened).listDirtySeeds('a', 10)).toHaveLength(1)
+      expect(
+        reopened
+          .getDatabase()
+          .prepare('SELECT COUNT(*) AS count FROM agent_memory WHERE id = ?')
+          .get('v45-claim')
+      ).toEqual({ count: 1 })
+      reopened.close()
+    })
+  })
+
   it('creates the fresh temporal schema with canonical memory state and reopens idempotently', () => {
     withTemporaryDatabase((databasePath) => {
       const first = new MainDatabaseCtor(databasePath)

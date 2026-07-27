@@ -54,6 +54,39 @@ describe('working-memory L1 (T5)', () => {
     expect(getEmbeddings).not.toHaveBeenCalled()
   })
 
+  it('never promotes narrow-scope claims into the agent-wide working projection', () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    repo.insert({
+      id: 'agent-fact',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'agent-wide preference',
+      importance: 0.8
+    })
+    for (const [id, content, scope] of [
+      ['session-secret', 'session-only secret', { type: 'session', id: 'session-1' }],
+      ['user-secret', 'user-only secret', { type: 'user', id: 'user-1' }],
+      ['project-secret', 'project-only secret', { type: 'project', id: 'project-1' }]
+    ] as const) {
+      repo.insert({
+        id,
+        agentId: 'deepchat',
+        kind: 'semantic',
+        content,
+        importance: 1,
+        scope
+      })
+    }
+
+    presenter.refreshWorkingMemory('deepchat')
+
+    const working = [...repo.rows.values()].find((row) => row.kind === 'working')?.content ?? ''
+    expect(working).toContain('agent-wide preference')
+    expect(working).not.toContain('session-only secret')
+    expect(working).not.toContain('user-only secret')
+    expect(working).not.toContain('project-only secret')
+  })
+
   it('keeps a single working row across refreshes', () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     repo.insert({

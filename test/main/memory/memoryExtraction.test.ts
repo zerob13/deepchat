@@ -729,6 +729,39 @@ describe('MemoryService.maybeReflect cheap model', () => {
     expect([...repo.rows.values()].some((r: any) => r.kind === 'persona')).toBe(false)
   })
 
+  it('never promotes narrow-scope claims into agent-wide reflections', async () => {
+    const generateText = vi.fn(
+      async (_providerId: string, _modelId: string, _prompt: string) => '["Agent-wide insight."]'
+    )
+    const { presenter, repo } = await buildWithMemories({ memoryEnabled: true }, generateText)
+    for (const [id, content, scope] of [
+      ['session-source', 'session-only reflection source', { type: 'session', id: 'session-1' }],
+      ['user-source', 'user-only reflection source', { type: 'user', id: 'user-1' }],
+      ['project-source', 'project-only reflection source', { type: 'project', id: 'project-1' }]
+    ] as const) {
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content,
+        importance: 1,
+        createdAt: 2,
+        scope
+      })
+    }
+
+    const result = await presenter.maybeReflect('a', { providerId: 'p', modelId: 'm' })
+
+    expect(result?.sourceMemoryIds.sort()).toEqual(
+      Array.from({ length: 6 }, (_, index) => `m${index}`)
+    )
+    expect(generateText.mock.calls[0][2]).not.toContain('reflection source')
+    expect(repo.getById(result!.reflectionIds[0])).toMatchObject({
+      scope_type: 'agent',
+      scope_id: null
+    })
+  })
+
   it('falls back to the caller model when no memoryExtractionModel is configured', async () => {
     const generateText = vi.fn(
       async (_providerId: string, _modelId: string, _prompt: string) => '["An insight."]'
