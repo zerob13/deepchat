@@ -206,7 +206,8 @@ export function makeLLMPresenter(
   generateText: MemoryServiceDeps['generateText'],
   config: DeepChatAgentConfig | null = embeddingConfig,
   repo: FakeRepository = createFakeRepository(),
-  auditRepo: FakeAuditRepository = new FakeAuditRepository()
+  auditRepo: FakeAuditRepository = new FakeAuditRepository(),
+  directiveRepo: FakeDirectiveRepository = new FakeDirectiveRepository()
 ) {
   const store = new FakeVectorStore()
   const getEmbeddings = vi.fn(async (_providerId: string, _modelId: string, texts: string[]) =>
@@ -215,6 +216,7 @@ export function makeLLMPresenter(
   const presenter = new MemoryService({
     repository: repo,
     auditRepository: auditRepo,
+    directiveRepository: directiveRepo,
     resolveAgentConfig: () => config,
     resolveAgentDefaultModel: () => ({ providerId: 'main', modelId: 'main' }),
     executeWithRateLimit: vi.fn(async () => undefined),
@@ -228,7 +230,7 @@ export function makeLLMPresenter(
       store.vectors.clear()
     }
   })
-  return { presenter, repo, auditRepo, store, getEmbeddings }
+  return { presenter, repo, auditRepo, directiveRepo, store, getEmbeddings }
 }
 
 export async function seedEmbedded(presenter: MemoryService, content: string): Promise<string> {

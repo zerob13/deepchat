@@ -104,6 +104,12 @@ an active directive.
 15. Scope broadening is explicit. Missing scope context never grants access to a narrower scope.
 16. Memory, projection, and directive contributions remain user-role data; none may rewrite or
     append to the base system prompt.
+17. Content tombstone identity includes applicability scope. The original agent-scope hash remains
+    valid for compatibility, while user/project/session tombstones cannot suppress identical
+    content outside their exact scope.
+18. Management and search response DTOs enforce the same temporal, scope, and directive-kind
+    invariants as persistence; malformed durable state is never normalized silently at the IPC
+    boundary.
 
 ## Temporal claim contract
 
@@ -121,7 +127,8 @@ Each authoritative claim gains:
 Validation rules:
 
 - `atemporal` has no validity bounds, confidence, precision, or timezone.
-- Non-atemporal claims require `temporal_confidence`.
+- Non-atemporal claims require `temporal_confidence`, `temporal_precision`, and
+  `temporal_timezone`.
 - When both bounds exist, `valid_from < valid_until`.
 - Extraction outputs are normalized and rejected per candidate when malformed; a malformed temporal
   fragment does not fail the entire extraction batch.
@@ -190,7 +197,8 @@ operational observability, but audit is not the source of truth for lineage.
 Explicit single-row deletion:
 
 1. resolves the owned row;
-2. hashes its canonical provenance key and normalized content;
+2. hashes its canonical provenance key and scope-qualified normalized content, retaining the
+   original agent-scope content hash so pre-scope tombstones remain effective;
 3. inserts tombstones and deletes the row in one SQLite transaction;
 4. removes the vector after the durable transaction;
 5. blocks future exact provenance/content recreation.
@@ -250,6 +258,8 @@ one Agent and cannot cross its ownership boundary.
 - Exact source replay cannot recreate a selectively deleted claim.
 - A later, independently sourced statement is not suppressed merely because it is semantically
   similar to forgotten content.
+- Identical content in another user, project, or session scope is not suppressed by a tombstone
+  from the forgotten claim's scope.
 
 ### AC-5: Consolidation and lineage
 

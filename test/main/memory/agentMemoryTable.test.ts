@@ -2247,6 +2247,72 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: 'session:secret-span'
         })
       ).toMatchObject({ id: 'other-agent' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'session-scope',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Secret launch plan',
+          provenanceKey: 'independent-session-source',
+          scope: { type: 'session', id: 'session-1' }
+        })
+      ).toMatchObject({ id: 'session-scope' })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('isolates exact content tombstones by non-agent scope', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten-project',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-1-source',
+        scope: { type: 'project', id: 'project-1' }
+      })
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: original.id })
+
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'same-project',
+          agentId: 'a',
+          kind: 'semantic',
+          content: ' Project   Saffron is paused ',
+          provenanceKey: 'project-1-independent-source',
+          scope: { type: 'project', id: 'project-1' }
+        })
+      ).toBeNull()
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'other-project',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Project Saffron is paused',
+          provenanceKey: 'project-2-source',
+          scope: { type: 'project', id: 'project-2' }
+        })
+      ).toMatchObject({ id: 'other-project' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'agent-scope',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Project Saffron is paused',
+          provenanceKey: 'agent-source'
+        })
+      ).toMatchObject({ id: 'agent-scope' })
     } finally {
       db.close()
     }

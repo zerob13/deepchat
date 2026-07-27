@@ -516,7 +516,7 @@ export class MaintenanceService {
       const fingerprint = embeddingFingerprint(embedding.providerId, embedding.modelId)
       const dimensions = this.ports.repository.getCurrentEmbeddingDimension(agentId, fingerprint)
       if (dimensions === null) {
-        this.ports.repository.settleDirtySeeds(agentId, dirtySeeds)
+        this.ports.repository.deferDirtySeeds(agentId, dirtySeeds, now)
         return result
       }
       await this.ports.warmVectorStore(agentId, currentEmbedding)
@@ -545,11 +545,16 @@ export class MaintenanceService {
           continue
         }
         const source = this.ports.repository.getById(seed.memoryId)
-        if (
-          !this.isCurrentEmbeddedConsolidationRow(agentId, source, dimensions, fingerprint) ||
-          source.decision_revision !== seed.claimRevision
-        ) {
+        if (!this.isLiveDirtyConsolidationRow(agentId, source)) {
           settleSeed(seed)
+          continue
+        }
+        if (source.decision_revision !== seed.claimRevision) {
+          settleSeed(seed)
+          continue
+        }
+        if (!this.isCurrentEmbeddedConsolidationRow(agentId, source, dimensions, fingerprint)) {
+          deferSeed(seed)
           continue
         }
 
@@ -850,15 +855,21 @@ export class MaintenanceService {
     )
   }
 
-  private isTerminalDirtySeed(agentId: string, seed: MemoryDirtySeed): boolean {
-    const row = this.ports.repository.getById(seed.memoryId)
+  private isLiveDirtyConsolidationRow(
+    agentId: string,
+    row: AgentMemoryRow | undefined
+  ): row is AgentMemoryRow {
     return (
-      !row ||
-      row.agent_id !== agentId ||
-      (row.kind !== 'episodic' && row.kind !== 'semantic' && row.kind !== 'reflection') ||
-      row.lifecycle_state !== 'active' ||
-      row.superseded_by !== null
+      !!row &&
+      row.agent_id === agentId &&
+      (row.kind === 'episodic' || row.kind === 'semantic' || row.kind === 'reflection') &&
+      row.lifecycle_state === 'active' &&
+      row.superseded_by === null
     )
+  }
+
+  private isTerminalDirtySeed(agentId: string, seed: MemoryDirtySeed): boolean {
+    return !this.isLiveDirtyConsolidationRow(agentId, this.ports.repository.getById(seed.memoryId))
   }
 
   private settleTerminalDirtySeeds(agentId: string): number {

@@ -467,7 +467,6 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     options: WriteMemoriesOptions,
     createdAt: number
   ): MemoryExplicitRelearnResult
@@ -475,7 +474,6 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     options: WriteMemoriesOptions,
     createdAt: number
   ): MemoryClaimInsertResult
@@ -483,7 +481,6 @@ export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     targetId: string,
     options: WriteMemoriesOptions,
     createdAt: number

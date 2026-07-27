@@ -73,6 +73,7 @@ import type {
 import {
   AGENT_MEMORY_AGENT_SCOPE_FILTER,
   legacyUserScopeForMemoryScope,
+  memoryScopeFromRow,
   normalizeMemoryScope,
   normalizeMemoryScopeFilter,
   rowMatchesMemoryScopeFilter,
@@ -179,7 +180,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     for (const identity of buildMemoryTombstoneIdentities({
       agentId: row.agent_id,
       content: row.content,
-      provenanceKey: row.provenance_key
+      provenanceKey: row.provenance_key,
+      scope: memoryScopeFromRow(row)
     })) {
       const key = this.tombstoneKey(row.agent_id, identity.identityKind, identity.identityHash)
       if (this.tombstones.has(key)) continue
@@ -194,13 +196,14 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   private hasTombstoneForClaim(
-    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey' | 'scope'>
   ): boolean {
     if (!isTombstoneEligibleMemoryKind(input.kind)) return false
     return buildMemoryTombstoneIdentities({
       agentId: input.agentId,
       content: input.content,
-      provenanceKey: input.provenanceKey ?? null
+      provenanceKey: input.provenanceKey ?? null,
+      scope: normalizeMemoryScope(input.scope)
     }).some((identity) =>
       this.tombstones.has(
         this.tombstoneKey(input.agentId, identity.identityKind, identity.identityHash)
@@ -295,7 +298,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       const identities = buildMemoryTombstoneIdentities({
         agentId: input.agentId,
         content: input.content,
-        provenanceKey: input.provenanceKey ?? null
+        provenanceKey: input.provenanceKey ?? null,
+        scope: normalizeMemoryScope(input.scope)
       })
       const matchingKeys = identities
         .map((identity) =>

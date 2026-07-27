@@ -446,6 +446,61 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(repo.countDirtySeeds('a')).toBe(0)
   })
 
+  it('defers active dirty seeds until an embedding dimension becomes available', async () => {
+    const { presenter, repo } = makeLLMPresenter(routedLLM({}))
+    repo.insert({
+      id: 'awaiting-embedding',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'claim awaiting its current embedding',
+      status: 'pending_embedding',
+      createdAt: 1_000
+    })
+    const now = 1_000 * DAY
+    await presenter.runConsolidationPass('a', now)
+
+    expect(repo.listDirtySeeds('a', 10)).toEqual([
+      expect.objectContaining({
+        memoryId: 'awaiting-embedding',
+        enqueuedAt: now
+      })
+    ])
+  })
+
+  it('defers current-generation rows whose embedding is not ready', async () => {
+    const { presenter, repo, store } = makeLLMPresenter(routedLLM({}))
+    const ready = repo.insert({
+      id: 'ready',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'ready claim',
+      status: 'embedded',
+      createdAt: 1_000
+    })
+    repo.seedLegacyStatus(ready.id, 'embedded', {
+      embeddingId: ready.id,
+      embeddingDim: 4,
+      embeddingModel: 'p:m'
+    })
+    store.vectors.set(ready.id, textToVector(ready.content))
+    repo.settleDirtySeeds('a', repo.listDirtySeeds('a', 10))
+    repo.insert({
+      id: 'pending',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'pending claim',
+      status: 'pending_embedding',
+      createdAt: 2_000
+    })
+
+    const now = 1_000 * DAY
+    await presenter.runConsolidationPass('a', now)
+
+    expect(repo.listDirtySeeds('a', 10)).toContainEqual(
+      expect.objectContaining({ memoryId: 'pending', enqueuedAt: now })
+    )
+  })
+
   it('skips vector neighbor scans after earlier maintenance steps exhaust the token budget', async () => {
     const generateText = routedLLM({
       decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'

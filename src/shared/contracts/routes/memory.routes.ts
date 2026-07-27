@@ -7,7 +7,6 @@ import {
   AGENT_MEMORY_CATEGORIES,
   AGENT_MEMORY_AGENT_ID_PATTERN,
   AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
-  AGENT_MEMORY_DIRECTIVE_KINDS,
   AGENT_MEMORY_DIRECTIVE_SOURCES,
   AGENT_MEMORY_DIRECTIVE_STATUSES,
   AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
@@ -66,6 +65,16 @@ const CanonicalMemoryScopeIdSchema = z
     message: `scope id must be at most ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} Unicode code points`
   })
 
+const CanonicalMemoryTimeZoneSchema = z
+  .string()
+  .min(1)
+  .refine((timeZone) => timeZone === timeZone.trim(), {
+    message: 'temporal timezone must not contain surrounding whitespace'
+  })
+  .refine((timeZone) => unicodeCodePointLength(timeZone) <= 128, {
+    message: 'temporal timezone must be at most 128 Unicode code points'
+  })
+
 const MemoryScopeIdInputSchema = z
   .string()
   .trim()
@@ -89,16 +98,72 @@ export const MemoryScopeContextSchema = z
   })
   .strict()
 
-function enforceProjectedScopeInvariant(
-  value: { scopeType: (typeof AGENT_MEMORY_SCOPE_TYPES)[number]; scopeId: string | null },
+type ProjectedMemoryInvariant = {
+  scopeType: (typeof AGENT_MEMORY_SCOPE_TYPES)[number]
+  scopeId: string | null
+  temporalKind: (typeof AGENT_MEMORY_TEMPORAL_KINDS)[number]
+  validFrom: number | null
+  validUntil: number | null
+  temporalConfidence: number | null
+  temporalPrecision: (typeof AGENT_MEMORY_TEMPORAL_PRECISIONS)[number] | null
+  temporalTimeZone: string | null
+}
+
+function enforceProjectedMemoryInvariant(
+  value: ProjectedMemoryInvariant,
   context: z.RefinementCtx
 ): void {
-  const valid = value.scopeType === 'agent' ? value.scopeId === null : value.scopeId !== null
-  if (!valid) {
+  const validScope = value.scopeType === 'agent' ? value.scopeId === null : value.scopeId !== null
+  if (!validScope) {
     context.addIssue({
       code: 'custom',
       path: ['scopeId'],
       message: 'scopeId must be null only for agent scope'
+    })
+  }
+
+  if (value.temporalKind === 'atemporal') {
+    const temporalFields = [
+      ['validFrom', value.validFrom],
+      ['validUntil', value.validUntil],
+      ['temporalConfidence', value.temporalConfidence],
+      ['temporalPrecision', value.temporalPrecision],
+      ['temporalTimeZone', value.temporalTimeZone]
+    ] as const
+    for (const [field, fieldValue] of temporalFields) {
+      if (fieldValue !== null) {
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `${field} must be null for atemporal memory`
+        })
+      }
+    }
+  } else {
+    for (const [field, fieldValue] of [
+      ['temporalConfidence', value.temporalConfidence],
+      ['temporalPrecision', value.temporalPrecision],
+      ['temporalTimeZone', value.temporalTimeZone]
+    ] as const) {
+      if (fieldValue === null) {
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `${field} is required for temporal memory`
+        })
+      }
+    }
+  }
+
+  if (
+    value.validFrom !== null &&
+    value.validUntil !== null &&
+    value.validFrom >= value.validUntil
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['validUntil'],
+      message: 'validUntil must be greater than validFrom'
     })
   }
 }
@@ -123,7 +188,7 @@ const MemoryItemBaseSchema = z.object({
   validUntil: z.number().int().nullable(),
   temporalConfidence: z.number().min(0).max(1).nullable(),
   temporalPrecision: z.enum(AGENT_MEMORY_TEMPORAL_PRECISIONS).nullable(),
-  temporalTimeZone: z.string().nullable(),
+  temporalTimeZone: CanonicalMemoryTimeZoneSchema.nullable(),
   conflictState: z.string().nullable().optional(),
   conflictWith: z.string().nullable().optional(),
   // Persona lifecycle (null for non-persona rows). isAnchor surfaces the drift guard; needsReview is
@@ -133,7 +198,7 @@ const MemoryItemBaseSchema = z.object({
   needsReview: z.boolean().optional()
 })
 
-export const MemoryItemSchema = MemoryItemBaseSchema.superRefine(enforceProjectedScopeInvariant)
+export const MemoryItemSchema = MemoryItemBaseSchema.superRefine(enforceProjectedMemoryInvariant)
 
 // Search results reuse the management DTO and add the retrieval score plus which path(s) surfaced
 // the row. Persona/working/archived/conflicted rows are excluded by the retrieval semantics.
@@ -141,7 +206,7 @@ export const MemorySearchResultSchema = MemoryItemBaseSchema.extend({
   score: z.number(),
   sources: z.object({ vec: z.boolean().optional(), fts: z.boolean().optional() }).optional(),
   similarity: z.number().optional()
-}).superRefine(enforceProjectedScopeInvariant)
+}).superRefine(enforceProjectedMemoryInvariant)
 
 const NonnegativeCountSchema = z.number().int().nonnegative()
 
@@ -210,17 +275,26 @@ export const MemoryStatusSchema = z.object({
     .optional()
 })
 
-export const MemoryDirectiveItemSchema = z.object({
+const MemoryDirectiveItemBaseSchema = z.object({
   id: z.string().min(1).max(128),
   agentId: AgentIdSchema,
-  kind: z.enum(AGENT_MEMORY_DIRECTIVE_KINDS),
   status: z.enum(AGENT_MEMORY_DIRECTIVE_STATUSES),
   source: z.enum(AGENT_MEMORY_DIRECTIVE_SOURCES),
   content: DirectiveContentSchema,
-  topic: DirectiveTopicSchema.nullable(),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative()
 })
+
+export const MemoryDirectiveItemSchema = z.discriminatedUnion('kind', [
+  MemoryDirectiveItemBaseSchema.extend({
+    kind: z.literal('instruction'),
+    topic: z.null()
+  }),
+  MemoryDirectiveItemBaseSchema.extend({
+    kind: z.literal('suppress_topic'),
+    topic: DirectiveTopicSchema
+  })
+])
 
 export const MemoryDirectiveInputSchema = z.discriminatedUnion('kind', [
   z

@@ -184,7 +184,6 @@ interface IndexedCandidate {
 }
 
 interface PreparedCoordinateCandidate extends IndexedCandidate {
-  provenanceKey: string
   decisionHeadId: string | null
   neighbors: MemoryRecallItem[]
   queryVector?: MemoryDecisionQueryVectorSnapshot
@@ -332,12 +331,6 @@ export class WriteCoordinator {
       const normalized = normalizeMemoryCandidate(candidate)
       if (!normalized) continue
       const content = normalized.content
-      const provenanceKey = buildScopedMemoryProvenanceKey(
-        options.agentId,
-        normalized.kind,
-        content,
-        scope
-      )
       const duplicate = this.ports.rows.resolveProvenance(
         options.agentId,
         normalized.kind,
@@ -368,7 +361,6 @@ export class WriteCoordinator {
         options.agentId,
         normalized,
         content,
-        provenanceKey,
         normalizedOptions,
         now
       )
@@ -471,7 +463,7 @@ export class WriteCoordinator {
         for (const suggestion of parsed.directiveSuggestions) {
           if (!this.ctx.canContinueOperation(operationFence)) {
             extractionOutcome = 'cancelled'
-            return { ok: false }
+            break
           }
           this.ports.suggestDirective(input.agentId, suggestion)
         }
@@ -590,12 +582,6 @@ export class WriteCoordinator {
     scope: MemoryScope
   ): PrepareCoordinateCandidateResult {
     const content = indexed.candidate.content
-    const provenanceKey = buildScopedMemoryProvenanceKey(
-      agentId,
-      indexed.candidate.kind,
-      content,
-      scope
-    )
     const duplicate = this.ports.rows.resolveProvenance(
       agentId,
       indexed.candidate.kind,
@@ -634,7 +620,6 @@ export class WriteCoordinator {
     return {
       prepared: {
         ...indexed,
-        provenanceKey,
         decisionHeadId,
         neighbors: []
       }
@@ -720,17 +705,10 @@ export class WriteCoordinator {
         return
       }
       if (!allowInsert) return
-      const provenanceKey = buildScopedMemoryProvenanceKey(
-        agentId,
-        candidate.kind,
-        candidate.content,
-        scope
-      )
       const insert = this.ports.rows.insertMemory(
         agentId,
         candidate,
         candidate.content,
-        provenanceKey,
         options,
         now
       )
@@ -781,8 +759,7 @@ export class WriteCoordinator {
       prepared.neighbors,
       parsed?.valid ? parsed.decision : ADD_DECISION,
       options,
-      now,
-      prepared.provenanceKey
+      now
     )
     if (result.action === 'retry' && !policy.retryConflict) {
       return { action: 'noop', reason: 'concurrent-update' }
@@ -1118,7 +1095,6 @@ export class WriteCoordinator {
       return { action: 'noop', reason: 'disposed' }
     }
 
-    const provenanceKey = buildScopedMemoryProvenanceKey(agentId, normalized.kind, content, scope)
     const duplicate = this.ports.rows.resolveProvenance(agentId, normalized.kind, content, scope)
     let decisionHead: AgentMemoryRow | null = null
     if (duplicate) {
@@ -1216,15 +1192,7 @@ export class WriteCoordinator {
       return { action: 'noop', reason: 'disposed' }
     }
 
-    return this.applyDecisionAttempt(
-      agentId,
-      normalized,
-      neighbors,
-      decision,
-      options,
-      now,
-      provenanceKey
-    )
+    return this.applyDecisionAttempt(agentId, normalized, neighbors, decision, options, now)
   }
 
   private applyDecisionAttempt(
@@ -1233,8 +1201,7 @@ export class WriteCoordinator {
     neighbors: readonly MemoryRecallItem[],
     decision: MemoryDecision,
     options: WriteMemoriesOptions,
-    now: number,
-    provenanceKey: string
+    now: number
   ): CoordinateWriteResult {
     const content = normalized.content
     const scope = normalizeMemoryScope(options.scope)
@@ -1320,7 +1287,6 @@ export class WriteCoordinator {
           const merged = decision.mergedContent ?? content
           const mergedTemporal = resolveContentMergeTemporalMetadata(targetRow, normalized, merged)
           const mergedCandidate = { ...normalized, temporal: mergedTemporal }
-          const mergedKey = buildScopedMemoryProvenanceKey(agentId, normalized.kind, merged, scope)
           const collisionOwner = this.ports.rows.resolveProvenance(
             agentId,
             normalized.kind,
@@ -1344,7 +1310,6 @@ export class WriteCoordinator {
                 agentId,
                 mergedCandidate,
                 merged,
-                mergedKey,
                 options,
                 now
               )
@@ -1429,7 +1394,6 @@ export class WriteCoordinator {
                 agentId,
                 normalized,
                 content,
-                provenanceKey,
                 target.id,
                 options,
                 now
@@ -1659,18 +1623,10 @@ export class WriteCoordinator {
   ): MemoryWriteOutcome | null {
     const normalized = normalizeMemoryCandidate(candidate)
     if (!normalized) return null
-    const scope = normalizeMemoryScope(options.scope)
-    const provenanceKey = buildScopedMemoryProvenanceKey(
-      agentId,
-      normalized.kind,
-      normalized.content,
-      scope
-    )
     const result = this.ports.rows.reauthorizeForgottenMemory(
       agentId,
       normalized,
       normalized.content,
-      provenanceKey,
       options,
       now
     )
@@ -1689,7 +1645,6 @@ export class WriteCoordinator {
     if (!normalized) return { action: 'noop', reason: 'empty' }
     const content = normalized.content
     const scope = normalizeMemoryScope(options.scope)
-    const provenanceKey = buildScopedMemoryProvenanceKey(agentId, normalized.kind, content, scope)
     const duplicate = this.ports.rows.resolveProvenance(agentId, normalized.kind, content, scope)
     if (duplicate) {
       const hit = this.ports.rows.handleProvenanceHit(agentId, duplicate)
@@ -1712,14 +1667,7 @@ export class WriteCoordinator {
       const reason = hit.action === 'noop' ? hit.reason : 'duplicate'
       return { action: 'noop', reason, id: duplicate.id }
     }
-    const insert = this.ports.rows.insertMemory(
-      agentId,
-      normalized,
-      content,
-      provenanceKey,
-      options,
-      now
-    )
+    const insert = this.ports.rows.insertMemory(agentId, normalized, content, options, now)
     return insert.action === 'inserted'
       ? { action: 'created', id: insert.id }
       : {

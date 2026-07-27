@@ -179,6 +179,41 @@ describe('toMemoryItemDto sourceEntryIds passthrough', () => {
     expect(parsed.memories[1].sourceEntryIds).toBeNull()
   })
 
+  it('enforces temporal persistence invariants on management and search DTOs', () => {
+    const atemporal = toMemoryItemDto(makeRow())
+    const temporal = {
+      ...atemporal,
+      temporalKind: 'state' as const,
+      validFrom: 100,
+      validUntil: 200,
+      temporalConfidence: 0.9,
+      temporalPrecision: 'exact' as const,
+      temporalTimeZone: 'UTC'
+    }
+
+    expect(memoryListRoute.output.safeParse({ memories: [temporal] }).success).toBe(true)
+    expect(
+      memorySearchRoute.output.safeParse({ results: [{ ...temporal, score: 0.8 }] }).success
+    ).toBe(true)
+
+    const malformed = [
+      { ...atemporal, validFrom: 100 },
+      { ...temporal, temporalConfidence: null },
+      { ...temporal, temporalPrecision: null },
+      { ...temporal, temporalTimeZone: null },
+      { ...temporal, temporalTimeZone: '' },
+      { ...temporal, temporalTimeZone: ' UTC ' },
+      { ...temporal, validFrom: 200, validUntil: 200 },
+      { ...temporal, validFrom: 300, validUntil: 200 }
+    ]
+    for (const memory of malformed) {
+      expect(memoryListRoute.output.safeParse({ memories: [memory] }).success).toBe(false)
+      expect(
+        memorySearchRoute.output.safeParse({ results: [{ ...memory, score: 0.8 }] }).success
+      ).toBe(false)
+    }
+  })
+
   it('projects pre-migration row shapes as atemporal', () => {
     const {
       temporal_kind: _temporalKind,
@@ -899,6 +934,38 @@ describe('memory directive route contracts', () => {
     expect(directive).not.toHaveProperty('identityHash')
   })
 
+  it('enforces directive topics according to directive kind in response DTOs', () => {
+    const common = {
+      id: 'directive-1',
+      agentId: 'deepchat',
+      status: 'active' as const,
+      source: 'manual' as const,
+      content: 'Be concise.',
+      createdAt: 1_000,
+      updatedAt: 2_000
+    }
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'instruction', topic: null }]
+      }).success
+    ).toBe(true)
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'suppress_topic', topic: 'project saffron' }]
+      }).success
+    ).toBe(true)
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'instruction', topic: 'unexpected' }]
+      }).success
+    ).toBe(false)
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'suppress_topic', topic: null }]
+      }).success
+    ).toBe(false)
+  })
+
   it('enforces closed directive inputs and bounded identifiers', () => {
     expect(
       memoryCreateDirectiveRoute.input.parse({
@@ -917,6 +984,15 @@ describe('memory directive route contracts', () => {
         topic: 'Project Saffron'
       }
     })
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: {
+          kind: 'instruction',
+          content: '😀'.repeat(AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS)
+        }
+      }).success
+    ).toBe(true)
     expect(
       memoryCreateDirectiveRoute.input.safeParse({
         agentId: 'deepchat',

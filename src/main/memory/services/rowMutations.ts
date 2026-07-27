@@ -137,13 +137,13 @@ export class MemoryRowMutations {
     agentId: string
     candidate: NormalizedMemoryCandidate
     content: string
-    provenanceKey: string
     options: WriteMemoriesOptions
     createdAt: number
     lifecycleState: Extract<AgentMemoryRow['lifecycle_state'], 'active' | 'conflicted'>
     conflictWith?: string
   }): AgentMemoryInsertInput {
     const sourceSession = input.options.sourceSession ?? null
+    const scope = normalizeMemoryScope(input.options.scope)
     return {
       id: input.id,
       agentId: input.agentId,
@@ -154,8 +154,13 @@ export class MemoryRowMutations {
       lifecycleState: input.lifecycleState,
       embeddingState: 'pending',
       sourceSession,
-      scope: normalizeMemoryScope(input.options.scope),
-      provenanceKey: input.provenanceKey,
+      scope,
+      provenanceKey: buildScopedMemoryProvenanceKey(
+        input.agentId,
+        input.candidate.kind,
+        input.content,
+        scope
+      ),
       sourceEntryIds: sourceSession ? (input.options.sourceEntryIds ?? null) : null,
       conflictWith: input.conflictWith,
       createdAt: input.createdAt,
@@ -167,7 +172,6 @@ export class MemoryRowMutations {
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     options: WriteMemoriesOptions,
     createdAt: number
   ): MemoryExplicitRelearnResult {
@@ -179,7 +183,6 @@ export class MemoryRowMutations {
           agentId,
           candidate,
           content,
-          provenanceKey,
           options,
           createdAt,
           lifecycleState: 'active'
@@ -197,7 +200,6 @@ export class MemoryRowMutations {
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     options: WriteMemoriesOptions,
     createdAt: number
   ): MemoryClaimInsertResult {
@@ -209,7 +211,6 @@ export class MemoryRowMutations {
           agentId,
           candidate,
           content,
-          provenanceKey,
           options,
           createdAt,
           lifecycleState: 'active'
@@ -227,7 +228,6 @@ export class MemoryRowMutations {
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     targetId: string,
     options: WriteMemoriesOptions,
     createdAt: number
@@ -240,7 +240,6 @@ export class MemoryRowMutations {
           agentId,
           candidate,
           content,
-          provenanceKey,
           options,
           createdAt,
           lifecycleState: 'conflicted',
@@ -320,7 +319,7 @@ export class MemoryRowMutations {
       | Extract<MemoryClaimInsertResult, { action: 'suppressed' }>['reason']
       | null = null
     const insertedAndSuperseded = this.runAtomicTransition(() => {
-      const insert = this.insertMemory(agentId, candidate, content, newKey, scopedOptions, now)
+      const insert = this.insertMemory(agentId, candidate, content, scopedOptions, now)
       if (insert.action === 'suppressed') {
         insertSuppression = insert.reason
         return false

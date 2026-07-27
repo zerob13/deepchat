@@ -71,6 +71,7 @@ import {
   AGENT_MEMORY_AGENT_SCOPE_FILTER,
   buildMemoryScopePredicateSql,
   legacyUserScopeForMemoryScope,
+  memoryScopeFromRow,
   normalizeMemoryScope,
   normalizeMemoryScopeFilter
 } from '../../core/scope'
@@ -105,7 +106,10 @@ const AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE = 256
 type FtsCapability = { available: boolean; tokenizer: 'trigram' | 'unicode61' }
 type SearchMatchMode = 'all' | 'any'
 type FtsMirrorRow = AgentMemoryRow & { rowid: number }
-type TombstoneSourceRow = Pick<AgentMemoryRow, 'agent_id' | 'kind' | 'content' | 'provenance_key'>
+type TombstoneSourceRow = Pick<
+  AgentMemoryRow,
+  'agent_id' | 'scope_type' | 'scope_id' | 'kind' | 'content' | 'provenance_key'
+>
 type TombstoneSourcePageRow = TombstoneSourceRow & { storage_rowid: number }
 
 const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
@@ -969,8 +973,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )
     if (!columns.has('scope_type') || !columns.has('scope_id')) return
 
-    this.db.exec(AGENT_MEMORY_SCOPE_TRIGGER_DROP_SQL)
-    this.db.exec(AGENT_MEMORY_SCOPE_TRIGGER_SQL)
+    this.db.transaction(() => {
+      this.db.exec(AGENT_MEMORY_SCOPE_TRIGGER_DROP_SQL)
+      this.db.exec(AGENT_MEMORY_SCOPE_TRIGGER_SQL)
+    })()
     const indexColumns = [
       'agent_id',
       'scope_type',
@@ -1002,7 +1008,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       for (const identity of buildMemoryTombstoneIdentities({
         agentId: row.agent_id,
         content: row.content,
-        provenanceKey: row.provenance_key
+        provenanceKey: row.provenance_key,
+        scope: memoryScopeFromRow(row)
       })) {
         insert.run(row.agent_id, identity.identityKind, identity.identityHash, createdAt, reason)
       }
@@ -1010,13 +1017,14 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   private findTombstoneIdentitiesForClaim(
-    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey' | 'scope'>
   ): ReturnType<typeof buildMemoryTombstoneIdentities> {
     if (!isTombstoneEligibleMemoryKind(input.kind)) return []
     const identities = buildMemoryTombstoneIdentities({
       agentId: input.agentId,
       content: input.content,
-      provenanceKey: input.provenanceKey ?? null
+      provenanceKey: input.provenanceKey ?? null,
+      scope: normalizeMemoryScope(input.scope)
     })
     const find = this.db.prepare(
       `SELECT 1 AS present
@@ -1030,7 +1038,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   private hasTombstoneForClaim(
-    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey' | 'scope'>
   ): boolean {
     return this.findTombstoneIdentitiesForClaim(input).length > 0
   }
@@ -3919,14 +3927,16 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   tombstoneAndClearByAgent(agentId: string, createdAt: number): number {
     return this.db.transaction(() => {
       const selectFirstPage = this.db.prepare(
-        `SELECT rowid AS storage_rowid, agent_id, kind, content, provenance_key
+        `SELECT rowid AS storage_rowid, agent_id, scope_type, scope_id,
+                kind, content, provenance_key
          FROM agent_memory NOT INDEXED
          WHERE agent_id = ?
          ORDER BY rowid
          LIMIT ?`
       )
       const selectNextPage = this.db.prepare(
-        `SELECT rowid AS storage_rowid, agent_id, kind, content, provenance_key
+        `SELECT rowid AS storage_rowid, agent_id, scope_type, scope_id,
+                kind, content, provenance_key
          FROM agent_memory NOT INDEXED
          WHERE rowid > ? AND agent_id = ?
          ORDER BY rowid

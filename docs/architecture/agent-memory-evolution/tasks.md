@@ -137,3 +137,15 @@ Completed on 2026-07-27:
 The final severity-ordered review found no unresolved actionable high, medium, or low findings.
 One additional low-severity localization gap in the Traditional Chinese Memory diagnostics was
 corrected before this record was closed.
+
+## 9. Pull-request review hardening
+
+- [x] Preserve legacy agent-scope tombstones while isolating narrower-scope content identities.
+- [x] Derive provenance identity and persisted scope from one normalized insert contract.
+- [x] Keep transient embedding-readiness work in the generation-aware dirty queue.
+- [x] Enforce persistence-equivalent temporal and directive-kind invariants on response DTOs.
+- [x] Preserve extraction audit coverage when cancellation interrupts directive suggestions.
+- [ ] Remove verified projection and retrieval hot-path overhead without changing output.
+- [ ] Localize the new directive and contribution-budget UI across maintained locales.
+- [ ] Run final formatting, i18n, lint, typecheck, focused, native, and maintained Memory gates.
+- [ ] Complete the final severity-ordered review and resolve every actionable finding.

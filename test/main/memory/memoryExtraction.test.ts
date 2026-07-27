@@ -360,6 +360,61 @@ describe('MemoryService.extractAndStore', () => {
     expect(presenter.listActiveDirectives('a')).toEqual([])
   })
 
+  it('audits committed claims when cancellation interrupts directive suggestions', async () => {
+    const { makeLLMPresenter, routedLLM } = await import('./serviceTestSupport')
+    const directiveRepository = new FakeDirectiveRepository()
+    let memoryEnabled = true
+    const config = {
+      get memoryEnabled() {
+        return memoryEnabled
+      },
+      memoryEmbedding: { providerId: 'p', modelId: 'm' }
+    }
+    const { presenter, repo, auditRepo } = makeLLMPresenter(
+      routedLLM({
+        extraction: JSON.stringify({
+          memories: [{ kind: 'semantic', content: 'user prefers concise answers' }],
+          directiveSuggestions: [
+            { kind: 'instruction', content: 'Keep responses concise.' },
+            { kind: 'instruction', content: 'Use direct language.' }
+          ]
+        })
+      }),
+      config,
+      undefined,
+      undefined,
+      directiveRepository
+    )
+    const insertDraft = directiveRepository.insertDerivedDirectiveDraft.bind(directiveRepository)
+    vi.spyOn(directiveRepository, 'insertDerivedDirectiveDraft').mockImplementation((input) => {
+      const result = insertDraft(input)
+      memoryEnabled = false
+      presenter.onAgentMemoryMaintenanceConfigChanged('a')
+      return result
+    })
+
+    await expect(
+      presenter.extractAndStore({
+        agentId: 'a',
+        spanText: 'User: Please keep answers concise and direct.',
+        model: { providerId: 'p', modelId: 'm' }
+      })
+    ).resolves.toEqual({ ok: false })
+
+    expect(repo.listByAgent('a')).toEqual([
+      expect.objectContaining({ content: 'user prefers concise answers' })
+    ])
+    expect(presenter.listDirectives('a')).toHaveLength(1)
+    expect(
+      auditRepo.listByAgent('a').filter((event) => event.event_type === 'memory/extract')
+    ).toEqual([
+      expect.objectContaining({
+        status: 'completed',
+        input_refs_json: expect.stringContaining('"directiveSuggestionCount":2')
+      })
+    ])
+  })
+
   it('applies category-derived kind and importance floor through extraction writes', async () => {
     const { MemoryService } = await import('@/memory')
     const repo = makeFakeRepo()

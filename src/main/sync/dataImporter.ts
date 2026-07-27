@@ -409,7 +409,8 @@ export class DataImporter {
         const identities = buildMemoryTombstoneIdentities({
           agentId: row.agent_id,
           content: row.content,
-          provenanceKey: typeof row.provenance_key === 'string' ? row.provenance_key : null
+          provenanceKey: typeof row.provenance_key === 'string' ? row.provenance_key : null,
+          scope: normalizedScope ?? { type: 'agent' }
         })
         if (
           tombstoneLookups.some((lookup) =>
