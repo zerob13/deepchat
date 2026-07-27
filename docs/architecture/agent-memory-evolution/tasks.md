@@ -112,8 +112,28 @@ Memory-owned entries to the shared schema catalog.
 - [x] Keep suppressed claims visible to management search.
 - [x] Remove and prevent persistent lineage self-edges.
 - [x] Shed directive contributions as the final optional context-pressure fallback.
-- [ ] Add working/reflection scope, migration, temporal boundary, idempotency, and precision tests.
-- [ ] Localize new Memory strings for maintained Chinese variants.
-- [ ] Resolve system timezone dynamically and bound explicit-clear row materialization.
-- [ ] Run final formatting, i18n, lint, typecheck, focused gates, native gates, and broader tests.
-- [ ] Complete a final severity-ordered review and resolve every actionable finding.
+- [x] Add working/reflection scope, migration, temporal boundary, idempotency, and precision tests.
+- [x] Localize new Memory strings for maintained Chinese variants.
+- [x] Resolve system timezone dynamically and bound explicit-clear row materialization.
+- [x] Run final formatting, i18n, lint, typecheck, focused gates, native gates, and broader tests.
+- [x] Complete a final severity-ordered review and resolve every actionable finding.
+
+## Post-implementation hardening validation record
+
+Completed on 2026-07-27:
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run format` | Passed on 2,334 files |
+| `pnpm run i18n` | Passed with no missing or invalid translations |
+| `pnpm run lint` | Passed; Agent cleanup baseline remains zero |
+| `pnpm run typecheck` | Node and renderer passed |
+| `pnpm run test:memory` | Classification passed with 74 classified and 3 exempt files; 54 behavior files and 856 tests passed |
+| Memory native gate | 14 files passed; 283 tests passed and 2 conditional tests skipped |
+| `pnpm run test:memory:eval` | 7 tests passed; hybrid Recall@5 1.0, MRR@10 0.95, nDCG@10 0.9631 |
+| `pnpm run test:main -- --silent` | 461 files and 5,420 tests passed; 2 tests skipped; the same 3 files and 11 assertions documented above remain failing at the `dev` merge base |
+| Electron native ABI restoration | Rebuilt for Electron 40.10.5 and verified with an in-memory SQLite query |
+
+The final severity-ordered review found no unresolved actionable high, medium, or low findings.
+One additional low-severity localization gap in the Traditional Chinese Memory diagnostics was
+corrected before this record was closed.
