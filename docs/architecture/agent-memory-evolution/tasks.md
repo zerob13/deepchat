@@ -146,6 +146,7 @@ corrected before this record was closed.
 - [x] Enforce persistence-equivalent temporal and directive-kind invariants on response DTOs.
 - [x] Preserve extraction audit coverage when cancellation interrupts directive suggestions.
 - [x] Reject single-character CJK suppression topics and ignore equivalent persisted values.
+- [x] Adaptively refill filtered recall candidates within a diagnosed hard budget.
 - [x] Remove verified projection and retrieval hot-path overhead without changing output.
 - [x] Localize the new directive and contribution-budget UI across maintained locales.
 - [x] Run final formatting, i18n, lint, typecheck, focused, native, and maintained Memory gates.

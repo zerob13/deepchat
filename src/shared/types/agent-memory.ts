@@ -66,6 +66,7 @@ export const MEMORY_RETRIEVAL_DEGRADATION_CAUSES = [
   'storeError',
   'revisionChanged',
   'ftsUnavailable',
+  'candidateBudgetExhausted',
   'unknown'
 ] as const
 

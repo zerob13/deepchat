@@ -259,7 +259,8 @@ ownership in its predicate.
 - Temporal policy is pure O(candidate count).
 - Directive gating operates over a bounded active-directive set.
 - FTS scope filtering remains indexed.
-- Vector filtering uses bounded oversampling, never an unbounded refill loop.
+- FTS and vector filtering use geometric adaptive refill with an 800-candidate per-source ceiling;
+  vector refill reuses the turn's query embedding and never becomes an unbounded loop.
 - Dirty consolidation is bounded by seed, neighbor, LLM-call, and deadline budgets.
 - Projection rebuilding paginates through the existing bounded candidate API.
 

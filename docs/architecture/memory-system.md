@@ -91,8 +91,9 @@ system prompt。
 
 FTS 在 SQL `LIMIT` 前应用 Agent 和 scope predicate。Vector store 仍按 Agent namespace 查询，使用
 有上限的 oversampling，并在 ranking 前通过 SQLite authoritative row 重新校验 owner、scope、
-lifecycle、revision 和 embedding identity；不得依赖 vector candidate 本身做授权判断，也不得为了
-填满 top-K 使用无界 refill loop。
+lifecycle、revision 和 embedding identity；不得依赖 vector candidate 本身做授权判断。过滤后不足
+top-K 时，FTS/vector 复用同一 query embedding 做几何增长的 adaptive refill，每个 source 最多
+800 candidates；到达上限仍不足时记录 `candidateBudgetExhausted`，不得进入无界 loop。
 
 current recall/injection 会排除高置信度的过期或尚未生效 state；低置信度时间解析 fail-open，但降低
 权重并附带 qualification。Event 保留为历史 evidence；Plan 即使过期也只能表述为 previously

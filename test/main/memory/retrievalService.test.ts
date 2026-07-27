@@ -341,12 +341,12 @@ describe('MemoryService recall + injection', () => {
     ).toEqual(['global', 'project-1', 'session-1', 'user-1'])
   })
 
-  it('bounded vector oversampling prevents other scopes from starving applicable recall', async () => {
+  it('adaptively refills vector candidates when other scopes fill the first page', async () => {
     const { presenter, store } = makePresenter({
       ...enabledConfig,
       memoryRetrieval: { topK: 1 }
     })
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 20; index += 1) {
       presenter.writeMemoriesSync(
         [{ kind: 'semantic', content: `unrelated other scope ${index}` }],
         { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
@@ -367,7 +367,49 @@ describe('MemoryService recall + injection', () => {
     })
 
     expect(recalled.map((item) => item.id)).toEqual([applicableId])
-    expect(querySpy).toHaveBeenCalledWith(expect.any(Array), { topK: 8 })
+    expect(querySpy.mock.calls.map(([, options]) => options.topK)).toEqual([8, 32])
+  })
+
+  it('cancels an adaptive vector refill when the directive read epoch changes', async () => {
+    const { presenter, repo, store } = makePresenter({
+      ...enabledConfig,
+      memoryRetrieval: { topK: 1 }
+    })
+    for (let index = 0; index < 20; index += 1) {
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: `unrelated other scope ${index}` }],
+        { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
+      )
+    }
+    const [applicableId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'applicable vector-only fact' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } }
+    )
+    await presenter.processPendingEmbeddings('a')
+    for (const memoryId of store.vectors.keys()) {
+      store.vectors.set(memoryId, textToVector('redis'))
+    }
+    const draft = presenter.suggestDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+    const originalQuery = store.query.bind(store)
+    const pendingRefill = deferred<Array<{ memoryId: string; distance: number }>>()
+    const querySpy = vi.spyOn(store, 'query').mockImplementation((embedding, options) => {
+      if (options.topK === 32) return pendingRefill.promise
+      return originalQuery(embedding, options)
+    })
+
+    const recall = presenter.recall('a', 'redis', undefined, {
+      sessionId: 'session-1'
+    })
+    await vi.waitFor(() => expect(querySpy).toHaveBeenCalledTimes(2))
+    expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
+    pendingRefill.resolve(await originalQuery(textToVector('redis'), { topK: 32 }))
+
+    await expect(recall).resolves.toEqual([])
+    expect(repo.getById(applicableId)?.access_count).toBe(0)
   })
 
   it('retains vectors that belong to an inapplicable scope during inline cleanup', async () => {
@@ -435,14 +477,14 @@ describe('MemoryService recall + injection', () => {
     expect(repo.getById(id)?.last_accessed).toBe(1234)
   })
 
-  it('backfills bounded recall candidates after filtering expired states', async () => {
+  it('adaptively refills recall candidates after filtering expired states', async () => {
     const config: DeepChatAgentConfig = {
       memoryEnabled: true,
       memoryEmbedding: null,
       memoryRetrieval: { topK: 2 }
     }
     const { presenter, repo } = makePresenter(config)
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 50; index += 1) {
       repo.insert({
         id: `expired-${index}`,
         agentId: 'a',
@@ -471,21 +513,23 @@ describe('MemoryService recall + injection', () => {
       content: 'redis current fact b'
     })
     const recordAccess = vi.spyOn(repo, 'recordAccessBatch')
+    const search = vi.spyOn(repo, 'searchWithStrategy')
 
     const recalled = await presenter.recall('a', 'redis')
 
     expect(recalled.map((item) => item.id)).toEqual(['current-a', 'current-b'])
     expect(recordAccess).toHaveBeenCalledWith(['current-a', 'current-b'], expect.any(Number))
+    expect(search.mock.calls.map(([, , limit]) => limit)).toEqual([8, 32, 128])
   })
 
-  it('filters active suppressed topics before top-k selection and recall access accounting', async () => {
+  it('adaptively refills after topic suppression before top-k and access accounting', async () => {
     const config: DeepChatAgentConfig = {
       memoryEnabled: true,
       memoryEmbedding: null,
       memoryRetrieval: { topK: 2 }
     }
     const { presenter, repo } = makePresenter(config)
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 50; index += 1) {
       repo.insert({
         id: `saffron-${index}`,
         agentId: 'a',
@@ -514,12 +558,47 @@ describe('MemoryService recall + injection', () => {
       topic: 'Project Saffron'
     })
     const recordAccess = vi.spyOn(repo, 'recordAccessBatch')
+    const search = vi.spyOn(repo, 'searchWithStrategy')
 
     const recalled = await presenter.recall('a', 'redis')
 
     expect(recalled.map((item) => item.id)).toEqual(['safe-a', 'safe-b'])
     expect(recordAccess).toHaveBeenCalledWith(['safe-a', 'safe-b'], expect.any(Number))
     expect(repo.getById('saffron-0')?.access_count).toBe(0)
+    expect(search.mock.calls.map(([, , limit]) => limit)).toEqual([8, 32, 128])
+  })
+
+  it('reports candidate budget exhaustion when every bounded page is ineligible', async () => {
+    const { presenter, repo } = makePresenter({
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 1 }
+    })
+    for (let index = 0; index <= 800; index += 1) {
+      repo.insert({
+        id: `expired-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis expired state ${index}`,
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 0,
+          validUntil: 1,
+          temporalConfidence: 0.95,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+    }
+
+    const injection = await presenter.buildInjection('a', 'redis')
+
+    expect(injection).toMatchObject({
+      payload: { memories: [] },
+      manifest: {
+        degradations: expect.arrayContaining(['candidateBudgetExhausted'])
+      }
+    })
   })
 
   it('keeps draft suppressions inert and revalidates runtime access against active directives', async () => {

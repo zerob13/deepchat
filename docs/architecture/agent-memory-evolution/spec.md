@@ -151,6 +151,11 @@ Runtime interpretation:
 The initial hard-filter threshold is a named policy constant and is covered by behavioral tests. It
 is not user-configurable in this change.
 
+Retrieval refills FTS and vector candidates adaptively when authoritative, scope, directive, or
+temporal filtering leaves fewer than top-K distinct claims. Refills reuse the query embedding,
+grow geometrically, stop at 800 candidates per source, and emit `candidateBudgetExhausted` when a
+saturated source reaches that hard bound without filling top-K.
+
 ## Directive contract
 
 Directives use a dedicated durable table and typed runtime contribution.
@@ -345,6 +350,8 @@ premise:
   internal persona and working rows.
 - Corrected after suppression-boundary verification: single-character CJK topics are rejected at
   write time, ignored if already persisted, and explained in the directive editor.
+- Corrected after recall-completeness verification: fixed oversampling now grows adaptively after
+  post-query filtering, reuses the existing embedding, and reports bounded exhaustion.
 - Rejected: adding an unknown allocation lane does not null Tape inspection. The parser ignores
   unknown object fields while retaining the four known lanes, and a Tape-to-route allocation
   fixture already exists.

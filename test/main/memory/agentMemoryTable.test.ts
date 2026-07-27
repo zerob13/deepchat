@@ -3834,6 +3834,26 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
     }
   })
 
+  it('allows bounded retrieval refills beyond the legacy 100-row search cap', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      for (let index = 0; index < 150; index += 1) {
+        table.insert({
+          id: `refill-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `redis refill candidate ${index}`
+        })
+      }
+
+      expect(table.searchWithStrategy('a', 'redis', 150).rows).toHaveLength(150)
+    } finally {
+      db.close()
+    }
+  })
+
   it('keeps the recallable-only FTS index in sync across lifecycle transitions', () => {
     const db = new DatabaseCtor(':memory:')
     try {

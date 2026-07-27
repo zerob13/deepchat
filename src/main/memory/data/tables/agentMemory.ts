@@ -67,6 +67,7 @@ import {
 } from './agentMemoryStateSql'
 import { normalizeMemoryTemporalMetadata, temporalMetadataFromRow } from '../../core/temporal'
 import { buildMemoryTombstoneIdentities, isTombstoneEligibleMemoryKind } from '../../core/tombstone'
+import { MEMORY_RETRIEVAL_MAX_CANDIDATES } from '../../core/retrievalBudget'
 import {
   AGENT_MEMORY_AGENT_SCOPE_FILTER,
   buildMemoryScopePredicateSql,
@@ -2541,7 +2542,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     if (!normalized) {
       return finish({ rows: [], strategy: this.ftsReady ? 'fts-only' : 'like-fallback' })
     }
-    const cappedLimit = Math.min(Math.max(Math.floor(limit), 1), 100)
+    const cappedLimit = Math.min(Math.max(Math.floor(limit), 1), MEMORY_RETRIEVAL_MAX_CANDIDATES)
     const matchMode = options.matchMode ?? 'all'
     const scopeFilter = normalizeMemoryScopeFilter(options.scopeFilter)
     if (!scopeFilter.length) {
@@ -2598,7 +2599,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     limit: number,
     scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
   ): AgentMemoryRow[] {
-    const lexicalScanLimit = Math.min(100, Math.max(1, limit))
+    const lexicalScanLimit = Math.min(MEMORY_RETRIEVAL_MAX_CANDIDATES, Math.max(1, limit))
     const importanceCandidateLimit = Math.min(800, Math.max(64, limit * 8))
     const scopePredicate = buildMemoryScopePredicateSql('am', scopeFilter)
     const importanceCandidates = buildScopedImportanceCandidatesSql(
