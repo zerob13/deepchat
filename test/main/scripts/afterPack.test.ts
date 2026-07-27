@@ -99,7 +99,7 @@ const writeUnpackedPackage = async (
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
 
 const testRuntimeVersions = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   node: 'v24.14.1',
   nodeArtifacts: Object.fromEntries(
     [
@@ -117,8 +117,12 @@ const testRuntimeVersions = {
     ])
   ),
   lightOcr: {
-    version: '0.3.4',
+    facadeVersion: '0.5.5',
+    runtimePackage: '@arcships/light-ocr-runtime',
+    runtimeVersion: '0.1.5',
     modelPackage: '@arcships/light-ocr-model-ppocrv6-small',
+    modelVersion: '0.3.4',
+    nativeVersion: '0.5.5',
     bundleId: 'ppocrv6-small-native-20260719.1',
     nativePackages: {
       'darwin-arm64': '@arcships/light-ocr-darwin-arm64',
@@ -159,7 +163,7 @@ const seedLightOcrPrerequisites = async (
   await mkdir(projectDir, { recursive: true })
   await writeFile(
     path.join(projectDir, 'package.json'),
-    JSON.stringify({ dependencies: { '@arcships/light-ocr': '0.3.4' } })
+    JSON.stringify({ dependencies: { '@arcships/light-ocr': '0.5.5' } })
   )
   await writeTestRuntimeVersions(projectDir)
   const virtualNodeModules = path.join(projectDir, 'node_modules', '.pnpm', 'node_modules')
@@ -175,13 +179,49 @@ const seedLightOcrPrerequisites = async (
   ].join('\n')
   const nativePayload = 'native-payload'
   const nativeDescriptor = '{}'
-  const nativePackageJson = `${JSON.stringify({ name: nativePackage, version: '0.3.4' })}`
+  const pdfiumLoader = 'module.exports = require("./pdfium.node")'
+  const pdfiumAddon = 'pdfium-addon'
+  const pdfiumLibraryName =
+    platform === 'darwin'
+      ? 'libpdfium.dylib'
+      : platform === 'linux'
+        ? 'libpdfium.so'
+        : 'pdfium.dll'
+  const pdfiumLibrary = 'pdfium-library'
+  const nativePackageJson = `${JSON.stringify({
+    name: nativePackage,
+    version: '0.5.5',
+    main: 'native/addon.node',
+    exports: {
+      '.': './native/addon.node',
+      './pdfium': './pdfium/index.cjs'
+    }
+  })}`
 
   await writeVirtualPackage(projectDir, '@arcships/light-ocr', {
-    'package.json': JSON.stringify({ name: '@arcships/light-ocr', version: '0.3.4' }),
+    'package.json': JSON.stringify({
+      name: '@arcships/light-ocr',
+      version: '0.5.5',
+      main: 'src/index.cjs',
+      dependencies: {
+        '@arcships/light-ocr-runtime': '0.1.5',
+        [modelPackage]: '0.3.4'
+      }
+    }),
     LICENSE: 'facade license',
     NOTICE: 'facade notice',
-    'js/index.cjs': 'module.exports = {}'
+    'src/index.cjs': 'module.exports = {}'
+  })
+  await writeVirtualPackage(projectDir, '@arcships/light-ocr-runtime', {
+    'package.json': JSON.stringify({
+      name: '@arcships/light-ocr-runtime',
+      version: '0.1.5',
+      main: 'src/index.cjs',
+      optionalDependencies: { [nativePackage]: '0.5.5' }
+    }),
+    LICENSE: 'runtime license',
+    NOTICE: 'runtime notice',
+    'src/index.cjs': 'module.exports = {}'
   })
   await writeVirtualPackage(projectDir, modelPackage, {
     'package.json': JSON.stringify({ name: modelPackage, version: '0.3.4' }),
@@ -200,6 +240,9 @@ const seedLightOcrPrerequisites = async (
     'licenses/dependency.txt': 'dependency license',
     'native/addon.node': nativePayload,
     'native/runtime-descriptor.json': nativeDescriptor,
+    'pdfium/index.cjs': pdfiumLoader,
+    'pdfium/pdfium.node': pdfiumAddon,
+    [`pdfium/${pdfiumLibraryName}`]: pdfiumLibrary,
     'artifact-hashes.json': JSON.stringify({
       files: [
         {
@@ -211,6 +254,21 @@ const seedLightOcrPrerequisites = async (
           path: 'native/runtime-descriptor.json',
           bytes: Buffer.byteLength(nativeDescriptor),
           sha256: sha256(nativeDescriptor)
+        },
+        {
+          path: 'pdfium/index.cjs',
+          bytes: Buffer.byteLength(pdfiumLoader),
+          sha256: sha256(pdfiumLoader)
+        },
+        {
+          path: `pdfium/${pdfiumLibraryName}`,
+          bytes: Buffer.byteLength(pdfiumLibrary),
+          sha256: sha256(pdfiumLibrary)
+        },
+        {
+          path: 'pdfium/pdfium.node',
+          bytes: Buffer.byteLength(pdfiumAddon),
+          sha256: sha256(pdfiumAddon)
         }
       ]
     })
@@ -466,8 +524,13 @@ describe('afterPack', () => {
       )
     )
     expect(manifest).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       supported: true,
+      facadeVersion: '0.5.5',
+      runtimeVersion: '0.1.5',
+      modelVersion: '0.3.4',
+      nativeVersion: '0.5.5',
+      pdfSupport: true,
       nodeVersion: 'v24.14.1',
       nodeSha256: sha256('node'),
       nativePayloadEncoding: 'gzip-base64-v1'
@@ -477,6 +540,15 @@ describe('afterPack', () => {
     await expect(stat(rawAddonPath)).rejects.toThrow()
     const encodedAddon = await readFile(`${rawAddonPath}.gz.b64`, 'utf8')
     expect(gunzipSync(Buffer.from(encodedAddon, 'base64')).toString('utf8')).toBe('native-payload')
+    const rawPdfiumAddonPath = path.join(lightOcrNativeDir, 'pdfium', 'pdfium.node')
+    const rawPdfiumLibraryPath = path.join(lightOcrNativeDir, 'pdfium', 'libpdfium.dylib')
+    await expect(stat(rawPdfiumAddonPath)).rejects.toThrow()
+    await expect(stat(rawPdfiumLibraryPath)).rejects.toThrow()
+    await expect(readFile(`${rawPdfiumAddonPath}.gz.b64`, 'utf8')).resolves.toBeTypeOf('string')
+    await expect(readFile(`${rawPdfiumLibraryPath}.gz.b64`, 'utf8')).resolves.toBeTypeOf('string')
+    await expect(
+      readFile(path.join(lightOcrNativeDir, 'pdfium', 'index.cjs'), 'utf8')
+    ).resolves.toContain('pdfium.node')
     if (process.platform !== 'win32') {
       expect((await stat(`${rawAddonPath}.gz.b64`)).mode & 0o777).toBe(0o644)
     }
@@ -589,7 +661,11 @@ describe('afterPack', () => {
         'utf8'
       )
     )
-    expect(manifest).toMatchObject({ schemaVersion: 2, nativePayloadEncoding: 'direct' })
+    expect(manifest).toMatchObject({
+      schemaVersion: 3,
+      nativePayloadEncoding: 'direct',
+      pdfSupport: true
+    })
   })
 
   it('fails fast when the target OpenDAL native package is missing', async () => {
@@ -854,6 +930,28 @@ describe('afterPack', () => {
     ).rejects.toThrow('OCR native artifact size mismatch for native/addon.node')
   })
 
+  it('rejects unmanifested files in the copied PDFium closure', async () => {
+    const packageLightOcrAssets = await loadPackageLightOcrAssets()
+    const projectDir = path.join(tmpDir, 'project')
+    const nodeModulesDir = path.join(tmpDir, 'resources', 'app.asar.unpacked', 'node_modules')
+    const { nativeSourceDir } = await seedLightOcrPrerequisites(
+      projectDir,
+      nodeModulesDir,
+      'linux',
+      'x64'
+    )
+    await writeFile(path.join(nativeSourceDir, 'pdfium', 'unexpected.node'), 'unmanifested')
+
+    await expect(
+      packageLightOcrAssets({
+        appOutDir: tmpDir,
+        electronPlatformName: 'linux',
+        arch: 'x64',
+        packager: { projectDir }
+      })
+    ).rejects.toThrow('OCR native PDFium directory mismatch for linux')
+  })
+
   it('fails packaging when the facade dependency is not exactly pinned', async () => {
     const packageLightOcrAssets = await loadPackageLightOcrAssets()
     const projectDir = path.join(tmpDir, 'project')
@@ -861,7 +959,7 @@ describe('afterPack', () => {
     await seedLightOcrPrerequisites(projectDir, nodeModulesDir, 'linux', 'x64')
     await writeFile(
       path.join(projectDir, 'package.json'),
-      JSON.stringify({ dependencies: { '@arcships/light-ocr': '^0.3.4' } })
+      JSON.stringify({ dependencies: { '@arcships/light-ocr': '^0.5.5' } })
     )
 
     await expect(
@@ -871,6 +969,6 @@ describe('afterPack', () => {
         arch: 'x64',
         packager: { projectDir }
       })
-    ).rejects.toThrow('DeepChat must depend on exactly @arcships/light-ocr@0.3.4')
+    ).rejects.toThrow('DeepChat must depend on exactly @arcships/light-ocr@0.5.5')
   })
 })

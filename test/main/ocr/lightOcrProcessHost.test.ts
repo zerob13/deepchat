@@ -66,7 +66,8 @@ describe('LightOcrProcessHost', () => {
         NODE_OPTIONS: '--require malicious.js',
         DYLD_INSERT_LIBRARIES: '/tmp/injected.dylib',
         LIGHT_OCR_NODE_BINARY: '/tmp/injected.node',
-        LIGHT_OCR_RUNTIME_DESCRIPTOR: '/tmp/injected.json'
+        LIGHT_OCR_RUNTIME_DESCRIPTOR: '/tmp/injected.json',
+        LIGHT_OCR_PDFIUM_MODULE: '/tmp/injected.cjs'
       },
       {
         FAKE_OCR_BEHAVIOR: 'cancellable',
@@ -88,13 +89,15 @@ describe('LightOcrProcessHost', () => {
       {},
       {
         nodeBinaryPath: '/private/runtime/native/light_ocr_node.node',
-        runtimeDescriptorPath: '/private/runtime/native/runtime-descriptor.json'
+        runtimeDescriptorPath: '/private/runtime/native/runtime-descriptor.json',
+        pdfiumModulePath: '/private/runtime/pdfium/index.cjs'
       }
     )
 
     expect(environment).toMatchObject({
       LIGHT_OCR_NODE_BINARY: '/private/runtime/native/light_ocr_node.node',
       LIGHT_OCR_RUNTIME_DESCRIPTOR: '/private/runtime/native/runtime-descriptor.json',
+      LIGHT_OCR_PDFIUM_MODULE: '/private/runtime/pdfium/index.cjs',
       DEEPCHAT_LIGHT_OCR_HELPER: '1'
     })
   })
@@ -102,7 +105,11 @@ describe('LightOcrProcessHost', () => {
   it('materializes encoded native bytes once and passes trusted override paths to the helper', async () => {
     const nativePackageDir = path.join(tempDir, 'native-package')
     const nativeDir = path.join(nativePackageDir, 'native')
-    await mkdir(nativeDir, { recursive: true })
+    const pdfiumDir = path.join(nativePackageDir, 'pdfium')
+    await Promise.all([
+      mkdir(nativeDir, { recursive: true }),
+      mkdir(pdfiumDir, { recursive: true })
+    ])
     const hash = (value: Buffer | string) => createHash('sha256').update(value).digest('hex')
     const addon = Buffer.from('qualified-addon')
     const runtime = Buffer.from('qualified-runtime')
@@ -124,6 +131,24 @@ describe('LightOcrProcessHost', () => {
       bytes: descriptor.byteLength,
       sha256: hash(descriptor)
     }
+    const pdfiumLoader = Buffer.from('module.exports = require("./pdfium.node")')
+    const pdfiumAddon = Buffer.from('qualified-pdfium-addon')
+    const pdfiumLibrary = Buffer.from('qualified-pdfium-library')
+    const pdfiumLoaderArtifact = {
+      path: 'pdfium/index.cjs',
+      bytes: pdfiumLoader.byteLength,
+      sha256: hash(pdfiumLoader)
+    }
+    const pdfiumAddonArtifact = {
+      path: 'pdfium/pdfium.node',
+      bytes: pdfiumAddon.byteLength,
+      sha256: hash(pdfiumAddon)
+    }
+    const pdfiumLibraryArtifact = {
+      path: 'pdfium/libpdfium.dylib',
+      bytes: pdfiumLibrary.byteLength,
+      sha256: hash(pdfiumLibrary)
+    }
     await Promise.all([
       writeFile(
         `${path.join(nativePackageDir, addonArtifact.path)}.gz.b64`,
@@ -133,10 +158,28 @@ describe('LightOcrProcessHost', () => {
         `${path.join(nativePackageDir, runtimeArtifact.path)}.gz.b64`,
         gzipSync(runtime).toString('base64')
       ),
+      writeFile(
+        `${path.join(nativePackageDir, pdfiumAddonArtifact.path)}.gz.b64`,
+        gzipSync(pdfiumAddon).toString('base64')
+      ),
+      writeFile(
+        `${path.join(nativePackageDir, pdfiumLibraryArtifact.path)}.gz.b64`,
+        gzipSync(pdfiumLibrary).toString('base64')
+      ),
       writeFile(path.join(nativePackageDir, descriptorArtifact.path), descriptor),
+      writeFile(path.join(nativePackageDir, pdfiumLoaderArtifact.path), pdfiumLoader),
       writeFile(
         path.join(nativePackageDir, 'artifact-hashes.json'),
-        JSON.stringify({ files: [addonArtifact, runtimeArtifact, descriptorArtifact] })
+        JSON.stringify({
+          files: [
+            addonArtifact,
+            runtimeArtifact,
+            descriptorArtifact,
+            pdfiumLoaderArtifact,
+            pdfiumAddonArtifact,
+            pdfiumLibraryArtifact
+          ]
+        })
       )
     ])
 
@@ -157,15 +200,20 @@ describe('LightOcrProcessHost', () => {
     expect(spawnedEnvironments).toHaveLength(2)
     const materializedAddon = spawnedEnvironments[0].LIGHT_OCR_NODE_BINARY
     const materializedDescriptor = spawnedEnvironments[0].LIGHT_OCR_RUNTIME_DESCRIPTOR
+    const materializedPdfium = spawnedEnvironments[0].LIGHT_OCR_PDFIUM_MODULE
     expect(materializedAddon).toBeTypeOf('string')
     expect(materializedDescriptor).toBeTypeOf('string')
+    expect(materializedPdfium).toBeTypeOf('string')
     expect(spawnedEnvironments[1].LIGHT_OCR_NODE_BINARY).toBe(materializedAddon)
     expect(spawnedEnvironments[1].LIGHT_OCR_RUNTIME_DESCRIPTOR).toBe(materializedDescriptor)
+    expect(spawnedEnvironments[1].LIGHT_OCR_PDFIUM_MODULE).toBe(materializedPdfium)
     await expect(readFile(materializedAddon!)).resolves.toEqual(addon)
     await expect(readFile(materializedDescriptor!)).resolves.toEqual(descriptor)
+    await expect(readFile(materializedPdfium!)).resolves.toEqual(pdfiumLoader)
 
     await host.close()
     await expect(readFile(materializedAddon!)).rejects.toThrow()
+    await expect(readFile(materializedPdfium!)).rejects.toThrow()
   })
 
   it('uses an immutable input snapshot and reports the actual engine selection', async () => {

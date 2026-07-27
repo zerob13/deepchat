@@ -85,6 +85,7 @@ export function createLightOcrHelperEnvironment(
   if (nativeRuntimeOverride) {
     environment.LIGHT_OCR_NODE_BINARY = nativeRuntimeOverride.nodeBinaryPath
     environment.LIGHT_OCR_RUNTIME_DESCRIPTOR = nativeRuntimeOverride.runtimeDescriptorPath
+    environment.LIGHT_OCR_PDFIUM_MODULE = nativeRuntimeOverride.pdfiumModulePath
   }
   return environment
 }

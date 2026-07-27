@@ -1,7 +1,13 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
-import { LightOcrHelperServer } from '../../../src/main/ocr/lightOcrHelper'
+import {
+  LightOcrHelperServer,
+  validateConfiguredPdfiumModule
+} from '../../../src/main/ocr/lightOcrHelper'
 
 const bundleId = 'ppocrv6-small-native-20260719.1'
 
@@ -34,6 +40,29 @@ function createEngine(close: () => Promise<void>) {
 }
 
 describe('LightOcrHelperServer', () => {
+  it('loads only a configured PDFium module inside the private runtime', async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'deepchat-pdfium-helper-test-'))
+    try {
+      const modulePath = path.join(tempRoot, 'pdfium', 'index.cjs')
+      await mkdir(path.dirname(modulePath), { recursive: true })
+      await writeFile(modulePath, 'module.exports = { loaded: true }')
+      vi.stubEnv('LIGHT_OCR_PDFIUM_MODULE', modulePath)
+
+      await expect(validateConfiguredPdfiumModule(tempRoot)).resolves.toBeUndefined()
+
+      const outsidePath = path.join(path.dirname(tempRoot), 'outside-pdfium.cjs')
+      await writeFile(outsidePath, 'module.exports = {}')
+      vi.stubEnv('LIGHT_OCR_PDFIUM_MODULE', outsidePath)
+      await expect(validateConfiguredPdfiumModule(tempRoot)).rejects.toMatchObject({
+        code: 'package_load_failed'
+      })
+      await rm(outsidePath)
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('uses the upstream auto provider policy without an incompatible session fallback', async () => {
     const stdin = new PassThrough()
     const stdout = new PassThrough()

@@ -1,4 +1,5 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import {
@@ -144,6 +145,47 @@ async function loadCreateEngine(): Promise<CreateEngine> {
     throw helperError('package_load_failed', 'Light OCR facade does not export createEngine')
   }
   return lightOcr.createEngine
+}
+
+export async function validateConfiguredPdfiumModule(tempRoot: string): Promise<void> {
+  const configuredPath = process.env.LIGHT_OCR_PDFIUM_MODULE
+  if (!configuredPath) return
+
+  let resolvedRoot: string
+  let resolvedModule: string
+  try {
+    ;[resolvedRoot, resolvedModule] = await Promise.all([
+      realpath(tempRoot),
+      realpath(configuredPath)
+    ])
+  } catch (error) {
+    throw helperError(
+      'package_load_failed',
+      'The configured Light OCR PDFium module is unavailable',
+      safeMessage(error)
+    )
+  }
+  const relative = path.relative(resolvedRoot, resolvedModule)
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw helperError(
+      'package_load_failed',
+      'The configured Light OCR PDFium module is outside the private runtime'
+    )
+  }
+  const moduleStat = await stat(resolvedModule)
+  if (!moduleStat.isFile()) {
+    throw helperError('package_load_failed', 'The configured Light OCR PDFium module is invalid')
+  }
+
+  try {
+    createRequire(import.meta.url)(resolvedModule)
+  } catch (error) {
+    throw helperError(
+      'package_load_failed',
+      'The configured Light OCR PDFium module failed to load',
+      safeMessage(error)
+    )
+  }
 }
 
 export class LightOcrHelperServer {
@@ -404,8 +446,11 @@ export class LightOcrHelperServer {
   }
 }
 
-export function runLightOcrHelper(argv = process.argv.slice(2)): LightOcrHelperServer {
+export async function runLightOcrHelper(
+  argv = process.argv.slice(2)
+): Promise<LightOcrHelperServer> {
   const options = parseLightOcrHelperArguments(argv)
+  await validateConfiguredPdfiumModule(options.tempRoot)
   const server = new LightOcrHelperServer(options)
   server.start()
   return server

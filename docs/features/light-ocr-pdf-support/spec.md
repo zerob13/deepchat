@@ -1,6 +1,6 @@
 # Light OCR 0.5.5 PDF Support
 
-Status: planned
+Status: in progress
 
 Upstream release:
 [arcships/light-ocr v0.5.5](https://github.com/arcships/light-ocr/releases/tag/v0.5.5)

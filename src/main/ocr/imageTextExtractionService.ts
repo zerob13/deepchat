@@ -139,7 +139,7 @@ export class ImageTextExtractionService implements ImageTextExtractionPort {
 
   constructor(private readonly options: ImageTextExtractionServiceOptions) {
     this.scheduler = options.scheduler ?? new OcrExtractionScheduler()
-    this.lightOcrVersion = options.lightOcrVersion ?? runtimeVersions.lightOcr.version
+    this.lightOcrVersion = options.lightOcrVersion ?? runtimeVersions.lightOcr.facadeVersion
     this.bundleId = options.bundleId ?? runtimeVersions.lightOcr.bundleId
     this.preprocessingRevision = options.preprocessingRevision ?? OCR_PREPROCESSING_REVISION
     this.snapshotReader = options.snapshotReader ?? readImmutableImageSnapshot

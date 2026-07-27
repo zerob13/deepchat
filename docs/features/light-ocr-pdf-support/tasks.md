@@ -11,15 +11,15 @@
 
 ## Dependency And Packaging
 
-- [ ] Pin facade 0.5.5, runtime 0.1.5, model 0.3.4, and native 0.5.5 independently.
-- [ ] Copy and verify the runtime package in supported packaged layouts.
-- [ ] Add shared script artifact classification and drift tests.
-- [ ] Encode and smoke-validate macOS PDFium Mach-O artifacts.
-- [ ] Materialize verified PDFium files with the `@loader_path` same-directory contract.
-- [ ] Resolve development native packages through runtime ownership.
-- [ ] Advance and validate packaged OCR manifest schema v3.
-- [ ] Update size accounting for the PDFium payload.
-- [ ] Complete the pre-commit packaging review, focused tests, and commit.
+- [x] Pin facade 0.5.5, runtime 0.1.5, model 0.3.4, and native 0.5.5 independently.
+- [x] Copy and verify the runtime package in supported packaged layouts.
+- [x] Add shared script artifact classification and drift tests.
+- [x] Encode and smoke-validate macOS PDFium Mach-O artifacts.
+- [x] Materialize verified PDFium files with the `@loader_path` same-directory contract.
+- [x] Resolve development native packages through runtime ownership.
+- [x] Advance and validate packaged OCR manifest schema v3.
+- [x] Update size accounting for the PDFium payload.
+- [x] Complete the pre-commit packaging review, focused tests, and commit.
 
 ## Streaming Document OCR
 

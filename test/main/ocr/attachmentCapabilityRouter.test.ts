@@ -15,6 +15,7 @@ const AVAILABLE = {
     nodeExecutable: '/runtime/node',
     helperEntryPath: '/runtime/helper.js',
     facadeDir: '/runtime/facade',
+    runtimeDir: '/runtime/runtime',
     bundlePath: '/runtime/bundle',
     nativePackageDir: '/runtime/native',
     nativePayloadEncoding: 'gzip-base64-v1' as const,

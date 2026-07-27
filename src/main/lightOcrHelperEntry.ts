@@ -7,7 +7,13 @@ Object.defineProperties(console, {
   debug: { configurable: true, value: redirectConsoleOutput, writable: true }
 })
 
-const server = runLightOcrHelper()
+let server
+try {
+  server = await runLightOcrHelper()
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exit(1)
+}
 
 const shutdown = async () => {
   await server.shutdown()

@@ -1,10 +1,17 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
+
+import {
+  getRequiredPdfiumArtifactPaths,
+  groupLightOcrArtifactPaths,
+  isEncodedMacLightOcrArtifact
+} from './light-ocr-artifacts.mjs'
 
 const LINUX_APP_NAME = 'deepchat'
 const VSS_EXTENSION_NAME = 'vss.duckdb_extension'
@@ -306,18 +313,47 @@ async function copyOpendalNativePackages(context) {
   }
 }
 
-async function copyPackageToUnpackedApp(
-  projectDir,
-  nodeModulesDir,
-  packageName,
-  expectedVersion
-) {
-  const sourceDir = await resolveInstalledPackageDir(projectDir, packageName, expectedVersion)
+async function copyPackageToUnpackedApp(sourceDir, nodeModulesDir, packageName) {
   const destinationDir = path.join(nodeModulesDir, ...packageName.split('/'))
   await fs.mkdir(path.dirname(destinationDir), { recursive: true })
   await fs.rm(destinationDir, { recursive: true, force: true })
   await fs.cp(sourceDir, destinationDir, { recursive: true, force: true, dereference: true })
   return destinationDir
+}
+
+async function resolveOwnedPackageDir(
+  ownerPackageDir,
+  packageName,
+  expectedVersion,
+  resolutionSpecifier = packageName
+) {
+  const ownerRequire = createRequire(path.join(ownerPackageDir, 'package.json'))
+  let packageEntry
+  try {
+    packageEntry = ownerRequire.resolve(resolutionSpecifier)
+  } catch (error) {
+    throw new Error(
+      `Unable to resolve ${packageName}@${expectedVersion} from ${ownerPackageDir}`,
+      { cause: error }
+    )
+  }
+
+  let candidate = path.dirname(await fs.realpath(packageEntry))
+  while (true) {
+    const packageJsonPath = path.join(candidate, 'package.json')
+    if (await pathExists(packageJsonPath)) {
+      const packageJson = await readJson(packageJsonPath)
+      if (packageJson.name === packageName && packageJson.version === expectedVersion) {
+        return candidate
+      }
+    }
+    const parent = path.dirname(candidate)
+    if (parent === candidate) break
+    candidate = parent
+  }
+  throw new Error(
+    `Resolved package does not match ${packageName}@${expectedVersion}: ${packageEntry}`
+  )
 }
 
 function extractRelativeModuleSpecifiers(source) {
@@ -402,6 +438,20 @@ async function assertPackageVersion(packageDir, expectedName, expectedVersion) {
   }
 }
 
+async function assertExactPackageDependency(
+  packageDir,
+  dependencyField,
+  dependencyName,
+  expectedVersion
+) {
+  const packageJson = await readJson(path.join(packageDir, 'package.json'))
+  if (packageJson[dependencyField]?.[dependencyName] !== expectedVersion) {
+    throw new Error(
+      `${packageJson.name} must declare exactly ${dependencyName}@${expectedVersion} in ${dependencyField}`
+    )
+  }
+}
+
 async function assertLightOcrDependencyPin(projectDir, expectedVersion) {
   const packageJson = await readJson(path.join(projectDir, 'package.json'))
   if (packageJson.dependencies?.[LIGHT_OCR_FACADE_PACKAGE] !== expectedVersion) {
@@ -452,14 +502,27 @@ async function verifyModelChecksums(bundleDir) {
   }
 }
 
-async function verifyNativeArtifacts(nativePackageDir) {
+async function verifyNativeArtifacts(nativePackageDir, platform) {
   const artifactManifest = await readJson(path.join(nativePackageDir, 'artifact-hashes.json'))
   if (!Array.isArray(artifactManifest.files) || artifactManifest.files.length === 0) {
     throw new Error('OCR native artifact manifest is empty')
   }
   for (const artifact of artifactManifest.files) {
+    if (
+      !artifact ||
+      typeof artifact.path !== 'string' ||
+      !Number.isSafeInteger(artifact.bytes) ||
+      artifact.bytes <= 0 ||
+      typeof artifact.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(artifact.sha256)
+    ) {
+      throw new Error('OCR native artifact manifest contains invalid metadata')
+    }
     const filePath = resolveContainedPath(nativePackageDir, artifact.path)
-    const fileStat = await fs.stat(filePath)
+    const fileStat = await fs.lstat(filePath)
+    if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
+      throw new Error(`OCR native artifact is not a regular file: ${artifact.path}`)
+    }
     if (fileStat.size !== artifact.bytes) {
       throw new Error(`OCR native artifact size mismatch for ${artifact.path}`)
     }
@@ -468,18 +531,38 @@ async function verifyNativeArtifacts(nativePackageDir) {
       throw new Error(`OCR native artifact checksum mismatch for ${artifact.path}`)
     }
   }
-  return artifactManifest
+  await assertExactPdfiumDirectory(nativePackageDir, platform)
+  return {
+    manifest: artifactManifest,
+    inventory: groupLightOcrArtifactPaths(
+      artifactManifest.files.map((artifact) => artifact.path),
+      platform
+    )
+  }
 }
 
-function isDarwinNativeCodeArtifact(relativePath) {
-  if (typeof relativePath !== 'string' || !relativePath.startsWith('native/')) return false
-  const extension = path.posix.extname(relativePath).toLowerCase()
-  return extension === '.node' || extension === '.dylib'
+async function assertExactPdfiumDirectory(nativePackageDir, platform) {
+  const entries = await fs.readdir(path.join(nativePackageDir, 'pdfium'), {
+    withFileTypes: true
+  })
+  if (entries.some((entry) => !entry.isFile())) {
+    throw new Error(`OCR native PDFium directory contains a non-file entry for ${platform}`)
+  }
+  const actualPaths = entries.map((entry) => `pdfium/${entry.name}`).sort()
+  const expectedPaths = getRequiredPdfiumArtifactPaths(platform).sort()
+  if (
+    actualPaths.length !== expectedPaths.length ||
+    actualPaths.some((relativePath, index) => relativePath !== expectedPaths[index])
+  ) {
+    throw new Error(
+      `OCR native PDFium directory mismatch for ${platform}: expected ${expectedPaths.join(', ')}`
+    )
+  }
 }
 
 async function encodeMacLightOcrNativeArtifacts(nativePackageDir, artifactManifest) {
   const codeArtifacts = artifactManifest.files.filter((artifact) =>
-    isDarwinNativeCodeArtifact(artifact.path)
+    isEncodedMacLightOcrArtifact(artifact.path)
   )
   if (codeArtifacts.length === 0) {
     throw new Error('macOS OCR native package has no code artifacts to encode')
@@ -501,10 +584,12 @@ async function encodeMacLightOcrNativeArtifacts(nativePackageDir, artifactManife
   }
 }
 
-async function assertLegalAssets(facadeDir, modelDir, nativeDir) {
+async function assertLegalAssets(facadeDir, runtimeDir, modelDir, nativeDir) {
   const requiredPaths = [
     path.join(facadeDir, 'LICENSE'),
     path.join(facadeDir, 'NOTICE'),
+    path.join(runtimeDir, 'LICENSE'),
+    path.join(runtimeDir, 'NOTICE'),
     path.join(modelDir, 'LICENSE'),
     path.join(modelDir, 'NOTICE'),
     path.join(modelDir, 'bundle', 'LICENSES', 'MODEL-NOTICE.md'),
@@ -516,9 +601,10 @@ async function assertLegalAssets(facadeDir, modelDir, nativeDir) {
   for (const requiredPath of requiredPaths) await fs.access(requiredPath)
 }
 
-async function assertRuntimeEntryPoints(facadeDir, nativeDir) {
+async function assertRuntimeEntryPoints(facadeDir, runtimeDir, nativeDir) {
   await Promise.all([
-    fs.access(path.join(facadeDir, 'js', 'index.cjs')),
+    fs.access(path.join(facadeDir, 'src', 'index.cjs')),
+    fs.access(path.join(runtimeDir, 'src', 'index.cjs')),
     fs.access(path.join(nativeDir, 'native', 'runtime-descriptor.json'))
   ])
 }
@@ -545,41 +631,68 @@ export async function packageLightOcrAssets(context) {
     await removeLightOcrPackages(nodeModulesDir)
     await fs.rm(helperPath, { force: true })
     await writeLightOcrRuntimeManifest(resourcesDir, {
-      schemaVersion: 2,
+      schemaVersion: 3,
       supported: false,
       reason: 'unsupported_platform',
       platform,
       arch: arch ?? 'unknown',
-      lightOcrVersion: lightOcr.version,
+      facadeVersion: lightOcr.facadeVersion,
+      runtimeVersion: lightOcr.runtimeVersion,
+      modelVersion: lightOcr.modelVersion,
+      nativeVersion: lightOcr.nativeVersion,
+      pdfSupport: false,
       bundleId: lightOcr.bundleId
     })
     return
   }
 
-  await assertLightOcrDependencyPin(projectDir, lightOcr.version)
+  await assertLightOcrDependencyPin(projectDir, lightOcr.facadeVersion)
   await copyStandaloneModuleClosure(
     path.join(projectDir, 'out', 'main'),
     path.join(unpackedRoot, 'out', 'main'),
     'lightOcrHelper.js'
   )
   await removeLightOcrPackages(nodeModulesDir)
-  const facadeDir = await copyPackageToUnpackedApp(
+  const facadeSourceDir = await resolveInstalledPackageDir(
     projectDir,
-    nodeModulesDir,
     LIGHT_OCR_FACADE_PACKAGE,
-    lightOcr.version
+    lightOcr.facadeVersion
+  )
+  const runtimeSourceDir = await resolveOwnedPackageDir(
+    facadeSourceDir,
+    lightOcr.runtimePackage,
+    lightOcr.runtimeVersion
+  )
+  const modelSourceDir = await resolveOwnedPackageDir(
+    facadeSourceDir,
+    lightOcr.modelPackage,
+    lightOcr.modelVersion,
+    `${lightOcr.modelPackage}/bundle/manifest.json`
+  )
+  const nativeSourceDir = await resolveOwnedPackageDir(
+    runtimeSourceDir,
+    nativePackage,
+    lightOcr.nativeVersion
+  )
+  const facadeDir = await copyPackageToUnpackedApp(
+    facadeSourceDir,
+    nodeModulesDir,
+    LIGHT_OCR_FACADE_PACKAGE
+  )
+  const runtimeDir = await copyPackageToUnpackedApp(
+    runtimeSourceDir,
+    nodeModulesDir,
+    lightOcr.runtimePackage
   )
   const modelDir = await copyPackageToUnpackedApp(
-    projectDir,
+    modelSourceDir,
     nodeModulesDir,
-    lightOcr.modelPackage,
-    lightOcr.version
+    lightOcr.modelPackage
   )
   const nativeDir = await copyPackageToUnpackedApp(
-    projectDir,
+    nativeSourceDir,
     nodeModulesDir,
-    nativePackage,
-    lightOcr.version
+    nativePackage
   )
 
   const nodeRelativePath =
@@ -599,9 +712,30 @@ export async function packageLightOcrAssets(context) {
       `Bundled Node checksum mismatch for ${platform}-${arch}: ${nodeSha256} != ${nodeArtifact.executableSha256}`
     )
   }
-  await assertPackageVersion(facadeDir, LIGHT_OCR_FACADE_PACKAGE, lightOcr.version)
-  await assertPackageVersion(modelDir, lightOcr.modelPackage, lightOcr.version)
-  await assertPackageVersion(nativeDir, nativePackage, lightOcr.version)
+  await assertPackageVersion(facadeDir, LIGHT_OCR_FACADE_PACKAGE, lightOcr.facadeVersion)
+  await assertPackageVersion(runtimeDir, lightOcr.runtimePackage, lightOcr.runtimeVersion)
+  await assertPackageVersion(modelDir, lightOcr.modelPackage, lightOcr.modelVersion)
+  await assertPackageVersion(nativeDir, nativePackage, lightOcr.nativeVersion)
+  await Promise.all([
+    assertExactPackageDependency(
+      facadeDir,
+      'dependencies',
+      lightOcr.runtimePackage,
+      lightOcr.runtimeVersion
+    ),
+    assertExactPackageDependency(
+      facadeDir,
+      'dependencies',
+      lightOcr.modelPackage,
+      lightOcr.modelVersion
+    ),
+    assertExactPackageDependency(
+      runtimeDir,
+      'optionalDependencies',
+      nativePackage,
+      lightOcr.nativeVersion
+    )
+  ])
 
   const bundleDir = path.join(modelDir, 'bundle')
   const bundleManifest = await readJson(path.join(bundleDir, 'manifest.json'))
@@ -611,9 +745,10 @@ export async function packageLightOcrAssets(context) {
     )
   }
   await verifyModelChecksums(bundleDir)
-  const nativeArtifactManifest = await verifyNativeArtifacts(nativeDir)
-  await assertRuntimeEntryPoints(facadeDir, nativeDir)
-  await assertLegalAssets(facadeDir, modelDir, nativeDir)
+  const { manifest: nativeArtifactManifest, inventory: nativeArtifactInventory } =
+    await verifyNativeArtifacts(nativeDir, platform)
+  await assertRuntimeEntryPoints(facadeDir, runtimeDir, nativeDir)
+  await assertLegalAssets(facadeDir, runtimeDir, modelDir, nativeDir)
   let nativePayloadEncoding = LIGHT_OCR_DIRECT_PAYLOAD
   if (platform === 'darwin') {
     await encodeMacLightOcrNativeArtifacts(nativeDir, nativeArtifactManifest)
@@ -621,20 +756,26 @@ export async function packageLightOcrAssets(context) {
   }
 
   await writeLightOcrRuntimeManifest(resourcesDir, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     supported: true,
     platform,
     arch,
-    lightOcrVersion: lightOcr.version,
+    facadeVersion: lightOcr.facadeVersion,
+    runtimeVersion: lightOcr.runtimeVersion,
+    modelVersion: lightOcr.modelVersion,
+    nativeVersion: lightOcr.nativeVersion,
+    pdfSupport: true,
     bundleId: lightOcr.bundleId,
     nodeVersion: runtimeVersions.node,
     nodeSha256,
     nativePackage,
     nativePayloadEncoding,
+    nativeArtifactInventory,
     paths: {
       node: nodeRelativePath,
       helper: path.join('out', 'main', 'lightOcrHelper.js'),
       facade: path.relative(unpackedRoot, facadeDir),
+      runtime: path.relative(unpackedRoot, runtimeDir),
       bundle: path.relative(unpackedRoot, bundleDir),
       native: path.relative(unpackedRoot, nativeDir)
     }

@@ -58,7 +58,7 @@ export class OcrRuntimeService {
       return {
         status: 'unavailable',
         reason: 'service_closed',
-        lightOcrVersion: runtimeVersions.lightOcr.version,
+        lightOcrVersion: runtimeVersions.lightOcr.facadeVersion,
         bundleId: runtimeVersions.lightOcr.bundleId
       }
     }

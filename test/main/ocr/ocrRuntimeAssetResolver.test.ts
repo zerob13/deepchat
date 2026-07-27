@@ -5,10 +5,20 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { OcrRuntimeAssetResolver } from '../../../src/main/ocr/ocrRuntimeAssetResolver'
 
-const lightOcrVersion = '0.3.4'
+const lightOcrVersion = '0.5.5'
+const runtimeVersion = '0.1.5'
+const modelVersion = '0.3.4'
+const nativeVersion = '0.5.5'
 const bundleId = 'ppocrv6-small-native-20260719.1'
+const runtimePackage = '@arcships/light-ocr-runtime'
 const modelPackage = '@arcships/light-ocr-model-ppocrv6-small'
 const nativePackage = '@arcships/light-ocr-darwin-arm64'
+const nativeArtifactInventory = {
+  nativeCode: ['native/light_ocr_node.node'],
+  pdfiumCode: ['pdfium/libpdfium.dylib', 'pdfium/pdfium.node'],
+  pdfiumLoader: ['pdfium/index.cjs'],
+  other: ['native/runtime-descriptor.json']
+}
 
 async function writeJson(filePath: string, value: unknown) {
   await mkdir(path.dirname(filePath), { recursive: true })
@@ -22,29 +32,54 @@ async function writeText(filePath: string, value = '') {
 
 async function seedAssetIdentity(root: string) {
   const facadeDir = path.join(root, 'node_modules', '@arcships', 'light-ocr')
+  const runtimeDir = path.join(root, 'node_modules', '@arcships', 'light-ocr-runtime')
   const modelDir = path.join(root, 'node_modules', '@arcships', 'light-ocr-model-ppocrv6-small')
   const nativeDir = path.join(root, 'node_modules', '@arcships', 'light-ocr-darwin-arm64')
   await writeJson(path.join(facadeDir, 'package.json'), {
     name: '@arcships/light-ocr',
     version: lightOcrVersion,
-    main: 'js/index.cjs'
+    main: 'src/index.cjs',
+    dependencies: {
+      [runtimePackage]: runtimeVersion,
+      [modelPackage]: modelVersion
+    }
   })
-  await writeText(path.join(facadeDir, 'js', 'index.cjs'))
+  await writeText(path.join(facadeDir, 'src', 'index.cjs'))
+  await writeJson(path.join(runtimeDir, 'package.json'), {
+    name: runtimePackage,
+    version: runtimeVersion,
+    main: 'src/index.cjs',
+    optionalDependencies: { [nativePackage]: nativeVersion }
+  })
+  await writeText(path.join(runtimeDir, 'src', 'index.cjs'))
   await writeJson(path.join(modelDir, 'package.json'), {
     name: modelPackage,
-    version: lightOcrVersion,
+    version: modelVersion,
     exports: { './bundle/manifest.json': './bundle/manifest.json' }
   })
   await writeJson(path.join(modelDir, 'bundle', 'manifest.json'), { bundleId })
   await writeJson(path.join(nativeDir, 'package.json'), {
     name: nativePackage,
-    version: lightOcrVersion,
+    version: nativeVersion,
     main: 'native/light_ocr_node.node'
   })
-  await writeJson(path.join(nativeDir, 'artifact-hashes.json'), { files: [] })
+  await writeJson(path.join(nativeDir, 'artifact-hashes.json'), {
+    files: [
+      { path: 'native/light_ocr_node.node' },
+      { path: 'native/runtime-descriptor.json' },
+      { path: 'pdfium/index.cjs' },
+      { path: 'pdfium/libpdfium.dylib' },
+      { path: 'pdfium/pdfium.node' }
+    ]
+  })
   await writeText(path.join(nativeDir, 'native', 'light_ocr_node.node'))
   await writeJson(path.join(nativeDir, 'native', 'runtime-descriptor.json'), {})
-  return { facadeDir, modelDir, nativeDir }
+  await writeText(path.join(nativeDir, 'pdfium', 'index.cjs'))
+  await writeText(path.join(nativeDir, 'pdfium', 'libpdfium.dylib'))
+  await writeText(path.join(nativeDir, 'pdfium', 'libpdfium.dylib.gz.b64'))
+  await writeText(path.join(nativeDir, 'pdfium', 'pdfium.node'))
+  await writeText(path.join(nativeDir, 'pdfium', 'pdfium.node.gz.b64'))
+  return { facadeDir, runtimeDir, modelDir, nativeDir }
 }
 
 describe('OcrRuntimeAssetResolver', () => {
@@ -61,22 +96,28 @@ describe('OcrRuntimeAssetResolver', () => {
   it('resolves an identity-checked packaged runtime manifest', async () => {
     const appPath = path.join(tempDir, 'resources', 'app.asar')
     const unpackedRoot = path.join(tempDir, 'resources', 'app.asar.unpacked')
-    const { facadeDir, modelDir, nativeDir } = await seedAssetIdentity(unpackedRoot)
+    const { facadeDir, runtimeDir, modelDir, nativeDir } = await seedAssetIdentity(unpackedRoot)
     await writeText(path.join(unpackedRoot, 'runtime', 'node', 'bin', 'node'))
     await writeText(path.join(unpackedRoot, 'out', 'main', 'lightOcrHelper.js'))
     await writeJson(path.join(unpackedRoot, 'runtime', 'ocr', 'manifest.json'), {
-      schemaVersion: 2,
+      schemaVersion: 3,
       supported: true,
       platform: 'darwin',
       arch: 'arm64',
-      lightOcrVersion,
+      facadeVersion: lightOcrVersion,
+      runtimeVersion,
+      modelVersion,
+      nativeVersion,
+      pdfSupport: true,
       bundleId,
       nativePayloadEncoding: 'gzip-base64-v1',
       nativePackage,
+      nativeArtifactInventory,
       paths: {
         node: 'runtime/node/bin/node',
         helper: 'out/main/lightOcrHelper.js',
         facade: path.relative(unpackedRoot, facadeDir),
+        runtime: path.relative(unpackedRoot, runtimeDir),
         bundle: path.relative(unpackedRoot, path.join(modelDir, 'bundle')),
         native: path.relative(unpackedRoot, nativeDir)
       }
@@ -106,18 +147,24 @@ describe('OcrRuntimeAssetResolver', () => {
       const appPath = path.join(tempDir, 'resources', 'app.asar')
       const unpackedRoot = path.join(tempDir, 'resources', 'app.asar.unpacked')
       await writeJson(path.join(unpackedRoot, 'runtime', 'ocr', 'manifest.json'), {
-        schemaVersion: 2,
+        schemaVersion: 3,
         supported: true,
         platform: 'darwin',
         arch: 'arm64',
-        lightOcrVersion,
+        facadeVersion: lightOcrVersion,
+        runtimeVersion,
+        modelVersion,
+        nativeVersion,
+        pdfSupport: true,
         bundleId,
         nativePayloadEncoding: 'gzip-base64-v1',
         nativePackage,
+        nativeArtifactInventory,
         paths: {
           node: 'runtime/node/bin/node',
           helper: 'out/main/lightOcrHelper.js',
           facade: 'node_modules/@arcships/light-ocr',
+          runtime: 'node_modules/@arcships/light-ocr-runtime',
           bundle,
           native: 'node_modules/@arcships/light-ocr-darwin-arm64'
         }
@@ -137,27 +184,33 @@ describe('OcrRuntimeAssetResolver', () => {
   it('reports identity drift separately from missing assets', async () => {
     const appPath = path.join(tempDir, 'resources', 'app.asar')
     const unpackedRoot = path.join(tempDir, 'resources', 'app.asar.unpacked')
-    const { facadeDir, modelDir, nativeDir } = await seedAssetIdentity(unpackedRoot)
+    const { facadeDir, runtimeDir, modelDir, nativeDir } = await seedAssetIdentity(unpackedRoot)
     await writeJson(path.join(facadeDir, 'package.json'), {
       name: '@arcships/light-ocr',
       version: '0.3.3',
-      main: 'js/index.cjs'
+      main: 'src/index.cjs'
     })
     await writeText(path.join(unpackedRoot, 'runtime', 'node', 'bin', 'node'))
     await writeText(path.join(unpackedRoot, 'out', 'main', 'lightOcrHelper.js'))
     await writeJson(path.join(unpackedRoot, 'runtime', 'ocr', 'manifest.json'), {
-      schemaVersion: 2,
+      schemaVersion: 3,
       supported: true,
       platform: 'darwin',
       arch: 'arm64',
-      lightOcrVersion,
+      facadeVersion: lightOcrVersion,
+      runtimeVersion,
+      modelVersion,
+      nativeVersion,
+      pdfSupport: true,
       bundleId,
       nativePayloadEncoding: 'gzip-base64-v1',
       nativePackage,
+      nativeArtifactInventory,
       paths: {
         node: 'runtime/node/bin/node',
         helper: 'out/main/lightOcrHelper.js',
         facade: path.relative(unpackedRoot, facadeDir),
+        runtime: path.relative(unpackedRoot, runtimeDir),
         bundle: path.relative(unpackedRoot, path.join(modelDir, 'bundle')),
         native: path.relative(unpackedRoot, nativeDir)
       }
@@ -177,14 +230,19 @@ describe('OcrRuntimeAssetResolver', () => {
     const appPath = path.join(tempDir, 'resources', 'app.asar')
     const unpackedRoot = path.join(tempDir, 'resources', 'app.asar.unpacked')
     await writeJson(path.join(unpackedRoot, 'runtime', 'ocr', 'manifest.json'), {
-      schemaVersion: 2,
+      schemaVersion: 3,
       supported: true,
       platform: 'darwin',
       arch: 'arm64',
-      lightOcrVersion,
+      facadeVersion: lightOcrVersion,
+      runtimeVersion,
+      modelVersion,
+      nativeVersion,
+      pdfSupport: true,
       bundleId,
       nativePayloadEncoding: 'gzip-base64-v1',
       nativePackage,
+      nativeArtifactInventory,
       paths: { node: null }
     })
 

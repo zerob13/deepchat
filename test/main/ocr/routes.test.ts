@@ -10,6 +10,7 @@ const INTERNAL_STATUS: OcrRuntimeServiceStatus = {
       nodeExecutable: '/private/runtime/node',
       helperEntryPath: '/private/runtime/helper.js',
       facadeDir: '/private/runtime/facade',
+      runtimeDir: '/private/runtime/runtime',
       bundlePath: '/private/runtime/model',
       nativePackageDir: '/private/runtime/native',
       nativePayloadEncoding: 'gzip-base64-v1',

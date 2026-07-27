@@ -4,7 +4,11 @@ import path from 'node:path'
 
 import runtimeVersions from '../../../resources/runtime-versions.json'
 import { resolveBundledNodeExecutable } from './lightOcrProcessHost'
-import type { LightOcrNativePayloadEncoding } from './lightOcrNativePayload'
+import {
+  classifyLightOcrArtifact,
+  getRequiredPdfiumArtifactPaths,
+  type LightOcrNativePayloadEncoding
+} from './lightOcrNativePayload'
 
 const LIGHT_OCR_FACADE_PACKAGE = '@arcships/light-ocr'
 
@@ -19,6 +23,7 @@ export interface OcrRuntimeAssets {
   nodeExecutable: string
   helperEntryPath: string
   facadeDir: string
+  runtimeDir: string
   bundlePath: string
   nativePackageDir: string
   nativePayloadEncoding: LightOcrNativePayloadEncoding
@@ -53,17 +58,35 @@ interface PackagedRuntimeManifest {
   reason?: string
   platform: string
   arch: string
-  lightOcrVersion: string
+  facadeVersion: string
+  runtimeVersion: string
+  modelVersion: string
+  nativeVersion: string
+  pdfSupport: boolean
   bundleId: string
   nativePayloadEncoding?: LightOcrNativePayloadEncoding
   nativePackage?: string
+  nativeArtifactInventory?: NativeArtifactInventory
   paths?: {
     node: string
     helper: string
     facade: string
+    runtime: string
     bundle: string
     native: string
   }
+}
+
+interface NativeArtifactInventory {
+  nativeCode: string[]
+  pdfiumCode: string[]
+  pdfiumLoader: string[]
+  other: string[]
+}
+
+interface ResolvedRuntimeAssets {
+  assets: OcrRuntimeAssets
+  expectedNativeArtifactInventory: NativeArtifactInventory | null
 }
 
 export class OcrRuntimeAssetResolver {
@@ -80,18 +103,18 @@ export class OcrRuntimeAssetResolver {
     if (!nativePackage) return this.unavailable('unsupported_platform')
 
     try {
-      const assets = this.options.isPackaged
+      const resolved = this.options.isPackaged
         ? await this.resolvePackaged(nativePackage)
         : await this.resolveDevelopment(nativePackage)
-      await this.verifyIdentity(assets)
-      return { status: 'available', assets }
+      await this.verifyIdentity(resolved.assets, resolved.expectedNativeArtifactInventory)
+      return { status: 'available', assets: resolved.assets }
     } catch (error) {
       if (error instanceof RuntimeAssetError) return this.unavailable(error.reason)
       return this.unavailable('assets_missing')
     }
   }
 
-  private async resolvePackaged(nativePackage: string): Promise<OcrRuntimeAssets> {
+  private async resolvePackaged(nativePackage: string): Promise<ResolvedRuntimeAssets> {
     const unpackedRoot = resolveUnpackedAppRoot(this.options.appPath)
     const manifestPath = path.join(unpackedRoot, 'runtime', 'ocr', 'manifest.json')
     let parsedManifest: unknown
@@ -115,14 +138,19 @@ export class OcrRuntimeAssetResolver {
     }
     const manifest = parsedManifest
     if (
-      manifest.schemaVersion !== 2 ||
+      manifest.schemaVersion !== 3 ||
       !manifest.supported ||
       manifest.platform !== this.platform ||
       manifest.arch !== this.arch ||
-      manifest.lightOcrVersion !== runtimeVersions.lightOcr.version ||
+      manifest.facadeVersion !== runtimeVersions.lightOcr.facadeVersion ||
+      manifest.runtimeVersion !== runtimeVersions.lightOcr.runtimeVersion ||
+      manifest.modelVersion !== runtimeVersions.lightOcr.modelVersion ||
+      manifest.nativeVersion !== runtimeVersions.lightOcr.nativeVersion ||
+      !manifest.pdfSupport ||
       manifest.bundleId !== runtimeVersions.lightOcr.bundleId ||
       manifest.nativePayloadEncoding !== expectedNativePayloadEncoding(this.platform) ||
       manifest.nativePackage !== nativePackage ||
+      !manifest.nativeArtifactInventory ||
       !manifest.paths
     ) {
       throw new RuntimeAssetError(
@@ -132,34 +160,40 @@ export class OcrRuntimeAssetResolver {
     }
 
     return {
-      nodeExecutable: resolveManifestPath(unpackedRoot, manifest.paths.node),
-      helperEntryPath: resolveManifestPath(unpackedRoot, manifest.paths.helper),
-      facadeDir: resolveManifestPath(unpackedRoot, manifest.paths.facade),
-      bundlePath: resolveManifestPath(unpackedRoot, manifest.paths.bundle),
-      nativePackageDir: resolveManifestPath(unpackedRoot, manifest.paths.native),
-      nativePayloadEncoding: manifest.nativePayloadEncoding,
-      nativePackage,
-      lightOcrVersion: runtimeVersions.lightOcr.version,
-      bundleId: runtimeVersions.lightOcr.bundleId
+      assets: {
+        nodeExecutable: resolveManifestPath(unpackedRoot, manifest.paths.node),
+        helperEntryPath: resolveManifestPath(unpackedRoot, manifest.paths.helper),
+        facadeDir: resolveManifestPath(unpackedRoot, manifest.paths.facade),
+        runtimeDir: resolveManifestPath(unpackedRoot, manifest.paths.runtime),
+        bundlePath: resolveManifestPath(unpackedRoot, manifest.paths.bundle),
+        nativePackageDir: resolveManifestPath(unpackedRoot, manifest.paths.native),
+        nativePayloadEncoding: manifest.nativePayloadEncoding,
+        nativePackage,
+        lightOcrVersion: runtimeVersions.lightOcr.facadeVersion,
+        bundleId: runtimeVersions.lightOcr.bundleId
+      },
+      expectedNativeArtifactInventory: manifest.nativeArtifactInventory
     }
   }
 
-  private async resolveDevelopment(nativePackage: string): Promise<OcrRuntimeAssets> {
+  private async resolveDevelopment(nativePackage: string): Promise<ResolvedRuntimeAssets> {
     if (!this.options.nodeRuntimePath) {
       throw new RuntimeAssetError('assets_missing', 'Bundled Node runtime is not installed')
     }
 
     const projectRequire = createRequire(path.join(this.options.appPath, 'package.json'))
     let facadeEntry: string
+    let runtimeEntry: string
     let bundleManifestPath: string
     let nativeEntry: string
     try {
       facadeEntry = projectRequire.resolve(LIGHT_OCR_FACADE_PACKAGE)
       const facadeRequire = createRequire(facadeEntry)
+      runtimeEntry = facadeRequire.resolve(runtimeVersions.lightOcr.runtimePackage)
       bundleManifestPath = facadeRequire.resolve(
         `${runtimeVersions.lightOcr.modelPackage}/bundle/manifest.json`
       )
-      nativeEntry = facadeRequire.resolve(nativePackage)
+      nativeEntry = createRequire(runtimeEntry).resolve(nativePackage)
     } catch (error) {
       throw new RuntimeAssetError('assets_missing', 'Development OCR packages are missing', {
         cause: error
@@ -167,41 +201,92 @@ export class OcrRuntimeAssetResolver {
     }
 
     return {
-      nodeExecutable: resolveBundledNodeExecutable(this.options.nodeRuntimePath, this.platform),
-      helperEntryPath: path.join(this.options.appPath, 'out', 'main', 'lightOcrHelper.js'),
-      facadeDir: path.resolve(path.dirname(facadeEntry), '..'),
-      bundlePath: path.dirname(bundleManifestPath),
-      nativePackageDir: path.resolve(path.dirname(nativeEntry), '..'),
-      nativePayloadEncoding: 'direct',
-      nativePackage,
-      lightOcrVersion: runtimeVersions.lightOcr.version,
-      bundleId: runtimeVersions.lightOcr.bundleId
+      assets: {
+        nodeExecutable: resolveBundledNodeExecutable(this.options.nodeRuntimePath, this.platform),
+        helperEntryPath: path.join(this.options.appPath, 'out', 'main', 'lightOcrHelper.js'),
+        facadeDir: path.resolve(path.dirname(facadeEntry), '..'),
+        runtimeDir: path.resolve(path.dirname(runtimeEntry), '..'),
+        bundlePath: path.dirname(bundleManifestPath),
+        nativePackageDir: path.resolve(path.dirname(nativeEntry), '..'),
+        nativePayloadEncoding: 'direct',
+        nativePackage,
+        lightOcrVersion: runtimeVersions.lightOcr.facadeVersion,
+        bundleId: runtimeVersions.lightOcr.bundleId
+      },
+      expectedNativeArtifactInventory: null
     }
   }
 
-  private async verifyIdentity(assets: OcrRuntimeAssets): Promise<void> {
+  private async verifyIdentity(
+    assets: OcrRuntimeAssets,
+    expectedNativeArtifactInventory: NativeArtifactInventory | null
+  ): Promise<void> {
     try {
       await Promise.all([
         access(assets.nodeExecutable),
         access(assets.helperEntryPath),
-        access(path.join(assets.facadeDir, 'js', 'index.cjs')),
+        access(path.join(assets.facadeDir, 'src', 'index.cjs')),
+        access(path.join(assets.runtimeDir, 'src', 'index.cjs')),
         access(path.join(assets.nativePackageDir, 'artifact-hashes.json')),
-        access(path.join(assets.nativePackageDir, 'native', 'runtime-descriptor.json'))
+        access(path.join(assets.nativePackageDir, 'native', 'runtime-descriptor.json')),
+        ...getRequiredPdfiumArtifactPaths(this.platform).map((relativePath) => {
+          const encoded =
+            assets.nativePayloadEncoding === 'gzip-base64-v1' &&
+            classifyLightOcrArtifact(relativePath) === 'pdfium-code'
+          return access(
+            path.join(
+              assets.nativePackageDir,
+              ...`${relativePath}${encoded ? '.gz.b64' : ''}`.split('/')
+            )
+          )
+        })
       ])
-      const [facadePackage, modelPackage, nativePackage, bundleManifest] = await Promise.all([
+      const [
+        facadePackage,
+        runtimePackage,
+        modelPackage,
+        nativePackage,
+        bundleManifest,
+        artifacts
+      ] = await Promise.all([
         readJson(path.join(assets.facadeDir, 'package.json')),
+        readJson(path.join(assets.runtimeDir, 'package.json')),
         readJson(path.join(assets.bundlePath, '..', 'package.json')),
         readJson(path.join(assets.nativePackageDir, 'package.json')),
-        readJson(path.join(assets.bundlePath, 'manifest.json'))
+        readJson(path.join(assets.bundlePath, 'manifest.json')),
+        readJson(path.join(assets.nativePackageDir, 'artifact-hashes.json'))
       ])
       if (
         facadePackage.name !== LIGHT_OCR_FACADE_PACKAGE ||
-        facadePackage.version !== runtimeVersions.lightOcr.version ||
+        facadePackage.version !== runtimeVersions.lightOcr.facadeVersion ||
+        !hasExactDependency(
+          facadePackage,
+          'dependencies',
+          runtimeVersions.lightOcr.runtimePackage,
+          runtimeVersions.lightOcr.runtimeVersion
+        ) ||
+        !hasExactDependency(
+          facadePackage,
+          'dependencies',
+          runtimeVersions.lightOcr.modelPackage,
+          runtimeVersions.lightOcr.modelVersion
+        ) ||
+        runtimePackage.name !== runtimeVersions.lightOcr.runtimePackage ||
+        runtimePackage.version !== runtimeVersions.lightOcr.runtimeVersion ||
+        !hasExactDependency(
+          runtimePackage,
+          'optionalDependencies',
+          assets.nativePackage,
+          runtimeVersions.lightOcr.nativeVersion
+        ) ||
         modelPackage.name !== runtimeVersions.lightOcr.modelPackage ||
-        modelPackage.version !== runtimeVersions.lightOcr.version ||
+        modelPackage.version !== runtimeVersions.lightOcr.modelVersion ||
         nativePackage.name !== assets.nativePackage ||
-        nativePackage.version !== runtimeVersions.lightOcr.version ||
-        bundleManifest.bundleId !== runtimeVersions.lightOcr.bundleId
+        nativePackage.version !== runtimeVersions.lightOcr.nativeVersion ||
+        bundleManifest.bundleId !== runtimeVersions.lightOcr.bundleId ||
+        !hasRequiredPdfiumInventory(artifacts, this.platform) ||
+        (expectedNativeArtifactInventory !== null &&
+          !matchesArtifactInventory(artifacts, expectedNativeArtifactInventory))
       ) {
         throw new RuntimeAssetError(
           'asset_identity_mismatch',
@@ -225,7 +310,7 @@ export class OcrRuntimeAssetResolver {
     return {
       status: 'unavailable',
       reason,
-      lightOcrVersion: runtimeVersions.lightOcr.version,
+      lightOcrVersion: runtimeVersions.lightOcr.facadeVersion,
       bundleId: runtimeVersions.lightOcr.bundleId
     }
   }
@@ -281,13 +366,23 @@ function isPackagedRuntimeManifest(value: unknown): value is PackagedRuntimeMani
     typeof value.supported !== 'boolean' ||
     typeof value.platform !== 'string' ||
     typeof value.arch !== 'string' ||
-    typeof value.lightOcrVersion !== 'string' ||
+    typeof value.facadeVersion !== 'string' ||
+    typeof value.runtimeVersion !== 'string' ||
+    typeof value.modelVersion !== 'string' ||
+    typeof value.nativeVersion !== 'string' ||
+    typeof value.pdfSupport !== 'boolean' ||
     typeof value.bundleId !== 'string'
   ) {
     return false
   }
   if (value.reason !== undefined && typeof value.reason !== 'string') return false
   if (value.nativePackage !== undefined && typeof value.nativePackage !== 'string') return false
+  if (
+    value.nativeArtifactInventory !== undefined &&
+    !isNativeArtifactInventory(value.nativeArtifactInventory)
+  ) {
+    return false
+  }
   if (
     value.nativePayloadEncoding !== undefined &&
     value.nativePayloadEncoding !== 'direct' &&
@@ -297,9 +392,75 @@ function isPackagedRuntimeManifest(value: unknown): value is PackagedRuntimeMani
   }
   if (value.paths === undefined) return true
   if (!isRecord(value.paths)) return false
-  return ['node', 'helper', 'facade', 'bundle', 'native'].every(
+  return ['node', 'helper', 'facade', 'runtime', 'bundle', 'native'].every(
     (key) => typeof value.paths?.[key] === 'string'
   )
+}
+
+function isNativeArtifactInventory(value: unknown): value is NativeArtifactInventory {
+  if (!isRecord(value)) return false
+  return ['nativeCode', 'pdfiumCode', 'pdfiumLoader', 'other'].every(
+    (key) =>
+      Array.isArray(value[key]) && value[key].every((entry: unknown) => typeof entry === 'string')
+  )
+}
+
+function hasExactDependency(
+  packageJson: Record<string, unknown>,
+  field: string,
+  dependencyName: string,
+  expectedVersion: string
+): boolean {
+  const dependencies = packageJson[field]
+  return isRecord(dependencies) && dependencies[dependencyName] === expectedVersion
+}
+
+function hasRequiredPdfiumInventory(
+  artifactManifest: Record<string, unknown>,
+  platform: NodeJS.Platform
+): boolean {
+  if (!Array.isArray(artifactManifest.files)) return false
+  const actualPaths = artifactManifest.files
+    .map((entry) => (isRecord(entry) ? entry.path : undefined))
+    .filter((entry): entry is string => typeof entry === 'string' && entry.startsWith('pdfium/'))
+    .sort()
+  const expectedPaths = [...getRequiredPdfiumArtifactPaths(platform)].sort()
+  return (
+    actualPaths.length === expectedPaths.length &&
+    actualPaths.every((entry, index) => entry === expectedPaths[index])
+  )
+}
+
+function matchesArtifactInventory(
+  artifactManifest: Record<string, unknown>,
+  expected: NativeArtifactInventory
+): boolean {
+  const actual = groupArtifactInventory(artifactManifest)
+  return actual !== null && JSON.stringify(actual) === JSON.stringify(expected)
+}
+
+function groupArtifactInventory(
+  artifactManifest: Record<string, unknown>
+): NativeArtifactInventory | null {
+  if (!Array.isArray(artifactManifest.files)) return null
+  const result: NativeArtifactInventory = {
+    nativeCode: [],
+    pdfiumCode: [],
+    pdfiumLoader: [],
+    other: []
+  }
+  const seen = new Set<string>()
+  for (const entry of artifactManifest.files) {
+    if (!isRecord(entry) || typeof entry.path !== 'string' || seen.has(entry.path)) return null
+    seen.add(entry.path)
+    const kind = classifyLightOcrArtifact(entry.path)
+    if (kind === 'native-code') result.nativeCode.push(entry.path)
+    else if (kind === 'pdfium-code') result.pdfiumCode.push(entry.path)
+    else if (kind === 'pdfium-loader') result.pdfiumLoader.push(entry.path)
+    else result.other.push(entry.path)
+  }
+  for (const paths of Object.values(result)) paths.sort()
+  return result
 }
 
 function expectedNativePayloadEncoding(platform: NodeJS.Platform): LightOcrNativePayloadEncoding {
