@@ -110,6 +110,10 @@ an active directive.
 18. Management and search response DTOs enforce the same temporal, scope, and directive-kind
     invariants as persistence; malformed durable state is never normalized silently at the IPC
     boundary.
+19. A model-initiated `memory_remember` call is an untrusted runtime write, not explicit user
+    re-authorization, and can never release a forget tombstone.
+20. Generic claim lifecycle and delete APIs reject internal `persona` and `working` rows; those
+    rows remain owned by their dedicated state machines.
 
 ## Temporal claim contract
 
@@ -197,11 +201,12 @@ operational observability, but audit is not the source of truth for lineage.
 Explicit single-row deletion:
 
 1. resolves the owned row;
-2. hashes its canonical provenance key and scope-qualified normalized content, retaining the
+2. rejects internal `persona` and `working` rows;
+3. hashes its canonical provenance key and scope-qualified normalized content, retaining the
    original agent-scope content hash so pre-scope tombstones remain effective;
-3. inserts tombstones and deletes the row in one SQLite transaction;
-4. removes the vector after the durable transaction;
-5. blocks future exact provenance/content recreation.
+4. inserts tombstones and deletes the row in one SQLite transaction;
+5. removes the vector after the durable transaction;
+6. blocks future exact provenance/content recreation.
 
 Agent-wide clear is an explicit forget operation. It tombstones the cleared claims before deleting
 them and preserves those tombstones so replay of existing Tape cannot repopulate the cleared data.
@@ -302,8 +307,8 @@ one Agent and cannot cross its ownership boundary.
 - A rewrite merge preserves the only available temporal interpretation; conflicting interpretations
   never erase time semantics without an observable audit decision.
 - Malformed model-produced temporal metadata rejects only that extracted candidate.
-- Explicit user re-authorization may recreate an exactly forgotten claim atomically; background
-  extraction and replay remain suppressed.
+- An explicit renderer user-add action may recreate an exactly forgotten claim atomically;
+  model-initiated tools, background extraction, and replay remain suppressed.
 - Scoped FTS importance candidates retain indexed ordering without a whole-Agent temporary sort.
 - Directive approval text is display-safe, capacity rejection is distinguishable, and trusted
   directives are the last optional contribution shed before a hard context overflow.
@@ -319,13 +324,15 @@ The 2026-07-27 post-implementation review was verified against the branch rather
 premise:
 
 - Confirmed: test-scope classification, upgraded-schema temporal enforcement, import isolation,
-  temporal merge preservation, explicit relearning, retired-index churn, scoped FTS ordering,
+  temporal merge preservation, explicit user relearning, retired-index churn, scoped FTS ordering,
   directive display controls and capacity results, projection/reflection scope tests, strict
   extraction temporal validation, management-search visibility, lineage self-edges, directive
   overflow fallback, Chinese locale gaps, migration/boundary/idempotency coverage, and live system
   timezone resolution.
-- Partially confirmed: `memory_remember` already returned a structured `forgotten` reason; the real
-  defect was permanent denial of an explicitly authorized relearn and generic renderer feedback.
+- Corrected after trust-boundary verification: `memory_remember` retains the structured
+  `forgotten` domain result but maps it to `requires_user_reauthorization`; only the explicit
+  renderer add action can atomically release matching tombstones. Generic deletion now rejects
+  internal persona and working rows.
 - Rejected: adding an unknown allocation lane does not null Tape inspection. The parser ignores
   unknown object fields while retaining the four known lanes, and a Tape-to-route allocation
   fixture already exists.

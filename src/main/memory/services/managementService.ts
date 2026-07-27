@@ -657,6 +657,7 @@ export class ManagementService {
     const row = this.ports.repository.getById(memoryId)
     if (!row || row.agent_id !== agentId) return false
     if (this.ports.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
+    if (isInternalMemoryKind(row)) return false
     this.ctx.invalidateAgentOperations(agentId)
     const deleted = this.ports.repository.tombstoneAndDelete({
       agentId,
@@ -666,9 +667,7 @@ export class ManagementService {
     })
     if (!deleted) return false
     this.ctx.markDomainMutationCommitted(agentId)
-    if (deleted.kind !== 'working') {
-      this.ports.syncWorkingMemoryAfterMutation(agentId)
-    }
+    this.ports.syncWorkingMemoryAfterMutation(agentId)
     const deleteResult = await this.ports.deleteVectorsForDeletedMemory(agentId, [memoryId], {
       embeddingModel: deleted.embedding_model,
       embeddingDim: deleted.embedding_dim

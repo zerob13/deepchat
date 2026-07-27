@@ -69,9 +69,7 @@ describe('Agent memory tools', () => {
 
   it('passes memory_remember category through to the runtime port', async () => {
     const runtimePort = buildRuntimePort({
-      rememberMemory: vi
-        .fn()
-        .mockResolvedValue({ action: 'created', id: 'mem-1', reauthorized: true })
+      rememberMemory: vi.fn().mockResolvedValue({ action: 'created', id: 'mem-1' })
     })
     const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
 
@@ -104,9 +102,28 @@ describe('Agent memory tools', () => {
     expect(JSON.parse(result.content)).toMatchObject({
       ok: true,
       action: 'created',
-      id: 'mem-1',
-      reauthorized: true
+      id: 'mem-1'
     })
+  })
+
+  it('requires an explicit user action when memory_remember matches a tombstone', async () => {
+    const runtimePort = buildRuntimePort({
+      rememberMemory: vi.fn().mockResolvedValue({ action: 'noop', reason: 'forgotten' })
+    })
+    const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
+
+    const result = await handler.call(
+      MEMORY_TOOL_NAMES.remember,
+      { content: 'previously deleted private fact' },
+      'conv-1'
+    )
+
+    expect(JSON.parse(result.content)).toEqual({
+      ok: false,
+      action: 'noop',
+      reason: 'requires_user_reauthorization'
+    })
+    expect(JSON.stringify(result.rawData)).toContain('requires an explicit user action')
   })
 
   it('recalls the current session scope without broadening the agent owner boundary', async () => {

@@ -1612,6 +1612,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       !row ||
       row.agent_id !== input.agentId ||
       row.decision_revision !== input.expectedRevision ||
+      !isTombstoneEligibleMemoryKind(row.kind) ||
       this.isUnresolvedConflictParticipant(input.agentId, input.id)
     ) {
       return null

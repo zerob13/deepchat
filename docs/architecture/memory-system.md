@@ -139,6 +139,8 @@ terminal turn projection
   失败；
 - 同 content 在不同 scope 可独立存在；update、supersede、conflict 和 merge 不得跨 scope；
 - exact tombstone lookup 与 insert 位于同一 transaction，关闭 delete/re-extraction race；
+- model 发起的 `memory_remember` 不是用户重新授权，不得释放 tombstone；只有 renderer 中的显式
+  user-add action 可以原子地重新写入完全相同的 forgotten claim；
 - model-derived directive suggestion 只进入 draft，不得经 claim extraction 通道直接 active；
 - cancellation signal 贯穿 text provider、embedding provider 和 vector query；
 - write coordinator 对同一 Agent 的配置变化、重建和 maintenance 串行化；
@@ -167,7 +169,8 @@ raw reader、facade 或 domain helper。
 选择性删除先在同一 SQLite transaction 中为 canonical provenance 和 normalized content 写入
 domain-separated SHA-256 tombstone，再删除 claim；tombstone 不保存明文。Vector 删除发生在 durable
 transaction 之后。Exact replay 被压制，语义近似但来源独立的新事实不做 embedding-level tombstone
-匹配。
+匹配。Generic lifecycle/delete API 只管理 claim，必须拒绝 persona 和 working internal row；这些
+row 只能由各自的状态机演进或重建。
 
 Agent clear 会 tombstone 当时存在的 claim，并保留 tombstone，防止既有 Tape replay 重新填充。
 Agent retirement 才删除整个 namespace 的 claim、directive、tombstone、lineage、dirty state 和

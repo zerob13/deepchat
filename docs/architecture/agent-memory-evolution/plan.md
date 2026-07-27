@@ -230,10 +230,10 @@ Storage enforcement is defense in depth:
 - startup normalizes any invalid temporal rows left by older builds or external corruption to
   atemporal metadata and logs the repair count.
 
-Explicit relearning is not a general tombstone-management API. Only a deliberate manual/tool write
-may remove the exact content/provenance tombstones needed for that claim, in the same transaction as
-the insert. Extraction, migration replay, conflict resolution, and maintenance remain unable to
-override forgetting.
+Explicit relearning is not a general tombstone-management API. Only the dedicated renderer
+user-add action may remove the exact content/provenance tombstones needed for that claim, in the
+same transaction as the insert. Model-initiated tools, extraction, migration replay, conflict
+resolution, and maintenance remain unable to override forgetting.
 
 Scoped FTS ordering uses one bounded indexed branch per applicable scope followed by an outer
 bounded merge. Branch count is capped by the closed scope set, and every branch retains Agent

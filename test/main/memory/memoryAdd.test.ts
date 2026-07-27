@@ -138,7 +138,7 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
     expect(relearnAudit?.output_refs_json).not.toContain('Project Saffron')
   })
 
-  it('reauthorizes an exact forgotten claim through the runtime remember entry point', async () => {
+  it('keeps an exact forgotten claim suppressed through the runtime remember entry point', async () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     const created = await presenter.addUserMemory('deepchat', {
       content: 'The user prefers dark mode.'
@@ -152,9 +152,9 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
         { agentId: 'deepchat' },
         null
       )
-    ).resolves.toMatchObject({ action: 'created', reauthorized: true })
-    expect(repo.listByAgent('deepchat')).toHaveLength(1)
-    expect(repo.tombstones.size).toBe(0)
+    ).resolves.toEqual({ action: 'noop', reason: 'forgotten' })
+    expect(repo.listByAgent('deepchat')).toEqual([])
+    expect(repo.tombstones.size).toBe(2)
   })
 
   it('defaults kind to semantic and never stores raw content in audit refs', async () => {

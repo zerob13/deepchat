@@ -180,15 +180,18 @@ export class AgentMemoryToolHandler {
         conversationId,
         session ? { providerId: session.providerId, modelId: session.modelId } : null
       )
+      if (outcome.action === 'noop' && outcome.reason === 'forgotten') {
+        return createMemoryResult(
+          toolName,
+          { ok: false, action: 'noop', reason: 'requires_user_reauthorization' },
+          'This matches permanently deleted memory and requires an explicit user action to restore.'
+        )
+      }
       const ok = outcome.action !== 'noop'
       return createMemoryResult(
         toolName,
         { ok, ...outcome },
-        outcome.action === 'created' && outcome.reauthorized
-          ? 'Reauthorized and stored the previously forgotten memory.'
-          : ok
-            ? 'Stored or updated long-term memory.'
-            : 'Memory write made no change.'
+        ok ? 'Stored or updated long-term memory.' : 'Memory write made no change.'
       )
     }
 

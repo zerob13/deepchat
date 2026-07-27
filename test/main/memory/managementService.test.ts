@@ -1650,15 +1650,31 @@ describe('MemoryService management', () => {
     expect(repo.getById(id)?.status).toBe('pending_embedding')
   })
 
-  it('refuses generic archive/restore/forget for persona and working rows without audit writes', async () => {
+  it('refuses generic lifecycle and delete operations for persona and working rows', async () => {
     const { presenter, repo, auditRepo } = makePresenter(enabledConfig)
     repo.insert({
-      id: 'persona',
+      id: 'persona-active',
       agentId: 'a',
       kind: 'persona',
       content: 'active self model',
       status: 'archived',
       personaState: 'active'
+    })
+    repo.insert({
+      id: 'persona-draft',
+      agentId: 'a',
+      kind: 'persona',
+      content: 'draft self model',
+      status: 'fts_only',
+      personaState: 'draft'
+    })
+    repo.insert({
+      id: 'persona-superseded',
+      agentId: 'a',
+      kind: 'persona',
+      content: 'superseded self model',
+      status: 'fts_only',
+      personaState: 'superseded'
     })
     repo.insert({
       id: 'working',
@@ -1668,23 +1684,27 @@ describe('MemoryService management', () => {
       status: 'fts_only'
     })
 
+    const internalIds = ['persona-active', 'persona-draft', 'persona-superseded', 'working']
     expect(presenter.listMemories('a').map((row) => row.id)).not.toEqual(
-      expect.arrayContaining(['persona', 'working'])
+      expect.arrayContaining(internalIds)
     )
-    expect(presenter.getByIds('a', ['persona', 'working']).map((row) => row.id)).toEqual([
-      'persona',
-      'working'
-    ])
-    await expect(presenter.forgetMemory('a', 'persona')).resolves.toBe(false)
-    await expect(presenter.archiveUserMemory('a', 'persona')).resolves.toBe(false)
-    expect(presenter.restoreMemory('a', 'persona')).toBe(false)
+    expect(presenter.getByIds('a', internalIds).map((row) => row.id)).toEqual(internalIds)
+    await expect(presenter.forgetMemory('a', 'persona-active')).resolves.toBe(false)
+    await expect(presenter.archiveUserMemory('a', 'persona-active')).resolves.toBe(false)
+    expect(presenter.restoreMemory('a', 'persona-active')).toBe(false)
     await expect(presenter.forgetMemory('a', 'working')).resolves.toBe(false)
+    for (const id of internalIds) {
+      await expect(presenter.deleteMemory('a', id)).resolves.toBe(false)
+    }
 
-    expect(repo.getById('persona')).toMatchObject({
+    expect(repo.getById('persona-active')).toMatchObject({
       status: 'archived',
       persona_state: 'active'
     })
+    expect(repo.getById('persona-draft')?.persona_state).toBe('draft')
+    expect(repo.getById('persona-superseded')?.persona_state).toBe('superseded')
     expect(repo.getById('working')?.status).toBe('fts_only')
+    expect(repo.tombstones.size).toBe(0)
     expect(auditRepo.listByAgent('a', { eventType: 'memory/archive' })).toHaveLength(0)
   })
 

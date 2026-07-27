@@ -212,6 +212,8 @@ interface CandidateApplyPolicy {
   retryConflict: boolean
 }
 
+type TombstoneReleasePolicy = 'preserve' | 'explicit-user-action'
+
 function resolveContentMergeTemporalMetadata(
   existing: AgentMemoryRow,
   incoming: NormalizedMemoryCandidate,
@@ -1567,8 +1569,17 @@ export class WriteCoordinator {
     options: WriteMemoriesOptions,
     model?: MemoryModelRef | null
   ): Promise<MemoryWriteOutcome> {
-    // This entry point is reserved for explicit manual/tool writes. Background extraction,
-    // maintenance, and replay use suppression-only paths and must never release tombstones.
+    // Runtime/model writes are not user authorization. They use the same tombstone-preserving
+    // contract as extraction, maintenance, and replay.
+    return this.rememberMemoryWithPolicy(candidate, options, model, 'preserve')
+  }
+
+  private async rememberMemoryWithPolicy(
+    candidate: MemoryCandidate,
+    options: WriteMemoriesOptions,
+    model: MemoryModelRef | null | undefined,
+    tombstoneRelease: TombstoneReleasePolicy
+  ): Promise<MemoryWriteOutcome> {
     if (!this.ctx.canWriteAgentMemory(options.agentId)) {
       return { action: 'noop', reason: 'disposed' }
     }
@@ -1578,12 +1589,10 @@ export class WriteCoordinator {
     }
     const operationFence = this.ctx.captureOperationFence(options.agentId)
     const now = this.ctx.now()
-    const explicitlyRelearned = this.tryExplicitRelearn(
-      options.agentId,
-      candidate,
-      normalizedOptions,
-      now
-    )
+    const explicitlyRelearned =
+      tombstoneRelease === 'explicit-user-action'
+        ? this.tryExplicitRelearn(options.agentId, candidate, normalizedOptions, now)
+        : null
     const resolvedModel =
       explicitlyRelearned || !model ? null : this.ctx.resolveExtractionModel(options.agentId, model)
     const outcome =
@@ -1780,14 +1789,15 @@ export class WriteCoordinator {
         ? { providerId: configured.providerId, modelId: configured.modelId }
         : null
     const scope = normalizeMemoryScope(input.scope ?? AGENT_MEMORY_AGENT_SCOPE)
-    const outcome = await this.rememberMemory(
+    const outcome = await this.rememberMemoryWithPolicy(
       candidate,
       {
         agentId,
         sourceSession: sessionId ?? null,
         scope
       },
-      model
+      model,
+      'explicit-user-action'
     )
     if (!this.ctx.canWriteAgentMemory(agentId)) return outcome
     const audit = userAddAuditFromOutcome(outcome)

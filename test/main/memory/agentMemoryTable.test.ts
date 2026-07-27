@@ -2252,6 +2252,44 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('refuses to tombstone or delete internal persona and working rows', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const persona = table.insertInternalMemory({
+        id: 'persona',
+        agentId: 'a',
+        kind: 'persona',
+        content: 'active self model',
+        personaState: 'active'
+      })
+      const working = table.insertInternalMemory({
+        id: 'working',
+        agentId: 'a',
+        kind: 'working',
+        content: 'working projection'
+      })
+
+      for (const row of [persona, working]) {
+        expect(
+          table.tombstoneAndDelete({
+            agentId: 'a',
+            id: row.id,
+            expectedRevision: row.decision_revision,
+            createdAt: 1_000
+          })
+        ).toBeNull()
+        expect(table.getById(row.id)).toBeDefined()
+      }
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      db.close()
+    }
+  })
+
   it('isolates exact content tombstones by non-agent scope', () => {
     const db = new DatabaseCtor(':memory:')
     try {
