@@ -547,7 +547,6 @@ import {
   NEW_API_ENDPOINT_TYPES,
   isNewApiEndpointType,
   resolveNewApiSelectableEndpointTypes,
-  resolveProviderCapabilityProviderId,
   type NewApiEndpointType
 } from '@shared/model'
 import {
@@ -949,12 +948,14 @@ const capabilityVerbosityDefault = ref<'low' | 'medium' | 'high' | undefined>(un
 const capabilityReasoningVisibilityDefault = ref<AnthropicReasoningVisibility | undefined>(
   undefined
 )
+let capabilityRequestId = 0
 
 const fetchCapabilities = async () => {
-  syncCapabilityProviderId()
+  const requestId = ++capabilityRequestId
   const targetModelId = currentModelLookupId.value
 
   if (!props.providerId || !targetModelId) {
+    capabilityProviderId.value = props.providerId
     capabilityReasoningPortrait.value = null
     capabilitySupportsReasoning.value = null
     capabilityBudgetRange.value = null
@@ -967,7 +968,17 @@ const fetchCapabilities = async () => {
     return
   }
   try {
-    const capabilities = await modelClient.getCapabilities(props.providerId, targetModelId)
+    const capabilities = await modelClient.getCapabilities(props.providerId, targetModelId, {
+      endpointType: isNewApiEndpointType(config.value.endpointType)
+        ? config.value.endpointType
+        : providerModelMeta.value?.endpointType,
+      supportedEndpointTypes: providerModelMeta.value?.supportedEndpointTypes,
+      type: effectiveNewApiModelType.value,
+      ownedBy: providerModelMeta.value?.ownedBy
+    })
+    if (requestId !== capabilityRequestId) return
+
+    capabilityProviderId.value = capabilities.identity.providerId
     const portrait = capabilities.reasoningPortrait ?? null
     capabilityReasoningPortrait.value = portrait
     capabilitySupportsReasoning.value =
@@ -993,6 +1004,9 @@ const fetchCapabilities = async () => {
       portrait?.visibility
     )
   } catch {
+    if (requestId !== capabilityRequestId) return
+
+    capabilityProviderId.value = props.providerId
     capabilityReasoningPortrait.value = null
     capabilitySupportsReasoning.value = null
     capabilityBudgetRange.value = null
@@ -1065,21 +1079,6 @@ const effectiveNewApiModelType = computed(() => {
 
   return providerModelMeta.value?.type ?? config.value.type
 })
-
-const syncCapabilityProviderId = () => {
-  capabilityProviderId.value = resolveProviderCapabilityProviderId(
-    props.providerId,
-    {
-      endpointType: isNewApiEndpointType(config.value.endpointType)
-        ? config.value.endpointType
-        : providerModelMeta.value?.endpointType,
-      supportedEndpointTypes: providerModelMeta.value?.supportedEndpointTypes,
-      type: effectiveNewApiModelType.value,
-      providerApiType: currentProvider.value?.apiType
-    },
-    currentModelLookupId.value
-  )
-}
 
 const providerSelectableEndpointTypes = computed<NewApiEndpointType[] | undefined>(() => {
   const selectableEndpointTypes = providerModelMeta.value?.selectableEndpointTypes
@@ -1573,7 +1572,9 @@ watch(
     }
 
     syncNewApiDerivedFields()
-    syncCapabilityProviderId()
+    if (props.open) {
+      void fetchCapabilities()
+    }
   }
 )
 
@@ -1737,14 +1738,6 @@ watch(
   () => [props.providerId, props.modelId, props.open],
   async () => {
     if (props.open) await fetchCapabilities()
-  },
-  { immediate: true }
-)
-
-watch(
-  () => [props.providerId, currentModelLookupId.value, providerModelMeta.value?.id],
-  () => {
-    syncCapabilityProviderId()
   },
   { immediate: true }
 )

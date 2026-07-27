@@ -17,6 +17,7 @@ import {
   VerbositySchema
 } from '../types/model-db'
 import { ConflictStrategy } from '../types/skillSync'
+import { CAPABILITY_IDENTITY_SOURCES } from '../types/model-capabilities'
 
 export const ThemeModeSchema = z.enum(['dark', 'light', 'system'])
 
@@ -523,6 +524,12 @@ export const ReasoningPortraitSchema = z.looseObject({
 })
 
 export const ModelCapabilitiesSchema = z.object({
+  identity: z.object({
+    providerId: z.string().min(1),
+    modelId: z.string().min(1),
+    source: z.enum(CAPABILITY_IDENTITY_SOURCES),
+    catalogMatched: z.boolean()
+  }),
   supportsAudioInput: z.boolean().nullable(),
   supportsReasoning: z.boolean().nullable(),
   reasoningPortrait: ReasoningPortraitSchema.nullable(),
@@ -542,7 +549,11 @@ export const ModelCapabilitiesSchema = z.object({
     })
     .nullable(),
   supportsTemperatureControl: z.boolean().nullable(),
-  temperatureCapability: z.boolean().nullable()
+  temperatureCapability: z.boolean().nullable(),
+  supportsReasoningEffort: z.boolean(),
+  reasoningEffortDefault: ReasoningEffortSchema.optional(),
+  supportsVerbosity: z.boolean(),
+  verbosityDefault: VerbositySchema.optional()
 })
 
 export const ModelConfigSchema = z.looseObject({

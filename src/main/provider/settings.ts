@@ -11,8 +11,8 @@ import { ProviderBatchUpdate } from '@shared/provider-operations'
 import {
   ModelType,
   isNewApiEndpointType,
-  resolveProviderCapabilityProviderId,
-  type NewApiEndpointType
+  resolveNewApiEndpointTypeFromRoute,
+  type NewApiRouteMeta
 } from '@shared/model'
 import { resolveVideoGenerationCompatType } from '@shared/videoGenerationSettings'
 import {
@@ -38,7 +38,11 @@ import {
 import { modelCapabilities } from '@/provider/modelCapabilities'
 import { ProviderHelper } from '@/provider/providerHelper'
 import { ModelStatusHelper } from '@/provider/modelStatusHelper'
-import { ProviderModelHelper, PROVIDER_MODELS_DIR } from '@/provider/providerModelHelper'
+import {
+  ProviderModelHelper,
+  PROVIDER_MODELS_DIR,
+  type ProviderModelRouteMetadata
+} from '@/provider/providerModelHelper'
 import { DEFAULT_SYSTEM_PROMPT } from '@/agent/promptSettings'
 import type { ProviderDatabase } from './data/database'
 import type { SettingsKey, SettingsSnapshotValues } from '@shared/contracts/routes'
@@ -53,6 +57,16 @@ import { ModelConfigDbStore, ProviderDbStore, ProviderModelDbStore } from './set
 import { SettingsStore } from '@/config/settingsStore'
 import type { StoreLike } from '@/config/storeLike'
 import type { PrivacySettingsPort } from '@/app/privacy'
+import {
+  buildResolvedCapabilitySnapshot,
+  resolveCapabilityFamilyHint,
+  resolveCapabilityIdentity
+} from './capabilityIdentity'
+import type {
+  CapabilityRouteOverride,
+  ResolvedCapabilityIdentity,
+  ResolvedModelCapabilitySnapshot
+} from '@shared/types/model-capabilities'
 
 // Create interface for model storage
 const defaultProviders = DEFAULT_PROVIDERS.map((provider) => ({
@@ -222,6 +236,11 @@ export interface ProviderSettingsPort {
   setProviderById(id: string, provider: LLM_PROVIDER): void
   getProviderModels(providerId: string): MODEL_META[]
   getDbProviderModels(providerId: string): RENDERER_MODEL_META[]
+  getCapabilitySnapshot(
+    providerId: string,
+    modelId: string,
+    routeOverride?: CapabilityRouteOverride
+  ): ResolvedModelCapabilitySnapshot
   getCapabilityProviderId(providerId: string, modelId: string): string
   supportsReasoningCapability(providerId: string, modelId: string): boolean
   getReasoningPortrait(providerId: string, modelId: string): ReasoningPortrait | null
@@ -302,6 +321,7 @@ export type ProviderModelResolutionPort = Pick<
   | 'getProviderById'
   | 'isKnownModel'
   | 'getModelConfig'
+  | 'getCapabilitySnapshot'
   | 'getCapabilityProviderId'
   | 'supportsReasoningCapability'
   | 'getReasoningPortrait'
@@ -447,60 +467,84 @@ export class ProviderSettings implements ProviderSettingsPort {
 
   private resolveCapabilityRoute(
     providerId: string,
-    modelId: string
-  ): {
-    endpointType?: NewApiEndpointType
-    supportedEndpointTypes?: NewApiEndpointType[]
-    type?: ModelType
-    providerApiType?: string
-    ownedBy?: string
-  } | null {
-    const providerApiType = this.providerHelper?.getProviderById?.(providerId)?.apiType
+    modelId: string,
+    routeOverride?: CapabilityRouteOverride,
+    storedRouteHint?: ProviderModelRouteMetadata
+  ): NewApiRouteMeta | null {
+    const provider = this.providerHelper?.getProviderById?.(providerId)
+    const providerApiType = provider?.apiType
     const modelConfig = this.getModelConfig(modelId, providerId)
-    if (isNewApiEndpointType(modelConfig.endpointType)) {
-      return {
-        endpointType: modelConfig.endpointType,
-        providerApiType,
-        ownedBy: modelConfig.ownedBy
-      }
-    }
-
-    const storedModel =
+    const storedRoute =
+      storedRouteHint ??
+      this.providerModelHelper.getProviderModelRouteMetadata?.(providerId, modelId) ??
       this.providerModelHelper
         .getProviderModels(providerId)
         .find((model) => model.id === modelId) ??
       this.getCustomModels(providerId).find((model) => model.id === modelId)
+    const overriddenEndpointType = isNewApiEndpointType(routeOverride?.endpointType)
+      ? routeOverride.endpointType
+      : undefined
+    const configuredEndpointType = isNewApiEndpointType(modelConfig.endpointType)
+      ? modelConfig.endpointType
+      : undefined
+    const storedEndpointType = isNewApiEndpointType(storedRoute?.endpointType)
+      ? storedRoute.endpointType
+      : undefined
+    const ownedBy = routeOverride?.ownedBy ?? storedRoute?.ownedBy ?? modelConfig.ownedBy
+    const capabilityFamilyHint = resolveCapabilityFamilyHint(modelId, ownedBy)
+    const route: NewApiRouteMeta = {
+      endpointType: overriddenEndpointType ?? configuredEndpointType ?? storedEndpointType,
+      supportedEndpointTypes:
+        routeOverride?.supportedEndpointTypes ?? storedRoute?.supportedEndpointTypes,
+      type: routeOverride?.type ?? storedRoute?.type,
+      providerApiType,
+      ownedBy,
+      capabilityFamilyHint
+    }
+    const hasEndpointEvidence =
+      route.endpointType !== undefined ||
+      Boolean(route.supportedEndpointTypes?.length) ||
+      providerApiType === 'new-api'
 
-    if (storedModel) {
-      return {
-        endpointType: storedModel.endpointType,
-        supportedEndpointTypes: storedModel.supportedEndpointTypes,
-        type: storedModel.type,
-        providerApiType,
-        ownedBy: storedModel.ownedBy ?? modelConfig.ownedBy
-      }
+    if (!route.endpointType && hasEndpointEvidence) {
+      route.endpointType = resolveNewApiEndpointTypeFromRoute(route, modelId)
     }
 
-    return providerApiType
-      ? {
-          providerApiType
-        }
-      : null
+    return hasEndpointEvidence || providerApiType || ownedBy || storedRoute ? route : null
+  }
+
+  private resolveCapabilityIdentityForModel(
+    providerId: string,
+    modelId: string,
+    routeOverride?: CapabilityRouteOverride,
+    storedRouteHint?: ProviderModelRouteMetadata
+  ): ResolvedCapabilityIdentity {
+    const route = this.resolveCapabilityRoute(providerId, modelId, routeOverride, storedRouteHint)
+    const provider = this.providerHelper?.getProviderById?.(providerId)
+    return resolveCapabilityIdentity({
+      providerId,
+      modelId,
+      ownedBy: route?.ownedBy,
+      endpointType: route?.endpointType,
+      explicitProviderId: provider?.capabilityProviderId
+    })
+  }
+
+  getCapabilitySnapshot(
+    providerId: string,
+    modelId: string,
+    routeOverride?: CapabilityRouteOverride
+  ): ResolvedModelCapabilitySnapshot {
+    const identity = this.resolveCapabilityIdentityForModel(providerId, modelId, routeOverride)
+    return buildResolvedCapabilitySnapshot(identity)
   }
 
   getCapabilityProviderId(providerId: string, modelId: string): string {
-    return resolveProviderCapabilityProviderId(
-      providerId,
-      this.resolveCapabilityRoute(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).identity.providerId
   }
 
   supportsReasoningCapability(providerId: string, modelId: string): boolean {
-    return modelCapabilities.supportsReasoning(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).supportsReasoning
   }
 
   private inferProviderDbModelType(model: ProviderModel): ModelType {
@@ -535,80 +579,53 @@ export class ProviderSettings implements ProviderSettingsPort {
   }
 
   getReasoningPortrait(providerId: string, modelId: string): ReasoningPortrait | null {
-    return modelCapabilities.getReasoningPortrait(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).reasoningPortrait
   }
 
   getThinkingBudgetRange(
     providerId: string,
     modelId: string
   ): { min?: number; max?: number; default?: number } {
-    return modelCapabilities.getThinkingBudgetRange(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).thinkingBudgetRange
   }
 
   supportsSearchCapability(providerId: string, modelId: string): boolean {
-    return modelCapabilities.supportsSearch(providerId, modelId)
+    return this.getCapabilitySnapshot(providerId, modelId).supportsSearch
   }
 
   getTemperatureCapability(providerId: string, modelId: string): boolean | undefined {
-    return modelCapabilities.getTemperatureCapability(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).temperatureCapability
   }
 
   supportsTemperatureControl(providerId: string, modelId: string): boolean {
-    return modelCapabilities.supportsTemperatureControl(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).supportsTemperatureControl
   }
 
   getSearchDefaults(
     providerId: string,
     modelId: string
   ): { default?: boolean; forced?: boolean; strategy?: 'turbo' | 'max' } {
-    return modelCapabilities.getSearchDefaults(providerId, modelId)
+    return this.getCapabilitySnapshot(providerId, modelId).searchDefaults
   }
 
   supportsAudioInputCapability(providerId: string, modelId: string): boolean {
-    return modelCapabilities.supportsAudioInput(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).supportsAudioInput
   }
 
   supportsReasoningEffortCapability(providerId: string, modelId: string): boolean {
-    return modelCapabilities.supportsReasoningEffort(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).supportsReasoningEffort
   }
 
   getReasoningEffortDefault(providerId: string, modelId: string): ReasoningEffort | undefined {
-    return modelCapabilities.getReasoningEffortDefault(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).reasoningEffortDefault
   }
 
   supportsVerbosityCapability(providerId: string, modelId: string): boolean {
-    return modelCapabilities.supportsVerbosity(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).supportsVerbosity
   }
 
   getVerbosityDefault(providerId: string, modelId: string): Verbosity | undefined {
-    return modelCapabilities.getVerbosityDefault(
-      this.getCapabilityProviderId(providerId, modelId),
-      modelId
-    )
+    return this.getCapabilitySnapshot(providerId, modelId).verbosityDefault
   }
 
   private migrateConfigData(oldVersion: string | undefined): void {
@@ -1066,27 +1083,24 @@ export class ProviderSettings implements ProviderSettingsPort {
   getProviderModels(providerId: string): MODEL_META[] {
     const models = this.providerModelHelper.getProviderModels(providerId)
     return models.map((model) => {
-      const capabilityProviderId = resolveProviderCapabilityProviderId(
+      const identity = this.resolveCapabilityIdentityForModel(
         providerId,
-        {
-          endpointType: model.endpointType,
-          supportedEndpointTypes: model.supportedEndpointTypes,
-          type: model.type,
-          providerApiType: this.providerHelper?.getProviderById?.(providerId)?.apiType,
-          ownedBy: model.ownedBy
-        },
-        model.id
+        model.id,
+        undefined,
+        model
       )
 
-      if (capabilityProviderId === providerId) {
+      if (identity.providerId === providerId) {
         return model
       }
 
+      const catalog = modelCapabilities.getCatalogCapabilitySnapshot(
+        identity.providerId,
+        identity.modelId
+      )
       return {
         ...model,
-        reasoning:
-          model.reasoning === true ||
-          modelCapabilities.supportsReasoning(capabilityProviderId, model.id)
+        reasoning: model.reasoning === true || catalog.supportsReasoning
       }
     })
   }

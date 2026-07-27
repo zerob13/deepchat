@@ -83,15 +83,27 @@ const setup = async (options: SetupOptions) => {
   })
 
   const modelClient = {
-    getCapabilities: vi.fn().mockResolvedValue({
-      supportsReasoning: options.reasoningPortrait?.supported ?? true,
-      reasoningPortrait: options.reasoningPortrait ?? null,
-      thinkingBudgetRange: options.reasoningPortrait?.budget ?? null,
-      supportsSearch: null,
-      searchDefaults: null,
-      supportsTemperatureControl: options.temperatureCapability ?? true,
-      temperatureCapability: options.temperatureCapability ?? true
-    })
+    getCapabilities: vi.fn().mockImplementation((_providerId: string, modelId: string) =>
+      Promise.resolve({
+        identity: {
+          providerId: options.capabilityProviderId ?? options.providerId,
+          modelId,
+          source: 'transport-fallback',
+          catalogMatched: false
+        },
+        supportsReasoning: options.reasoningPortrait?.supported ?? true,
+        reasoningPortrait: options.reasoningPortrait ?? null,
+        thinkingBudgetRange: options.reasoningPortrait?.budget ?? null,
+        supportsSearch: null,
+        searchDefaults: null,
+        supportsTemperatureControl: options.temperatureCapability ?? true,
+        temperatureCapability: options.temperatureCapability ?? true,
+        supportsReasoningEffort: Boolean(options.reasoningPortrait?.effort),
+        reasoningEffortDefault: options.reasoningPortrait?.effort,
+        supportsVerbosity: Boolean(options.reasoningPortrait?.verbosity),
+        verbosityDefault: options.reasoningPortrait?.verbosity
+      })
+    )
   }
 
   vi.doMock('@/stores/modelConfigStore', () => ({
@@ -436,6 +448,7 @@ describe('ModelConfigDialog reasoning portraits', () => {
       modelId: 'anthropic/claude-opus-4-7',
       modelName: 'Claude Opus 4.7',
       providerApiType: 'openai',
+      capabilityProviderId: 'anthropic',
       providerModels: [
         {
           id: 'anthropic/claude-opus-4-7',
@@ -557,6 +570,7 @@ describe('ModelConfigDialog reasoning portraits', () => {
       modelId: 'claude-opus-4-8',
       modelName: 'Claude Opus 4.8',
       providerApiType: 'new-api',
+      capabilityProviderId: 'anthropic',
       temperatureCapability: false,
       providerModels: [
         {

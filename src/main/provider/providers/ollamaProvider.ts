@@ -31,6 +31,7 @@ import {
 } from '../aiSdk'
 import { normalizeOllamaOpenAIBaseUrl, normalizeOllamaSdkHost } from '../aiSdk/providerFactory'
 import { isInsecureTlsAllowed } from '@/lib/insecureTls'
+import { buildResolvedCapabilitySnapshot, resolveCapabilityIdentity } from '../capabilityIdentity'
 
 const OLLAMA_LIST_TIMEOUT_MS = 5000
 
@@ -68,13 +69,20 @@ export class OllamaProvider extends BaseLLMProvider {
     })
   }
 
-  protected getAiSdkRuntimeContext(): AiSdkRuntimeContext {
+  protected getAiSdkRuntimeContext(modelId: string): AiSdkRuntimeContext {
+    const capabilityIdentity = resolveCapabilityIdentity({
+      providerId: this.provider.id,
+      modelId,
+      explicitProviderId: this.provider.capabilityProviderId
+    })
+
     return {
       providerKind: 'openai-compatible',
       provider: {
         ...this.provider,
         baseUrl: normalizeOllamaOpenAIBaseUrl(this.provider.baseUrl)
       },
+      capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity),
       providerSettings: this.providerSettings,
       defaultHeaders: this.defaultHeaders,
       buildLegacyFunctionCallPrompt: (tools) => this.getFunctionCallWrapPrompt(tools),
@@ -493,7 +501,7 @@ export class OllamaProvider extends BaseLLMProvider {
   public async summaryTitles(messages: ChatMessage[], modelId: string): Promise<string> {
     const prompt = `${SUMMARY_TITLES_PROMPT}\n\n${messages.map((m) => `${m.role}: ${m.content}`).join('\n')}`
     const response = await runAiSdkGenerateText(
-      this.getAiSdkRuntimeContext(),
+      this.getAiSdkRuntimeContext(modelId),
       [{ role: 'user', content: prompt }],
       modelId,
       this.providerSettings.getModelConfig(modelId, this.provider.id),
@@ -511,7 +519,7 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): Promise<LLMResponse> {
     return runAiSdkGenerateText(
-      this.getAiSdkRuntimeContext(),
+      this.getAiSdkRuntimeContext(modelId),
       messages,
       modelId,
       this.providerSettings.getModelConfig(modelId, this.provider.id),
@@ -527,7 +535,7 @@ export class OllamaProvider extends BaseLLMProvider {
     maxTokens?: number
   ): Promise<LLMResponse> {
     return runAiSdkGenerateText(
-      this.getAiSdkRuntimeContext(),
+      this.getAiSdkRuntimeContext(modelId),
       [{ role: 'user', content: `Please summarize the following content:\n\n${text}` }],
       modelId,
       this.providerSettings.getModelConfig(modelId, this.provider.id),
@@ -545,7 +553,7 @@ export class OllamaProvider extends BaseLLMProvider {
   ): Promise<LLMResponse> {
     if (options?.signal) {
       return runAiSdkGenerateText(
-        this.getAiSdkRuntimeContext(),
+        this.getAiSdkRuntimeContext(modelId),
         [{ role: 'user', content: prompt }],
         modelId,
         this.providerSettings.getModelConfig(modelId, this.provider.id),
@@ -555,7 +563,7 @@ export class OllamaProvider extends BaseLLMProvider {
       )
     }
     return runAiSdkGenerateText(
-      this.getAiSdkRuntimeContext(),
+      this.getAiSdkRuntimeContext(modelId),
       [{ role: 'user', content: prompt }],
       modelId,
       this.providerSettings.getModelConfig(modelId, this.provider.id),
@@ -734,7 +742,7 @@ export class OllamaProvider extends BaseLLMProvider {
     options?: ProviderStreamOptions
   ): AsyncGenerator<LLMCoreStreamEvent> {
     yield* runAiSdkCoreStream(
-      this.getAiSdkRuntimeContext(),
+      this.getAiSdkRuntimeContext(modelId),
       messages,
       modelId,
       modelConfig,
@@ -746,10 +754,10 @@ export class OllamaProvider extends BaseLLMProvider {
   }
 
   async getEmbeddings(modelId: string, texts: string[], signal?: AbortSignal): Promise<number[][]> {
-    return runAiSdkEmbeddings(this.getAiSdkRuntimeContext(), modelId, texts, signal)
+    return runAiSdkEmbeddings(this.getAiSdkRuntimeContext(modelId), modelId, texts, signal)
   }
 
   async getDimensions(modelId: string, signal?: AbortSignal): Promise<LLM_EMBEDDING_ATTRS> {
-    return runAiSdkDimensions(this.getAiSdkRuntimeContext(), modelId, signal)
+    return runAiSdkDimensions(this.getAiSdkRuntimeContext(modelId), modelId, signal)
   }
 }

@@ -58,6 +58,7 @@ import {
   resolveEmbeddingBatchLimit
 } from './embeddingBatchLimits'
 import type { PromptCacheIntent } from '../promptCacheStrategy'
+import type { ResolvedModelCapabilitySnapshot } from '@shared/types/model-capabilities'
 
 type ImageGenerationProviderPayload = Record<string, JSONValue>
 type ImageGenerationRequestOptions = {
@@ -108,6 +109,7 @@ const PROMPT_VIDEO_DURATION_ZH_PATTERN = /(?<duration>\d{1,2})\s*秒/u
 export interface AiSdkRuntimeContext {
   providerKind: AiSdkProviderKind
   provider: LLM_PROVIDER
+  capabilitySnapshot?: ResolvedModelCapabilitySnapshot
   supportsOfficialAnthropicReasoning?: boolean
   providerSettings: ProviderSettingsPort
   defaultHeaders: Record<string, string>
@@ -128,38 +130,16 @@ export interface AiSdkRuntimeContext {
   shouldUseTts?: (modelId: string, modelConfig: ModelConfig) => boolean
 }
 
-function resolveCapabilityProviderId(context: AiSdkRuntimeContext, modelId: string): string {
-  const resolvedProviderId = context.providerSettings.getCapabilityProviderId(
-    context.provider.id,
-    modelId
+function resolveCapabilityProviderId(context: AiSdkRuntimeContext): string {
+  return (
+    context.capabilitySnapshot?.identity.providerId ||
+    context.provider.capabilityProviderId ||
+    context.provider.id
   )
-
-  if (typeof resolvedProviderId === 'string' && resolvedProviderId.trim().length > 0) {
-    return resolvedProviderId
-  }
-
-  return context.provider.capabilityProviderId || context.provider.id
 }
 
-function supportsTemperatureControlRuntime(context: AiSdkRuntimeContext, modelId: string): boolean {
-  const capabilityProviderId = resolveCapabilityProviderId(context, modelId)
-  const directSupport = context.providerSettings.supportsTemperatureControl(
-    capabilityProviderId,
-    modelId
-  )
-  if (typeof directSupport === 'boolean') {
-    return directSupport
-  }
-
-  const directCapability = context.providerSettings.getTemperatureCapability(
-    capabilityProviderId,
-    modelId
-  )
-  if (typeof directCapability === 'boolean') {
-    return directCapability
-  }
-
-  return true
+function supportsTemperatureControlRuntime(context: AiSdkRuntimeContext): boolean {
+  return context.capabilitySnapshot?.temperatureCapability !== false
 }
 
 function normalizePromptValue(value: unknown): string {
@@ -786,15 +766,15 @@ function resolveRuntimeTemperature(
 
   return {
     shouldSendTemperature:
-      supportsTemperatureControlRuntime(context, modelId) && requestedTemperature !== undefined,
+      supportsTemperatureControlRuntime(context) && requestedTemperature !== undefined,
     temperature: requestedTemperature
   }
 }
 
-function supportsTopPControlRuntime(context: AiSdkRuntimeContext, modelId: string): boolean {
-  const capabilityProviderId = resolveCapabilityProviderId(context, modelId)
+function supportsTopPControlRuntime(context: AiSdkRuntimeContext): boolean {
+  const capabilityProviderId = resolveCapabilityProviderId(context)
   if (capabilityProviderId === 'anthropic') {
-    return supportsTemperatureControlRuntime(context, modelId)
+    return supportsTemperatureControlRuntime(context)
   }
 
   return true
@@ -802,10 +782,9 @@ function supportsTopPControlRuntime(context: AiSdkRuntimeContext, modelId: strin
 
 function resolveRuntimeTopP(
   context: AiSdkRuntimeContext,
-  modelId: string,
   modelConfig: ModelConfig
 ): number | undefined {
-  return supportsTopPControlRuntime(context, modelId) ? modelConfig.topP : undefined
+  return supportsTopPControlRuntime(context) ? modelConfig.topP : undefined
 }
 
 function normalizeOpenAICompatibleBaseUrl(baseUrl: string | undefined): string {
@@ -1170,7 +1149,7 @@ async function buildPromptRuntime(
   cacheIntent: PromptCacheIntent
 ) {
   const supportsNativeTools = resolveSupportsNativeTools(context, modelId, modelConfig)
-  const capabilityProviderId = resolveCapabilityProviderId(context, modelId)
+  const capabilityProviderId = resolveCapabilityProviderId(context)
   const providerContext = createAiSdkProviderContext({
     providerKind: context.providerKind,
     provider: context.provider,
@@ -1301,7 +1280,7 @@ export async function runAiSdkGenerateText(
     normalizedModelConfig,
     temperature
   )
-  const resolvedTopP = resolveRuntimeTopP(context, modelId, normalizedModelConfig)
+  const resolvedTopP = resolveRuntimeTopP(context, normalizedModelConfig)
   const timeout = resolveRequestTimeout(normalizedModelConfig)
   const requestBody = {
     model: runtime.providerContext.resolvedModelId ?? modelId,
@@ -1529,7 +1508,7 @@ export async function* runAiSdkCoreStream(
     normalizedModelConfig,
     temperature
   )
-  const resolvedTopP = resolveRuntimeTopP(context, modelId, normalizedModelConfig)
+  const resolvedTopP = resolveRuntimeTopP(context, normalizedModelConfig)
   const requestBody = {
     model: runtime.providerContext.resolvedModelId ?? modelId,
     maxOutputTokens: maxTokens,

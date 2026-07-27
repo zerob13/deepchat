@@ -1,9 +1,4 @@
-import {
-  ApiEndpointType,
-  ModelType,
-  isNewApiEndpointType,
-  resolveProviderCapabilityProviderId
-} from '@shared/model'
+import { ApiEndpointType, ModelType, isNewApiEndpointType } from '@shared/model'
 import type { IModelConfig, ModelConfig, ModelConfigSource } from '@shared/types/provider'
 import {
   DEFAULT_MODEL_TIMEOUT,
@@ -30,6 +25,7 @@ import {
 import { resolveProviderId } from './providerId'
 import { modelCapabilities } from './modelCapabilities'
 import type { StoreLike } from '@/config/storeLike'
+import { resolveCapabilityIdentity } from './capabilityIdentity'
 
 const SPECIAL_CONCAT_CHAR = '-_-'
 
@@ -179,8 +175,14 @@ export class ModelConfigHelper {
 
   private buildConfigFromProviderModel(model: ProviderModel, providerId: string): ModelConfig {
     const modelType = this.inferModelType(model)
-    const portrait = modelCapabilities.getReasoningPortrait(providerId, model.id)
-    const capabilityProviderId = resolveProviderCapabilityProviderId(providerId, null, model.id)
+    const identity = resolveCapabilityIdentity({
+      providerId,
+      modelId: model.id
+    })
+    const portrait = modelCapabilities.getCatalogCapabilitySnapshot(
+      identity.providerId,
+      identity.modelId
+    ).reasoningPortrait
     const reasoningEnabled =
       portrait?.defaultEnabled ?? model.reasoning?.default ?? portrait?.supported ?? false
     const thinkingBudget =
@@ -190,7 +192,7 @@ export class ModelConfigHelper {
       portrait,
       portrait?.effort ?? model.reasoning?.effort
     )
-    const reasoningVisibility = hasAnthropicReasoningToggle(capabilityProviderId, portrait)
+    const reasoningVisibility = hasAnthropicReasoningToggle(identity.providerId, portrait)
       ? (normalizeAnthropicReasoningVisibilityValue(portrait?.visibility) ??
         normalizeReasoningVisibilityValue(portrait?.visibility))
       : normalizeReasoningVisibilityValue(portrait?.visibility)

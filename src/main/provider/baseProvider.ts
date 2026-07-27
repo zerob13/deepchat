@@ -158,10 +158,6 @@ export abstract class BaseLLMProvider {
     }
   }
 
-  protected getCapabilityProviderId(): string {
-    return this.provider.capabilityProviderId || this.provider.id
-  }
-
   private escapeXmlAttribute(value: string): string {
     return value
       .replace(/&/g, '&amp;')

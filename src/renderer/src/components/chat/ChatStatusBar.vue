@@ -1008,7 +1008,6 @@ import type {
   SessionGenerationSettings
 } from '@shared/types/agent-interface'
 import { normalizeDeepChatSubagentConfig } from '@shared/lib/deepchatSubagents'
-import { isNewApiEndpointType, resolveProviderCapabilityProviderId } from '@shared/model'
 import {
   MOONSHOT_KIMI_THINKING_DISABLED_TEMPERATURE,
   MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE,
@@ -1505,24 +1504,6 @@ const findEnabledModelMeta = (providerId: string, modelId: string): RENDERER_MOD
   return modelStore.findChatSelectableModel(providerId, modelId)?.model ?? null
 }
 
-const resolveCapabilityProviderIdForSelection = (
-  providerId: string,
-  modelId: string,
-  endpointType?: unknown
-): string => {
-  const modelMeta = findEnabledModelMeta(providerId, modelId)
-  return resolveProviderCapabilityProviderId(
-    providerId,
-    {
-      endpointType: isNewApiEndpointType(endpointType) ? endpointType : modelMeta?.endpointType,
-      supportedEndpointTypes: modelMeta?.supportedEndpointTypes,
-      type: modelMeta?.type,
-      providerApiType: resolveProviderApiType(providerId)
-    },
-    modelId
-  )
-}
-
 const resolveModelName = (providerId?: string | null, modelId?: string | null): string => {
   if (!modelId) {
     return ''
@@ -1924,11 +1905,7 @@ const resolveDefaultGenerationSettings = async (
   const agentConfig = await resolveDeepChatAgentConfig(agentId)
   const modelConfig = await modelClient.getModelConfig(modelId, providerId)
   const capabilities = await modelClient.getCapabilities(providerId, modelId)
-  const resolvedCapabilityProviderId = resolveCapabilityProviderIdForSelection(
-    providerId,
-    modelId,
-    modelConfig.endpointType
-  )
+  const resolvedCapabilityProviderId = capabilities.identity.providerId
   const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
     providerId,
     modelId,
@@ -2050,15 +2027,16 @@ const resolveDefaultGenerationSettings = async (
   return defaults
 }
 
-const fetchCapabilities = async (providerId: string, modelId: string): Promise<void> => {
+const fetchCapabilities = async (
+  providerId: string,
+  modelId: string,
+  requestToken: number
+): Promise<void> => {
   try {
-    const modelConfig = await modelClient.getModelConfig(modelId, providerId)
     const capabilities = await modelClient.getCapabilities(providerId, modelId)
-    capabilityProviderId.value = resolveCapabilityProviderIdForSelection(
-      providerId,
-      modelId,
-      modelConfig.endpointType
-    )
+    if (requestToken !== generationSyncToken) return
+
+    capabilityProviderId.value = capabilities.identity.providerId
     const portrait = capabilities.reasoningPortrait ?? null
 
     capabilityReasoningPortrait.value = portrait
@@ -2069,6 +2047,8 @@ const fetchCapabilities = async (providerId: string, modelId: string): Promise<v
         ? capabilities.supportsTemperatureControl
         : capabilities.temperatureCapability
   } catch (error) {
+    if (requestToken !== generationSyncToken) return
+
     console.warn('[ChatStatusBar] Failed to fetch model capabilities:', error)
     capabilityProviderId.value = providerId
     capabilitySupportsReasoning.value = null
@@ -2217,7 +2197,7 @@ const runSyncGenerationSettings = async () => {
     return
   }
 
-  await fetchCapabilities(selection.providerId, selection.modelId)
+  await fetchCapabilities(selection.providerId, selection.modelId, token)
   if (token !== generationSyncToken) {
     return
   }

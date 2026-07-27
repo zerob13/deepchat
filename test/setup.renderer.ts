@@ -11,14 +11,24 @@ const createDefaultModelConfig = () => ({
   type: 'chat'
 })
 
-const createDefaultReasoningCapabilities = () => ({
+const createDefaultReasoningCapabilities = (providerId = 'openai', modelId = 'gpt-5.4') => ({
+  identity: {
+    providerId,
+    modelId,
+    source: 'transport-fallback',
+    catalogMatched: false
+  },
   supportsReasoning: true,
   reasoningPortrait: null,
   thinkingBudgetRange: null,
   supportsSearch: null,
   searchDefaults: null,
   supportsTemperatureControl: true,
-  temperatureCapability: true
+  temperatureCapability: true,
+  supportsReasoningEffort: true,
+  reasoningEffortDefault: 'medium',
+  supportsVerbosity: true,
+  verbosityDefault: 'medium'
 })
 
 const getDefaultDeepchatInvokeResult = (
@@ -354,7 +364,10 @@ const getDefaultDeepchatInvokeResult = (
       }
     case 'models.getCapabilities':
       return {
-        capabilities: createDefaultReasoningCapabilities()
+        capabilities: createDefaultReasoningCapabilities(
+          typeof payload.providerId === 'string' ? payload.providerId : undefined,
+          typeof payload.modelId === 'string' ? payload.modelId : undefined
+        )
       }
     default:
       return {}

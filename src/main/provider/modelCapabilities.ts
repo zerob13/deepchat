@@ -40,6 +40,21 @@ export type CapabilityModelMatch = {
   model: ProviderModel
 }
 
+export type CatalogCapabilitySnapshot = {
+  modelMatched: boolean
+  reasoningPortrait: ReasoningPortrait | null
+  supportsReasoning: boolean
+  thinkingBudgetRange: ThinkingBudgetRange
+  supportsSearch: boolean
+  searchDefaults: SearchDefaults
+  temperatureCapability: boolean | undefined
+  supportsAudioInput: boolean
+  supportsReasoningEffort: boolean
+  reasoningEffortDefault: ReasoningEffort | undefined
+  supportsVerbosity: boolean
+  verbosityDefault: Verbosity | undefined
+}
+
 const OPENAI_REASONING_EFFORT_MODEL_FAMILIES = ['o1', 'o3', 'o4-mini', 'gpt-5']
 const OPENAI_VERBOSITY_MODEL_FAMILIES = ['gpt-5']
 const OPENAI_REASONING_FALLBACK_PROVIDERS = new Set(['openai', 'azure'])
@@ -312,6 +327,7 @@ const portraitFromLegacyReasoning = (
 export class ModelCapabilities {
   private index: Map<string, Map<string, ProviderModel>> = new Map()
   private modelLookupIndex: Map<string, Map<string, IndexedProviderModel[]>> = new Map()
+  private globalModelLookupIndex: Map<string, IndexedProviderModel[]> = new Map()
   private portraitRegistry: Map<string, IndexedPortrait[]> = new Map()
 
   constructor() {
@@ -323,6 +339,7 @@ export class ModelCapabilities {
     const db = providerDbLoader.getDb()
     this.index.clear()
     this.modelLookupIndex.clear()
+    this.globalModelLookupIndex.clear()
     this.portraitRegistry.clear()
     if (!db) return
     this.buildIndex(db)
@@ -342,13 +359,18 @@ export class ModelCapabilities {
         modelMap.set(mid, model)
         for (const lookupKey of getProviderCapabilityModelLookupKeys(model.id)) {
           const entries = lookupMap.get(lookupKey) ?? []
-          entries.push({
+          const indexedModel = {
             providerId: pkey,
             modelId: mid,
             model,
             isUnprefixed: !mid.includes('/')
-          })
+          }
+          entries.push(indexedModel)
           lookupMap.set(lookupKey, entries)
+
+          const globalEntries = this.globalModelLookupIndex.get(lookupKey) ?? []
+          globalEntries.push(indexedModel)
+          this.globalModelLookupIndex.set(lookupKey, globalEntries)
         }
 
         const portrait = portraitFromExtraCapabilities(model.extra_capabilities?.reasoning)
@@ -597,6 +619,38 @@ export class ModelCapabilities {
     )
   }
 
+  getProviderCapabilityModelMatch(
+    providerId: string,
+    modelId: string
+  ): CapabilityModelMatch | undefined {
+    return this.getProviderModelMatch(providerId, modelId)
+  }
+
+  findUniqueCapabilityModelMatch(modelId: string): CapabilityModelMatch | undefined {
+    for (const lookupKey of getProviderCapabilityModelLookupKeys(modelId)) {
+      const entries = this.globalModelLookupIndex.get(lookupKey)
+      if (!entries || entries.length === 0) {
+        continue
+      }
+
+      const matches = Array.from(
+        new Map(entries.map((entry) => [`${entry.providerId}\0${entry.modelId}`, entry])).values()
+      )
+      if (matches.length !== 1) {
+        return undefined
+      }
+
+      const [match] = matches
+      return {
+        providerId: match.providerId,
+        modelId: match.modelId,
+        model: match.model
+      }
+    }
+
+    return undefined
+  }
+
   findCapabilityModelMatch(
     modelId: string,
     preferredProviderIds: string[] = []
@@ -619,6 +673,53 @@ export class ModelCapabilities {
     }
 
     return this.findModelAcrossProvidersMatch(normalizeModelId(modelId))
+  }
+
+  getCatalogCapabilitySnapshot(providerId: string, modelId: string): CatalogCapabilitySnapshot {
+    const match = this.getProviderModelMatch(providerId, modelId)
+    const resolvedProviderId = match?.providerId ?? normalizeCapabilityProviderId(providerId)
+    const resolvedModelId = match?.modelId ?? modelId
+    const model = match?.model
+    const reasoningPortrait =
+      mergeReasoningPortraits(
+        this.getFallbackReasoningPortrait(resolvedProviderId, resolvedModelId),
+        portraitFromLegacyReasoning(model?.reasoning),
+        portraitFromExtraCapabilities(model?.extra_capabilities?.reasoning)
+      ) ?? null
+    const search = model?.search
+    const searchDefaults: SearchDefaults = {}
+    if (typeof search?.default === 'boolean') searchDefaults.default = search.default
+    if (typeof search?.forced_search === 'boolean') searchDefaults.forced = search.forced_search
+    if (search?.search_strategy === 'turbo' || search?.search_strategy === 'max') {
+      searchDefaults.strategy = search.search_strategy
+    }
+
+    const thinkingBudgetRange: ThinkingBudgetRange = {}
+    if (typeof reasoningPortrait?.budget?.default === 'number') {
+      thinkingBudgetRange.default = reasoningPortrait.budget.default
+    }
+    if (typeof reasoningPortrait?.budget?.min === 'number') {
+      thinkingBudgetRange.min = reasoningPortrait.budget.min
+    }
+    if (typeof reasoningPortrait?.budget?.max === 'number') {
+      thinkingBudgetRange.max = reasoningPortrait.budget.max
+    }
+
+    return {
+      modelMatched: Boolean(model),
+      reasoningPortrait: reasoningPortrait ? clonePortrait(reasoningPortrait) : null,
+      supportsReasoning: reasoningPortrait?.supported === true,
+      thinkingBudgetRange,
+      supportsSearch: search?.supported === true,
+      searchDefaults,
+      temperatureCapability:
+        typeof model?.temperature === 'boolean' ? model.temperature : undefined,
+      supportsAudioInput: model?.modalities?.input?.includes('audio') === true,
+      supportsReasoningEffort: supportsEffortControls(reasoningPortrait),
+      reasoningEffortDefault: reasoningPortrait?.effort,
+      supportsVerbosity: supportsVerbosityControls(reasoningPortrait),
+      verbosityDefault: reasoningPortrait?.verbosity
+    }
   }
 
   getReasoningPortrait(providerId: string, modelId: string): ReasoningPortrait | null {

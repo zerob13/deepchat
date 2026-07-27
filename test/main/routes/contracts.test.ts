@@ -1528,6 +1528,12 @@ describe('main kernel contracts', () => {
     expect(
       DEEPCHAT_ROUTE_CATALOG['models.getCapabilities'].output.parse({
         capabilities: {
+          identity: {
+            providerId: 'openai',
+            modelId: 'gpt-5.4',
+            source: 'provider-model',
+            catalogMatched: true
+          },
           supportsReasoning: true,
           reasoningPortrait: null,
           thinkingBudgetRange: null,
@@ -1535,11 +1541,21 @@ describe('main kernel contracts', () => {
           searchDefaults: { default: true, forced: false, strategy: 'turbo' },
           supportsAudioInput: false,
           supportsTemperatureControl: true,
-          temperatureCapability: true
+          temperatureCapability: true,
+          supportsReasoningEffort: true,
+          reasoningEffortDefault: 'medium',
+          supportsVerbosity: true,
+          verbosityDefault: 'medium'
         }
       })
     ).toEqual({
       capabilities: {
+        identity: {
+          providerId: 'openai',
+          modelId: 'gpt-5.4',
+          source: 'provider-model',
+          catalogMatched: true
+        },
         supportsReasoning: true,
         reasoningPortrait: null,
         thinkingBudgetRange: null,
@@ -1547,7 +1563,11 @@ describe('main kernel contracts', () => {
         searchDefaults: { default: true, forced: false, strategy: 'turbo' },
         supportsAudioInput: false,
         supportsTemperatureControl: true,
-        temperatureCapability: true
+        temperatureCapability: true,
+        supportsReasoningEffort: true,
+        reasoningEffortDefault: 'medium',
+        supportsVerbosity: true,
+        verbosityDefault: 'medium'
       }
     })
 

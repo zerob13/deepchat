@@ -24,6 +24,7 @@ import {
   modelsUpdateCustomRoute
 } from '@shared/contracts/routes'
 import type { IModelConfig, ModelConfig, RENDERER_MODEL_META } from '@shared/types/provider'
+import type { CapabilityRouteOverride } from '@shared/types/model-capabilities'
 import { getDeepchatBridge } from './core'
 
 export function createModelClient(bridge: DeepchatBridge = getDeepchatBridge()) {
@@ -32,10 +33,15 @@ export function createModelClient(bridge: DeepchatBridge = getDeepchatBridge()) 
     return result.catalog
   }
 
-  async function fetchCapabilities(providerId: string, modelId: string) {
+  async function fetchCapabilities(
+    providerId: string,
+    modelId: string,
+    routeOverride?: CapabilityRouteOverride
+  ) {
     return await bridge.invoke(modelsGetCapabilitiesRoute.name, {
       providerId,
-      modelId
+      modelId,
+      ...(routeOverride ? { routeOverride } : {})
     })
   }
 
@@ -202,7 +208,15 @@ export function createModelClient(bridge: DeepchatBridge = getDeepchatBridge()) 
     })
   }
 
-  async function getCapabilities(providerId: string, modelId: string) {
+  async function getCapabilities(
+    providerId: string,
+    modelId: string,
+    routeOverride?: CapabilityRouteOverride
+  ) {
+    if (routeOverride) {
+      return (await fetchCapabilities(providerId, modelId, routeOverride)).capabilities
+    }
+
     const cacheKey = `${providerId}:${modelId}`
     const cached = capabilitiesCache.get(cacheKey)
     if (cached) {

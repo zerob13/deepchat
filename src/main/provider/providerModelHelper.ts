@@ -37,6 +37,11 @@ interface ProviderModelHelperOptions {
 
 type ProviderModelStore = StoreLike<IModelStore & Record<string, unknown>>
 
+export type ProviderModelRouteMetadata = Pick<
+  MODEL_META,
+  'endpointType' | 'supportedEndpointTypes' | 'type' | 'ownedBy'
+>
+
 const MODEL_TYPE_VALUES = new Set<string>(Object.values(ModelType))
 
 function isModelType(value: unknown): value is ModelType {
@@ -248,10 +253,10 @@ export class ProviderModelHelper {
     return selectableEndpointTypes ? { ...model, selectableEndpointTypes } : model
   }
 
-  getProviderModels(providerId: string): MODEL_META[] {
+  private getResolvedProviderModels(providerId: string): MODEL_META[] {
     const cached = this.providerModelsCache.get(providerId)
     if (cached && cached.expiresAt > Date.now()) {
-      return this.cloneModels(cached.models)
+      return cached.models
     }
 
     const store = this.getProviderModelStore(providerId)
@@ -288,7 +293,47 @@ export class ProviderModelHelper {
       models: this.cloneModels(result)
     })
 
-    return this.cloneModels(result)
+    return result
+  }
+
+  getProviderModels(providerId: string): MODEL_META[] {
+    return this.cloneModels(this.getResolvedProviderModels(providerId))
+  }
+
+  getProviderModelRouteMetadata(
+    providerId: string,
+    modelId: string
+  ): ProviderModelRouteMetadata | undefined {
+    const storedModel = this.getResolvedProviderModels(providerId).find(
+      (model) => model.id === modelId
+    )
+    if (storedModel) {
+      return {
+        endpointType: storedModel.endpointType,
+        supportedEndpointTypes: storedModel.supportedEndpointTypes
+          ? [...storedModel.supportedEndpointTypes]
+          : undefined,
+        type: storedModel.type,
+        ownedBy: storedModel.ownedBy
+      }
+    }
+
+    const customModels = (this.getProviderModelStore(providerId).get('custom_models') ||
+      []) as MODEL_META[]
+    const customModel = customModels.find((model) => model.id === modelId)
+    if (!customModel) {
+      return undefined
+    }
+
+    const config = this.getModelConfig(modelId, providerId)
+    return {
+      endpointType: config?.endpointType ?? customModel.endpointType,
+      supportedEndpointTypes: customModel.supportedEndpointTypes
+        ? [...customModel.supportedEndpointTypes]
+        : undefined,
+      type: customModel.type ?? config?.type,
+      ownedBy: customModel.ownedBy ?? config?.ownedBy
+    }
   }
 
   setProviderModels(providerId: string, models: MODEL_META[]): void {

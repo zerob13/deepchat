@@ -246,15 +246,37 @@ describe('NewApiProvider capability routing', () => {
       }
     } as any
     const capabilityMatchSpy = vi
-      .spyOn(modelCapabilities, 'findCapabilityModelMatch')
+      .spyOn(modelCapabilities, 'getProviderCapabilityModelMatch')
+      .mockImplementation((providerId, modelId) =>
+        providerId === 'anthropic' && modelId === 'claude-opus-4-8'
+          ? {
+              providerId: 'anthropic',
+              modelId: 'claude-opus-4-8',
+              model: capabilityModel
+            }
+          : undefined
+      )
+    const catalogSnapshotSpy = vi
+      .spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot')
       .mockReturnValue({
-        providerId: 'anthropic',
-        modelId: 'claude-opus-4-8',
-        model: capabilityModel
+        modelMatched: true,
+        reasoningPortrait: {
+          supported: true,
+          defaultEnabled: false,
+          mode: 'effort',
+          effort: 'high'
+        },
+        supportsReasoning: true,
+        thinkingBudgetRange: {},
+        supportsSearch: false,
+        searchDefaults: {},
+        temperatureCapability: undefined,
+        supportsAudioInput: false,
+        supportsReasoningEffort: true,
+        reasoningEffortDefault: 'high',
+        supportsVerbosity: false,
+        verbosityDefault: undefined
       })
-    const supportsReasoningSpy = vi
-      .spyOn(modelCapabilities, 'supportsReasoning')
-      .mockReturnValue(true)
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: vi.fn().mockResolvedValue({
@@ -294,11 +316,8 @@ describe('NewApiProvider capability routing', () => {
         maxTokens: 32000
       })
     ])
-    expect(capabilityMatchSpy).toHaveBeenCalledWith(
-      'claude-opus-4-8',
-      expect.arrayContaining(['anthropic'])
-    )
-    expect(supportsReasoningSpy).toHaveBeenCalledWith('anthropic', 'claude-opus-4-8')
+    expect(capabilityMatchSpy).toHaveBeenCalledWith('anthropic', 'claude-opus-4-8')
+    expect(catalogSnapshotSpy).toHaveBeenCalledWith('anthropic', 'claude-opus-4-8')
     expect(providerSettings.setModelConfig).toHaveBeenCalledWith(
       'claude-opus-4-8',
       'new-api',
@@ -407,14 +426,18 @@ describe('NewApiProvider capability routing', () => {
 
   it('keeps OpenAI-compatible owners on openai endpoints while using provider DB capability matches', () => {
     const capabilityMatchSpy = vi
-      .spyOn(modelCapabilities, 'findCapabilityModelMatch')
-      .mockReturnValue({
-        providerId: 'alibaba-cn',
-        modelId: 'qwen3.7-max',
-        model: {
-          id: 'qwen3.7-max'
-        } as any
-      })
+      .spyOn(modelCapabilities, 'getProviderCapabilityModelMatch')
+      .mockImplementation((providerId, modelId) =>
+        providerId === 'alibaba-cn' && modelId === 'qwen3.7-max'
+          ? {
+              providerId: 'alibaba-cn',
+              modelId: 'qwen3.7-max',
+              model: {
+                id: 'qwen3.7-max'
+              } as any
+            }
+          : undefined
+      )
     const provider = new AiSdkProvider(
       createProvider(),
       createProviderSettings(
@@ -442,10 +465,99 @@ describe('NewApiProvider capability routing', () => {
     expect(routeDecision.endpointType).toBe('openai')
     expect(runtimeProvider.apiType).toBe('openai-completions')
     expect(runtimeProvider.capabilityProviderId).toBe('alibaba-cn')
-    expect(capabilityMatchSpy).toHaveBeenCalledWith(
-      'qwen3.7-max',
-      expect.arrayContaining(['openai', 'alibaba-cn'])
+    expect(capabilityMatchSpy).toHaveBeenCalledWith('alibaba-cn', 'qwen3.7-max')
+  })
+
+  it('carries the Moonshot K3 identity and capability snapshot through the runtime route', () => {
+    const capabilityModel = {
+      id: 'kimi-k3',
+      temperature: false,
+      reasoning: {
+        supported: true,
+        default: true
+      },
+      extra_capabilities: {
+        reasoning: {
+          supported: true,
+          interleaved: true,
+          summaries: true,
+          visibility: 'summary',
+          continuation: ['thinking_blocks']
+        }
+      }
+    } as any
+    vi.spyOn(modelCapabilities, 'getProviderCapabilityModelMatch').mockImplementation(
+      (providerId, modelId) =>
+        providerId === 'moonshot' && modelId === 'kimi-k3'
+          ? {
+              providerId: 'moonshot',
+              modelId: 'kimi-k3',
+              model: capabilityModel
+            }
+          : undefined
     )
+    vi.spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot').mockReturnValue({
+      modelMatched: true,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        interleaved: true,
+        summaries: true,
+        visibility: 'summary',
+        continuation: ['thinking_blocks']
+      },
+      supportsReasoning: true,
+      thinkingBudgetRange: {},
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability: false,
+      supportsAudioInput: false,
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      supportsVerbosity: false,
+      verbosityDefault: undefined
+    })
+    const providerSettings = createProviderSettings({
+      'kimi-k3': {
+        endpointType: 'openai'
+      }
+    })
+    const legacyCapabilityGetters = [
+      'getCapabilityProviderId',
+      'getTemperatureCapability',
+      'getReasoningPortrait',
+      'supportsReasoningCapability'
+    ] as const
+    for (const method of legacyCapabilityGetters) {
+      Object.assign(providerSettings, { [method]: vi.fn() })
+    }
+    const provider = new AiSdkProvider(createProvider(), providerSettings)
+
+    const routeDecision = (provider as any).resolveRouteDecision('kimi-k3')
+    const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
+    const runtimeContext = (provider as any).buildRuntimeContext('kimi-k3')
+
+    expect(routeDecision.endpointType).toBe('openai')
+    expect(routeDecision.capabilityIdentity).toEqual({
+      providerId: 'moonshot',
+      modelId: 'kimi-k3',
+      source: 'model-family',
+      catalogMatched: true
+    })
+    expect(runtimeProvider.capabilityProviderId).toBe('moonshot')
+    expect(runtimeContext.context.capabilitySnapshot).toMatchObject({
+      identity: routeDecision.capabilityIdentity,
+      temperatureCapability: false,
+      reasoningPortrait: {
+        interleaved: true,
+        summaries: true,
+        visibility: 'summary',
+        continuation: ['thinking_blocks']
+      }
+    })
+    for (const method of legacyCapabilityGetters) {
+      expect(providerSettings[method]).not.toHaveBeenCalled()
+    }
   })
 
   it('exposes all chat endpoints for openai-only chat models while keeping completions as default', async () => {

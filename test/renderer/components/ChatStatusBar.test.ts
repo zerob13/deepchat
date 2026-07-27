@@ -475,15 +475,27 @@ const setup = async (options: SetupOptions = {}) => {
       verbosity: 'medium',
       ...options.modelConfig
     }),
-    getCapabilities: vi.fn().mockResolvedValue({
-      supportsReasoning: reasoningPortrait?.supported ?? true,
-      reasoningPortrait,
-      thinkingBudgetRange: reasoningPortrait?.budget ?? null,
-      supportsSearch: null,
-      searchDefaults: null,
-      supportsTemperatureControl: options.temperatureCapability ?? true,
-      temperatureCapability: options.temperatureCapability ?? true
-    })
+    getCapabilities: vi.fn().mockImplementation((providerId: string, modelId: string) =>
+      Promise.resolve({
+        identity: {
+          providerId: options.capabilityProviderId ?? providerId,
+          modelId,
+          source: 'transport-fallback',
+          catalogMatched: false
+        },
+        supportsReasoning: reasoningPortrait?.supported ?? true,
+        reasoningPortrait,
+        thinkingBudgetRange: reasoningPortrait?.budget ?? null,
+        supportsSearch: null,
+        searchDefaults: null,
+        supportsTemperatureControl: options.temperatureCapability ?? true,
+        temperatureCapability: options.temperatureCapability ?? true,
+        supportsReasoningEffort: options.supportsEffort !== false,
+        reasoningEffortDefault,
+        supportsVerbosity: true,
+        verbosityDefault: 'medium'
+      })
+    )
   }
 
   const baseSessionSettings: TestGenerationSettings = {
@@ -1194,6 +1206,7 @@ describe('ChatStatusBar model and session panels', () => {
       hasActiveSession: false,
       preferredModel: { providerId: 'zenmux', modelId: 'anthropic/claude-opus-4-7' },
       defaultModel: { providerId: 'zenmux', modelId: 'anthropic/claude-opus-4-7' },
+      capabilityProviderId: 'anthropic',
       extraModelGroups: [
         {
           providerId: 'zenmux',
@@ -1607,6 +1620,7 @@ describe('ChatStatusBar model and session panels', () => {
       hasActiveSession: false,
       preferredModel: { providerId: 'new-api', modelId: 'claude-opus-4-8' },
       defaultModel: { providerId: 'new-api', modelId: 'claude-opus-4-8' },
+      capabilityProviderId: 'anthropic',
       extraModelGroups: [
         {
           providerId: 'new-api',

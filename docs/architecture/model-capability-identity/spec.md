@@ -82,13 +82,14 @@ Phase 2 accepts the selected endpoint in addition to model ID and owner metadata
 capability identity using this precedence:
 
 1. explicit provider-level capability override;
-2. provider-local exact or canonical provider-db match;
-3. qualified model namespace;
-4. recognized owner;
-5. recognized model family;
-6. transport-provider match;
-7. unique global exact or canonical match;
-8. transport fallback with an unknown catalog model.
+2. explicit main-process route override;
+3. provider-local exact or canonical provider-db match;
+4. qualified model namespace;
+5. recognized owner;
+6. recognized model family;
+7. transport-provider match;
+8. unique global exact or canonical match;
+9. transport fallback with an unknown catalog model.
 
 An ambiguous global match is not selected by provider iteration order. All capabilities for a
 resolved model use the same provider and catalog model identity.

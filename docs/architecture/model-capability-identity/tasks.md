@@ -12,16 +12,16 @@
 
 ## Capability identity
 
-- [ ] Add the main-process two-phase capability identity resolver.
-- [ ] Rename `capabilityProviderId` route hints to `capabilityFamilyHint`.
-- [ ] Move transport fallback and ZenMux override out of the shared renderer module.
-- [ ] Remove the unused BaseProvider capability resolver.
-- [ ] Resolve RouteDecision capability identity once and pass it through runtime context.
-- [ ] Add one ProviderSettings capability snapshot and compatibility wrappers.
-- [ ] Preserve temperature `true`, `false`, and `unknown` states.
-- [ ] Make a resolved identity select all capability fields from one catalog model.
-- [ ] Add New API K3, OpenCode Go, ZenMux, ambiguity, and unknown-model tests.
-- [ ] Review and commit the capability identity slice.
+- [x] Add the main-process two-phase capability identity resolver.
+- [x] Rename `capabilityProviderId` route hints to `capabilityFamilyHint`.
+- [x] Move transport fallback and ZenMux override out of the shared renderer module.
+- [x] Remove the unused BaseProvider capability resolver.
+- [x] Resolve RouteDecision capability identity once and pass it through runtime context.
+- [x] Add one ProviderSettings capability snapshot and compatibility wrappers.
+- [x] Preserve temperature `true`, `false`, and `unknown` states.
+- [x] Make a resolved identity select all capability fields from one catalog model.
+- [x] Add New API K3, OpenCode Go, ZenMux, ambiguity, and unknown-model tests.
+- [x] Review and commit the capability identity slice.
 
 ## Model request policy
 

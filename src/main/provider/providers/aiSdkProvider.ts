@@ -3,14 +3,10 @@ import { EMBEDDING_TEST_KEY, isNormalized } from '@/utils/vector'
 import {
   ApiEndpointType,
   ModelType,
-  isClaudeFamilyModelId,
-  isDeepSeekSeriesModelId,
-  isGeminiFamilyModelId,
   isNewApiEndpointType,
   resolveNewApiModelTypeFromMetadata,
   resolveNewApiSelectableEndpointTypes,
   resolveNewApiEndpointTypeFromRoute,
-  resolveProviderCapabilityProviderId,
   type NewApiEndpointType
 } from '@shared/model'
 import { isTtsModelConfig, isTtsModelId } from '@shared/ttsSettings'
@@ -69,8 +65,16 @@ import {
   resolveAiSdkProviderDefinition
 } from '../providerRegistry'
 import { providerDbLoader } from '../../provider/providerDbLoader'
-import { modelCapabilities, type CapabilityModelMatch } from '../modelCapabilities'
+import { modelCapabilities } from '../modelCapabilities'
 import { isImageInputSupported } from '@shared/types/model-db'
+import {
+  buildResolvedCapabilitySnapshot,
+  isOpenCodeGoAnthropicRoute,
+  isZenmuxAnthropicRoute,
+  resolveCapabilityFamilyHint,
+  resolveCapabilityIdentity as resolveModelCapabilityIdentity
+} from '../capabilityIdentity'
+import type { ResolvedCapabilityIdentity } from '@shared/types/model-capabilities'
 
 const OPENAI_IMAGE_GENERATION_MODELS = ['gpt-4o-all', 'gpt-4o-image']
 const OPENAI_IMAGE_GENERATION_MODEL_PREFIXES = ['dall-e-', 'gpt-image-']
@@ -90,15 +94,6 @@ const GREENPT_RECOMMENDED_MODEL_IDS = [
   'green-rerank'
 ]
 const GREENPT_NON_OPENAI_MODEL_IDS = new Set(['green-s', 'green-s-pro'])
-// Keep this aligned with the OpenCode Go docs table for models served by /messages.
-const OPENCODE_GO_ANTHROPIC_MODEL_IDS = new Set([
-  'minimax-m3',
-  'minimax-m2.7',
-  'minimax-m2.5',
-  'qwen3.7-max',
-  'qwen3.7-plus',
-  'qwen3.6-plus'
-])
 const DEFAULT_NEW_API_BASE_URL = 'https://www.newapi.ai'
 
 type RouteDecision = {
@@ -107,6 +102,7 @@ type RouteDecision = {
   modelConfigPatch?: Partial<ModelConfig>
   endpointType?: NewApiEndpointType | 'grok-image'
   supportsOfficialAnthropicReasoning?: boolean
+  capabilityIdentity?: ResolvedCapabilityIdentity
 }
 
 type ProviderRequestOptions = {
@@ -149,106 +145,6 @@ const shouldUseOpenAITtsRoute = (modelId: string, modelConfig: ModelConfig): boo
   isTtsModelConfig(modelConfig) ||
   modelConfig.apiEndpoint === ApiEndpointType.AudioSpeech ||
   isTtsModelId(modelId)
-
-const normalizeNewApiHintValue = (value: string | undefined): string =>
-  value
-    ?.trim()
-    .toLowerCase()
-    .replace(/[./_-]+/g, ' ') ?? ''
-
-const addUniqueProviderId = (providerIds: string[], providerId: string): void => {
-  if (!providerIds.includes(providerId)) {
-    providerIds.push(providerId)
-  }
-}
-
-const addNewApiCapabilityProviderHints = (
-  providerIds: string[],
-  modelId: string,
-  ownedBy?: string,
-  endpointType?: NewApiEndpointType
-): void => {
-  const normalizedModelId = normalizeNewApiHintValue(modelId)
-  const normalizedOwner = normalizeNewApiHintValue(ownedBy)
-
-  if (endpointType === 'anthropic') {
-    addUniqueProviderId(providerIds, 'anthropic')
-  }
-  if (endpointType === 'gemini') {
-    addUniqueProviderId(providerIds, 'gemini')
-  }
-  if (endpointType === 'openai' || endpointType === 'openai-response') {
-    addUniqueProviderId(providerIds, 'openai')
-  }
-
-  if (isClaudeFamilyModelId(modelId)) {
-    addUniqueProviderId(providerIds, 'anthropic')
-  }
-  if (isGeminiFamilyModelId(modelId)) {
-    addUniqueProviderId(providerIds, 'gemini')
-  }
-  if (normalizedModelId.includes('qwen') || normalizedModelId.includes('qwq')) {
-    addUniqueProviderId(providerIds, 'alibaba-cn')
-    addUniqueProviderId(providerIds, 'alibaba')
-  }
-  if (isDeepSeekSeriesModelId(modelId)) {
-    addUniqueProviderId(providerIds, 'deepseek')
-  }
-  if (normalizedModelId.includes('kimi') || normalizedModelId.includes('moonshot')) {
-    addUniqueProviderId(providerIds, 'moonshot')
-  }
-  if (normalizedModelId.includes('doubao')) {
-    addUniqueProviderId(providerIds, 'doubao')
-  }
-  if (normalizedModelId.includes('grok') || normalizedModelId.includes('xai')) {
-    addUniqueProviderId(providerIds, 'xai')
-  }
-
-  if (normalizedOwner.includes('claude') || normalizedOwner.includes('anthropic')) {
-    addUniqueProviderId(providerIds, 'anthropic')
-  }
-  if (normalizedOwner.includes('gemini') || normalizedOwner.includes('google')) {
-    addUniqueProviderId(providerIds, 'gemini')
-  }
-  if (
-    normalizedOwner === 'ali' ||
-    normalizedOwner.includes('alibaba') ||
-    normalizedOwner.includes('qwen') ||
-    normalizedOwner.includes('dashscope')
-  ) {
-    addUniqueProviderId(providerIds, 'alibaba-cn')
-    addUniqueProviderId(providerIds, 'alibaba')
-  }
-  if (
-    normalizedOwner.includes('volcengine') ||
-    normalizedOwner.includes('doubao') ||
-    normalizedOwner.includes('bytedance')
-  ) {
-    addUniqueProviderId(providerIds, 'doubao')
-  }
-  if (normalizedOwner.includes('deepseek')) {
-    addUniqueProviderId(providerIds, 'deepseek')
-  }
-  if (normalizedOwner.includes('moonshot') || normalizedOwner.includes('kimi')) {
-    addUniqueProviderId(providerIds, 'moonshot')
-  }
-  if (normalizedOwner.includes('xai') || normalizedOwner.includes('grok')) {
-    addUniqueProviderId(providerIds, 'xai')
-  }
-  if (normalizedOwner.includes('openai')) {
-    addUniqueProviderId(providerIds, 'openai')
-  }
-}
-
-const getNewApiPreferredCapabilityProviderIds = (
-  modelId: string,
-  ownedBy?: string,
-  endpointType?: NewApiEndpointType
-): string[] => {
-  const providerIds: string[] = []
-  addNewApiCapabilityProviderHints(providerIds, modelId, ownedBy, endpointType)
-  return providerIds
-}
 
 export function normalizeExtractedImageText(content: string): string {
   const normalized = content
@@ -362,41 +258,31 @@ export class AiSdkProvider extends BaseLLMProvider {
   }
 
   private getStoredModel(modelId: string): MODEL_META | undefined {
-    return [...this.models, ...this.customModels].find((model) => model.id === modelId)
-  }
-
-  private resolveNewApiSpecialCapabilityProviderId(
-    modelId: string,
-    ownedBy?: string
-  ): string | undefined {
-    const preferredProviderIds = getNewApiPreferredCapabilityProviderIds(modelId, ownedBy)
-    const specialProviderId = preferredProviderIds.find(
-      (providerId) => providerId === 'anthropic' || providerId === 'gemini'
-    )
-    if (specialProviderId) {
-      return specialProviderId
-    }
-
     return (
-      modelCapabilities.getCapabilityModelMatch('anthropic', modelId)?.providerId ??
-      modelCapabilities.getCapabilityModelMatch('gemini', modelId)?.providerId
+      this.models.find((model) => model.id === modelId) ??
+      this.customModels.find((model) => model.id === modelId)
     )
   }
 
-  private resolveNewApiCapabilityMatch(
+  private resolveCapabilityIdentity(
     modelId: string,
-    endpointType: NewApiEndpointType,
-    ownedBy?: string
-  ): CapabilityModelMatch | undefined {
-    return modelCapabilities.findCapabilityModelMatch(
+    endpointType?: RouteDecision['endpointType']
+  ): ResolvedCapabilityIdentity {
+    const storedModel = this.getStoredModel(modelId)
+    const modelConfig = this.getProviderModelConfig(modelId)
+    const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
+    return resolveModelCapabilityIdentity({
+      providerId: this.provider.id,
       modelId,
-      getNewApiPreferredCapabilityProviderIds(modelId, ownedBy, endpointType)
-    )
+      ownedBy,
+      endpointType: endpointType === 'grok-image' ? undefined : endpointType,
+      explicitProviderId: this.provider.capabilityProviderId
+    })
   }
 
-  private resolveNewApiRuntimeCapabilityProviderId(
-    modelId: string,
-    endpointType: NewApiEndpointType
+  private getRuntimeCapabilityProviderId(
+    identity: ResolvedCapabilityIdentity,
+    endpointType?: NewApiEndpointType
   ): string {
     if (endpointType === 'anthropic') {
       return 'anthropic'
@@ -404,30 +290,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     if (endpointType === 'gemini') {
       return 'gemini'
     }
-
-    const storedModel = this.getStoredModel(modelId)
-    const modelConfig = this.getProviderModelConfig(modelId)
-    const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
-    const capabilityMatch = this.resolveNewApiCapabilityMatch(modelId, endpointType, ownedBy)
-    if (
-      capabilityMatch &&
-      (endpointType === 'openai' || endpointType === 'openai-response') &&
-      capabilityMatch.providerId !== 'openai'
-    ) {
-      return capabilityMatch.providerId
-    }
-
-    return resolveProviderCapabilityProviderId(
-      this.provider.id,
-      {
-        endpointType,
-        supportedEndpointTypes: storedModel?.supportedEndpointTypes,
-        type: storedModel?.type,
-        ownedBy,
-        capabilityProviderId: capabilityMatch?.providerId
-      },
-      modelId
-    )
+    return identity.providerId
   }
 
   private usesOfficialAnthropicReasoning(): boolean {
@@ -446,6 +309,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
 
     const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
+    const capabilityFamilyHint = resolveCapabilityFamilyHint(modelId, ownedBy)
     return resolveNewApiEndpointTypeFromRoute(
       storedModel
         ? {
@@ -453,11 +317,11 @@ export class AiSdkProvider extends BaseLLMProvider {
             supportedEndpointTypes: storedModel.supportedEndpointTypes,
             type: storedModel.type,
             ownedBy,
-            capabilityProviderId: this.resolveNewApiSpecialCapabilityProviderId(modelId, ownedBy)
+            capabilityFamilyHint
           }
         : {
             ownedBy,
-            capabilityProviderId: this.resolveNewApiSpecialCapabilityProviderId(modelId, ownedBy)
+            capabilityFamilyHint
           },
       modelId
     )
@@ -470,37 +334,43 @@ export class AiSdkProvider extends BaseLLMProvider {
       return {
         providerKind: this.definition.runtimeKind,
         endpointType: 'grok-image',
+        capabilityIdentity: this.resolveCapabilityIdentity(modelId),
         modelConfigPatch: {
           apiEndpoint: ApiEndpointType.Image
         }
       }
     }
 
-    if (strategy === 'zenmux' && modelId.trim().toLowerCase().startsWith('anthropic/')) {
+    if (strategy === 'zenmux' && isZenmuxAnthropicRoute(this.provider.id, modelId)) {
+      const capabilityIdentity = this.resolveCapabilityIdentity(modelId)
       return {
         providerKind: 'openai-compatible',
+        capabilityIdentity,
         providerPatch: {
           apiType: 'openai-completions',
-          capabilityProviderId: 'anthropic'
+          capabilityProviderId: capabilityIdentity.providerId
         }
       }
     }
 
-    if (strategy === 'opencode-go' && OPENCODE_GO_ANTHROPIC_MODEL_IDS.has(modelId)) {
+    if (strategy === 'opencode-go' && isOpenCodeGoAnthropicRoute(this.provider.id, modelId)) {
+      const capabilityIdentity = this.resolveCapabilityIdentity(modelId)
       return {
         providerKind: 'anthropic',
+        capabilityIdentity,
         providerPatch: {
           apiType: 'anthropic',
           baseUrl: this.provider.baseUrl,
-          capabilityProviderId: 'anthropic'
+          capabilityProviderId: capabilityIdentity.providerId
         }
       }
     }
 
     if (strategy === 'new-api') {
       const endpointType = this.resolveNewApiEndpointType(modelId)
-      const capabilityProviderId = this.resolveNewApiRuntimeCapabilityProviderId(
-        modelId,
+      const capabilityIdentity = this.resolveCapabilityIdentity(modelId, endpointType)
+      const capabilityProviderId = this.getRuntimeCapabilityProviderId(
+        capabilityIdentity,
         endpointType
       )
       const host = this.getNormalizedNewApiHost()
@@ -510,6 +380,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'anthropic',
             endpointType,
+            capabilityIdentity,
             supportsOfficialAnthropicReasoning: true,
             providerPatch: {
               apiType: 'anthropic',
@@ -521,6 +392,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'gemini',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'gemini',
               baseUrl: this.getNormalizedNewApiGeminiBaseUrl(),
@@ -531,6 +403,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-responses',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-responses',
               baseUrl: `${host}/v1`,
@@ -541,6 +414,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-compatible',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${host}/v1`,
@@ -556,6 +430,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-compatible',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${host}/v1`,
@@ -572,6 +447,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-compatible',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${host}/v1`,
@@ -585,6 +461,7 @@ export class AiSdkProvider extends BaseLLMProvider {
 
     return {
       providerKind: this.definition.runtimeKind,
+      capabilityIdentity: this.resolveCapabilityIdentity(modelId),
       ...(supportsOfficialAnthropicReasoning ? { supportsOfficialAnthropicReasoning } : {})
     }
   }
@@ -615,8 +492,11 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
   }
 
-  private getModelConfigForDecision(modelId: string, modelConfig?: ModelConfig): ModelConfig {
-    const decision = this.resolveRouteDecision(modelId, modelConfig)
+  private getModelConfigForDecision(
+    modelId: string,
+    modelConfig?: ModelConfig,
+    decision: RouteDecision = this.resolveRouteDecision(modelId, modelConfig)
+  ): ModelConfig {
     return {
       ...this.getResolvedModelConfig(modelId, modelConfig),
       ...decision.modelConfigPatch
@@ -774,7 +654,10 @@ export class AiSdkProvider extends BaseLLMProvider {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
     }
-    const resolvedModelConfig = this.getModelConfigForDecision(modelId, modelConfig)
+    const resolvedModelConfig = this.getModelConfigForDecision(modelId, modelConfig, decision)
+    const capabilityIdentity =
+      decision.capabilityIdentity ?? this.resolveCapabilityIdentity(modelId, decision.endpointType)
+    const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity)
 
     const cleanHeaders =
       this.isAzureOpenAI(decision, runtimeProvider) || runtimeProvider.id === 'kimi-for-coding'
@@ -827,6 +710,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       context: {
         providerKind: decision.providerKind,
         provider: runtimeProvider,
+        capabilitySnapshot,
         supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
         providerSettings: this.providerSettings,
         defaultHeaders,
@@ -1224,6 +1108,8 @@ export class AiSdkProvider extends BaseLLMProvider {
     signal?: AbortSignal
   ): Promise<number[][]> {
     const runtimeProvider = this.getRuntimeProvider(decision)
+    const capabilityIdentity =
+      decision.capabilityIdentity ?? this.resolveCapabilityIdentity(modelId, decision.endpointType)
     const defaultHeaders = {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
@@ -1231,6 +1117,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     const context: AiSdkRuntimeContext = {
       providerKind: decision.providerKind,
       provider: runtimeProvider,
+      capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity),
       supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
       providerSettings: this.providerSettings,
       defaultHeaders,
@@ -1305,6 +1192,9 @@ export class AiSdkProvider extends BaseLLMProvider {
       }
       console.error(`[AiSdkProvider] Failed to get dimensions for model ${modelId}:`, error)
       const runtimeProvider = this.getRuntimeProvider(decision)
+      const capabilityIdentity =
+        decision.capabilityIdentity ??
+        this.resolveCapabilityIdentity(modelId, decision.endpointType)
       const defaultHeaders = {
         ...this.defaultHeaders,
         ...this.definition.defaultHeadersPatch
@@ -1312,6 +1202,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       const context: AiSdkRuntimeContext = {
         providerKind: decision.providerKind,
         provider: runtimeProvider,
+        capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity),
         supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
         providerSettings: this.providerSettings,
         defaultHeaders,
@@ -2000,7 +1891,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       })
       .map((model) => {
         const modelId = model.id.trim()
-        const isAnthropicModel = OPENCODE_GO_ANTHROPIC_MODEL_IDS.has(modelId)
+        const isAnthropicModel = isOpenCodeGoAnthropicRoute(this.provider.id, modelId)
         const existingConfig = this.getProviderModelConfig(modelId)
         const endpointType = isAnthropicModel ? 'anthropic' : 'openai'
 
@@ -2108,42 +1999,32 @@ export class AiSdkProvider extends BaseLLMProvider {
             typeof candidate === 'number' && Number.isFinite(candidate)
         )
 
-        const endpointCapabilityProviderId = this.resolveNewApiSpecialCapabilityProviderId(
-          rawModel.id,
-          ownedBy
-        )
+        const capabilityFamilyHint = resolveCapabilityFamilyHint(rawModel.id, ownedBy)
         const defaultEndpointType = resolveNewApiEndpointTypeFromRoute(
           {
             supportedEndpointTypes,
             type,
             ownedBy,
-            capabilityProviderId: endpointCapabilityProviderId
+            capabilityFamilyHint
           },
           rawModel.id
         )
-        const capabilityMatch = this.resolveNewApiCapabilityMatch(
-          rawModel.id,
-          defaultEndpointType,
-          ownedBy
+        const capabilityIdentity = resolveModelCapabilityIdentity({
+          providerId: this.provider.id,
+          modelId: rawModel.id,
+          ownedBy,
+          endpointType: defaultEndpointType,
+          explicitProviderId: this.provider.capabilityProviderId
+        })
+        const capabilityModel = modelCapabilities.getProviderCapabilityModelMatch(
+          capabilityIdentity.providerId,
+          capabilityIdentity.modelId
+        )?.model
+        const catalogCapabilities = modelCapabilities.getCatalogCapabilitySnapshot(
+          capabilityIdentity.providerId,
+          capabilityIdentity.modelId
         )
-        const capabilityProviderId = resolveProviderCapabilityProviderId(
-          this.provider.id,
-          {
-            endpointType: defaultEndpointType,
-            supportedEndpointTypes,
-            type,
-            ownedBy,
-            capabilityProviderId: capabilityMatch?.providerId
-          },
-          rawModel.id
-        )
-        const capabilityModel =
-          capabilityMatch?.model ??
-          modelCapabilities.getCapabilityModel(capabilityProviderId, rawModel.id)
-        const capabilityReasoning = modelCapabilities.supportsReasoning(
-          capabilityMatch?.providerId ?? capabilityProviderId,
-          rawModel.id
-        )
+        const capabilityReasoning = catalogCapabilities.supportsReasoning
         const capabilityVision = capabilityModel
           ? isImageInputSupported(capabilityModel)
           : undefined
@@ -2840,15 +2721,22 @@ export class AiSdkProvider extends BaseLLMProvider {
       case 'google':
         return this.runEmbeddings(modelId, texts, signal)
       case 'new-api': {
+        const endpointType = 'openai' as const
+        const capabilityIdentity = this.resolveCapabilityIdentity(modelId, endpointType)
         return this.runEmbeddingsWithDecision(
           modelId,
           texts,
           {
             providerKind: 'openai-compatible',
+            endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${this.getNormalizedNewApiHost()}/v1`,
-              capabilityProviderId: this.resolveNewApiRuntimeCapabilityProviderId(modelId, 'openai')
+              capabilityProviderId: this.getRuntimeCapabilityProviderId(
+                capabilityIdentity,
+                endpointType
+              )
             }
           },
           signal
@@ -2871,14 +2759,21 @@ export class AiSdkProvider extends BaseLLMProvider {
       case 'google':
         return this.runDimensions(modelId, signal)
       case 'new-api': {
+        const endpointType = 'openai' as const
+        const capabilityIdentity = this.resolveCapabilityIdentity(modelId, endpointType)
         return this.runDimensionsWithDecision(
           modelId,
           {
             providerKind: 'openai-compatible',
+            endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${this.getNormalizedNewApiHost()}/v1`,
-              capabilityProviderId: this.resolveNewApiRuntimeCapabilityProviderId(modelId, 'openai')
+              capabilityProviderId: this.getRuntimeCapabilityProviderId(
+                capabilityIdentity,
+                endpointType
+              )
             }
           },
           signal
