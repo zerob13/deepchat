@@ -64,14 +64,26 @@
 
 ## Validation
 
-- [ ] Preserve existing image OCR unit, integration, and packaged smoke behavior.
-- [ ] Add textual, scanned, mixed-coverage, empty, over-100-page, output-limit, resource-limit, and
+- [x] Preserve existing image OCR unit, integration, and packaged smoke behavior.
+- [x] Add textual, scanned, mixed-coverage, empty, over-100-page, output-limit, resource-limit, and
   cancellation PDF tests.
-- [ ] Add deterministic packaged PDF OCR smoke.
-- [ ] Run focused main and renderer tests after each slice.
-- [ ] Run format, i18n, lint, typecheck, full tests, and production build.
-- [ ] Run current-platform packaged smoke when prerequisites are available.
-- [ ] Complete the final cross-module review and resolve findings.
-- [ ] Update this checklist and the retained historical OCR specification.
-- [ ] Commit the validated implementation and documentation locally.
-- [ ] Do not push.
+- [x] Add deterministic packaged PDF OCR smoke.
+- [x] Run focused main and renderer tests after each slice.
+- [x] Run format, i18n, lint, typecheck, full tests, and production build.
+- [x] Run current-platform packaged smoke when prerequisites are available.
+- [x] Complete the final cross-module review and resolve findings.
+- [x] Update this checklist and the retained historical OCR specification.
+- [x] Commit the validated implementation and documentation locally.
+- [x] Do not push.
+
+## Validation Evidence
+
+- Focused protocol, helper, host, artifact, routing, persistence, renderer, and packaging suites
+  passed after their implementation slices.
+- The full main suite passed with 5,142 tests and 244 skips; the full renderer suite passed with
+  1,578 tests.
+- `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, `pnpm run typecheck`, and
+  `pnpm run build` passed.
+- An unsigned macOS arm64 packaged app passed the network-denied Light OCR smoke. The helper
+  recognized both the existing image fixture and a generated one-page image-only PDF through the
+  packaged PDFium runtime.

@@ -2,8 +2,18 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { gzipSync } from 'node:zlib'
+import { deflateSync, gzipSync } from 'node:zlib'
+import pdfParse from 'pdf-parse-new'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  LIGHT_OCR_DOCUMENT_MAX_PAGES,
+  LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS,
+  LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+  LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES,
+  LIGHT_OCR_PROTOCOL_VERSION
+} from '../../../src/main/ocr/lightOcrProtocol'
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs')
@@ -12,11 +22,16 @@ vi.mock('node:fs', async () => {
 
 import {
   assertSupportExpectation,
+  assertDocumentFixtureRecognized,
   assertFixtureRecognized,
+  buildRasterPdfFixture,
   createPackagedLightOcrEnvironment,
+  DOCUMENT_SMOKE_OPTIONS,
   measurePackagedComponents,
   normalizeArch,
   normalizePlatform,
+  PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES,
+  PACKAGED_LIGHT_OCR_PROTOCOL_VERSION,
   parseArgs,
   resolvePackagedOcrLayout
 } from '../../../scripts/smoke-light-ocr.js'
@@ -135,6 +150,21 @@ describe('smoke-light-ocr', () => {
         true
       )
     ).toThrow(/mutually exclusive/)
+  })
+
+  it('keeps packaged smoke limits aligned with the host protocol', () => {
+    expect(PACKAGED_LIGHT_OCR_PROTOCOL_VERSION).toBe(LIGHT_OCR_PROTOCOL_VERSION)
+    expect(PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES).toBe(
+      LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES
+    )
+    expect(DOCUMENT_SMOKE_OPTIONS).toEqual({
+      dpi: 150,
+      pageRange: { start: 1, end: LIGHT_OCR_DOCUMENT_MAX_PAGES },
+      maxPages: LIGHT_OCR_DOCUMENT_MAX_PAGES,
+      maxFileBytes: LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+      maxPagePixels: LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+      maxTotalPixels: LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS
+    })
   })
 
   it('does not inherit credentials or code-injection variables in smoke helpers', () => {
@@ -615,5 +645,26 @@ describe('smoke-light-ocr', () => {
     expect(() => assertFixtureRecognized({ lines: [{ text: 'unrelated' }] })).toThrow(
       /did not recognize/
     )
+    expect(() =>
+      assertDocumentFixtureRecognized([
+        { index: 0, lines: ['DeepChat', 'OCR TEST 2026'] }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      assertDocumentFixtureRecognized([
+        { index: 0, lines: ['DeepChat'] },
+        { index: 1, lines: ['2026'] }
+      ])
+    ).toThrow(/PDF OCR did not recognize/)
+  })
+
+  it('builds a one-page image-only PDF fixture', async () => {
+    const pdf = buildRasterPdfFixture(deflateSync(Buffer.from([255, 255, 255])), 1, 1)
+
+    expect(pdf.subarray(0, 8).toString('ascii')).toBe('%PDF-1.4')
+    await expect(pdfParse(pdf)).resolves.toMatchObject({
+      numpages: 1,
+      text: expect.stringMatching(/^\s*$/)
+    })
   })
 })

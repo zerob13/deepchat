@@ -1,6 +1,6 @@
 # Light OCR 0.5.5 PDF Support
 
-Status: in progress
+Status: implemented and locally validated
 
 Upstream release:
 [arcships/light-ocr v0.5.5](https://github.com/arcships/light-ocr/releases/tag/v0.5.5)
@@ -310,4 +310,4 @@ or a transient OCR failure; it is not inferred from whether an artifact was cach
   pass locally. Platform packaging claims remain limited to targets actually validated by their
   workflows.
 
-No clarification marker remains; implementation can proceed from this contract.
+No clarification marker remains; the implementation and local validation conform to this contract.
