@@ -97,6 +97,60 @@ function normalizeConfidence(value: unknown): number {
   return Math.min(1, Math.max(0, parsed))
 }
 
+function parseStrictConfidence(value: unknown): number | null {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value)
+        : Number.NaN
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null
+}
+
+export function tryNormalizeMemoryTemporalMetadata(
+  input: RawMemoryTemporalMetadata | null | undefined
+): MemoryTemporalMetadata | null {
+  const rawKind = input?.temporalKind ?? input?.kind
+  if (!TEMPORAL_KIND_SET.has(rawKind)) return null
+  const temporalKind = rawKind as AgentMemoryTemporalKind
+  const rawValidFrom = input?.validFrom
+  const rawValidUntil = input?.validUntil
+  const rawConfidence = input?.temporalConfidence ?? input?.confidence
+  const rawPrecision = input?.temporalPrecision ?? input?.precision
+  const rawTimeZone = input?.temporalTimeZone ?? input?.timeZone
+
+  if (temporalKind === 'atemporal') {
+    return [rawValidFrom, rawValidUntil, rawConfidence, rawPrecision, rawTimeZone].every(
+      (value) => value === undefined || value === null
+    )
+      ? { ...ATEMPORAL_MEMORY_METADATA }
+      : null
+  }
+
+  const validFrom = parseEpochMilliseconds(rawValidFrom)
+  const validUntil = parseEpochMilliseconds(rawValidUntil)
+  if (
+    (rawValidFrom !== undefined && rawValidFrom !== null && validFrom === null) ||
+    (rawValidUntil !== undefined && rawValidUntil !== null && validUntil === null) ||
+    (validFrom !== null && validUntil !== null && validFrom >= validUntil)
+  ) {
+    return null
+  }
+  const temporalConfidence = parseStrictConfidence(rawConfidence)
+  if (temporalConfidence === null || !TEMPORAL_PRECISION_SET.has(rawPrecision)) return null
+  const temporalTimeZone = canonicalizeMemoryTimeZone(rawTimeZone)
+  if (temporalTimeZone === null) return null
+
+  return {
+    temporalKind,
+    validFrom,
+    validUntil,
+    temporalConfidence,
+    temporalPrecision: rawPrecision as AgentMemoryTemporalPrecision,
+    temporalTimeZone
+  }
+}
+
 export function normalizeMemoryTemporalMetadata(
   input: RawMemoryTemporalMetadata | null | undefined,
   fallbackTimeZone = 'UTC'

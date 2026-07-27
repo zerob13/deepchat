@@ -101,9 +101,9 @@ Memory-owned entries to the shared schema catalog.
 ## 8. Post-implementation hardening
 
 - [x] Classify all Memory tests and run native directive persistence tests in CI.
-- [ ] Enforce temporal invariants on upgraded databases and repair invalid legacy rows.
-- [ ] Skip malformed temporal/scope import rows without rolling back valid data.
-- [ ] Retire the superseded recall index without rebuilding it at startup.
+- [x] Enforce temporal invariants on upgraded databases and repair invalid legacy rows.
+- [x] Skip malformed temporal/scope import rows without rolling back valid data.
+- [x] Retire the superseded recall index without rebuilding it at startup.
 - [ ] Preserve one-sided temporal metadata across all rewrite paths.
 - [ ] Reject malformed extracted temporal candidates independently.
 - [ ] Allow explicit relearning to atomically supersede exact tombstones.

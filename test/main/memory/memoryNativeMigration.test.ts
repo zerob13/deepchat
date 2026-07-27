@@ -117,12 +117,12 @@ describeIfNative('Memory native SQLite migration', () => {
         db.exec(
           "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, valid_from, valid_until, created_at) VALUES ('bad-time', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', 'UTC', 20, 10, 1)"
         )
-      ).toThrow(/CHECK constraint failed/)
+      ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
       expect(() =>
         db.exec(
           "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, created_at) VALUES ('bad-zone', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', ' UTC ', 1)"
         )
-      ).toThrow(/CHECK constraint failed/)
+      ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
       expect(() =>
         db.exec(
           "INSERT INTO agent_memory (id, agent_id, kind, content, scope_type, scope_id, created_at) VALUES ('bad-scope', 'a', 'semantic', 'bad', 'agent', 'unexpected', 1)"
@@ -131,10 +131,78 @@ describeIfNative('Memory native SQLite migration', () => {
       expect(
         db.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'agent_memory_fts'").get()
       ).toEqual({ present: 1 })
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_memory_recall_importance_v5'"
+          )
+          .get()
+      ).toBeUndefined()
       first.close()
 
       const reopened = new MainDatabaseCtor(databasePath)
       expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(46)
+      reopened.close()
+    })
+  })
+
+  it('repairs invalid upgraded temporal metadata before startup validation', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      memoryTable(seeded).insert({
+        id: 'corrupted-temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Corrupted temporal metadata survives as a claim.',
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 10,
+          validUntil: 20,
+          temporalConfidence: 0.9,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+      seeded.close()
+
+      const corrupted = new DatabaseCtor(databasePath)
+      corrupted.exec(`
+        DROP TRIGGER IF EXISTS agent_memory_temporal_bu_v1;
+        PRAGMA ignore_check_constraints = ON;
+        UPDATE agent_memory
+        SET valid_from = 20, valid_until = 10
+        WHERE id = 'corrupted-temporal';
+        PRAGMA ignore_check_constraints = OFF;
+      `)
+      corrupted.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(
+        reopened
+          .getDatabase()
+          .prepare(
+            `SELECT content, temporal_kind, valid_from, valid_until, temporal_confidence,
+                    temporal_precision, temporal_timezone
+             FROM agent_memory WHERE id = 'corrupted-temporal'`
+          )
+          .get()
+      ).toEqual({
+        content: 'Corrupted temporal metadata survives as a claim.',
+        temporal_kind: 'atemporal',
+        valid_from: null,
+        valid_until: null,
+        temporal_confidence: null,
+        temporal_precision: null,
+        temporal_timezone: null
+      })
+      expect(() =>
+        reopened
+          .getDatabase()
+          .prepare(
+            "UPDATE agent_memory SET temporal_kind = 'state' WHERE id = 'corrupted-temporal'"
+          )
+          .run()
+      ).toThrow(/invalid agent_memory temporal metadata/)
       reopened.close()
     })
   })
@@ -885,6 +953,63 @@ describeIfNative('Memory native SQLite migration', () => {
       expect(canonicalSummary.tableCounts.agent_memory).toBe(1)
       expect(canonicalSummary.skippedRowCounts).toEqual({ agent_memory: 1 })
       canonicalTargetDb.close()
+    } finally {
+      actualFs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('skips malformed temporal and scope rows without rolling back valid memory imports', async () => {
+    const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-invariant-import-'))
+    const sourcePath = join(directory, 'source.db')
+    const targetPath = join(directory, 'target.db')
+    try {
+      const source = new MainDatabaseCtor(sourcePath)
+      for (const id of ['valid', 'bad-temporal', 'bad-scope']) {
+        memoryTable(source).insert({
+          id,
+          agentId: 'a',
+          kind: 'semantic',
+          content: id,
+          temporal: {
+            temporalKind: 'state',
+            validFrom: 10,
+            validUntil: 20,
+            temporalConfidence: 0.9,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          }
+        })
+      }
+      source.close()
+
+      const malformed = new DatabaseCtor(sourcePath)
+      malformed.exec(`
+        DROP TRIGGER IF EXISTS agent_memory_temporal_bu_v1;
+        DROP TRIGGER IF EXISTS agent_memory_scope_bu_v1;
+        PRAGMA ignore_check_constraints = ON;
+        UPDATE agent_memory
+        SET valid_from = 20, valid_until = 10
+        WHERE id = 'bad-temporal';
+        UPDATE agent_memory
+        SET scope_type = 'agent', scope_id = 'unexpected'
+        WHERE id = 'bad-scope';
+        PRAGMA ignore_check_constraints = OFF;
+      `)
+      malformed.close()
+
+      const target = new MainDatabaseCtor(targetPath)
+      target.close()
+      const importer = new DataImporterCtor(sourcePath, targetPath)
+      const summary = await importer.importData()
+      importer.close()
+
+      expect(summary.tableCounts.agent_memory).toBe(1)
+      expect(summary.skippedRowCounts.agent_memory).toBe(2)
+      const imported = new DatabaseCtor(targetPath)
+      expect(imported.prepare('SELECT id FROM agent_memory ORDER BY id').all()).toEqual([
+        { id: 'valid' }
+      ])
+      imported.close()
     } finally {
       actualFs.rmSync(directory, { recursive: true, force: true })
     }

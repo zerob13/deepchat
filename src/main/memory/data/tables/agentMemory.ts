@@ -219,6 +219,72 @@ const AGENT_MEMORY_DIRTY_TRIGGER_DROP_SQL = `
 
 const DIRTY_SEED_REPOSITORY_LIMIT = 256
 
+const AGENT_MEMORY_TEMPORAL_TRIGGER_INSERT_NAME = 'agent_memory_temporal_bi_v1'
+const AGENT_MEMORY_TEMPORAL_TRIGGER_UPDATE_NAME = 'agent_memory_temporal_bu_v1'
+const AGENT_MEMORY_TEMPORAL_TRIGGER_DROP_SQL = `
+  DROP TRIGGER IF EXISTS ${AGENT_MEMORY_TEMPORAL_TRIGGER_INSERT_NAME};
+  DROP TRIGGER IF EXISTS ${AGENT_MEMORY_TEMPORAL_TRIGGER_UPDATE_NAME};
+`
+const AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL = `
+  (valid_from IS NOT NULL AND valid_until IS NOT NULL AND valid_from >= valid_until)
+  OR temporal_kind IS NULL
+  OR temporal_kind NOT IN ('atemporal', 'state', 'event', 'plan', 'recurring')
+  OR (
+    temporal_confidence IS NOT NULL
+    AND (temporal_confidence < 0 OR temporal_confidence > 1)
+  )
+  OR (
+    temporal_precision IS NOT NULL
+    AND temporal_precision NOT IN ('exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown')
+  )
+  OR (
+    temporal_timezone IS NOT NULL
+    AND (
+      length(temporal_timezone) NOT BETWEEN 1 AND 128
+      OR temporal_timezone != trim(temporal_timezone)
+    )
+  )
+  OR (
+    temporal_kind = 'atemporal'
+    AND (
+      valid_from IS NOT NULL
+      OR valid_until IS NOT NULL
+      OR temporal_confidence IS NOT NULL
+      OR temporal_precision IS NOT NULL
+      OR temporal_timezone IS NOT NULL
+    )
+  )
+  OR (
+    temporal_kind != 'atemporal'
+    AND (
+      temporal_confidence IS NULL
+      OR temporal_precision IS NULL
+      OR temporal_timezone IS NULL
+    )
+  )
+`
+const AGENT_MEMORY_TEMPORAL_INVALID_NEW_SQL = AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL.replaceAll(
+  /\b(temporal_kind|valid_from|valid_until|temporal_confidence|temporal_precision|temporal_timezone)\b/gu,
+  'NEW.$1'
+)
+const AGENT_MEMORY_TEMPORAL_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ${AGENT_MEMORY_TEMPORAL_TRIGGER_INSERT_NAME}
+  BEFORE INSERT ON agent_memory
+  WHEN ${AGENT_MEMORY_TEMPORAL_INVALID_NEW_SQL}
+  BEGIN
+    SELECT RAISE(ABORT, 'invalid agent_memory temporal metadata');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS ${AGENT_MEMORY_TEMPORAL_TRIGGER_UPDATE_NAME}
+  BEFORE UPDATE OF temporal_kind, valid_from, valid_until, temporal_confidence,
+                   temporal_precision, temporal_timezone
+  ON agent_memory
+  WHEN ${AGENT_MEMORY_TEMPORAL_INVALID_NEW_SQL}
+  BEGIN
+    SELECT RAISE(ABORT, 'invalid agent_memory temporal metadata');
+  END;
+`
+
 const AGENT_MEMORY_SCOPE_TRIGGER_INSERT_NAME = 'agent_memory_scope_bi_v1'
 const AGENT_MEMORY_SCOPE_TRIGGER_UPDATE_NAME = 'agent_memory_scope_bu_v1'
 const AGENT_MEMORY_SCOPE_TRIGGER_DROP_SQL = `
@@ -378,6 +444,7 @@ const AGENT_MEMORY_RETIRED_INDEX_SQL = `
   DROP INDEX IF EXISTS idx_agent_memory_conflict_fairness_v2;
   DROP INDEX IF EXISTS idx_agent_memory_conflict_target;
   DROP INDEX IF EXISTS idx_agent_memory_conflict_link_anomaly_v2;
+  DROP INDEX IF EXISTS idx_agent_memory_recall_importance_v5;
 `
 
 const AGENT_MEMORY_CONFLICT_INDEX_SQL = `
@@ -391,11 +458,6 @@ const AGENT_MEMORY_CANONICAL_INDEX_SQL = `
   DROP INDEX IF EXISTS idx_agent_memory_lifecycle_maintenance;
   CREATE INDEX IF NOT EXISTS idx_agent_memory_active_recall
     ON agent_memory(agent_id, lifecycle_state, superseded_by, kind, created_at);
-  CREATE INDEX IF NOT EXISTS idx_agent_memory_recall_importance_v5
-    ON agent_memory(agent_id, importance DESC, created_at DESC, id ASC)
-    WHERE lifecycle_state = 'active'
-      AND superseded_by IS NULL
-      AND kind NOT IN ('persona', 'working');
   CREATE INDEX IF NOT EXISTS idx_agent_memory_management_page_v3
     ON agent_memory(agent_id, created_at DESC, id DESC)
     WHERE lifecycle_state != 'conflicted'
@@ -662,6 +724,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   private ftsCapability: FtsCapability | undefined
   private ftsReady = false
   private ftsRecoveryAfter = 0
+  private temporalArtifactsEnsured = false
 
   getCreateTableSQL(): string {
     return `
@@ -743,6 +806,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       ${AGENT_MEMORY_BASE_INDEX_SQL}
       ${AGENT_MEMORY_CONFLICT_INDEX_SQL}
       ${AGENT_MEMORY_CANONICAL_INDEX_SQL}
+      ${AGENT_MEMORY_TEMPORAL_TRIGGER_SQL}
       ${AGENT_MEMORY_SCOPE_INDEX_SQL}
       ${AGENT_MEMORY_SCOPE_TRIGGER_SQL}
       ${AGENT_MEMORY_LEGACY_STATUS_BRIDGE_SQL}
@@ -755,6 +819,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )
     if (!this.tableExists()) {
       this.db.exec(this.getCreateTableSQL())
+      this.temporalArtifactsEnsured = true
     } else {
       this.db.exec(AGENT_MEMORY_TOMBSTONE_TABLE_SQL)
       this.db.exec(AGENT_MEMORY_BASE_INDEX_SQL)
@@ -770,6 +835,16 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         columns.some((column) => column.name === 'embedding_state')
       ) {
         this.ensureLineageAndDirtyArtifacts()
+      }
+      if (
+        columns.some((column) => column.name === 'temporal_kind') &&
+        columns.some((column) => column.name === 'valid_from') &&
+        columns.some((column) => column.name === 'valid_until') &&
+        columns.some((column) => column.name === 'temporal_confidence') &&
+        columns.some((column) => column.name === 'temporal_precision') &&
+        columns.some((column) => column.name === 'temporal_timezone')
+      ) {
+        this.ensureTemporalArtifacts()
       }
       if (
         columns.some((column) => column.name === 'scope_type') &&
@@ -799,6 +874,31 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     this.db.exec(AGENT_MEMORY_DIRTY_TABLE_SQL)
     if (!dirtyTableExists) this.db.exec(AGENT_MEMORY_DIRTY_BACKFILL_SQL)
     this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
+  }
+
+  private ensureTemporalArtifacts(): void {
+    if (this.temporalArtifactsEnsured) return
+    const repaired = this.db.transaction(() => {
+      this.db.exec(AGENT_MEMORY_TEMPORAL_TRIGGER_DROP_SQL)
+      const changes = this.db
+        .prepare(
+          `UPDATE agent_memory
+           SET temporal_kind = 'atemporal',
+               valid_from = NULL,
+               valid_until = NULL,
+               temporal_confidence = NULL,
+               temporal_precision = NULL,
+               temporal_timezone = NULL
+           WHERE ${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL}`
+        )
+        .run().changes
+      this.db.exec(AGENT_MEMORY_TEMPORAL_TRIGGER_SQL)
+      return changes
+    })()
+    this.temporalArtifactsEnsured = true
+    if (repaired > 0) {
+      logger.warn(`[Memory] reset invalid temporal metadata to atemporal: rows=${repaired}`)
+    }
   }
 
   private ensureScopeArtifacts(): void {
@@ -990,6 +1090,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         throw new Error(`[Memory] agent_memory schema migration is incomplete: ${columnName}`)
       }
     }
+    this.ensureTemporalArtifacts()
     const tableSql = (
       this.db
         .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory'")
@@ -1051,26 +1152,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         .prepare(
           `SELECT COUNT(*) AS count
            FROM agent_memory
-           WHERE (valid_from IS NOT NULL AND valid_until IS NOT NULL AND valid_from >= valid_until)
-              OR temporal_kind NOT IN ('atemporal', 'state', 'event', 'plan', 'recurring')
-              OR (temporal_confidence IS NOT NULL
-                  AND (temporal_confidence < 0 OR temporal_confidence > 1))
-              OR (temporal_precision IS NOT NULL AND temporal_precision NOT IN (
-                   'exact', 'day', 'week', 'month', 'quarter', 'year', 'unknown'
-                 ))
-              OR (temporal_timezone IS NOT NULL AND (
-                   length(temporal_timezone) NOT BETWEEN 1 AND 128
-                   OR temporal_timezone != trim(temporal_timezone)
-                 ))
-              OR (temporal_kind = 'atemporal' AND (
-                   valid_from IS NOT NULL OR valid_until IS NOT NULL
-                   OR temporal_confidence IS NOT NULL OR temporal_precision IS NOT NULL
-                   OR temporal_timezone IS NOT NULL
-                 ))
-              OR (temporal_kind != 'atemporal' AND (
-                   temporal_confidence IS NULL OR temporal_precision IS NULL
-                   OR temporal_timezone IS NULL
-                 ))`
+           WHERE ${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL}`
         )
         .get() as { count: number }
     ).count
@@ -1230,10 +1312,36 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         throw new Error(`[Memory] ${name} is incomplete`)
       }
     }
+    for (const [name, signature] of [
+      [AGENT_MEMORY_TEMPORAL_TRIGGER_INSERT_NAME, 'BEFORE INSERT ON agent_memory'],
+      [
+        AGENT_MEMORY_TEMPORAL_TRIGGER_UPDATE_NAME,
+        'BEFORE UPDATE OF temporal_kind, valid_from, valid_until, temporal_confidence, temporal_precision, temporal_timezone ON agent_memory'
+      ]
+    ] as const) {
+      const triggerSql = (
+        this.db
+          .prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+          .get(name) as { sql: string | null } | undefined
+      )?.sql
+        ?.replace(/\s+/gu, ' ')
+        .trim()
+      if (
+        !triggerSql?.includes(signature) ||
+        !triggerSql.includes("NEW.temporal_kind NOT IN ('atemporal', 'state', 'event', 'plan'") ||
+        !triggerSql.includes("SELECT RAISE(ABORT, 'invalid agent_memory temporal metadata')")
+      ) {
+        throw new Error(`[Memory] ${name} is incomplete`)
+      }
+    }
     this.ensureFtsIndex()
   }
 
   finalizeMigration(version: number): void {
+    if (version === AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION) {
+      this.ensureTemporalArtifacts()
+      return
+    }
     if (version === AGENT_MEMORY_SCOPE_SCHEMA_VERSION) {
       this.ensureScopeArtifacts()
       return
@@ -1396,6 +1504,19 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     }
     if (addedColumns.has('scope_type') || addedColumns.has('scope_id')) {
       this.ensureScopeArtifacts()
+    }
+    if (
+      [
+        'temporal_kind',
+        'valid_from',
+        'valid_until',
+        'temporal_confidence',
+        'temporal_precision',
+        'temporal_timezone'
+      ].some((column) => addedColumns.has(column))
+    ) {
+      this.temporalArtifactsEnsured = false
+      this.ensureTemporalArtifacts()
     }
   }
 

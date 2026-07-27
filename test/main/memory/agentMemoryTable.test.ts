@@ -2977,6 +2977,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_derivation')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_dirty')
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai')
+      expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_temporal_bi_v1')
       expect(createSql).toContain("scope_type TEXT NOT NULL DEFAULT 'agent'")
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_scope_bi_v1')
       expect(table.getLatestVersion()).toBe(51)
@@ -3019,6 +3020,13 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
           )
           .get()
       ).toEqual({ name: 'agent_memory_tombstone' })
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_memory_recall_importance_v5'"
+          )
+          .get()
+      ).toBeUndefined()
 
       const row = table.insert({
         id: 'temporal',
@@ -3066,6 +3074,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       if (!migration) throw new Error('expected temporal migration')
 
       db.exec(migration)
+      table.finalizeMigration(46)
 
       expect(
         db
@@ -3085,7 +3094,33 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       })
       expect(() =>
         db.prepare('UPDATE agent_memory SET temporal_confidence = 2 WHERE id = ?').run('legacy')
-      ).toThrow(/CHECK constraint failed/)
+      ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
+      expect(() =>
+        db
+          .prepare(
+            `UPDATE agent_memory
+             SET temporal_kind = 'state',
+                 temporal_confidence = NULL,
+                 temporal_precision = NULL,
+                 temporal_timezone = NULL
+             WHERE id = ?`
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory temporal metadata/)
+      expect(() =>
+        db
+          .prepare(
+            `UPDATE agent_memory
+             SET temporal_kind = 'state',
+                 temporal_confidence = 0.9,
+                 temporal_precision = 'exact',
+                 temporal_timezone = 'UTC',
+                 valid_from = 20,
+                 valid_until = 10
+             WHERE id = ?`
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory temporal metadata/)
     } finally {
       db.close()
     }

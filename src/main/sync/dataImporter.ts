@@ -13,10 +13,14 @@ import {
   buildMemoryTombstoneIdentities,
   isTombstoneEligibleMemoryKind
 } from '../memory/core/tombstone'
+import { tryNormalizeMemoryTemporalMetadata } from '../memory/core/temporal'
+import { legacyUserScopeForMemoryScope, memoryScopeFromRow } from '../memory/core/scope'
 import type {
   AgentMemoryEmbeddingState,
   AgentMemoryLifecycleState,
-  AgentMemoryStatus
+  AgentMemoryStatus,
+  MemoryScope,
+  MemoryTemporalMetadata
 } from '../memory/domain/types'
 
 export interface ImportSummary {
@@ -28,6 +32,37 @@ export interface ImportSummary {
 type ColumnInfo = {
   name: string
   pk: number
+}
+
+const AGENT_MEMORY_TEMPORAL_COLUMNS = [
+  'temporal_kind',
+  'valid_from',
+  'valid_until',
+  'temporal_confidence',
+  'temporal_precision',
+  'temporal_timezone'
+] as const
+const AGENT_MEMORY_SCOPE_COLUMNS = ['scope_type', 'scope_id'] as const
+
+function parseImportedMemoryScope(row: Record<string, unknown>): MemoryScope | null {
+  const scopeType = row.scope_type
+  const scopeId = row.scope_id
+  if (scopeType === 'agent') {
+    return scopeId === null
+      ? memoryScopeFromRow({ scope_type: scopeType, scope_id: scopeId })
+      : null
+  }
+  if (
+    (scopeType !== 'user' && scopeType !== 'project' && scopeType !== 'session') ||
+    typeof scopeId !== 'string'
+  ) {
+    return null
+  }
+  try {
+    return memoryScopeFromRow({ scope_type: scopeType, scope_id: scopeId })
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -177,6 +212,18 @@ export class DataImporter {
       tableName === 'agent_memory' &&
       targetColumnNames.has('lifecycle_state') &&
       targetColumnNames.has('embedding_state')
+    const targetSupportsAgentMemoryTemporal =
+      tableName === 'agent_memory' &&
+      AGENT_MEMORY_TEMPORAL_COLUMNS.every((column) => targetColumnNames.has(column))
+    const sourceAgentMemoryTemporalColumnCount = AGENT_MEMORY_TEMPORAL_COLUMNS.filter((column) =>
+      sourceColumnNames.has(column)
+    ).length
+    const targetSupportsAgentMemoryScope =
+      tableName === 'agent_memory' &&
+      AGENT_MEMORY_SCOPE_COLUMNS.every((column) => targetColumnNames.has(column))
+    const sourceAgentMemoryScopeColumnCount = AGENT_MEMORY_SCOPE_COLUMNS.filter((column) =>
+      sourceColumnNames.has(column)
+    ).length
     if (normalizeAgentMemoryState) {
       if (!targetColumnNames.has('status')) {
         throw new Error(
@@ -192,6 +239,14 @@ export class DataImporter {
       if (!targetColumnNamesInInsert.includes('embedding_state')) {
         targetColumnNamesInInsert.push('embedding_state')
       }
+    }
+    if (
+      targetSupportsAgentMemoryScope &&
+      sourceAgentMemoryScopeColumnCount === AGENT_MEMORY_SCOPE_COLUMNS.length &&
+      targetColumnNames.has('user_scope') &&
+      !targetColumnNamesInInsert.includes('user_scope')
+    ) {
+      targetColumnNamesInInsert.push('user_scope')
     }
 
     const wrappedTableName = this.wrapIdentifier(tableName)
@@ -244,6 +299,9 @@ export class DataImporter {
           }
         | undefined
       let repairedState = false
+      let normalizedTemporal: MemoryTemporalMetadata | undefined
+      let normalizedScope: MemoryScope | undefined
+      let repairedMetadata = false
       if (normalizeAgentMemoryState) {
         if (!isAgentMemoryKind(row.kind)) {
           skipped += 1
@@ -283,6 +341,64 @@ export class DataImporter {
           status: projectedStatus
         }
       }
+      if (targetSupportsAgentMemoryTemporal) {
+        if (
+          sourceAgentMemoryTemporalColumnCount > 0 &&
+          sourceAgentMemoryTemporalColumnCount < AGENT_MEMORY_TEMPORAL_COLUMNS.length
+        ) {
+          skipped += 1
+          continue
+        }
+        if (sourceAgentMemoryTemporalColumnCount === AGENT_MEMORY_TEMPORAL_COLUMNS.length) {
+          normalizedTemporal =
+            tryNormalizeMemoryTemporalMetadata({
+              temporalKind: row.temporal_kind,
+              validFrom: row.valid_from,
+              validUntil: row.valid_until,
+              temporalConfidence: row.temporal_confidence,
+              temporalPrecision: row.temporal_precision,
+              temporalTimeZone: row.temporal_timezone
+            }) ?? undefined
+          if (!normalizedTemporal) {
+            skipped += 1
+            continue
+          }
+          repairedMetadata =
+            row.temporal_kind !== normalizedTemporal.temporalKind ||
+            row.valid_from !== normalizedTemporal.validFrom ||
+            row.valid_until !== normalizedTemporal.validUntil ||
+            row.temporal_confidence !== normalizedTemporal.temporalConfidence ||
+            row.temporal_precision !== normalizedTemporal.temporalPrecision ||
+            row.temporal_timezone !== normalizedTemporal.temporalTimeZone
+        }
+      }
+      if (targetSupportsAgentMemoryScope) {
+        if (
+          sourceAgentMemoryScopeColumnCount > 0 &&
+          sourceAgentMemoryScopeColumnCount < AGENT_MEMORY_SCOPE_COLUMNS.length
+        ) {
+          skipped += 1
+          continue
+        }
+        if (sourceAgentMemoryScopeColumnCount === AGENT_MEMORY_SCOPE_COLUMNS.length) {
+          normalizedScope = parseImportedMemoryScope(row) ?? undefined
+          if (!normalizedScope) {
+            skipped += 1
+            continue
+          }
+          const expectedLegacyUserScope = legacyUserScopeForMemoryScope(normalizedScope)
+          const hasLegacyUserScope = sourceColumnNames.has('user_scope')
+          const legacyUserScopeIsValid =
+            normalizedScope.type === 'agent' ||
+            !hasLegacyUserScope ||
+            row.user_scope === expectedLegacyUserScope
+          if (!legacyUserScopeIsValid) {
+            skipped += 1
+            continue
+          }
+          repairedMetadata ||= !hasLegacyUserScope && expectedLegacyUserScope !== null
+        }
+      }
       if (
         tombstoneLookups.length > 0 &&
         typeof row.agent_id === 'string' &&
@@ -307,16 +423,35 @@ export class DataImporter {
         }
       }
       const values = targetColumnNamesInInsert.map((column) => {
-        if (!normalizedState) return row[column]
-        if (column === 'lifecycle_state') return normalizedState.lifecycleState
-        if (column === 'embedding_state') return normalizedState.embeddingState
-        if (column === 'status') return normalizedState.status
+        if (normalizedState) {
+          if (column === 'lifecycle_state') return normalizedState.lifecycleState
+          if (column === 'embedding_state') return normalizedState.embeddingState
+          if (column === 'status') return normalizedState.status
+        }
+        if (normalizedTemporal) {
+          if (column === 'temporal_kind') return normalizedTemporal.temporalKind
+          if (column === 'valid_from') return normalizedTemporal.validFrom
+          if (column === 'valid_until') return normalizedTemporal.validUntil
+          if (column === 'temporal_confidence') return normalizedTemporal.temporalConfidence
+          if (column === 'temporal_precision') return normalizedTemporal.temporalPrecision
+          if (column === 'temporal_timezone') return normalizedTemporal.temporalTimeZone
+        }
+        if (normalizedScope) {
+          if (column === 'scope_type') return normalizedScope.type
+          if (column === 'scope_id')
+            return normalizedScope.type === 'agent' ? null : normalizedScope.id
+          if (column === 'user_scope') {
+            return normalizedScope.type === 'agent'
+              ? (row.user_scope ?? null)
+              : legacyUserScopeForMemoryScope(normalizedScope)
+          }
+        }
         return row[column]
       })
       const info = insertStmt.run(...values)
       if (pkColumns.length === 0 || info.changes > 0) {
         inserted++
-        if (repairedState) repaired++
+        if (repairedState || repairedMetadata) repaired++
       }
     }
 
