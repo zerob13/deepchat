@@ -100,10 +100,13 @@ const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
 const AGENT_MEMORY_FTS_RECOVERY_COOLDOWN_MS = 30_000
 const PREVIOUS_AGENT_MEMORY_FTS_POLICY_VERSION = 2
+const AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE = 256
 
 type FtsCapability = { available: boolean; tokenizer: 'trigram' | 'unicode61' }
 type SearchMatchMode = 'all' | 'any'
 type FtsMirrorRow = AgentMemoryRow & { rowid: number }
+type TombstoneSourceRow = Pick<AgentMemoryRow, 'agent_id' | 'kind' | 'content' | 'provenance_key'>
+type TombstoneSourcePageRow = TombstoneSourceRow & { storage_rowid: number }
 
 const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS agent_memory_tombstone (
@@ -985,7 +988,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   private insertTombstonesForRows(
-    rows: readonly AgentMemoryRow[],
+    rows: readonly TombstoneSourceRow[],
     createdAt: number,
     reason: MemoryTombstoneReason
   ): void {
@@ -3915,10 +3918,32 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
 
   tombstoneAndClearByAgent(agentId: string, createdAt: number): number {
     return this.db.transaction(() => {
-      const rows = this.db
-        .prepare('SELECT * FROM agent_memory WHERE agent_id = ?')
-        .all(agentId) as AgentMemoryRow[]
-      this.insertTombstonesForRows(rows, createdAt, 'agent_clear')
+      const selectFirstPage = this.db.prepare(
+        `SELECT rowid AS storage_rowid, agent_id, kind, content, provenance_key
+         FROM agent_memory NOT INDEXED
+         WHERE agent_id = ?
+         ORDER BY rowid
+         LIMIT ?`
+      )
+      const selectNextPage = this.db.prepare(
+        `SELECT rowid AS storage_rowid, agent_id, kind, content, provenance_key
+         FROM agent_memory NOT INDEXED
+         WHERE rowid > ? AND agent_id = ?
+         ORDER BY rowid
+         LIMIT ?`
+      )
+      let rows = selectFirstPage.all(
+        agentId,
+        AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE
+      ) as TombstoneSourcePageRow[]
+      while (rows.length > 0) {
+        this.insertTombstonesForRows(rows, createdAt, 'agent_clear')
+        rows = selectNextPage.all(
+          rows[rows.length - 1].storage_rowid,
+          agentId,
+          AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE
+        ) as TombstoneSourcePageRow[]
+      }
       const removed = this.clearByAgent(agentId)
       this.db.prepare('DELETE FROM agent_memory_dirty WHERE agent_id = ?').run(agentId)
       return removed

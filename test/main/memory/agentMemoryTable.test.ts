@@ -2760,6 +2760,46 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('tombstones a large clear across bounded source pages', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const claimCount = 600
+      for (let index = 0; index < claimCount; index += 1) {
+        table.insert({
+          id: `claim-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `remembered claim ${index}`,
+          provenanceKey: `claim-source-${index}`
+        })
+      }
+      table.insert({
+        id: 'other-agent',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'other agent claim',
+        provenanceKey: 'other-agent-source'
+      })
+
+      expect(table.tombstoneAndClearByAgent('a', 2_000)).toBe(claimCount)
+      expect(table.countByAgent('a')).toBe(0)
+      expect(table.getById('other-agent')).toBeDefined()
+      expect(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count
+             FROM agent_memory_tombstone
+             WHERE agent_id = 'a'`
+          )
+          .get()
+      ).toEqual({ count: claimCount * 2 })
+    } finally {
+      db.close()
+    }
+  })
+
   it('round-trips source_entry_ids lineage and leaves it null when absent', () => {
     const db = new DatabaseCtor(':memory:')
     try {
