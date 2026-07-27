@@ -102,12 +102,10 @@ interface DocumentOcrSourcePage {
 
 export class DocumentOcrTextAssembler {
   private readonly pages: DocumentOcrSourcePage[] = []
-  private current: BoundedDocumentOcrText = {
-    text: '',
-    tokenCount: 0,
-    pageSpans: [],
-    truncated: false
-  }
+  private text = ''
+  private tokenCount = 0
+  private pageSpans: DocumentOcrPageSpan[] = []
+  private truncated = false
 
   constructor(
     private readonly startPage: number,
@@ -120,24 +118,54 @@ export class DocumentOcrTextAssembler {
   }
 
   append(page: LightOcrDocumentPage): 'continue' | 'output_limit_reached' {
-    if (this.current.truncated) return 'output_limit_reached'
+    if (this.truncated) return 'output_limit_reached'
     const pageNumber = page.index + 1
     if (pageNumber !== this.startPage + this.pages.length) {
       throw new Error('Document OCR pages must be appended in ascending order')
     }
-    this.pages.push({
+    const sourcePage: DocumentOcrSourcePage = {
       pageNumber,
       text: normalizeDocumentOcrPageText(page.lines),
       complete: true
-    })
-    this.current = fitDocumentOcrPages(this.pages, this.maxTokens, this.maxCharacters)
-    return this.current.truncated ? 'output_limit_reached' : 'continue'
+    }
+    this.pages.push(sourcePage)
+
+    const chunk = formatCompletePage(sourcePage, this.text.length > 0)
+    // Every non-empty page chunk starts with a whitespace-separated heading, so tokenx cannot
+    // merge a token across the page boundary and the per-chunk estimates remain additive.
+    const nextTokenCount = this.tokenCount + estimateDocumentOcrTokens(chunk)
+    if (this.text.length + chunk.length <= this.maxCharacters && nextTokenCount <= this.maxTokens) {
+      const start = this.text.length
+      this.text += chunk
+      this.tokenCount = nextTokenCount
+      this.pageSpans.push({
+        pageNumber,
+        start,
+        end: this.text.length,
+        complete: true
+      })
+      return 'continue'
+    }
+
+    const bounded = fitTruncatedPrefix(
+      this.pages,
+      this.pages.length - 1,
+      this.maxTokens,
+      this.maxCharacters
+    )
+    this.text = bounded.text
+    this.tokenCount = bounded.tokenCount
+    this.pageSpans = [...bounded.pageSpans]
+    this.truncated = true
+    return 'output_limit_reached'
   }
 
   snapshot(): BoundedDocumentOcrText {
     return {
-      ...this.current,
-      pageSpans: this.current.pageSpans.map((span) => ({ ...span }))
+      text: this.text,
+      tokenCount: this.tokenCount,
+      pageSpans: this.pageSpans.map((span) => ({ ...span })),
+      truncated: this.truncated
     }
   }
 }

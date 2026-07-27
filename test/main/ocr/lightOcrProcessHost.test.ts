@@ -379,6 +379,28 @@ describe('LightOcrProcessHost', () => {
     })
   })
 
+  it('allows a document-stop acknowledgement to outlive cancellation grace', async () => {
+    const host = createHost({
+      cancelGraceMs: 10,
+      documentStopTimeoutMs: 200,
+      testEnvironment: { FAKE_OCR_DOCUMENT_STOP_DELAY_MS: '50' }
+    })
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'output_limit_reached'
+      })
+    ).resolves.toMatchObject({
+      artifactTermination: 'stopped_by_output_limit',
+      emittedPages: 1,
+      generationOutputLimitReached: true
+    })
+  })
+
   it('keeps stream completion separate from a raced output-limit stop', async () => {
     const host = createHost({
       testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-stop-race' }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   LIGHT_OCR_DOCUMENT_MAX_LINE_CHARACTERS,
   LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS,
   LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
   isLightOcrDocumentOptions,
   isLightOcrDocumentPage,
@@ -18,7 +19,7 @@ const documentOptions: LightOcrDocumentOptions = {
   maxPages: 100,
   maxFileBytes: LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
   maxPagePixels: LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
-  maxTotalPixels: 100 * 1024 * 1024
+  maxTotalPixels: LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS
 }
 
 const documentPage: LightOcrDocumentPage = {

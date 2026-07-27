@@ -507,7 +507,7 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
 
 export function normalizeDocumentSourceByteLimit(maxFileSize: number): number {
   if (!Number.isFinite(maxFileSize) || maxFileSize <= 0) {
-    throw new DocumentTextExtractionError('input_too_large', 'PDF OCR source byte limit is invalid')
+    throw new DocumentTextExtractionError('invalid_input', 'PDF OCR source byte limit is invalid')
   }
   return Math.min(Math.floor(maxFileSize), LIGHT_OCR_HELPER_MAX_INPUT_BYTES)
 }
@@ -642,7 +642,7 @@ function normalizeGenerationTokenLimit(value: number | undefined): number {
   const limit = value ?? PDF_OCR_GENERATION_MAX_TOKENS
   if (!Number.isSafeInteger(limit) || limit <= 0 || limit > PDF_OCR_GENERATION_MAX_TOKENS) {
     throw new DocumentTextExtractionError(
-      'runtime_identity_mismatch',
+      'invalid_input',
       'Document OCR generation token limit is invalid'
     )
   }

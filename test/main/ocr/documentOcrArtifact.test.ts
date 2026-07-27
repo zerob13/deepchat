@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import packageJson from '../../../package.json'
 import {
   DocumentOcrTextAssembler,
   PDF_OCR_ARTIFACT_REVISION,
@@ -105,6 +106,12 @@ describe('document OCR artifacts', () => {
     })
     expect(result.pageSpans[0].end).toBe(result.pageSpans[1].start)
     expect(result.pageSpans[1].end).toBe(result.text.length)
+    expect(result.tokenCount).toBe(estimateDocumentOcrTokens(result.text))
+  })
+
+  it('keeps the cache revision synchronized with the exact token estimator version', () => {
+    expect(packageJson.dependencies.tokenx).toBe('0.4.1')
+    expect(PDF_OCR_ARTIFACT_REVISION).toContain(`tokenx=${packageJson.dependencies.tokenx}`)
   })
 
   it('uses a page-aware prefix and never retains the tail after the output limit', () => {

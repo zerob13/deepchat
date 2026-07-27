@@ -112,7 +112,12 @@ describe('OcrRuntimeAssetResolver', () => {
       bundleId,
       nativePayloadEncoding: 'gzip-base64-v1',
       nativePackage,
-      nativeArtifactInventory,
+      nativeArtifactInventory: {
+        other: nativeArtifactInventory.other,
+        pdfiumLoader: nativeArtifactInventory.pdfiumLoader,
+        pdfiumCode: nativeArtifactInventory.pdfiumCode,
+        nativeCode: nativeArtifactInventory.nativeCode
+      },
       paths: {
         node: 'runtime/node/bin/node',
         helper: 'out/main/lightOcrHelper.js',

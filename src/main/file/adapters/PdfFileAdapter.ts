@@ -28,7 +28,10 @@ export class PdfFileAdapter extends BaseFileAdapter {
   }
 
   private loadPdfData(): Promise<(pdfParse.Result & { pageContents?: string[] }) | undefined> {
-    this.pdfLoadPromise ??= this.readPdfData()
+    this.pdfLoadPromise ??= this.readPdfData().catch((error) => {
+      console.error('Error reading PDF:', error)
+      return undefined
+    })
     return this.pdfLoadPromise
   }
 

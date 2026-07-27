@@ -84,6 +84,13 @@ interface NativeArtifactInventory {
   other: string[]
 }
 
+const NATIVE_ARTIFACT_INVENTORY_GROUPS: ReadonlyArray<keyof NativeArtifactInventory> = [
+  'nativeCode',
+  'pdfiumCode',
+  'pdfiumLoader',
+  'other'
+]
+
 interface ResolvedRuntimeAssets {
   assets: OcrRuntimeAssets
   expectedNativeArtifactInventory: NativeArtifactInventory | null
@@ -436,7 +443,14 @@ function matchesArtifactInventory(
   expected: NativeArtifactInventory
 ): boolean {
   const actual = groupArtifactInventory(artifactManifest)
-  return actual !== null && JSON.stringify(actual) === JSON.stringify(expected)
+  return (
+    actual !== null &&
+    NATIVE_ARTIFACT_INVENTORY_GROUPS.every(
+      (group) =>
+        actual[group].length === expected[group].length &&
+        actual[group].every((relativePath, index) => relativePath === expected[group][index])
+    )
+  )
 }
 
 function groupArtifactInventory(

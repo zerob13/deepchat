@@ -24,6 +24,7 @@ import {
   classifyLightOcrArtifact,
   getRequiredPdfiumArtifactPaths,
   groupLightOcrArtifactPaths,
+  hasSameLightOcrArtifactInventory,
   isEncodedMacLightOcrArtifact
 } from './light-ocr-artifacts.mjs'
 
@@ -465,7 +466,7 @@ async function verifyNativeChecksums(
     manifest.files.map((entry) => entry.path),
     platform
   )
-  if (JSON.stringify(actualInventory) !== JSON.stringify(expectedInventory)) {
+  if (!hasSameLightOcrArtifactInventory(actualInventory, expectedInventory)) {
     throw new Error('Packaged OCR native artifact inventory does not match its runtime manifest')
   }
 }

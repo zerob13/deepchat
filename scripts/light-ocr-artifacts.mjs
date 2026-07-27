@@ -6,6 +6,12 @@ export const LIGHT_OCR_ARTIFACT_KINDS = Object.freeze({
   pdfiumLoader: 'pdfium-loader',
   other: 'other'
 })
+export const LIGHT_OCR_ARTIFACT_GROUPS = Object.freeze([
+  'nativeCode',
+  'pdfiumCode',
+  'pdfiumLoader',
+  'other'
+])
 
 const PDFIUM_ARTIFACTS_BY_PLATFORM = Object.freeze({
   darwin: Object.freeze([
@@ -101,4 +107,17 @@ export function groupLightOcrArtifactPaths(relativePaths, platform) {
     )
   }
   return groups
+}
+
+export function hasSameLightOcrArtifactInventory(left, right) {
+  return LIGHT_OCR_ARTIFACT_GROUPS.every((group) => {
+    const leftPaths = left?.[group]
+    const rightPaths = right?.[group]
+    return (
+      Array.isArray(leftPaths) &&
+      Array.isArray(rightPaths) &&
+      leftPaths.length === rightPaths.length &&
+      leftPaths.every((relativePath, index) => relativePath === rightPaths[index])
+    )
+  })
 }

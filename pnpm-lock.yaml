@@ -159,7 +159,7 @@ importers:
         specifier: ^0.35.3
         version: 0.35.3(@types/node@24.13.3)
       tokenx:
-        specifier: ^0.4.1
+        specifier: 0.4.1
         version: 0.4.1
       turndown:
         specifier: ^7.2.4

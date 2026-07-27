@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildPdfEmbeddedTextCoverage } from '@/file/adapters/PdfFileAdapter'
+import { PdfFileAdapter, buildPdfEmbeddedTextCoverage } from '@/file/adapters/PdfFileAdapter'
 
 describe('PdfFileAdapter embedded-text coverage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('counts substantive pages by Unicode code points and keeps bounded low-text samples', () => {
     const pages = [`${'字'.repeat(63)}😀`, 'short note', ...Array.from({ length: 24 }, () => '')]
 
@@ -27,5 +31,15 @@ describe('PdfFileAdapter embedded-text coverage', () => {
     })
     expect(buildPdfEmbeddedTextCoverage(0, [])).toBeUndefined()
     expect(buildPdfEmbeddedTextCoverage(1_000_001, [])).toBeUndefined()
+  })
+
+  it('degrades filesystem read failures without retaining a rejected load promise', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const adapter = new PdfFileAdapter('/missing/deepchat-pdf-adapter-test.pdf', 1024)
+
+    await expect(adapter.getTextCoverage()).resolves.toBeUndefined()
+    await expect(adapter.getTextCoverage()).resolves.toBeUndefined()
+
+    expect(error).toHaveBeenCalledTimes(1)
   })
 })

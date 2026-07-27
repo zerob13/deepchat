@@ -2,10 +2,7 @@ import type { AgentTapeSearchOptions, AgentTapeViewScope } from '@shared/types/a
 import type { DeepChatTapeEntryRow, DeepChatTapeSearchInput } from '../domain/entry'
 import { parseJsonObject, parseJsonValue } from './common'
 import type { TapeSearchResult } from './contracts'
-import {
-  isPdfAttachment,
-  normalizeAttachmentResolvedRepresentation
-} from '@shared/utils/attachmentRepresentation'
+import { getAttachmentSearchableText } from '@shared/utils/attachmentRepresentation'
 
 const MAX_ATTACHMENT_SEARCH_CHARACTERS_PER_ATTACHMENT = 4_000
 const MAX_ATTACHMENT_SEARCH_CHARACTERS_PER_MESSAGE = 16_000
@@ -143,20 +140,7 @@ function collectUserMessageAttachmentRefs(files: unknown): {
       fileNames.push(compactText(value, 500))
       attachmentMetadataSearchText.push(compactText(value, 500))
     }
-    const resolved = normalizeAttachmentResolvedRepresentation(file.resolvedRepresentation)
-    const attachmentText =
-      resolved?.kind === 'ocr_text'
-        ? resolved.text
-        : resolved?.kind === 'embedded_text' &&
-            typeof file.content === 'string' &&
-            isPdfAttachment({
-              name,
-              path,
-              type: typeof file.type === 'string' ? file.type : undefined,
-              mimeType: typeof file.mimeType === 'string' ? file.mimeType : undefined
-            })
-          ? file.content
-          : ''
+    const attachmentText = getAttachmentSearchableText(file)
     if (
       attachmentText &&
       attachmentContentSearchText.length < MAX_SEARCHABLE_ATTACHMENTS &&

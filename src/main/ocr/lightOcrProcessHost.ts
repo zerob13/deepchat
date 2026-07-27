@@ -33,6 +33,7 @@ const DEFAULT_INITIALIZATION_TIMEOUT_MS = 60_000
 const DEFAULT_RECOGNITION_TIMEOUT_MS = 120_000
 const DEFAULT_DOCUMENT_IDLE_TIMEOUT_MS = 120_000
 const DEFAULT_DOCUMENT_TOTAL_TIMEOUT_MS = 10 * 60_000
+const DEFAULT_DOCUMENT_STOP_TIMEOUT_MS = DEFAULT_DOCUMENT_IDLE_TIMEOUT_MS
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000
 const DEFAULT_CANCEL_GRACE_MS = 1_000
 const DEFAULT_SHUTDOWN_GRACE_MS = 2_000
@@ -113,6 +114,7 @@ export interface LightOcrProcessHostOptions {
   recognitionTimeoutMs?: number
   documentIdleTimeoutMs?: number
   documentTotalTimeoutMs?: number
+  documentStopTimeoutMs?: number
   idleTimeoutMs?: number
   cancelGraceMs?: number
   shutdownGraceMs?: number
@@ -271,6 +273,7 @@ export class LightOcrProcessHost {
   private readonly recognitionTimeoutMs: number
   private readonly documentIdleTimeoutMs: number
   private readonly documentTotalTimeoutMs: number
+  private readonly documentStopTimeoutMs: number
   private readonly idleTimeoutMs: number
   private readonly cancelGraceMs: number
   private readonly shutdownGraceMs: number
@@ -320,6 +323,10 @@ export class LightOcrProcessHost {
     this.documentIdleTimeoutMs = options.documentIdleTimeoutMs ?? DEFAULT_DOCUMENT_IDLE_TIMEOUT_MS
     this.documentTotalTimeoutMs =
       options.documentTotalTimeoutMs ?? DEFAULT_DOCUMENT_TOTAL_TIMEOUT_MS
+    this.documentStopTimeoutMs =
+      options.documentStopTimeoutMs ??
+      options.documentIdleTimeoutMs ??
+      DEFAULT_DOCUMENT_STOP_TIMEOUT_MS
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.cancelGraceMs = options.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS
     this.shutdownGraceMs = options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS
@@ -1163,7 +1170,7 @@ export class LightOcrProcessHost {
         new LightOcrProcessHostError('timeout', 'OCR helper document-stop request timed out'),
         true
       )
-    }, this.cancelGraceMs)
+    }, this.documentStopTimeoutMs)
     this.pendingDocumentStops.set(stopRequestId, {
       documentRequestId: pending.request.id,
       timeout

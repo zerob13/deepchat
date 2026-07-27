@@ -25,7 +25,7 @@ import {
 } from '@/session/usageStats'
 import type { TapeMessageFactWriter } from '@/tape/ports/capabilities'
 import {
-  isPdfAttachment,
+  getAttachmentSearchableText,
   normalizeAttachmentRepresentationPreference,
   normalizeAttachmentResolvedRepresentation,
   normalizePdfEmbeddedTextCoverage
@@ -137,26 +137,8 @@ function buildSearchableAttachmentText(files: unknown): string {
   if (!Array.isArray(files)) return ''
   const text = files
     .flatMap((file) => {
-      if (!file || typeof file !== 'object' || Array.isArray(file)) return []
-      const resolved = normalizeAttachmentResolvedRepresentation(
-        (file as Record<string, unknown>).resolvedRepresentation
-      )
-      if (resolved?.kind === 'ocr_text' && resolved.text.trim()) return [resolved.text.trim()]
-      const candidate = file as Record<string, unknown>
-      if (
-        resolved?.kind === 'embedded_text' &&
-        typeof candidate.content === 'string' &&
-        candidate.content.trim() &&
-        isPdfAttachment({
-          name: typeof candidate.name === 'string' ? candidate.name : '',
-          path: typeof candidate.path === 'string' ? candidate.path : '',
-          type: typeof candidate.type === 'string' ? candidate.type : undefined,
-          mimeType: typeof candidate.mimeType === 'string' ? candidate.mimeType : undefined
-        })
-      ) {
-        return [candidate.content.trim()]
-      }
-      return []
+      const searchableText = getAttachmentSearchableText(file).trim()
+      return searchableText ? [searchableText] : []
     })
     .join('\n')
   if (text.length <= MAX_SEARCHABLE_ATTACHMENT_CHARACTERS) return text

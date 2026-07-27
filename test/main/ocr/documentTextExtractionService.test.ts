@@ -168,6 +168,24 @@ describe('DocumentTextExtractionService', () => {
     service.close()
   })
 
+  it('classifies invalid service limits as invalid input', async () => {
+    const service = createService(createProcessHost())
+    const input = {
+      filePath: '/invalid-limits.pdf',
+      maxFileSize: 1024,
+      backend: 'auto' as const
+    }
+
+    await expect(service.extractDocument({ ...input, maxFileSize: 0 })).rejects.toMatchObject({
+      code: 'invalid_input'
+    })
+    await expect(
+      service.extractDocument({ ...input, generationTokenLimit: 0 })
+    ).rejects.toMatchObject({ code: 'invalid_input' })
+
+    service.close()
+  })
+
   it('misses an output-limited cache for a larger budget and reuses it for a smaller one', async () => {
     const processHost = createProcessHost(async (input) => {
       const action = input.onPage(page(0, 'A'.repeat(2_000)))

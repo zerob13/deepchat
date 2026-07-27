@@ -428,8 +428,10 @@ function buildResolvedImageRepresentationContext(files: MessageFile[]): string {
     .flatMap((file, index) => {
       const resolved = getAttachmentResolvedRepresentation(file)
       if (!resolved || resolved.kind === 'image') return []
-      const fileName = typeof file.name === 'string' ? file.name : `image-${index + 1}`
-      const mimeType = resolveFileMimeType(file)
+      const fileName =
+        (typeof file.name === 'string' ? sanitizeAttachmentMetadata(file.name, 512) : '') ||
+        `image-${index + 1}`
+      const mimeType = sanitizeAttachmentMetadata(resolveFileMimeType(file), 128)
       const metadata = [`name: ${fileName}`, `mime: ${mimeType}`].join('\n')
       if (resolved.kind === 'unavailable') {
         return [

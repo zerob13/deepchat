@@ -233,11 +233,12 @@ lines.on('line', async (line) => {
       id: request.id,
       data: behavior === 'document-invalid-stop-result' ? { stopped: 'invalid' } : { stopped }
     }
-    if (behavior === 'document-page-after-completion') {
-      setTimeout(() => send(response), 30)
-    } else {
-      send(response)
-    }
+    const responseDelay = Number(
+      process.env.FAKE_OCR_DOCUMENT_STOP_DELAY_MS ??
+        (behavior === 'document-page-after-completion' ? 30 : 0)
+    )
+    if (responseDelay > 0) setTimeout(() => send(response), responseDelay)
+    else send(response)
     return
   }
 

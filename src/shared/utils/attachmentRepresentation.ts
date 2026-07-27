@@ -228,6 +228,26 @@ export function getAttachmentResolvedRepresentation(
   return normalizeAttachmentResolvedRepresentation(file.resolvedRepresentation)
 }
 
+export function getAttachmentSearchableText(file: unknown): string {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) return ''
+  const candidate = file as Record<string, unknown>
+  const resolved = normalizeAttachmentResolvedRepresentation(candidate.resolvedRepresentation)
+  if (resolved?.kind === 'ocr_text') return resolved.text
+  if (
+    resolved?.kind === 'embedded_text' &&
+    typeof candidate.content === 'string' &&
+    isPdfAttachment({
+      name: typeof candidate.name === 'string' ? candidate.name : '',
+      path: typeof candidate.path === 'string' ? candidate.path : '',
+      type: typeof candidate.type === 'string' ? candidate.type : undefined,
+      mimeType: typeof candidate.mimeType === 'string' ? candidate.mimeType : undefined
+    })
+  ) {
+    return candidate.content
+  }
+  return ''
+}
+
 function normalizeAttachmentDocumentOcrSnapshot(
   value: unknown,
   text: unknown

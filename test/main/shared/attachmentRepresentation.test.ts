@@ -7,6 +7,7 @@ import {
 } from '../../../src/shared/contracts/common'
 import { PreparedMessageFileSchema } from '../../../src/shared/contracts/domainSchemas'
 import {
+  getAttachmentSearchableText,
   isAttachmentPreparationCandidate,
   isImageAttachment,
   isPdfAttachment,
@@ -141,6 +142,37 @@ describe('attachment representation contracts', () => {
     expect(
       isAttachmentPreparationCandidate({ name: 'notes.txt', path: '', mimeType: 'text/plain' })
     ).toBe(false)
+  })
+
+  it('selects searchable attachment text from the resolved representation', () => {
+    expect(
+      getAttachmentSearchableText({
+        name: 'scan.png',
+        mimeType: 'image/png',
+        resolvedRepresentation: {
+          kind: 'ocr_text',
+          text: 'recognized image text',
+          tokenCount: 3,
+          truncated: false
+        }
+      })
+    ).toBe('recognized image text')
+    expect(
+      getAttachmentSearchableText({
+        name: 'report.pdf',
+        mimeType: 'application/pdf',
+        content: 'embedded PDF text',
+        resolvedRepresentation: { kind: 'embedded_text' }
+      })
+    ).toBe('embedded PDF text')
+    expect(
+      getAttachmentSearchableText({
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        content: 'plain file text',
+        resolvedRepresentation: { kind: 'embedded_text' }
+      })
+    ).toBe('')
   })
 
   it('normalizes bounded PDF embedded-text coverage and rejects inconsistent samples', () => {

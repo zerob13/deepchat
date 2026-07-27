@@ -7,7 +7,8 @@ import {
 import {
   classifyLightOcrArtifact as classifyScriptArtifact,
   getRequiredPdfiumArtifactPaths as getScriptPdfiumPaths,
-  groupLightOcrArtifactPaths
+  groupLightOcrArtifactPaths,
+  hasSameLightOcrArtifactInventory
 } from '../../../scripts/light-ocr-artifacts.mjs'
 
 describe('Light OCR artifact contract', () => {
@@ -58,5 +59,29 @@ describe('Light OCR artifact contract', () => {
         'darwin'
       )
     ).toThrow(/PDFium artifact inventory mismatch/)
+  })
+
+  it('compares artifact groups independently of object key order', () => {
+    const inventory = {
+      nativeCode: ['native/light_ocr_node.node'],
+      pdfiumCode: ['pdfium/libpdfium.dylib', 'pdfium/pdfium.node'],
+      pdfiumLoader: ['pdfium/index.cjs'],
+      other: ['native/runtime-descriptor.json']
+    }
+
+    expect(
+      hasSameLightOcrArtifactInventory(inventory, {
+        other: inventory.other,
+        pdfiumLoader: inventory.pdfiumLoader,
+        pdfiumCode: inventory.pdfiumCode,
+        nativeCode: inventory.nativeCode
+      })
+    ).toBe(true)
+    expect(
+      hasSameLightOcrArtifactInventory(inventory, {
+        ...inventory,
+        pdfiumCode: [...inventory.pdfiumCode].reverse()
+      })
+    ).toBe(false)
   })
 })

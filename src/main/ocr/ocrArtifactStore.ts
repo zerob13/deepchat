@@ -863,6 +863,7 @@ class MemoryOcrArtifactBackend implements OcrArtifactBackend {
     }
 
     let logicalBytes = this.logicalBytes()
+    if (logicalBytes <= this.options.maxBytes) return
     const candidates = [
       ...[...this.records.entries()].map(([key, record]) => ({
         kind: 'image' as const,
