@@ -171,3 +171,37 @@ The final review found no unresolved actionable high-, medium-, or low-severity 
 suggested broad renderer/context-builder extractions were intentionally not applied: their similar
 surface mechanics conceal different state and fallback contracts, so sharing them would increase
 coupling without improving correctness.
+
+## 10. Resumable clear and capability boundaries
+
+- [x] Persist Agent clear progress and fence claim access before the first deletion batch.
+- [x] Tombstone and delete claims in bounded transactions with event-loop yields.
+- [x] Resume interrupted claim/vector phases after database reopen and runtime startup.
+- [x] Reject synchronous writes and Agent ownership changes while a clear job exists.
+- [x] Preserve independent directive reads and management during claim clear.
+- [x] Cover concurrent clear calls, restart recovery, storage guards, and post-clear writes.
+- [x] Document directive recency ordering without inventing priority semantics.
+- [x] Document Agent/Session/User/Project end-to-end capability limits.
+- [x] Run final format, i18n, lint, typecheck, focused Memory, native, and performance gates;
+      classify unavailable toolchain checks explicitly.
+- [x] Complete the final severity-ordered review and resolve every actionable finding.
+
+## Resumable clear validation record
+
+Completed on 2026-07-27:
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run format` / `format:check` | Passed on 2,337 files |
+| `pnpm run i18n` | Passed with no missing or invalid translations |
+| `pnpm run lint` | Passed; Agent cleanup baseline remains zero |
+| Node fallback typecheck | `pnpm exec tsc --noEmit -p tsconfig.node.json --composite false` passed |
+| `pnpm run typecheck` | Environment-blocked because the declared `tsgo` / `vue-tsgo` binaries are absent from the current install; no renderer source changed in this slice |
+| `pnpm run test:memory` | Scope/type gates passed with 75 classified and 3 exempt files; 54 behavior files and 872 tests passed |
+| Memory native gate | 14 files passed; 287 tests passed and 2 conditional tests skipped |
+| `pnpm run test:main:memory-perf` | 6 files and 10 tests passed; 10k clear used 40 batches and the observed maximum SQLite batch was 5.42 ms |
+
+The final review found no unresolved correctness, compatibility, performance, security, or
+maintenance defect in the resumable-clear implementation. Rollback with a pending clear job is
+explicitly prohibited because an older runtime cannot honor its read fence. Directive
+priority/pinning remains a separately specified product capability rather than inferred behavior.

@@ -220,7 +220,14 @@ Land review hardening in independently reviewable slices:
 6. replace multi-scope importance scans with bounded per-scope ordered branches;
 7. keep management search unsuppressed and prevent derivation self-edges;
 8. shed directives only after memory when an active turn otherwise cannot physically fit;
-9. add scope, migration, boundary, idempotency, locale, and precision regression coverage.
+9. add scope, migration, boundary, idempotency, locale, and precision regression coverage;
+10. replace the synchronous whole-corpus clear transaction with a persisted `claims|vectors` job;
+11. fence claim reads and writes from job creation through vector cleanup, including direct
+    synchronous writes and internal persona/conflict paths;
+12. process at most 256 rows per SQLite transaction, yield between batches, and resume unfinished
+    jobs when background maintenance starts;
+13. preserve directive-plane read/management availability and document the current
+    directive-ordering and scope capability limits rather than inventing unsupported semantics.
 
 Storage enforcement is defense in depth:
 
@@ -241,6 +248,14 @@ Scoped FTS ordering uses one bounded indexed branch per applicable scope followe
 bounded merge. Branch count is capped by the closed scope set, and every branch retains Agent
 ownership in its predicate.
 
+Resumable clear uses `agent_memory_clear_job` as the durable fence. Its first transaction captures a
+rowid cutoff; later transactions insert hash-only tombstones, update the FTS mirror, delete no more
+than 256 authoritative rows, and persist cumulative progress. Inserts and updates touching the
+clearing Agent are rejected by SQLite triggers as defense in depth. After the final claim batch,
+lineage and dirty-work rows are removed and the phase advances to `vectors`. Only successful or
+explicitly deferred vector cleanup completes the job. Disposal leaves the bounded current batch
+committed and the job recoverable.
+
 ## Compatibility and rollback
 
 - All schema changes are additive.
@@ -249,8 +264,11 @@ ownership in its predicate.
 - New extraction parsing accepts the historical array.
 - Existing rows are atemporal and Agent-scoped by default.
 - Temporal metadata does not invalidate embeddings.
-- A rollback binary ignores additive SQLite columns/tables. It may leave new rows present, but
-  claims written by the new binary retain compatible core columns.
+- A rollback binary ignores most additive SQLite columns/tables. Claims written by the new binary
+  retain compatible core columns.
+- Rollback is not safe while `agent_memory_clear_job` contains a pending job: an older runtime
+  cannot honor the claim-read fence or resume cleanup, although the persisted triggers continue to
+  reject writes. Pending clear recovery must finish on the new binary before downgrade.
 - Directive and lineage tables are isolated; an older binary simply does not consume them.
 
 ## Performance boundaries
@@ -263,6 +281,8 @@ ownership in its predicate.
   vector refill reuses the turn's query embedding and never becomes an unbounded loop.
 - Dirty consolidation is bounded by seed, neighbor, LLM-call, and deadline budgets.
 - Projection rebuilding paginates through the existing bounded candidate API.
+- Agent clear performs at most 256 claim deletions per synchronous transaction and yields to the
+  event loop between batches; restart recovery processes pending Agent jobs sequentially.
 
 ## Security and privacy
 

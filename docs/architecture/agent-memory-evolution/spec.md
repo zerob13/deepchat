@@ -114,6 +114,14 @@ an active directive.
     re-authorization, and can never release a forget tombstone.
 20. Generic claim lifecycle and delete APIs reject internal `persona` and `working` rows; those
     rows remain owned by their dedicated state machines.
+21. Agent-wide claim clear becomes effective before its first deletion batch: claim reads and
+    writes are fenced while a durable clear job exists, and a restart resumes that job instead of
+    exposing a partially cleared namespace.
+22. Each clear transaction processes a bounded claim batch. Tombstone insertion, authoritative row
+    deletion, and FTS maintenance for that batch are atomic; directive state remains outside this
+    operation.
+23. Persisted support for a scope does not imply end-to-end runtime identity wiring. The capability
+    matrix below is part of the public architecture contract.
 
 ## Temporal claim contract
 
@@ -185,6 +193,11 @@ Behavior:
 7. Because CJK suppression uses normalized substring matching, a topic containing CJK characters
    requires at least two visible base characters. New writes are rejected and malformed persisted
    topics are ignored so a single broad character cannot suppress unrelated recall.
+8. The current contribution policy orders active directives deterministically by `updated_at DESC,
+   id ASC` before applying its hard budget. This is recency ordering, not semantic priority, and
+   active persistence alone does not guarantee that an instruction fits in every prompt.
+9. `priority` or `pinned` semantics require a separate product contract, persistence migration, and
+   user-visible controls. They must not be inferred from directive text or source.
 
 ## Durable derivation contract
 
@@ -216,10 +229,22 @@ Explicit single-row deletion:
 5. removes the vector after the durable transaction;
 6. blocks future exact provenance/content recreation.
 
-Agent-wide clear is an explicit forget operation. It tombstones the cleared claims before deleting
-them and preserves those tombstones so replay of existing Tape cannot repopulate the cleared data.
-Directive clearing is explicit and independent. Every clear control must therefore name factual
-memories/persona as its target and state that standing directives are retained.
+Agent-wide clear is an explicit, resumable forget operation:
+
+1. a durable job records the Agent, a row cutoff, cumulative removed count, creation time, and
+   `claims|vectors` phase;
+2. the runtime immediately fences all claim reads, writes, lifecycle operations, persona
+   transitions, conflict operations, projection rebuilds, and maintenance for that Agent;
+3. each synchronous SQLite transaction tombstones and deletes at most 256 rows while maintaining
+   the FTS mirror atomically;
+4. derivation and dirty-work state are removed after the final claim batch;
+5. vector cleanup must either complete or be explicitly deferred by the vector manager before the
+   durable job completes; a restart resumes any unfinished phase before claim access is restored.
+
+The job preserves tombstones so replay of existing Tape cannot repopulate the cleared data. Standing
+directives remain readable and independently manageable throughout because directive clearing is a
+separate trust-plane operation. Every clear control must therefore name factual memories/persona as
+its target and state that standing directives are retained.
 
 `memory_forget` is a compatibility name for soft archival. Its tool definition and result must both
 say that the row remains stored locally and is excluded from normal recall; it must never claim
@@ -246,6 +271,19 @@ Existing `user_scope` remains a compatibility shadow during this evolution:
 
 This change does not introduce cross-Agent sharing. A user- or project-scoped claim remains owned by
 one Agent and cannot cross its ownership boundary.
+
+Current runtime capability:
+
+| Scope | Persistence / explicit API | Normal DeepChat recall | Automatic extraction |
+| --- | --- | --- | --- |
+| `agent` | Supported and default | Fully wired | Writes Agent scope |
+| `session` | Supported | Wired when the current Session ID is supplied | Does not assign Session scope |
+| `user` | Supported as an internal typed capability | No user identity is supplied by the normal chat runtime | Does not assign User scope |
+| `project` | Supported as an internal typed capability | No project identity is supplied by the normal chat runtime | Does not assign Project scope |
+
+Until DeepChat has authoritative user/project identity sources and lifecycle rules, user/project
+scope is internal/experimental rather than an end-to-end product capability. Callers must not infer
+that DTO and route support alone enables it.
 
 ## Behavioral acceptance criteria
 
@@ -352,6 +390,12 @@ premise:
   write time, ignored if already persisted, and explained in the directive editor.
 - Corrected after recall-completeness verification: fixed oversampling now grows adaptively after
   post-query filtering, reuses the existing embedding, and reports bounded exhaustion.
+- Corrected after clear-performance verification: Agent clear now uses a durable two-phase job,
+  immediate claim-access fencing, 256-row transactions, event-loop yields, startup recovery, and
+  completion only after vector cleanup. Directives remain on their independent trust plane.
+- Documented rather than guessed: directive contribution ordering is recency-based and has no
+  semantic priority/pinning contract; user/project scopes are persisted internal capabilities but
+  are not wired end to end by the normal chat runtime.
 - Rejected: adding an unknown allocation lane does not null Tape inspection. The parser ignores
   unknown object fields while retaining the four known lanes, and a Tape-to-route allocation
   fixture already exists.
@@ -366,6 +410,8 @@ premise:
 - Promoting file, tool, or knowledge-base content into long-term memory without the current policy
   and provenance path.
 - Cross-Agent memory sharing.
+- End-to-end User/Project scope identity wiring.
+- Directive priority/pinning before its product semantics and controls are specified.
 - Semantic tombstones or embedding-based topic suppression.
 - A strict output firewall for natural-language directives.
 - Replacing query retrieval with a single summary.

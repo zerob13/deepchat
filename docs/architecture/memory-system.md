@@ -44,6 +44,7 @@ vector sidecar 和 renderer summary 都是可重建 projection，不能反向成
 | `agent_memory_derivation` | claim-to-claim 持久 lineage | 权威关系 |
 | `agent_memory_tombstone` | 精确遗忘的 hash-only suppression identity | 随 Agent namespace 保留 |
 | `agent_memory_dirty` | 增量 consolidation 的有界 work index | 可重建派生状态 |
+| `agent_memory_clear_job` | Agent claim clear 的持久 fence、进度与恢复阶段 | vector cleanup 后删除 |
 | working / FTS / vector | 注入、关键词和相似度 projection | 可删除并重建 |
 | audit | 运维可观测事件 | 有 retention，不承担 lineage |
 
@@ -63,6 +64,9 @@ stale epoch 的结果不得提交。
   applicability，缺少窄 scope context 时不得放宽；
 - 历史 `user_scope` 只作为兼容 shadow；迁移后的历史 row 保持 Agent scope，新的 User-scope write
   才同步 shadow；
+- 当前 Agent scope 是默认且完整的产品路径；Session scope 只在 recall 收到当前 Session ID 时生效，
+  自动 extraction 仍写 Agent scope；User/Project 的存储、类型和显式 route 是 internal/experimental
+  能力，普通 chat runtime 尚无权威 identity 接线；
 - 同一配置 epoch 内的异步 extraction/embedding 才能提交，ABA 配置切换由 execution identity fence
   拒绝；
 - provider/model/dimension identity 与 vector store metadata 必须一致，不一致进入 reindex/quarantine；
@@ -105,6 +109,11 @@ persona 和 working projection 进入只读 `<context-data>` 容器，内容严�
 进入独立 typed contribution。抽取结果只能创建 draft directive，只有用户显式创建或 approve
 操作能让 directive active。CJK topic 使用标准化 substring 匹配，因此至少需要两个可见 base
 character；写入端拒绝过宽 topic，运行时也忽略历史脏值。
+
+Active directive 的当前 contribution 顺序是 `updated_at DESC, id ASC`，表示确定性的最近更新顺序，
+不表示 privacy、style 或其他语义优先级。预算 manifest 会记录 dropped IDs，但 active persistence
+不保证每轮都能装入 prompt。`priority`/`pinned` 需要独立的产品语义、迁移和用户控件，不能从文本或
+source 猜测。
 
 一个纯 allocator 管理总 memory contribution budget：directive ceiling、persona/working
 floor/ceiling、query-recall reservation，以及未使用份额的有界 borrowing。最终 assembler 仍执行
@@ -177,10 +186,19 @@ transaction 之后。Exact replay 被压制，语义近似但来源独立的新�
 匹配。Generic lifecycle/delete API 只管理 claim，必须拒绝 persona 和 working internal row；这些
 row 只能由各自的状态机演进或重建。
 
-Agent clear 会 tombstone 当时存在的 claim，并保留 tombstone，防止既有 Tape replay 重新填充。
-该操作会删除 factual claim、persona 和 working projection，但不删除 standing directive；UI 必须
+Agent clear 先持久化 `claims|vectors` clear job，并立即 fence 该 Agent 的 claim read/write、
+lifecycle、persona、conflict、projection 和 maintenance 路径。每个同步 SQLite transaction 最多
+tombstone 并删除 256 行，同时原子维护 FTS；batch 之间让出 event loop。最后一个 claim batch 删除
+derivation/dirty state 并进入 vector phase，vector cleanup 完成或被 vector manager 明确延后后才
+移除 job。进程中断时，已提交 batch 不回滚；下次启动从持久 phase 继续，期间 claim 始终不可见且
+SQLite trigger 拒绝 INSERT/UPDATE 逃逸。
+
+该操作保留 tombstone，防止既有 Tape replay 重新填充，并删除 factual claim、persona 和 working
+projection；它不删除 standing directive，directive trust plane 在清理期间仍可读取和管理。UI 必须
 明确这个边界，不能承诺“清空所有 Memory 数据”。兼容工具名 `memory_forget` 执行的是可恢复 archive，
 工具结果必须说明 row 仍在本地、只是不再参与正常 recall。
+存在 pending clear job 时禁止降级到不理解该 job 的旧版本：旧 runtime 无法执行 read fence 或恢复
+清理，虽然持久 trigger 仍会拒绝 INSERT/UPDATE。必须先用当前版本完成恢复。
 Agent retirement 才删除整个 namespace 的 claim、directive、tombstone、lineage、dirty state 和
 vector projection，使重新创建的 Agent identity 从干净状态开始。
 
@@ -199,6 +217,7 @@ Maintenance 只处理有界 seed batch 和有界 same-scope vector neighbors；�
   context 匹配的窄 scope。
 - private/secret-like 内容在写入、日志、metric 和 prompt contribution 前按 policy 过滤或脱敏。
 - tombstone、audit refs 和 diagnostics 不得保存 forgotten plaintext。
+- pending clear job 只保存 Agent ID、rowid cutoff、时间、计数和 phase，不保存 claim plaintext。
 - untrusted claim、projection 和 draft directive 不能进入 executable directive channel。
 - Memory tool、renderer route 和 background task 使用同一 domain normalizer。
 - 删除 Agent 时先 fence 新任务、等待/取消 owned work，再删除 row、vector file 和 metadata。
@@ -207,6 +226,8 @@ Maintenance 只处理有界 seed batch 和有界 same-scope vector neighbors；�
 
 Maintenance 使用有界 batch、deadline 和 ingestion fence。Database maintenance 顺序为：停止新任务、
 fence Memory、drain accepted work、关闭 store/SQLite、执行操作、reopen、恢复后台任务。
+启动恢复按 Agent 顺序处理 pending clear job，避免多个遗留 namespace 在同一个 event-loop tick
+同时执行首批同步事务。Shutdown 只等待当前有界 batch；未完成 job 保持可恢复。
 
 Working projection 按 current state、stable preference/fact、recent event、plan/recurring 和 reflection
 分节，使用稳定排序和 temporal annotation；排序用于 determinism、diff 和测试，不宣称带来
