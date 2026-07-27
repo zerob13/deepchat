@@ -137,6 +137,9 @@ terminal turn projection
 - terminal extraction 在后台运行，不延迟已完成回复；
 - malformed temporal metadata 只拒绝该 candidate，不让它变成永久事实，也不让整个 extraction batch
   失败；
+- startup 发现 legacy/corrupt external claim 的非法 temporal metadata 时，先归一化字段并将 claim
+  archive；不得把损坏状态提升成可召回的永久 atemporal fact。Persona/working 则归一化到其强制
+  atemporal 形式；
 - 同 content 在不同 scope 可独立存在；update、supersede、conflict 和 merge 不得跨 scope；
 - exact tombstone lookup 与 insert 位于同一 transaction，关闭 delete/re-extraction race；
 - model 发起的 `memory_remember` 不是用户重新授权，不得释放 tombstone；只有 renderer 中的显式

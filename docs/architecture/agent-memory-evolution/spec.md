@@ -308,7 +308,9 @@ one Agent and cannot cross its ownership boundary.
 - Every Memory-owned test is classified into exactly one maintained gate; native trust-boundary
   tests execute in the native gate.
 - Upgraded databases enforce temporal and scope invariants at write time. Import skips malformed
-  rows independently, and startup repairs legacy invalid temporal metadata instead of boot-looping.
+  rows independently, and startup neutralizes invalid temporal metadata instead of boot-looping.
+  External claims repaired this way are archived rather than promoted to permanent atemporal facts;
+  internal persona/working rows are normalized to their required atemporal form.
 - A rewrite merge preserves the only available temporal interpretation; conflicting interpretations
   never erase time semantics without an observable audit decision.
 - Malformed model-produced temporal metadata rejects only that extracted candidate.

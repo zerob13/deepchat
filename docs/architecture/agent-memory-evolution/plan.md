@@ -227,8 +227,10 @@ Storage enforcement is defense in depth:
 - SQLite triggers reject future malformed temporal/scope writes;
 - import validates each row before the target statement so one malformed row does not abort the
   restore transaction;
-- startup normalizes any invalid temporal rows left by older builds or external corruption to
-  atemporal metadata and logs the repair count.
+- startup normalizes invalid temporal rows left by older builds or external corruption. External
+  claims are archived after their temporal fields are neutralized so corruption cannot promote a
+  stale state to a permanent fact; internal persona/working rows are normalized to atemporal. The
+  repair log records counts and a bounded ID sample without plaintext.
 
 Explicit relearning is not a general tombstone-management API. Only the dedicated renderer
 user-add action may remove the exact content/provenance tombstones needed for that claim, in the

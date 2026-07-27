@@ -946,9 +946,45 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
 
   private ensureTemporalArtifacts(): void {
     if (this.temporalArtifactsEnsured) return
-    const repaired = this.db.transaction(() => {
+    const columns = new Set(
+      (
+        this.db.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
+          name: string
+        }>
+      ).map((column) => column.name)
+    )
+    const archiveStateAssignments = columns.has('lifecycle_state')
+      ? "lifecycle_state = 'archived', status = 'archived'"
+      : "status = 'archived'"
+    const repair = this.db.transaction(() => {
       this.db.exec(AGENT_MEMORY_TEMPORAL_TRIGGER_DROP_SQL)
-      const changes = this.db
+      const quarantinedIds = (
+        this.db
+          .prepare(
+            `SELECT id
+             FROM agent_memory
+             WHERE (${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL})
+               AND kind NOT IN ('persona', 'working')
+             ORDER BY id
+             LIMIT 20`
+          )
+          .all() as Array<{ id: string }>
+      ).map((row) => row.id)
+      const quarantined = this.db
+        .prepare(
+          `UPDATE agent_memory
+           SET temporal_kind = 'atemporal',
+               valid_from = NULL,
+               valid_until = NULL,
+               temporal_confidence = NULL,
+               temporal_precision = NULL,
+               temporal_timezone = NULL,
+               ${archiveStateAssignments}
+           WHERE (${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL})
+             AND kind NOT IN ('persona', 'working')`
+        )
+        .run().changes
+      const normalizedInternal = this.db
         .prepare(
           `UPDATE agent_memory
            SET temporal_kind = 'atemporal',
@@ -957,15 +993,26 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                temporal_confidence = NULL,
                temporal_precision = NULL,
                temporal_timezone = NULL
-           WHERE ${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL}`
+           WHERE (${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL})
+             AND kind IN ('persona', 'working')`
         )
         .run().changes
       this.db.exec(AGENT_MEMORY_TEMPORAL_TRIGGER_SQL)
-      return changes
+      return {
+        quarantined,
+        quarantinedIds,
+        normalizedInternal,
+        repaired: quarantined + normalizedInternal
+      }
     })()
     this.temporalArtifactsEnsured = true
-    if (repaired > 0) {
-      logger.warn(`[Memory] reset invalid temporal metadata to atemporal: rows=${repaired}`)
+    if (repair.repaired > 0) {
+      const idSample = repair.quarantinedIds.length
+        ? ` ids=${JSON.stringify(repair.quarantinedIds)}${repair.quarantined > repair.quarantinedIds.length ? '…' : ''}`
+        : ''
+      logger.warn(
+        `[Memory] repaired invalid temporal metadata: quarantinedClaims=${repair.quarantined} normalizedInternal=${repair.normalizedInternal}${idSample}`
+      )
     }
   }
 

@@ -289,6 +289,19 @@ describeIfNative('Memory native SQLite migration', () => {
           temporalTimeZone: 'UTC'
         }
       })
+      memoryTable(seeded).insertInternalMemory({
+        id: 'corrupted-persona-temporal',
+        agentId: 'a',
+        kind: 'persona',
+        content: 'Active self model remains internal.',
+        personaState: 'active'
+      })
+      memoryTable(seeded).insertInternalMemory({
+        id: 'corrupted-working-temporal',
+        agentId: 'a',
+        kind: 'working',
+        content: 'Working projection remains internal.'
+      })
       seeded.close()
 
       const corrupted = new DatabaseCtor(databasePath)
@@ -296,8 +309,17 @@ describeIfNative('Memory native SQLite migration', () => {
         DROP TRIGGER IF EXISTS agent_memory_temporal_bu_v1;
         PRAGMA ignore_check_constraints = ON;
         UPDATE agent_memory
-        SET valid_from = 20, valid_until = 10
-        WHERE id = 'corrupted-temporal';
+        SET temporal_kind = 'state',
+            valid_from = 20,
+            valid_until = 10,
+            temporal_confidence = 0.9,
+            temporal_precision = 'exact',
+            temporal_timezone = 'UTC'
+        WHERE id IN (
+          'corrupted-temporal',
+          'corrupted-persona-temporal',
+          'corrupted-working-temporal'
+        );
         PRAGMA ignore_check_constraints = OFF;
       `)
       corrupted.close()
@@ -308,7 +330,7 @@ describeIfNative('Memory native SQLite migration', () => {
           .getDatabase()
           .prepare(
             `SELECT content, temporal_kind, valid_from, valid_until, temporal_confidence,
-                    temporal_precision, temporal_timezone
+                    temporal_precision, temporal_timezone, lifecycle_state, status
              FROM agent_memory WHERE id = 'corrupted-temporal'`
           )
           .get()
@@ -319,8 +341,46 @@ describeIfNative('Memory native SQLite migration', () => {
         valid_until: null,
         temporal_confidence: null,
         temporal_precision: null,
-        temporal_timezone: null
+        temporal_timezone: null,
+        lifecycle_state: 'archived',
+        status: 'archived'
       })
+      expect(memoryTable(reopened).search('a', 'Corrupted temporal')).toEqual([])
+      expect(
+        reopened
+          .getDatabase()
+          .prepare(
+            `SELECT id, temporal_kind, valid_from, valid_until, temporal_confidence,
+                    temporal_precision, temporal_timezone, lifecycle_state, status
+             FROM agent_memory
+             WHERE id IN ('corrupted-persona-temporal', 'corrupted-working-temporal')
+             ORDER BY id`
+          )
+          .all()
+      ).toEqual([
+        {
+          id: 'corrupted-persona-temporal',
+          temporal_kind: 'atemporal',
+          valid_from: null,
+          valid_until: null,
+          temporal_confidence: null,
+          temporal_precision: null,
+          temporal_timezone: null,
+          lifecycle_state: 'active',
+          status: 'fts_only'
+        },
+        {
+          id: 'corrupted-working-temporal',
+          temporal_kind: 'atemporal',
+          valid_from: null,
+          valid_until: null,
+          temporal_confidence: null,
+          temporal_precision: null,
+          temporal_timezone: null,
+          lifecycle_state: 'active',
+          status: 'fts_only'
+        }
+      ])
       expect(() =>
         reopened
           .getDatabase()
