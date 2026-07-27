@@ -43,6 +43,7 @@ vi.mock('@shadcn/components/ui/dialog', () => {
 })
 
 import ChatAttachmentItem from '@/components/chat/ChatAttachmentItem.vue'
+import { PDF_OCR_TRUNCATION_MARKER } from '@shared/utils/documentOcrText'
 
 describe('ChatAttachmentItem', () => {
   it('shows the persisted OCR snapshot as escaped text', async () => {
@@ -110,7 +111,7 @@ describe('ChatAttachmentItem', () => {
   })
 
   it('keeps output-limited page coverage inside the OCR preview', async () => {
-    const text = '## Page 1\n\npartial page'
+    const text = `## Page 1\n\npartial page\n\n${PDF_OCR_TRUNCATION_MARKER}`
     const wrapper = mount(ChatAttachmentItem, {
       props: {
         file: {
@@ -143,6 +144,37 @@ describe('ChatAttachmentItem', () => {
 
     expect(wrapper.text()).toContain('chat.attachments.ocrPageCoveragePartial')
     expect(wrapper.text()).toContain('chat.attachments.ocrTextTruncated')
+  })
+
+  it('does not preview malformed persisted PDF OCR coverage as valid text', () => {
+    const text = '## Page 1\n\npartial page'
+    const wrapper = mount(ChatAttachmentItem, {
+      props: {
+        file: {
+          name: 'corrupt.pdf',
+          path: '/tmp/corrupt.pdf',
+          mimeType: 'application/pdf',
+          resolvedRepresentation: {
+            kind: 'ocr_text',
+            text,
+            tokenCount: 8,
+            truncated: true,
+            document: {
+              pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: false }],
+              includedThroughPage: 1,
+              includedThroughPageComplete: false,
+              artifactTermination: 'stopped_by_output_limit',
+              generationOutputLimitReached: true
+            }
+          }
+        }
+      }
+    })
+
+    expect(wrapper.get('[data-testid="attachment-representation-status"]').text()).toBe(
+      'chat.attachments.unavailableBadge'
+    )
+    expect(wrapper.find('[data-testid="attachment-ocr-preview-trigger"]').exists()).toBe(false)
   })
 
   it('distinguishes resource-limited PDF OCR in the chip and preview', async () => {
