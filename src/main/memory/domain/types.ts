@@ -195,7 +195,7 @@ export type ResolveChallengerTransition = ResolveChallengerTransitionBase &
         content: string
         provenanceKey: string | null
         category?: string | null
-        temporal: MemoryTemporalMetadata
+        temporal?: MemoryTemporalMetadata
         at: number
       }
   )

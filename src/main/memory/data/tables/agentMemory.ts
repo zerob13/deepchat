@@ -65,7 +65,7 @@ import {
   buildLegacyStatusProjectionSql,
   buildStatusProjectionFromExpressionsSql
 } from './agentMemoryStateSql'
-import { normalizeMemoryTemporalMetadata } from '../../core/temporal'
+import { normalizeMemoryTemporalMetadata, temporalMetadataFromRow } from '../../core/temporal'
 import { buildMemoryTombstoneIdentities, isTombstoneEligibleMemoryKind } from '../../core/tombstone'
 import {
   AGENT_MEMORY_AGENT_SCOPE_FILTER,
@@ -2766,7 +2766,11 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     )
     const updateContent = input.content !== undefined
     const updateCategory = updateContent && Object.prototype.hasOwnProperty.call(input, 'category')
-    const temporal = updateContent ? normalizeMemoryTemporalMetadata(input.temporal) : null
+    const temporal = updateContent
+      ? input.temporal
+        ? normalizeMemoryTemporalMetadata(input.temporal)
+        : temporalMetadataFromRow(before)
+      : null
     const contentSql = updateContent
       ? `, content = ?, provenance_key = ?${
           updateCategory ? ', category = ?' : ''

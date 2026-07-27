@@ -45,7 +45,7 @@ import type {
   MemoryDirectiveWriteResult
 } from '@/memory/domain/directives'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
-import { normalizeMemoryTemporalMetadata } from '@/memory/core/temporal'
+import { normalizeMemoryTemporalMetadata, temporalMetadataFromRow } from '@/memory/core/temporal'
 import {
   buildMemoryTombstoneIdentities,
   isTombstoneEligibleMemoryKind
@@ -828,7 +828,9 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       if (Object.prototype.hasOwnProperty.call(input, 'category')) {
         row.category = input.category ?? null
       }
-      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      const temporal = input.temporal
+        ? normalizeMemoryTemporalMetadata(input.temporal)
+        : temporalMetadataFromRow(row)
       row.temporal_kind = temporal.temporalKind
       row.valid_from = temporal.validFrom
       row.valid_until = temporal.validUntil

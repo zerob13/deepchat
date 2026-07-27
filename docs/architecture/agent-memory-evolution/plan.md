@@ -85,10 +85,10 @@ during parser transition.
 Normalize model output:
 
 - finite epoch milliseconds only;
-- confidence clamped to `[0, 1]`;
+- confidence must be finite and inside `[0, 1]`;
 - half-open ordered intervals;
 - IANA timezone syntax bounded in length;
-- invalid temporal metadata degrades that candidate to atemporal rather than failing the batch.
+- invalid temporal metadata rejects only that candidate rather than failing the batch.
 
 Do not infer completion from an expired plan.
 

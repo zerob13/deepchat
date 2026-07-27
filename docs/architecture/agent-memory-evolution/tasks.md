@@ -104,8 +104,8 @@ Memory-owned entries to the shared schema catalog.
 - [x] Enforce temporal invariants on upgraded databases and repair invalid legacy rows.
 - [x] Skip malformed temporal/scope import rows without rolling back valid data.
 - [x] Retire the superseded recall index without rebuilding it at startup.
-- [ ] Preserve one-sided temporal metadata across all rewrite paths.
-- [ ] Reject malformed extracted temporal candidates independently.
+- [x] Preserve one-sided temporal metadata across all rewrite paths.
+- [x] Reject malformed extracted temporal candidates independently.
 - [ ] Allow explicit relearning to atomically supersede exact tombstones.
 - [ ] Strip invisible directive controls and return typed capacity failures.
 - [ ] Preserve indexed ordering for multi-scope FTS importance candidates.

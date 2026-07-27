@@ -546,12 +546,12 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
 
     expect(repo.getById('c1')).toMatchObject({
       content: 'user prefers valkey over redis',
-      temporal_kind: 'atemporal',
-      valid_from: null,
+      temporal_kind: 'state',
+      valid_from: 500 * DAY,
       valid_until: null,
-      temporal_confidence: null,
-      temporal_precision: null,
-      temporal_timezone: null
+      temporal_confidence: 0.8,
+      temporal_precision: 'day',
+      temporal_timezone: 'UTC'
     })
     expect(repo.getById('c1')?.provenance_key).toBe(
       buildMemoryProvenanceKey('a', 'semantic', 'user prefers valkey over redis')

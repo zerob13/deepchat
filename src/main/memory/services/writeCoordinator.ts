@@ -428,7 +428,7 @@ export class WriteCoordinator {
         extractionOutcome = 'cancelled'
         return { ok: false }
       }
-      const parsed = parseMemoryCandidates(response, { fallbackTimeZone: timeZone })
+      const parsed = parseMemoryCandidates(response)
       if (!parsed.ok) {
         logger.warn(`[Memory] extraction parse failed: ${parsed.reason}`)
         return { ok: false }

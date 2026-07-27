@@ -36,9 +36,7 @@ function resolveSystemTimeZone(): string {
   }
 }
 
-const SYSTEM_TIME_ZONE = resolveSystemTimeZone()
-
 export const systemMemoryDomainClock: MemoryDomainClock = {
   now: () => Date.now(),
-  timeZone: () => SYSTEM_TIME_ZONE
+  timeZone: resolveSystemTimeZone
 }

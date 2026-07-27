@@ -951,6 +951,58 @@ describeIfSqlite('AgentMemoryTable', () => {
         conflict_state: null,
         decision_revision: challengedTarget.decision_revision + 1
       })
+
+      const secondTarget = table.insert({
+        id: 'target-preserve-temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'second target'
+      })
+      expect(
+        table.markConflictIfRevision(
+          'a',
+          secondTarget.id,
+          secondTarget.decision_revision,
+          'challenged'
+        )
+      ).toBe(true)
+      const temporalChallenger = table.insert({
+        id: 'challenger-preserve-temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'time-bound challenger',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: secondTarget.id,
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 300,
+          validUntil: 400,
+          temporalConfidence: 0.9,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+      expect(
+        table.activateResolvedChallenger({
+          agentId: 'a',
+          id: temporalChallenger.id,
+          expectedRevision: temporalChallenger.decision_revision,
+          targetId: secondTarget.id,
+          content: 'rewritten time-bound challenger',
+          provenanceKey: 'rewritten-time-bound-challenger',
+          at: 350
+        })
+      ).toBe(true)
+      expect(table.getById(temporalChallenger.id)).toMatchObject({
+        content: 'rewritten time-bound challenger',
+        temporal_kind: 'state',
+        valid_from: 300,
+        valid_until: 400,
+        temporal_confidence: 0.9,
+        temporal_precision: 'exact',
+        temporal_timezone: 'UTC'
+      })
     } finally {
       db.close()
     }

@@ -98,13 +98,9 @@ function normalizeConfidence(value: unknown): number {
 }
 
 function parseStrictConfidence(value: unknown): number | null {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && value.trim()
-        ? Number(value)
-        : Number.NaN
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+    ? value
+    : null
 }
 
 export function tryNormalizeMemoryTemporalMetadata(
@@ -271,6 +267,8 @@ export function resolveMergedClaimTemporalMetadata(
   }
   if (contentMatch.existing) return { ...existing }
   if (contentMatch.incoming) return { ...incoming }
+  if (existing.temporalKind === 'atemporal') return { ...incoming }
+  if (incoming.temporalKind === 'atemporal') return { ...existing }
   if (!sameTemporalInterpretation(existing, incoming)) {
     return { ...ATEMPORAL_MEMORY_METADATA }
   }

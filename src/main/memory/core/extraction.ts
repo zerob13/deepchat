@@ -2,7 +2,7 @@ import type { MemoryCandidate } from '../types'
 import { normalizeMemoryDirective, type MemoryDirectiveInput } from '../domain/directives'
 import { AGENT_MEMORY_CATEGORIES, isAgentMemoryCategory } from '@shared/types/agent-memory'
 import { extractJsonContainer } from './jsonExtraction'
-import { normalizeMemoryTemporalMetadata, type RawMemoryTemporalMetadata } from './temporal'
+import { tryNormalizeMemoryTemporalMetadata, type RawMemoryTemporalMetadata } from './temporal'
 
 const MAX_CANDIDATES = 8
 const MAX_DIRECTIVE_SUGGESTIONS = 4
@@ -113,10 +113,7 @@ export type MemoryCandidateParseResult =
 
 // Tolerant per-entry parse: surrounding noise and malformed entries are ignored, but malformed
 // top-level model output is reported so callers can retry instead of advancing durable cursors.
-export function parseMemoryCandidates(
-  raw: string,
-  options: { fallbackTimeZone?: string } = {}
-): MemoryCandidateParseResult {
+export function parseMemoryCandidates(raw: string): MemoryCandidateParseResult {
   if (typeof raw !== 'string' || !raw.trim()) return { ok: false, reason: 'empty-response' }
 
   let parsed: unknown
@@ -166,19 +163,22 @@ export function parseMemoryCandidates(
     const content = typeof obj.content === 'string' ? obj.content.trim() : ''
     if (!content) continue
     const category = typeof obj.category === 'string' ? obj.category.trim() : undefined
-    if (isAgentMemoryCategory(category) && category === 'task_outcome') {
-      if (sawTaskOutcome) continue
-      sawTaskOutcome = true
-    }
+    const isTaskOutcome = isAgentMemoryCategory(category) && category === 'task_outcome'
+    if (isTaskOutcome && sawTaskOutcome) continue
     const kind = obj.kind === 'episodic' || obj.kind === 'semantic' ? obj.kind : undefined
     const importance = parseImportance(obj.importance)
-    const temporal =
-      obj.temporal && typeof obj.temporal === 'object'
-        ? normalizeMemoryTemporalMetadata(
-            obj.temporal as RawMemoryTemporalMetadata,
-            options.fallbackTimeZone
-          )
-        : undefined
+    const hasTemporal = Object.prototype.hasOwnProperty.call(obj, 'temporal')
+    if (
+      hasTemporal &&
+      (!obj.temporal || typeof obj.temporal !== 'object' || Array.isArray(obj.temporal))
+    ) {
+      continue
+    }
+    const temporal = hasTemporal
+      ? (tryNormalizeMemoryTemporalMetadata(obj.temporal as RawMemoryTemporalMetadata) ?? undefined)
+      : undefined
+    if (hasTemporal && !temporal) continue
+    if (isTaskOutcome) sawTaskOutcome = true
     candidates.push(
       temporal
         ? { category, kind, content, importance, temporal }

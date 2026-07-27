@@ -135,7 +135,8 @@ terminal turn projection
 ```
 
 - terminal extraction 在后台运行，不延迟已完成回复；
-- malformed temporal metadata 只让该 candidate 降级为 atemporal，不让整个 extraction batch 失败；
+- malformed temporal metadata 只拒绝该 candidate，不让它变成永久事实，也不让整个 extraction batch
+  失败；
 - 同 content 在不同 scope 可独立存在；update、supersede、conflict 和 merge 不得跨 scope；
 - exact tombstone lookup 与 insert 位于同一 transaction，关闭 delete/re-extraction race；
 - model-derived directive suggestion 只进入 draft，不得经 claim extraction 通道直接 active；
