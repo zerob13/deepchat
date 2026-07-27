@@ -37,6 +37,28 @@ runtime behavior from package names and do not install arbitrary SDKs dynamicall
 API-key profiles such as NVIDIA, Hugging Face, Moonshot, StepFun, Upstage, Alibaba, MiniMax, DaoXE,
 Kimi For Coding and OpenCode Go remain catalog/registry mappings unless they need a real special adapter.
 
+## Model capability identity
+
+Provider service identity, transport identity, and provider-db capability identity are separate
+contracts. A provider profile owns credentials and its service endpoint. A transport route owns the
+wire protocol used by one model. A capability identity owns the single provider-db model record used
+for reasoning, sampling, tools, modalities, search, and other model behavior.
+
+Aggregator routes resolve in two phases. Model ID and owner metadata first provide only the coarse
+Anthropic or Gemini family hint needed to choose an endpoint. The selected endpoint then participates
+in complete capability resolution. A transport endpoint is a fallback signal and never overrides an
+explicit, provider-local, owner, family, or catalog model match.
+
+Capability identity is resolved in the main process and passed through the provider runtime.
+Renderer code consumes typed capability snapshots and does not reproduce provider routing rules.
+Per-model aggregator matches are derived request state and are not persisted in provider or model
+configuration. Provider-level `capabilityProviderId` remains an explicit compatibility override.
+
+Generation controls use an effective request policy that can pass through, fix, or omit a
+parameter. Stored model and Session values remain user intent; policy is applied at the UI and wire
+boundaries without destructive normalization. Unknown catalog capabilities remain compatible by
+passing through unless an explicit model request policy requires a different wire shape.
+
 ## Auth and secrets
 
 - API keys and OAuth credentials are written and read in main process storage.
