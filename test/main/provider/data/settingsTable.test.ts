@@ -86,6 +86,17 @@ describeIfSqlite('ProviderSettingsTable', () => {
       id: 'custom-model',
       isCustom: true
     })
+    expect(table.getProviderModel('openai', 'gpt-4', 'provider')).toMatchObject({
+      id: 'gpt-4',
+      providerId: 'openai',
+      isCustom: false
+    })
+    expect(table.getProviderModel('openai', 'custom-model', 'custom')).toMatchObject({
+      id: 'custom-model',
+      providerId: 'openai',
+      isCustom: true
+    })
+    expect(table.getProviderModel('openai', 'missing', 'provider')).toBeUndefined()
 
     table.setModelStatus('model_status_openai_gpt-4', 'openai', 'gpt-4', true)
     expect(table.getModelStatus('model_status_openai_gpt-4')).toBe(true)

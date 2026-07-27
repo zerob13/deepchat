@@ -100,6 +100,7 @@ type RouteDecision = {
   providerKind: AiSdkProviderKind
   providerPatch?: Partial<LLM_PROVIDER>
   modelConfigPatch?: Partial<ModelConfig>
+  resolvedModelConfig?: ModelConfig
   endpointType?: NewApiEndpointType | 'grok-image'
   supportsOfficialAnthropicReasoning?: boolean
   capabilityIdentity?: ResolvedCapabilityIdentity
@@ -266,10 +267,10 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private resolveCapabilityIdentity(
     modelId: string,
-    endpointType?: RouteDecision['endpointType']
+    endpointType: RouteDecision['endpointType'] | undefined,
+    modelConfig: ModelConfig,
+    storedModel: MODEL_META | undefined
   ): ResolvedCapabilityIdentity {
-    const storedModel = this.getStoredModel(modelId)
-    const modelConfig = this.getProviderModelConfig(modelId)
     const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
     return resolveModelCapabilityIdentity({
       providerId: this.provider.id,
@@ -278,6 +279,19 @@ export class AiSdkProvider extends BaseLLMProvider {
       endpointType: endpointType === 'grok-image' ? undefined : endpointType,
       explicitProviderId: this.provider.capabilityProviderId
     })
+  }
+
+  private resolveCapabilityIdentityFromProviderState(
+    modelId: string,
+    endpointType?: RouteDecision['endpointType'],
+    resolvedModelConfig?: ModelConfig
+  ): ResolvedCapabilityIdentity {
+    return this.resolveCapabilityIdentity(
+      modelId,
+      endpointType,
+      resolvedModelConfig ?? this.getProviderModelConfig(modelId),
+      this.getStoredModel(modelId)
+    )
   }
 
   private getRuntimeCapabilityProviderId(
@@ -297,13 +311,15 @@ export class AiSdkProvider extends BaseLLMProvider {
     return this.provider.id.trim().toLowerCase() === 'anthropic'
   }
 
-  private resolveNewApiEndpointType(modelId: string): NewApiEndpointType {
-    const modelConfig = this.getProviderModelConfig(modelId)
+  private resolveNewApiEndpointType(
+    modelId: string,
+    modelConfig: ModelConfig,
+    storedModel: MODEL_META | undefined
+  ): NewApiEndpointType {
     if (isNewApiEndpointType(modelConfig.endpointType)) {
       return modelConfig.endpointType
     }
 
-    const storedModel = this.getStoredModel(modelId)
     if (storedModel && isNewApiEndpointType(storedModel.endpointType)) {
       return storedModel.endpointType
     }
@@ -327,14 +343,20 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  private resolveRouteDecision(modelId: string, _modelConfig?: ModelConfig): RouteDecision {
+  private buildRouteDecision(modelId: string, modelConfig: ModelConfig): RouteDecision {
     const strategy = this.getRouteStrategy()
+    const storedModel = this.getStoredModel(modelId)
 
     if (strategy === 'grok' && modelId.startsWith('grok-2-image')) {
       return {
         providerKind: this.definition.runtimeKind,
         endpointType: 'grok-image',
-        capabilityIdentity: this.resolveCapabilityIdentity(modelId),
+        capabilityIdentity: this.resolveCapabilityIdentity(
+          modelId,
+          undefined,
+          modelConfig,
+          storedModel
+        ),
         modelConfigPatch: {
           apiEndpoint: ApiEndpointType.Image
         }
@@ -342,7 +364,12 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
 
     if (strategy === 'zenmux' && isZenmuxAnthropicRoute(this.provider.id, modelId)) {
-      const capabilityIdentity = this.resolveCapabilityIdentity(modelId)
+      const capabilityIdentity = this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      )
       return {
         providerKind: 'openai-compatible',
         capabilityIdentity,
@@ -354,7 +381,12 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
 
     if (strategy === 'opencode-go' && isOpenCodeGoAnthropicRoute(this.provider.id, modelId)) {
-      const capabilityIdentity = this.resolveCapabilityIdentity(modelId)
+      const capabilityIdentity = this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      )
       return {
         providerKind: 'anthropic',
         capabilityIdentity,
@@ -367,8 +399,13 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
 
     if (strategy === 'new-api') {
-      const endpointType = this.resolveNewApiEndpointType(modelId)
-      const capabilityIdentity = this.resolveCapabilityIdentity(modelId, endpointType)
+      const endpointType = this.resolveNewApiEndpointType(modelId, modelConfig, storedModel)
+      const capabilityIdentity = this.resolveCapabilityIdentity(
+        modelId,
+        endpointType,
+        modelConfig,
+        storedModel
+      )
       const capabilityProviderId = this.getRuntimeCapabilityProviderId(
         capabilityIdentity,
         endpointType
@@ -461,8 +498,21 @@ export class AiSdkProvider extends BaseLLMProvider {
 
     return {
       providerKind: this.definition.runtimeKind,
-      capabilityIdentity: this.resolveCapabilityIdentity(modelId),
+      capabilityIdentity: this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      ),
       ...(supportsOfficialAnthropicReasoning ? { supportsOfficialAnthropicReasoning } : {})
+    }
+  }
+
+  private resolveRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
+    const resolvedModelConfig = this.getResolvedModelConfig(modelId, modelConfig)
+    return {
+      ...this.buildRouteDecision(modelId, resolvedModelConfig),
+      resolvedModelConfig
     }
   }
 
@@ -494,11 +544,12 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private getModelConfigForDecision(
     modelId: string,
-    modelConfig?: ModelConfig,
-    decision: RouteDecision = this.resolveRouteDecision(modelId, modelConfig)
+    decision: RouteDecision,
+    modelConfig?: ModelConfig
   ): ModelConfig {
     return {
-      ...this.getResolvedModelConfig(modelId, modelConfig),
+      ...(decision.resolvedModelConfig ?? this.getResolvedModelConfig(modelId)),
+      ...modelConfig,
       ...decision.modelConfigPatch
     }
   }
@@ -646,17 +697,22 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private buildRuntimeContext(
     modelId: string,
+    decision: RouteDecision,
     modelConfig?: ModelConfig
   ): { context: AiSdkRuntimeContext; decision: RouteDecision; resolvedModelConfig: ModelConfig } {
-    const decision = this.resolveRouteDecision(modelId, modelConfig)
     const runtimeProvider = this.getRuntimeProvider(decision)
     const defaultHeaders = {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
     }
-    const resolvedModelConfig = this.getModelConfigForDecision(modelId, modelConfig, decision)
+    const resolvedModelConfig = this.getModelConfigForDecision(modelId, decision, modelConfig)
     const capabilityIdentity =
-      decision.capabilityIdentity ?? this.resolveCapabilityIdentity(modelId, decision.endpointType)
+      decision.capabilityIdentity ??
+      this.resolveCapabilityIdentityFromProviderState(
+        modelId,
+        decision.endpointType,
+        resolvedModelConfig
+      )
     const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity, {
       reasoning: resolvedModelConfig.reasoning
     })
@@ -895,7 +951,9 @@ export class AiSdkProvider extends BaseLLMProvider {
           body: formData
         },
         {
-          timeout: this.resolveModelRequestTimeout(this.getModelConfigForDecision(modelId)),
+          timeout: this.resolveModelRequestTimeout(
+            this.getModelConfigForDecision(modelId, decision)
+          ),
           signal: options?.signal
         },
         decision
@@ -965,22 +1023,35 @@ export class AiSdkProvider extends BaseLLMProvider {
     return models
   }
 
-  public async runText(
-    messages: ChatMessage[],
-    modelId: string,
-    temperature?: number,
-    maxTokens?: number,
-    modelConfig?: ModelConfig,
-    signal?: AbortSignal
-  ): Promise<LLMResponse> {
+  private assertModelRequestReady(modelId: string): void {
     if (!this.isInitialized) {
       throw new Error('Provider not initialized')
     }
     if (!modelId) {
       throw new Error('Model ID is required')
     }
+  }
 
-    const { context, resolvedModelConfig } = this.buildRuntimeContext(modelId, modelConfig)
+  private resolveRequestRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
+    this.assertModelRequestReady(modelId)
+    return this.resolveRouteDecision(modelId, modelConfig)
+  }
+
+  private async runTextWithDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    decision: RouteDecision,
+    temperature?: number,
+    maxTokens?: number,
+    modelConfig?: ModelConfig,
+    signal?: AbortSignal
+  ): Promise<LLMResponse> {
+    this.assertModelRequestReady(modelId)
+    const { context, resolvedModelConfig } = this.buildRuntimeContext(
+      modelId,
+      decision,
+      modelConfig
+    )
     if (signal) {
       return runAiSdkGenerateText(
         context,
@@ -1002,23 +1073,42 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  public async *streamText(
+  public async runText(
     messages: ChatMessage[],
     modelId: string,
+    temperature?: number,
+    maxTokens?: number,
+    modelConfig?: ModelConfig,
+    signal?: AbortSignal
+  ): Promise<LLMResponse> {
+    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    return this.runTextWithDecision(
+      messages,
+      modelId,
+      decision,
+      temperature,
+      maxTokens,
+      modelConfig,
+      signal
+    )
+  }
+
+  private async *streamTextWithDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    decision: RouteDecision,
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
     tools: MCPToolDefinition[],
     signal?: AbortSignal
   ): AsyncGenerator<LLMCoreStreamEvent> {
-    if (!this.isInitialized) {
-      throw new Error('Provider not initialized')
-    }
-    if (!modelId) {
-      throw new Error('Model ID is required')
-    }
-
-    const { context, resolvedModelConfig } = this.buildRuntimeContext(modelId, modelConfig)
+    this.assertModelRequestReady(modelId)
+    const { context, resolvedModelConfig } = this.buildRuntimeContext(
+      modelId,
+      decision,
+      modelConfig
+    )
     if (signal) {
       yield* runAiSdkCoreStream(
         context,
@@ -1043,9 +1133,32 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  public async collectStreamResponse(
+  public async *streamText(
     messages: ChatMessage[],
     modelId: string,
+    modelConfig: ModelConfig,
+    temperature: number,
+    maxTokens: number,
+    tools: MCPToolDefinition[],
+    signal?: AbortSignal
+  ): AsyncGenerator<LLMCoreStreamEvent> {
+    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    yield* this.streamTextWithDecision(
+      messages,
+      modelId,
+      decision,
+      modelConfig,
+      temperature,
+      maxTokens,
+      tools,
+      signal
+    )
+  }
+
+  private async collectStreamResponseWithDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    decision: RouteDecision,
     temperature?: number,
     maxTokens?: number,
     tools: MCPToolDefinition[] = [],
@@ -1055,16 +1168,16 @@ export class AiSdkProvider extends BaseLLMProvider {
     const response: LLMResponse = {
       content: ''
     }
-    const resolvedModelConfig =
-      modelConfig ??
-      ({
-        ...this.getProviderModelConfig(modelId),
-        apiEndpoint: ApiEndpointType.Image
-      } as ModelConfig)
+    const resolvedModelConfig = this.getModelConfigForDecision(
+      modelId,
+      decision,
+      modelConfig ?? ({ apiEndpoint: ApiEndpointType.Image } as ModelConfig)
+    )
 
-    for await (const event of this.streamText(
+    for await (const event of this.streamTextWithDecision(
       messages,
       modelId,
+      decision,
       resolvedModelConfig,
       temperature ?? resolvedModelConfig.temperature ?? 0.7,
       maxTokens ?? resolvedModelConfig.maxTokens ?? 1024,
@@ -1094,12 +1207,35 @@ export class AiSdkProvider extends BaseLLMProvider {
     return response
   }
 
+  public async collectStreamResponse(
+    messages: ChatMessage[],
+    modelId: string,
+    temperature?: number,
+    maxTokens?: number,
+    tools: MCPToolDefinition[] = [],
+    modelConfig?: ModelConfig,
+    signal?: AbortSignal
+  ): Promise<LLMResponse> {
+    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    return this.collectStreamResponseWithDecision(
+      messages,
+      modelId,
+      decision,
+      temperature,
+      maxTokens,
+      tools,
+      modelConfig,
+      signal
+    )
+  }
+
   public async runEmbeddings(
     modelId: string,
     texts: string[],
     signal?: AbortSignal
   ): Promise<number[][]> {
-    const { context } = this.buildRuntimeContext(modelId)
+    const decision = this.resolveRouteDecision(modelId)
+    const { context } = this.buildRuntimeContext(modelId, decision)
     return runAiSdkEmbeddings(context, modelId, texts, signal)
   }
 
@@ -1111,7 +1247,8 @@ export class AiSdkProvider extends BaseLLMProvider {
   ): Promise<number[][]> {
     const runtimeProvider = this.getRuntimeProvider(decision)
     const capabilityIdentity =
-      decision.capabilityIdentity ?? this.resolveCapabilityIdentity(modelId, decision.endpointType)
+      decision.capabilityIdentity ??
+      this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
     const defaultHeaders = {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
@@ -1167,7 +1304,8 @@ export class AiSdkProvider extends BaseLLMProvider {
         throw error
       }
       console.error(`[AiSdkProvider] Failed to get dimensions for model ${modelId}:`, error)
-      const { context } = this.buildRuntimeContext(modelId)
+      const decision = this.resolveRouteDecision(modelId)
+      const { context } = this.buildRuntimeContext(modelId, decision)
       return runAiSdkDimensions(context, modelId, signal)
     }
   }
@@ -1196,7 +1334,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       const runtimeProvider = this.getRuntimeProvider(decision)
       const capabilityIdentity =
         decision.capabilityIdentity ??
-        this.resolveCapabilityIdentity(modelId, decision.endpointType)
+        this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
       const defaultHeaders = {
         ...this.defaultHeaders,
         ...this.definition.defaultHeadersPatch
@@ -2393,10 +2531,11 @@ export class AiSdkProvider extends BaseLLMProvider {
   private async runSummaryTitlePrompt(
     messages: ChatMessage[],
     modelId: string,
+    decision: RouteDecision,
     temperature: number,
     maxTokens?: number
   ): Promise<string> {
-    const response = await this.runText(
+    const response = await this.runTextWithDecision(
       [
         {
           role: 'user',
@@ -2404,6 +2543,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         }
       ],
       modelId,
+      decision,
       temperature,
       maxTokens
     )
@@ -2413,17 +2553,19 @@ export class AiSdkProvider extends BaseLLMProvider {
   private async runPromptCompletion(
     prompt: string,
     modelId: string,
+    decision: RouteDecision,
     temperature?: number,
     maxTokens?: number,
     systemPrompt?: string,
     signal?: AbortSignal
   ): Promise<LLMResponse> {
-    return this.runText(
+    return this.runTextWithDecision(
       [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'user', content: prompt }
       ],
       modelId,
+      decision,
       temperature,
       maxTokens,
       undefined,
@@ -2433,6 +2575,7 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private async getSuggestionsByPreset(
     preset: AiSdkBehaviorPreset,
+    decision: RouteDecision,
     context: string | ChatMessage[],
     modelId: string,
     temperature?: number,
@@ -2445,6 +2588,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       const response = await this.runPromptCompletion(
         `根据下面的上下文，给出3个可能的回复建议，每个建议一行，不要有编号或者额外的解释：\n\n${promptContext}`,
         modelId,
+        decision,
         temperature ?? 0.7,
         maxTokens ?? 128,
         systemPrompt
@@ -2460,6 +2604,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       const response = await this.runPromptCompletion(
         `Based on the following context, please provide up to 5 reasonable suggestion options, each on a new line without numbering:\n\n${promptContext}`,
         modelId,
+        decision,
         temperature ?? 0.7,
         maxTokens ?? 128,
         systemPrompt
@@ -2479,7 +2624,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       return []
     }
 
-    const response = await this.runText(
+    const response = await this.runTextWithDecision(
       [
         {
           role: 'system',
@@ -2489,6 +2634,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         ...messages.slice(-5)
       ],
       modelId,
+      decision,
       temperature ?? 0.7,
       maxTokens ?? 60
     )
@@ -2509,9 +2655,9 @@ export class AiSdkProvider extends BaseLLMProvider {
 
     switch (preset) {
       case 'anthropic':
-        return this.runSummaryTitlePrompt(messages, modelId, 0.3, 50)
+        return this.runSummaryTitlePrompt(messages, modelId, decision, 0.3, 50)
       case 'google': {
-        const title = await this.runSummaryTitlePrompt(messages, modelId, 0.4)
+        const title = await this.runSummaryTitlePrompt(messages, modelId, decision, 0.4)
         return title || 'New Conversation'
       }
       case 'openai':
@@ -2519,7 +2665,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       case 'english-summary':
       case 'chinese-summary':
       default: {
-        const title = await this.runSummaryTitlePrompt(messages, modelId, 0.5)
+        const title = await this.runSummaryTitlePrompt(messages, modelId, decision, 0.5)
         return title.replace(/["']/g, '').trim()
       }
     }
@@ -2533,10 +2679,16 @@ export class AiSdkProvider extends BaseLLMProvider {
   ): Promise<LLMResponse> {
     const decision = this.resolveRouteDecision(modelId)
     if (decision.endpointType === 'grok-image' || decision.endpointType === 'image-generation') {
-      return this.collectStreamResponse(messages, modelId, temperature, maxTokens)
+      return this.collectStreamResponseWithDecision(
+        messages,
+        modelId,
+        decision,
+        temperature,
+        maxTokens
+      )
     }
 
-    return this.runText(messages, modelId, temperature, maxTokens)
+    return this.runTextWithDecision(messages, modelId, decision, temperature, maxTokens)
   }
 
   public async summaries(
@@ -2548,9 +2700,10 @@ export class AiSdkProvider extends BaseLLMProvider {
   ): Promise<LLMResponse> {
     const decision = this.resolveRouteDecision(modelId)
     if (decision.endpointType === 'grok-image' || decision.endpointType === 'image-generation') {
-      return this.collectStreamResponse(
+      return this.collectStreamResponseWithDecision(
         [{ role: 'user', content: text }],
         modelId,
+        decision,
         temperature,
         maxTokens
       )
@@ -2562,6 +2715,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `请对以下内容进行摘要:\n\n${text}\n\n请提供一个简洁明了的摘要。`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2570,6 +2724,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `Please generate a concise summary for the following content:\n\n${text}`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2579,6 +2734,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           "You need to summarize the user's conversation into a title of no more than 10 words, with the title language matching the user's primary language, without using punctuation or other special symbols：\n" +
             text,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2587,6 +2743,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `Please summarize the following content using concise language and highlighting key points:\n${text}`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2595,6 +2752,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `请总结以下内容，使用简洁的语言，突出重点：\n${text}`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2605,17 +2763,19 @@ export class AiSdkProvider extends BaseLLMProvider {
           return this.runPromptCompletion(
             `${SUMMARY_TITLES_PROMPT}\n\n${text}`,
             modelId,
+            decision,
             temperature,
             maxTokens,
             systemPrompt
           )
         }
-        return this.runText(
+        return this.runTextWithDecision(
           [
             { role: 'system', content: 'Summarize the following text concisely:' },
             { role: 'user', content: text }
           ],
           modelId,
+          decision,
           temperature,
           maxTokens
         )
@@ -2650,9 +2810,10 @@ export class AiSdkProvider extends BaseLLMProvider {
         : (optionsOrSystemPrompt ?? {})
     const decision = this.resolveRouteDecision(modelId)
     if (decision.endpointType === 'grok-image' || decision.endpointType === 'image-generation') {
-      return this.collectStreamResponse(
+      return this.collectStreamResponseWithDecision(
         [{ role: 'user', content: prompt }],
         modelId,
+        decision,
         temperature,
         maxTokens,
         [],
@@ -2664,6 +2825,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     return this.runPromptCompletion(
       prompt,
       modelId,
+      decision,
       temperature,
       maxTokens,
       options?.systemPrompt,
@@ -2681,6 +2843,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     const decision = this.resolveRouteDecision(modelId)
     return this.getSuggestionsByPreset(
       this.getBehaviorPreset(decision),
+      decision,
       context,
       modelId,
       temperature,
@@ -2724,7 +2887,10 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runEmbeddings(modelId, texts, signal)
       case 'new-api': {
         const endpointType = 'openai' as const
-        const capabilityIdentity = this.resolveCapabilityIdentity(modelId, endpointType)
+        const capabilityIdentity = this.resolveCapabilityIdentityFromProviderState(
+          modelId,
+          endpointType
+        )
         return this.runEmbeddingsWithDecision(
           modelId,
           texts,
@@ -2762,7 +2928,10 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runDimensions(modelId, signal)
       case 'new-api': {
         const endpointType = 'openai' as const
-        const capabilityIdentity = this.resolveCapabilityIdentity(modelId, endpointType)
+        const capabilityIdentity = this.resolveCapabilityIdentityFromProviderState(
+          modelId,
+          endpointType
+        )
         return this.runDimensionsWithDecision(
           modelId,
           {

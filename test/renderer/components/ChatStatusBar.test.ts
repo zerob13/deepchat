@@ -482,7 +482,6 @@ const setup = async (options: SetupOptions = {}) => {
         identity: {
           providerId: options.capabilityProviderId ?? providerId,
           modelId,
-          source: 'transport-fallback',
           catalogMatched: false
         },
         requestPolicy: options.requestPolicy ?? {
@@ -1726,7 +1725,7 @@ describe('ChatStatusBar model and session panels', () => {
   })
 
   it('hides K3 sampling controls and uses the catalog effort default', async () => {
-    const { wrapper } = await setup({
+    const { wrapper, modelClient } = await setup({
       agentId: 'deepchat',
       hasActiveSession: false,
       preferredModel: { providerId: 'new-api', modelId: 'kimi-k3' },
@@ -1779,6 +1778,7 @@ describe('ChatStatusBar model and session panels', () => {
     expect(wrapper.text()).not.toContain(
       'settings.model.modelConfig.reasoningEffort.options.medium'
     )
+    expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
   })
 
   it('ignores existing draft generation overrides when loading draft model defaults', async () => {

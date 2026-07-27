@@ -15,7 +15,6 @@ const createDefaultReasoningCapabilities = (providerId = 'openai', modelId = 'gp
   identity: {
     providerId,
     modelId,
-    source: 'transport-fallback',
     catalogMatched: false
   },
   requestPolicy: {

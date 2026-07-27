@@ -2,18 +2,16 @@ import {
   isClaudeFamilyModelId,
   isDeepSeekSeriesModelId,
   isGeminiFamilyModelId,
+  type NewApiCapabilityFamilyHint,
   type NewApiEndpointType
 } from '@shared/model'
 import type {
   CapabilitySnapshotOptions,
-  CapabilityIdentitySource,
   ResolvedCapabilityIdentity,
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
 import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
 import { resolveModelRequestPolicy } from '@shared/modelRequestPolicy'
-
-export type CapabilityFamilyHint = 'anthropic' | 'gemini'
 
 export type CapabilityIdentityInput = {
   providerId: string
@@ -178,25 +176,20 @@ const getExplicitRouteCapabilityProviderId = (
   return undefined
 }
 
-const toMatchedIdentity = (
-  match: CapabilityModelMatch,
-  source: CapabilityIdentitySource
-): ResolvedCapabilityIdentity => ({
+const toMatchedIdentity = (match: CapabilityModelMatch): ResolvedCapabilityIdentity => ({
   providerId: match.providerId,
   modelId: match.modelId,
-  source,
   catalogMatched: true
 })
 
 const resolveProviderMatch = (
   providerIds: readonly string[],
-  modelId: string,
-  source: CapabilityIdentitySource
+  modelId: string
 ): ResolvedCapabilityIdentity | undefined => {
   for (const providerId of providerIds) {
     const match = modelCapabilities.getProviderCapabilityModelMatch(providerId, modelId)
     if (match) {
-      return toMatchedIdentity(match, source)
+      return toMatchedIdentity(match)
     }
   }
   return undefined
@@ -205,7 +198,7 @@ const resolveProviderMatch = (
 export const resolveCapabilityFamilyHint = (
   modelId: string,
   ownedBy?: string
-): CapabilityFamilyHint | undefined => {
+): NewApiCapabilityFamilyHint | undefined => {
   const normalizedOwner = normalizeHintValue(ownedBy)
   if (
     isClaudeFamilyModelId(modelId) ||
@@ -228,7 +221,7 @@ export const resolveCapabilityFamilyHint = (
   return undefined
 }
 
-export const resolveTransportCapabilityFallback = (
+const resolveTransportCapabilityFallback = (
   providerId: string,
   endpointType?: NewApiEndpointType
 ): string => {
@@ -253,10 +246,9 @@ export const resolveCapabilityIdentity = (
   const explicitProviderId = input.explicitProviderId?.trim()
   if (explicitProviderId) {
     return (
-      resolveProviderMatch([explicitProviderId], input.modelId, 'provider-override') ?? {
+      resolveProviderMatch([explicitProviderId], input.modelId) ?? {
         providerId: normalizeProviderId(explicitProviderId),
         modelId: input.modelId,
-        source: 'provider-override',
         catalogMatched: false
       }
     )
@@ -268,44 +260,27 @@ export const resolveCapabilityIdentity = (
   )
   if (routeOverrideProviderId) {
     return (
-      resolveProviderMatch([routeOverrideProviderId], input.modelId, 'route-override') ?? {
+      resolveProviderMatch([routeOverrideProviderId], input.modelId) ?? {
         providerId: normalizeProviderId(routeOverrideProviderId),
         modelId: input.modelId,
-        source: 'route-override',
         catalogMatched: false
       }
     )
   }
 
-  const providerModelIdentity = resolveProviderMatch(
-    [input.providerId],
-    input.modelId,
-    'provider-model'
-  )
+  const providerModelIdentity = resolveProviderMatch([input.providerId], input.modelId)
   if (providerModelIdentity) {
     return providerModelIdentity
   }
 
-  const identityCandidates: Array<{
-    providerIds: string[]
-    source: CapabilityIdentitySource
-  }> = [
-    {
-      providerIds: getNamespaceProviderIds(input.modelId),
-      source: 'model-namespace'
-    },
-    {
-      providerIds: getOwnerProviderIds(input.ownedBy),
-      source: 'model-owner'
-    },
-    {
-      providerIds: getModelFamilyProviderIds(input.modelId),
-      source: 'model-family'
-    }
+  const identityCandidates = [
+    getNamespaceProviderIds(input.modelId),
+    getOwnerProviderIds(input.ownedBy),
+    getModelFamilyProviderIds(input.modelId)
   ]
 
-  for (const candidate of identityCandidates) {
-    const identity = resolveProviderMatch(candidate.providerIds, input.modelId, candidate.source)
+  for (const providerIds of identityCandidates) {
+    const identity = resolveProviderMatch(providerIds, input.modelId)
     if (identity) {
       return identity
     }
@@ -315,24 +290,19 @@ export const resolveCapabilityIdentity = (
     input.providerId,
     input.endpointType
   )
-  const transportIdentity = resolveProviderMatch(
-    [transportProviderId],
-    input.modelId,
-    'transport-model'
-  )
+  const transportIdentity = resolveProviderMatch([transportProviderId], input.modelId)
   if (transportIdentity) {
     return transportIdentity
   }
 
   const uniqueMatch = modelCapabilities.findUniqueCapabilityModelMatch(input.modelId)
   if (uniqueMatch) {
-    return toMatchedIdentity(uniqueMatch, 'unique-model')
+    return toMatchedIdentity(uniqueMatch)
   }
 
   return {
     providerId: transportProviderId,
     modelId: input.modelId,
-    source: 'transport-fallback',
     catalogMatched: false
   }
 }

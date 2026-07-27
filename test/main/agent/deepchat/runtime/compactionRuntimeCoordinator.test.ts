@@ -49,6 +49,27 @@ function createProviderSettings(): ProviderModelResolutionPort {
       reasoning: true,
       type: ModelType.Chat
     }),
+    getCapabilitySnapshot: vi.fn((providerId: string, modelId: string) => ({
+      identity: { providerId, modelId, catalogMatched: false },
+      requestPolicy: {
+        temperature: { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      },
+      supportsAudioInput: false,
+      supportsReasoning: true,
+      reasoningPortrait: null,
+      thinkingBudgetRange: {},
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability: undefined,
+      supportsTemperatureControl: true,
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      supportsVerbosity: false,
+      verbosityDefault: undefined
+    })),
     getCapabilityProviderId: vi.fn((providerId: string) => providerId),
     supportsReasoningCapability: vi.fn().mockReturnValue(true),
     getReasoningPortrait: vi.fn().mockReturnValue(null),
@@ -334,7 +355,13 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(initialInstance?.getAbortController()).toBeUndefined()
     expect(sessionSettings.getEffectiveGenerationSettings).toHaveBeenCalledWith(
       SESSION_ID,
-      initialInstance
+      initialInstance,
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({ contextLength: 128_000 }),
+        capabilitySnapshot: expect.objectContaining({
+          identity: expect.objectContaining({ providerId: 'openai', modelId: 'gpt-5' })
+        })
+      })
     )
     expect(toolResolver.loadToolDefinitionsForSession).toHaveBeenCalledWith(
       SESSION_ID,

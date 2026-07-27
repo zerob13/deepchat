@@ -228,6 +228,47 @@ const mergeReasoningPortraits = (
   return hasReasoningPortrait(merged) ? merged : undefined
 }
 
+const removeInheritedIncompatibleModeFields = (
+  resolved: ReasoningPortrait,
+  explicit: ReasoningPortrait | undefined
+): void => {
+  if (!explicit?.mode || explicit.mode === 'mixed') {
+    return
+  }
+
+  const removeInherited = (key: keyof ReasoningPortrait): void => {
+    if (explicit[key] === undefined) {
+      delete resolved[key]
+    }
+  }
+
+  switch (explicit.mode) {
+    case 'budget':
+      removeInherited('effort')
+      removeInherited('effortOptions')
+      removeInherited('level')
+      removeInherited('levelOptions')
+      break
+    case 'effort':
+      removeInherited('budget')
+      removeInherited('level')
+      removeInherited('levelOptions')
+      break
+    case 'level':
+      removeInherited('budget')
+      removeInherited('effort')
+      removeInherited('effortOptions')
+      break
+    case 'fixed':
+      removeInherited('budget')
+      removeInherited('effort')
+      removeInherited('effortOptions')
+      removeInherited('level')
+      removeInherited('levelOptions')
+      break
+  }
+}
+
 const portraitFromExtraCapabilities = (
   reasoning: NonNullable<NonNullable<ProviderModel['extra_capabilities']>['reasoning']> | undefined
 ): ReasoningPortrait | undefined => {
@@ -359,14 +400,14 @@ export class ModelCapabilities {
         if (!mid) continue
 
         modelMap.set(mid, model)
+        const indexedModel = {
+          providerId: pkey,
+          modelId: mid,
+          model,
+          isUnprefixed: !mid.includes('/')
+        }
         for (const lookupKey of getProviderCapabilityModelLookupKeys(model.id)) {
           const entries = lookupMap.get(lookupKey) ?? []
-          const indexedModel = {
-            providerId: pkey,
-            modelId: mid,
-            model,
-            isUnprefixed: !mid.includes('/')
-          }
           entries.push(indexedModel)
           lookupMap.set(lookupKey, entries)
 
@@ -692,12 +733,18 @@ export class ModelCapabilities {
     const resolvedProviderId = match?.providerId ?? normalizeCapabilityProviderId(providerId)
     const resolvedModelId = match?.modelId ?? modelId
     const model = match?.model
+    const explicitReasoningPortrait = mergeReasoningPortraits(
+      portraitFromLegacyReasoning(model?.reasoning),
+      portraitFromExtraCapabilities(model?.extra_capabilities?.reasoning)
+    )
     const reasoningPortrait =
       mergeReasoningPortraits(
         this.getFallbackReasoningPortrait(resolvedProviderId, resolvedModelId),
-        portraitFromLegacyReasoning(model?.reasoning),
-        portraitFromExtraCapabilities(model?.extra_capabilities?.reasoning)
+        explicitReasoningPortrait
       ) ?? null
+    if (reasoningPortrait) {
+      removeInheritedIncompatibleModeFields(reasoningPortrait, explicitReasoningPortrait)
+    }
     const search = model?.search
     const searchDefaults: SearchDefaults = {}
     if (typeof search?.default === 'boolean') searchDefaults.default = search.default
@@ -760,6 +807,7 @@ export class ModelCapabilities {
       registryPortrait,
       extraCapabilitiesPortrait
     )
+    removeInheritedIncompatibleModeFields(resolvedPortrait, explicitPortrait)
 
     if (usesExtendedEffortDefaultWithoutOptions(explicitPortrait)) {
       delete resolvedPortrait.effortOptions

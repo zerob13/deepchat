@@ -23,6 +23,11 @@ import {
   sanitizeGenerationSettings,
   type PersistedSessionGenerationRow
 } from './generationSettings'
+import {
+  assertProviderModelRuntimeFacts,
+  resolveProviderModelRuntimeFacts,
+  type ProviderModelRuntimeFacts
+} from './providerModelRuntimeFacts'
 import type { SessionSettingsStore } from '@/session/data/settings'
 import type { DeepChatToolResolver } from './toolResolver'
 import type { PromptSettings } from '@/agent/promptSettings'
@@ -300,16 +305,33 @@ export class SessionSettingsCoordinator {
 
   async getEffectiveGenerationSettings(
     sessionId: string,
-    expectedInstance = this.instance(sessionId)
+    expectedInstance = this.instance(sessionId),
+    providedProviderModelFacts?: ProviderModelRuntimeFacts
   ): Promise<SessionGenerationSettings> {
     this.assertCurrent(sessionId, expectedInstance)
+    const state = expectedInstance.getRuntimeState()
+    let dbSession: PersistedSessionGenerationRow | undefined
+    if (providedProviderModelFacts) {
+      dbSession = state
+        ? undefined
+        : (this.deps.sessionStore.get(sessionId) as PersistedSessionGenerationRow | undefined)
+      const expectedProviderId = state?.providerId ?? dbSession?.provider_id
+      const expectedModelId = state?.modelId ?? dbSession?.model_id
+      if (!expectedProviderId || !expectedModelId) {
+        throw new Error(`Session ${sessionId} not found`)
+      }
+      assertProviderModelRuntimeFacts(
+        providedProviderModelFacts,
+        expectedProviderId,
+        expectedModelId
+      )
+    }
     const cached = expectedInstance.getGenerationSettings()
     if (cached) {
       return { ...cached }
     }
 
-    const state = expectedInstance.getRuntimeState()
-    const dbSession = this.deps.sessionStore.get(sessionId) as
+    dbSession ??= this.deps.sessionStore.get(sessionId) as
       | PersistedSessionGenerationRow
       | undefined
     const providerId = state?.providerId ?? dbSession?.provider_id
@@ -319,15 +341,24 @@ export class SessionSettingsCoordinator {
       throw new Error(`Session ${sessionId} not found`)
     }
 
+    const providerModelFacts =
+      providedProviderModelFacts ??
+      resolveProviderModelRuntimeFacts(this.deps.providerSettings, providerId, modelId)
     const persistedPatch = dbSession
-      ? mapPersistedGenerationPatch(this.deps.providerSettings, dbSession)
+      ? mapPersistedGenerationPatch(
+          this.deps.providerSettings,
+          dbSession,
+          providerModelFacts.capabilitySnapshot
+        )
       : {}
     const sanitized = await sanitizeGenerationSettings(
       this.deps.providerSettings,
       this.deps.promptSettings,
       providerId,
       modelId,
-      persistedPatch
+      persistedPatch,
+      undefined,
+      providerModelFacts
     )
     this.assertCurrent(sessionId, expectedInstance)
     expectedInstance.setGenerationSettings(sanitized)

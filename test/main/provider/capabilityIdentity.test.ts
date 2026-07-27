@@ -106,8 +106,7 @@ vi.mock('../../../src/main/provider/providerDbLoader', () => ({
 import {
   buildResolvedCapabilitySnapshot,
   resolveCapabilityFamilyHint,
-  resolveCapabilityIdentity,
-  resolveTransportCapabilityFallback
+  resolveCapabilityIdentity
 } from '../../../src/main/provider/capabilityIdentity'
 
 describe('capability identity resolution', () => {
@@ -122,7 +121,6 @@ describe('capability identity resolution', () => {
     expect(identity).toEqual({
       providerId: 'moonshot',
       modelId: 'kimi-k3',
-      source: 'model-family',
       catalogMatched: true
     })
     expect(snapshot.temperatureCapability).toBe(false)
@@ -154,7 +152,6 @@ describe('capability identity resolution', () => {
       })
     ).toMatchObject({
       providerId: 'openrouter',
-      source: 'provider-model',
       catalogMatched: true
     })
   })
@@ -166,8 +163,7 @@ describe('capability identity resolution', () => {
         modelId: 'anthropic/claude-opus-4-7'
       })
     ).toMatchObject({
-      providerId: 'anthropic',
-      source: 'route-override'
+      providerId: 'anthropic'
     })
     expect(
       resolveCapabilityIdentity({
@@ -175,8 +171,7 @@ describe('capability identity resolution', () => {
         modelId: 'minimax-m3'
       })
     ).toMatchObject({
-      providerId: 'anthropic',
-      source: 'route-override'
+      providerId: 'anthropic'
     })
   })
 
@@ -189,7 +184,6 @@ describe('capability identity resolution', () => {
     ).toEqual({
       providerId: 'custom-relay',
       modelId: 'ambiguous-model',
-      source: 'transport-fallback',
       catalogMatched: false
     })
 
@@ -201,7 +195,6 @@ describe('capability identity resolution', () => {
     ).toEqual({
       providerId: 'sole-provider',
       modelId: 'only-once',
-      source: 'unique-model',
       catalogMatched: true
     })
   })
@@ -216,16 +209,32 @@ describe('capability identity resolution', () => {
     ).toEqual({
       providerId: 'capability-team',
       modelId: 'unknown-model',
-      source: 'provider-override',
       catalogMatched: false
     })
   })
 
-  it('keeps Phase 1 narrow and transport fallback separately named', () => {
+  it('keeps Phase 1 narrow and transport fallback internal to identity resolution', () => {
     expect(resolveCapabilityFamilyHint('claude-opus-4-7')).toBe('anthropic')
     expect(resolveCapabilityFamilyHint('proxy-model', 'Google Gemini')).toBe('gemini')
     expect(resolveCapabilityFamilyHint('kimi-k3', 'Moonshot')).toBeUndefined()
-    expect(resolveTransportCapabilityFallback('new-api', 'gemini')).toBe('google')
-    expect(resolveTransportCapabilityFallback('custom-relay')).toBe('custom-relay')
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'new-api',
+        modelId: 'unknown-gemini-model',
+        endpointType: 'gemini'
+      })
+    ).toMatchObject({
+      providerId: 'google',
+      catalogMatched: false
+    })
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'custom-relay',
+        modelId: 'unknown-model'
+      })
+    ).toMatchObject({
+      providerId: 'custom-relay',
+      catalogMatched: false
+    })
   })
 })

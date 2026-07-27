@@ -13,6 +13,7 @@ import { createSessionQueryFixture } from './queryFixture'
 import { createSessionFixture } from './sessionFixture'
 import { createSessionData, createSessionDataFromDatabase } from '@/session/data'
 import { SessionTranscriptMutations } from '@/session/transcriptMutations'
+import { createPassthroughModelRequestPolicy } from '@shared/modelRequestPolicy'
 
 vi.mock('nanoid', () => {
   let counter = 0
@@ -680,7 +681,7 @@ function createMockProviderRuntime() {
 }
 
 function createMockProviderSettings() {
-  return {
+  const settings = {
     getDefaultModel: vi.fn().mockReturnValue({ providerId: 'openai', modelId: 'gpt-4' }),
     getModelConfig: vi
       .fn()
@@ -717,6 +718,34 @@ function createMockProviderSettings() {
       ]
     })
   } as any
+
+  settings.getCapabilitySnapshot = vi.fn((providerId: string, modelId: string) => {
+    const reasoningPortrait = settings.getReasoningPortrait(providerId, modelId)
+    const temperatureCapability = undefined
+
+    return {
+      identity: {
+        providerId: settings.getCapabilityProviderId(providerId, modelId),
+        modelId,
+        catalogMatched: true
+      },
+      requestPolicy: createPassthroughModelRequestPolicy(),
+      supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
+      supportsReasoning: settings.supportsReasoningCapability(providerId, modelId),
+      reasoningPortrait,
+      thinkingBudgetRange: settings.getThinkingBudgetRange(providerId, modelId),
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability,
+      supportsTemperatureControl: temperatureCapability !== false,
+      supportsReasoningEffort: settings.supportsReasoningEffortCapability(providerId, modelId),
+      reasoningEffortDefault: settings.getReasoningEffortDefault(providerId, modelId),
+      supportsVerbosity: settings.supportsVerbosityCapability(providerId, modelId),
+      verbosityDefault: settings.getVerbosityDefault(providerId, modelId)
+    }
+  })
+
+  return settings
 }
 
 function createMockToolService() {

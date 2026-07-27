@@ -218,7 +218,7 @@ export function createModelClient(bridge: DeepchatBridge = getDeepchatBridge()) 
       return (await fetchCapabilities(providerId, modelId, options)).capabilities
     }
 
-    const cacheKey = `${providerId}:${modelId}`
+    const cacheKey = JSON.stringify([providerId, modelId])
     const cached = capabilitiesCache.get(cacheKey)
     if (cached) {
       return (await cached).capabilities

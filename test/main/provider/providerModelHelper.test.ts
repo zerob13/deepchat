@@ -494,6 +494,101 @@ describe('ProviderModelHelper cache', () => {
     })
   })
 
+  it('uses targeted model reads for route metadata when the store supports them', async () => {
+    const { ProviderModelHelper } = await import('../../../src/main/provider/providerModelHelper')
+    const getModelConfig = vi.fn(() =>
+      createModelConfig({ endpointType: 'anthropic', ownedBy: 'moonshot' })
+    )
+    const helper = new ProviderModelHelper({
+      userDataPath: 'C:/mock-user-data',
+      getModelConfig,
+      setModelStatus: vi.fn(),
+      deleteModelStatus: vi.fn(),
+      publishEvent: publishDeepchatEventMock
+    })
+    const listModels = vi.fn()
+    const getProviderModel = vi.fn((source: 'provider' | 'custom', modelId: string) =>
+      source === 'provider' && modelId === 'kimi-k3'
+        ? {
+            ...createBaseModel('new-api', modelId),
+            supportedEndpointTypes: ['openai', 'anthropic']
+          }
+        : undefined
+    )
+    helper.setStoreFactory(() => ({
+      store: { models: [], custom_models: [] },
+      get<TValue = unknown>(_key: string, defaultValue?: TValue): TValue | undefined {
+        listModels()
+        return defaultValue
+      },
+      set: vi.fn(),
+      delete: vi.fn(),
+      getProviderModel
+    }))
+
+    expect(helper.getProviderModelRouteMetadata('new-api', 'kimi-k3')).toEqual({
+      endpointType: 'anthropic',
+      supportedEndpointTypes: ['openai', 'anthropic'],
+      type: ModelType.Chat,
+      ownedBy: 'moonshot'
+    })
+    expect(getProviderModel).toHaveBeenCalledOnce()
+    expect(getProviderModel).toHaveBeenCalledWith('provider', 'kimi-k3')
+    expect(listModels).not.toHaveBeenCalled()
+    expect(getModelConfig).toHaveBeenCalledOnce()
+
+    getModelConfig.mockClear()
+    expect(
+      helper.getProviderModelRouteMetadata(
+        'new-api',
+        'kimi-k3',
+        createModelConfig({ endpointType: 'openai', ownedBy: 'moonshot' })
+      )
+    ).toMatchObject({
+      endpointType: 'openai',
+      ownedBy: 'moonshot'
+    })
+    expect(getModelConfig).not.toHaveBeenCalled()
+  })
+
+  it('uses a fresh provider cache as negative evidence before reading a custom model', async () => {
+    const { ProviderModelHelper } = await import('../../../src/main/provider/providerModelHelper')
+    const helper = new ProviderModelHelper({
+      userDataPath: 'C:/mock-user-data',
+      getModelConfig: () => createModelConfig(),
+      setModelStatus: vi.fn(),
+      deleteModelStatus: vi.fn(),
+      publishEvent: publishDeepchatEventMock
+    })
+    const providerModel = createBaseModel('new-api', 'provider-model')
+    const customModel = {
+      ...createBaseModel('new-api', 'custom-model'),
+      isCustom: true,
+      ownedBy: 'moonshot'
+    }
+    const getProviderModel = vi.fn((source: 'provider' | 'custom', modelId: string) =>
+      source === 'custom' && modelId === customModel.id ? customModel : undefined
+    )
+    helper.setStoreFactory(() => ({
+      store: { models: [providerModel], custom_models: [customModel] },
+      get<TValue = unknown>(key: string, defaultValue?: TValue): TValue | undefined {
+        if (key === 'models') return [providerModel] as TValue
+        if (key === 'custom_models') return [customModel] as TValue
+        return defaultValue
+      },
+      set: vi.fn(),
+      delete: vi.fn(),
+      getProviderModel
+    }))
+
+    helper.getProviderModels('new-api')
+    expect(helper.getProviderModelRouteMetadata('new-api', customModel.id)).toMatchObject({
+      ownedBy: 'moonshot'
+    })
+    expect(getProviderModel).toHaveBeenCalledOnce()
+    expect(getProviderModel).toHaveBeenCalledWith('custom', customModel.id)
+  })
+
   it('clears persisted provider models and custom models for a removed provider', async () => {
     const { ProviderModelHelper } = await import('../../../src/main/provider/providerModelHelper')
     const helper = new ProviderModelHelper({

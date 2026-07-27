@@ -1531,7 +1531,6 @@ describe('main kernel contracts', () => {
           identity: {
             providerId: 'openai',
             modelId: 'gpt-5.4',
-            source: 'provider-model',
             catalogMatched: true
           },
           requestPolicy: {
@@ -1559,7 +1558,6 @@ describe('main kernel contracts', () => {
         identity: {
           providerId: 'openai',
           modelId: 'gpt-5.4',
-          source: 'provider-model',
           catalogMatched: true
         },
         requestPolicy: {

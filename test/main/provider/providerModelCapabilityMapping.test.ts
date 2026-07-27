@@ -69,6 +69,7 @@ describe('ProviderSettings provider model capability mapping', () => {
     ])
     expect(catalogSnapshot).toHaveBeenCalledWith('openai', 'gpt-5.4')
     expect(getProviderModelRouteMetadata).not.toHaveBeenCalled()
+    expect(presenter.getModelConfig).not.toHaveBeenCalled()
   })
 
   it('preserves explicit stored reasoning support when capability registry has no match', async () => {
@@ -204,5 +205,35 @@ describe('ProviderSettings provider model capability mapping', () => {
     expect(presenter.getCapabilityProviderId('zenmux', 'anthropic/claude-opus-4-7')).toBe(
       'anthropic'
     )
+  })
+
+  it('does not load the full model list when a targeted capability route is absent', async () => {
+    const { ProviderSettings } = await loadProviderSettings()
+    const getProviderModels = vi.fn().mockReturnValue([])
+    const getProviderModelRouteMetadata = vi.fn().mockReturnValue(undefined)
+    const modelConfig = { endpointType: undefined }
+    const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
+      providerHelper: {
+        getProviderById: vi.fn().mockReturnValue({
+          id: 'custom-relay',
+          apiType: 'openai'
+        })
+      },
+      providerModelHelper: {
+        getProviderModelRouteMetadata,
+        getProviderModels,
+        getCustomModels: vi.fn().mockReturnValue([])
+      },
+      getModelConfig: vi.fn().mockReturnValue(modelConfig)
+    }) as InstanceType<typeof ProviderSettings>
+
+    expect(presenter.getCapabilityProviderId('custom-relay', 'unknown-model')).toBe('custom-relay')
+    expect(getProviderModelRouteMetadata).toHaveBeenCalledOnce()
+    expect(getProviderModelRouteMetadata).toHaveBeenCalledWith(
+      'custom-relay',
+      'unknown-model',
+      modelConfig
+    )
+    expect(getProviderModels).not.toHaveBeenCalled()
   })
 })

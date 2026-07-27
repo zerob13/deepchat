@@ -156,9 +156,11 @@ function supportsSiliconcloudThinking(modelId: string): boolean {
 }
 
 function supportsGrokReasoningEffort(modelId: string): boolean {
-  return ['grok-3-mini', 'grok-3-mini-fast'].some((model) =>
-    modelId.toLowerCase().includes(model.toLowerCase())
-  )
+  const normalizedModelId = modelId.trim().toLowerCase()
+  const unqualifiedModelId = normalizedModelId.includes('/')
+    ? normalizedModelId.slice(normalizedModelId.lastIndexOf('/') + 1)
+    : normalizedModelId
+  return unqualifiedModelId === 'grok-3-mini' || unqualifiedModelId.startsWith('grok-3-mini-')
 }
 
 function normalizeMiniMaxModelId(modelId: string): string {
@@ -223,7 +225,10 @@ export function buildProviderOptions(
     case 'openai_chat':
     case 'openai_responses': {
       const config: Record<string, unknown> = {}
-      if (modelConfig.reasoningEffort && params.providerId !== 'grok') {
+      if (
+        modelConfig.reasoningEffort &&
+        (params.providerId !== 'grok' || supportsGrokReasoningEffort(params.modelId))
+      ) {
         config.reasoningEffort = modelConfig.reasoningEffort
       }
       if (modelConfig.verbosity) {
@@ -280,13 +285,6 @@ export function buildProviderOptions(
         if (typeof budget === 'number') {
           config.thinking_budget = budget
         }
-      }
-      if (
-        params.providerId === 'grok' &&
-        modelConfig.reasoningEffort &&
-        supportsGrokReasoningEffort(params.modelId)
-      ) {
-        config.reasoning_effort = modelConfig.reasoningEffort
       }
       if (Object.keys(config).length > 0) {
         providerOptions[params.providerOptionsKey] = config

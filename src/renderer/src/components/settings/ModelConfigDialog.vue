@@ -43,6 +43,7 @@
               :placeholder="t('settings.model.modelConfig.id.placeholder')"
               :disabled="!canEditModelIdentity"
               :class="{ 'border-destructive': errors.modelId }"
+              @blur="queueCapabilityRefresh"
             />
             <p class="text-xs text-muted-foreground">
               {{
@@ -538,7 +539,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import {
@@ -864,12 +865,6 @@ const getReasoningVisibilityOptions = (
     ? [...ANTHROPIC_REASONING_VISIBILITY_VALUES]
     : []
 
-const hasReasoningEffortSupport = (portrait: ReasoningPortrait | null | undefined): boolean =>
-  supportsReasoningCapability(portrait) && getReasoningEffortOptions(portrait).length > 0
-
-const hasVerbositySupport = (portrait: ReasoningPortrait | null | undefined): boolean =>
-  supportsReasoningCapability(portrait) && getVerbosityOptions(portrait).length > 0
-
 const hasThinkingBudgetSupport = (portrait: ReasoningPortrait | null | undefined): boolean =>
   Boolean(
     portrait &&
@@ -991,25 +986,16 @@ const fetchCapabilities = async () => {
     capabilityRequestPolicy.value = capabilities.requestPolicy
     const portrait = capabilities.reasoningPortrait ?? null
     capabilityReasoningPortrait.value = portrait
-    capabilitySupportsReasoning.value =
-      typeof portrait?.supported === 'boolean' ? portrait.supported : null
-    capabilityBudgetRange.value = portrait?.budget
-      ? {
-          ...(typeof portrait.budget.min === 'number' ? { min: portrait.budget.min } : {}),
-          ...(typeof portrait.budget.max === 'number' ? { max: portrait.budget.max } : {}),
-          ...(typeof portrait.budget.default === 'number'
-            ? { default: portrait.budget.default }
-            : {})
-        }
-      : null
+    capabilitySupportsReasoning.value = capabilities.supportsReasoning
+    capabilityBudgetRange.value = capabilities.thinkingBudgetRange
     capabilitySupportsTemperature.value =
       typeof capabilities.supportsTemperatureControl === 'boolean'
         ? capabilities.supportsTemperatureControl
         : capabilities.temperatureCapability
-    capabilitySupportsEffort.value = hasReasoningEffortSupport(portrait)
-    capabilityEffortDefault.value = normalizeReasoningEffortValue(portrait, portrait?.effort)
-    capabilitySupportsVerbosity.value = hasVerbositySupport(portrait)
-    capabilityVerbosityDefault.value = normalizeVerbosityValue(portrait, portrait?.verbosity)
+    capabilitySupportsEffort.value = capabilities.supportsReasoningEffort
+    capabilityEffortDefault.value = capabilities.reasoningEffortDefault
+    capabilitySupportsVerbosity.value = capabilities.supportsVerbosity
+    capabilityVerbosityDefault.value = capabilities.verbosityDefault
     capabilityReasoningVisibilityDefault.value = normalizeAnthropicReasoningVisibilityValue(
       portrait?.visibility
     )
@@ -1028,6 +1014,18 @@ const fetchCapabilities = async () => {
     capabilityVerbosityDefault.value = undefined
     capabilityReasoningVisibilityDefault.value = undefined
   }
+}
+
+let capabilityRefreshQueued = false
+const queueCapabilityRefresh = () => {
+  if (capabilityRefreshQueued) return
+  capabilityRefreshQueued = true
+  void nextTick().then(() => {
+    capabilityRefreshQueued = false
+    if (props.open && !isLoadingModelConfig.value) {
+      void fetchCapabilities()
+    }
+  })
 }
 
 const providerCustomModelList = computed(() => {
@@ -1582,8 +1580,8 @@ watch(
     }
 
     syncNewApiDerivedFields()
-    if (props.open) {
-      void fetchCapabilities()
+    if (props.open && !isLoadingModelConfig.value) {
+      queueCapabilityRefresh()
     }
   }
 )
@@ -1632,9 +1630,7 @@ const isDeepSeekV31Model = computed(() => {
   return modelId.includes('deepseek-v3.1') || modelId.includes('deepseek-v3-1')
 })
 
-const supportsReasoningEffort = computed(() =>
-  hasReasoningEffortSupport(capabilityReasoningPortrait.value)
-)
+const supportsReasoningEffort = computed(() => capabilitySupportsEffort.value === true)
 const effectiveReasoningEnabled = computed(() =>
   capabilityRequestPolicy.value.reasoning.mode === 'fixed'
     ? capabilityRequestPolicy.value.reasoning.value
@@ -1769,14 +1765,6 @@ const showInterleavedThinking = computed(() => {
 })
 
 watch(
-  () => [props.providerId, props.modelId, props.open],
-  async () => {
-    if (props.open) await fetchCapabilities()
-  },
-  { immediate: true }
-)
-
-watch(
   () => [props.providerId, currentModelLookupId.value, config.value.reasoning],
   () => {
     const fixedTemperatureKimi = resolvedMoonshotKimiTemperaturePolicy.value
@@ -1793,6 +1781,15 @@ watch(
     }
   },
   { immediate: true }
+)
+
+watch(
+  () => config.value.reasoning,
+  () => {
+    if (props.open && !isLoadingModelConfig.value) {
+      queueCapabilityRefresh()
+    }
+  }
 )
 
 watch(
@@ -1885,12 +1882,6 @@ const getConfirmTitle = computed(() => {
   if (!mutualExclusiveAction.value) return ''
   const { from } = mutualExclusiveAction.value
   return t(`dialog.mutualExclusive.title.${from}`)
-})
-
-onMounted(() => {
-  if (props.open) {
-    loadConfig()
-  }
 })
 
 const showReasoningToggle = computed(() => {

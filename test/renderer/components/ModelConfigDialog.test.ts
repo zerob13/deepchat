@@ -90,7 +90,6 @@ const setup = async (options: SetupOptions) => {
         identity: {
           providerId: options.capabilityProviderId ?? options.providerId,
           modelId,
-          source: 'transport-fallback',
           catalogMatched: false
         },
         requestPolicy: options.requestPolicy ?? {
@@ -656,7 +655,7 @@ describe('ModelConfigDialog reasoning portraits', () => {
   })
 
   it('renders K3 request policy without rewriting stored generation intent', async () => {
-    const { wrapper, modelConfigStore } = await setup({
+    const { wrapper, modelConfigStore, modelClient } = await setup({
       providerId: 'new-api',
       providerApiType: 'new-api',
       capabilityProviderId: 'moonshot',
@@ -698,6 +697,8 @@ describe('ModelConfigDialog reasoning portraits', () => {
     expect(wrapper.text()).not.toContain(
       'settings.model.modelConfig.reasoningEffort.options.medium'
     )
+    expect(modelConfigStore.getModelConfig).toHaveBeenCalledTimes(1)
+    expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
 
     await (wrapper.vm as any).handleSave()
     expect(modelConfigStore.setModelConfig).toHaveBeenCalledWith(
@@ -940,6 +941,29 @@ describe('ModelConfigDialog new-api endpoint normalization', () => {
     )
   })
 
+  it('refreshes capability policy after a create-mode model ID is entered', async () => {
+    const { wrapper, modelClient } = await setup({
+      providerId: 'new-api',
+      modelId: '',
+      modelName: '',
+      providerApiType: 'new-api',
+      mode: 'create'
+    })
+
+    ;(wrapper.vm as any).modelIdField = 'kimi-k3'
+    ;(wrapper.vm as any).queueCapabilityRefresh()
+    await nextTick()
+    await flushPromises()
+
+    expect(modelClient.getCapabilities).toHaveBeenCalledWith(
+      'new-api',
+      'kimi-k3',
+      expect.objectContaining({
+        reasoning: expect.any(Boolean)
+      })
+    )
+  })
+
   it('does not expose media endpoints for explicit chat models', async () => {
     const { wrapper } = await setup({
       providerId: 'new-api',
@@ -1129,6 +1153,9 @@ describe('ModelConfigDialog new-api endpoint normalization', () => {
       ],
       getModelConfig
     })
+
+    void (wrapper.vm as any).loadConfig()
+    await nextTick()
 
     expect(modelConfigStore.getModelConfig).toHaveBeenCalledTimes(2)
     expect((wrapper.vm as any).isLoadingModelConfig).toBe(true)

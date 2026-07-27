@@ -615,7 +615,7 @@ function createMockProviderSettings() {
     xai: 'grok'
   }
 
-  return {
+  const settings = {
     getModelConfig: vi.fn().mockReturnValue({
       temperature: 0.7,
       maxTokens: 4096,
@@ -672,6 +672,38 @@ function createMockProviderSettings() {
     resolveDeepChatAgentConfig: vi.fn().mockResolvedValue({}),
     agentSupportsCapability: vi.fn().mockResolvedValue(true)
   } as any
+  settings.getCapabilitySnapshot = vi.fn((providerId: string, modelId: string) => {
+    const portrait = settings.getReasoningPortrait(providerId, modelId)
+    const hasFixedKimiTemperature = providerId === 'moonshot' && modelId === 'moonshotai/kimi-k2.6'
+    return {
+      identity: {
+        providerId: settings.getCapabilityProviderId(providerId, modelId),
+        modelId,
+        catalogMatched: true
+      },
+      requestPolicy: {
+        temperature: hasFixedKimiTemperature
+          ? { mode: 'fixed', value: 1 }
+          : { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      },
+      supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
+      supportsReasoning: settings.supportsReasoningCapability(providerId, modelId),
+      reasoningPortrait: portrait,
+      thinkingBudgetRange: settings.getThinkingBudgetRange(providerId, modelId),
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability: undefined,
+      supportsTemperatureControl: true,
+      supportsReasoningEffort: settings.supportsReasoningEffortCapability(providerId, modelId),
+      reasoningEffortDefault: settings.getReasoningEffortDefault(providerId, modelId),
+      supportsVerbosity: settings.supportsVerbosityCapability(providerId, modelId),
+      verbosityDefault: settings.getVerbosityDefault(providerId, modelId)
+    }
+  })
+  return settings
 }
 
 function createRuntimeDependencies(

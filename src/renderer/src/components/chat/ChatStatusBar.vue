@@ -1136,6 +1136,8 @@ const providerClient = createProviderClient()
 const sessionClient = createSessionClient()
 const { t } = useI18n()
 
+type RendererModelCapabilities = Awaited<ReturnType<typeof modelClient.getCapabilities>>
+
 const draftModelSelection = ref<ModelSelection | null>(null)
 const permissionMode = ref<PermissionMode>('full_access')
 const localSettings = ref<SessionGenerationSettings | null>(null)
@@ -1920,11 +1922,14 @@ const syncDraftModelSelection = async () => {
 const resolveDefaultGenerationSettings = async (
   providerId: string,
   modelId: string,
-  agentId: string = 'deepchat'
+  agentId: string = 'deepchat',
+  prefetchedCapabilities?: RendererModelCapabilities
 ): Promise<SessionGenerationSettings> => {
-  const agentConfig = await resolveDeepChatAgentConfig(agentId)
-  const modelConfig = await modelClient.getModelConfig(modelId, providerId)
-  const capabilities = await modelClient.getCapabilities(providerId, modelId)
+  const [agentConfig, modelConfig, capabilities] = await Promise.all([
+    resolveDeepChatAgentConfig(agentId),
+    modelClient.getModelConfig(modelId, providerId),
+    prefetchedCapabilities ?? modelClient.getCapabilities(providerId, modelId)
+  ])
   const resolvedCapabilityProviderId = capabilities.identity.providerId
   const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
     providerId,
@@ -2051,10 +2056,10 @@ const fetchCapabilities = async (
   providerId: string,
   modelId: string,
   requestToken: number
-): Promise<void> => {
+): Promise<RendererModelCapabilities | null> => {
   try {
     const capabilities = await modelClient.getCapabilities(providerId, modelId)
-    if (requestToken !== generationSyncToken) return
+    if (requestToken !== generationSyncToken) return null
 
     capabilityProviderId.value = capabilities.identity.providerId
     capabilityRequestPolicy.value = capabilities.requestPolicy
@@ -2062,13 +2067,16 @@ const fetchCapabilities = async (
 
     capabilityReasoningPortrait.value = portrait
     capabilitySupportsReasoning.value =
-      typeof portrait?.supported === 'boolean' ? portrait.supported : null
+      typeof capabilities.supportsReasoning === 'boolean'
+        ? capabilities.supportsReasoning
+        : (portrait?.supported ?? null)
     capabilitySupportsTemperature.value =
       typeof capabilities.supportsTemperatureControl === 'boolean'
         ? capabilities.supportsTemperatureControl
         : capabilities.temperatureCapability
+    return capabilities
   } catch (error) {
-    if (requestToken !== generationSyncToken) return
+    if (requestToken !== generationSyncToken) return null
 
     console.warn('[ChatStatusBar] Failed to fetch model capabilities:', error)
     capabilityProviderId.value = providerId
@@ -2076,6 +2084,7 @@ const fetchCapabilities = async (
     capabilitySupportsReasoning.value = null
     capabilityReasoningPortrait.value = null
     capabilitySupportsTemperature.value = null
+    return null
   }
 }
 
@@ -2221,7 +2230,7 @@ const runSyncGenerationSettings = async () => {
     return
   }
 
-  await fetchCapabilities(selection.providerId, selection.modelId, token)
+  const capabilities = await fetchCapabilities(selection.providerId, selection.modelId, token)
   if (token !== generationSyncToken) {
     return
   }
@@ -2240,7 +2249,8 @@ const runSyncGenerationSettings = async () => {
         const defaults = await resolveDefaultGenerationSettings(
           selection.providerId,
           selection.modelId,
-          sessionStore.activeSession?.agentId ?? 'deepchat'
+          sessionStore.activeSession?.agentId ?? 'deepchat',
+          capabilities ?? undefined
         )
         if (token !== generationSyncToken) {
           return
@@ -2257,7 +2267,8 @@ const runSyncGenerationSettings = async () => {
   const defaults = await resolveDefaultGenerationSettings(
     selection.providerId,
     selection.modelId,
-    selectedDeepChatAgentId.value ?? 'deepchat'
+    selectedDeepChatAgentId.value ?? 'deepchat',
+    capabilities ?? undefined
   )
   if (token !== generationSyncToken) {
     return

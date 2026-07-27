@@ -96,7 +96,6 @@ describe('AI SDK runtime', () => {
     identity: {
       providerId,
       modelId,
-      source: 'provider-model',
       catalogMatched: temperatureCapability !== undefined
     },
     requestPolicy: {
@@ -2168,6 +2167,56 @@ describe('AI SDK runtime', () => {
     expect(request.providerOptions?.['new-api']).not.toHaveProperty('thinking')
     expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
     expect(tracePayloads[0]?.body).not.toHaveProperty('topP')
+  })
+
+  it('removes inherited K3 effort when the catalog declares a non-effort mode', async () => {
+    mockCreateAiSdkProviderContext.mockReturnValue({
+      providerOptionsKey: 'new-api',
+      apiType: 'openai_chat',
+      model: {},
+      endpoint: 'https://new-api.example.com/v1/chat/completions'
+    })
+    const context = {
+      providerKind: 'openai-compatible',
+      provider: {
+        id: 'new-api',
+        apiType: 'new-api'
+      },
+      capabilitySnapshot: createCapabilitySnapshot('moonshot', 'kimi-k3', false, {
+        requestPolicy: {
+          temperature: { mode: 'omit' },
+          topP: { mode: 'omit' },
+          reasoning: { mode: 'fixed', value: true },
+          legacyThinking: { mode: 'omit' }
+        },
+        supportsReasoning: true,
+        reasoningPortrait: {
+          supported: true,
+          mode: 'budget',
+          budget: { min: 1024, default: 4096 }
+        },
+        supportsReasoningEffort: false,
+        reasoningEffortDefault: undefined
+      }),
+      providerSettings: createProviderSettings(),
+      defaultHeaders: {}
+    } as any
+
+    await runAiSdkGenerateText(
+      context,
+      [],
+      'kimi-k3',
+      {
+        apiEndpoint: 'chat',
+        reasoning: true,
+        reasoningEffort: 'max'
+      } as any,
+      0.6,
+      1024
+    )
+
+    const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, any>
+    expect(request.providerOptions?.['new-api'] ?? {}).not.toHaveProperty('reasoningEffort')
   })
 
   it('forces Moonshot Kimi temperature to 1.0 when reasoning is enabled', async () => {

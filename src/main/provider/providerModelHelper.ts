@@ -35,7 +35,9 @@ interface ProviderModelHelperOptions {
   publishEvent: DeepchatEventPublisher
 }
 
-type ProviderModelStore = StoreLike<IModelStore & Record<string, unknown>>
+type ProviderModelStore = StoreLike<IModelStore & Record<string, unknown>> & {
+  getProviderModel?: (source: 'provider' | 'custom', modelId: string) => MODEL_META | undefined
+}
 
 export type ProviderModelRouteMetadata = Pick<
   MODEL_META,
@@ -183,9 +185,13 @@ export class ProviderModelHelper {
     return ModelType.Chat
   }
 
-  private applyResolvedModelConfig(model: MODEL_META, providerId: string): MODEL_META {
+  private applyResolvedModelConfig(
+    model: MODEL_META,
+    providerId: string,
+    resolvedConfig?: ModelConfig
+  ): MODEL_META {
     const normalizedModel = this.cloneModel(model)
-    const config = this.getModelConfig(normalizedModel.id, providerId)
+    const config = resolvedConfig ?? this.getModelConfig(normalizedModel.id, providerId)
 
     if (config) {
       normalizedModel.maxTokens = config.maxTokens
@@ -302,11 +308,37 @@ export class ProviderModelHelper {
 
   getProviderModelRouteMetadata(
     providerId: string,
-    modelId: string
+    modelId: string,
+    resolvedConfig?: ModelConfig
   ): ProviderModelRouteMetadata | undefined {
-    const storedModel = this.getResolvedProviderModels(providerId).find(
-      (model) => model.id === modelId
-    )
+    const cached = this.providerModelsCache.get(providerId)
+    const hasFreshCache = Boolean(cached && cached.expiresAt > Date.now())
+    const cachedModel = hasFreshCache
+      ? cached?.models.find((model) => model.id === modelId)
+      : undefined
+    const store = this.getProviderModelStore(providerId)
+    const rawStoredModel =
+      hasFreshCache || !store.getProviderModel
+        ? undefined
+        : store.getProviderModel('provider', modelId)
+    const storedModel =
+      cachedModel ??
+      (rawStoredModel
+        ? this.applyNewApiEndpointCompatibility(
+            this.applyResolvedModelConfig(
+              this.normalizeStoredModel(
+                rawStoredModel,
+                providerId,
+                'getProviderModelRouteMetadata'
+              ),
+              providerId,
+              resolvedConfig
+            ),
+            providerId
+          )
+        : store.getProviderModel
+          ? undefined
+          : this.getResolvedProviderModels(providerId).find((model) => model.id === modelId))
     if (storedModel) {
       return {
         endpointType: storedModel.endpointType,
@@ -318,14 +350,14 @@ export class ProviderModelHelper {
       }
     }
 
-    const customModels = (this.getProviderModelStore(providerId).get('custom_models') ||
-      []) as MODEL_META[]
-    const customModel = customModels.find((model) => model.id === modelId)
+    const customModel = store.getProviderModel
+      ? store.getProviderModel('custom', modelId)
+      : ((store.get('custom_models') || []) as MODEL_META[]).find((model) => model.id === modelId)
     if (!customModel) {
       return undefined
     }
 
-    const config = this.getModelConfig(modelId, providerId)
+    const config = resolvedConfig ?? this.getModelConfig(modelId, providerId)
     return {
       endpointType: config?.endpointType ?? customModel.endpointType,
       supportedEndpointTypes: customModel.supportedEndpointTypes

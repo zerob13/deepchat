@@ -4,12 +4,22 @@ import {
   supportsProviderAudioInput,
   supportsProviderVision
 } from '@/agent/deepchat/runtime/providerInputCapabilities'
+import {
+  assertProviderModelRuntimeFacts,
+  resolveProviderModelRuntimeFacts
+} from '@/agent/deepchat/runtime/providerModelRuntimeFacts'
+
+const createCapabilitySnapshot = (supportsAudioInput: boolean) =>
+  ({
+    identity: { providerId: 'provider', modelId: 'model', catalogMatched: true },
+    supportsAudioInput
+  }) as any
 
 describe('provider input capabilities', () => {
-  it('resolves vision and audio with their provider-port argument order', () => {
+  it('resolves vision and audio from one model config and capability snapshot', () => {
     const providerSettings = {
       getModelConfig: vi.fn().mockReturnValue({ vision: true }),
-      supportsAudioInputCapability: vi.fn().mockReturnValue(true)
+      getCapabilitySnapshot: vi.fn().mockReturnValue(createCapabilitySnapshot(true))
     }
 
     expect(resolveProviderInputCapabilities(providerSettings, 'provider', 'model')).toEqual({
@@ -17,19 +27,55 @@ describe('provider input capabilities', () => {
       supportsAudioInput: true
     })
     expect(providerSettings.getModelConfig).toHaveBeenCalledWith('model', 'provider')
-    expect(providerSettings.supportsAudioInputCapability).toHaveBeenCalledWith('provider', 'model')
+    expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledWith('provider', 'model', {
+      reasoning: undefined
+    }, { vision: true })
   })
 
   it('fails vision closed when the model config is unavailable', () => {
     const providerSettings = {
       getModelConfig: vi.fn().mockReturnValue(undefined),
-      supportsAudioInputCapability: vi.fn().mockReturnValue(false)
+      getCapabilitySnapshot: vi.fn().mockReturnValue(createCapabilitySnapshot(false))
     }
 
-    expect(resolveProviderInputCapabilities(providerSettings, 'provider', 'missing')).toEqual({
-      supportsVision: false,
-      supportsAudioInput: false
+    expect(resolveProviderInputCapabilities(providerSettings as any, 'provider', 'missing')).toEqual(
+      {
+        supportsVision: false,
+        supportsAudioInput: false
+      }
+    )
+  })
+
+  it('reuses request-local model facts without repeating capability resolution', () => {
+    const providerSettings = {
+      getModelConfig: vi.fn().mockReturnValue({ vision: true, reasoning: true }),
+      getCapabilitySnapshot: vi.fn().mockReturnValue(createCapabilitySnapshot(true))
+    }
+    const facts = resolveProviderModelRuntimeFacts(providerSettings, 'provider', 'model')
+
+    expect(
+      resolveProviderInputCapabilities(providerSettings, 'provider', 'model', facts)
+    ).toEqual({
+      supportsVision: true,
+      supportsAudioInput: true
     })
+    expect(providerSettings.getModelConfig).toHaveBeenCalledTimes(1)
+    expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects reuse across service provider selections', () => {
+    const providerSettings = {
+      getModelConfig: vi.fn().mockReturnValue({ vision: true }),
+      getCapabilitySnapshot: vi.fn().mockReturnValue(createCapabilitySnapshot(true))
+    }
+    const facts = resolveProviderModelRuntimeFacts(providerSettings, 'new-api', 'kimi-k3')
+
+    expect(() => assertProviderModelRuntimeFacts(facts, 'moonshot', 'kimi-k3')).toThrow(
+      'cannot be used'
+    )
+    expect(() =>
+      resolveProviderInputCapabilities(providerSettings, 'new-api', 'other-model', facts)
+    ).toThrow('cannot be used')
   })
 
   it('supports isolated capability reads without querying the unrelated capability', () => {

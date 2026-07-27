@@ -2,24 +2,9 @@ import type { ReasoningEffort, ReasoningPortrait, Verbosity } from './model-db'
 import type { ModelType, NewApiEndpointType } from '../model'
 import type { ModelRequestPolicy } from '../modelRequestPolicy'
 
-export const CAPABILITY_IDENTITY_SOURCES = [
-  'provider-override',
-  'route-override',
-  'provider-model',
-  'model-namespace',
-  'model-owner',
-  'model-family',
-  'transport-model',
-  'unique-model',
-  'transport-fallback'
-] as const
-
-export type CapabilityIdentitySource = (typeof CAPABILITY_IDENTITY_SOURCES)[number]
-
 export type ResolvedCapabilityIdentity = {
   providerId: string
   modelId: string
-  source: CapabilityIdentitySource
   catalogMatched: boolean
 }
 

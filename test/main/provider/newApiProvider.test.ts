@@ -188,7 +188,7 @@ describe('NewApiProvider capability routing', () => {
     expect(runtimeProvider.apiType).toBe('anthropic')
     expect(routeDecision.supportsOfficialAnthropicReasoning).toBe(true)
 
-    const runtimeContext = (provider as any).buildRuntimeContext('claude-model')
+    const runtimeContext = (provider as any).buildRuntimeContext('claude-model', routeDecision)
     expect(runtimeContext.context.provider.capabilityProviderId).toBe('anthropic')
     expect(runtimeContext.context.supportsOfficialAnthropicReasoning).toBe(true)
   })
@@ -219,7 +219,7 @@ describe('NewApiProvider capability routing', () => {
     )
     const routeDecision = (provider as any).resolveRouteDecision('claude-opus-4-7')
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
-    const runtimeContext = (provider as any).buildRuntimeContext('claude-opus-4-7')
+    const runtimeContext = (provider as any).buildRuntimeContext('claude-opus-4-7', routeDecision)
 
     expect(routeDecision.endpointType).toBe('anthropic')
     expect(runtimeProvider.apiType).toBe('anthropic')
@@ -532,16 +532,16 @@ describe('NewApiProvider capability routing', () => {
       Object.assign(providerSettings, { [method]: vi.fn() })
     }
     const provider = new AiSdkProvider(createProvider(), providerSettings)
+    const getStoredModel = vi.spyOn(provider as any, 'getStoredModel')
 
     const routeDecision = (provider as any).resolveRouteDecision('kimi-k3')
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
-    const runtimeContext = (provider as any).buildRuntimeContext('kimi-k3')
+    const runtimeContext = (provider as any).buildRuntimeContext('kimi-k3', routeDecision)
 
     expect(routeDecision.endpointType).toBe('openai')
     expect(routeDecision.capabilityIdentity).toEqual({
       providerId: 'moonshot',
       modelId: 'kimi-k3',
-      source: 'model-family',
       catalogMatched: true
     })
     expect(runtimeProvider.capabilityProviderId).toBe('moonshot')
@@ -558,6 +558,7 @@ describe('NewApiProvider capability routing', () => {
     for (const method of legacyCapabilityGetters) {
       expect(providerSettings[method]).not.toHaveBeenCalled()
     }
+    expect(getStoredModel).toHaveBeenCalledOnce()
   })
 
   it('exposes all chat endpoints for openai-only chat models while keeping completions as default', async () => {
@@ -995,7 +996,10 @@ describe('NewApiProvider capability routing', () => {
     const provider = new AiSdkProvider(zenmuxProvider, createProviderSettings())
     const routeDecision = (provider as any).resolveRouteDecision('anthropic/claude-sonnet-4.5')
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
-    const runtimeContext = (provider as any).buildRuntimeContext('anthropic/claude-sonnet-4.5')
+    const runtimeContext = (provider as any).buildRuntimeContext(
+      'anthropic/claude-sonnet-4.5',
+      routeDecision
+    )
     expect(resolveAiSdkProviderDefinition(zenmuxProvider)?.anthropicBaseUrl).toBeTruthy()
     expect(routeDecision.providerKind).toBe('openai-compatible')
     expect(routeDecision.supportsOfficialAnthropicReasoning).toBeUndefined()
@@ -1018,7 +1022,7 @@ describe('NewApiProvider capability routing', () => {
     )
     const routeDecision = (provider as any).resolveRouteDecision('claude-opus-4-7')
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
-    const runtimeContext = (provider as any).buildRuntimeContext('claude-opus-4-7')
+    const runtimeContext = (provider as any).buildRuntimeContext('claude-opus-4-7', routeDecision)
 
     expect(routeDecision.providerKind).toBe('anthropic')
     expect(routeDecision.supportsOfficialAnthropicReasoning).toBeUndefined()
@@ -1039,7 +1043,7 @@ describe('NewApiProvider capability routing', () => {
     )
     const routeDecision = (provider as any).resolveRouteDecision('MiniMax-M2.5')
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
-    const runtimeContext = (provider as any).buildRuntimeContext('MiniMax-M2.5')
+    const runtimeContext = (provider as any).buildRuntimeContext('MiniMax-M2.5', routeDecision)
 
     expect(routeDecision.providerKind).toBe('anthropic')
     expect(routeDecision.supportsOfficialAnthropicReasoning).toBeUndefined()
@@ -1072,5 +1076,20 @@ describe('NewApiProvider capability routing', () => {
     expect(modelConfig.type).toBe(ModelType.ImageGeneration)
     expect(modelConfig.endpointType).toBe('image-generation')
     expect(result.content).toBe('generated-image')
+  })
+
+  it('preserves the collect-stream image fallback without rereading model config', async () => {
+    const providerSettings = createProviderSettings()
+    const provider = new AiSdkProvider(createProvider(), providerSettings)
+    ;(provider as any).isInitialized = true
+
+    await provider.collectStreamResponse(
+      [{ role: 'user', content: 'Draw a cat' }],
+      'custom-image-model'
+    )
+
+    const modelConfig = mockRunAiSdkCoreStream.mock.calls.at(-1)?.[3]
+    expect(modelConfig.apiEndpoint).toBe(ApiEndpointType.Image)
+    expect(providerSettings.getModelConfig).toHaveBeenCalledOnce()
   })
 })

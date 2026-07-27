@@ -105,8 +105,9 @@ Renderer components do not import or execute capability-provider routing rules. 
 ModelConfigDialog consume the snapshot returned by the typed models capability route. Agent
 generation settings consume the same main-process resolution contract.
 
-The optional resolution source is retained only because request tracing consumes it to explain
-which catalog identity and policy produced the final body.
+The snapshot does not expose a speculative resolution-source field. Request tracing currently has
+no metadata contract that consumes it; diagnostics should be added only together with a real trace
+consumer.
 
 ### Generation parameter policy
 

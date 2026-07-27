@@ -718,7 +718,7 @@ describe('AI SDK provider options', () => {
     })
   })
 
-  it('maps grok reasoning effort to the vendor-specific body field', () => {
+  it('maps Grok Mini reasoning effort through the standard adapter option', () => {
     const result = buildProviderOptions({
       providerId: 'grok',
       capabilityProviderId: 'grok',
@@ -734,10 +734,30 @@ describe('AI SDK provider options', () => {
 
     expect(result.providerOptions).toEqual({
       openai: {
-        reasoning_effort: 'medium'
+        reasoningEffort: 'medium'
       }
     })
   })
+
+  it.each(['grok-4', 'not-grok-3-mini'])(
+    'does not add reasoning effort to unsupported Grok model %s',
+    (modelId) => {
+      const result = buildProviderOptions({
+        providerId: 'grok',
+        capabilityProviderId: 'grok',
+        providerOptionsKey: 'openai',
+        apiType: 'openai_chat',
+        modelId,
+        modelConfig: {
+          reasoningEffort: 'high'
+        },
+        tools: [],
+        messages: []
+      })
+
+      expect(result.providerOptions).toBeUndefined()
+    }
+  )
 
   it('passes through extended OpenAI reasoning effort values', () => {
     mockGetReasoningPortrait.mockReturnValue({

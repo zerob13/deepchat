@@ -754,8 +754,21 @@ function applyReasoningEffortCapability(
   modelConfig: ModelConfig,
   capabilitySnapshot: ResolvedModelCapabilitySnapshot | undefined
 ): ModelConfig {
-  if (!capabilitySnapshot?.supportsReasoningEffort) {
+  if (!capabilitySnapshot) {
     return modelConfig
+  }
+
+  if (!capabilitySnapshot.supportsReasoningEffort) {
+    const explicitNonEffortMode =
+      capabilitySnapshot.reasoningPortrait?.mode !== undefined &&
+      capabilitySnapshot.reasoningPortrait.mode !== 'effort' &&
+      capabilitySnapshot.reasoningPortrait.mode !== 'mixed'
+    return explicitNonEffortMode && modelConfig.reasoningEffort !== undefined
+      ? {
+          ...modelConfig,
+          reasoningEffort: undefined
+        }
+      : modelConfig
   }
 
   const reasoningEffort =

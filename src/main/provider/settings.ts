@@ -240,7 +240,8 @@ export interface ProviderSettingsPort {
   getCapabilitySnapshot(
     providerId: string,
     modelId: string,
-    options?: CapabilitySnapshotOptions
+    options?: CapabilitySnapshotOptions,
+    resolvedModelConfig?: ModelConfig
   ): ResolvedModelCapabilitySnapshot
   getCapabilityProviderId(providerId: string, modelId: string): string
   supportsReasoningCapability(providerId: string, modelId: string): boolean
@@ -323,15 +324,7 @@ export type ProviderModelResolutionPort = Pick<
   | 'isKnownModel'
   | 'getModelConfig'
   | 'getCapabilitySnapshot'
-  | 'getCapabilityProviderId'
-  | 'supportsReasoningCapability'
-  | 'getReasoningPortrait'
-  | 'getThinkingBudgetRange'
   | 'supportsAudioInputCapability'
-  | 'supportsReasoningEffortCapability'
-  | 'getReasoningEffortDefault'
-  | 'supportsVerbosityCapability'
-  | 'getVerbosityDefault'
 >
 
 export class ProviderSettings implements ProviderSettingsPort {
@@ -470,18 +463,17 @@ export class ProviderSettings implements ProviderSettingsPort {
     providerId: string,
     modelId: string,
     routeOverride?: CapabilityRouteOverride,
-    storedRouteHint?: ProviderModelRouteMetadata
+    resolvedModelConfig?: ModelConfig
   ): NewApiRouteMeta | null {
     const provider = this.providerHelper?.getProviderById?.(providerId)
     const providerApiType = provider?.apiType
-    const modelConfig = this.getModelConfig(modelId, providerId)
-    const storedRoute =
-      storedRouteHint ??
-      this.providerModelHelper.getProviderModelRouteMetadata?.(providerId, modelId) ??
-      this.providerModelHelper
-        .getProviderModels(providerId)
-        .find((model) => model.id === modelId) ??
-      this.getCustomModels(providerId).find((model) => model.id === modelId)
+    const modelConfig =
+      resolvedModelConfig ?? this.getModelConfig(modelId, providerId) ?? ({} as ModelConfig)
+    const storedRoute = this.providerModelHelper.getProviderModelRouteMetadata?.(
+      providerId,
+      modelId,
+      modelConfig
+    )
     const overriddenEndpointType = isNewApiEndpointType(routeOverride?.endpointType)
       ? routeOverride.endpointType
       : undefined
@@ -518,9 +510,14 @@ export class ProviderSettings implements ProviderSettingsPort {
     providerId: string,
     modelId: string,
     routeOverride?: CapabilityRouteOverride,
-    storedRouteHint?: ProviderModelRouteMetadata
+    resolvedModelConfig?: ModelConfig
   ): ResolvedCapabilityIdentity {
-    const route = this.resolveCapabilityRoute(providerId, modelId, routeOverride, storedRouteHint)
+    const route = this.resolveCapabilityRoute(
+      providerId,
+      modelId,
+      routeOverride,
+      resolvedModelConfig
+    )
     const provider = this.providerHelper?.getProviderById?.(providerId)
     return resolveCapabilityIdentity({
       providerId,
@@ -531,15 +528,46 @@ export class ProviderSettings implements ProviderSettingsPort {
     })
   }
 
+  private resolveStoredModelCapabilityIdentity(
+    providerId: string,
+    model: ProviderModelRouteMetadata & { id: string },
+    provider = this.providerHelper?.getProviderById?.(providerId)
+  ): ResolvedCapabilityIdentity {
+    const capabilityFamilyHint = resolveCapabilityFamilyHint(model.id, model.ownedBy)
+    const route: NewApiRouteMeta = {
+      endpointType: isNewApiEndpointType(model.endpointType) ? model.endpointType : undefined,
+      supportedEndpointTypes: model.supportedEndpointTypes,
+      type: model.type,
+      providerApiType: provider?.apiType,
+      ownedBy: model.ownedBy,
+      capabilityFamilyHint
+    }
+    const endpointType =
+      route.endpointType ??
+      (provider?.apiType === 'new-api' || Boolean(route.supportedEndpointTypes?.length)
+        ? resolveNewApiEndpointTypeFromRoute(route, model.id)
+        : undefined)
+
+    return resolveCapabilityIdentity({
+      providerId,
+      modelId: model.id,
+      ownedBy: model.ownedBy,
+      endpointType,
+      explicitProviderId: provider?.capabilityProviderId
+    })
+  }
+
   getCapabilitySnapshot(
     providerId: string,
     modelId: string,
-    options?: CapabilitySnapshotOptions
+    options?: CapabilitySnapshotOptions,
+    resolvedModelConfig?: ModelConfig
   ): ResolvedModelCapabilitySnapshot {
     const identity = this.resolveCapabilityIdentityForModel(
       providerId,
       modelId,
-      options?.routeOverride
+      options?.routeOverride,
+      resolvedModelConfig
     )
     return buildResolvedCapabilitySnapshot(identity, {
       reasoning: options?.reasoning
@@ -1089,13 +1117,9 @@ export class ProviderSettings implements ProviderSettingsPort {
 
   getProviderModels(providerId: string): MODEL_META[] {
     const models = this.providerModelHelper.getProviderModels(providerId)
+    const provider = this.providerHelper?.getProviderById?.(providerId)
     return models.map((model) => {
-      const identity = this.resolveCapabilityIdentityForModel(
-        providerId,
-        model.id,
-        undefined,
-        model
-      )
+      const identity = this.resolveStoredModelCapabilityIdentity(providerId, model, provider)
 
       if (identity.providerId === providerId) {
         return model
@@ -1231,7 +1255,10 @@ export class ProviderSettings implements ProviderSettingsPort {
    * @returns ModelConfig 模型配置
    */
   getModelConfig(modelId: string, providerId?: string): ModelConfig {
-    return this.modelConfigHelper.getModelConfig(modelId, providerId)
+    const capabilityProviderId = providerId
+      ? this.providerHelper?.getProviderById?.(providerId)?.capabilityProviderId
+      : undefined
+    return this.modelConfigHelper.getModelConfig(modelId, providerId, capabilityProviderId)
   }
 
   /**

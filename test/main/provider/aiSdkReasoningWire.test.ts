@@ -48,7 +48,6 @@ describe('AI SDK reasoning wire payloads', () => {
             identity: {
               providerId: 'moonshot',
               modelId: 'kimi-k3',
-              source: 'model-family',
               catalogMatched: true
             },
             requestPolicy: {
@@ -101,5 +100,69 @@ describe('AI SDK reasoning wire payloads', () => {
     expect(body).not.toHaveProperty('presence_penalty')
     expect(body).not.toHaveProperty('frequency_penalty')
     expect(body).not.toHaveProperty('thinking')
+  })
+
+  it('emits Grok Mini reasoning effort through the standard adapter option', async () => {
+    const body = await captureRequestBody(() =>
+      runAiSdkGenerateText(
+        {
+          providerKind: 'openai-compatible',
+          provider: {
+            id: 'grok',
+            name: 'Grok',
+            apiType: 'grok',
+            apiKey: 'test-key',
+            baseUrl: 'https://grok-compatible.example.com/v1',
+            enable: true
+          } as any,
+          providerSettings,
+          defaultHeaders: {}
+        },
+        [{ role: 'user', content: 'Hello' }],
+        'grok-3-mini',
+        {
+          apiEndpoint: 'chat',
+          reasoning: true,
+          reasoningEffort: 'high',
+          functionCall: false
+        } as any,
+        0.6,
+        1024
+      )
+    )
+
+    expect(body.reasoning_effort).toBe('high')
+  })
+
+  it('does not emit reasoning effort for unsupported Grok models', async () => {
+    const body = await captureRequestBody(() =>
+      runAiSdkGenerateText(
+        {
+          providerKind: 'openai-compatible',
+          provider: {
+            id: 'grok',
+            name: 'Grok',
+            apiType: 'grok',
+            apiKey: 'test-key',
+            baseUrl: 'https://grok-compatible.example.com/v1',
+            enable: true
+          } as any,
+          providerSettings,
+          defaultHeaders: {}
+        },
+        [{ role: 'user', content: 'Hello' }],
+        'grok-4',
+        {
+          apiEndpoint: 'chat',
+          reasoning: true,
+          reasoningEffort: 'high',
+          functionCall: false
+        } as any,
+        0.6,
+        1024
+      )
+    )
+
+    expect(body).not.toHaveProperty('reasoning_effort')
   })
 })

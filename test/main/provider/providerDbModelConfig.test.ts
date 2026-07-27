@@ -337,6 +337,17 @@ describe('Provider DB strict matching and user overrides', () => {
     expect(proxyConfig.reasoningEffort).toBe('max')
   })
 
+  it('keeps an explicit capability provider override authoritative for proxy defaults', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const config = helper.getModelConfig('kimi-k3', 'new-api', 'capability-team')
+
+    expect(config.contextLength).toBe(16000)
+    expect(config.maxTokens).toBe(4096)
+    expect(config.reasoning).toBe(false)
+    expect(config.reasoningEffort).toBeUndefined()
+  })
+
   it('uses safe defaults instead of selecting an ambiguous global model match', () => {
     const helper = new ModelConfigHelper('1.0.0')
 

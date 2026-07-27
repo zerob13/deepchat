@@ -36,26 +36,36 @@
 ## Reasoning and consumers
 
 - [x] Consume K3 effort options `low`, `high`, and `max` with default `max`.
-- [ ] Restore Grok Mini final-body `reasoning_effort` through the standard AI SDK option.
-- [ ] Add real-adapter request-capture tests for New API K3 and Grok.
+- [x] Restore Grok Mini final-body `reasoning_effort` through the standard AI SDK option.
+- [x] Add real-adapter request-capture tests for New API K3 and Grok.
 - [x] Extend the typed capability route with identity and generation policy.
 - [x] Remove local capability-provider resolution from ChatStatusBar.
 - [x] Remove local capability-provider resolution from ModelConfigDialog.
-- [ ] Update agent generation settings to consume the authoritative snapshot.
+- [x] Update agent generation settings to consume the authoritative snapshot.
 - [x] Add the narrow provider-model route metadata getter.
-- [ ] Ensure each request resolves route, identity, and generation parameters once.
+- [x] Ensure each request resolves route, identity, and generation parameters once.
 - [x] Add renderer control and complete Moonshot portrait regression tests.
-- [ ] Review and commit the consumer and de-duplication slice.
+- [x] Review the consumer and de-duplication slice.
 
 ## Final validation
 
-- [ ] Run focused main, shared, agent, and renderer tests.
-- [ ] Run `pnpm run format`, `pnpm run i18n`, and `pnpm run lint`.
-- [ ] Run full type checking, the full test suite, and the production build.
-- [ ] Review generated provider and ACP registry changes if the build refreshes them.
-- [ ] Review the complete branch diff by severity and fix every finding.
-- [ ] Confirm the worktree is clean, commits are local, and no push occurred.
+- [x] Run focused main, shared, agent, and renderer tests.
+- [x] Run `pnpm run format`, `pnpm run i18n`, and `pnpm run lint`.
+- [x] Run full type checking, the full test suite, and the production build.
+- [x] Review generated provider and ACP registry changes if the build refreshes them.
+- [x] Review the complete branch diff by severity and fix every finding.
+- [x] Confirm the final worktree is clean, commits are local, and no push occurred.
 
 ## Validation Result
 
-Pending implementation.
+- Focused provider, agent, shared, contract, and renderer suites passed, including 566 tests after
+  the final request-facts module extraction.
+- `pnpm run format`, `pnpm run i18n`, and `pnpm run lint` passed.
+- `pnpm run typecheck` passed both node and renderer type checking.
+- `pnpm test` passed 636 files with 19 skipped; 6,653 tests passed with 241 skipped.
+- `pnpm run build` passed and refreshed the provider and ACP registry resources.
+- The refreshed provider database contains 175 providers and 7,727 models. Both Moonshot K3
+  records retain `temperature: false` and the complete reasoning portrait required by this
+  specification.
+- The final severity review found no remaining P0-P3 issue in the implementation or generated
+  resources.

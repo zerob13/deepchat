@@ -7,7 +7,7 @@ resolution. Phase 1 accepts only model ID and owner metadata and returns only an
 family hint. It may query provider-db family evidence by those inputs, but cannot consume an
 endpoint or any Phase 2 result. Shared endpoint routing consumes the renamed
 `capabilityFamilyHint`. Phase 2 accepts the selected endpoint and returns a resolved
-provider/catalog model identity plus an optional diagnostic source.
+provider/catalog model identity.
 
 Split the current shared helper by responsibility. Keep endpoint selection utilities in
 `@shared/model`; move the transport capability fallback and ZenMux explicit override into the
@@ -29,7 +29,6 @@ to the snapshot during migration.
 Extend the existing models capability route and schema with:
 
 - resolved capability provider and catalog model identity;
-- optional resolution source for request diagnostics;
 - temperature's tri-state value;
 - generic generation-parameter policies for temperature and top P;
 - required or optional reasoning state and legacy thinking behavior.
@@ -41,9 +40,10 @@ instead of independently deriving endpoint capability semantics.
 
 ## Runtime integration
 
-Resolve a route decision exactly once in `buildRuntimeContext`. Pass that decision to model-config
-patching instead of recalculating it. RouteDecision carries the resolved capability identity, and
-AiSdkRuntimeContext receives the same immutable request-local value.
+Resolve a route decision exactly once at each request boundary and pass it into
+`buildRuntimeContext`. Model-config patching consumes that decision instead of recalculating it.
+RouteDecision carries the resolved capability identity, and AiSdkRuntimeContext receives the same
+immutable request-local value.
 
 Remove runtime calls that ask ProviderSettings to derive capability ownership again. Prompt/provider
 options, reasoning, temperature, top P, and request tracing consume the context identity.
@@ -84,9 +84,10 @@ and Grok so mapper-only tests cannot pass while the wire field is lost.
 
 ## Performance and compatibility
 
-Add a narrow provider-model route metadata getter backed by the existing model storage/cache rather
-than calling `getProviderModels().find()` from capability resolution. It returns only endpoint,
-supported endpoints, model type, and owner metadata.
+Add a narrow provider-model route metadata getter backed by the provider-model composite primary
+key for SQLite stores, with the existing short-lived model cache and legacy store fallback. Do not
+call `getProviderModels().find()` from SQLite capability resolution. The getter returns only
+endpoint, supported endpoints, model type, and owner metadata.
 
 Do not add a new catalog snapshot, resolution memo, LRU, or persistent cache. Existing provider-db
 indexes and catalog-change rebuilds remain in place. Focused tests assert single route/capability

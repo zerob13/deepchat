@@ -202,6 +202,22 @@ describe('ModelCapabilities reasoning portraits', () => {
             }
           ]
         },
+        'moonshot-budget': {
+          id: 'moonshot-budget',
+          models: [
+            {
+              id: 'kimi-k3',
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  mode: 'budget',
+                  budget: { min: 1024, default: 4096 }
+                }
+              }
+            }
+          ]
+        },
         '302ai': {
           id: '302ai',
           models: [{ id: 'gpt-5-thinking', reasoning: { supported: true, default: true } }]
@@ -322,6 +338,14 @@ describe('ModelCapabilities reasoning portraits', () => {
         mode: 'effort',
         effort: 'high',
         effortOptions: ['low', 'high']
+      }
+    })
+    expect(capabilities.getCatalogCapabilitySnapshot('moonshot-budget', 'kimi-k3')).toMatchObject({
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      reasoningPortrait: {
+        mode: 'budget',
+        budget: { min: 1024, default: 4096 }
       }
     })
   })

@@ -35,7 +35,6 @@ describe('Provider routes', () => {
       identity: {
         providerId: 'anthropic',
         modelId: 'claude-opus-4-8',
-        source: 'model-owner',
         catalogMatched: true
       },
       requestPolicy: {

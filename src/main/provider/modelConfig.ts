@@ -407,7 +407,7 @@ export class ModelConfigHelper {
    * Resolve model configuration from user intent, the authoritative capability identity,
    * provider-managed cache, or safe defaults in that order.
    */
-  getModelConfig(modelId: string, providerId?: string): ModelConfig {
+  getModelConfig(modelId: string, providerId?: string, capabilityProviderId?: string): ModelConfig {
     this.initializeCache()
 
     let storedConfig: ModelConfig | null = null
@@ -456,7 +456,8 @@ export class ModelConfigHelper {
     if (normProviderId && normModelId) {
       const identity = resolveCapabilityIdentity({
         providerId: normProviderId,
-        modelId
+        modelId,
+        explicitProviderId: capabilityProviderId
       })
       const match = identity.catalogMatched
         ? modelCapabilities.getProviderCapabilityModelMatch(identity.providerId, identity.modelId)
