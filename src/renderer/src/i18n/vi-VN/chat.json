@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR đang bận. Hãy thử lại sau khi xử lý xong tệp đính kèm hiện tại.",
       "ocr_resource_limited": "OCR đã dừng ở giới hạn xử lý PDF.",
       "ocr_runtime_unavailable": "OCR không khả dụng trên nền tảng hoặc bản cài đặt này.",
+      "invalid_attachment_snapshot": "Dữ liệu OCR đã lưu không hợp lệ.",
+      "turn_ocr_budget_exhausted": "Văn bản OCR vượt quá giới hạn văn bản đính kèm của tin nhắn này.",
       "pdf_text_unavailable": "Không có văn bản nhúng trong tệp PDF này.",
       "requested_image_requires_vision": "“Gửi hình ảnh” yêu cầu mô hình có khả năng thị giác.",
       "turn_image_bytes_exceeded": "Các hình ảnh trong lượt này vượt quá giới hạn tổng dung lượng.",

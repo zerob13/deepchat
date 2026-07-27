@@ -223,6 +223,35 @@ describe('document OCR artifacts', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('prefers identical retained coverage that did not reach the generation output limit', () => {
+    const text = '## Page 1\n\nfirst\n\n[… PDF OCR truncated …]'
+    const shared = artifact({
+      text,
+      tokenCount: estimateDocumentOcrTokens(text),
+      pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: false }],
+      artifactTermination: 'resource_limited',
+      emittedPages: 1,
+      resourceLimit: { code: 'resource_limit_exceeded', message: 'pixel limit' }
+    })
+    const reusableForLargerBudgets = {
+      ...shared,
+      generationOutputLimitReached: false
+    }
+    const limitedToItsGenerationBudget = {
+      ...shared,
+      generationOutputLimitReached: true
+    }
+
+    expect(isValidDocumentOcrArtifact(reusableForLargerBudgets, identity())).toBe(true)
+    expect(isValidDocumentOcrArtifact(limitedToItsGenerationBudget, identity())).toBe(true)
+    expect(
+      compareDocumentOcrCoverage(reusableForLargerBudgets, limitedToItsGenerationBudget)
+    ).toBeGreaterThan(0)
+    expect(
+      compareDocumentOcrCoverage(limitedToItsGenerationBudget, reusableForLargerBudgets)
+    ).toBeLessThan(0)
+  })
+
   it('rejects illegal termination, coverage, and engine identity combinations', () => {
     expect(isValidDocumentOcrArtifact(artifact(), identity())).toBe(true)
     expect(

@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR sedang sibuk. Cuba lagi selepas lampiran semasa selesai diproses.",
       "ocr_resource_limited": "OCR berhenti pada had pemprosesan PDF.",
       "ocr_runtime_unavailable": "OCR tidak tersedia pada platform atau pemasangan ini.",
+      "invalid_attachment_snapshot": "Data OCR yang disimpan tidak sah.",
+      "turn_ocr_budget_exhausted": "Teks OCR melebihi had teks lampiran mesej ini.",
       "pdf_text_unavailable": "Tiada teks terbenam tersedia dalam PDF ini.",
       "requested_image_requires_vision": "“Hantar imej” memerlukan model dengan keupayaan penglihatan.",
       "turn_image_bytes_exceeded": "Imej dalam giliran ini melebihi had saiz keseluruhan.",

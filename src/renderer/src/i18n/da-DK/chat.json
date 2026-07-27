@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR er optaget. Prøv igen, når den aktuelle vedhæftning er færdigbehandlet.",
       "ocr_resource_limited": "OCR stoppede ved grænsen for PDF-behandling.",
       "ocr_runtime_unavailable": "OCR er ikke tilgængelig på denne platform eller installation.",
+      "invalid_attachment_snapshot": "De gemte OCR-data er ugyldige.",
+      "turn_ocr_budget_exhausted": "OCR-teksten overskrider denne beskeds grænse for vedhæftet tekst.",
       "pdf_text_unavailable": "Der er ingen integreret tekst i denne PDF.",
       "requested_image_requires_vision": "„Send billede“ kræver en model med billedforståelse.",
       "turn_image_bytes_exceeded": "Billederne i denne omgang overskrider den samlede størrelsesgrænse.",

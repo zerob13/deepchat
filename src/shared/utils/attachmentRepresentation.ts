@@ -7,7 +7,7 @@ import {
   ATTACHMENT_REPRESENTATION_PREFERENCES,
   ATTACHMENT_UNAVAILABLE_REASONS,
   PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT,
-  PDF_TEXT_COVERAGE_MAX_PAGES,
+  PDF_PAGE_COUNT_SANITY_LIMIT,
   type AttachmentDocumentOcrSnapshot,
   type AttachmentDocumentPageSpan,
   type AttachmentRepresentationPreference,
@@ -15,6 +15,7 @@ import {
   type AttachmentUnavailableReason,
   type PdfEmbeddedTextCoverage
 } from '../types/attachment'
+import { isValidDocumentOcrTextPageSpans } from './documentOcrText'
 
 const REPRESENTATION_PREFERENCES = new Set<string>(ATTACHMENT_REPRESENTATION_PREFERENCES)
 const UNAVAILABLE_REASONS = new Set<string>(ATTACHMENT_UNAVAILABLE_REASONS)
@@ -131,10 +132,10 @@ export function normalizeAttachmentResolvedRepresentation(
   }
 
   if (candidate.kind === 'ocr_text') {
-    const document =
-      candidate.document === undefined
-        ? undefined
-        : normalizeAttachmentDocumentOcrSnapshot(candidate.document, candidate.text)
+    const hasDocumentSnapshot = candidate.document !== undefined
+    const document = !hasDocumentSnapshot
+      ? undefined
+      : normalizeAttachmentDocumentOcrSnapshot(candidate.document, candidate.text)
     const maxTokens = document ? ATTACHMENT_PDF_OCR_MAX_TOKENS : ATTACHMENT_OCR_MAX_TOKENS
     if (
       typeof candidate.text !== 'string' ||
@@ -144,13 +145,15 @@ export function normalizeAttachmentResolvedRepresentation(
       (candidate.tokenCount as number) < 1 ||
       (candidate.tokenCount as number) > maxTokens ||
       typeof candidate.truncated !== 'boolean' ||
-      (candidate.document !== undefined && !document) ||
+      (hasDocumentSnapshot && !document) ||
       (document &&
         candidate.truncated !==
           (document.generationOutputLimitReached ||
             document.artifactTermination === 'resource_limited'))
     ) {
-      return undefined
+      return hasDocumentSnapshot
+        ? { kind: 'unavailable', reason: 'invalid_attachment_snapshot' }
+        : undefined
     }
 
     return {
@@ -185,7 +188,7 @@ export function normalizePdfEmbeddedTextCoverage(
     typeof candidate.routingRevision !== 'string' ||
     candidate.routingRevision.length === 0 ||
     candidate.routingRevision.length > 128 ||
-    !isIntegerInRange(candidate.pageCount, 1, PDF_TEXT_COVERAGE_MAX_PAGES) ||
+    !isIntegerInRange(candidate.pageCount, 1, PDF_PAGE_COUNT_SANITY_LIMIT) ||
     !isIntegerInRange(candidate.substantivePageCount, 0, candidate.pageCount as number) ||
     !isIntegerInRange(candidate.lowTextPageCount, 0, candidate.pageCount as number) ||
     (candidate.substantivePageCount as number) + (candidate.lowTextPageCount as number) !==
@@ -237,10 +240,12 @@ function normalizeAttachmentDocumentOcrSnapshot(
     !Array.isArray(candidate.pageSpans) ||
     candidate.pageSpans.length === 0 ||
     candidate.pageSpans.length > ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS ||
-    !isValidDocumentPageSpans(candidate.pageSpans, text) ||
+    !isValidDocumentOcrTextPageSpans(text, candidate.pageSpans, {
+      maxSpans: ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS
+    }) ||
     (candidate.sourcePageCountHint !== undefined &&
-      !isIntegerInRange(candidate.sourcePageCountHint, 1, PDF_TEXT_COVERAGE_MAX_PAGES)) ||
-    !isIntegerInRange(candidate.includedThroughPage, 1, PDF_TEXT_COVERAGE_MAX_PAGES) ||
+      !isIntegerInRange(candidate.sourcePageCountHint, 1, PDF_PAGE_COUNT_SANITY_LIMIT)) ||
+    !isIntegerInRange(candidate.includedThroughPage, 1, PDF_PAGE_COUNT_SANITY_LIMIT) ||
     typeof candidate.includedThroughPageComplete !== 'boolean' ||
     (candidate.artifactTermination !== 'request_complete' &&
       candidate.artifactTermination !== 'stopped_by_output_limit' &&
@@ -268,7 +273,12 @@ function normalizeAttachmentDocumentOcrSnapshot(
   if (candidate.embeddedTextCoverage !== undefined && !embeddedTextCoverage) return undefined
 
   return {
-    pageSpans: pageSpans.map((span) => ({ ...span })),
+    pageSpans: pageSpans.map((span) => ({
+      pageNumber: span.pageNumber,
+      start: span.start,
+      end: span.end,
+      complete: span.complete
+    })),
     ...(candidate.sourcePageCountHint
       ? { sourcePageCountHint: candidate.sourcePageCountHint as number }
       : {}),
@@ -278,31 +288,6 @@ function normalizeAttachmentDocumentOcrSnapshot(
     generationOutputLimitReached: candidate.generationOutputLimitReached,
     ...(embeddedTextCoverage ? { embeddedTextCoverage } : {})
   }
-}
-
-function isValidDocumentPageSpans(
-  values: unknown[],
-  text: string
-): values is AttachmentDocumentPageSpan[] {
-  let expectedStart = 0
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index]
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-    const span = value as Record<string, unknown>
-    if (
-      span.pageNumber !== index + 1 ||
-      !isIntegerInRange(span.start, 0, text.length) ||
-      span.start !== expectedStart ||
-      !isIntegerInRange(span.end, span.start as number, text.length) ||
-      typeof span.complete !== 'boolean' ||
-      (!span.complete && index !== values.length - 1) ||
-      (!span.complete && span.end === span.start)
-    ) {
-      return false
-    }
-    expectedStart = span.end as number
-  }
-  return expectedStart === text.length
 }
 
 function isIntegerInRange(value: unknown, minimum: number, maximum: number): value is number {

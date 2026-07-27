@@ -446,6 +446,8 @@
       "ocr_queue_full": "מנוע ה־OCR עסוק. יש לנסות שוב לאחר סיום עיבוד הקובץ המצורף הנוכחי.",
       "ocr_resource_limited": "ה־OCR נעצר במגבלת עיבוד ה־PDF.",
       "ocr_runtime_unavailable": "OCR אינו זמין בפלטפורמה או בהתקנה זו.",
+      "invalid_attachment_snapshot": "נתוני ה-OCR השמורים אינם תקינים.",
+      "turn_ocr_budget_exhausted": "טקסט ה-OCR חורג ממגבלת טקסט הקבצים המצורפים של הודעה זו.",
       "pdf_text_unavailable": "אין טקסט מוטמע זמין בקובץ PDF זה.",
       "requested_image_requires_vision": "״שליחת תמונה״ דורשת מודל עם יכולת ראייה.",
       "turn_image_bytes_exceeded": "התמונות בסבב הזה חורגות ממגבלת הגודל הכוללת.",

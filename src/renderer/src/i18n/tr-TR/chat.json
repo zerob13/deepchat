@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR meşgul. Geçerli ek tamamlandıktan sonra yeniden deneyin.",
       "ocr_resource_limited": "OCR, PDF işleme sınırında durdu.",
       "ocr_runtime_unavailable": "OCR bu platformda veya kurulumda kullanılamıyor.",
+      "invalid_attachment_snapshot": "Kaydedilen OCR verileri geçersiz.",
+      "turn_ocr_budget_exhausted": "OCR metni bu iletinin ek metin sınırını aşıyor.",
       "pdf_text_unavailable": "Bu PDF’de kullanılabilir gömülü metin yok.",
       "requested_image_requires_vision": "“Görüntüyü gönder” için görsel desteği olan bir model gerekir.",
       "turn_image_bytes_exceeded": "Bu turdaki görüntüler toplam boyut sınırını aşıyor.",

@@ -87,3 +87,20 @@
 - An unsigned macOS arm64 packaged app passed the network-denied Light OCR smoke. The helper
   recognized both the existing image fixture and a generated one-page image-only PDF through the
   packaged PDFium runtime.
+- Post-implementation hardening passed 259 focused tests with four native-SQLite skips on this
+  machine, plus the full main suite with 5,153 tests passed and 244 skipped. Format, i18n, lint, and
+  node/web typecheck also passed.
+
+## Post-Implementation Hardening
+
+- [x] Share content-aware page-span validation between cache artifacts and persisted snapshots.
+- [x] Restore output-limit compatibility as the fifth document coverage replacement criterion.
+- [x] Stream immutable PDF snapshots to helper-private files without retaining whole-document
+  buffers in main.
+- [x] Distinguish turn packing exhaustion from empty OCR output.
+- [x] Restore embedded PDF path and size metadata in provider context.
+- [x] Avoid repeated token estimation at adjacent document artifact validation boundaries.
+- [x] Separate protocol page, persisted span, and parsed page-count sanity constants by name.
+- [x] Require document artifact persistence tests in the native SQLite CI step.
+- [x] Run focused validation, required repository checks, pre-commit review, and commit locally.
+- [x] Do not push.

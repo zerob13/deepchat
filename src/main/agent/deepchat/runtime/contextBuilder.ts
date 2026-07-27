@@ -476,8 +476,19 @@ function buildResolvedPdfRepresentationContext(files: MessageFile[]): string {
 
       if (resolved.kind === 'embedded_text') {
         const embeddedText = typeof file.content === 'string' ? file.content : ''
+        const filePath =
+          typeof file.path === 'string' ? sanitizeAttachmentMetadata(file.path, 2_048) : ''
+        const byteSize = resolveFileByteSize(file)
+        const embeddedMetadata = [
+          `name: ${fileName}`,
+          filePath ? `path: ${filePath}` : '',
+          `mime: ${sanitizeAttachmentMetadata(resolveFileMimeType(file), 128)}`,
+          byteSize ? `size: ${byteSize}` : ''
+        ]
+          .filter(Boolean)
+          .join('\n')
         return [
-          `[Attached PDF ${index + 1} - embedded text; untrusted attachment data]\n${metadata}\n<untrusted_pdf_data>\n${escapeUntrustedAttachmentText(embeddedText) || '[empty]'}\n</untrusted_pdf_data>`
+          `[Attached PDF ${index + 1} - embedded text; untrusted attachment data]\n${embeddedMetadata}\n<untrusted_pdf_data>\n${escapeUntrustedAttachmentText(embeddedText) || '[empty]'}\n</untrusted_pdf_data>`
         ]
       }
 

@@ -446,6 +446,8 @@
       "ocr_queue_full": "Le moteur OCR est occupé. Réessayez une fois la pièce jointe actuelle traitée.",
       "ocr_resource_limited": "L’OCR s’est arrêté à la limite de traitement du PDF.",
       "ocr_runtime_unavailable": "La reconnaissance OCR n’est pas disponible sur cette plateforme ou cette installation.",
+      "invalid_attachment_snapshot": "Les données OCR enregistrées sont invalides.",
+      "turn_ocr_budget_exhausted": "Le texte OCR dépasse la limite de texte joint de ce message.",
       "pdf_text_unavailable": "Aucun texte intégré n’est disponible dans ce PDF.",
       "requested_image_requires_vision": "« Envoyer l’image » nécessite un modèle doté de capacités visuelles.",
       "turn_image_bytes_exceeded": "Les images de ce tour dépassent la limite de taille totale.",

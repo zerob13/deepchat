@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { access, chmod, mkdir, mkdtemp, open, rm, stat } from 'node:fs/promises'
@@ -40,6 +40,7 @@ const DEFAULT_MAX_INPUT_BYTES = LIGHT_OCR_HELPER_MAX_INPUT_BYTES
 const DEFAULT_MAX_PENDING_INPUT_BYTES = 120 * 1024 * 1024
 const DEFAULT_MAX_PENDING_REQUESTS = 8
 const MAX_STDERR_BYTES = 16 * 1024
+const DOCUMENT_SNAPSHOT_CHUNK_BYTES = 1024 * 1024
 const INHERITED_HELPER_ENVIRONMENT_KEYS = [
   'LANG',
   'LC_ALL',
@@ -143,8 +144,21 @@ export type LightOcrPrepareInput = Omit<LightOcrRecognizeInput, 'encoded'>
 
 export type LightOcrDocumentPageAction = 'continue' | 'output_limit_reached'
 
+export interface LightOcrDocumentSourceSnapshot {
+  readonly filePath: string
+  readonly byteLength: number
+  readonly sourceSha256: string
+  release(): Promise<void>
+}
+
+export interface LightOcrCreateDocumentSourceSnapshotInput {
+  readonly filePath: string
+  readonly maxFileBytes: number
+  readonly signal?: AbortSignal
+}
+
 export interface LightOcrRecognizeDocumentInput extends LightOcrPrepareInput {
-  encoded: Uint8Array
+  snapshot: LightOcrDocumentSourceSnapshot
   options: LightOcrDocumentOptions
   onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
 }
@@ -174,6 +188,7 @@ type QueueResult =
 interface QueueItem {
   operation: 'configure' | 'recognize' | 'recognize_document'
   encoded: Buffer | null
+  inputByteLength: number
   backend: LightOcrBackendPreference
   strategy: LightOcrRecognitionStrategy
   signal?: AbortSignal
@@ -183,6 +198,7 @@ interface QueueItem {
   reject: (error: unknown) => void
   abortListener?: () => void
   documentOptions?: LightOcrDocumentOptions
+  documentSnapshot?: LightOcrDocumentSourceSnapshot
   onDocumentPage?: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
 }
 
@@ -225,12 +241,15 @@ export class LightOcrProcessHostError extends Error {
     readonly code:
       | 'cancelled'
       | 'closed'
+      | 'empty_input'
       | 'helper_error'
       | 'input_too_large'
+      | 'invalid_input'
       | 'invalid_protocol'
       | 'page_handler_failed'
       | 'queue_full'
       | 'runtime_missing'
+      | 'snapshot_io_failed'
       | 'timeout'
       | 'unexpected_exit',
     message: string,
@@ -263,6 +282,11 @@ export class LightOcrProcessHost {
   private readonly pendingResponses = new Map<string, PendingResponse>()
   private readonly pendingDocumentResponses = new Map<string, PendingDocumentResponse>()
   private readonly pendingDocumentStops = new Map<string, PendingDocumentStop>()
+  private readonly documentSnapshotCreations = new Set<Promise<LightOcrDocumentSourceSnapshot>>()
+  private readonly documentSnapshots = new Map<
+    string,
+    { readonly byteLength: number; readonly sourceSha256: string }
+  >()
   private readonly ignoredResponseIds = new Set<string>()
   private readonly terminatingChildren = new Set<Promise<void>>()
   private child: ChildProcessWithoutNullStreams | null = null
@@ -272,6 +296,7 @@ export class LightOcrProcessHost {
   private activeItem: QueueItem | null = null
   private pumpPromise: Promise<void> | null = null
   private tempRoot: string | null = null
+  private tempRootPromise: Promise<string> | null = null
   private nativeRuntimePromise: Promise<LightOcrNativeRuntimeOverride> | null = null
   private configuredKey: string | null = null
   private engineStatus: LightOcrEngineStatus | null = null
@@ -329,12 +354,68 @@ export class LightOcrProcessHost {
     })
   }
 
+  createDocumentSourceSnapshot(
+    input: LightOcrCreateDocumentSourceSnapshotInput
+  ): Promise<LightOcrDocumentSourceSnapshot> {
+    const creation = this.createDocumentSourceSnapshotInternal(input)
+    this.documentSnapshotCreations.add(creation)
+    creation.then(
+      () => this.documentSnapshotCreations.delete(creation),
+      () => this.documentSnapshotCreations.delete(creation)
+    )
+    return creation
+  }
+
+  private async createDocumentSourceSnapshotInternal(
+    input: LightOcrCreateDocumentSourceSnapshotInput
+  ): Promise<LightOcrDocumentSourceSnapshot> {
+    if (this.closed) {
+      throw new LightOcrProcessHostError('closed', 'OCR process host is closed')
+    }
+    if (input.signal?.aborted) throw cancelledError()
+    if (
+      !Number.isSafeInteger(input.maxFileBytes) ||
+      input.maxFileBytes <= 0 ||
+      input.maxFileBytes > this.maxInputBytes
+    ) {
+      throw new LightOcrProcessHostError(
+        'invalid_protocol',
+        'OCR document snapshot has an invalid byte limit'
+      )
+    }
+
+    const tempRoot = await this.ensureTempRoot()
+    const snapshotPath = path.join(tempRoot, `${randomUUID()}.pdf`)
+    const metadata = await this.copyDocumentSourceSnapshot(
+      input.filePath,
+      snapshotPath,
+      input.maxFileBytes,
+      input.signal
+    )
+    if (this.closed) {
+      await rm(snapshotPath, { force: true })
+      throw new LightOcrProcessHostError('closed', 'OCR process host is closed')
+    }
+    this.documentSnapshots.set(snapshotPath, metadata)
+    return Object.freeze({
+      filePath: snapshotPath,
+      ...metadata,
+      release: async () => {
+        await this.releaseDocumentSourceSnapshot(snapshotPath, metadata)
+      }
+    })
+  }
+
   recognizeDocument(
     input: LightOcrRecognizeDocumentInput
   ): Promise<LightOcrDocumentRecognitionOutcome> {
+    const ownedSnapshot = this.documentSnapshots.get(input.snapshot.filePath)
     if (
       !isLightOcrDocumentOptions(input.options) ||
       input.options.maxFileBytes > this.maxInputBytes ||
+      !ownedSnapshot ||
+      ownedSnapshot.byteLength !== input.snapshot.byteLength ||
+      ownedSnapshot.sourceSha256 !== input.snapshot.sourceSha256 ||
       typeof input.onPage !== 'function'
     ) {
       return Promise.reject(
@@ -345,8 +426,8 @@ export class LightOcrProcessHost {
       )
     }
     if (
-      input.encoded.byteLength > this.maxInputBytes ||
-      input.encoded.byteLength > input.options.maxFileBytes
+      input.snapshot.byteLength > this.maxInputBytes ||
+      input.snapshot.byteLength > input.options.maxFileBytes
     ) {
       return Promise.reject(
         new LightOcrProcessHostError(
@@ -356,8 +437,9 @@ export class LightOcrProcessHost {
       )
     }
 
-    return this.enqueue('recognize_document', input.encoded, input, {
+    return this.enqueue('recognize_document', null, input, {
       options: structuredClone(input.options),
+      snapshot: input.snapshot,
       onPage: input.onPage
     }).then((result) => {
       if (!isDocumentRecognitionOutcome(result)) {
@@ -373,6 +455,7 @@ export class LightOcrProcessHost {
     input: LightOcrPrepareInput,
     document?: {
       options: LightOcrDocumentOptions
+      snapshot: LightOcrDocumentSourceSnapshot
       onPage: (page: LightOcrDocumentPage) => LightOcrDocumentPageAction
     }
   ): Promise<QueueResult> {
@@ -382,7 +465,7 @@ export class LightOcrProcessHost {
     if (input.signal?.aborted) {
       return Promise.reject(cancelledError())
     }
-    const inputBytes = encoded?.byteLength ?? 0
+    const inputBytes = encoded?.byteLength ?? document?.snapshot.byteLength ?? 0
     if (
       this.queue.length + (this.activeItem ? 1 : 0) >= this.maxPendingRequests ||
       this.pendingInputBytes + inputBytes > this.maxPendingInputBytes
@@ -392,12 +475,13 @@ export class LightOcrProcessHost {
 
     this.clearIdleTimer()
     const encodedSnapshot = encoded ? Buffer.from(encoded) : null
-    this.pendingInputBytes += encodedSnapshot?.byteLength ?? 0
+    this.pendingInputBytes += inputBytes
 
     return new Promise<QueueResult>((resolve, reject) => {
       const item: QueueItem = {
         operation,
         encoded: encodedSnapshot,
+        inputByteLength: inputBytes,
         backend: input.backend,
         strategy: input.strategy,
         signal: input.signal,
@@ -406,6 +490,7 @@ export class LightOcrProcessHost {
         resolve,
         reject,
         documentOptions: document?.options,
+        documentSnapshot: document?.snapshot,
         onDocumentPage: document?.onPage
       }
       if (input.signal) {
@@ -444,7 +529,7 @@ export class LightOcrProcessHost {
     this.clearIdleTimer()
 
     for (const item of this.queue.splice(0)) {
-      this.pendingInputBytes -= item.encoded?.byteLength ?? 0
+      this.pendingInputBytes -= item.inputByteLength
       this.settleQueueItem(
         item,
         'reject',
@@ -461,12 +546,14 @@ export class LightOcrProcessHost {
     await this.pumpPromise?.catch(() => undefined)
     await this.stopProcessGracefully()
     await Promise.all(this.terminatingChildren)
+    await Promise.allSettled(this.documentSnapshotCreations)
 
     if (this.tempRoot) {
       await rm(this.tempRoot, { recursive: true, force: true })
       this.tempRoot = null
       this.nativeRuntimePromise = null
     }
+    this.documentSnapshots.clear()
   }
 
   private startPump(): void {
@@ -501,7 +588,7 @@ export class LightOcrProcessHost {
       } catch (error) {
         this.settleQueueItem(item, 'reject', item.cancelled ? cancelledError() : error)
       } finally {
-        this.pendingInputBytes -= item.encoded?.byteLength ?? 0
+        this.pendingInputBytes -= item.inputByteLength
         this.activeItem = null
       }
     }
@@ -557,45 +644,41 @@ export class LightOcrProcessHost {
   private async recognizeDocumentQueueItem(
     item: QueueItem
   ): Promise<LightOcrDocumentRecognitionOutcome> {
-    if (!item.encoded || !item.documentOptions || !item.onDocumentPage) {
+    if (!item.documentSnapshot || !item.documentOptions || !item.onDocumentPage) {
       throw this.failProtocol('OCR document queue item is incomplete')
     }
-    const inputPath = await this.materializeInput(item.encoded, '.pdf')
+    const inputPath = item.documentSnapshot.filePath
     let observedPage = false
-    try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          if (item.cancelled || item.signal?.aborted) throw cancelledError()
-          await this.ensureProcess()
-          if (item.cancelled || item.signal?.aborted) throw cancelledError()
-          await this.ensureConfigured(item.backend, item.strategy)
-          if (item.cancelled || item.signal?.aborted) throw cancelledError()
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        if (item.cancelled || item.signal?.aborted) throw cancelledError()
+        await this.ensureProcess()
+        if (item.cancelled || item.signal?.aborted) throw cancelledError()
+        await this.ensureConfigured(item.backend, item.strategy)
+        if (item.cancelled || item.signal?.aborted) throw cancelledError()
 
-          const outcome = await this.sendDocumentRequest(
-            {
-              type: 'recognize_document',
-              id: randomUUID(),
-              filePath: inputPath,
-              backend: item.backend,
-              strategy: item.strategy,
-              options: item.documentOptions
-            },
-            (page) => {
-              observedPage = true
-              return item.onDocumentPage!(page)
-            }
-          )
-          return outcome
-        } catch (error) {
-          if (item.cancelled || item.signal?.aborted) throw cancelledError()
-          if (isUnexpectedExit(error) && !observedPage && attempt === 0 && !this.closed) continue
-          throw error
-        }
+        const outcome = await this.sendDocumentRequest(
+          {
+            type: 'recognize_document',
+            id: randomUUID(),
+            filePath: inputPath,
+            backend: item.backend,
+            strategy: item.strategy,
+            options: item.documentOptions
+          },
+          (page) => {
+            observedPage = true
+            return item.onDocumentPage!(page)
+          }
+        )
+        return outcome
+      } catch (error) {
+        if (item.cancelled || item.signal?.aborted) throw cancelledError()
+        if (isUnexpectedExit(error) && !observedPage && attempt === 0 && !this.closed) continue
+        throw error
       }
-      throw new LightOcrProcessHostError('unexpected_exit', 'OCR helper did not recover')
-    } finally {
-      await rm(inputPath, { force: true })
     }
+    throw new LightOcrProcessHostError('unexpected_exit', 'OCR helper did not recover')
   }
 
   private async ensureProcess(): Promise<void> {
@@ -1222,7 +1305,7 @@ export class LightOcrProcessHost {
     const queuedIndex = this.queue.indexOf(item)
     if (queuedIndex >= 0) {
       this.queue.splice(queuedIndex, 1)
-      this.pendingInputBytes -= item.encoded?.byteLength ?? 0
+      this.pendingInputBytes -= item.inputByteLength
       this.settleQueueItem(item, 'reject', cancelledError())
       return
     }
@@ -1272,6 +1355,124 @@ export class LightOcrProcessHost {
     else item.reject(value)
   }
 
+  private async copyDocumentSourceSnapshot(
+    sourcePath: string,
+    snapshotPath: string,
+    maxFileBytes: number,
+    signal?: AbortSignal
+  ): Promise<{ byteLength: number; sourceSha256: string }> {
+    let sourceHandle
+    try {
+      sourceHandle = await open(sourcePath, 'r')
+    } catch (error) {
+      throw new LightOcrProcessHostError('invalid_input', 'Unable to open PDF OCR input', {
+        cause: error
+      })
+    }
+
+    let snapshotHandle
+    let snapshotComplete = false
+    try {
+      const sourceStat = await sourceHandle.stat()
+      if (!sourceStat.isFile()) {
+        throw new LightOcrProcessHostError('invalid_input', 'PDF OCR input must be a regular file')
+      }
+      if (sourceStat.size > maxFileBytes) {
+        throw new LightOcrProcessHostError(
+          'input_too_large',
+          'PDF OCR input exceeds the source byte limit'
+        )
+      }
+      if (sourceStat.size === 0) {
+        throw new LightOcrProcessHostError('empty_input', 'PDF OCR input is empty')
+      }
+
+      try {
+        snapshotHandle = await open(snapshotPath, 'wx', 0o600)
+      } catch (error) {
+        throw new LightOcrProcessHostError(
+          'snapshot_io_failed',
+          'Unable to create the private PDF OCR snapshot',
+          { cause: error }
+        )
+      }
+
+      const hash = createHash('sha256')
+      const chunk = Buffer.allocUnsafe(Math.min(DOCUMENT_SNAPSHOT_CHUNK_BYTES, maxFileBytes + 1))
+      let byteLength = 0
+      while (true) {
+        this.throwIfSnapshotCancelled(signal)
+        const readLength = Math.min(chunk.byteLength, maxFileBytes + 1 - byteLength)
+        const { bytesRead } = await sourceHandle.read(chunk, 0, readLength, byteLength)
+        if (bytesRead === 0) break
+        byteLength += bytesRead
+        if (byteLength > maxFileBytes) {
+          throw new LightOcrProcessHostError(
+            'input_too_large',
+            'PDF OCR input exceeds the source byte limit'
+          )
+        }
+
+        const bytes = chunk.subarray(0, bytesRead)
+        hash.update(bytes)
+        let writeOffset = 0
+        while (writeOffset < bytesRead) {
+          const { bytesWritten } = await snapshotHandle.write(
+            bytes,
+            writeOffset,
+            bytesRead - writeOffset
+          )
+          if (bytesWritten <= 0) {
+            throw new LightOcrProcessHostError(
+              'snapshot_io_failed',
+              'Unable to write the private PDF OCR snapshot'
+            )
+          }
+          writeOffset += bytesWritten
+        }
+      }
+
+      if (byteLength === 0) {
+        throw new LightOcrProcessHostError('empty_input', 'PDF OCR input is empty')
+      }
+      snapshotComplete = true
+      return { byteLength, sourceSha256: hash.digest('hex') }
+    } catch (error) {
+      if (error instanceof LightOcrProcessHostError) throw error
+      throw new LightOcrProcessHostError(
+        snapshotHandle ? 'snapshot_io_failed' : 'invalid_input',
+        'Unable to snapshot PDF OCR input',
+        { cause: error }
+      )
+    } finally {
+      await Promise.allSettled([sourceHandle.close(), snapshotHandle?.close()])
+      if (!snapshotComplete) await rm(snapshotPath, { force: true })
+    }
+  }
+
+  private throwIfSnapshotCancelled(signal?: AbortSignal): void {
+    if (signal?.aborted) throw cancelledError()
+    if (this.closed) {
+      throw new LightOcrProcessHostError('closed', 'OCR process host is closed')
+    }
+  }
+
+  private async releaseDocumentSourceSnapshot(
+    snapshotPath: string,
+    expected: { readonly byteLength: number; readonly sourceSha256: string }
+  ): Promise<void> {
+    const owned = this.documentSnapshots.get(snapshotPath)
+    if (
+      !owned ||
+      owned.byteLength !== expected.byteLength ||
+      owned.sourceSha256 !== expected.sourceSha256
+    ) {
+      return
+    }
+    await rm(snapshotPath, { force: true })
+    this.documentSnapshots.delete(snapshotPath)
+  }
+
   private async materializeInput(encoded: Buffer, extension = '.img'): Promise<string> {
     const tempRoot = await this.ensureTempRoot()
     const inputPath = path.join(tempRoot, `${randomUUID()}${extension}`)
@@ -1290,12 +1491,40 @@ export class LightOcrProcessHost {
     return inputPath
   }
 
-  private async ensureTempRoot(): Promise<string> {
-    if (this.tempRoot) return this.tempRoot
+  private ensureTempRoot(): Promise<string> {
+    if (this.tempRoot) return Promise.resolve(this.tempRoot)
+    if (this.tempRootPromise) return this.tempRootPromise
+
+    const creation = this.createTempRoot()
+    this.tempRootPromise = creation
+    creation.then(
+      () => {
+        if (this.tempRootPromise === creation) this.tempRootPromise = null
+      },
+      () => {
+        if (this.tempRootPromise === creation) this.tempRootPromise = null
+      }
+    )
+    return creation
+  }
+
+  private async createTempRoot(): Promise<string> {
+    if (this.closed) {
+      throw new LightOcrProcessHostError('closed', 'OCR process host is closed')
+    }
     await mkdir(this.options.tempBaseDir, { recursive: true, mode: 0o700 })
-    this.tempRoot = await mkdtemp(path.join(this.options.tempBaseDir, 'deepchat-light-ocr-'))
-    await chmod(this.tempRoot, 0o700)
-    return this.tempRoot
+    const tempRoot = await mkdtemp(path.join(this.options.tempBaseDir, 'deepchat-light-ocr-'))
+    try {
+      await chmod(tempRoot, 0o700)
+      if (this.closed) {
+        throw new LightOcrProcessHostError('closed', 'OCR process host is closed')
+      }
+      this.tempRoot = tempRoot
+      return tempRoot
+    } catch (error) {
+      await rm(tempRoot, { recursive: true, force: true })
+      throw error
+    }
   }
 
   private async resolveNativeRuntimeOverride(

@@ -143,7 +143,9 @@ resource limit. Do not increase that limit without latency and peak-RSS measurem
 One attachment preparation may OCR at most one PDF. Additional PDF OCR candidates produce
 `document_limit_exceeded`; they do not consume the existing image OCR candidate allowance. This
 keeps a single submission from serially occupying the one-engine helper for many minutes. Existing
-limits of eight image OCR candidates and 120 MiB of source snapshots remain unchanged.
+limits of eight image OCR candidates and 120 MiB of source snapshots remain unchanged. PDF snapshot
+creation reserves its declared maximum before the private copy starts and contracts the reservation
+to the actual byte count afterward; concurrent copies cannot transiently bypass the global bound.
 
 PDF OCR has a 16,000-token generation ceiling and the existing 128,000-character safety ceiling.
 The character ceiling and all page-aware formatting rules are covered by
@@ -197,6 +199,12 @@ page spans plus:
 Protocol page coverage and final retained-text coverage are separate facts. `emittedPages` is
 diagnostic only and must not be used to rank artifact usefulness.
 
+Artifact and persisted-message page spans use the same content-aware validator. Besides structural
+bounds, it verifies contiguous offsets, page headings, the final truncation marker, and full text
+coverage before any turn-level reconstruction or slicing. A malformed persisted OCR representation
+with document metadata normalizes to a deterministic unavailable state instead of being
+reinterpreted as valid PDF OCR text. Existing image OCR normalization remains unchanged.
+
 ## Cache Contract
 
 The derived OCR database advances to schema v2. Existing schema-v1 data is discarded and rebuilt;
@@ -239,8 +247,11 @@ existing retained-text coverage. The comparator, in order, uses:
 2. last included page;
 3. completeness of that page;
 4. retained characters on that page;
-5. total retained text characters;
+5. whether generation did not reach its output limit;
 6. generation token limit.
+
+The output-limit comparison precedes the generation limit so otherwise equivalent coverage retains
+the artifact that is compatible with larger future requests.
 
 Cache outcomes:
 
@@ -273,11 +284,16 @@ User cancellation is control flow:
 for failures with a reasonable chance of changing under the same user action, such as queue pressure
 or a transient OCR failure; it is not inferred from whether an artifact was cached.
 
+If turn-level attachment packing cannot retain any otherwise valid PDF OCR text, the attachment uses
+`turn_ocr_budget_exhausted`; it must not be mislabeled as an empty OCR result.
+
 ## Persistence, Context, And UI
 
 - `embedded_text` reuses the persisted `file.content` snapshot.
 - PDF `ocr_text` excludes the embedded `file.content` from provider context and emits only the
   escaped, explicitly untrusted OCR block.
+- Embedded-text PDF context retains the sanitized source path and byte size supplied by the existing
+  file attachment path so provider tools do not lose follow-up file-read capability.
 - Partial and output-limited PDF text carries an explicit provider-context notice and a visible UI
   notice; it is never presented as complete.
 - Sent attachment chips distinguish embedded PDF text, complete OCR, truncated OCR, and

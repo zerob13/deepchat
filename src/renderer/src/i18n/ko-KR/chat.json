@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR이 사용 중입니다. 현재 첨부 파일 처리가 끝난 후 다시 시도하세요.",
       "ocr_resource_limited": "PDF 처리 제한에 도달하여 OCR이 중지되었습니다.",
       "ocr_runtime_unavailable": "이 플랫폼 또는 설치 환경에서는 OCR을 사용할 수 없습니다.",
+      "invalid_attachment_snapshot": "저장된 OCR 데이터가 올바르지 않습니다.",
+      "turn_ocr_budget_exhausted": "OCR 텍스트가 이 메시지의 첨부 텍스트 한도를 초과합니다.",
       "pdf_text_unavailable": "이 PDF에는 사용할 수 있는 내장 텍스트가 없습니다.",
       "requested_image_requires_vision": "‘이미지 보내기’에는 비전 기능을 지원하는 모델이 필요합니다.",
       "turn_image_bytes_exceeded": "이 턴의 이미지가 전체 크기 제한을 초과합니다.",

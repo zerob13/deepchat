@@ -113,6 +113,8 @@
       "ocr_queue_full": "OCR 正忙，请等待当前附件处理完成后重试。",
       "ocr_resource_limited": "OCR 已在 PDF 处理资源上限处停止。",
       "ocr_runtime_unavailable": "当前平台或安装环境不支持 OCR。",
+      "invalid_attachment_snapshot": "已保存的 OCR 数据无效。",
+      "turn_ocr_budget_exhausted": "OCR 文本超出本条消息的附件文本额度。",
       "pdf_text_unavailable": "此 PDF 没有可用的内嵌文字。",
       "requested_image_requires_vision": "“发送图片”需要支持视觉能力的模型。",
       "turn_image_bytes_exceeded": "本轮图片总大小超过限制。",

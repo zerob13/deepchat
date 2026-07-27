@@ -446,6 +446,8 @@
       "ocr_queue_full": "L’OCR è occupato. Riprova al termine dell’allegato corrente.",
       "ocr_resource_limited": "L’OCR si è fermato al limite di elaborazione del PDF.",
       "ocr_runtime_unavailable": "L’OCR non è disponibile su questa piattaforma o installazione.",
+      "invalid_attachment_snapshot": "I dati OCR salvati non sono validi.",
+      "turn_ocr_budget_exhausted": "Il testo OCR supera il limite di testo allegato di questo messaggio.",
       "pdf_text_unavailable": "In questo PDF non è disponibile testo incorporato.",
       "requested_image_requires_vision": "“Invia immagine” richiede un modello con capacità visive.",
       "turn_image_bytes_exceeded": "Le immagini di questo turno superano il limite di dimensione totale.",

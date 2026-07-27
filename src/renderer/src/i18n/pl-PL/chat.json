@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR jest zajęte. Spróbuj ponownie po przetworzeniu bieżącego załącznika.",
       "ocr_resource_limited": "OCR zatrzymało się na limicie przetwarzania pliku PDF.",
       "ocr_runtime_unavailable": "OCR nie jest dostępne na tej platformie lub w tej instalacji.",
+      "invalid_attachment_snapshot": "Zapisane dane OCR są nieprawidłowe.",
+      "turn_ocr_budget_exhausted": "Tekst OCR przekracza limit tekstu załączników tej wiadomości.",
       "pdf_text_unavailable": "W tym pliku PDF nie ma dostępnego osadzonego tekstu.",
       "requested_image_requires_vision": "Opcja „Wyślij obraz” wymaga modelu z obsługą obrazu.",
       "turn_image_bytes_exceeded": "Obrazy w tej turze przekraczają łączny limit rozmiaru.",

@@ -25,8 +25,9 @@ import {
   ATTACHMENT_REPRESENTATION_PREFERENCES,
   ATTACHMENT_UNAVAILABLE_REASONS,
   PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT,
-  PDF_TEXT_COVERAGE_MAX_PAGES
+  PDF_PAGE_COUNT_SANITY_LIMIT
 } from '../types/attachment'
+import { isValidDocumentOcrTextPageSpans } from '../utils/documentOcrText'
 
 export type JsonValue =
   | string
@@ -188,7 +189,7 @@ export const AttachmentPreparationSummarySchema = z.object({
 export const PdfEmbeddedTextCoverageSchema = z
   .object({
     routingRevision: z.string().min(1).max(128),
-    pageCount: z.number().int().min(1).max(PDF_TEXT_COVERAGE_MAX_PAGES),
+    pageCount: z.number().int().min(1).max(PDF_PAGE_COUNT_SANITY_LIMIT),
     substantivePageCount: z.number().int().nonnegative(),
     lowTextPageCount: z.number().int().nonnegative(),
     lowTextPageSamples: z.array(z.number().int().positive()).max(PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT),
@@ -228,8 +229,8 @@ const AttachmentDocumentOcrSnapshotSchema = z
       .array(AttachmentDocumentPageSpanSchema)
       .min(1)
       .max(ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS),
-    sourcePageCountHint: z.number().int().min(1).max(PDF_TEXT_COVERAGE_MAX_PAGES).optional(),
-    includedThroughPage: z.number().int().min(1).max(PDF_TEXT_COVERAGE_MAX_PAGES),
+    sourcePageCountHint: z.number().int().min(1).max(PDF_PAGE_COUNT_SANITY_LIMIT).optional(),
+    includedThroughPage: z.number().int().min(1).max(PDF_PAGE_COUNT_SANITY_LIMIT),
     includedThroughPageComplete: z.boolean(),
     artifactTermination: z.enum([
       'request_complete',
@@ -297,7 +298,12 @@ export const AttachmentResolvedRepresentationSchema = z
     ) {
       context.addIssue({ code: 'custom', message: 'Invalid document OCR truncation state' })
     }
-    if (value.document && value.document.pageSpans.at(-1)?.end !== value.text.length) {
+    if (
+      value.document &&
+      !isValidDocumentOcrTextPageSpans(value.text, value.document.pageSpans, {
+        maxSpans: ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS
+      })
+    ) {
       context.addIssue({ code: 'custom', message: 'Document OCR text coverage is incomplete' })
     }
   })

@@ -5,7 +5,7 @@ import {
   PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT,
   PDF_ROUTING_REVISION,
   PDF_SUBSTANTIVE_TEXT_MIN_CODE_POINTS,
-  PDF_TEXT_COVERAGE_MAX_PAGES,
+  PDF_PAGE_COUNT_SANITY_LIMIT,
   type PdfEmbeddedTextCoverage
 } from '@shared/types/attachment'
 
@@ -86,7 +86,7 @@ export class PdfFileAdapter extends BaseFileAdapter {
       const normalizedPageTexts =
         Number.isSafeInteger(this.pdfData.numpages) &&
         this.pdfData.numpages > 0 &&
-        this.pdfData.numpages <= PDF_TEXT_COVERAGE_MAX_PAGES
+        this.pdfData.numpages <= PDF_PAGE_COUNT_SANITY_LIMIT
           ? Array.from(
               { length: this.pdfData.numpages },
               (_, pageIndex) => pageTexts[pageIndex] ?? ''
@@ -298,7 +298,7 @@ export function buildPdfEmbeddedTextCoverage(
   if (
     !Number.isSafeInteger(pageCount) ||
     pageCount <= 0 ||
-    pageCount > PDF_TEXT_COVERAGE_MAX_PAGES
+    pageCount > PDF_PAGE_COUNT_SANITY_LIMIT
   ) {
     return undefined
   }

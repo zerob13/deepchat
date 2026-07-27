@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   AttachmentCapabilityRouter,
+  applyTurnOcrTextBudget,
   type AttachmentOcrRuntimePort
 } from '@/ocr/attachmentCapabilityRouter'
 import { ImagePreprocessingError } from '@/ocr/imagePreprocessor'
@@ -897,6 +898,37 @@ describe('AttachmentCapabilityRouter', () => {
     expect(resolvedRepresentation.document.generationOutputLimitReached).toBe(false)
     expect(resolvedRepresentation.text).toContain('TAIL_SECRET')
     expect(extraction.getAvailability).not.toHaveBeenCalled()
+  })
+
+  it('reports turn budget exhaustion without misclassifying recognized PDF text as empty', () => {
+    const text = '## Page 1\n\nrecognized PDF text'
+    const files = [
+      pdf(1, {
+        resolvedRepresentation: {
+          kind: 'ocr_text',
+          text,
+          tokenCount: 7,
+          truncated: false,
+          document: {
+            pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: true }],
+            sourcePageCountHint: 1,
+            includedThroughPage: 1,
+            includedThroughPageComplete: true,
+            artifactTermination: 'request_complete',
+            generationOutputLimitReached: false
+          }
+        }
+      })
+    ]
+    const issues = [{ attachmentIndex: 0, reason: 'ocr_resource_limited' as const }]
+
+    applyTurnOcrTextBudget(files, issues, 1)
+
+    expect(files[0].resolvedRepresentation).toEqual({
+      kind: 'unavailable',
+      reason: 'turn_ocr_budget_exhausted'
+    })
+    expect(issues).toEqual([{ attachmentIndex: 0, reason: 'turn_ocr_budget_exhausted' }])
   })
 
   it('bounds OCR work to eight images and degrades when some images are skipped', async () => {

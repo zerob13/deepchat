@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR は処理中です。現在の添付ファイルの処理完了後に再試行してください。",
       "ocr_resource_limited": "PDF の処理上限に達したため OCR を停止しました。",
       "ocr_runtime_unavailable": "このプラットフォームまたはインストール環境では OCR を利用できません。",
+      "invalid_attachment_snapshot": "保存された OCR データが無効です。",
+      "turn_ocr_budget_exhausted": "OCR テキストがこのメッセージの添付テキスト上限を超えています。",
       "pdf_text_unavailable": "この PDF には使用できる埋め込みテキストがありません。",
       "requested_image_requires_vision": "「画像を送信」には画像対応モデルが必要です。",
       "turn_image_bytes_exceeded": "このターンの画像が合計サイズの上限を超えています。",

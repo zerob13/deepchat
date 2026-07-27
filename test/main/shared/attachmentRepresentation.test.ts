@@ -204,10 +204,24 @@ describe('attachment representation contracts', () => {
         ...documentRepresentation,
         document: {
           ...documentRepresentation.document,
+          pageSpans: [
+            {
+              ...documentRepresentation.document.pageSpans[0],
+              ignoredPersistedField: 'discard me'
+            }
+          ]
+        }
+      })
+    ).toEqual(documentRepresentation)
+    expect(
+      normalizeAttachmentResolvedRepresentation({
+        ...documentRepresentation,
+        document: {
+          ...documentRepresentation.document,
           includedThroughPage: 2
         }
       })
-    ).toBeUndefined()
+    ).toEqual({ kind: 'unavailable', reason: 'invalid_attachment_snapshot' })
     expect(
       AttachmentResolvedRepresentationSchema.safeParse({
         kind: 'ocr_text',
@@ -225,6 +239,97 @@ describe('attachment representation contracts', () => {
         }
       }).success
     ).toBe(false)
+  })
+
+  it.each([
+    {
+      name: 'page heading does not match its span',
+      text: '## Page 2\n\nrecognized document text',
+      pageSpans: [
+        {
+          pageNumber: 1,
+          start: 0,
+          end: '## Page 2\n\nrecognized document text'.length,
+          complete: true
+        }
+      ],
+      generationOutputLimitReached: false
+    },
+    {
+      name: 'partial page omits the truncation marker',
+      text: '## Page 1\n\npartial text',
+      pageSpans: [
+        {
+          pageNumber: 1,
+          start: 0,
+          end: '## Page 1\n\npartial text'.length,
+          complete: false
+        }
+      ],
+      generationOutputLimitReached: true
+    },
+    {
+      name: 'partial page joins text directly to the truncation marker',
+      text: '## Page 1\n\npartial text[… PDF OCR truncated …]',
+      pageSpans: [
+        {
+          pageNumber: 1,
+          start: 0,
+          end: '## Page 1\n\npartial text[… PDF OCR truncated …]'.length,
+          complete: false
+        }
+      ],
+      generationOutputLimitReached: true
+    },
+    {
+      name: 'complete page contains a heading without a body',
+      text: '## Page 1\n\n',
+      pageSpans: [
+        {
+          pageNumber: 1,
+          start: 0,
+          end: '## Page 1\n\n'.length,
+          complete: true
+        }
+      ],
+      generationOutputLimitReached: false
+    },
+    {
+      name: 'contiguous offsets split the next page heading',
+      text: '## Page 1\n\nfirst\n\n## Page 2\n\nsecond',
+      pageSpans: [
+        { pageNumber: 1, start: 0, end: '## Page 1\n\nfirst\n\n#'.length, complete: true },
+        {
+          pageNumber: 2,
+          start: '## Page 1\n\nfirst\n\n#'.length,
+          end: '## Page 1\n\nfirst\n\n## Page 2\n\nsecond'.length,
+          complete: true
+        }
+      ],
+      generationOutputLimitReached: false
+    }
+  ])('rejects corrupt persisted PDF OCR coverage: $name', (fixture) => {
+    const representation = {
+      kind: 'ocr_text' as const,
+      text: fixture.text,
+      tokenCount: 10,
+      truncated: fixture.generationOutputLimitReached,
+      document: {
+        pageSpans: fixture.pageSpans,
+        includedThroughPage: fixture.pageSpans.at(-1)!.pageNumber,
+        includedThroughPageComplete: fixture.pageSpans.at(-1)!.complete,
+        artifactTermination: fixture.generationOutputLimitReached
+          ? ('stopped_by_output_limit' as const)
+          : ('request_complete' as const),
+        generationOutputLimitReached: fixture.generationOutputLimitReached
+      }
+    }
+
+    expect(AttachmentResolvedRepresentationSchema.safeParse(representation).success).toBe(false)
+    expect(normalizeAttachmentResolvedRepresentation(representation)).toEqual({
+      kind: 'unavailable',
+      reason: 'invalid_attachment_snapshot'
+    })
   })
 
   it('treats malformed legacy attachment metadata as non-image data', () => {

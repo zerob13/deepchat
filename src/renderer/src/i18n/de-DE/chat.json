@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR ist ausgelastet. Versuchen Sie es nach Abschluss des aktuellen Anhangs erneut.",
       "ocr_resource_limited": "OCR wurde an der Verarbeitungsgrenze für PDF-Dateien gestoppt.",
       "ocr_runtime_unavailable": "OCR ist auf dieser Plattform oder in dieser Installation nicht verfügbar.",
+      "invalid_attachment_snapshot": "Die gespeicherten OCR-Daten sind ungültig.",
+      "turn_ocr_budget_exhausted": "Der OCR-Text überschreitet das Anhangstextlimit dieser Nachricht.",
       "pdf_text_unavailable": "In dieser PDF-Datei ist kein eingebetteter Text verfügbar.",
       "requested_image_requires_vision": "„Bild senden“ erfordert ein Modell mit Vision-Unterstützung.",
       "turn_image_bytes_exceeded": "Die Bilder in diesem Durchlauf überschreiten das Gesamtgrößenlimit.",

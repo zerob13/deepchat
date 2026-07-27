@@ -288,7 +288,7 @@ export class AttachmentCapabilityRouter {
       )
     }
     throwIfAborted(input.signal)
-    applyTurnOcrTextBudget(files)
+    applyTurnOcrTextBudget(files, issues)
     this.appendOcrDiagnostics(files, ocrDiagnostics, routingDiagnostics)
     if (input.emitDiagnostics !== false) {
       for (const diagnostic of routingDiagnostics) this.emitDiagnostic(diagnostic)
@@ -737,12 +737,16 @@ function buildPreparationSummary(input: {
   return { status: 'needs_user_action', issues: input.issues, suggestedActions }
 }
 
-function applyTurnOcrTextBudget(files: MessageFile[]): void {
-  const ocrFiles = files.flatMap((file) => {
+export function applyTurnOcrTextBudget(
+  files: MessageFile[],
+  issues: AttachmentPreparationIssue[],
+  maxTurnTokens = MAX_TURN_OCR_TEXT_TOKENS
+): void {
+  const ocrFiles = files.flatMap((file, attachmentIndex) => {
     const resolved = getAttachmentResolvedRepresentation(file)
-    return resolved?.kind === 'ocr_text' ? [{ file, resolved }] : []
+    return resolved?.kind === 'ocr_text' ? [{ attachmentIndex, file, resolved }] : []
   })
-  let remainingTokens = MAX_TURN_OCR_TEXT_TOKENS
+  let remainingTokens = Number.isSafeInteger(maxTurnTokens) && maxTurnTokens > 0 ? maxTurnTokens : 0
   for (let index = 0; index < ocrFiles.length; index += 1) {
     const item = ocrFiles[index]
     const remainingItems = ocrFiles.length - index
@@ -765,8 +769,9 @@ function applyTurnOcrTextBudget(files: MessageFile[]): void {
       if (!limited.text.trim() || limited.tokenCount <= 0 || !lastSpan) {
         item.file.resolvedRepresentation = {
           kind: 'unavailable',
-          reason: 'ocr_empty'
+          reason: 'turn_ocr_budget_exhausted'
         }
+        recordTurnBudgetIssue(issues, item.attachmentIndex)
         continue
       }
       const generationOutputLimitReached =
@@ -791,6 +796,14 @@ function applyTurnOcrTextBudget(files: MessageFile[]): void {
     }
 
     const limited = truncateOcrText(item.resolved.text, budget)
+    if (!limited.text.trim() || limited.tokenCount <= 0) {
+      item.file.resolvedRepresentation = {
+        kind: 'unavailable',
+        reason: 'turn_ocr_budget_exhausted'
+      }
+      recordTurnBudgetIssue(issues, item.attachmentIndex)
+      continue
+    }
     item.file.resolvedRepresentation = {
       kind: 'ocr_text',
       text: limited.text,
@@ -798,6 +811,23 @@ function applyTurnOcrTextBudget(files: MessageFile[]): void {
       truncated: item.resolved.truncated || limited.truncated
     }
     remainingTokens = Math.max(0, remainingTokens - limited.tokenCount)
+  }
+}
+
+function recordTurnBudgetIssue(
+  issues: AttachmentPreparationIssue[],
+  attachmentIndex: number
+): void {
+  const existingIndex = issues.findIndex((issue) => issue.attachmentIndex === attachmentIndex)
+  if (existingIndex >= 0) {
+    issues[existingIndex] = { attachmentIndex, reason: 'turn_ocr_budget_exhausted' }
+    for (let index = issues.length - 1; index > existingIndex; index -= 1) {
+      if (issues[index].attachmentIndex === attachmentIndex) issues.splice(index, 1)
+    }
+    return
+  }
+  if (issues.length < ATTACHMENT_PREPARATION_MAX_ISSUES) {
+    issues.push({ attachmentIndex, reason: 'turn_ocr_budget_exhausted' })
   }
 }
 

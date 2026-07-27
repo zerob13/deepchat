@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-import { open } from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
 
 import runtimeVersions from '../../../resources/runtime-versions.json'
@@ -32,16 +30,17 @@ import {
 } from './lightOcrProtocol'
 import {
   LightOcrProcessHostError,
+  type LightOcrCreateDocumentSourceSnapshotInput,
+  type LightOcrDocumentSourceSnapshot,
   type LightOcrPrepareInput,
   type LightOcrRecognizeDocumentInput,
   type LightOcrDocumentRecognitionOutcome
 } from './lightOcrProcessHost'
 import { OcrSourceSnapshotBudget, OcrSourceSnapshotBudgetError } from './ocrSourceSnapshotBudget'
-import { PDF_TEXT_COVERAGE_MAX_PAGES } from '@shared/types/attachment'
+import { PDF_PAGE_COUNT_SANITY_LIMIT } from '@shared/types/attachment'
 
 const PDF_OCR_DPI = 150
 const PDF_OCR_PAGE_RANGE = { start: 1, end: LIGHT_OCR_DOCUMENT_MAX_PAGES } as const
-const SNAPSHOT_READ_CHUNK_BYTES = 1024 * 1024
 
 export type DocumentTextExtractionErrorCode =
   | 'cancelled'
@@ -63,10 +62,7 @@ export class DocumentTextExtractionError extends Error {
   }
 }
 
-export interface ImmutablePdfSnapshot {
-  readonly bytes: Buffer
-  readonly sourceSha256: string
-}
+export type ImmutablePdfSnapshot = LightOcrDocumentSourceSnapshot
 
 export interface DocumentTextExtractionInput {
   readonly filePath: string
@@ -92,6 +88,9 @@ export interface DocumentTextExtractionPort {
 }
 
 export interface LightOcrDocumentRecognitionPort {
+  createDocumentSourceSnapshot(
+    input: LightOcrCreateDocumentSourceSnapshotInput
+  ): Promise<LightOcrDocumentSourceSnapshot>
   prepare(input: LightOcrPrepareInput): Promise<LightOcrEngineStatus>
   recognizeDocument(
     input: LightOcrRecognizeDocumentInput
@@ -110,13 +109,16 @@ export interface DocumentTextExtractionServiceOptions {
   readonly modelVersion?: string
   readonly bundleId?: string
   readonly artifactRevision?: string
-  readonly snapshotReader?: typeof readImmutablePdfSnapshot
+  readonly snapshotReader?: (
+    input: LightOcrCreateDocumentSourceSnapshotInput
+  ) => Promise<LightOcrDocumentSourceSnapshot>
   readonly onDiagnostic?: (event: { code: 'cache_read_failed' | 'cache_write_failed' }) => void
 }
 
 interface SharedDocumentExtractionFlight {
   readonly controller: AbortController
   readonly promise: Promise<DocumentTextExtractionResult>
+  readonly snapshot: ImmutablePdfSnapshot
   owners: number
   settled: boolean
 }
@@ -131,8 +133,12 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
   private readonly modelVersion: string
   private readonly bundleId: string
   private readonly artifactRevision: string
-  private readonly snapshotReader: typeof readImmutablePdfSnapshot
+  private readonly snapshotReader: (
+    input: LightOcrCreateDocumentSourceSnapshotInput
+  ) => Promise<LightOcrDocumentSourceSnapshot>
   private readonly flights = new Map<string, SharedDocumentExtractionFlight>()
+  private readonly closeController = new AbortController()
+  private activeSnapshotCreations = 0
   private closed = false
 
   constructor(private readonly options: DocumentTextExtractionServiceOptions) {
@@ -145,7 +151,9 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
     this.modelVersion = options.modelVersion ?? runtimeVersions.lightOcr.modelVersion
     this.bundleId = options.bundleId ?? runtimeVersions.lightOcr.bundleId
     this.artifactRevision = options.artifactRevision ?? PDF_OCR_ARTIFACT_REVISION
-    this.snapshotReader = options.snapshotReader ?? readImmutablePdfSnapshot
+    this.snapshotReader =
+      options.snapshotReader ??
+      ((input) => this.options.processHost.createDocumentSourceSnapshot(input))
   }
 
   async extractDocument(input: DocumentTextExtractionInput): Promise<DocumentTextExtractionResult> {
@@ -155,90 +163,123 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
     const effectiveMaxFileBytes = normalizeDocumentSourceByteLimit(input.maxFileSize)
     const startedAt = performance.now()
     const snapshotStartedAt = performance.now()
-    const snapshot = await this.snapshotReader({
-      filePath: input.filePath,
-      maxFileSize: effectiveMaxFileBytes,
-      signal: input.signal
-    })
-    const snapshotMs = performance.now() - snapshotStartedAt
-    this.assertOpen()
-    this.reserveSnapshot(snapshot)
+    // Reserve the declared maximum before copying so concurrent disk snapshots cannot bypass the
+    // shared pending-source budget. The reservation is reduced to the actual immutable size below.
+    this.reserveSnapshotBytes(effectiveMaxFileBytes)
+    let reservedSnapshotBytes = effectiveMaxFileBytes
+    const snapshotSignal = input.signal
+      ? AbortSignal.any([input.signal, this.closeController.signal])
+      : this.closeController.signal
+    this.activeSnapshotCreations += 1
+    let snapshot: ImmutablePdfSnapshot
     try {
-      const result = await this.extractSnapshot(snapshot, {
-        ...input,
-        sourcePageCountHint,
-        generationTokenLimit,
-        maxFileBytes: effectiveMaxFileBytes
+      snapshot = await this.snapshotReader({
+        filePath: input.filePath,
+        maxFileBytes: effectiveMaxFileBytes,
+        signal: snapshotSignal
       })
-      return {
-        ...result,
-        timingMs: {
-          ...result.timingMs,
-          snapshot: snapshotMs,
-          total: performance.now() - startedAt
-        }
-      }
+    } catch (error) {
+      this.snapshotBudget.release(reservedSnapshotBytes)
+      throw normalizeRuntimeError(error)
     } finally {
-      this.snapshotBudget.release(snapshot.bytes.byteLength)
+      this.activeSnapshotCreations -= 1
+    }
+    const snapshotMs = performance.now() - snapshotStartedAt
+    try {
+      this.assertOpen()
+      this.snapshotBudget.release(reservedSnapshotBytes)
+      reservedSnapshotBytes = 0
+      this.reserveSnapshotBytes(snapshot.byteLength)
+    } catch (error) {
+      this.snapshotBudget.release(reservedSnapshotBytes)
+      await snapshot.release().catch(() => undefined)
+      throw error
+    }
+
+    const result = await this.extractSnapshot(snapshot, {
+      ...input,
+      sourcePageCountHint,
+      generationTokenLimit,
+      maxFileBytes: effectiveMaxFileBytes
+    })
+    return {
+      ...result,
+      timingMs: {
+        ...result.timingMs,
+        snapshot: snapshotMs,
+        total: performance.now() - startedAt
+      }
     }
   }
 
   close(): void {
     if (this.closed) return
     this.closed = true
+    this.closeController.abort()
     for (const flight of this.flights.values()) flight.controller.abort()
     if (this.closeSchedulerOnClose) this.scheduler.close()
   }
 
   hasActiveExtractions(): boolean {
-    return this.flights.size > 0
+    return this.activeSnapshotCreations > 0 || this.flights.size > 0
   }
 
-  private extractSnapshot(
+  private async extractSnapshot(
     snapshot: ImmutablePdfSnapshot,
     input: DocumentTextExtractionInput & {
       generationTokenLimit: number
       maxFileBytes: number
     }
   ): Promise<DocumentTextExtractionResult> {
-    if (input.signal?.aborted) return Promise.reject(cancelledError())
-    const flightKey = JSON.stringify([
-      snapshot.sourceSha256,
-      this.facadeVersion,
-      this.runtimeVersion,
-      this.nativeVersion,
-      this.modelVersion,
-      this.bundleId,
-      this.artifactRevision,
-      input.backend,
-      input.maxFileBytes,
-      input.generationTokenLimit,
-      input.sourcePageCountHint
-    ])
-    let flight = this.flights.get(flightKey)
-    if (!flight) {
-      const controller = new AbortController()
-      const promise = this.scheduler.schedule(
-        () =>
-          this.runExtraction(
-            snapshot,
-            input.backend,
-            input.maxFileBytes,
-            input.generationTokenLimit,
-            input.sourcePageCountHint,
-            controller.signal
-          ),
-        input.priority ?? 'interactive',
-        controller.signal
-      )
-      flight = { controller, promise, owners: 0, settled: false }
-      this.flights.set(flightKey, flight)
-      promise.then(
-        () => this.finishFlight(flightKey, flight!),
-        () => this.finishFlight(flightKey, flight!)
-      )
+    let releaseUnusedSnapshot = true
+    try {
+      if (input.signal?.aborted) throw cancelledError()
+      const flightKey = JSON.stringify([
+        snapshot.sourceSha256,
+        this.facadeVersion,
+        this.runtimeVersion,
+        this.nativeVersion,
+        this.modelVersion,
+        this.bundleId,
+        this.artifactRevision,
+        input.backend,
+        input.maxFileBytes,
+        input.generationTokenLimit,
+        input.sourcePageCountHint
+      ])
+      let flight = this.flights.get(flightKey)
+      if (flight) {
+        releaseUnusedSnapshot = false
+        await this.releaseSnapshot(snapshot)
+        return await this.joinFlight(flightKey, flight, input.signal)
+      }
+      if (!flight) {
+        const controller = new AbortController()
+        const promise = this.scheduler.schedule(
+          () =>
+            this.runExtraction(
+              snapshot,
+              input.backend,
+              input.maxFileBytes,
+              input.generationTokenLimit,
+              input.sourcePageCountHint,
+              controller.signal
+            ),
+          input.priority ?? 'interactive',
+          controller.signal
+        )
+        flight = { controller, promise, snapshot, owners: 0, settled: false }
+        releaseUnusedSnapshot = false
+        this.flights.set(flightKey, flight)
+        promise.then(
+          () => this.finishFlight(flightKey, flight!),
+          () => this.finishFlight(flightKey, flight!)
+        )
+      }
+      return await this.joinFlight(flightKey, flight, input.signal)
+    } finally {
+      if (releaseUnusedSnapshot) await this.releaseSnapshot(snapshot)
     }
-    return this.joinFlight(flightKey, flight, input.signal)
   }
 
   private async runExtraction(
@@ -307,7 +348,7 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
     let outcome: LightOcrDocumentRecognitionOutcome
     try {
       outcome = await this.options.processHost.recognizeDocument({
-        encoded: snapshot.bytes,
+        snapshot,
         backend,
         strategy: PDF_OCR_STRATEGY,
         options: documentOptions,
@@ -431,6 +472,7 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
   private finishFlight(key: string, flight: SharedDocumentExtractionFlight): void {
     flight.settled = true
     if (this.flights.get(key) === flight) this.flights.delete(key)
+    void this.releaseSnapshot(flight.snapshot)
   }
 
   private emitDiagnostic(code: 'cache_read_failed' | 'cache_write_failed'): void {
@@ -441,9 +483,9 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
     }
   }
 
-  private reserveSnapshot(snapshot: ImmutablePdfSnapshot): void {
+  private reserveSnapshotBytes(byteLength: number): void {
     try {
-      this.snapshotBudget.reserve(snapshot.bytes.byteLength)
+      this.snapshotBudget.reserve(byteLength)
     } catch (error) {
       if (!(error instanceof OcrSourceSnapshotBudgetError)) throw error
       throw new DocumentTextExtractionError(
@@ -453,57 +495,13 @@ export class DocumentTextExtractionService implements DocumentTextExtractionPort
     }
   }
 
+  private async releaseSnapshot(snapshot: ImmutablePdfSnapshot): Promise<void> {
+    this.snapshotBudget.release(snapshot.byteLength)
+    await snapshot.release().catch(() => undefined)
+  }
+
   private assertOpen(): void {
     if (this.closed) throw new Error('Document text extraction service is closed')
-  }
-}
-
-export async function readImmutablePdfSnapshot(input: {
-  readonly filePath: string
-  readonly maxFileSize: number
-  readonly signal?: AbortSignal
-}): Promise<ImmutablePdfSnapshot> {
-  const byteLimit = normalizeDocumentSourceByteLimit(input.maxFileSize)
-  throwIfAborted(input.signal)
-  let handle
-  try {
-    handle = await open(input.filePath, 'r')
-  } catch (error) {
-    throw new DocumentTextExtractionError('invalid_input', 'Unable to open PDF OCR input', {
-      cause: error
-    })
-  }
-
-  try {
-    const fileStat = await handle.stat()
-    if (!fileStat.isFile()) {
-      throw new DocumentTextExtractionError('invalid_input', 'PDF OCR input must be a regular file')
-    }
-    if (fileStat.size > byteLimit) throwInputTooLarge()
-
-    const chunks: Buffer[] = []
-    let bytesReadTotal = 0
-    while (true) {
-      throwIfAborted(input.signal)
-      const readSize = Math.min(SNAPSHOT_READ_CHUNK_BYTES, byteLimit + 1 - bytesReadTotal)
-      const chunk = Buffer.allocUnsafe(readSize)
-      const { bytesRead } = await handle.read(chunk, 0, readSize, bytesReadTotal)
-      if (bytesRead === 0) break
-      bytesReadTotal += bytesRead
-      if (bytesReadTotal > byteLimit) throwInputTooLarge()
-      chunks.push(chunk.subarray(0, bytesRead))
-    }
-
-    if (bytesReadTotal === 0) {
-      throw new DocumentTextExtractionError('empty_input', 'PDF OCR input is empty')
-    }
-    const bytes = Buffer.concat(chunks, bytesReadTotal)
-    return {
-      bytes,
-      sourceSha256: createHash('sha256').update(bytes).digest('hex')
-    }
-  } finally {
-    await handle.close()
   }
 }
 
@@ -621,7 +619,15 @@ function hasSameExecutionIdentity(
 function normalizeRuntimeError(error: unknown): Error {
   if (error instanceof DocumentTextExtractionError) return error
   if (error instanceof LightOcrProcessHostError) {
-    return error.code === 'cancelled' ? cancelledError() : error
+    if (error.code === 'cancelled') return cancelledError()
+    if (
+      error.code === 'empty_input' ||
+      error.code === 'input_too_large' ||
+      error.code === 'invalid_input'
+    ) {
+      return new DocumentTextExtractionError(error.code, error.message, { cause: error })
+    }
+    return error
   }
   if (error instanceof OcrSchedulerError && error.code === 'cancelled') return cancelledError()
   if (error instanceof OcrSchedulerError && error.code === 'queue_full') {
@@ -645,21 +651,10 @@ function normalizeGenerationTokenLimit(value: number | undefined): number {
 
 function normalizeSourcePageCountHint(value: number | undefined): number | undefined {
   if (value === undefined) return undefined
-  if (!Number.isSafeInteger(value) || value <= 0 || value > PDF_TEXT_COVERAGE_MAX_PAGES) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > PDF_PAGE_COUNT_SANITY_LIMIT) {
     throw new DocumentTextExtractionError('invalid_input', 'PDF source page count hint is invalid')
   }
   return value
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw cancelledError()
-}
-
-function throwInputTooLarge(): never {
-  throw new DocumentTextExtractionError(
-    'input_too_large',
-    'PDF OCR input exceeds the source byte limit'
-  )
 }
 
 function cancelledError(): DocumentTextExtractionError {

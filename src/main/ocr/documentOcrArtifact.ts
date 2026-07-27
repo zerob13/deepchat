@@ -5,18 +5,23 @@ import type {
   LightOcrEngineStatus,
   LightOcrRecognitionStrategy
 } from './lightOcrProtocol'
-import { LIGHT_OCR_DOCUMENT_MAX_PAGES, isLightOcrEngineStatus } from './lightOcrProtocol'
+import { isLightOcrEngineStatus } from './lightOcrProtocol'
 import type { LightOcrBackendPreference } from './lightOcrProtocol'
 import type { LightOcrDocumentArtifactTermination } from './lightOcrProcessHost'
 import {
   ATTACHMENT_OCR_MAX_TEXT_CHARACTERS,
+  ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS,
   ATTACHMENT_PDF_OCR_MAX_TOKENS,
-  PDF_TEXT_COVERAGE_MAX_PAGES
+  PDF_PAGE_COUNT_SANITY_LIMIT
 } from '@shared/types/attachment'
+import {
+  PDF_OCR_TRUNCATION_MARKER as SHARED_PDF_OCR_TRUNCATION_MARKER,
+  isValidDocumentOcrTextPageSpans
+} from '@shared/utils/documentOcrText'
 
 export const PDF_OCR_GENERATION_MAX_TOKENS = ATTACHMENT_PDF_OCR_MAX_TOKENS
 export const PDF_OCR_STRATEGY: LightOcrRecognitionStrategy = 'bounded-960'
-export const PDF_OCR_TRUNCATION_MARKER = '[… PDF OCR truncated …]'
+export const PDF_OCR_TRUNCATION_MARKER = SHARED_PDF_OCR_TRUNCATION_MARKER
 export const PDF_OCR_ARTIFACT_REVISION = [
   'pdf-ocr-artifact-v1',
   'page-heading-v1',
@@ -27,6 +32,7 @@ export const PDF_OCR_ARTIFACT_REVISION = [
 ].join(';')
 
 const MAX_RESOURCE_ERROR_CHARACTERS = 2_048
+const TOKEN_ESTIMATE_CACHE = new WeakMap<object, { text: string; tokenCount: number }>()
 
 export interface DocumentOcrPageSpan {
   readonly pageNumber: number
@@ -232,7 +238,7 @@ export function compareDocumentOcrCoverage(
     (leftLast?.pageNumber ?? 0) - (rightLast?.pageNumber ?? 0),
     Number(leftLast?.complete ?? false) - Number(rightLast?.complete ?? false),
     retainedSpanCharacters(leftLast) - retainedSpanCharacters(rightLast),
-    left.text.length - right.text.length,
+    Number(!left.generationOutputLimitReached) - Number(!right.generationOutputLimitReached),
     left.generationTokenLimit - right.generationTokenLimit
   ]
   return comparisons.find((comparison) => comparison !== 0) ?? 0
@@ -248,7 +254,7 @@ export function isValidDocumentOcrArtifact(
     typeof candidate.text !== 'string' ||
     candidate.text.length > ATTACHMENT_OCR_MAX_TEXT_CHARACTERS ||
     !isNonNegativeInteger(candidate.tokenCount) ||
-    candidate.tokenCount !== estimateDocumentOcrTokens(candidate.text) ||
+    !hasConsistentTokenCount(candidate, candidate.text, candidate.tokenCount) ||
     !Array.isArray(candidate.pageSpans) ||
     !isValidPageSpans(candidate.text, candidate.pageSpans) ||
     !isArtifactTermination(candidate.artifactTermination) ||
@@ -256,7 +262,7 @@ export function isValidDocumentOcrArtifact(
     !isIntegerInRange(candidate.generationTokenLimit, 1, PDF_OCR_GENERATION_MAX_TOKENS) ||
     !isNonNegativeInteger(candidate.emittedPages) ||
     (candidate.sourcePageCountHint !== undefined &&
-      !isIntegerInRange(candidate.sourcePageCountHint, 1, PDF_TEXT_COVERAGE_MAX_PAGES)) ||
+      !isIntegerInRange(candidate.sourcePageCountHint, 1, PDF_PAGE_COUNT_SANITY_LIMIT)) ||
     !isLightOcrEngineStatus(candidate.engine)
   ) {
     return false
@@ -313,6 +319,18 @@ export function estimateDocumentOcrTokens(text: string): number {
     // Fall through to a conservative byte-level bound.
   }
   return Buffer.byteLength(text, 'utf8')
+}
+
+function hasConsistentTokenCount(
+  candidate: object,
+  text: string,
+  declaredTokenCount: number
+): boolean {
+  const cached = TOKEN_ESTIMATE_CACHE.get(candidate)
+  if (cached?.text === text) return declaredTokenCount === cached.tokenCount
+  const tokenCount = estimateDocumentOcrTokens(text)
+  TOKEN_ESTIMATE_CACHE.set(candidate, { text, tokenCount })
+  return declaredTokenCount === tokenCount
 }
 
 function fitTruncatedPrefix(
@@ -427,39 +445,9 @@ function reconstructSourcePages(
 }
 
 function isValidPageSpans(text: string, spans: unknown[]): spans is DocumentOcrPageSpan[] {
-  if (spans.length > LIGHT_OCR_DOCUMENT_MAX_PAGES) return false
-  let expectedStart = 0
-  let previousPage = 0
-  for (let index = 0; index < spans.length; index += 1) {
-    const value = spans[index]
-    if (!value || typeof value !== 'object') return false
-    const span = value as Record<string, unknown>
-    if (
-      !isPositiveInteger(span.pageNumber) ||
-      span.pageNumber !== previousPage + 1 ||
-      !isNonNegativeInteger(span.start) ||
-      span.start !== expectedStart ||
-      !isNonNegativeInteger(span.end) ||
-      span.end < span.start ||
-      span.end > text.length ||
-      typeof span.complete !== 'boolean' ||
-      (!span.complete && index !== spans.length - 1) ||
-      (!span.complete && span.end === span.start)
-    ) {
-      return false
-    }
-    const chunk = text.slice(span.start, span.end)
-    if (chunk) {
-      const prefix = `${span.start > 0 ? '\n\n' : ''}## Page ${span.pageNumber}\n\n`
-      if (!chunk.startsWith(prefix)) return false
-      if (!span.complete && !chunk.endsWith(PDF_OCR_TRUNCATION_MARKER)) return false
-    } else if (!span.complete) {
-      return false
-    }
-    expectedStart = span.end
-    previousPage = span.pageNumber
-  }
-  return expectedStart === text.length
+  return isValidDocumentOcrTextPageSpans(text, spans, {
+    maxSpans: ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS
+  })
 }
 
 function matchesDocumentEngineIdentity(
@@ -515,10 +503,6 @@ function isResourceLimit(value: unknown): value is DocumentOcrResourceLimit {
       (typeof candidate.detail === 'string' &&
         candidate.detail.length <= MAX_RESOURCE_ERROR_CHARACTERS))
   )
-}
-
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 function isNonNegativeInteger(value: unknown): value is number {

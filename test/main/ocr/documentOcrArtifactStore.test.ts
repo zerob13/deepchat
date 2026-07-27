@@ -17,16 +17,26 @@ import {
 import type { OcrCacheKeyProvider } from '../../../src/main/ocr/ocrCacheKeyProvider'
 import type { LightOcrEngineStatus } from '../../../src/main/ocr/lightOcrProtocol'
 
+let sqliteLoadError: unknown
+const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch((error) => {
+  sqliteLoadError = error
+  return null
+})
 let sqliteAvailable = false
-const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() => null)
 if (sqliteModule) {
   try {
     const database = new sqliteModule.default(':memory:')
     database.close()
     sqliteAvailable = true
-  } catch {
+  } catch (error) {
+    sqliteLoadError = error
     sqliteAvailable = false
   }
+}
+if (process.env.DEEPCHAT_REQUIRE_NATIVE_SQLITE === '1' && !sqliteAvailable) {
+  throw new Error('Native SQLite is required for document OCR artifact persistence tests', {
+    cause: sqliteLoadError
+  })
 }
 const persistentIt = sqliteAvailable ? it : it.skip
 

@@ -100,7 +100,12 @@ needed, and discards the accumulator.
 ## Phase 3: Page-Aware Assembly And Cache
 
 Add `DocumentTextExtractionService` with a PDF-only immutable snapshot reader. It applies the same
-per-file and pending-byte bounds as image OCR but skips Sharp preprocessing.
+per-file and pending-byte bounds as image OCR but skips Sharp preprocessing. Snapshot creation copies
+and hashes the source incrementally into the helper-private directory with a fixed-size buffer; the
+main process never retains the complete PDF in a `Buffer`. The service reserves the declared source
+limit before copying, then contracts that reservation to the immutable snapshot's actual size, so
+concurrent copies cannot bypass the shared pending-byte bound. The shared extraction flight owns the
+private file and releases it only after every joined owner settles.
 
 Use a fixed PDF recognition strategy and include it in identity. Prepare the engine before cache
 lookup so actual provider chains and precision remain part of the canonical key.
@@ -121,6 +126,11 @@ hint, and logical-byte accounting. Empty text is valid for a completed negative 
 resource-limited artifact with at least one validated page; it is invalid for output-limit
 termination.
 
+The page-span validator is shared with persisted attachment normalization so cache artifacts and
+message snapshots enforce identical heading, marker, offset, and text-coverage invariants. Cache
+validation memoizes token estimates by artifact object identity to avoid rescanning the same bounded
+text at adjacent service/store boundaries.
+
 Image schema and public behavior remain unchanged apart from the one-time derived-cache rebuild.
 
 ## Phase 4: Routing, Persistence, And Context
@@ -140,6 +150,8 @@ Legacy payloads without the new fields remain valid.
 - maps empty embedded snapshots, zero-text resource-limited prefixes, zero-page deterministic
   limits, and transient helper failures explicitly;
 - adds a degraded issue while retaining useful partial OCR text;
+- reports `turn_ocr_budget_exhausted` when packing, rather than recognition, removes all PDF OCR
+  text;
 - removes `ocr_empty` from retryable reasons.
 
 Turn packing uses document page spans for PDF OCR and the existing head-tail helper for image OCR.
@@ -147,7 +159,11 @@ The packed snapshot updates page coverage and never writes back to cache.
 
 Update `contextBuilder` so resolved PDF OCR is excluded from generic non-image `file.content` and
 rendered as one escaped untrusted document OCR block. Embedded PDFs keep the current file-content
-path. Update transcript/search normalization limits only where new structured fields require it.
+path, including sanitized path and byte-size metadata needed for follow-up file reads. Update
+transcript/search normalization limits only where new structured fields require it.
+
+Keep protocol `LIGHT_OCR_DOCUMENT_MAX_PAGES`, persisted span limits, and parsed-page-count sanity
+limits as independently named constants even when their current numeric values happen to match.
 
 ## Phase 5: Renderer And i18n
 
@@ -192,6 +208,10 @@ pnpm run build
 
 Run current-platform packaged smoke when the local runtime and packaging prerequisites are
 available. Do not claim other platform results without their native workflow runs.
+
+The native SQLite CI step must run both image and document OCR artifact store suites with
+`DEEPCHAT_REQUIRE_NATIVE_SQLITE=1`, so a missing native binding fails instead of silently skipping
+document schema and replacement tests.
 
 ## Compatibility And Migration
 

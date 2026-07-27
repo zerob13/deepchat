@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DocumentTextExtractionService,
-  readImmutablePdfSnapshot,
+  type DocumentTextExtractionServiceOptions,
   type LightOcrDocumentRecognitionPort
 } from '../../../src/main/ocr/documentTextExtractionService'
 import { OcrArtifactStore } from '../../../src/main/ocr/ocrArtifactStore'
@@ -15,6 +15,7 @@ import type {
   LightOcrEngineStatus
 } from '../../../src/main/ocr/lightOcrProtocol'
 import { LightOcrProcessHostError } from '../../../src/main/ocr/lightOcrProcessHost'
+import { OcrSourceSnapshotBudget } from '../../../src/main/ocr/ocrSourceSnapshotBudget'
 
 const nullKeyProvider: OcrCacheKeyProvider = { loadOrCreateKey: async () => null }
 
@@ -72,6 +73,12 @@ function createProcessHost(
   preparedEngine = engine()
 ) {
   return {
+    createDocumentSourceSnapshot: vi.fn(async () => ({
+      filePath: '/private/process-host-snapshot.pdf',
+      byteLength: Buffer.byteLength('%PDF-snapshot'),
+      sourceSha256: 'a'.repeat(64),
+      release: vi.fn(async () => undefined)
+    })),
     prepare: vi.fn(async () => structuredClone(preparedEngine)),
     recognizeDocument: vi.fn(recognizeDocument)
   } satisfies LightOcrDocumentRecognitionPort
@@ -94,7 +101,17 @@ describe('DocumentTextExtractionService', () => {
     await rm(tempDir, { recursive: true, force: true })
   })
 
-  function createService(processHost: LightOcrDocumentRecognitionPort) {
+  function createService(
+    processHost: LightOcrDocumentRecognitionPort,
+    snapshotReader: NonNullable<
+      DocumentTextExtractionServiceOptions['snapshotReader']
+    > = async () => ({
+      filePath: '/private/service-snapshot.pdf',
+      byteLength: Buffer.byteLength('%PDF-snapshot'),
+      sourceSha256: 'a'.repeat(64),
+      release: vi.fn(async () => undefined)
+    })
+  ) {
     return new DocumentTextExtractionService({
       processHost,
       artifactStore,
@@ -103,10 +120,7 @@ describe('DocumentTextExtractionService', () => {
       nativeVersion: '0.5.5',
       modelVersion: '0.3.4',
       bundleId: 'bundle-1',
-      snapshotReader: async () => ({
-        bytes: Buffer.from('%PDF-snapshot'),
-        sourceSha256: 'a'.repeat(64)
-      })
+      snapshotReader
     })
   }
 
@@ -135,6 +149,11 @@ describe('DocumentTextExtractionService', () => {
     expect(processHost.recognizeDocument).toHaveBeenCalledTimes(1)
     expect(processHost.recognizeDocument).toHaveBeenCalledWith(
       expect.objectContaining({
+        snapshot: expect.objectContaining({
+          filePath: '/private/service-snapshot.pdf',
+          byteLength: Buffer.byteLength('%PDF-snapshot'),
+          sourceSha256: 'a'.repeat(64)
+        }),
         strategy: 'bounded-960',
         options: {
           dpi: 150,
@@ -313,7 +332,19 @@ describe('DocumentTextExtractionService', () => {
           }
         })
     )
-    const service = createService(processHost)
+    const releasedSnapshots: string[] = []
+    let snapshotSequence = 0
+    const service = createService(processHost, async () => {
+      const filePath = `/private/service-snapshot-${snapshotSequence++}.pdf`
+      return {
+        filePath,
+        byteLength: Buffer.byteLength('%PDF-snapshot'),
+        sourceSha256: 'a'.repeat(64),
+        release: vi.fn(async () => {
+          releasedSnapshots.push(filePath)
+        })
+      }
+    })
     const controller = new AbortController()
     const input = {
       filePath: '/shared.pdf',
@@ -329,21 +360,56 @@ describe('DocumentTextExtractionService', () => {
     finishRecognition()
     await expect(retained).resolves.toMatchObject({ text: expect.stringContaining('shared') })
     expect(processHost.recognizeDocument).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(releasedSnapshots).toHaveLength(2))
     service.close()
   })
 
-  it('reads a bounded immutable PDF snapshot from one open file handle', async () => {
-    const pdfPath = path.join(tempDir, 'snapshot.pdf')
-    await writeFile(pdfPath, '%PDF-test')
-
-    await expect(
-      readImmutablePdfSnapshot({ filePath: pdfPath, maxFileSize: 1024 })
-    ).resolves.toMatchObject({
-      bytes: Buffer.from('%PDF-test'),
-      sourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+  it('reserves pending source capacity before materializing a PDF snapshot', async () => {
+    let finishFirstSnapshot!: () => void
+    const release = vi.fn(async () => undefined)
+    const snapshotReader = vi.fn(
+      () =>
+        new Promise<{
+          filePath: string
+          byteLength: number
+          sourceSha256: string
+          release: () => Promise<void>
+        }>((resolve) => {
+          finishFirstSnapshot = () =>
+            resolve({
+              filePath: '/private/bounded-snapshot.pdf',
+              byteLength: 5,
+              sourceSha256: 'b'.repeat(64),
+              release
+            })
+        })
+    )
+    const processHost = createProcessHost()
+    const service = new DocumentTextExtractionService({
+      processHost,
+      artifactStore,
+      snapshotBudget: new OcrSourceSnapshotBudget(2, 15),
+      facadeVersion: '0.5.5',
+      runtimeVersion: '0.1.5',
+      nativeVersion: '0.5.5',
+      modelVersion: '0.3.4',
+      bundleId: 'bundle-1',
+      snapshotReader
     })
-    await expect(
-      readImmutablePdfSnapshot({ filePath: pdfPath, maxFileSize: 4 })
-    ).rejects.toMatchObject({ code: 'input_too_large' })
+    const input = {
+      filePath: '/bounded.pdf',
+      maxFileSize: 10,
+      backend: 'auto' as const
+    }
+
+    const first = service.extractDocument(input)
+    await vi.waitFor(() => expect(snapshotReader).toHaveBeenCalledTimes(1))
+    await expect(service.extractDocument(input)).rejects.toMatchObject({ code: 'queue_full' })
+    expect(snapshotReader).toHaveBeenCalledTimes(1)
+
+    finishFirstSnapshot()
+    await expect(first).resolves.toMatchObject({ cacheHit: false })
+    await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1))
+    service.close()
   })
 })

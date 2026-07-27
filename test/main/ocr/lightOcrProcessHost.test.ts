@@ -1,6 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,7 +23,8 @@ import {
   LightOcrProcessHost,
   LightOcrProcessHostError,
   resolveBundledNodeExecutable,
-  type LightOcrProcessHostOptions
+  type LightOcrProcessHostOptions,
+  type LightOcrRecognizeDocumentInput
 } from '../../../src/main/ocr/lightOcrProcessHost'
 import {
   LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
@@ -38,11 +49,13 @@ const documentOptions: LightOcrDocumentOptions = {
 describe('LightOcrProcessHost', () => {
   let tempDir: string
   let bundlePath: string
+  let documentSourceSequence: number
   const hosts: LightOcrProcessHost[] = []
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'deepchat-light-ocr-host-test-'))
     bundlePath = path.join(tempDir, 'bundle')
+    documentSourceSequence = 0
     await mkdir(bundlePath)
   })
 
@@ -70,6 +83,25 @@ describe('LightOcrProcessHost', () => {
     })
     hosts.push(host)
     return host
+  }
+
+  async function recognizeTestDocument(
+    host: LightOcrProcessHost,
+    input: Omit<LightOcrRecognizeDocumentInput, 'snapshot'> & { encoded: Uint8Array }
+  ) {
+    const sourcePath = path.join(tempDir, `document-source-${documentSourceSequence++}.pdf`)
+    await writeFile(sourcePath, input.encoded)
+    const snapshot = await host.createDocumentSourceSnapshot({
+      filePath: sourcePath,
+      maxFileBytes: input.options.maxFileBytes,
+      signal: input.signal
+    })
+    const { encoded: _encoded, ...request } = input
+    try {
+      return await host.recognizeDocument({ ...request, snapshot })
+    } finally {
+      await snapshot.release()
+    }
   }
 
   it('inherits only required process environment variables for the helper', () => {
@@ -278,7 +310,7 @@ describe('LightOcrProcessHost', () => {
     const host = createHost()
     const pages: string[] = []
 
-    const outcome = await host.recognizeDocument({
+    const outcome = await recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond\fthird'),
       backend: 'cpu',
       strategy: 'bounded-960',
@@ -308,7 +340,7 @@ describe('LightOcrProcessHost', () => {
     })
     const pages: string[] = []
 
-    const outcome = await host.recognizeDocument({
+    const outcome = await recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond'),
       backend: 'cpu',
       strategy: 'bounded-960',
@@ -327,7 +359,7 @@ describe('LightOcrProcessHost', () => {
     const host = createHost()
     const pages: string[] = []
 
-    const outcome = await host.recognizeDocument({
+    const outcome = await recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond\fthird'),
       backend: 'auto',
       strategy: 'bounded-960',
@@ -353,7 +385,7 @@ describe('LightOcrProcessHost', () => {
     })
     const pages: string[] = []
 
-    const outcome = await host.recognizeDocument({
+    const outcome = await recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond\fthird'),
       backend: 'cpu',
       strategy: 'bounded-960',
@@ -379,7 +411,7 @@ describe('LightOcrProcessHost', () => {
     })
     const pages: string[] = []
 
-    const outcome = await host.recognizeDocument({
+    const outcome = await recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond'),
       backend: 'cpu',
       strategy: 'bounded-960',
@@ -404,7 +436,7 @@ describe('LightOcrProcessHost', () => {
       testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-after-page' }
     })
 
-    const outcome = await host.recognizeDocument({
+    const outcome = await recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond'),
       backend: 'cpu',
       strategy: 'bounded-960',
@@ -425,7 +457,7 @@ describe('LightOcrProcessHost', () => {
     })
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -445,7 +477,7 @@ describe('LightOcrProcessHost', () => {
     const pages: string[] = []
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first\fsecond'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -465,7 +497,7 @@ describe('LightOcrProcessHost', () => {
       const host = createHost({ testEnvironment: { FAKE_OCR_BEHAVIOR: behavior } })
 
       await expect(
-        host.recognizeDocument({
+        recognizeTestDocument(host, {
           encoded: Buffer.from('first\fsecond'),
           backend: 'cpu',
           strategy: 'bounded-960',
@@ -480,7 +512,7 @@ describe('LightOcrProcessHost', () => {
     const host = createHost()
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first\fsecond'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -498,7 +530,7 @@ describe('LightOcrProcessHost', () => {
     const pages: string[] = []
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first\fsecond'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -521,7 +553,7 @@ describe('LightOcrProcessHost', () => {
     const pages: string[] = []
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('one\ftwo\fthree\ffour\ffive'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -542,7 +574,7 @@ describe('LightOcrProcessHost', () => {
     })
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first\fsecond'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -558,7 +590,7 @@ describe('LightOcrProcessHost', () => {
     })
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first\fsecond'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -574,7 +606,7 @@ describe('LightOcrProcessHost', () => {
     })
     const controller = new AbortController()
 
-    const recognition = host.recognizeDocument({
+    const recognition = recognizeTestDocument(host, {
       encoded: Buffer.from('first\fsecond'),
       backend: 'cpu',
       strategy: 'bounded-960',
@@ -601,7 +633,7 @@ describe('LightOcrProcessHost', () => {
     const pages: string[] = []
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first\fsecond'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -620,7 +652,7 @@ describe('LightOcrProcessHost', () => {
     const host = createHost()
 
     await expect(
-      host.recognizeDocument({
+      recognizeTestDocument(host, {
         encoded: Buffer.from('first'),
         backend: 'cpu',
         strategy: 'bounded-960',
@@ -629,6 +661,63 @@ describe('LightOcrProcessHost', () => {
       })
     ).rejects.toMatchObject({ code: 'invalid_protocol' })
     expect(host.getStatus().pid).toBeNull()
+  })
+
+  it('copies document sources into a private bounded snapshot', async () => {
+    const host = createHost()
+    const sourcePath = path.join(tempDir, 'source.pdf')
+    const source = Buffer.from('%PDF-private-snapshot')
+    await writeFile(sourcePath, source)
+
+    const snapshot = await host.createDocumentSourceSnapshot({
+      filePath: sourcePath,
+      maxFileBytes: source.byteLength
+    })
+
+    expect(snapshot.byteLength).toBe(source.byteLength)
+    expect(snapshot.sourceSha256).toBe(createHash('sha256').update(source).digest('hex'))
+    await expect(readFile(snapshot.filePath)).resolves.toEqual(source)
+    if (process.platform !== 'win32') {
+      expect((await stat(snapshot.filePath)).mode & 0o777).toBe(0o600)
+    }
+
+    await snapshot.release()
+    await snapshot.release()
+    await expect(readFile(snapshot.filePath)).rejects.toThrow()
+  })
+
+  it('rejects document sources that exceed the bounded snapshot limit', async () => {
+    const host = createHost()
+    const sourcePath = path.join(tempDir, 'oversized.pdf')
+    await writeFile(sourcePath, Buffer.alloc(5, 1))
+
+    await expect(
+      host.createDocumentSourceSnapshot({ filePath: sourcePath, maxFileBytes: 4 })
+    ).rejects.toMatchObject({ code: 'input_too_large' })
+  })
+
+  it('serializes the private root creation for concurrent document snapshots', async () => {
+    const host = createHost()
+    const firstSourcePath = path.join(tempDir, 'first-source.pdf')
+    const secondSourcePath = path.join(tempDir, 'second-source.pdf')
+    await Promise.all([
+      writeFile(firstSourcePath, '%PDF-first'),
+      writeFile(secondSourcePath, '%PDF-second')
+    ])
+
+    const [first, second] = await Promise.all([
+      host.createDocumentSourceSnapshot({
+        filePath: firstSourcePath,
+        maxFileBytes: 1_024
+      }),
+      host.createDocumentSourceSnapshot({
+        filePath: secondSourcePath,
+        maxFileBytes: 1_024
+      })
+    ])
+
+    expect(path.dirname(first.filePath)).toBe(path.dirname(second.filePath))
+    await Promise.all([first.release(), second.release()])
   })
 
   it('restarts once after an abnormal helper exit', async () => {

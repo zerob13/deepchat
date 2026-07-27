@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR مشغول است. پس از پایان پردازش پیوست فعلی دوباره تلاش کنید.",
       "ocr_resource_limited": "OCR در محدودیت پردازش PDF متوقف شد.",
       "ocr_runtime_unavailable": "OCR در این پلتفرم یا نصب در دسترس نیست.",
+      "invalid_attachment_snapshot": "دادهٔ ذخیره‌شدهٔ OCR نامعتبر است.",
+      "turn_ocr_budget_exhausted": "متن OCR از محدودیت متن پیوست این پیام فراتر رفته است.",
       "pdf_text_unavailable": "هیچ متن تعبیه‌شده‌ای در این PDF موجود نیست.",
       "requested_image_requires_vision": "گزینهٔ «ارسال تصویر» به مدلی با قابلیت بینایی نیاز دارد.",
       "turn_image_bytes_exceeded": "حجم کل تصاویر این نوبت از محدودیت بیشتر است.",

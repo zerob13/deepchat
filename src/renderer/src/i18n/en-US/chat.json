@@ -113,6 +113,8 @@
       "ocr_queue_full": "OCR is busy. Try again after the current attachment finishes.",
       "ocr_resource_limited": "OCR stopped at the PDF processing limit.",
       "ocr_runtime_unavailable": "OCR is not available on this platform or installation.",
+      "invalid_attachment_snapshot": "Saved OCR data is invalid.",
+      "turn_ocr_budget_exhausted": "OCR text exceeds this message's attachment text limit.",
       "pdf_text_unavailable": "No embedded text is available in this PDF.",
       "requested_image_requires_vision": "Send image requires a model with vision support.",
       "turn_image_bytes_exceeded": "The images in this turn exceed the total size limit.",

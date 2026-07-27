@@ -446,6 +446,8 @@
       "ocr_queue_full": "OCR sedang sibuk. Coba lagi setelah lampiran saat ini selesai diproses.",
       "ocr_resource_limited": "OCR berhenti pada batas pemrosesan PDF.",
       "ocr_runtime_unavailable": "OCR tidak tersedia pada platform atau instalasi ini.",
+      "invalid_attachment_snapshot": "Data OCR yang tersimpan tidak valid.",
+      "turn_ocr_budget_exhausted": "Teks OCR melebihi batas teks lampiran pesan ini.",
       "pdf_text_unavailable": "Tidak ada teks tersemat yang tersedia dalam PDF ini.",
       "requested_image_requires_vision": "“Kirim gambar” memerlukan model dengan kemampuan visual.",
       "turn_image_bytes_exceeded": "Gambar dalam giliran ini melampaui batas ukuran total.",

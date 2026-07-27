@@ -21,8 +21,10 @@ export const ATTACHMENT_UNAVAILABLE_REASONS = [
   'ocr_queue_full',
   'ocr_resource_limited',
   'ocr_runtime_unavailable',
+  'invalid_attachment_snapshot',
   'pdf_text_unavailable',
   'requested_image_requires_vision',
+  'turn_ocr_budget_exhausted',
   'turn_image_bytes_exceeded',
   'user_skipped_attachment_content',
   'user_skipped_image_content',
@@ -34,7 +36,7 @@ export const PDF_ROUTING_REVISION = 'pdf-text-coverage-v1'
 export const PDF_SUBSTANTIVE_TEXT_MIN_CODE_POINTS = 64
 export const PDF_AUTO_EMBEDDED_COVERAGE_PERCENT = 90
 export const PDF_LOW_TEXT_PAGE_SAMPLE_LIMIT = 20
-export const PDF_TEXT_COVERAGE_MAX_PAGES = 1_000_000
+export const PDF_PAGE_COUNT_SANITY_LIMIT = 1_000_000
 export const ATTACHMENT_PDF_OCR_MAX_TOKENS = 16_000
 export const ATTACHMENT_PDF_OCR_MAX_PAGE_SPANS = 100
 
