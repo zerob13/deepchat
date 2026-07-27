@@ -1,11 +1,7 @@
 import type { MCPToolDefinition } from '@shared/types/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import type { ModelMessage } from 'ai'
-import {
-  applyRequestParameterPolicy,
-  resolveModelRequestPolicy,
-  type ModelRequestPolicy
-} from '@shared/modelRequestPolicy'
+import { applyRequestParameterPolicy, type ModelRequestPolicy } from '@shared/modelRequestPolicy'
 import {
   getReasoningEffectiveEnabledForProvider,
   hasAnthropicReasoningToggle,
@@ -19,7 +15,6 @@ import {
   type PromptCacheIntent,
   resolvePromptCachePlan
 } from '../promptCacheStrategy'
-import { modelCapabilities } from '../modelCapabilities'
 import { providerDbLoader } from '../../provider/providerDbLoader'
 
 type ProviderOptionsRecord = Record<string, Record<string, unknown>>
@@ -118,8 +113,8 @@ export interface BuildProviderOptionsParams {
     | 'bedrock'
   modelId: string
   modelConfig: ModelConfig
-  requestPolicy?: ModelRequestPolicy
-  reasoningPortrait?: ReasoningPortrait | null
+  requestPolicy: ModelRequestPolicy
+  reasoningPortrait: ReasoningPortrait | null
   tools: MCPToolDefinition[]
   messages: ModelMessage[]
   cacheIntent?: PromptCacheIntent
@@ -185,14 +180,9 @@ export function buildProviderOptions(
 ): ProviderOptionsMappingResult {
   const providerOptions: ProviderOptionsRecord = {}
   let messages = params.messages
-  const requestPolicy =
-    params.requestPolicy ??
-    resolveModelRequestPolicy(params.providerId, params.modelId, params.modelConfig.reasoning)
+  const requestPolicy = params.requestPolicy
   const modelConfig = params.modelConfig
-  const reasoningPortrait =
-    params.reasoningPortrait !== undefined
-      ? params.reasoningPortrait
-      : modelCapabilities.getReasoningPortrait?.(params.capabilityProviderId, params.modelId)
+  const reasoningPortrait = params.reasoningPortrait
   const reasoningEnabled = getReasoningEffectiveEnabledForProvider(
     params.capabilityProviderId,
     reasoningPortrait,
@@ -273,14 +263,11 @@ export function buildProviderOptions(
       }
       if (
         params.providerId === 'dashscope' &&
-        modelCapabilities.supportsReasoning(params.providerId, params.modelId) &&
+        reasoningPortrait?.supported === true &&
         reasoningEnabled
       ) {
         config.enable_thinking = true
-        const dbBudget = modelCapabilities.getThinkingBudgetRange(
-          params.providerId,
-          params.modelId
-        ).default
+        const dbBudget = reasoningPortrait.budget?.default
         const budget = modelConfig.thinkingBudget ?? dbBudget
         if (typeof budget === 'number') {
           config.thinking_budget = budget

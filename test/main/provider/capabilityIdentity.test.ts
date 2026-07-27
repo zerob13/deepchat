@@ -40,6 +40,18 @@ const state = vi.hoisted(() => ({
               }
             }
           },
+          {
+            id: 'coding-kimi-k3',
+            reasoning: {
+              supported: true,
+              default: true
+            },
+            extra_capabilities: {
+              reasoning: {
+                supported: true
+              }
+            }
+          },
           { id: 'ambiguous-model', temperature: true }
         ]
       },
@@ -47,8 +59,13 @@ const state = vi.hoisted(() => ({
         id: 'llmgateway',
         models: [
           { id: 'kimi-k3', temperature: false },
-          { id: 'ambiguous-model', temperature: false }
+          { id: 'ambiguous-model', temperature: false },
+          { id: 'hunyuan-ambiguous', reasoning: { supported: true } }
         ]
+      },
+      mirror: {
+        id: 'mirror',
+        models: [{ id: 'hunyuan-ambiguous', reasoning: { supported: false }, temperature: false }]
       },
       anthropic: {
         id: 'anthropic',
@@ -88,6 +105,57 @@ const state = vi.hoisted(() => ({
         id: 'google',
         models: [{ id: 'gemini-3.5-pro', temperature: true }]
       },
+      zhipuai: {
+        id: 'zhipuai',
+        models: [
+          {
+            id: 'glm-4.7',
+            temperature: true,
+            reasoning: { supported: true, default: true },
+            extra_capabilities: {
+              reasoning: {
+                supported: true,
+                interleaved: true,
+                summaries: true,
+                visibility: 'summary',
+                continuation: ['thinking_blocks']
+              }
+            }
+          }
+        ]
+      },
+      minimax: {
+        id: 'minimax',
+        models: [
+          {
+            id: 'MiniMax-M2',
+            temperature: true,
+            reasoning: { supported: true, default: true }
+          }
+        ]
+      },
+      stepfun: {
+        id: 'stepfun',
+        models: [
+          {
+            id: 'step-3.5-flash',
+            temperature: true,
+            reasoning: { supported: true, default: true }
+          }
+        ]
+      },
+      mistral: {
+        id: 'mistral',
+        models: [{ id: 'mistral-large-latest', temperature: true }]
+      },
+      cohere: {
+        id: 'cohere',
+        models: [{ id: 'command-r-plus-08-2024', temperature: true }]
+      },
+      openai: {
+        id: 'openai',
+        models: []
+      },
       'sole-provider': {
         id: 'sole-provider',
         models: [{ id: 'only-once', temperature: false }]
@@ -120,8 +188,9 @@ describe('capability identity resolution', () => {
 
     expect(identity).toEqual({
       providerId: 'moonshot',
-      modelId: 'kimi-k3',
-      catalogMatched: true
+      requestModelId: 'kimi-k3',
+      catalogMatched: true,
+      catalogModelId: 'kimi-k3'
     })
     expect(snapshot.temperatureCapability).toBe(false)
     expect(snapshot.requestPolicy).toEqual({
@@ -157,13 +226,15 @@ describe('capability identity resolution', () => {
   })
 
   it('applies ZenMux and OpenCode Go route overrides in the main-process resolver', () => {
-    expect(
-      resolveCapabilityIdentity({
-        providerId: 'zenmux',
-        modelId: 'anthropic/claude-opus-4-7'
-      })
-    ).toMatchObject({
+    const zenmuxIdentity = resolveCapabilityIdentity({
+      providerId: 'zenmux',
+      modelId: 'anthropic/claude-opus-4-7'
+    })
+    expect(zenmuxIdentity).toMatchObject({
       providerId: 'anthropic'
+    })
+    expect(buildResolvedCapabilitySnapshot(zenmuxIdentity).requestPolicy.topP).toEqual({
+      mode: 'omit'
     })
     expect(
       resolveCapabilityIdentity({
@@ -183,8 +254,9 @@ describe('capability identity resolution', () => {
       })
     ).toEqual({
       providerId: 'custom-relay',
-      modelId: 'ambiguous-model',
-      catalogMatched: false
+      requestModelId: 'ambiguous-model',
+      catalogMatched: false,
+      catalogModelId: null
     })
 
     expect(
@@ -194,8 +266,22 @@ describe('capability identity resolution', () => {
       })
     ).toEqual({
       providerId: 'sole-provider',
-      modelId: 'only-once',
-      catalogMatched: true
+      requestModelId: 'only-once',
+      catalogMatched: true,
+      catalogModelId: 'only-once'
+    })
+
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'new-api',
+        modelId: 'hunyuan-ambiguous',
+        endpointType: 'openai'
+      })
+    ).toEqual({
+      providerId: 'openai',
+      requestModelId: 'hunyuan-ambiguous',
+      catalogMatched: false,
+      catalogModelId: null
     })
   })
 
@@ -208,8 +294,111 @@ describe('capability identity resolution', () => {
       })
     ).toEqual({
       providerId: 'capability-team',
-      modelId: 'unknown-model',
-      catalogMatched: false
+      requestModelId: 'unknown-model',
+      catalogMatched: false,
+      catalogModelId: null
+    })
+  })
+
+  it('resolves authoritative model origins without selecting an arbitrary mirror', () => {
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'new-api',
+        modelId: 'z-ai/glm_4.7',
+        endpointType: 'openai'
+      })
+    ).toEqual({
+      providerId: 'zhipuai',
+      requestModelId: 'z-ai/glm_4.7',
+      catalogMatched: true,
+      catalogModelId: 'glm-4.7'
+    })
+
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'new-api',
+        modelId: 'minimax-m2',
+        endpointType: 'openai'
+      })
+    ).toEqual({
+      providerId: 'minimax',
+      requestModelId: 'minimax-m2',
+      catalogMatched: true,
+      catalogModelId: 'minimax-m2'
+    })
+
+    const gptOssIdentity = resolveCapabilityIdentity({
+      providerId: 'new-api',
+      modelId: 'gpt-oss-120b',
+      endpointType: 'openai'
+    })
+    expect(gptOssIdentity).toEqual({
+      providerId: 'openai',
+      requestModelId: 'gpt-oss-120b',
+      catalogMatched: false,
+      catalogModelId: null
+    })
+    expect(buildResolvedCapabilitySnapshot(gptOssIdentity)).toMatchObject({
+      supportsReasoning: true,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true
+      },
+      temperatureCapability: undefined
+    })
+
+    for (const [modelId, providerId, catalogModelId] of [
+      ['step-3.5-flash', 'stepfun', 'step-3.5-flash'],
+      ['mistralai/mistral-large-latest', 'mistral', 'mistral-large-latest'],
+      ['cohere/command-r-plus-08-2024', 'cohere', 'command-r-plus-08-2024']
+    ] as const) {
+      expect(
+        resolveCapabilityIdentity({
+          providerId: 'new-api',
+          modelId,
+          endpointType: 'openai'
+        })
+      ).toMatchObject({
+        providerId,
+        catalogMatched: true,
+        catalogModelId
+      })
+    }
+  })
+
+  it('uses the same K3 alias identity for request policy and catalog capabilities', () => {
+    const identity = resolveCapabilityIdentity({
+      providerId: 'new-api',
+      modelId: 'coding-kimi-k3-free',
+      endpointType: 'openai'
+    })
+
+    expect(identity).toEqual({
+      providerId: 'moonshot',
+      requestModelId: 'coding-kimi-k3-free',
+      catalogMatched: true,
+      catalogModelId: 'kimi-k3'
+    })
+    expect(buildResolvedCapabilitySnapshot(identity)).toMatchObject({
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' }
+      },
+      reasoningPortrait: {
+        interleaved: true,
+        visibility: 'summary'
+      }
+    })
+
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'aihubmix',
+        modelId: 'kimi_k3'
+      })
+    ).toMatchObject({
+      providerId: 'aihubmix',
+      catalogMatched: true,
+      catalogModelId: 'kimi-k3'
     })
   })
 

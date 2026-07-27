@@ -7,6 +7,13 @@ import {
 } from '@shared/types/model-db'
 import { providerDbLoader } from './providerDbLoader'
 import { resolveProviderId as resolveProviderIdAlias } from './providerId'
+import {
+  getDottedProviderUnqualifiedModelId,
+  getUnqualifiedModelId,
+  normalizeCanonicalModelId,
+  normalizeModelIdText
+} from '@shared/modelId'
+import { isKimiK3ModelId } from '@shared/modelRequestPolicy'
 
 export type ThinkingBudgetRange = {
   min?: number
@@ -56,10 +63,10 @@ export type CatalogCapabilitySnapshot = {
 }
 
 const OPENAI_REASONING_EFFORT_MODEL_FAMILIES = ['o1', 'o3', 'o4-mini', 'gpt-5']
+const OPENAI_REASONING_ONLY_MODEL_FAMILIES = ['gpt-oss']
 const OPENAI_VERBOSITY_MODEL_FAMILIES = ['gpt-5']
 const OPENAI_REASONING_FALLBACK_PROVIDERS = new Set(['openai', 'azure'])
 const GROK_REASONING_EFFORT_MODEL_FAMILIES = ['grok-3-mini']
-const KIMI_K3_MODEL_ID = 'kimi-k3'
 const DEFAULT_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high']
 const BINARY_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'high']
 const KIMI_K3_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'high', 'max']
@@ -69,42 +76,30 @@ const normalizeCapabilityProviderId = (providerId: string): string => {
   return resolveProviderIdAlias(providerId.toLowerCase())?.toLowerCase() ?? providerId.toLowerCase()
 }
 
-const normalizeModelId = (value: string | undefined): string => value?.trim().toLowerCase() ?? ''
-
-const normalizeSlashUnprefixedModelId = (value: string | undefined): string => {
-  const normalizedModelId = normalizeModelId(value)
-  return normalizedModelId.includes('/')
-    ? normalizedModelId.slice(normalizedModelId.lastIndexOf('/') + 1)
-    : normalizedModelId
-}
-
-const normalizeDottedProviderUnprefixedModelId = (value: string | undefined): string => {
-  const normalizedModelId = normalizeSlashUnprefixedModelId(value)
-  const segments = normalizedModelId.split('.')
-  const modelSegmentIndex = segments.findIndex((segment) => segment.includes('-'))
-
-  return modelSegmentIndex > 0 ? segments.slice(modelSegmentIndex).join('.') : normalizedModelId
-}
-
 export const normalizeCapabilityModelId = (value: string | undefined): string =>
-  normalizeDottedProviderUnprefixedModelId(value)
-    .replace(/[_:\s]+/g, '-')
-    .replace(/(\d)\.(?=\d)/g, '$1-')
-    .replace(/-+/g, '-')
+  normalizeCanonicalModelId(value)
+
+const getCapabilityModelLookupKeys = (value: string | undefined): string[] => {
+  const lookupKeys: string[] = []
+  for (const key of [
+    normalizeModelIdText(value),
+    getUnqualifiedModelId(value),
+    getDottedProviderUnqualifiedModelId(value),
+    normalizeCapabilityModelId(value)
+  ]) {
+    if (key && !lookupKeys.includes(key)) {
+      lookupKeys.push(key)
+    }
+  }
+  return lookupKeys
+}
 
 const getProviderCapabilityModelLookupKeys = (value: string | undefined): string[] => {
-  const exactModelId = normalizeModelId(value)
-  const slashUnprefixedModelId = normalizeSlashUnprefixedModelId(value)
-  const dottedUnprefixedModelId = normalizeDottedProviderUnprefixedModelId(value)
-  const canonicalModelId = normalizeCapabilityModelId(value)
-
-  return Array.from(
-    new Set(
-      [exactModelId, slashUnprefixedModelId, dottedUnprefixedModelId, canonicalModelId].filter(
-        (key) => key.length > 0
-      )
-    )
-  )
+  const lookupKeys = getCapabilityModelLookupKeys(value)
+  if (isKimiK3ModelId(value) && !lookupKeys.includes('kimi-k3')) {
+    lookupKeys.push('kimi-k3')
+  }
+  return lookupKeys
 }
 
 const matchesModelFamily = (modelId: string, families: string[]): boolean =>
@@ -372,6 +367,7 @@ export class ModelCapabilities {
   private modelLookupIndex: Map<string, Map<string, IndexedProviderModel[]>> = new Map()
   private globalModelLookupIndex: Map<string, IndexedProviderModel[]> = new Map()
   private portraitRegistry: Map<string, IndexedPortrait[]> = new Map()
+  private reasoningCandidateModelIds: Set<string> = new Set()
 
   constructor() {
     this.rebuildIndexFromDb()
@@ -384,6 +380,7 @@ export class ModelCapabilities {
     this.modelLookupIndex.clear()
     this.globalModelLookupIndex.clear()
     this.portraitRegistry.clear()
+    this.reasoningCandidateModelIds.clear()
     if (!db) return
     this.buildIndex(db)
   }
@@ -406,7 +403,7 @@ export class ModelCapabilities {
           model,
           isUnprefixed: !mid.includes('/')
         }
-        for (const lookupKey of getProviderCapabilityModelLookupKeys(model.id)) {
+        for (const lookupKey of getCapabilityModelLookupKeys(model.id)) {
           const entries = lookupMap.get(lookupKey) ?? []
           entries.push(indexedModel)
           lookupMap.set(lookupKey, entries)
@@ -414,6 +411,13 @@ export class ModelCapabilities {
           const globalEntries = this.globalModelLookupIndex.get(lookupKey) ?? []
           globalEntries.push(indexedModel)
           this.globalModelLookupIndex.set(lookupKey, globalEntries)
+        }
+
+        if (
+          model.reasoning?.supported === true ||
+          model.extra_capabilities?.reasoning?.supported === true
+        ) {
+          this.reasoningCandidateModelIds.add(normalizeCapabilityModelId(model.id))
         }
 
         const portrait = portraitFromExtraCapabilities(model.extra_capabilities?.reasoning)
@@ -442,15 +446,19 @@ export class ModelCapabilities {
       return undefined
     }
 
-    const selected = [...entries].sort((left, right) => {
-      const leftPrefixedRank = left.isUnprefixed ? 0 : 1
-      const rightPrefixedRank = right.isUnprefixed ? 0 : 1
-      if (leftPrefixedRank !== rightPrefixedRank) {
-        return leftPrefixedRank - rightPrefixedRank
+    let selected = entries[0]
+    for (let index = 1; index < entries.length; index += 1) {
+      const candidate = entries[index]
+      const candidatePrefixedRank = candidate.isUnprefixed ? 0 : 1
+      const selectedPrefixedRank = selected.isUnprefixed ? 0 : 1
+      if (
+        candidatePrefixedRank < selectedPrefixedRank ||
+        (candidatePrefixedRank === selectedPrefixedRank &&
+          candidate.modelId.localeCompare(selected.modelId) < 0)
+      ) {
+        selected = candidate
       }
-
-      return left.modelId.localeCompare(right.modelId)
-    })[0]
+    }
 
     return selected
       ? {
@@ -609,6 +617,23 @@ export class ModelCapabilities {
     return resolved
   }
 
+  hasProvider(providerId: string | undefined): boolean {
+    const resolvedProviderId = this.resolveProviderId(providerId?.trim().toLowerCase())
+    return Boolean(resolvedProviderId && this.index.has(resolvedProviderId))
+  }
+
+  hasReasoningCandidate(modelId: string): boolean {
+    const normalizedModelId = normalizeCapabilityModelId(modelId)
+
+    return Boolean(
+      this.reasoningCandidateModelIds.has(normalizedModelId) ||
+      isKimiK3ModelId(modelId) ||
+      matchesModelFamily(normalizedModelId, OPENAI_REASONING_EFFORT_MODEL_FAMILIES) ||
+      matchesModelFamily(normalizedModelId, OPENAI_REASONING_ONLY_MODEL_FAMILIES) ||
+      matchesModelFamily(normalizedModelId, GROK_REASONING_EFFORT_MODEL_FAMILIES)
+    )
+  }
+
   private getFallbackReasoningPortrait(
     providerId: string,
     modelId: string
@@ -639,7 +664,17 @@ export class ModelCapabilities {
       }
     }
 
-    if (normalizedModelId === KIMI_K3_MODEL_ID) {
+    if (
+      allowsOpenAIFallback &&
+      matchesModelFamily(normalizedModelId, OPENAI_REASONING_ONLY_MODEL_FAMILIES)
+    ) {
+      return {
+        supported: true,
+        defaultEnabled: true
+      }
+    }
+
+    if (isKimiK3ModelId(modelId)) {
       return {
         supported: true,
         defaultEnabled: true,
@@ -686,14 +721,15 @@ export class ModelCapabilities {
         continue
       }
 
-      const matches = Array.from(
-        new Map(entries.map((entry) => [`${entry.providerId}\0${entry.modelId}`, entry])).values()
-      )
-      if (matches.length !== 1) {
-        return undefined
+      let match = entries[0]
+      for (let index = 1; index < entries.length; index += 1) {
+        const candidate = entries[index]
+        if (candidate.providerId !== match.providerId || candidate.modelId !== match.modelId) {
+          return undefined
+        }
+        match = candidate
       }
 
-      const [match] = matches
       return {
         providerId: match.providerId,
         modelId: match.modelId,
@@ -725,7 +761,7 @@ export class ModelCapabilities {
       }
     }
 
-    return this.findModelAcrossProvidersMatch(normalizeModelId(modelId))
+    return this.findModelAcrossProvidersMatch(normalizeModelIdText(modelId))
   }
 
   getCatalogCapabilitySnapshot(providerId: string, modelId: string): CatalogCapabilitySnapshot {

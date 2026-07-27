@@ -56,6 +56,24 @@
 - [x] Review the complete branch diff by severity and fix every finding.
 - [x] Confirm the final worktree is clean, commits are local, and no push occurred.
 
+## Post-implementation review hardening
+
+- [x] Unify canonical model-ID normalization and K3 request/fallback matching.
+- [x] Cover coding, free, qualified, and separator-normalized K3 aliases.
+- [x] Add deterministic origin identity for authoritative model families without arbitrary mirror
+      selection.
+- [x] Split request-facing and catalog-facing model IDs in resolved identity.
+- [x] Restore the known-provider model-config source boundary.
+- [x] Resolve route metadata without deriving full capability defaults first.
+- [x] Scope runtime reasoning-effort correction to K3.
+- [x] Require explicit request policy and reasoning portrait in provider-option mapping.
+- [x] Move Anthropic top-P behavior into the shared main-process request policy.
+- [x] Add provider-model reasoning prefilter and readonly internal cache view.
+- [x] Separate raw route metadata from derived provider-model cache state.
+- [x] Remove the obsolete Moonshot policy re-export.
+- [x] Run focused and full validation.
+- [x] Complete a new severity-ordered review and commit without pushing.
+
 ## Validation Result
 
 - Focused provider, agent, shared, contract, and renderer suites passed; the final provider-model
@@ -67,5 +85,14 @@
 - The refreshed provider database contains 175 providers and 7,728 models. Both Moonshot K3
   records retain `temperature: false` and the complete reasoning portrait required by this
   specification.
-- The final severity review found no remaining P0-P3 issue in the implementation or generated
-  resources.
+- Post-review focused provider, runtime, helper, renderer, agent, contract, and wire suites passed.
+  The final K3 wire matrix covers canonical, free, coding, coding-free, and separator-normalized
+  aliases.
+- The post-review full suite passed 637 files with 19 skipped; 6,674 tests passed with 241 skipped,
+  including the expanded seven-case reasoning wire suite.
+- Post-review `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, full type checking, and
+  `pnpm run build` passed. The build refreshed the expected ACP registry entry for Harn 0.10.41;
+  provider-db content remained stable.
+- The final severity-ordered review found and fixed a cache-state-dependent route metadata source,
+  replacing derived array scans with a compact raw O(1) route index shared by runtime and settings.
+  No remaining high, medium, or low-severity findings were identified.

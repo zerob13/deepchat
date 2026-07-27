@@ -17,6 +17,7 @@ import { ApiEndpointType } from '@shared/model'
 import {
   applyModelRequestPolicy,
   applyRequestParameterPolicy,
+  isKimiK3ModelId,
   resolveModelRequestPolicy,
   type ModelRequestPolicy
 } from '@shared/modelRequestPolicy'
@@ -751,10 +752,16 @@ type EffectiveGenerationRequest = {
 }
 
 function applyReasoningEffortCapability(
+  modelId: string,
   modelConfig: ModelConfig,
   capabilitySnapshot: ResolvedModelCapabilitySnapshot | undefined
 ): ModelConfig {
-  if (!capabilitySnapshot) {
+  if (
+    !capabilitySnapshot ||
+    (!isKimiK3ModelId(modelId) &&
+      !isKimiK3ModelId(capabilitySnapshot.identity.requestModelId) &&
+      !isKimiK3ModelId(capabilitySnapshot.identity.catalogModelId))
+  ) {
     return modelConfig
   }
 
@@ -799,6 +806,7 @@ function resolveEffectiveGenerationRequest(
     context.capabilitySnapshot?.requestPolicy ??
     resolveModelRequestPolicy(context.provider.id, modelId, modelConfig.reasoning)
   const effectiveModelConfig = applyReasoningEffortCapability(
+    modelId,
     applyModelRequestPolicy(modelConfig, requestPolicy),
     context.capabilitySnapshot
   )
@@ -810,10 +818,7 @@ function resolveEffectiveGenerationRequest(
     temperature = undefined
   }
 
-  let topP = applyRequestParameterPolicy(requestPolicy.topP, effectiveModelConfig.topP)
-  if (requestPolicy.topP.mode === 'passthrough' && !supportsTopPControlRuntime(context)) {
-    topP = undefined
-  }
+  const topP = applyRequestParameterPolicy(requestPolicy.topP, effectiveModelConfig.topP)
 
   return {
     modelConfig: effectiveModelConfig,
@@ -823,15 +828,6 @@ function resolveEffectiveGenerationRequest(
       ...(topP !== undefined ? { topP } : {})
     }
   }
-}
-
-function supportsTopPControlRuntime(context: AiSdkRuntimeContext): boolean {
-  const capabilityProviderId = resolveCapabilityProviderId(context)
-  if (capabilityProviderId === 'anthropic') {
-    return supportsTemperatureControlRuntime(context)
-  }
-
-  return true
 }
 
 function normalizeOpenAICompatibleBaseUrl(baseUrl: string | undefined): string {
@@ -1223,7 +1219,7 @@ async function buildPromptRuntime(
     modelId,
     modelConfig,
     requestPolicy,
-    reasoningPortrait: context.capabilitySnapshot?.reasoningPortrait,
+    reasoningPortrait: context.capabilitySnapshot?.reasoningPortrait ?? null,
     tools,
     messages: mappedMessages,
     cacheIntent

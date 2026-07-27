@@ -4,7 +4,7 @@ import {
   MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE,
   getMoonshotKimiTemperaturePolicy,
   resolveMoonshotKimiTemperaturePolicy
-} from '../../../src/shared/moonshotKimiPolicy'
+} from '../../../src/shared/modelRequestPolicy'
 import {
   applyModelRequestPolicy,
   isKimiK3ModelId,
@@ -57,7 +57,11 @@ describe('moonshot Kimi temperature policy', () => {
     ['new-api', 'moonshot/kimi-k3'],
     ['new-api', 'moonshotai/kimi-k3'],
     ['new-api', 'models/moonshotai/kimi-k3'],
-    ['new-api', 'MOONSHOTAI/KIMI-K3']
+    ['new-api', 'MOONSHOTAI/KIMI-K3'],
+    ['aihubmix', 'coding-kimi-k3'],
+    ['aihubmix', 'coding-kimi-k3-free'],
+    ['zenmux', 'moonshotai/kimi-k3-free'],
+    ['new-api', 'kimi_k3']
   ])(
     'recognizes exact K3 identities for %s including qualified aliases: %s',
     (providerId, modelId) => {
@@ -71,18 +75,21 @@ describe('moonshot Kimi temperature policy', () => {
     }
   )
 
-  it.each(['kimi-k3-preview', 'kimi-k30', 'not-kimi-k3-model', 'kimi-k3:thinking'])(
-    'does not apply K3 policy to substring or variant matches: %s',
-    (modelId) => {
-      expect(isKimiK3ModelId(modelId)).toBe(false)
-      expect(resolveModelRequestPolicy('new-api', modelId, false)).toEqual({
-        temperature: { mode: 'passthrough' },
-        topP: { mode: 'passthrough' },
-        reasoning: { mode: 'passthrough' },
-        legacyThinking: { mode: 'passthrough' }
-      })
-    }
-  )
+  it.each([
+    'kimi-k3-preview',
+    'kimi-k30',
+    'not-kimi-k3-model',
+    'kimi-k3:thinking',
+    'coding-kimi-k3-preview'
+  ])('does not apply K3 policy to substring or variant matches: %s', (modelId) => {
+    expect(isKimiK3ModelId(modelId)).toBe(false)
+    expect(resolveModelRequestPolicy('new-api', modelId, false)).toEqual({
+      temperature: { mode: 'passthrough' },
+      topP: { mode: 'passthrough' },
+      reasoning: { mode: 'passthrough' },
+      legacyThinking: { mode: 'passthrough' }
+    })
+  })
 
   it('applies K3 policy without mutating stored generation settings', () => {
     const stored = {

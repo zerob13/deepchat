@@ -1,5 +1,5 @@
 import logger from '@shared/logger'
-import type { ModelConfig, MODEL_META } from '@shared/types/provider'
+import type { ModelConfig, MODEL_META, ModelRouteConfig } from '@shared/types/provider'
 import {
   isNewApiEndpointType,
   ModelType,
@@ -22,6 +22,10 @@ export const PROVIDER_MODELS_DIR = 'provider_models'
 const PROVIDER_MODEL_CACHE_TTL_MS = 250
 
 type ModelConfigResolver = (modelId: string, providerId?: string) => ModelConfig
+type ProviderModelRouteSource = Pick<
+  MODEL_META,
+  'id' | 'endpointType' | 'supportedEndpointTypes' | 'type' | 'ownedBy'
+>
 
 type ModelStatusUpdater = (providerId: string, modelId: string, enabled: boolean) => void
 
@@ -66,7 +70,8 @@ export class ProviderModelHelper {
     string,
     {
       expiresAt: number
-      models: MODEL_META[]
+      models: readonly MODEL_META[]
+      routeModelsById: ReadonlyMap<string, ProviderModelRouteSource>
     }
   >()
 
@@ -131,7 +136,7 @@ export class ProviderModelHelper {
     }
   }
 
-  private cloneModels(models: MODEL_META[]): MODEL_META[] {
+  private cloneModels(models: readonly MODEL_META[]): MODEL_META[] {
     return models.map((model) => this.cloneModel(model))
   }
 
@@ -153,7 +158,10 @@ export class ProviderModelHelper {
     return normalizedModel
   }
 
-  private resolveNewApiEffectiveModelType(model: MODEL_META, config?: ModelConfig): ModelType {
+  private resolveNewApiEffectiveModelType(
+    model: ProviderModelRouteSource,
+    config?: ModelRouteConfig
+  ): ModelType {
     const userConfigType =
       config?.isUserDefined === true && isModelType(config.type) ? config.type : undefined
     if (userConfigType) {
@@ -259,7 +267,34 @@ export class ProviderModelHelper {
     return selectableEndpointTypes ? { ...model, selectableEndpointTypes } : model
   }
 
-  private getResolvedProviderModels(providerId: string): MODEL_META[] {
+  private resolveProviderModelRouteMetadata(
+    model: ProviderModelRouteSource,
+    providerId: string,
+    config?: ModelRouteConfig
+  ): ProviderModelRouteMetadata {
+    const endpointType = config?.endpointType ?? model.endpointType
+    const ownedBy = model.ownedBy ?? config?.ownedBy
+    const modelWithRoute = {
+      ...model,
+      endpointType,
+      ownedBy
+    }
+    const type =
+      providerId === 'new-api'
+        ? this.resolveNewApiEffectiveModelType(modelWithRoute, config)
+        : (config?.type ?? model.type)
+
+    return {
+      endpointType,
+      supportedEndpointTypes: model.supportedEndpointTypes
+        ? [...model.supportedEndpointTypes]
+        : undefined,
+      type,
+      ownedBy
+    }
+  }
+
+  private getResolvedProviderModels(providerId: string): readonly MODEL_META[] {
     const cached = this.providerModelsCache.get(providerId)
     if (cached && cached.expiresAt > Date.now()) {
       return cached.models
@@ -296,7 +331,21 @@ export class ProviderModelHelper {
 
     this.providerModelsCache.set(providerId, {
       expiresAt: Date.now() + PROVIDER_MODEL_CACHE_TTL_MS,
-      models: this.cloneModels(result)
+      models: this.cloneModels(result),
+      routeModelsById: new Map(
+        normalizedStoredModels.map((model) => [
+          model.id,
+          {
+            id: model.id,
+            endpointType: model.endpointType,
+            supportedEndpointTypes: model.supportedEndpointTypes
+              ? [...model.supportedEndpointTypes]
+              : undefined,
+            type: model.type,
+            ownedBy: model.ownedBy
+          }
+        ])
+      )
     })
 
     return result
@@ -309,14 +358,16 @@ export class ProviderModelHelper {
   getProviderModelRouteMetadata(
     providerId: string,
     modelId: string,
-    resolvedConfig?: ModelConfig
+    resolvedConfig?: ModelRouteConfig
   ): ProviderModelRouteMetadata | undefined {
-    const cached = this.providerModelsCache.get(providerId)
-    const hasFreshCache = Boolean(cached && cached.expiresAt > Date.now())
-    const cachedModel = hasFreshCache
-      ? cached?.models.find((model) => model.id === modelId)
-      : undefined
     const store = this.getProviderModelStore(providerId)
+    let cached = this.providerModelsCache.get(providerId)
+    if ((!cached || cached.expiresAt <= Date.now()) && !store.getProviderModel) {
+      this.getResolvedProviderModels(providerId)
+      cached = this.providerModelsCache.get(providerId)
+    }
+    const hasFreshCache = Boolean(cached && cached.expiresAt > Date.now())
+    const cachedModel = hasFreshCache ? cached?.routeModelsById.get(modelId) : undefined
     const rawStoredModel =
       hasFreshCache || !store.getProviderModel
         ? undefined
@@ -324,30 +375,11 @@ export class ProviderModelHelper {
     const storedModel =
       cachedModel ??
       (rawStoredModel
-        ? this.applyNewApiEndpointCompatibility(
-            this.applyResolvedModelConfig(
-              this.normalizeStoredModel(
-                rawStoredModel,
-                providerId,
-                'getProviderModelRouteMetadata'
-              ),
-              providerId,
-              resolvedConfig
-            ),
-            providerId
-          )
-        : store.getProviderModel
-          ? undefined
-          : this.getResolvedProviderModels(providerId).find((model) => model.id === modelId))
+        ? this.normalizeStoredModel(rawStoredModel, providerId, 'getProviderModelRouteMetadata')
+        : undefined)
     if (storedModel) {
-      return {
-        endpointType: storedModel.endpointType,
-        supportedEndpointTypes: storedModel.supportedEndpointTypes
-          ? [...storedModel.supportedEndpointTypes]
-          : undefined,
-        type: storedModel.type,
-        ownedBy: storedModel.ownedBy
-      }
+      const config = resolvedConfig ?? this.getModelConfig(modelId, providerId)
+      return this.resolveProviderModelRouteMetadata(storedModel, providerId, config)
     }
 
     const customModel = store.getProviderModel
@@ -358,14 +390,7 @@ export class ProviderModelHelper {
     }
 
     const config = resolvedConfig ?? this.getModelConfig(modelId, providerId)
-    return {
-      endpointType: config?.endpointType ?? customModel.endpointType,
-      supportedEndpointTypes: customModel.supportedEndpointTypes
-        ? [...customModel.supportedEndpointTypes]
-        : undefined,
-      type: customModel.type ?? config?.type,
-      ownedBy: customModel.ownedBy ?? config?.ownedBy
-    }
+    return this.resolveProviderModelRouteMetadata(customModel, providerId, config)
   }
 
   setProviderModels(providerId: string, models: MODEL_META[]): void {

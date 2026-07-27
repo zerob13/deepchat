@@ -541,11 +541,20 @@ const LegacyThinkingRequestParameterPolicySchema = z.discriminatedUnion('mode', 
 ])
 
 export const ModelCapabilitiesSchema = z.object({
-  identity: z.object({
-    providerId: z.string().min(1),
-    modelId: z.string().min(1),
-    catalogMatched: z.boolean()
-  }),
+  identity: z.discriminatedUnion('catalogMatched', [
+    z.object({
+      providerId: z.string().min(1),
+      requestModelId: z.string().min(1),
+      catalogMatched: z.literal(true),
+      catalogModelId: z.string().min(1)
+    }),
+    z.object({
+      providerId: z.string().min(1),
+      requestModelId: z.string().min(1),
+      catalogMatched: z.literal(false),
+      catalogModelId: z.null()
+    })
+  ]),
   requestPolicy: z.object({
     temperature: NumberRequestParameterPolicySchema,
     topP: NumberRequestParameterPolicySchema,

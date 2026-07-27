@@ -93,11 +93,20 @@ describe('AI SDK runtime', () => {
     temperatureCapability: boolean | undefined,
     overrides: Record<string, unknown> = {}
   ) => ({
-    identity: {
-      providerId,
-      modelId,
-      catalogMatched: temperatureCapability !== undefined
-    },
+    identity:
+      temperatureCapability !== undefined
+        ? {
+            providerId,
+            requestModelId: modelId,
+            catalogMatched: true,
+            catalogModelId: modelId
+          }
+        : {
+            providerId,
+            requestModelId: modelId,
+            catalogMatched: false,
+            catalogModelId: null
+          },
     requestPolicy: {
       temperature: { mode: 'passthrough' },
       topP: { mode: 'passthrough' },
@@ -1920,7 +1929,14 @@ describe('AI SDK runtime', () => {
         getCapabilityProviderId: vi.fn().mockReturnValue('anthropic'),
         supportsTemperatureControl: vi.fn().mockReturnValue(false)
       },
-      capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-8', false),
+      capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-8', false, {
+        requestPolicy: {
+          temperature: { mode: 'passthrough' },
+          topP: { mode: 'omit' },
+          reasoning: { mode: 'passthrough' },
+          legacyThinking: { mode: 'passthrough' }
+        }
+      }),
       defaultHeaders: {},
       emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
         tracePayloads.push(payload)
@@ -2217,6 +2233,82 @@ describe('AI SDK runtime', () => {
 
     const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, any>
     expect(request.providerOptions?.['new-api'] ?? {}).not.toHaveProperty('reasoningEffort')
+  })
+
+  it('does not inject or remove reasoning effort for non-K3 models', async () => {
+    mockCreateAiSdkProviderContext.mockReturnValue({
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      model: {},
+      endpoint: 'https://api.example.com/v1/chat/completions'
+    })
+    const effortContext = {
+      providerKind: 'openai-compatible',
+      provider: {
+        id: 'openai',
+        apiType: 'openai-compatible'
+      },
+      capabilitySnapshot: createCapabilitySnapshot('openai', 'future-effort-model', true, {
+        supportsReasoning: true,
+        reasoningPortrait: {
+          supported: true,
+          mode: 'effort',
+          effort: 'high',
+          effortOptions: ['low', 'high']
+        },
+        supportsReasoningEffort: true,
+        reasoningEffortDefault: 'high'
+      }),
+      providerSettings: createProviderSettings(),
+      defaultHeaders: {}
+    } as any
+
+    await runAiSdkGenerateText(
+      effortContext,
+      [],
+      'future-effort-model',
+      {
+        apiEndpoint: 'chat',
+        reasoning: true
+      } as any,
+      0.6,
+      1024
+    )
+
+    let request = mockGenerateText.mock.calls.at(-1)?.[0] as Record<string, any>
+    expect(request.providerOptions?.openai ?? {}).not.toHaveProperty('reasoningEffort')
+
+    const budgetContext = {
+      ...effortContext,
+      capabilitySnapshot: createCapabilitySnapshot('openai', 'future-budget-model', true, {
+        supportsReasoning: true,
+        reasoningPortrait: {
+          supported: true,
+          mode: 'budget',
+          budget: { min: 1024, default: 4096 }
+        },
+        supportsReasoningEffort: false,
+        reasoningEffortDefault: undefined
+      })
+    } as any
+
+    await runAiSdkGenerateText(
+      budgetContext,
+      [],
+      'future-budget-model',
+      {
+        apiEndpoint: 'chat',
+        reasoning: true,
+        reasoningEffort: 'high'
+      } as any,
+      0.6,
+      1024
+    )
+
+    request = mockGenerateText.mock.calls.at(-1)?.[0] as Record<string, any>
+    expect(request.providerOptions?.openai).toMatchObject({
+      reasoningEffort: 'high'
+    })
   })
 
   it('forces Moonshot Kimi temperature to 1.0 when reasoning is enabled', async () => {

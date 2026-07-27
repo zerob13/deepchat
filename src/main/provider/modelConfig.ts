@@ -1,5 +1,10 @@
 import { ApiEndpointType, ModelType, isNewApiEndpointType } from '@shared/model'
-import type { IModelConfig, ModelConfig, ModelConfigSource } from '@shared/types/provider'
+import type {
+  IModelConfig,
+  ModelConfig,
+  ModelConfigSource,
+  ModelRouteConfig
+} from '@shared/types/provider'
 import {
   DEFAULT_MODEL_TIMEOUT,
   DEFAULT_MODEL_CAPABILITY_FALLBACKS,
@@ -7,7 +12,7 @@ import {
   resolveModelContextLength,
   resolveModelFunctionCall
 } from '@shared/modelConfigDefaults'
-import { applyMoonshotKimiReasoningTemperaturePolicy } from '@shared/moonshotKimiPolicy'
+import { applyMoonshotKimiReasoningTemperaturePolicy } from '@shared/modelRequestPolicy'
 import { resolveVideoGenerationCompatType } from '@shared/videoGenerationSettings'
 import ElectronStore from 'electron-store'
 import {
@@ -24,6 +29,7 @@ import {
 import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
 import type { StoreLike } from '@/config/storeLike'
 import { resolveCapabilityIdentity } from './capabilityIdentity'
+import type { ResolvedCapabilityIdentity } from '@shared/types/model-capabilities'
 
 const SPECIAL_CONCAT_CHAR = '-_-'
 
@@ -403,11 +409,56 @@ export class ModelConfigHelper {
     this.cacheInitialized = true
   }
 
+  private getStoredConfigEntry(modelId: string, providerId?: string): IModelConfig | undefined {
+    if (!providerId) {
+      return undefined
+    }
+
+    const normalizedModelId = modelId.toLowerCase().replace(/^models\//, '')
+    const normalizedProviderId = providerId.toLowerCase()
+    const originalCacheKey = this.generateCacheKey(providerId, modelId)
+    const originalEntry = this.memoryCache.get(originalCacheKey)
+    if (originalEntry?.config) {
+      return originalEntry
+    }
+
+    const normalizedCacheKey = this.generateCacheKey(normalizedProviderId, normalizedModelId)
+    if (normalizedCacheKey !== originalCacheKey) {
+      const normalizedEntry = this.memoryCache.get(normalizedCacheKey)
+      if (normalizedEntry?.config) {
+        return normalizedEntry
+      }
+    }
+
+    return undefined
+  }
+
+  getModelRouteConfig(modelId: string, providerId?: string): ModelRouteConfig {
+    this.initializeCache()
+    const entry = this.getStoredConfigEntry(modelId, providerId)
+    const config = entry?.config
+    if (!config) {
+      return {}
+    }
+
+    return {
+      endpointType: config.endpointType,
+      ownedBy: config.ownedBy,
+      type: config.type,
+      isUserDefined: entry.source === 'user' || config.isUserDefined === true
+    }
+  }
+
   /**
    * Resolve model configuration from user intent, the authoritative capability identity,
    * provider-managed cache, or safe defaults in that order.
    */
-  getModelConfig(modelId: string, providerId?: string, capabilityProviderId?: string): ModelConfig {
+  getModelConfig(
+    modelId: string,
+    providerId?: string,
+    capabilityProviderId?: string,
+    resolvedIdentity?: ResolvedCapabilityIdentity
+  ): ModelConfig {
     this.initializeCache()
 
     let storedConfig: ModelConfig | null = null
@@ -419,26 +470,10 @@ export class ModelConfigHelper {
     const normModelId = normModelIdRaw ? normModelIdRaw.replace(/^models\//, '') : normModelIdRaw
     const normProviderId = providerId ? providerId.toLowerCase() : providerId
 
-    if (providerId) {
-      const cacheKey = this.generateCacheKey(providerId, modelId)
-      const cachedEntry = this.memoryCache.has(cacheKey)
-        ? (this.memoryCache.get(cacheKey) as IModelConfig | undefined)
-        : undefined
-
-      if (cachedEntry?.config) {
-        storedConfig = cachedEntry.config
-        storedSource = cachedEntry.source ?? (cachedEntry.config.isUserDefined ? 'user' : undefined)
-      } else if (normProviderId && normModelId) {
-        // 二次尝试：小写键（兼容历史大小写不一致的存储键）
-        const normKey = this.generateCacheKey(normProviderId, normModelId)
-        const normCached = this.memoryCache.has(normKey)
-          ? (this.memoryCache.get(normKey) as IModelConfig | undefined)
-          : undefined
-        if (normCached?.config) {
-          storedConfig = normCached.config
-          storedSource = normCached.source ?? (normCached.config.isUserDefined ? 'user' : undefined)
-        }
-      }
+    const cachedEntry = this.getStoredConfigEntry(modelId, providerId)
+    if (cachedEntry?.config) {
+      storedConfig = cachedEntry.config
+      storedSource = cachedEntry.source ?? (cachedEntry.config.isUserDefined ? 'user' : undefined)
     }
 
     const isUserConfig = storedSource === 'user'
@@ -454,14 +489,29 @@ export class ModelConfigHelper {
     let finalConfig: ModelConfig | null = null
 
     if (normProviderId && normModelId) {
-      const identity = resolveCapabilityIdentity({
-        providerId: normProviderId,
-        modelId,
-        explicitProviderId: capabilityProviderId
-      })
-      const match = identity.catalogMatched
-        ? modelCapabilities.getProviderCapabilityModelMatch(identity.providerId, identity.modelId)
-        : undefined
+      let match: CapabilityModelMatch | undefined
+      if (resolvedIdentity?.catalogMatched) {
+        match = modelCapabilities.getProviderCapabilityModelMatch(
+          resolvedIdentity.providerId,
+          resolvedIdentity.catalogModelId
+        )
+      } else if (!resolvedIdentity) {
+        if (!capabilityProviderId && modelCapabilities.hasProvider(normProviderId)) {
+          match = modelCapabilities.getProviderCapabilityModelMatch(normProviderId, modelId)
+        } else {
+          const identity = resolveCapabilityIdentity({
+            providerId: normProviderId,
+            modelId,
+            explicitProviderId: capabilityProviderId
+          })
+          if (identity.catalogMatched) {
+            match = modelCapabilities.getProviderCapabilityModelMatch(
+              identity.providerId,
+              identity.catalogModelId
+            )
+          }
+        }
+      }
       if (match) {
         finalConfig = this.buildConfigFromProviderModel(match)
       }

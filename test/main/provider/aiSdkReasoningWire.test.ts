@@ -31,76 +31,80 @@ describe('AI SDK reasoning wire payloads', () => {
     vi.unstubAllGlobals()
   })
 
-  it('emits K3 reasoning effort while omitting unsupported sampling and legacy thinking', async () => {
-    const body = await captureRequestBody(() =>
-      runAiSdkGenerateText(
-        {
-          providerKind: 'openai-compatible',
-          provider: {
-            id: 'new-api',
-            name: 'New API',
-            apiType: 'new-api',
-            apiKey: 'test-key',
-            baseUrl: 'https://new-api.example.com/v1',
-            enable: true
-          } as any,
-          capabilitySnapshot: {
-            identity: {
-              providerId: 'moonshot',
-              modelId: 'kimi-k3',
-              catalogMatched: true
+  it.each(['kimi-k3', 'kimi-k3-free', 'coding-kimi-k3', 'coding-kimi-k3-free', 'kimi_k3'])(
+    'emits K3 reasoning effort while omitting unsupported fields for %s',
+    async (modelId) => {
+      const body = await captureRequestBody(() =>
+        runAiSdkGenerateText(
+          {
+            providerKind: 'openai-compatible',
+            provider: {
+              id: 'new-api',
+              name: 'New API',
+              apiType: 'new-api',
+              apiKey: 'test-key',
+              baseUrl: 'https://new-api.example.com/v1',
+              enable: true
+            } as any,
+            capabilitySnapshot: {
+              identity: {
+                providerId: 'moonshot',
+                requestModelId: modelId,
+                catalogMatched: true,
+                catalogModelId: 'kimi-k3'
+              },
+              requestPolicy: {
+                temperature: { mode: 'omit' },
+                topP: { mode: 'omit' },
+                reasoning: { mode: 'fixed', value: true },
+                legacyThinking: { mode: 'omit' }
+              },
+              supportsAudioInput: false,
+              supportsReasoning: true,
+              reasoningPortrait: {
+                supported: true,
+                defaultEnabled: true,
+                mode: 'effort',
+                effort: 'max',
+                effortOptions: ['low', 'high', 'max']
+              },
+              thinkingBudgetRange: {},
+              supportsSearch: false,
+              searchDefaults: {},
+              temperatureCapability: false,
+              supportsTemperatureControl: false,
+              supportsReasoningEffort: true,
+              reasoningEffortDefault: 'max',
+              supportsVerbosity: false,
+              verbosityDefault: undefined
             },
-            requestPolicy: {
-              temperature: { mode: 'omit' },
-              topP: { mode: 'omit' },
-              reasoning: { mode: 'fixed', value: true },
-              legacyThinking: { mode: 'omit' }
-            },
-            supportsAudioInput: false,
-            supportsReasoning: true,
-            reasoningPortrait: {
-              supported: true,
-              defaultEnabled: true,
-              mode: 'effort',
-              effort: 'max',
-              effortOptions: ['low', 'high', 'max']
-            },
-            thinkingBudgetRange: {},
-            supportsSearch: false,
-            searchDefaults: {},
-            temperatureCapability: false,
-            supportsTemperatureControl: false,
-            supportsReasoningEffort: true,
-            reasoningEffortDefault: 'max',
-            supportsVerbosity: false,
-            verbosityDefault: undefined
+            providerSettings,
+            defaultHeaders: {}
           },
-          providerSettings,
-          defaultHeaders: {}
-        },
-        [{ role: 'user', content: 'Hello' }],
-        'kimi-k3',
-        {
-          apiEndpoint: 'chat',
-          reasoning: false,
-          reasoningEffort: 'medium',
-          temperature: 0.6,
-          topP: 0.8,
-          functionCall: false
-        } as any,
-        0.6,
-        1024
+          [{ role: 'user', content: 'Hello' }],
+          modelId,
+          {
+            apiEndpoint: 'chat',
+            reasoning: false,
+            reasoningEffort: 'medium',
+            temperature: 0.6,
+            topP: 0.8,
+            functionCall: false
+          } as any,
+          0.6,
+          1024
+        )
       )
-    )
 
-    expect(body.reasoning_effort).toBe('max')
-    expect(body).not.toHaveProperty('temperature')
-    expect(body).not.toHaveProperty('top_p')
-    expect(body).not.toHaveProperty('n')
-    expect(body).not.toHaveProperty('presence_penalty')
-    expect(body).not.toHaveProperty('frequency_penalty')
-    expect(body).not.toHaveProperty('thinking')
-  })
+      expect(body.reasoning_effort).toBe('max')
+      expect(body).not.toHaveProperty('temperature')
+      expect(body).not.toHaveProperty('top_p')
+      expect(body).not.toHaveProperty('n')
+      expect(body).not.toHaveProperty('presence_penalty')
+      expect(body).not.toHaveProperty('frequency_penalty')
+      expect(body).not.toHaveProperty('thinking')
+    }
+  )
 
   it('emits Grok Mini reasoning effort through the standard adapter option', async () => {
     const body = await captureRequestBody(() =>

@@ -89,12 +89,17 @@ const setup = async (options: SetupOptions) => {
       Promise.resolve({
         identity: {
           providerId: options.capabilityProviderId ?? options.providerId,
-          modelId,
-          catalogMatched: false
+          requestModelId: modelId,
+          catalogMatched: false,
+          catalogModelId: null
         },
         requestPolicy: options.requestPolicy ?? {
           temperature: { mode: 'passthrough' },
-          topP: { mode: 'passthrough' },
+          topP:
+            (options.capabilityProviderId ?? options.providerId) === 'anthropic' &&
+            options.temperatureCapability === false
+              ? { mode: 'omit' }
+              : { mode: 'passthrough' },
           reasoning: { mode: 'passthrough' },
           legacyThinking: { mode: 'passthrough' }
         },

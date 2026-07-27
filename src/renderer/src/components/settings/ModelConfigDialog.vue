@@ -555,7 +555,7 @@ import {
   MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE,
   getMoonshotKimiTemperaturePolicy,
   resolveMoonshotKimiTemperaturePolicy
-} from '@shared/moonshotKimiPolicy'
+} from '@shared/modelRequestPolicy'
 import {
   createPassthroughModelRequestPolicy,
   type ModelRequestPolicy
@@ -1652,11 +1652,7 @@ const showTemperatureControl = computed(
     (supportsTemperatureControl.value || isMoonshotKimiTemperatureLocked.value) &&
     !supportsReasoningEffort.value
 )
-const supportsTopPControl = computed(
-  () =>
-    capabilityRequestPolicy.value.topP.mode !== 'omit' &&
-    (capabilityProviderId.value !== 'anthropic' || capabilitySupportsTemperature.value !== false)
-)
+const supportsTopPControl = computed(() => capabilityRequestPolicy.value.topP.mode !== 'omit')
 const showTopPControl = computed(
   () => !showOpenAIMediaGenerationSettings.value && supportsTopPControl.value
 )

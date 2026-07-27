@@ -1,3 +1,5 @@
+import { normalizeCanonicalModelId, normalizeModelIdText } from './modelId'
+
 const THINKING_SUFFIX = ':thinking'
 const FIXED_TEMPERATURE_MODELS = new Set([
   'kimi-k2.5',
@@ -50,25 +52,16 @@ export const createPassthroughModelRequestPolicy = (): ModelRequestPolicy => ({
   legacyThinking: passthrough()
 })
 
-const normalizeModelId = (modelId: string | null | undefined): string =>
-  modelId
-    ?.trim()
-    .toLowerCase()
-    .replace(/^models\//, '') ?? ''
-
-const getUnqualifiedModelId = (modelId: string): string =>
-  modelId.includes('/') ? modelId.slice(modelId.lastIndexOf('/') + 1) : modelId
-
 export const isKimiK3ModelId = (modelId: string | null | undefined): boolean => {
-  const normalizedModelId = normalizeModelId(modelId)
-  return Boolean(normalizedModelId && getUnqualifiedModelId(normalizedModelId) === 'kimi-k3')
+  const canonicalModelId = normalizeCanonicalModelId(modelId)
+  return /^(?:coding-)?kimi-k3(?:-free)?$/.test(canonicalModelId)
 }
 
 export const getMoonshotKimiTemperaturePolicy = (
   _providerId: string | null | undefined,
   modelId: string | null | undefined
 ): MoonshotKimiTemperaturePolicy | null => {
-  const normalizedModelId = normalizeModelId(modelId)
+  const normalizedModelId = normalizeModelIdText(modelId)
   if (!normalizedModelId) {
     return null
   }

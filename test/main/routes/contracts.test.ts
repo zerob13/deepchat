@@ -1530,8 +1530,9 @@ describe('main kernel contracts', () => {
         capabilities: {
           identity: {
             providerId: 'openai',
-            modelId: 'gpt-5.4',
-            catalogMatched: true
+            requestModelId: 'gpt-5.4',
+            catalogMatched: true,
+            catalogModelId: 'gpt-5.4'
           },
           requestPolicy: {
             temperature: { mode: 'passthrough' },
@@ -1557,8 +1558,9 @@ describe('main kernel contracts', () => {
       capabilities: {
         identity: {
           providerId: 'openai',
-          modelId: 'gpt-5.4',
-          catalogMatched: true
+          requestModelId: 'gpt-5.4',
+          catalogMatched: true,
+          catalogModelId: 'gpt-5.4'
         },
         requestPolicy: {
           temperature: { mode: 'passthrough' },

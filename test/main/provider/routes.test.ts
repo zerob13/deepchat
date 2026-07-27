@@ -34,8 +34,9 @@ describe('Provider routes', () => {
     const snapshot = {
       identity: {
         providerId: 'anthropic',
-        modelId: 'claude-opus-4-8',
-        catalogMatched: true
+        requestModelId: 'claude-opus-4-8',
+        catalogMatched: true,
+        catalogModelId: 'claude-opus-4-8'
       },
       requestPolicy: {
         temperature: { mode: 'passthrough' },

@@ -1,15 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const {
-  mockGetThinkingBudgetRange,
-  mockGetModel,
-  mockGetReasoningPortrait,
-  mockSupportsReasoning
-} = vi.hoisted(() => ({
-  mockGetThinkingBudgetRange: vi.fn().mockReturnValue({}),
+const { mockGetModel, mockGetReasoningPortrait } = vi.hoisted(() => ({
   mockGetModel: vi.fn().mockReturnValue(undefined),
-  mockGetReasoningPortrait: vi.fn().mockReturnValue(null),
-  mockSupportsReasoning: vi.fn().mockReturnValue(false)
+  mockGetReasoningPortrait: vi.fn().mockReturnValue(null)
 }))
 
 vi.mock('@/provider/providerDbLoader', () => ({
@@ -19,16 +12,30 @@ vi.mock('@/provider/providerDbLoader', () => ({
   }
 }))
 
-vi.mock('@/provider/modelCapabilities', () => ({
-  modelCapabilities: {
-    getThinkingBudgetRange: mockGetThinkingBudgetRange,
-    getReasoningPortrait: mockGetReasoningPortrait,
-    supportsReasoning: mockSupportsReasoning
-  }
-}))
-
-import { buildProviderOptions } from '@/provider/aiSdk/providerOptionsMapper'
+import {
+  buildProviderOptions as buildProviderOptionsImpl,
+  type BuildProviderOptionsParams
+} from '@/provider/aiSdk/providerOptionsMapper'
 import { OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER } from '@/provider/promptCacheStrategy'
+import { resolveModelRequestPolicy } from '@shared/modelRequestPolicy'
+
+type ProviderOptionsTestParams = Omit<
+  BuildProviderOptionsParams,
+  'requestPolicy' | 'reasoningPortrait'
+> &
+  Partial<Pick<BuildProviderOptionsParams, 'requestPolicy' | 'reasoningPortrait'>>
+
+const buildProviderOptions = (params: ProviderOptionsTestParams) =>
+  buildProviderOptionsImpl({
+    ...params,
+    requestPolicy:
+      params.requestPolicy ??
+      resolveModelRequestPolicy(params.providerId, params.modelId, params.modelConfig.reasoning),
+    reasoningPortrait:
+      params.reasoningPortrait !== undefined
+        ? params.reasoningPortrait
+        : mockGetReasoningPortrait(params.capabilityProviderId, params.modelId)
+  })
 
 describe('AI SDK provider options', () => {
   const baseModelConfig = {
@@ -39,10 +46,8 @@ describe('AI SDK provider options', () => {
   }
 
   beforeEach(() => {
-    mockGetThinkingBudgetRange.mockReturnValue({})
     mockGetModel.mockReturnValue(undefined)
     mockGetReasoningPortrait.mockReturnValue(null)
-    mockSupportsReasoning.mockReturnValue(false)
   })
 
   it('limits OpenAI prompt cache keys to conversation requests', () => {

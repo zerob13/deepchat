@@ -551,6 +551,47 @@ describe('ProviderModelHelper cache', () => {
     expect(getModelConfig).not.toHaveBeenCalled()
   })
 
+  it('keeps cached route metadata independent from derived model defaults', async () => {
+    const { ProviderModelHelper } = await import('../../../src/main/provider/providerModelHelper')
+    const getModelConfig = vi.fn(() =>
+      createModelConfig({ endpointType: 'anthropic', ownedBy: 'derived-owner' })
+    )
+    const helper = new ProviderModelHelper({
+      userDataPath: 'C:/mock-user-data',
+      getModelConfig,
+      setModelStatus: vi.fn(),
+      deleteModelStatus: vi.fn(),
+      publishEvent: publishDeepchatEventMock
+    })
+    const providerModel = {
+      ...createBaseModel('new-api', 'aggregated-model'),
+      endpointType: undefined,
+      ownedBy: undefined,
+      supportedEndpointTypes: ['openai', 'anthropic'] as const
+    }
+    helper.setStoreFactory(() => ({
+      store: { models: [providerModel], custom_models: [] },
+      get<TValue = unknown>(key: string, defaultValue?: TValue): TValue | undefined {
+        if (key === 'models') return [providerModel] as TValue
+        return defaultValue
+      },
+      set: vi.fn(),
+      delete: vi.fn()
+    }))
+
+    expect(helper.getProviderModels('new-api')[0]).toMatchObject({
+      endpointType: 'anthropic',
+      ownedBy: 'derived-owner'
+    })
+    expect(helper.getProviderModelRouteMetadata('new-api', providerModel.id, {})).toEqual({
+      endpointType: undefined,
+      supportedEndpointTypes: ['openai', 'anthropic'],
+      type: ModelType.Chat,
+      ownedBy: undefined
+    })
+    expect(getModelConfig).toHaveBeenCalledOnce()
+  })
+
   it('uses a fresh provider cache as negative evidence before reading a custom model', async () => {
     const { ProviderModelHelper } = await import('../../../src/main/provider/providerModelHelper')
     const helper = new ProviderModelHelper({

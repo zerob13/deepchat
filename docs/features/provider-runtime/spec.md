@@ -53,6 +53,11 @@ Capability identity is resolved in the main process and passed through the provi
 Renderer code consumes typed capability snapshots and does not reproduce provider routing rules.
 Per-model aggregator matches are derived request state and are not persisted in provider or model
 configuration. Provider-level `capabilityProviderId` remains an explicit compatibility override.
+Resolved identity keeps the request-facing model ID separate from the optional matched catalog
+model ID. Recognized origin families may select their authoritative provider-db owner, but ambiguous
+families never select a mirror by provider iteration order. Known provider profiles keep
+provider-local model configuration defaults; cross-provider defaults are limited to explicit
+overrides and profiles absent from provider-db, such as New API.
 
 Generation controls use an effective request policy that can pass through, fix, or omit a
 parameter. Stored model and Session values remain user intent; policy is applied at the UI and wire

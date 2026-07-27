@@ -678,8 +678,9 @@ function createMockProviderSettings() {
     return {
       identity: {
         providerId: settings.getCapabilityProviderId(providerId, modelId),
-        modelId,
-        catalogMatched: true
+        requestModelId: modelId,
+        catalogMatched: true,
+        catalogModelId: modelId
       },
       requestPolicy: {
         temperature: hasFixedKimiTemperature

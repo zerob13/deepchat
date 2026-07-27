@@ -97,6 +97,36 @@ No database migration is required. Existing provider-level `capabilityProviderId
 valid explicit overrides. Existing capability route response fields remain during migration so
 older renderer call sites and tests can be updated incrementally.
 
+## Post-implementation review hardening
+
+Use one shared canonical model-ID normalizer and K3 matcher for request policy and temporary
+reasoning metadata. Recognize the catalog's current coding and free K3 aliases without accepting
+arbitrary substring matches.
+
+Extend Phase 2 with explicit model-origin rules for provider-db families that have an authoritative
+owner. Do not reinstate portrait-registry provider sorting. OpenAI GPT-OSS receives only its
+well-established reasoning-supported fallback when the official OpenAI catalog lacks the model;
+sampling, limits, tools, and richer portrait fields remain unknown.
+
+Replace the overloaded identity model ID with a discriminated request/catalog identity. Use the
+request ID for wire policy and the catalog ID only for provider-db reads.
+
+Split route-only persisted configuration reads from complete derived model configuration. Runtime
+selects the route and capability identity first, then derives complete model defaults from that
+identity. Settings capability queries use the same route-only path. Keep known provider model
+configuration strict and permit cross-provider identity defaults only for explicit overrides or
+providers absent from provider-db.
+
+Scope runtime reasoning-effort correction to K3. Make provider option policy and portrait inputs
+required, replace DashScope's hidden catalog reads with the supplied portrait, and encode
+Anthropic top-P omission in the main-process request policy so renderer and runtime share the same
+rule.
+
+Short-circuit provider model-list capability mapping when stored reasoning is already true or no
+reasoning candidate exists. Mark the internal provider-model cache view readonly and keep cloning
+at the public mutation boundary. Keep a compact raw route-metadata index beside the derived model
+snapshot so route lookup remains constant-time and cannot change according to cache warmth.
+
 ## Review and commit slices
 
 1. Write and review the architecture SDD and maintained provider runtime contract.
@@ -120,7 +150,11 @@ Run focused tests after each slice:
 - `test/main/provider/aiSdkRuntime.test.ts`
 - `test/main/provider/aiSdkProviderOptionsMapper.test.ts`
 - real OpenAI-compatible provider factory request-capture tests
-- `test/main/shared/moonshotKimiPolicy.test.ts`
+- `test/main/shared/modelRequestPolicy.test.ts`
+- canonical K3 coding/free alias tests
+- known-provider model-config source-boundary tests
+- GLM, MiniMax, GPT-OSS, and ambiguous-family identity tests
+- non-K3 reasoning-effort compatibility tests
 - ChatStatusBar and ModelConfigDialog renderer tests
 - agent generation settings tests
 

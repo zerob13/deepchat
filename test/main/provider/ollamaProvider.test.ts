@@ -140,7 +140,9 @@ describe('OllamaProvider.fetchModels', () => {
     expect(runtimeContext.provider.baseUrl).toBe('http://localhost:11434/v1')
     expect(runtimeContext.capabilitySnapshot.identity).toMatchObject({
       providerId: 'ollama',
-      modelId: 'local-custom-model'
+      requestModelId: 'local-custom-model',
+      catalogMatched: false,
+      catalogModelId: null
     })
   })
 

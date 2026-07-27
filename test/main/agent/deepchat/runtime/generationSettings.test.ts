@@ -12,8 +12,9 @@ import { resolveProviderModelRuntimeFacts } from '@/agent/deepchat/runtime/provi
 const createCapabilitySnapshot = () => ({
   identity: {
     providerId: 'openai',
-    modelId: 'gpt-4o',
-    catalogMatched: false
+    requestModelId: 'gpt-4o',
+    catalogMatched: false,
+    catalogModelId: null
   },
   requestPolicy: {
     temperature: { mode: 'passthrough' as const },
@@ -105,8 +106,9 @@ describe('generation settings policy', () => {
       ...createCapabilitySnapshot(),
       identity: {
         providerId: 'moonshot',
-        modelId: 'kimi-k3',
-        catalogMatched: true
+        requestModelId: 'kimi-k3',
+        catalogMatched: true,
+        catalogModelId: 'kimi-k3'
       },
       requestPolicy: {
         temperature: { mode: 'omit' },

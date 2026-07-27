@@ -37,7 +37,12 @@ function createProviderSettings(): ProviderModelResolutionPort {
       type: ModelType.Chat
     }),
     getCapabilitySnapshot: vi.fn((providerId: string, modelId: string) => ({
-      identity: { providerId, modelId, catalogMatched: false },
+      identity: {
+        providerId,
+        requestModelId: modelId,
+        catalogMatched: false,
+        catalogModelId: null
+      },
       requestPolicy: {
         temperature: { mode: 'passthrough' },
         topP: { mode: 'passthrough' },

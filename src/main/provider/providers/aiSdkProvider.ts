@@ -29,6 +29,7 @@ import type {
   LLM_PROVIDER,
   MODEL_META,
   ModelConfig,
+  ModelRouteConfig,
   ProviderStreamOptions,
   VERTEX_PROVIDER
 } from '@shared/types/provider'
@@ -110,6 +111,11 @@ type ProviderRequestOptions = {
   timeout?: number
   signal?: AbortSignal
 }
+
+type StoredModelRouteMetadata = Pick<
+  MODEL_META,
+  'endpointType' | 'supportedEndpointTypes' | 'type' | 'ownedBy'
+>
 
 export interface AiSdkGenerateTextOptions extends ProviderGenerateTextOptions {
   systemPrompt?: string
@@ -265,11 +271,24 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
+  private getStoredModelRouteMetadata(
+    modelId: string,
+    routeConfig: ModelRouteConfig
+  ): StoredModelRouteMetadata | undefined {
+    return (
+      this.providerSettings.getProviderModelRouteMetadata?.(
+        this.provider.id,
+        modelId,
+        routeConfig
+      ) ?? this.getStoredModel(modelId)
+    )
+  }
+
   private resolveCapabilityIdentity(
     modelId: string,
     endpointType: RouteDecision['endpointType'] | undefined,
-    modelConfig: ModelConfig,
-    storedModel: MODEL_META | undefined
+    modelConfig: ModelRouteConfig,
+    storedModel: StoredModelRouteMetadata | undefined
   ): ResolvedCapabilityIdentity {
     const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
     return resolveModelCapabilityIdentity({
@@ -283,14 +302,14 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private resolveCapabilityIdentityFromProviderState(
     modelId: string,
-    endpointType?: RouteDecision['endpointType'],
-    resolvedModelConfig?: ModelConfig
+    endpointType?: RouteDecision['endpointType']
   ): ResolvedCapabilityIdentity {
+    const routeModelConfig = this.getRouteModelConfig(modelId)
     return this.resolveCapabilityIdentity(
       modelId,
       endpointType,
-      resolvedModelConfig ?? this.getProviderModelConfig(modelId),
-      this.getStoredModel(modelId)
+      routeModelConfig,
+      this.getStoredModelRouteMetadata(modelId, routeModelConfig)
     )
   }
 
@@ -302,7 +321,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       return 'anthropic'
     }
     if (endpointType === 'gemini') {
-      return 'gemini'
+      return 'google'
     }
     return identity.providerId
   }
@@ -313,8 +332,8 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private resolveNewApiEndpointType(
     modelId: string,
-    modelConfig: ModelConfig,
-    storedModel: MODEL_META | undefined
+    modelConfig: ModelRouteConfig,
+    storedModel: StoredModelRouteMetadata | undefined
   ): NewApiEndpointType {
     if (isNewApiEndpointType(modelConfig.endpointType)) {
       return modelConfig.endpointType
@@ -343,9 +362,9 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  private buildRouteDecision(modelId: string, modelConfig: ModelConfig): RouteDecision {
+  private buildRouteDecision(modelId: string, modelConfig: ModelRouteConfig): RouteDecision {
     const strategy = this.getRouteStrategy()
-    const storedModel = this.getStoredModel(modelId)
+    const storedModel = this.getStoredModelRouteMetadata(modelId, modelConfig)
 
     if (strategy === 'grok' && modelId.startsWith('grok-2-image')) {
       return {
@@ -509,9 +528,18 @@ export class AiSdkProvider extends BaseLLMProvider {
   }
 
   private resolveRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
-    const resolvedModelConfig = this.getResolvedModelConfig(modelId, modelConfig)
+    const routeModelConfig = this.getRouteModelConfig(modelId, modelConfig)
+    const decision = this.buildRouteDecision(modelId, routeModelConfig)
+    const resolvedModelConfig = {
+      ...this.providerSettings.getModelConfig(
+        modelId,
+        this.provider.id,
+        decision.capabilityIdentity
+      ),
+      ...modelConfig
+    }
     return {
-      ...this.buildRouteDecision(modelId, resolvedModelConfig),
+      ...decision,
       resolvedModelConfig
     }
   }
@@ -535,9 +563,12 @@ export class AiSdkProvider extends BaseLLMProvider {
     return base
   }
 
-  private getResolvedModelConfig(modelId: string, modelConfig?: ModelConfig): ModelConfig {
+  private getRouteModelConfig(modelId: string, modelConfig?: ModelConfig): ModelRouteConfig {
+    const routeConfig = this.providerSettings.getModelRouteConfig
+      ? this.providerSettings.getModelRouteConfig(modelId, this.provider.id)
+      : this.providerSettings.getModelConfig(modelId, this.provider.id)
     return {
-      ...this.providerSettings.getModelConfig(modelId, this.provider.id),
+      ...routeConfig,
       ...modelConfig
     }
   }
@@ -548,7 +579,12 @@ export class AiSdkProvider extends BaseLLMProvider {
     modelConfig?: ModelConfig
   ): ModelConfig {
     return {
-      ...(decision.resolvedModelConfig ?? this.getResolvedModelConfig(modelId)),
+      ...(decision.resolvedModelConfig ??
+        this.providerSettings.getModelConfig(
+          modelId,
+          this.provider.id,
+          decision.capabilityIdentity
+        )),
       ...modelConfig,
       ...decision.modelConfigPatch
     }
@@ -708,11 +744,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     const resolvedModelConfig = this.getModelConfigForDecision(modelId, decision, modelConfig)
     const capabilityIdentity =
       decision.capabilityIdentity ??
-      this.resolveCapabilityIdentityFromProviderState(
-        modelId,
-        decision.endpointType,
-        resolvedModelConfig
-      )
+      this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
     const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity, {
       reasoning: resolvedModelConfig.reasoning
     })
@@ -2158,11 +2190,11 @@ export class AiSdkProvider extends BaseLLMProvider {
         })
         const capabilityModel = modelCapabilities.getProviderCapabilityModelMatch(
           capabilityIdentity.providerId,
-          capabilityIdentity.modelId
+          capabilityIdentity.catalogModelId ?? capabilityIdentity.requestModelId
         )?.model
         const catalogCapabilities = modelCapabilities.getCatalogCapabilitySnapshot(
           capabilityIdentity.providerId,
-          capabilityIdentity.modelId
+          capabilityIdentity.catalogModelId ?? capabilityIdentity.requestModelId
         )
         const capabilityReasoning = catalogCapabilities.supportsReasoning
         const capabilityVision = capabilityModel

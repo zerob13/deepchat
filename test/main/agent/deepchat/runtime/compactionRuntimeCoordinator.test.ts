@@ -50,7 +50,12 @@ function createProviderSettings(): ProviderModelResolutionPort {
       type: ModelType.Chat
     }),
     getCapabilitySnapshot: vi.fn((providerId: string, modelId: string) => ({
-      identity: { providerId, modelId, catalogMatched: false },
+      identity: {
+        providerId,
+        requestModelId: modelId,
+        catalogMatched: false,
+        catalogModelId: null
+      },
       requestPolicy: {
         temperature: { mode: 'passthrough' },
         topP: { mode: 'passthrough' },
@@ -359,7 +364,10 @@ describe('CompactionRuntimeCoordinator', () => {
       expect.objectContaining({
         modelConfig: expect.objectContaining({ contextLength: 128_000 }),
         capabilitySnapshot: expect.objectContaining({
-          identity: expect.objectContaining({ providerId: 'openai', modelId: 'gpt-5' })
+          identity: expect.objectContaining({
+            providerId: 'openai',
+            requestModelId: 'gpt-5'
+          })
         })
       })
     )

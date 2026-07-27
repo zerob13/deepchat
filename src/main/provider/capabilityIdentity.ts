@@ -12,6 +12,7 @@ import type {
 } from '@shared/types/model-capabilities'
 import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
 import { resolveModelRequestPolicy } from '@shared/modelRequestPolicy'
+import { normalizeCanonicalModelId } from '@shared/modelId'
 
 export type CapabilityIdentityInput = {
   providerId: string
@@ -74,6 +75,17 @@ const getNamespaceProviderIds = (modelId: string): string[] => {
       moonshot: 'moonshot',
       moonshotai: 'moonshot',
       kimi: 'moonshot',
+      zhipuai: 'zhipuai',
+      zai: 'zhipuai',
+      'z-ai': 'zhipuai',
+      'zai-org': 'zhipuai',
+      minimax: 'minimax',
+      minimaxai: 'minimax',
+      stepfun: 'stepfun',
+      'stepfun-ai': 'stepfun',
+      mistral: 'mistral',
+      mistralai: 'mistral',
+      cohere: 'cohere',
       xai: 'xai',
       'x-ai': 'xai',
       deepseek: 'deepseek',
@@ -106,6 +118,21 @@ const getOwnerProviderIds = (ownedBy: string | undefined): string[] => {
   if (owner.includes('moonshot') || owner.includes('kimi')) {
     addUniqueProviderId(providerIds, 'moonshot')
   }
+  if (owner.includes('zhipu') || owner.includes('z ai') || owner.includes('zai')) {
+    addUniqueProviderId(providerIds, 'zhipuai')
+  }
+  if (owner.includes('minimax')) {
+    addUniqueProviderId(providerIds, 'minimax')
+  }
+  if (owner.includes('stepfun')) {
+    addUniqueProviderId(providerIds, 'stepfun')
+  }
+  if (owner.includes('mistral')) {
+    addUniqueProviderId(providerIds, 'mistral')
+  }
+  if (owner.includes('cohere')) {
+    addUniqueProviderId(providerIds, 'cohere')
+  }
   if (owner.includes('deepseek')) {
     addUniqueProviderId(providerIds, 'deepseek')
   }
@@ -133,6 +160,7 @@ const getOwnerProviderIds = (ownedBy: string | undefined): string[] => {
 
 const getModelFamilyProviderIds = (modelId: string): string[] => {
   const normalizedModelId = normalizeHintValue(modelId)
+  const canonicalModelId = normalizeCanonicalModelId(modelId)
   const providerIds: string[] = []
 
   if (isClaudeFamilyModelId(modelId)) {
@@ -143,6 +171,34 @@ const getModelFamilyProviderIds = (modelId: string): string[] => {
   }
   if (normalizedModelId.includes('kimi') || normalizedModelId.includes('moonshot')) {
     addUniqueProviderId(providerIds, 'moonshot')
+  }
+  if (canonicalModelId.startsWith('glm-')) {
+    addUniqueProviderId(providerIds, 'zhipuai')
+  }
+  if (canonicalModelId.startsWith('minimax-')) {
+    addUniqueProviderId(providerIds, 'minimax')
+  }
+  if (/^step(?:audio)?-/.test(canonicalModelId)) {
+    addUniqueProviderId(providerIds, 'stepfun')
+  }
+  if (
+    [
+      'mistral-',
+      'mixtral-',
+      'ministral-',
+      'magistral-',
+      'devstral-',
+      'codestral-',
+      'pixtral-'
+    ].some((prefix) => canonicalModelId.startsWith(prefix))
+  ) {
+    addUniqueProviderId(providerIds, 'mistral')
+  }
+  if (canonicalModelId.startsWith('command-') || canonicalModelId.startsWith('c4ai-aya-')) {
+    addUniqueProviderId(providerIds, 'cohere')
+  }
+  if (canonicalModelId.startsWith('gpt-oss-')) {
+    addUniqueProviderId(providerIds, 'openai')
   }
   if (normalizedModelId.includes('qwen') || normalizedModelId.includes('qwq')) {
     addUniqueProviderId(providerIds, 'alibaba-cn')
@@ -176,10 +232,14 @@ const getExplicitRouteCapabilityProviderId = (
   return undefined
 }
 
-const toMatchedIdentity = (match: CapabilityModelMatch): ResolvedCapabilityIdentity => ({
+const toMatchedIdentity = (
+  match: CapabilityModelMatch,
+  requestModelId: string
+): ResolvedCapabilityIdentity => ({
   providerId: match.providerId,
-  modelId: match.modelId,
-  catalogMatched: true
+  requestModelId,
+  catalogMatched: true,
+  catalogModelId: match.modelId
 })
 
 const resolveProviderMatch = (
@@ -189,7 +249,7 @@ const resolveProviderMatch = (
   for (const providerId of providerIds) {
     const match = modelCapabilities.getProviderCapabilityModelMatch(providerId, modelId)
     if (match) {
-      return toMatchedIdentity(match)
+      return toMatchedIdentity(match, modelId)
     }
   }
   return undefined
@@ -248,8 +308,9 @@ export const resolveCapabilityIdentity = (
     return (
       resolveProviderMatch([explicitProviderId], input.modelId) ?? {
         providerId: normalizeProviderId(explicitProviderId),
-        modelId: input.modelId,
-        catalogMatched: false
+        requestModelId: input.modelId,
+        catalogMatched: false,
+        catalogModelId: null
       }
     )
   }
@@ -262,8 +323,9 @@ export const resolveCapabilityIdentity = (
     return (
       resolveProviderMatch([routeOverrideProviderId], input.modelId) ?? {
         providerId: normalizeProviderId(routeOverrideProviderId),
-        modelId: input.modelId,
-        catalogMatched: false
+        requestModelId: input.modelId,
+        catalogMatched: false,
+        catalogModelId: null
       }
     )
   }
@@ -297,13 +359,14 @@ export const resolveCapabilityIdentity = (
 
   const uniqueMatch = modelCapabilities.findUniqueCapabilityModelMatch(input.modelId)
   if (uniqueMatch) {
-    return toMatchedIdentity(uniqueMatch)
+    return toMatchedIdentity(uniqueMatch, input.modelId)
   }
 
   return {
     providerId: transportProviderId,
-    modelId: input.modelId,
-    catalogMatched: false
+    requestModelId: input.modelId,
+    catalogMatched: false,
+    catalogModelId: null
   }
 }
 
@@ -311,18 +374,29 @@ export const buildResolvedCapabilitySnapshot = (
   identity: ResolvedCapabilityIdentity,
   options: Pick<CapabilitySnapshotOptions, 'reasoning'> = {}
 ): ResolvedModelCapabilitySnapshot => {
+  const catalogModelId = identity.catalogModelId ?? identity.requestModelId
   const catalog = modelCapabilities.getCatalogCapabilitySnapshot(
     identity.providerId,
-    identity.modelId
+    catalogModelId
   )
+  const baseRequestPolicy = resolveModelRequestPolicy(
+    identity.providerId,
+    identity.requestModelId,
+    options.reasoning
+  )
+  const requestPolicy =
+    baseRequestPolicy.topP.mode === 'passthrough' &&
+    identity.providerId === 'anthropic' &&
+    catalog.temperatureCapability === false
+      ? {
+          ...baseRequestPolicy,
+          topP: { mode: 'omit' as const }
+        }
+      : baseRequestPolicy
 
   return {
     identity,
-    requestPolicy: resolveModelRequestPolicy(
-      identity.providerId,
-      identity.modelId,
-      options.reasoning
-    ),
+    requestPolicy,
     supportsAudioInput: catalog.supportsAudioInput,
     supportsReasoning: catalog.supportsReasoning,
     reasoningPortrait: catalog.reasoningPortrait,

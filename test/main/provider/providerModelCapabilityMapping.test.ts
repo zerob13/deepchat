@@ -38,6 +38,7 @@ describe('ProviderSettings provider model capability mapping', () => {
       .mockImplementation((providerId, modelId) =>
         createCatalogSnapshot(providerId === 'openai' && modelId === 'gpt-5.4')
       )
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(true)
 
     const getProviderModelRouteMetadata = vi.fn()
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
@@ -113,6 +114,7 @@ describe('ProviderSettings provider model capability mapping', () => {
       .mockImplementation((providerId, modelId) =>
         createCatalogSnapshot(providerId === 'anthropic' && modelId === 'claude-opus-4-7')
       )
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(true)
 
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
       providerModelHelper: {
@@ -145,6 +147,7 @@ describe('ProviderSettings provider model capability mapping', () => {
 
   it('keeps anthropic transport relays on provider-local capability semantics', async () => {
     const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(false)
     const catalogSnapshot = vi
       .spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot')
       .mockImplementation((providerId, modelId) =>
@@ -183,6 +186,30 @@ describe('ProviderSettings provider model capability mapping', () => {
       })
     ])
     expect(catalogSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('skips identity resolution for model lists without reasoning candidates', async () => {
+    const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(false)
+
+    const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
+      providerModelHelper: {
+        getProviderModels: vi.fn().mockReturnValue(
+          Array.from({ length: 500 }, (_, index) => ({
+            id: `plain-model-${index}`,
+            name: `Plain Model ${index}`,
+            group: 'default',
+            providerId: 'new-api',
+            isCustom: false,
+            reasoning: false
+          }))
+        )
+      }
+    }) as InstanceType<typeof ProviderSettings>
+    const resolveIdentity = vi.spyOn(presenter as any, 'resolveStoredModelCapabilityIdentity')
+
+    expect(presenter.getProviderModels('new-api')).toHaveLength(500)
+    expect(resolveIdentity).not.toHaveBeenCalled()
   })
 
   it('maps zenmux anthropic routes to anthropic capability semantics', async () => {

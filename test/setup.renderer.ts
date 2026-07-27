@@ -14,8 +14,9 @@ const createDefaultModelConfig = () => ({
 const createDefaultReasoningCapabilities = (providerId = 'openai', modelId = 'gpt-5.4') => ({
   identity: {
     providerId,
-    modelId,
-    catalogMatched: false
+    requestModelId: modelId,
+    catalogMatched: false,
+    catalogModelId: null
   },
   requestPolicy: {
     temperature: { mode: 'passthrough' },

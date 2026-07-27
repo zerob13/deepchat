@@ -11,7 +11,12 @@ import {
 
 const createCapabilitySnapshot = (supportsAudioInput: boolean) =>
   ({
-    identity: { providerId: 'provider', modelId: 'model', catalogMatched: true },
+    identity: {
+      providerId: 'provider',
+      requestModelId: 'model',
+      catalogMatched: true,
+      catalogModelId: 'model'
+    },
     supportsAudioInput
   }) as any
 

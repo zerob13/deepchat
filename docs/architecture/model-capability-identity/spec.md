@@ -39,6 +39,8 @@ cross-provider fallback; for `openai/kimi-k3` it deterministically selects the i
 8. Restore Grok reasoning effort in the final OpenAI-compatible request body.
 9. Remove repeated route and capability work without adding a new memoization or cache-invalidation
    subsystem.
+10. Preserve reasoning capabilities for recognized model-origin families without restoring
+    provider-order-based cross-provider portrait selection.
 
 ## Required Invariants
 
@@ -94,6 +96,23 @@ capability identity using this precedence:
 An ambiguous global match is not selected by provider iteration order. All capabilities for a
 resolved model use the same provider and catalog model identity.
 
+Qualified namespaces, owner metadata, and canonical model-family rules may identify a known model
+origin even when an aggregator returns an unqualified ID. The maintained origin rules cover
+families with an authoritative provider-db owner, including GLM, MiniMax, StepFun, Mistral, Cohere,
+and OpenAI GPT-OSS. Families without an authoritative owner record, or whose provider-db mirrors
+disagree about reasoning semantics, remain unknown rather than selecting an arbitrary mirror.
+
+Resolved identity distinguishes the ID sent to the service from the optional ID selected in the
+catalog:
+
+```text
+requestModelId: the unchanged request-facing model ID
+catalogModelId: the matched provider-db model ID, or null when unmatched
+```
+
+`catalogMatched` discriminates those two states. Request policy always consumes `requestModelId`;
+catalog capability reads always consume `catalogModelId`.
+
 ### Capability snapshots
 
 The main process returns one capability snapshot per provider/model selection. The snapshot contains
@@ -132,6 +151,9 @@ Kimi behavior is:
 
 K3 matching uses exact canonical model identities rather than substring matching. It remains safe
 when provider-db is unavailable or an aggregator exposes a recognized K3-qualified model ID.
+Recognized canonical aliases are `kimi-k3`, `kimi-k3-free`, `coding-kimi-k3`, and
+`coding-kimi-k3-free`, including qualified and separator-normalized forms. One shared matcher owns
+both request policy and the temporary reasoning-metadata fallback.
 
 Unknown model capabilities retain the current compatibility behavior: user-provided parameters
 pass through unless an explicit model request policy says otherwise. Unknown does not become
@@ -146,6 +168,11 @@ Kimi K3 reasoning effort has options `low`, `high`, and `max`, defaulting to `ma
 provider-db publishes those fields, DeepChat supplies that exact model fallback; later explicit
 catalog fields override the fallback. `medium` is not offered for K3.
 
+Runtime effort normalization is K3-specific. It may choose K3's supported default or remove an
+inherited K3 effort when the authoritative K3 portrait declares a non-effort mode. It does not
+inject, normalize, or remove effort values for unrelated models; their established model-config
+behavior remains unchanged.
+
 DeepChat supplies the standard AI SDK `reasoningEffort` provider option. The installed
 `@ai-sdk/openai-compatible` adapter serializes that option as `reasoning_effort`. DeepChat does not
 add a duplicate New API snake-case path.
@@ -159,10 +186,23 @@ standard-field assignment overwrites it.
 The implementation removes repeated work rather than introducing speculative caching:
 
 - one route decision per request;
-- one capability identity per request;
+- one authoritative Phase 2 capability identity per request;
 - one capability snapshot per settings query;
 - one effective parameter serialization per request;
 - no capability lookup through a cloned full provider-model array.
+
+Route selection reads only persisted route fields before Phase 2. Once identity is known, model
+defaults are derived from that identity without resolving it again. Provider model-list mapping
+uses a constant-time reasoning-candidate prefilter so models with no catalog reasoning evidence do
+not run full route and identity resolution. The short-lived provider-model cache stores a compact
+raw route-metadata index separately from its derived renderer model snapshot; both cold and warm
+lookups therefore select the same route without scanning the full model list.
+
+Provider-db configuration defaults preserve the pre-existing source boundary. A provider present
+in provider-db uses only its own model record unless `LLM_PROVIDER.capabilityProviderId` explicitly
+overrides the source. Providers absent from provider-db, such as New API, may use the authoritative
+identity resolver. A custom same-name model under a known provider never inherits another
+provider's limits or defaults merely because the name is globally unique.
 
 The existing provider-db indexes remain the catalog lookup mechanism. No revision snapshot, LRU,
 new persistent cache, or benchmark gate is introduced. No request-path disk or network access is
@@ -177,25 +217,34 @@ added.
    Aihubmix portrait.
 3. Moonshot direct K3, New API `kimi-k3`, and qualified K3 aliases omit temperature and top P from
    streaming, non-streaming, and traced request bodies.
-4. K3 does not emit the legacy Kimi `thinking` object and reasoning cannot be disabled in the
+4. `coding-kimi-k3`, `coding-kimi-k3-free`, `kimi-k3-free`, and separator-normalized canonical
+   aliases receive the same K3 request policy; unrelated suffix or substring matches do not.
+5. K3 does not emit the legacy Kimi `thinking` object and reasoning cannot be disabled in the
    effective UI policy.
-5. K2 fixed-temperature and thinking behavior remains unchanged.
-6. OpenCode Go Anthropic routes retain Anthropic capability identity through final request
+6. K2 fixed-temperature and thinking behavior remains unchanged.
+7. OpenCode Go Anthropic routes retain Anthropic capability identity through final request
    construction.
-7. ZenMux Anthropic behavior remains correct without a duplicate shared routing rule.
-8. Unknown custom OpenAI-compatible models retain pass-through generation behavior.
-9. K3 effort controls expose exactly `low`, `high`, and `max`, defaulting to `max`; later explicit
+8. ZenMux Anthropic behavior remains correct without a duplicate shared routing rule.
+9. Unknown custom OpenAI-compatible models retain pass-through generation behavior.
+10. K3 effort controls expose exactly `low`, `high`, and `max`, defaulting to `max`; later explicit
    provider-db metadata overrides the local fallback.
-10. New API K3 `reasoningEffort: max` produces final wire field `reasoning_effort: "max"`.
-11. Grok Mini `reasoningEffort: high` produces final wire field `reasoning_effort: "high"`;
+11. Non-K3 effort-capable and non-effort models retain their previous runtime model-config values.
+12. New API K3 `reasoningEffort: max` produces final wire field `reasoning_effort: "max"`.
+13. Grok Mini `reasoningEffort: high` produces final wire field `reasoning_effort: "high"`;
     unsupported Grok models do not gain reasoning-effort behavior.
-12. ChatStatusBar and ModelConfigDialog show generation controls from the main-process policy and
+14. New API GLM, MiniMax, and GPT-OSS examples retain reasoning support through a deterministic
+    origin identity or origin fallback, while conflicting unknown families remain unresolved.
+15. A known provider's custom same-name model does not inherit another provider's derived model
+    configuration; New API still receives origin-derived defaults.
+16. ChatStatusBar and ModelConfigDialog show generation controls from the main-process policy and
     contain no local capability-provider resolver.
-13. A request calculates its route, capability identity, and effective generation parameters once
-    each.
-14. Capability resolution performs no full provider-model clone and requires no new persistent
+17. A request calculates its route, Phase 2 capability identity, and effective generation
+    parameters once each, and cache warmth cannot change the Phase 1 route metadata.
+18. Capability resolution performs no full provider-model clone and requires no new persistent
     data or migration.
-15. Existing provider, model import/export, renderer, agent, and direct-provider behavior remains
+19. Provider-option unit tests and runtime use explicit request policy and reasoning portrait
+    inputs; the mapper has no hidden cross-provider portrait fallback.
+20. Existing provider, model import/export, renderer, agent, and direct-provider behavior remains
     compatible unless explicitly changed above.
 
 ## Constraints

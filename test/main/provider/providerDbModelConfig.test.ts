@@ -207,7 +207,10 @@ describe('Provider DB strict matching and user overrides', () => {
         },
         alpha: {
           id: 'alpha',
-          models: [{ id: 'shared-model', limit: { context: 11111, output: 1111 } }]
+          models: [
+            { id: 'shared-model', limit: { context: 11111, output: 1111 } },
+            { id: 'foreign-only', limit: { context: 55555, output: 5555 } }
+          ]
         },
         beta: {
           id: 'beta',
@@ -335,6 +338,57 @@ describe('Provider DB strict matching and user overrides', () => {
     expect(proxyConfig.functionCall).toBe(true)
     expect(proxyConfig.reasoning).toBe(true)
     expect(proxyConfig.reasoningEffort).toBe('max')
+  })
+
+  it('does not inherit globally unique defaults for custom models under a known provider', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const knownProviderConfig = helper.getModelConfig('foreign-only', 'test-provider')
+    const proxyConfig = helper.getModelConfig('foreign-only', 'new-api')
+
+    expect(knownProviderConfig).toMatchObject({
+      contextLength: 16000,
+      maxTokens: 4096,
+      reasoning: false
+    })
+    expect(proxyConfig).toMatchObject({
+      contextLength: 55555,
+      maxTokens: 5555
+    })
+  })
+
+  it('preserves user ownership when reading route-only configuration', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+    const helperInternals = helper as any
+    const cacheKey = helperInternals.generateCacheKey('new-api', 'custom-route-model')
+
+    helper.importConfigs(
+      {
+        [cacheKey]: {
+          id: 'custom-route-model',
+          providerId: 'new-api',
+          source: 'user',
+          config: {
+            maxTokens: 4096,
+            contextLength: 16000,
+            temperature: 0.6,
+            vision: false,
+            functionCall: true,
+            reasoning: false,
+            type: ModelType.ImageGeneration,
+            endpointType: 'image-generation',
+            isUserDefined: false
+          }
+        }
+      },
+      false
+    )
+
+    expect(helper.getModelRouteConfig('custom-route-model', 'new-api')).toMatchObject({
+      type: ModelType.ImageGeneration,
+      endpointType: 'image-generation',
+      isUserDefined: true
+    })
   })
 
   it('keeps an explicit capability provider override authoritative for proxy defaults', () => {

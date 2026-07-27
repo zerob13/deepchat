@@ -2,11 +2,19 @@ import type { ReasoningEffort, ReasoningPortrait, Verbosity } from './model-db'
 import type { ModelType, NewApiEndpointType } from '../model'
 import type { ModelRequestPolicy } from '../modelRequestPolicy'
 
-export type ResolvedCapabilityIdentity = {
-  providerId: string
-  modelId: string
-  catalogMatched: boolean
-}
+export type ResolvedCapabilityIdentity =
+  | {
+      providerId: string
+      requestModelId: string
+      catalogMatched: true
+      catalogModelId: string
+    }
+  | {
+      providerId: string
+      requestModelId: string
+      catalogMatched: false
+      catalogModelId: null
+    }
 
 export type CapabilityRouteOverride = {
   endpointType?: NewApiEndpointType

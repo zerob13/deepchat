@@ -4,6 +4,7 @@ import type {
   MODEL_META,
   ModelConfig,
   ModelConfigSource,
+  ModelRouteConfig,
   RENDERER_MODEL_META,
   IModelConfig
 } from '@shared/types/provider'
@@ -236,12 +237,17 @@ export interface ProviderSettingsPort {
   getProviderById(id: string): LLM_PROVIDER | undefined
   setProviderById(id: string, provider: LLM_PROVIDER): void
   getProviderModels(providerId: string): MODEL_META[]
+  getProviderModelRouteMetadata(
+    providerId: string,
+    modelId: string,
+    resolvedConfig?: ModelRouteConfig
+  ): ProviderModelRouteMetadata | undefined
   getDbProviderModels(providerId: string): RENDERER_MODEL_META[]
   getCapabilitySnapshot(
     providerId: string,
     modelId: string,
     options?: CapabilitySnapshotOptions,
-    resolvedModelConfig?: ModelConfig
+    resolvedModelConfig?: ModelRouteConfig
   ): ResolvedModelCapabilitySnapshot
   getCapabilityProviderId(providerId: string, modelId: string): string
   supportsReasoningCapability(providerId: string, modelId: string): boolean
@@ -278,7 +284,12 @@ export interface ProviderSettingsPort {
   getBatchModelStatus(providerId: string, modelIds: string[]): Record<string, boolean>
   getDefaultProviders(): LLM_PROVIDER[]
   isKnownModel(providerId: string, modelId: string): boolean
-  getModelConfig(modelId: string, providerId?: string): ModelConfig
+  getModelRouteConfig(modelId: string, providerId?: string): ModelRouteConfig
+  getModelConfig(
+    modelId: string,
+    providerId?: string,
+    resolvedIdentity?: ResolvedCapabilityIdentity
+  ): ModelConfig
   setModelConfig(
     modelId: string,
     providerId: string,
@@ -463,12 +474,11 @@ export class ProviderSettings implements ProviderSettingsPort {
     providerId: string,
     modelId: string,
     routeOverride?: CapabilityRouteOverride,
-    resolvedModelConfig?: ModelConfig
+    resolvedModelConfig?: ModelRouteConfig
   ): NewApiRouteMeta | null {
     const provider = this.providerHelper?.getProviderById?.(providerId)
     const providerApiType = provider?.apiType
-    const modelConfig =
-      resolvedModelConfig ?? this.getModelConfig(modelId, providerId) ?? ({} as ModelConfig)
+    const modelConfig = resolvedModelConfig ?? this.getModelRouteConfig(modelId, providerId)
     const storedRoute = this.providerModelHelper.getProviderModelRouteMetadata?.(
       providerId,
       modelId,
@@ -510,7 +520,7 @@ export class ProviderSettings implements ProviderSettingsPort {
     providerId: string,
     modelId: string,
     routeOverride?: CapabilityRouteOverride,
-    resolvedModelConfig?: ModelConfig
+    resolvedModelConfig?: ModelRouteConfig
   ): ResolvedCapabilityIdentity {
     const route = this.resolveCapabilityRoute(
       providerId,
@@ -561,7 +571,7 @@ export class ProviderSettings implements ProviderSettingsPort {
     providerId: string,
     modelId: string,
     options?: CapabilitySnapshotOptions,
-    resolvedModelConfig?: ModelConfig
+    resolvedModelConfig?: ModelRouteConfig
   ): ResolvedModelCapabilitySnapshot {
     const identity = this.resolveCapabilityIdentityForModel(
       providerId,
@@ -1119,6 +1129,10 @@ export class ProviderSettings implements ProviderSettingsPort {
     const models = this.providerModelHelper.getProviderModels(providerId)
     const provider = this.providerHelper?.getProviderById?.(providerId)
     return models.map((model) => {
+      if (model.reasoning === true || !modelCapabilities.hasReasoningCandidate(model.id)) {
+        return model
+      }
+
       const identity = this.resolveStoredModelCapabilityIdentity(providerId, model, provider)
 
       if (identity.providerId === providerId) {
@@ -1127,13 +1141,25 @@ export class ProviderSettings implements ProviderSettingsPort {
 
       const catalog = modelCapabilities.getCatalogCapabilitySnapshot(
         identity.providerId,
-        identity.modelId
+        identity.catalogModelId ?? identity.requestModelId
       )
       return {
         ...model,
-        reasoning: model.reasoning === true || catalog.supportsReasoning
+        reasoning: catalog.supportsReasoning
       }
     })
+  }
+
+  getProviderModelRouteMetadata(
+    providerId: string,
+    modelId: string,
+    resolvedConfig?: ModelRouteConfig
+  ): ProviderModelRouteMetadata | undefined {
+    return this.providerModelHelper.getProviderModelRouteMetadata(
+      providerId,
+      modelId,
+      resolvedConfig
+    )
   }
 
   // 基于聚合 Provider DB 的标准模型（只读映射，不落库）
@@ -1248,17 +1274,29 @@ export class ProviderSettings implements ProviderSettingsPort {
     return this.providerHelper.getDefaultProviders()
   }
 
-  /**
-   * 获取指定provider和model的推荐配置
-   * @param modelId 模型ID
-   * @param providerId 可选的提供商ID，如果提供则优先查找该提供商的特定配置
-   * @returns ModelConfig 模型配置
-   */
-  getModelConfig(modelId: string, providerId?: string): ModelConfig {
+  /** Return only persisted fields that may participate in route selection. */
+  getModelRouteConfig(modelId: string, providerId?: string): ModelRouteConfig {
+    return (
+      this.modelConfigHelper?.getModelRouteConfig(modelId, providerId) ??
+      this.getModelConfig(modelId, providerId)
+    )
+  }
+
+  /** Resolve the complete effective configuration from stored intent and capability defaults. */
+  getModelConfig(
+    modelId: string,
+    providerId?: string,
+    resolvedIdentity?: ResolvedCapabilityIdentity
+  ): ModelConfig {
     const capabilityProviderId = providerId
       ? this.providerHelper?.getProviderById?.(providerId)?.capabilityProviderId
       : undefined
-    return this.modelConfigHelper.getModelConfig(modelId, providerId, capabilityProviderId)
+    return this.modelConfigHelper.getModelConfig(
+      modelId,
+      providerId,
+      capabilityProviderId,
+      resolvedIdentity
+    )
   }
 
   /**

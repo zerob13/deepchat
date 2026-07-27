@@ -21,7 +21,9 @@ describe('ModelCapabilities reasoning portraits', () => {
           id: 'openai',
           models: [
             { id: 'gpt-5', reasoning: { supported: true, default: true } },
-            { id: 'o3', reasoning: { supported: true, default: true } }
+            { id: 'o3', reasoning: { supported: true, default: true } },
+            { id: 'legacy-reasoning-only', reasoning: { supported: true, default: false } },
+            { id: 'plain-model' }
           ]
         },
         google: {
@@ -331,6 +333,17 @@ describe('ModelCapabilities reasoning portraits', () => {
         continuation: ['thinking_blocks']
       }
     })
+    expect(
+      capabilities.getCatalogCapabilitySnapshot('moonshot', 'coding-kimi_k3-free')
+    ).toMatchObject({
+      modelMatched: true,
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'max',
+      reasoningPortrait: {
+        interleaved: true,
+        visibility: 'summary'
+      }
+    })
     expect(capabilities.getCatalogCapabilitySnapshot('moonshot-ai', 'kimi-k3')).toMatchObject({
       supportsReasoningEffort: true,
       reasoningEffortDefault: 'high',
@@ -358,6 +371,29 @@ describe('ModelCapabilities reasoning portraits', () => {
     expect(capabilities.getReasoningEffortDefault('302ai', 'gpt-5-thinking')).toBeUndefined()
     expect(capabilities.supportsVerbosity('302ai', 'gpt-5-thinking')).toBe(false)
     expect(capabilities.getVerbosityDefault('302ai', 'gpt-5-thinking')).toBeUndefined()
+  })
+
+  it('keeps GPT-OSS reasoning without inventing sampling or effort capabilities', () => {
+    const capabilities = new ModelCapabilities()
+
+    expect(capabilities.getCatalogCapabilitySnapshot('openai', 'gpt-oss-120b')).toMatchObject({
+      modelMatched: false,
+      supportsReasoning: true,
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      temperatureCapability: undefined,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true
+      }
+    })
+  })
+
+  it('prefilters both legacy and extended reasoning metadata without false positives', () => {
+    const capabilities = new ModelCapabilities()
+
+    expect(capabilities.hasReasoningCandidate('legacy-reasoning-only')).toBe(true)
+    expect(capabilities.hasReasoningCandidate('plain-model')).toBe(false)
   })
 
   it('preserves official anthropic adaptive reasoning portraits', () => {

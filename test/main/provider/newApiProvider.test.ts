@@ -66,9 +66,27 @@ const createProviderSettings = (
   ({
     getProviders: vi.fn().mockReturnValue([]),
     getProviderModels: vi.fn((providerId: string) => providerModelsByProviderId[providerId] ?? []),
+    getProviderModelRouteMetadata: vi.fn((providerId: string, modelId: string) => {
+      const model = providerModelsByProviderId[providerId]?.find(
+        (candidate: any) => candidate.id === modelId
+      ) as any
+      return model
+        ? {
+            endpointType: model.endpointType,
+            supportedEndpointTypes: model.supportedEndpointTypes,
+            type: model.type,
+            ownedBy: model.ownedBy
+          }
+        : undefined
+    }),
     getCustomModels: vi.fn().mockReturnValue([]),
     getDbProviderModels: vi.fn().mockReturnValue([]),
     getModelConfig: vi.fn((modelId: string) => ({
+      type: ModelType.Chat,
+      apiEndpoint: ApiEndpointType.Chat,
+      ...modelConfigById[modelId]
+    })),
+    getModelRouteConfig: vi.fn((modelId: string) => ({
       type: ModelType.Chat,
       apiEndpoint: ApiEndpointType.Chat,
       ...modelConfigById[modelId]
@@ -125,7 +143,7 @@ describe('NewApiProvider capability routing', () => {
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
 
     expect(runtimeProvider.id).toBe('new-api')
-    expect(runtimeProvider.capabilityProviderId).toBe('gemini')
+    expect(runtimeProvider.capabilityProviderId).toBe('google')
     expect(runtimeProvider.apiType).toBe('gemini')
   })
 
@@ -226,6 +244,42 @@ describe('NewApiProvider capability routing', () => {
     expect(runtimeProvider.capabilityProviderId).toBe('anthropic')
     expect(routeDecision.supportsOfficialAnthropicReasoning).toBe(true)
     expect(runtimeContext.context.supportsOfficialAnthropicReasoning).toBe(true)
+  })
+
+  it('uses narrow route metadata instead of enriched provider model state', () => {
+    const providerSettings = createProviderSettings(
+      {},
+      {
+        'new-api': [
+          {
+            id: 'cached-model',
+            name: 'Cached Model',
+            group: 'default',
+            providerId: 'new-api',
+            isCustom: false,
+            endpointType: 'anthropic',
+            supportedEndpointTypes: ['openai', 'anthropic'],
+            type: ModelType.Chat
+          }
+        ]
+      }
+    )
+    vi.mocked(providerSettings.getProviderModelRouteMetadata).mockReturnValue({
+      endpointType: 'openai',
+      supportedEndpointTypes: ['openai', 'anthropic'],
+      type: ModelType.Chat,
+      ownedBy: undefined
+    })
+    const provider = new AiSdkProvider(createProvider(), providerSettings)
+
+    const routeDecision = (provider as any).resolveRouteDecision('cached-model')
+
+    expect(routeDecision.endpointType).toBe('openai')
+    expect(providerSettings.getProviderModelRouteMetadata).toHaveBeenCalledWith(
+      'new-api',
+      'cached-model',
+      expect.any(Object)
+    )
   })
 
   it('overlays provider DB capabilities while preserving new-api endpoint routing', async () => {
@@ -533,6 +587,7 @@ describe('NewApiProvider capability routing', () => {
     }
     const provider = new AiSdkProvider(createProvider(), providerSettings)
     const getStoredModel = vi.spyOn(provider as any, 'getStoredModel')
+    const resolveCapabilityIdentity = vi.spyOn(provider as any, 'resolveCapabilityIdentity')
 
     const routeDecision = (provider as any).resolveRouteDecision('kimi-k3')
     const runtimeProvider = (provider as any).getRuntimeProvider(routeDecision) as LLM_PROVIDER
@@ -541,8 +596,9 @@ describe('NewApiProvider capability routing', () => {
     expect(routeDecision.endpointType).toBe('openai')
     expect(routeDecision.capabilityIdentity).toEqual({
       providerId: 'moonshot',
-      modelId: 'kimi-k3',
-      catalogMatched: true
+      requestModelId: 'kimi-k3',
+      catalogMatched: true,
+      catalogModelId: 'kimi-k3'
     })
     expect(runtimeProvider.capabilityProviderId).toBe('moonshot')
     expect(runtimeContext.context.capabilitySnapshot).toMatchObject({
@@ -559,6 +615,9 @@ describe('NewApiProvider capability routing', () => {
       expect(providerSettings[method]).not.toHaveBeenCalled()
     }
     expect(getStoredModel).toHaveBeenCalledOnce()
+    expect(resolveCapabilityIdentity).toHaveBeenCalledOnce()
+    expect(providerSettings.getModelRouteConfig).toHaveBeenCalledOnce()
+    expect(providerSettings.getModelConfig).toHaveBeenCalledOnce()
   })
 
   it('exposes all chat endpoints for openai-only chat models while keeping completions as default', async () => {

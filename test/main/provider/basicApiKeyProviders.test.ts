@@ -69,6 +69,7 @@ const createProviderSettings = (): ProviderSettingsPort =>
   ({
     getProviderModels: vi.fn().mockReturnValue([]),
     getCustomModels: vi.fn().mockReturnValue([]),
+    getModelRouteConfig: vi.fn().mockReturnValue(undefined),
     getModelConfig: vi.fn().mockReturnValue(undefined),
     getSetting: vi.fn().mockReturnValue(undefined),
     setProviderModels: vi.fn(),
@@ -487,6 +488,9 @@ describe('basic API-key provider registrations', () => {
 
   it('keeps local request shortcuts independent from provider initialization', async () => {
     const imageProviderSettings = createProviderSettings()
+    vi.mocked(imageProviderSettings.getModelRouteConfig).mockReturnValue({
+      endpointType: 'image-generation'
+    })
     vi.mocked(imageProviderSettings.getModelConfig).mockReturnValue({
       endpointType: 'image-generation'
     })
