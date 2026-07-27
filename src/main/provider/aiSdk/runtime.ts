@@ -15,9 +15,11 @@ import type { MCPToolDefinition } from '@shared/types/mcp'
 import type { LLM_EMBEDDING_ATTRS, LLM_PROVIDER, ModelConfig } from '@shared/types/provider'
 import { ApiEndpointType } from '@shared/model'
 import {
-  applyMoonshotKimiReasoningTemperaturePolicy,
-  resolveMoonshotKimiTemperaturePolicy
-} from '@shared/moonshotKimiPolicy'
+  applyModelRequestPolicy,
+  applyRequestParameterPolicy,
+  resolveModelRequestPolicy,
+  type ModelRequestPolicy
+} from '@shared/modelRequestPolicy'
 import {
   normalizeImageGenerationOptions,
   supportsOpenAIImageGenerationSettings,
@@ -59,6 +61,7 @@ import {
 } from './embeddingBatchLimits'
 import type { PromptCacheIntent } from '../promptCacheStrategy'
 import type { ResolvedModelCapabilitySnapshot } from '@shared/types/model-capabilities'
+import { normalizeReasoningEffortValue } from '@shared/types/model-db'
 
 type ImageGenerationProviderPayload = Record<string, JSONValue>
 type ImageGenerationRequestOptions = {
@@ -738,36 +741,74 @@ function buildImageGenerationRequestOptions(
   return requestOptions
 }
 
-function normalizeRuntimeModelConfig(
-  context: AiSdkRuntimeContext,
-  modelId: string,
+type EffectiveGenerationRequest = {
   modelConfig: ModelConfig
-): ModelConfig {
-  return applyMoonshotKimiReasoningTemperaturePolicy(context.provider.id, modelId, modelConfig)
+  requestPolicy: ModelRequestPolicy
+  samplingOptions: {
+    temperature?: number
+    topP?: number
+  }
 }
 
-function resolveRuntimeTemperature(
+function applyReasoningEffortCapability(
+  modelConfig: ModelConfig,
+  capabilitySnapshot: ResolvedModelCapabilitySnapshot | undefined
+): ModelConfig {
+  if (!capabilitySnapshot?.supportsReasoningEffort) {
+    return modelConfig
+  }
+
+  const reasoningEffort =
+    normalizeReasoningEffortValue(
+      capabilitySnapshot.reasoningPortrait,
+      modelConfig.reasoningEffort
+    ) ??
+    normalizeReasoningEffortValue(
+      capabilitySnapshot.reasoningPortrait,
+      capabilitySnapshot.reasoningEffortDefault
+    )
+
+  return reasoningEffort === modelConfig.reasoningEffort
+    ? modelConfig
+    : {
+        ...modelConfig,
+        reasoningEffort
+      }
+}
+
+function resolveEffectiveGenerationRequest(
   context: AiSdkRuntimeContext,
   modelId: string,
   modelConfig: ModelConfig,
   requestedTemperature: number | undefined
-): { shouldSendTemperature: boolean; temperature: number | undefined } {
-  const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
-    context.provider.id,
-    modelId,
-    modelConfig.reasoning
+): EffectiveGenerationRequest {
+  const requestPolicy =
+    context.capabilitySnapshot?.requestPolicy ??
+    resolveModelRequestPolicy(context.provider.id, modelId, modelConfig.reasoning)
+  const effectiveModelConfig = applyReasoningEffortCapability(
+    applyModelRequestPolicy(modelConfig, requestPolicy),
+    context.capabilitySnapshot
   )
-  if (fixedTemperatureKimi) {
-    return {
-      shouldSendTemperature: true,
-      temperature: fixedTemperatureKimi.temperature
-    }
+  let temperature = applyRequestParameterPolicy(requestPolicy.temperature, requestedTemperature)
+  if (
+    requestPolicy.temperature.mode === 'passthrough' &&
+    !supportsTemperatureControlRuntime(context)
+  ) {
+    temperature = undefined
+  }
+
+  let topP = applyRequestParameterPolicy(requestPolicy.topP, effectiveModelConfig.topP)
+  if (requestPolicy.topP.mode === 'passthrough' && !supportsTopPControlRuntime(context)) {
+    topP = undefined
   }
 
   return {
-    shouldSendTemperature:
-      supportsTemperatureControlRuntime(context) && requestedTemperature !== undefined,
-    temperature: requestedTemperature
+    modelConfig: effectiveModelConfig,
+    requestPolicy,
+    samplingOptions: {
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(topP !== undefined ? { topP } : {})
+    }
   }
 }
 
@@ -778,13 +819,6 @@ function supportsTopPControlRuntime(context: AiSdkRuntimeContext): boolean {
   }
 
   return true
-}
-
-function resolveRuntimeTopP(
-  context: AiSdkRuntimeContext,
-  modelConfig: ModelConfig
-): number | undefined {
-  return supportsTopPControlRuntime(context) ? modelConfig.topP : undefined
 }
 
 function normalizeOpenAICompatibleBaseUrl(baseUrl: string | undefined): string {
@@ -1145,6 +1179,7 @@ async function buildPromptRuntime(
   messages: ChatMessage[],
   modelId: string,
   modelConfig: ModelConfig,
+  requestPolicy: ModelRequestPolicy,
   tools: MCPToolDefinition[],
   cacheIntent: PromptCacheIntent
 ) {
@@ -1174,6 +1209,8 @@ async function buildPromptRuntime(
     apiType: providerContext.apiType,
     modelId,
     modelConfig,
+    requestPolicy,
+    reasoningPortrait: context.capabilitySnapshot?.reasoningPortrait,
     tools,
     messages: mappedMessages,
     cacheIntent
@@ -1265,30 +1302,27 @@ export async function runAiSdkGenerateText(
   signal?: AbortSignal
 ): Promise<LLMResponse> {
   signal?.throwIfAborted()
-  const normalizedModelConfig = normalizeRuntimeModelConfig(context, modelId, modelConfig)
+  const effectiveRequest = resolveEffectiveGenerationRequest(
+    context,
+    modelId,
+    modelConfig,
+    temperature
+  )
+  const normalizedModelConfig = effectiveRequest.modelConfig
   const runtime = await buildPromptRuntime(
     context,
     messages,
     modelId,
     normalizedModelConfig,
+    effectiveRequest.requestPolicy,
     [],
     'isolated'
   )
-  const { shouldSendTemperature, temperature: resolvedTemperature } = resolveRuntimeTemperature(
-    context,
-    modelId,
-    normalizedModelConfig,
-    temperature
-  )
-  const resolvedTopP = resolveRuntimeTopP(context, normalizedModelConfig)
   const timeout = resolveRequestTimeout(normalizedModelConfig)
   const requestBody = {
     model: runtime.providerContext.resolvedModelId ?? modelId,
     maxOutputTokens: maxTokens,
-    ...(shouldSendTemperature && resolvedTemperature !== undefined
-      ? { temperature: resolvedTemperature }
-      : {}),
-    ...(resolvedTopP !== undefined ? { topP: resolvedTopP } : {})
+    ...effectiveRequest.samplingOptions
   }
 
   await context.emitRequestTrace?.(normalizedModelConfig, {
@@ -1308,10 +1342,7 @@ export async function runAiSdkGenerateText(
     allowSystemInMessages: false,
     providerOptions: runtime.providerOptions as any,
     ...(requestSignal ? { abortSignal: requestSignal } : {}),
-    ...(shouldSendTemperature && resolvedTemperature !== undefined
-      ? { temperature: resolvedTemperature }
-      : {}),
-    ...(resolvedTopP !== undefined ? { topP: resolvedTopP } : {}),
+    ...effectiveRequest.samplingOptions,
     maxOutputTokens: maxTokens
   })
 
@@ -1333,7 +1364,13 @@ export async function* runAiSdkCoreStream(
   signal?: AbortSignal
 ): AsyncGenerator<LLMCoreStreamEvent> {
   signal?.throwIfAborted()
-  const normalizedModelConfig = normalizeRuntimeModelConfig(context, modelId, modelConfig)
+  const effectiveRequest = resolveEffectiveGenerationRequest(
+    context,
+    modelId,
+    modelConfig,
+    temperature
+  )
+  const normalizedModelConfig = effectiveRequest.modelConfig
   const timeout = resolveRequestTimeout(normalizedModelConfig)
 
   if (shouldUseTtsRuntime(context, modelId, normalizedModelConfig)) {
@@ -1499,23 +1536,14 @@ export async function* runAiSdkCoreStream(
     messages,
     modelId,
     normalizedModelConfig,
+    effectiveRequest.requestPolicy,
     tools,
     'conversation'
   )
-  const { shouldSendTemperature, temperature: resolvedTemperature } = resolveRuntimeTemperature(
-    context,
-    modelId,
-    normalizedModelConfig,
-    temperature
-  )
-  const resolvedTopP = resolveRuntimeTopP(context, normalizedModelConfig)
   const requestBody = {
     model: runtime.providerContext.resolvedModelId ?? modelId,
     maxOutputTokens: maxTokens,
-    ...(shouldSendTemperature && resolvedTemperature !== undefined
-      ? { temperature: resolvedTemperature }
-      : {}),
-    ...(resolvedTopP !== undefined ? { topP: resolvedTopP } : {}),
+    ...effectiveRequest.samplingOptions,
     tools: tools.map((tool) => tool.function.name)
   }
 
@@ -1537,10 +1565,7 @@ export async function* runAiSdkCoreStream(
     tools: runtime.tools,
     providerOptions: runtime.providerOptions as any,
     ...(requestSignal ? { abortSignal: requestSignal } : {}),
-    ...(shouldSendTemperature && resolvedTemperature !== undefined
-      ? { temperature: resolvedTemperature }
-      : {}),
-    ...(resolvedTopP !== undefined ? { topP: resolvedTopP } : {}),
+    ...effectiveRequest.samplingOptions,
     maxOutputTokens: maxTokens
   })
 

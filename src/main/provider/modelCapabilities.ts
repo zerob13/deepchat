@@ -59,8 +59,10 @@ const OPENAI_REASONING_EFFORT_MODEL_FAMILIES = ['o1', 'o3', 'o4-mini', 'gpt-5']
 const OPENAI_VERBOSITY_MODEL_FAMILIES = ['gpt-5']
 const OPENAI_REASONING_FALLBACK_PROVIDERS = new Set(['openai', 'azure'])
 const GROK_REASONING_EFFORT_MODEL_FAMILIES = ['grok-3-mini']
+const KIMI_K3_MODEL_ID = 'kimi-k3'
 const DEFAULT_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high']
 const BINARY_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'high']
+const KIMI_K3_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'high', 'max']
 const DEFAULT_VERBOSITY_OPTIONS: Verbosity[] = ['low', 'medium', 'high']
 
 const normalizeCapabilityProviderId = (providerId: string): string => {
@@ -593,6 +595,16 @@ export class ModelCapabilities {
               verbosityOptions: [...DEFAULT_VERBOSITY_OPTIONS]
             }
           : {})
+      }
+    }
+
+    if (normalizedModelId === KIMI_K3_MODEL_ID) {
+      return {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: [...KIMI_K3_REASONING_EFFORT_OPTIONS]
       }
     }
 

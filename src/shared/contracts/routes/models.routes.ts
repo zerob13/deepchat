@@ -191,7 +191,8 @@ export const modelsGetCapabilitiesRoute = defineRouteContract({
         type: z.enum(ModelType).optional(),
         ownedBy: z.string().optional()
       })
-      .optional()
+      .optional(),
+    reasoning: z.boolean().optional()
   }),
   output: z.object({
     capabilities: ModelCapabilitiesSchema

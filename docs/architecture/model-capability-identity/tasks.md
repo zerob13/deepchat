@@ -25,26 +25,26 @@
 
 ## Model request policy
 
-- [ ] Generalize the Kimi policy to pass through, fix, or omit generation parameters.
-- [ ] Preserve K2 fixed-temperature and thinking behavior.
-- [ ] Add K3 temperature/top-P omission, required reasoning, and legacy-thinking omission.
-- [ ] Serialize effective generation parameters once for trace, generate, and stream.
-- [ ] Preserve stored user settings without migration.
-- [ ] Add direct, aggregator, qualified-ID, missing-catalog, and K2 regression tests.
-- [ ] Review and commit the model request policy slice.
+- [x] Generalize the Kimi policy to pass through, fix, or omit generation parameters.
+- [x] Preserve K2 fixed-temperature and thinking behavior.
+- [x] Add K3 temperature/top-P omission, required reasoning, and legacy-thinking omission.
+- [x] Serialize effective generation parameters once for trace, generate, and stream.
+- [x] Preserve stored user settings without migration.
+- [x] Add direct, aggregator, qualified-ID, missing-catalog, and K2 regression tests.
+- [x] Review and commit the model request policy slice.
 
 ## Reasoning and consumers
 
-- [ ] Consume K3 effort options `low`, `high`, and `max` with default `max`.
+- [x] Consume K3 effort options `low`, `high`, and `max` with default `max`.
 - [ ] Restore Grok Mini final-body `reasoning_effort` through the standard AI SDK option.
 - [ ] Add real-adapter request-capture tests for New API K3 and Grok.
-- [ ] Extend the typed capability route with identity and generation policy.
-- [ ] Remove local capability-provider resolution from ChatStatusBar.
-- [ ] Remove local capability-provider resolution from ModelConfigDialog.
+- [x] Extend the typed capability route with identity and generation policy.
+- [x] Remove local capability-provider resolution from ChatStatusBar.
+- [x] Remove local capability-provider resolution from ModelConfigDialog.
 - [ ] Update agent generation settings to consume the authoritative snapshot.
-- [ ] Add the narrow provider-model route metadata getter.
+- [x] Add the narrow provider-model route metadata getter.
 - [ ] Ensure each request resolves route, identity, and generation parameters once.
-- [ ] Add renderer control and complete Moonshot portrait regression tests.
+- [x] Add renderer control and complete Moonshot portrait regression tests.
 - [ ] Review and commit the consumer and de-duplication slice.
 
 ## Final validation

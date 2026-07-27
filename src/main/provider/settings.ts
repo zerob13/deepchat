@@ -64,6 +64,7 @@ import {
 } from './capabilityIdentity'
 import type {
   CapabilityRouteOverride,
+  CapabilitySnapshotOptions,
   ResolvedCapabilityIdentity,
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
@@ -239,7 +240,7 @@ export interface ProviderSettingsPort {
   getCapabilitySnapshot(
     providerId: string,
     modelId: string,
-    routeOverride?: CapabilityRouteOverride
+    options?: CapabilitySnapshotOptions
   ): ResolvedModelCapabilitySnapshot
   getCapabilityProviderId(providerId: string, modelId: string): string
   supportsReasoningCapability(providerId: string, modelId: string): boolean
@@ -533,10 +534,16 @@ export class ProviderSettings implements ProviderSettingsPort {
   getCapabilitySnapshot(
     providerId: string,
     modelId: string,
-    routeOverride?: CapabilityRouteOverride
+    options?: CapabilitySnapshotOptions
   ): ResolvedModelCapabilitySnapshot {
-    const identity = this.resolveCapabilityIdentityForModel(providerId, modelId, routeOverride)
-    return buildResolvedCapabilitySnapshot(identity)
+    const identity = this.resolveCapabilityIdentityForModel(
+      providerId,
+      modelId,
+      options?.routeOverride
+    )
+    return buildResolvedCapabilitySnapshot(identity, {
+      reasoning: options?.reasoning
+    })
   }
 
   getCapabilityProviderId(providerId: string, modelId: string): string {

@@ -3,6 +3,7 @@ import { defineComponent, nextTick, reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { ReasoningPortrait } from '../../../src/shared/types/model-db'
 import { ApiEndpointType, ModelType } from '../../../src/shared/model'
+import type { ModelRequestPolicy } from '../../../src/shared/modelRequestPolicy'
 
 const passthrough = (name: string) =>
   defineComponent({
@@ -19,6 +20,7 @@ type SetupOptions = {
   modelConfig?: Record<string, unknown>
   reasoningPortrait?: ReasoningPortrait | null
   temperatureCapability?: boolean | undefined
+  requestPolicy?: ModelRequestPolicy
   mode?: 'create' | 'edit'
   isCustomModel?: boolean
   providerModels?: Array<Record<string, unknown>>
@@ -90,6 +92,12 @@ const setup = async (options: SetupOptions) => {
           modelId,
           source: 'transport-fallback',
           catalogMatched: false
+        },
+        requestPolicy: options.requestPolicy ?? {
+          temperature: { mode: 'passthrough' },
+          topP: { mode: 'passthrough' },
+          reasoning: { mode: 'passthrough' },
+          legacyThinking: { mode: 'passthrough' }
         },
         supportsReasoning: options.reasoningPortrait?.supported ?? true,
         reasoningPortrait: options.reasoningPortrait ?? null,
@@ -645,6 +653,63 @@ describe('ModelConfigDialog reasoning portraits', () => {
 
     expect((wrapper.vm as any).isMoonshotKimiTemperatureLocked).toBe(true)
     expect((wrapper.vm as any).config.temperature).toBe(1)
+  })
+
+  it('renders K3 request policy without rewriting stored generation intent', async () => {
+    const { wrapper, modelConfigStore } = await setup({
+      providerId: 'new-api',
+      providerApiType: 'new-api',
+      capabilityProviderId: 'moonshot',
+      modelId: 'kimi-k3',
+      modelName: 'Kimi K3',
+      modelConfig: {
+        isUserDefined: true,
+        reasoning: false,
+        reasoningEffort: 'medium',
+        temperature: 0.6,
+        topP: 0.8
+      },
+      temperatureCapability: false,
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      },
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max']
+      }
+    })
+
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).showTopPControl).toBe(false)
+    expect((wrapper.vm as any).reasoningToggleMode).toBe('indicator')
+    expect((wrapper.vm as any).reasoningToggleValue).toBe(true)
+    expect((wrapper.vm as any).config.reasoning).toBe(false)
+    expect((wrapper.vm as any).config.reasoningEffort).toBe('medium')
+    expect((wrapper.vm as any).effectiveReasoningEffort).toBe('max')
+    expect((wrapper.vm as any).config.temperature).toBe(0.6)
+    expect((wrapper.vm as any).config.topP).toBe(0.8)
+    expect(wrapper.text()).toContain('settings.model.modelConfig.reasoningEffort.options.max')
+    expect(wrapper.text()).not.toContain(
+      'settings.model.modelConfig.reasoningEffort.options.medium'
+    )
+
+    await (wrapper.vm as any).handleSave()
+    expect(modelConfigStore.setModelConfig).toHaveBeenCalledWith(
+      'kimi-k3',
+      'new-api',
+      expect.objectContaining({
+        reasoning: false,
+        reasoningEffort: 'medium',
+        temperature: 0.6,
+        topP: 0.8
+      })
+    )
   })
 })
 

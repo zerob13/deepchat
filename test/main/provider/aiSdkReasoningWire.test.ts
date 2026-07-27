@@ -1,0 +1,105 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../../src/main/platform/proxy', () => ({
+  proxyConfig: {
+    getProxyUrl: vi.fn().mockReturnValue(null)
+  }
+}))
+
+import { runAiSdkGenerateText } from '@/provider/aiSdk/runtime'
+
+const providerSettings = {
+  getAzureApiVersion: () => undefined
+} as any
+
+async function captureRequestBody(run: () => Promise<unknown>): Promise<Record<string, any>> {
+  const fetchMock = vi.fn(async () => {
+    throw new Error('request captured')
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  await expect(run()).rejects.toThrow()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+
+  const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+  expect(init?.body).toBeTypeOf('string')
+  return JSON.parse(init?.body as string)
+}
+
+describe('AI SDK reasoning wire payloads', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('emits K3 reasoning effort while omitting unsupported sampling and legacy thinking', async () => {
+    const body = await captureRequestBody(() =>
+      runAiSdkGenerateText(
+        {
+          providerKind: 'openai-compatible',
+          provider: {
+            id: 'new-api',
+            name: 'New API',
+            apiType: 'new-api',
+            apiKey: 'test-key',
+            baseUrl: 'https://new-api.example.com/v1',
+            enable: true
+          } as any,
+          capabilitySnapshot: {
+            identity: {
+              providerId: 'moonshot',
+              modelId: 'kimi-k3',
+              source: 'model-family',
+              catalogMatched: true
+            },
+            requestPolicy: {
+              temperature: { mode: 'omit' },
+              topP: { mode: 'omit' },
+              reasoning: { mode: 'fixed', value: true },
+              legacyThinking: { mode: 'omit' }
+            },
+            supportsAudioInput: false,
+            supportsReasoning: true,
+            reasoningPortrait: {
+              supported: true,
+              defaultEnabled: true,
+              mode: 'effort',
+              effort: 'max',
+              effortOptions: ['low', 'high', 'max']
+            },
+            thinkingBudgetRange: {},
+            supportsSearch: false,
+            searchDefaults: {},
+            temperatureCapability: false,
+            supportsTemperatureControl: false,
+            supportsReasoningEffort: true,
+            reasoningEffortDefault: 'max',
+            supportsVerbosity: false,
+            verbosityDefault: undefined
+          },
+          providerSettings,
+          defaultHeaders: {}
+        },
+        [{ role: 'user', content: 'Hello' }],
+        'kimi-k3',
+        {
+          apiEndpoint: 'chat',
+          reasoning: false,
+          reasoningEffort: 'medium',
+          temperature: 0.6,
+          topP: 0.8,
+          functionCall: false
+        } as any,
+        0.6,
+        1024
+      )
+    )
+
+    expect(body.reasoning_effort).toBe('max')
+    expect(body).not.toHaveProperty('temperature')
+    expect(body).not.toHaveProperty('top_p')
+    expect(body).not.toHaveProperty('n')
+    expect(body).not.toHaveProperty('presence_penalty')
+    expect(body).not.toHaveProperty('frequency_penalty')
+    expect(body).not.toHaveProperty('thinking')
+  })
+})

@@ -126,8 +126,19 @@ describe('capability identity resolution', () => {
       catalogMatched: true
     })
     expect(snapshot.temperatureCapability).toBe(false)
+    expect(snapshot.requestPolicy).toEqual({
+      temperature: { mode: 'omit' },
+      topP: { mode: 'omit' },
+      reasoning: { mode: 'fixed', value: true },
+      legacyThinking: { mode: 'omit' }
+    })
+    expect(snapshot.supportsReasoningEffort).toBe(true)
+    expect(snapshot.reasoningEffortDefault).toBe('max')
     expect(snapshot.reasoningPortrait).toMatchObject({
       supported: true,
+      mode: 'effort',
+      effort: 'max',
+      effortOptions: ['low', 'high', 'max'],
       interleaved: true,
       summaries: true,
       visibility: 'summary',

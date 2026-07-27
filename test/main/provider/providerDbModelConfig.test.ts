@@ -141,10 +141,38 @@ describe('Provider DB strict matching and user overrides', () => {
             }
           ]
         },
+        aihubmix: {
+          id: 'aihubmix',
+          name: 'AIHubMix',
+          models: [
+            {
+              id: 'kimi-k3',
+              limit: { context: 8192, output: 1024 },
+              reasoning: { supported: true, default: true }
+            }
+          ]
+        },
         moonshot: {
           id: 'moonshot',
           name: 'Moonshot',
           models: [
+            {
+              id: 'kimi-k3',
+              limit: { context: 1048576, output: 131072 },
+              modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+              tool_call: true,
+              temperature: false,
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  interleaved: true,
+                  summaries: true,
+                  visibility: 'summary',
+                  continuation: ['thinking_blocks']
+                }
+              }
+            },
             {
               id: 'moonshotai/kimi-k2.6',
               reasoning: {
@@ -176,6 +204,14 @@ describe('Provider DB strict matching and user overrides', () => {
               }
             }
           ]
+        },
+        alpha: {
+          id: 'alpha',
+          models: [{ id: 'shared-model', limit: { context: 11111, output: 1111 } }]
+        },
+        beta: {
+          id: 'beta',
+          models: [{ id: 'shared-model', limit: { context: 22222, output: 2222 } }]
         },
         minimax: {
           id: 'minimax',
@@ -277,6 +313,37 @@ describe('Provider DB strict matching and user overrides', () => {
     expect(cfg.maxTokens).toBe(4096)
     expect(cfg.functionCall).toBe(true)
     expect(cfg.temperature).toBe(0.6)
+  })
+
+  it('uses capability identity instead of provider iteration order for proxy defaults', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const proxyConfig = helper.getModelConfig('kimi-k3', 'new-api')
+    const directConfig = helper.getModelConfig('kimi-k3', 'moonshot')
+
+    expect(proxyConfig).toMatchObject({
+      contextLength: directConfig.contextLength,
+      maxTokens: directConfig.maxTokens,
+      vision: directConfig.vision,
+      functionCall: directConfig.functionCall,
+      reasoning: directConfig.reasoning,
+      reasoningEffort: directConfig.reasoningEffort
+    })
+    expect(proxyConfig.contextLength).toBe(1048576)
+    expect(proxyConfig.maxTokens).toBe(32000)
+    expect(proxyConfig.vision).toBe(true)
+    expect(proxyConfig.functionCall).toBe(true)
+    expect(proxyConfig.reasoning).toBe(true)
+    expect(proxyConfig.reasoningEffort).toBe('max')
+  })
+
+  it('uses safe defaults instead of selecting an ambiguous global model match', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const cfg = helper.getModelConfig('shared-model', 'new-api')
+
+    expect(cfg.contextLength).toBe(16000)
+    expect(cfg.maxTokens).toBe(4096)
   })
 
   it('prefers user config over provider DB and persists across restart', () => {

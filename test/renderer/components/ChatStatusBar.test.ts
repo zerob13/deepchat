@@ -5,6 +5,7 @@ import type { ReasoningEffort, ReasoningPortrait } from '../../../src/shared/typ
 import type { AcpConfigState } from '@shared/types/acp'
 import type { ImageGenerationOptions } from '../../../src/shared/imageGenerationSettings'
 import type { PermissionMode } from '../../../src/shared/types/agent-interface'
+import type { ModelRequestPolicy } from '../../../src/shared/modelRequestPolicy'
 
 const TEST_TIMEOUT_MS = 20000
 
@@ -57,6 +58,7 @@ type SetupOptions = {
   reasoningPortrait?: ReasoningPortrait | null
   capabilityProviderId?: string
   temperatureCapability?: boolean | undefined
+  requestPolicy?: ModelRequestPolicy
   projectPath?: string | null
   acpDraftSessionId?: string | null
   acpProcessConfig?: AcpConfigState | null
@@ -482,6 +484,12 @@ const setup = async (options: SetupOptions = {}) => {
           modelId,
           source: 'transport-fallback',
           catalogMatched: false
+        },
+        requestPolicy: options.requestPolicy ?? {
+          temperature: { mode: 'passthrough' },
+          topP: { mode: 'passthrough' },
+          reasoning: { mode: 'passthrough' },
+          legacyThinking: { mode: 'passthrough' }
         },
         supportsReasoning: reasoningPortrait?.supported ?? true,
         reasoningPortrait,
@@ -1715,6 +1723,62 @@ describe('ChatStatusBar model and session panels', () => {
 
     await findNumericButton(wrapper, 'temperature', 'increment').trigger('click')
     expect((wrapper.vm as any).localSettings.temperature).toBe(1)
+  })
+
+  it('hides K3 sampling controls and uses the catalog effort default', async () => {
+    const { wrapper } = await setup({
+      agentId: 'deepchat',
+      hasActiveSession: false,
+      preferredModel: { providerId: 'new-api', modelId: 'kimi-k3' },
+      defaultModel: { providerId: 'new-api', modelId: 'kimi-k3' },
+      capabilityProviderId: 'moonshot',
+      temperatureCapability: false,
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      },
+      extraModelGroups: [
+        {
+          providerId: 'new-api',
+          providerName: 'New API',
+          apiType: 'new-api',
+          models: [{ id: 'kimi-k3', name: 'Kimi K3' }]
+        }
+      ],
+      modelConfig: {
+        reasoning: false,
+        reasoningEffort: undefined,
+        temperature: 0.6
+      },
+      reasoningEffortDefault: 'max',
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max']
+      }
+    })
+
+    await (wrapper.vm as any).openModelSettings('new-api', 'kimi-k3')
+    await flushPromises()
+
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).showTopPControl).toBe(false)
+    expect((wrapper.vm as any).localSettings.temperature).toBe(0.6)
+    expect((wrapper.vm as any).localSettings.reasoningEffort).toBe('max')
+    const localSettings = (wrapper.vm as any).localSettings
+    localSettings.reasoningEffort = 'medium'
+    await flushPromises()
+    expect((wrapper.vm as any).effectiveReasoningEffortValue).toBe('max')
+    expect((wrapper.vm as any).localSettings.reasoningEffort).toBe('medium')
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.topP')
+    expect(wrapper.text()).not.toContain(
+      'settings.model.modelConfig.reasoningEffort.options.medium'
+    )
   })
 
   it('ignores existing draft generation overrides when loading draft model defaults', async () => {

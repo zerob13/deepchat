@@ -365,6 +365,36 @@ describe('AI SDK provider options', () => {
     })
   })
 
+  it('uses standard reasoning effort and omits legacy thinking for K3', () => {
+    const result = buildProviderOptions({
+      providerId: 'new-api',
+      capabilityProviderId: 'moonshot',
+      providerOptionsKey: 'new-api',
+      apiType: 'openai_chat',
+      modelId: 'kimi-k3',
+      modelConfig: {
+        reasoning: false,
+        reasoningEffort: 'max',
+        temperature: 0.6,
+        topP: 0.8
+      } as any,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max']
+      },
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions?.['new-api']).toMatchObject({
+      reasoningEffort: 'max'
+    })
+    expect(result.providerOptions?.['new-api']).not.toHaveProperty('thinking')
+  })
+
   it('routes Ollama reasoning effort through OpenAI-compatible provider options', () => {
     const result = buildProviderOptions({
       providerId: 'ollama',

@@ -1534,6 +1534,12 @@ describe('main kernel contracts', () => {
             source: 'provider-model',
             catalogMatched: true
           },
+          requestPolicy: {
+            temperature: { mode: 'passthrough' },
+            topP: { mode: 'passthrough' },
+            reasoning: { mode: 'passthrough' },
+            legacyThinking: { mode: 'passthrough' }
+          },
           supportsReasoning: true,
           reasoningPortrait: null,
           thinkingBudgetRange: null,
@@ -1555,6 +1561,12 @@ describe('main kernel contracts', () => {
           modelId: 'gpt-5.4',
           source: 'provider-model',
           catalogMatched: true
+        },
+        requestPolicy: {
+          temperature: { mode: 'passthrough' },
+          topP: { mode: 'passthrough' },
+          reasoning: { mode: 'passthrough' },
+          legacyThinking: { mode: 'passthrough' }
         },
         supportsReasoning: true,
         reasoningPortrait: null,

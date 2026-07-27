@@ -38,6 +38,12 @@ describe('Provider routes', () => {
         source: 'model-owner',
         catalogMatched: true
       },
+      requestPolicy: {
+        temperature: { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      },
       supportsAudioInput: false,
       supportsReasoning: true,
       reasoningPortrait: {
@@ -77,13 +83,17 @@ describe('Provider routes', () => {
       {
         providerId: 'new-api',
         modelId: 'claude-opus-4-8',
-        routeOverride
+        routeOverride,
+        reasoning: false
       },
       context
     )
 
     expect(getCapabilitySnapshot).toHaveBeenCalledTimes(1)
-    expect(getCapabilitySnapshot).toHaveBeenCalledWith('new-api', 'claude-opus-4-8', routeOverride)
+    expect(getCapabilitySnapshot).toHaveBeenCalledWith('new-api', 'claude-opus-4-8', {
+      routeOverride,
+      reasoning: false
+    })
     expect(legacyGetter).not.toHaveBeenCalled()
     expect(result).toEqual({
       capabilities: {

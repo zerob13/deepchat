@@ -141,8 +141,9 @@ per physical request.
 
 ### Reasoning effort
 
-Kimi K3 reasoning effort is described by provider-db metadata with options `low`, `high`, and `max`,
-defaulting to `max`. `medium` is not offered for K3.
+Kimi K3 reasoning effort has options `low`, `high`, and `max`, defaulting to `max`. Until
+provider-db publishes those fields, DeepChat supplies that exact model fallback; later explicit
+catalog fields override the fallback. `medium` is not offered for K3.
 
 DeepChat supplies the standard AI SDK `reasoningEffort` provider option. The installed
 `@ai-sdk/openai-compatible` adapter serializes that option as `reasoning_effort`. DeepChat does not
@@ -182,8 +183,8 @@ added.
    construction.
 7. ZenMux Anthropic behavior remains correct without a duplicate shared routing rule.
 8. Unknown custom OpenAI-compatible models retain pass-through generation behavior.
-9. K3 effort controls expose exactly `low`, `high`, and `max`, defaulting to `max`, when the
-   provider-db metadata is available.
+9. K3 effort controls expose exactly `low`, `high`, and `max`, defaulting to `max`; later explicit
+   provider-db metadata overrides the local fallback.
 10. New API K3 `reasoningEffort: max` produces final wire field `reasoning_effort: "max"`.
 11. Grok Mini `reasoningEffort: high` produces final wire field `reasoning_effort: "high"`;
     unsupported Grok models do not gain reasoning-effort behavior.

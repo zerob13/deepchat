@@ -5,11 +5,13 @@ import {
   type NewApiEndpointType
 } from '@shared/model'
 import type {
+  CapabilitySnapshotOptions,
   CapabilityIdentitySource,
   ResolvedCapabilityIdentity,
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
 import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
+import { resolveModelRequestPolicy } from '@shared/modelRequestPolicy'
 
 export type CapabilityFamilyHint = 'anthropic' | 'gemini'
 
@@ -336,7 +338,8 @@ export const resolveCapabilityIdentity = (
 }
 
 export const buildResolvedCapabilitySnapshot = (
-  identity: ResolvedCapabilityIdentity
+  identity: ResolvedCapabilityIdentity,
+  options: Pick<CapabilitySnapshotOptions, 'reasoning'> = {}
 ): ResolvedModelCapabilitySnapshot => {
   const catalog = modelCapabilities.getCatalogCapabilitySnapshot(
     identity.providerId,
@@ -345,6 +348,11 @@ export const buildResolvedCapabilitySnapshot = (
 
   return {
     identity,
+    requestPolicy: resolveModelRequestPolicy(
+      identity.providerId,
+      identity.modelId,
+      options.reasoning
+    ),
     supportsAudioInput: catalog.supportsAudioInput,
     supportsReasoning: catalog.supportsReasoning,
     reasoningPortrait: catalog.reasoningPortrait,

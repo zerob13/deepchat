@@ -10,6 +10,10 @@ import { modelCapabilities } from '../../../src/main/provider/modelCapabilities'
 const mockStores = new Map<string, Record<string, any>>()
 
 const CURRENT_VERSION = '1.0.0'
+const rebuildModelCapabilities = () => {
+  const capabilities = modelCapabilities as unknown as { rebuildIndexFromDb: () => void }
+  capabilities.rebuildIndexFromDb()
+}
 
 vi.mock('electron-store', () => {
   return {
@@ -81,7 +85,8 @@ describe('ModelConfigHelper', () => {
       mockStores.set(key, value)
     })
 
-    vi.clearAllMocks()
+    vi.restoreAllMocks()
+    rebuildModelCapabilities()
   })
 
   describe('Core CRUD Operations', () => {
@@ -466,29 +471,37 @@ describe('ModelConfigHelper', () => {
     it('derives interleaved thinking from the provider reasoning portrait', () => {
       const getDbSpy = vi.spyOn(providerDbLoader, 'getDb').mockReturnValue({
         providers: {
-          zenmux: {
-            id: 'zenmux',
-            models: [{ id: 'moonshotai/kimi-k2.5', tool_call: true }]
+          moonshot: {
+            id: 'moonshot',
+            models: [
+              {
+                id: 'moonshotai/kimi-k2.5',
+                tool_call: true,
+                reasoning: { supported: true, default: true },
+                extra_capabilities: {
+                  reasoning: {
+                    supported: true,
+                    default_enabled: true,
+                    mode: 'effort',
+                    effort: 'medium',
+                    effort_options: ['minimal', 'low', 'medium', 'high'],
+                    verbosity: 'medium',
+                    verbosity_options: ['low', 'medium', 'high'],
+                    interleaved: true
+                  }
+                }
+              }
+            ]
           }
         }
       } as any)
-      const portraitSpy = vi.spyOn(modelCapabilities, 'getReasoningPortrait').mockReturnValue({
-        supported: true,
-        defaultEnabled: true,
-        interleaved: true,
-        mode: 'effort',
-        effort: 'medium',
-        effortOptions: ['minimal', 'low', 'medium', 'high'],
-        verbosity: 'medium',
-        verbosityOptions: ['low', 'medium', 'high']
-      })
+      rebuildModelCapabilities()
 
       const config = modelConfigHelper.getModelConfig('moonshotai/kimi-k2.5', 'zenmux')
 
       expect(config.forceInterleavedThinkingCompat).toBe(true)
       expect(config.isUserDefined).toBe(false)
 
-      portraitSpy.mockRestore()
       getDbSpy.mockRestore()
     })
 
@@ -515,18 +528,28 @@ describe('ModelConfigHelper', () => {
         providers: {
           anthropic: {
             id: 'anthropic',
-            models: [{ id: 'claude-opus-4-7', tool_call: true, temperature: false }]
+            models: [
+              {
+                id: 'claude-opus-4-7',
+                tool_call: true,
+                temperature: false,
+                reasoning: { supported: true, default: false },
+                extra_capabilities: {
+                  reasoning: {
+                    supported: true,
+                    default_enabled: false,
+                    mode: 'effort',
+                    effort: 'high',
+                    effort_options: ['low', 'medium', 'high', 'xhigh', 'max'],
+                    visibility: 'omitted'
+                  }
+                }
+              }
+            ]
           }
         }
       } as any)
-      const portraitSpy = vi.spyOn(modelCapabilities, 'getReasoningPortrait').mockReturnValue({
-        supported: true,
-        defaultEnabled: false,
-        mode: 'effort',
-        effort: 'high',
-        effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
-        visibility: 'omitted'
-      })
+      rebuildModelCapabilities()
 
       const config = modelConfigHelper.getModelConfig('claude-opus-4-7', 'anthropic')
 
@@ -534,35 +557,36 @@ describe('ModelConfigHelper', () => {
       expect(config.reasoningVisibility).toBe('omitted')
       expect(config.reasoningEffort).toBe('high')
 
-      portraitSpy.mockRestore()
       getDbSpy.mockRestore()
     })
 
     it('derives anthropic reasoning visibility for zenmux anthropic routes', () => {
       const getDbSpy = vi.spyOn(providerDbLoader, 'getDb').mockReturnValue({
         providers: {
-          zenmux: {
-            id: 'zenmux',
-            models: [{ id: 'anthropic/claude-opus-4-7', tool_call: true, temperature: false }]
+          anthropic: {
+            id: 'anthropic',
+            models: [
+              {
+                id: 'claude-opus-4-7',
+                tool_call: true,
+                temperature: false,
+                reasoning: { supported: true, default: false },
+                extra_capabilities: {
+                  reasoning: {
+                    supported: true,
+                    default_enabled: false,
+                    mode: 'effort',
+                    effort: 'high',
+                    effort_options: ['low', 'medium', 'high', 'xhigh', 'max'],
+                    visibility: 'omitted'
+                  }
+                }
+              }
+            ]
           }
         }
       } as any)
-      const portraitSpy = vi
-        .spyOn(modelCapabilities, 'getReasoningPortrait')
-        .mockImplementation((providerId: string, modelId: string) => {
-          if (providerId === 'zenmux' && modelId === 'anthropic/claude-opus-4-7') {
-            return {
-              supported: true,
-              defaultEnabled: false,
-              mode: 'effort',
-              effort: 'high',
-              effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
-              visibility: 'omitted'
-            }
-          }
-
-          return null
-        })
+      rebuildModelCapabilities()
 
       const config = modelConfigHelper.getModelConfig('anthropic/claude-opus-4-7', 'zenmux')
 
@@ -570,7 +594,6 @@ describe('ModelConfigHelper', () => {
       expect(config.reasoningVisibility).toBe('omitted')
       expect(config.reasoningEffort).toBe('high')
 
-      portraitSpy.mockRestore()
       getDbSpy.mockRestore()
     })
 
@@ -580,39 +603,43 @@ describe('ModelConfigHelper', () => {
           openai: {
             id: 'openai',
             models: [
-              { id: 'gpt-5', tool_call: true, temperature: true },
-              { id: 'gpt-5-mini', tool_call: true, temperature: true }
+              {
+                id: 'gpt-5',
+                tool_call: true,
+                temperature: true,
+                reasoning: { supported: true, default: true },
+                extra_capabilities: {
+                  reasoning: {
+                    supported: true,
+                    default_enabled: true,
+                    mode: 'effort',
+                    effort: 'medium',
+                    effort_options: ['minimal', 'low', 'medium', 'high'],
+                    visibility: 'hidden'
+                  }
+                }
+              },
+              {
+                id: 'gpt-5-mini',
+                tool_call: true,
+                temperature: true,
+                reasoning: { supported: true, default: true },
+                extra_capabilities: {
+                  reasoning: {
+                    supported: true,
+                    default_enabled: true,
+                    mode: 'effort',
+                    effort: 'medium',
+                    effort_options: ['minimal', 'low', 'medium', 'high'],
+                    visibility: 'summary'
+                  }
+                }
+              }
             ]
           }
         }
       } as any)
-      const portraitSpy = vi
-        .spyOn(modelCapabilities, 'getReasoningPortrait')
-        .mockImplementation((providerId: string, modelId: string) => {
-          if (providerId === 'openai' && modelId === 'gpt-5') {
-            return {
-              supported: true,
-              defaultEnabled: true,
-              mode: 'effort',
-              effort: 'medium',
-              effortOptions: ['minimal', 'low', 'medium', 'high'],
-              visibility: 'hidden'
-            }
-          }
-
-          if (providerId === 'openai' && modelId === 'gpt-5-mini') {
-            return {
-              supported: true,
-              defaultEnabled: true,
-              mode: 'effort',
-              effort: 'medium',
-              effortOptions: ['minimal', 'low', 'medium', 'high'],
-              visibility: 'summary'
-            }
-          }
-
-          return null
-        })
+      rebuildModelCapabilities()
 
       const hiddenConfig = modelConfigHelper.getModelConfig('gpt-5', 'openai')
       const summaryConfig = modelConfigHelper.getModelConfig('gpt-5-mini', 'openai')
@@ -620,7 +647,6 @@ describe('ModelConfigHelper', () => {
       expect(hiddenConfig.reasoningVisibility).toBe('hidden')
       expect(summaryConfig.reasoningVisibility).toBe('summary')
 
-      portraitSpy.mockRestore()
       getDbSpy.mockRestore()
     })
   })

@@ -73,9 +73,9 @@ copy only if it remains necessary to explain its two fixed values.
 ## Reasoning effort and provider metadata
 
 Consume K3 reasoning metadata with effort mode, options `low`, `high`, and `max`, and default `max`.
-If the generated provider-db resource does not yet contain the upstream change, add focused
-DeepChat tests using a catalog fixture while keeping the runtime compatible with a later background
-catalog refresh.
+Because the current generated provider-db resource does not contain those effort fields, provide an
+exact K3 fallback in the existing portrait fallback layer. Merge explicit catalog fields after the
+fallback so a later background catalog refresh remains authoritative without a code change.
 
 Replace Grok's custom snake-case provider option with the standard `reasoningEffort` option, guarded
 by the existing Grok Mini family check. The installed OpenAI-compatible adapter maps the standard

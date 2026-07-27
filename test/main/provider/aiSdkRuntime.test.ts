@@ -87,6 +87,39 @@ describe('AI SDK runtime', () => {
       ...overrides
     }) as any
 
+  const createCapabilitySnapshot = (
+    providerId: string,
+    modelId: string,
+    temperatureCapability: boolean | undefined,
+    overrides: Record<string, unknown> = {}
+  ) => ({
+    identity: {
+      providerId,
+      modelId,
+      source: 'provider-model',
+      catalogMatched: temperatureCapability !== undefined
+    },
+    requestPolicy: {
+      temperature: { mode: 'passthrough' },
+      topP: { mode: 'passthrough' },
+      reasoning: { mode: 'passthrough' },
+      legacyThinking: { mode: 'passthrough' }
+    },
+    supportsAudioInput: false,
+    supportsReasoning: false,
+    reasoningPortrait: null,
+    thinkingBudgetRange: {},
+    supportsSearch: false,
+    searchDefaults: {},
+    temperatureCapability,
+    supportsTemperatureControl: temperatureCapability !== false,
+    supportsReasoningEffort: false,
+    reasoningEffortDefault: undefined,
+    supportsVerbosity: false,
+    verbosityDefault: undefined,
+    ...overrides
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     clearLearnedEmbeddingBatchLimits()
@@ -1804,6 +1837,7 @@ describe('AI SDK runtime', () => {
         ...createProviderSettings(),
         supportsTemperatureControl: vi.fn().mockReturnValue(false)
       },
+      capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-7', false),
       defaultHeaders: {},
       emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
         tracePayloads.push(payload)
@@ -1841,6 +1875,7 @@ describe('AI SDK runtime', () => {
           getCapabilityProviderId: vi.fn().mockReturnValue('anthropic'),
           supportsTemperatureControl: vi.fn().mockReturnValue(false)
         },
+        capabilitySnapshot: createCapabilitySnapshot('anthropic', modelId, false),
         defaultHeaders: {},
         emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
           tracePayloads.push(payload)
@@ -1864,14 +1899,8 @@ describe('AI SDK runtime', () => {
       }
 
       const request = mockStreamText.mock.calls[0]?.[0] as Record<string, unknown>
-      expect(context.providerSettings.getCapabilityProviderId).toHaveBeenCalledWith(
-        'aihubmix',
-        modelId
-      )
-      expect(context.providerSettings.supportsTemperatureControl).toHaveBeenCalledWith(
-        'anthropic',
-        modelId
-      )
+      expect(context.providerSettings.getCapabilityProviderId).not.toHaveBeenCalled()
+      expect(context.providerSettings.supportsTemperatureControl).not.toHaveBeenCalled()
       expect(request).not.toHaveProperty('temperature')
       expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
       expect(events).toEqual([])
@@ -1892,6 +1921,7 @@ describe('AI SDK runtime', () => {
         getCapabilityProviderId: vi.fn().mockReturnValue('anthropic'),
         supportsTemperatureControl: vi.fn().mockReturnValue(false)
       },
+      capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-8', false),
       defaultHeaders: {},
       emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
         tracePayloads.push(payload)
@@ -1916,10 +1946,7 @@ describe('AI SDK runtime', () => {
     }
 
     const request = mockStreamText.mock.calls[0]?.[0] as Record<string, unknown>
-    expect(context.providerSettings.supportsTemperatureControl).toHaveBeenCalledWith(
-      'anthropic',
-      'claude-opus-4-8'
-    )
+    expect(context.providerSettings.supportsTemperatureControl).not.toHaveBeenCalled()
     expect(request).not.toHaveProperty('temperature')
     expect(request).not.toHaveProperty('topP')
     expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
@@ -1939,6 +1966,7 @@ describe('AI SDK runtime', () => {
         ...createProviderSettings(),
         supportsTemperatureControl: vi.fn().mockReturnValue(true)
       },
+      capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-6', true),
       defaultHeaders: {},
       emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
         tracePayloads.push(payload)
@@ -1959,6 +1987,187 @@ describe('AI SDK runtime', () => {
     const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, unknown>
     expect(request).toHaveProperty('temperature', 0.6)
     expect(tracePayloads[0]?.body).toHaveProperty('temperature', 0.6)
+  })
+
+  it('keeps sampling parameters for unknown OpenAI-compatible models', async () => {
+    const tracePayloads: Array<{ body?: Record<string, unknown> }> = []
+    const context = {
+      providerKind: 'openai-compatible',
+      provider: {
+        id: 'new-api',
+        apiType: 'new-api'
+      },
+      capabilitySnapshot: createCapabilitySnapshot('new-api', 'custom-model', undefined),
+      providerSettings: createProviderSettings(),
+      defaultHeaders: {},
+      emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
+        tracePayloads.push(payload)
+      })
+    } as any
+
+    await runAiSdkGenerateText(
+      context,
+      [],
+      'custom-model',
+      {
+        apiEndpoint: 'chat',
+        topP: 0.7
+      } as any,
+      0.4,
+      1024
+    )
+
+    const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(request).toMatchObject({
+      temperature: 0.4,
+      topP: 0.7
+    })
+    expect(tracePayloads[0]?.body).toMatchObject({
+      temperature: 0.4,
+      topP: 0.7
+    })
+  })
+
+  it('omits K3 sampling parameters and legacy thinking in non-streaming requests', async () => {
+    mockCreateAiSdkProviderContext.mockReturnValue({
+      providerOptionsKey: 'new-api',
+      apiType: 'openai_chat',
+      model: {},
+      endpoint: 'https://new-api.example.com/v1/chat/completions'
+    })
+    const tracePayloads: Array<{
+      modelConfig: Record<string, unknown>
+      body?: Record<string, unknown>
+    }> = []
+    const capabilitySnapshot = createCapabilitySnapshot('moonshot', 'kimi-k3', false, {
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      },
+      supportsReasoning: true,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max']
+      },
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'max'
+    })
+    const context = {
+      providerKind: 'openai-compatible',
+      provider: {
+        id: 'new-api',
+        apiType: 'new-api'
+      },
+      capabilitySnapshot,
+      providerSettings: createProviderSettings(),
+      defaultHeaders: {},
+      emitRequestTrace: vi.fn(async (modelConfig, payload) => {
+        tracePayloads.push({ modelConfig, ...payload })
+      })
+    } as any
+
+    await runAiSdkGenerateText(
+      context,
+      [],
+      'kimi-k3',
+      {
+        apiEndpoint: 'chat',
+        reasoning: false,
+        reasoningEffort: 'medium',
+        temperature: 0.6,
+        topP: 0.8
+      } as any,
+      0.6,
+      1024
+    )
+
+    const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, any>
+    expect(request).not.toHaveProperty('temperature')
+    expect(request).not.toHaveProperty('topP')
+    expect(request.providerOptions?.['new-api']).toMatchObject({
+      reasoningEffort: 'max'
+    })
+    expect(request.providerOptions?.['new-api']).not.toHaveProperty('thinking')
+    expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
+    expect(tracePayloads[0]?.body).not.toHaveProperty('topP')
+    expect(tracePayloads[0]?.modelConfig).toMatchObject({
+      reasoning: true,
+      reasoningEffort: 'max',
+      temperature: undefined,
+      topP: undefined
+    })
+  })
+
+  it('omits K3 sampling parameters and legacy thinking in streaming requests', async () => {
+    mockCreateAiSdkProviderContext.mockReturnValue({
+      providerOptionsKey: 'new-api',
+      apiType: 'openai_chat',
+      model: {},
+      endpoint: 'https://new-api.example.com/v1/chat/completions'
+    })
+    const tracePayloads: Array<{ body?: Record<string, unknown> }> = []
+    const context = {
+      providerKind: 'openai-compatible',
+      provider: {
+        id: 'new-api',
+        apiType: 'new-api'
+      },
+      capabilitySnapshot: createCapabilitySnapshot('moonshot', 'kimi-k3', false, {
+        requestPolicy: {
+          temperature: { mode: 'omit' },
+          topP: { mode: 'omit' },
+          reasoning: { mode: 'fixed', value: true },
+          legacyThinking: { mode: 'omit' }
+        },
+        supportsReasoning: true,
+        reasoningPortrait: {
+          supported: true,
+          defaultEnabled: true,
+          mode: 'effort',
+          effort: 'max',
+          effortOptions: ['low', 'high', 'max']
+        }
+      }),
+      providerSettings: createProviderSettings(),
+      defaultHeaders: {},
+      emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
+        tracePayloads.push(payload)
+      })
+    } as any
+
+    for await (const _event of runAiSdkCoreStream(
+      context,
+      [],
+      'aggregator-kimi-k3-alias',
+      {
+        apiEndpoint: 'chat',
+        reasoning: false,
+        reasoningEffort: 'high',
+        temperature: 0.6,
+        topP: 0.8,
+        functionCall: false
+      } as any,
+      0.6,
+      2048,
+      []
+    )) {
+      continue
+    }
+
+    const request = mockStreamText.mock.calls[0]?.[0] as Record<string, any>
+    expect(request).not.toHaveProperty('temperature')
+    expect(request).not.toHaveProperty('topP')
+    expect(request.providerOptions?.['new-api']).toMatchObject({
+      reasoningEffort: 'high'
+    })
+    expect(request.providerOptions?.['new-api']).not.toHaveProperty('thinking')
+    expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
+    expect(tracePayloads[0]?.body).not.toHaveProperty('topP')
   })
 
   it('forces Moonshot Kimi temperature to 1.0 when reasoning is enabled', async () => {

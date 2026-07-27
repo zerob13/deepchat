@@ -167,6 +167,41 @@ describe('ModelCapabilities reasoning portraits', () => {
             { id: 'grok-3-mini-fast-beta', reasoning: { supported: true, default: true } }
           ]
         },
+        moonshot: {
+          id: 'moonshot',
+          models: [
+            {
+              id: 'kimi-k3',
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  interleaved: true,
+                  summaries: true,
+                  visibility: 'summary',
+                  continuation: ['thinking_blocks']
+                }
+              }
+            }
+          ]
+        },
+        'moonshot-ai': {
+          id: 'moonshot-ai',
+          models: [
+            {
+              id: 'kimi-k3',
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  mode: 'effort',
+                  effort: 'high',
+                  effort_options: ['low', 'high']
+                }
+              }
+            }
+          ]
+        },
         '302ai': {
           id: '302ai',
           models: [{ id: 'gpt-5-thinking', reasoning: { supported: true, default: true } }]
@@ -258,6 +293,36 @@ describe('ModelCapabilities reasoning portraits', () => {
       supported: true,
       effort: 'low',
       effortOptions: ['low', 'high']
+    })
+  })
+
+  it('fills missing K3 effort metadata without overriding explicit catalog values', () => {
+    const capabilities = new ModelCapabilities()
+
+    expect(capabilities.getCatalogCapabilitySnapshot('moonshot', 'kimi-k3')).toMatchObject({
+      supportsReasoning: true,
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'max',
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max'],
+        interleaved: true,
+        summaries: true,
+        visibility: 'summary',
+        continuation: ['thinking_blocks']
+      }
+    })
+    expect(capabilities.getCatalogCapabilitySnapshot('moonshot-ai', 'kimi-k3')).toMatchObject({
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'high',
+      reasoningPortrait: {
+        mode: 'effort',
+        effort: 'high',
+        effortOptions: ['low', 'high']
+      }
     })
   })
 

@@ -650,7 +650,12 @@ export function createProviderRoutes(deps: {
         const snapshot = providerSettings.getCapabilitySnapshot(
           input.providerId,
           input.modelId,
-          input.routeOverride
+          input.routeOverride || input.reasoning !== undefined
+            ? {
+                routeOverride: input.routeOverride,
+                reasoning: input.reasoning
+              }
+            : undefined
         )
         return modelsGetCapabilitiesRoute.output.parse({
           capabilities: {

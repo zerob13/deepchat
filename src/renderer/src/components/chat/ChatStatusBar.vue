@@ -636,7 +636,7 @@
                           t('settings.model.modelConfig.reasoningEffort.label')
                         }}</label>
                         <Select
-                          :model-value="localSettings.reasoningEffort ?? effortOptions[0]?.value"
+                          :model-value="effectiveReasoningEffortValue"
                           @update:model-value="onReasoningEffortSelect($event as string)"
                         >
                           <SelectTrigger class="h-8 text-xs">
@@ -1015,6 +1015,10 @@ import {
   resolveMoonshotKimiTemperaturePolicy
 } from '@shared/moonshotKimiPolicy'
 import {
+  createPassthroughModelRequestPolicy,
+  type ModelRequestPolicy
+} from '@shared/modelRequestPolicy'
+import {
   getReasoningEffectiveEnabledForProvider,
   hasAnthropicReasoningToggle,
   type ReasoningPortrait
@@ -1149,6 +1153,7 @@ const capabilitySupportsReasoning = ref<boolean | null>(null)
 const capabilityReasoningPortrait = ref<ReasoningPortrait | null>(null)
 const capabilitySupportsTemperature = ref<boolean | null>(null)
 const capabilityProviderId = ref('')
+const capabilityRequestPolicy = ref<ModelRequestPolicy>(createPassthroughModelRequestPolicy())
 
 let draftModelSyncToken = 0
 let permissionSyncToken = 0
@@ -1605,11 +1610,14 @@ const showThinkingBudget = computed(() => {
 
 const showTemperatureControl = computed(
   () =>
+    capabilityRequestPolicy.value.temperature.mode !== 'omit' &&
     (capabilitySupportsTemperature.value !== false || isMoonshotKimiTemperatureLocked.value) &&
     Boolean(localSettings.value)
 )
 const supportsTopPControl = computed(
-  () => capabilityProviderId.value !== 'anthropic' || capabilitySupportsTemperature.value !== false
+  () =>
+    capabilityRequestPolicy.value.topP.mode !== 'omit' &&
+    (capabilityProviderId.value !== 'anthropic' || capabilitySupportsTemperature.value !== false)
 )
 const showTopPControl = computed(
   () =>
@@ -1667,6 +1675,18 @@ const effortOptions = computed(() => {
     label: t(`settings.model.modelConfig.reasoningEffort.options.${value}`)
   }))
 })
+const effectiveReasoningEffortValue = computed(
+  () =>
+    normalizeReasoningEffort(
+      capabilityReasoningPortrait.value,
+      localSettings.value?.reasoningEffort
+    ) ??
+    normalizeReasoningEffort(
+      capabilityReasoningPortrait.value,
+      capabilityReasoningPortrait.value?.effort
+    ) ??
+    effortOptions.value[0]?.value
+)
 
 const verbosityOptions = computed(() => {
   return getVerbosityOptions(capabilityReasoningPortrait.value).map((value) => ({
@@ -2037,6 +2057,7 @@ const fetchCapabilities = async (
     if (requestToken !== generationSyncToken) return
 
     capabilityProviderId.value = capabilities.identity.providerId
+    capabilityRequestPolicy.value = capabilities.requestPolicy
     const portrait = capabilities.reasoningPortrait ?? null
 
     capabilityReasoningPortrait.value = portrait
@@ -2051,6 +2072,7 @@ const fetchCapabilities = async (
 
     console.warn('[ChatStatusBar] Failed to fetch model capabilities:', error)
     capabilityProviderId.value = providerId
+    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
     capabilitySupportsReasoning.value = null
     capabilityReasoningPortrait.value = null
     capabilitySupportsTemperature.value = null
@@ -2182,6 +2204,7 @@ const runSyncGenerationSettings = async () => {
     localSettings.value = null
     loadedSettingsSelection.value = null
     capabilityProviderId.value = ''
+    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
     capabilitySupportsReasoning.value = null
     capabilityReasoningPortrait.value = null
     return
@@ -2192,6 +2215,7 @@ const runSyncGenerationSettings = async () => {
     localSettings.value = null
     loadedSettingsSelection.value = null
     capabilityProviderId.value = ''
+    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
     capabilityReasoningPortrait.value = null
     capabilitySupportsReasoning.value = null
     return

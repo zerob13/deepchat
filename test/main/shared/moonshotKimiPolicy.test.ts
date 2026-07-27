@@ -5,6 +5,11 @@ import {
   getMoonshotKimiTemperaturePolicy,
   resolveMoonshotKimiTemperaturePolicy
 } from '../../../src/shared/moonshotKimiPolicy'
+import {
+  applyModelRequestPolicy,
+  isKimiK3ModelId,
+  resolveModelRequestPolicy
+} from '../../../src/shared/modelRequestPolicy'
 
 describe('moonshot Kimi temperature policy', () => {
   it('locks Kimi For Coding fixed-thinking model temperature', () => {
@@ -43,6 +48,62 @@ describe('moonshot Kimi temperature policy', () => {
       getMoonshotKimiTemperaturePolicy('kimi-for-coding', 'kimi-k2.7-code-highspeed')
     ).toMatchObject({
       baseModelId: 'kimi-k2.7-code-highspeed'
+    })
+  })
+
+  it.each([
+    ['moonshot', 'kimi-k3'],
+    ['new-api', 'kimi-k3'],
+    ['new-api', 'moonshot/kimi-k3'],
+    ['new-api', 'moonshotai/kimi-k3'],
+    ['new-api', 'models/moonshotai/kimi-k3'],
+    ['new-api', 'MOONSHOTAI/KIMI-K3']
+  ])(
+    'recognizes exact K3 identities for %s including qualified aliases: %s',
+    (providerId, modelId) => {
+      expect(isKimiK3ModelId(modelId)).toBe(true)
+      expect(resolveModelRequestPolicy(providerId, modelId, false)).toEqual({
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      })
+    }
+  )
+
+  it.each(['kimi-k3-preview', 'kimi-k30', 'not-kimi-k3-model', 'kimi-k3:thinking'])(
+    'does not apply K3 policy to substring or variant matches: %s',
+    (modelId) => {
+      expect(isKimiK3ModelId(modelId)).toBe(false)
+      expect(resolveModelRequestPolicy('new-api', modelId, false)).toEqual({
+        temperature: { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      })
+    }
+  )
+
+  it('applies K3 policy without mutating stored generation settings', () => {
+    const stored = {
+      reasoning: false,
+      temperature: 0.6,
+      topP: 0.8
+    }
+    const effective = applyModelRequestPolicy(
+      stored,
+      resolveModelRequestPolicy('new-api', 'kimi-k3', stored.reasoning)
+    )
+
+    expect(effective).toEqual({
+      reasoning: true,
+      temperature: undefined,
+      topP: undefined
+    })
+    expect(stored).toEqual({
+      reasoning: false,
+      temperature: 0.6,
+      topP: 0.8
     })
   })
 })

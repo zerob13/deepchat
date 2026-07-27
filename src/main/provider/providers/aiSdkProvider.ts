@@ -657,7 +657,9 @@ export class AiSdkProvider extends BaseLLMProvider {
     const resolvedModelConfig = this.getModelConfigForDecision(modelId, modelConfig, decision)
     const capabilityIdentity =
       decision.capabilityIdentity ?? this.resolveCapabilityIdentity(modelId, decision.endpointType)
-    const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity)
+    const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity, {
+      reasoning: resolvedModelConfig.reasoning
+    })
 
     const cleanHeaders =
       this.isAzureOpenAI(decision, runtimeProvider) || runtimeProvider.id === 'kimi-for-coding'

@@ -523,12 +523,36 @@ export const ReasoningPortraitSchema = z.looseObject({
   notes: z.array(z.string()).optional()
 })
 
+const NumberRequestParameterPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('passthrough') }),
+  z.object({ mode: z.literal('fixed'), value: z.number() }),
+  z.object({ mode: z.literal('omit') })
+])
+
+const BooleanRequestParameterPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('passthrough') }),
+  z.object({ mode: z.literal('fixed'), value: z.boolean() }),
+  z.object({ mode: z.literal('omit') })
+])
+
+const LegacyThinkingRequestParameterPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('passthrough') }),
+  z.object({ mode: z.literal('fixed'), value: z.enum(['enabled', 'disabled']) }),
+  z.object({ mode: z.literal('omit') })
+])
+
 export const ModelCapabilitiesSchema = z.object({
   identity: z.object({
     providerId: z.string().min(1),
     modelId: z.string().min(1),
     source: z.enum(CAPABILITY_IDENTITY_SOURCES),
     catalogMatched: z.boolean()
+  }),
+  requestPolicy: z.object({
+    temperature: NumberRequestParameterPolicySchema,
+    topP: NumberRequestParameterPolicySchema,
+    reasoning: BooleanRequestParameterPolicySchema,
+    legacyThinking: LegacyThinkingRequestParameterPolicySchema
   }),
   supportsAudioInput: z.boolean().nullable(),
   supportsReasoning: z.boolean().nullable(),

@@ -368,7 +368,7 @@
             <Label for="reasoningEffort">{{
               t('settings.model.modelConfig.reasoningEffort.label')
             }}</Label>
-            <Select v-model="config.reasoningEffort">
+            <Select v-model="effectiveReasoningEffort">
               <SelectTrigger>
                 <SelectValue
                   :placeholder="t('settings.model.modelConfig.reasoningEffort.placeholder')"
@@ -555,6 +555,10 @@ import {
   getMoonshotKimiTemperaturePolicy,
   resolveMoonshotKimiTemperaturePolicy
 } from '@shared/moonshotKimiPolicy'
+import {
+  createPassthroughModelRequestPolicy,
+  type ModelRequestPolicy
+} from '@shared/modelRequestPolicy'
 import type { ModelConfig } from '@shared/types/provider'
 import {
   ANTHROPIC_REASONING_VISIBILITY_VALUES,
@@ -948,6 +952,7 @@ const capabilityVerbosityDefault = ref<'low' | 'medium' | 'high' | undefined>(un
 const capabilityReasoningVisibilityDefault = ref<AnthropicReasoningVisibility | undefined>(
   undefined
 )
+const capabilityRequestPolicy = ref<ModelRequestPolicy>(createPassthroughModelRequestPolicy())
 let capabilityRequestId = 0
 
 const fetchCapabilities = async () => {
@@ -956,6 +961,7 @@ const fetchCapabilities = async () => {
 
   if (!props.providerId || !targetModelId) {
     capabilityProviderId.value = props.providerId
+    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
     capabilityReasoningPortrait.value = null
     capabilitySupportsReasoning.value = null
     capabilityBudgetRange.value = null
@@ -969,16 +975,20 @@ const fetchCapabilities = async () => {
   }
   try {
     const capabilities = await modelClient.getCapabilities(props.providerId, targetModelId, {
-      endpointType: isNewApiEndpointType(config.value.endpointType)
-        ? config.value.endpointType
-        : providerModelMeta.value?.endpointType,
-      supportedEndpointTypes: providerModelMeta.value?.supportedEndpointTypes,
-      type: effectiveNewApiModelType.value,
-      ownedBy: providerModelMeta.value?.ownedBy
+      routeOverride: {
+        endpointType: isNewApiEndpointType(config.value.endpointType)
+          ? config.value.endpointType
+          : providerModelMeta.value?.endpointType,
+        supportedEndpointTypes: providerModelMeta.value?.supportedEndpointTypes,
+        type: effectiveNewApiModelType.value,
+        ownedBy: providerModelMeta.value?.ownedBy
+      },
+      reasoning: config.value.reasoning
     })
     if (requestId !== capabilityRequestId) return
 
     capabilityProviderId.value = capabilities.identity.providerId
+    capabilityRequestPolicy.value = capabilities.requestPolicy
     const portrait = capabilities.reasoningPortrait ?? null
     capabilityReasoningPortrait.value = portrait
     capabilitySupportsReasoning.value =
@@ -1007,6 +1017,7 @@ const fetchCapabilities = async () => {
     if (requestId !== capabilityRequestId) return
 
     capabilityProviderId.value = props.providerId
+    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
     capabilityReasoningPortrait.value = null
     capabilitySupportsReasoning.value = null
     capabilityBudgetRange.value = null
@@ -1401,7 +1412,6 @@ const validateForm = () => {
 
   if (showTopPControl.value) {
     const parsedTopP = parseTopPDraft()
-    config.value.topP = parsedTopP
     if (parsedTopP !== undefined) {
       if (!Number.isFinite(parsedTopP)) {
         errors.value.topP = t('chat.advancedSettings.validation.finiteNumber')
@@ -1409,8 +1419,6 @@ const validateForm = () => {
         errors.value.topP = t('settings.model.modelConfig.validation.topPRange')
       }
     }
-  } else {
-    config.value.topP = undefined
   }
 
   if (config.value.timeout !== undefined && config.value.timeout !== null) {
@@ -1451,13 +1459,15 @@ const handleSave = async () => {
     ...config.value,
     ...(normalizedTimeout !== undefined ? { timeout: normalizedTimeout } : {}),
     topP:
-      showTopPControl.value &&
-      typeof parsedTopP === 'number' &&
-      Number.isFinite(parsedTopP) &&
-      parsedTopP >= 0.1 &&
-      parsedTopP <= 1
-        ? parsedTopP
-        : undefined,
+      capabilityRequestPolicy.value.topP.mode !== 'passthrough'
+        ? config.value.topP
+        : showTopPControl.value &&
+            typeof parsedTopP === 'number' &&
+            Number.isFinite(parsedTopP) &&
+            parsedTopP >= 0.1 &&
+            parsedTopP <= 1
+          ? parsedTopP
+          : undefined,
     imageGeneration: showOpenAIImageGenerationSettings.value
       ? normalizeImageGenerationOptions(config.value.imageGeneration)
       : undefined,
@@ -1625,28 +1635,40 @@ const isDeepSeekV31Model = computed(() => {
 const supportsReasoningEffort = computed(() =>
   hasReasoningEffortSupport(capabilityReasoningPortrait.value)
 )
+const effectiveReasoningEnabled = computed(() =>
+  capabilityRequestPolicy.value.reasoning.mode === 'fixed'
+    ? capabilityRequestPolicy.value.reasoning.value
+    : Boolean(config.value.reasoning)
+)
 const showReasoningEffort = computed(
   () =>
     supportsReasoningEffort.value &&
     (!hasAnthropicReasoningToggle(capabilityProviderId.value, capabilityReasoningPortrait.value) ||
-      Boolean(config.value.reasoning))
+      effectiveReasoningEnabled.value)
 )
 const showReasoningVisibility = computed(
-  () => supportsReasoningVisibility.value && Boolean(config.value.reasoning)
+  () => supportsReasoningVisibility.value && effectiveReasoningEnabled.value
 )
 const supportsTemperatureControl = computed(() => capabilitySupportsTemperature.value !== false)
 const showTemperatureControl = computed(
   () =>
+    capabilityRequestPolicy.value.temperature.mode !== 'omit' &&
     (supportsTemperatureControl.value || isMoonshotKimiTemperatureLocked.value) &&
     !supportsReasoningEffort.value
 )
 const supportsTopPControl = computed(
-  () => capabilityProviderId.value !== 'anthropic' || capabilitySupportsTemperature.value !== false
+  () =>
+    capabilityRequestPolicy.value.topP.mode !== 'omit' &&
+    (capabilityProviderId.value !== 'anthropic' || capabilitySupportsTemperature.value !== false)
 )
 const showTopPControl = computed(
   () => !showOpenAIMediaGenerationSettings.value && supportsTopPControl.value
 )
 const reasoningToggleMode = computed(() => {
+  if (capabilityRequestPolicy.value.reasoning.mode === 'fixed') {
+    return 'indicator' as const
+  }
+
   if (moonshotKimiTemperaturePolicy.value?.isThinkingVariant) {
     return 'indicator' as const
   }
@@ -1668,11 +1690,13 @@ const reasoningToggleMode = computed(() => {
 })
 const reasoningToggleDisabled = computed(() => reasoningToggleMode.value === 'indicator')
 const reasoningToggleValue = computed(() =>
-  moonshotKimiTemperaturePolicy.value?.isThinkingVariant
-    ? true
-    : reasoningToggleDisabled.value
-      ? supportsReasoningCapability(capabilityReasoningPortrait.value)
-      : Boolean(config.value.reasoning)
+  capabilityRequestPolicy.value.reasoning.mode === 'fixed'
+    ? capabilityRequestPolicy.value.reasoning.value
+    : moonshotKimiTemperaturePolicy.value?.isThinkingVariant
+      ? true
+      : reasoningToggleDisabled.value
+        ? supportsReasoningCapability(capabilityReasoningPortrait.value)
+        : Boolean(config.value.reasoning)
 )
 const reasoningToggleLabelKey = computed(() =>
   reasoningToggleDisabled.value
@@ -1693,6 +1717,16 @@ const reasoningEffortOptions = computed(() =>
     label: t(`settings.model.modelConfig.reasoningEffort.options.${value}`)
   }))
 )
+const effectiveReasoningEffort = computed<ReasoningEffort | undefined>({
+  get: () =>
+    normalizeReasoningEffortValue(
+      capabilityReasoningPortrait.value,
+      config.value.reasoningEffort
+    ) ?? capabilityEffortDefault.value,
+  set: (value) => {
+    config.value.reasoningEffort = value
+  }
+})
 const verbosityOptions = computed(() =>
   getVerbosityOptions(capabilityReasoningPortrait.value).map((value) => ({
     value,
@@ -1713,7 +1747,7 @@ const showThinkingBudget = computed(() => {
     capabilityProviderId.value,
     capabilityReasoningPortrait.value,
     {
-      reasoning: config.value.reasoning,
+      reasoning: effectiveReasoningEnabled.value,
       reasoningEffort: config.value.reasoningEffort
     }
   )
@@ -1767,7 +1801,7 @@ watch(
     if (
       supportsReasoningVisibility.value &&
       !config.value.reasoningVisibility &&
-      Boolean(config.value.reasoning)
+      effectiveReasoningEnabled.value
     ) {
       config.value.reasoningVisibility = capabilityReasoningVisibilityDefault.value ?? 'omitted'
     }

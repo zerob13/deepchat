@@ -10,7 +10,6 @@ import {
 import { applyMoonshotKimiReasoningTemperaturePolicy } from '@shared/moonshotKimiPolicy'
 import { resolveVideoGenerationCompatType } from '@shared/videoGenerationSettings'
 import ElectronStore from 'electron-store'
-import { providerDbLoader } from './providerDbLoader'
 import {
   hasAnthropicReasoningToggle,
   isImageInputSupported,
@@ -22,8 +21,7 @@ import {
   isVerbosity,
   type Verbosity
 } from '@shared/types/model-db'
-import { resolveProviderId } from './providerId'
-import { modelCapabilities } from './modelCapabilities'
+import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
 import type { StoreLike } from '@/config/storeLike'
 import { resolveCapabilityIdentity } from './capabilityIdentity'
 
@@ -31,11 +29,6 @@ const SPECIAL_CONCAT_CHAR = '-_-'
 
 const MODEL_CONFIG_META_KEY = '__meta__'
 const MINIMAX_M3_CONTEXT_LENGTH = 1_000_000
-
-const normalizeProviderDbModelId = (modelId: string | undefined): string | undefined => {
-  const normalized = modelId ? modelId.toLowerCase() : modelId
-  return normalized ? normalized.replace(/^models\//, '') : normalized
-}
 
 const isMiniMaxProviderId = (providerId: string | undefined): boolean => {
   const normalized = providerId?.trim().toLowerCase()
@@ -101,10 +94,6 @@ export class ModelConfigHelper {
     if (meta.lastRefreshVersion !== this.currentVersion) {
       this.refreshDerivedConfigs(meta)
     }
-  }
-
-  private resolveProviderId(providerId: string | undefined): string | undefined {
-    return resolveProviderId(providerId)
   }
 
   /**
@@ -173,15 +162,12 @@ export class ModelConfigHelper {
     }
   }
 
-  private buildConfigFromProviderModel(model: ProviderModel, providerId: string): ModelConfig {
+  private buildConfigFromProviderModel(match: CapabilityModelMatch): ModelConfig {
+    const { model, modelId, providerId } = match
     const modelType = this.inferModelType(model)
-    const identity = resolveCapabilityIdentity({
-      providerId,
-      modelId: model.id
-    })
     const portrait = modelCapabilities.getCatalogCapabilitySnapshot(
-      identity.providerId,
-      identity.modelId
+      providerId,
+      modelId
     ).reasoningPortrait
     const reasoningEnabled =
       portrait?.defaultEnabled ?? model.reasoning?.default ?? portrait?.supported ?? false
@@ -192,7 +178,7 @@ export class ModelConfigHelper {
       portrait,
       portrait?.effort ?? model.reasoning?.effort
     )
-    const reasoningVisibility = hasAnthropicReasoningToggle(identity.providerId, portrait)
+    const reasoningVisibility = hasAnthropicReasoningToggle(providerId, portrait)
       ? (normalizeAnthropicReasoningVisibilityValue(portrait?.visibility) ??
         normalizeReasoningVisibilityValue(portrait?.visibility))
       : normalizeReasoningVisibilityValue(portrait?.visibility)
@@ -418,8 +404,8 @@ export class ModelConfigHelper {
   }
 
   /**
-   * 获取模型配置（优先级：用户自定义 > 远端缓存/本地内置 Provider DB 严格匹配 > 默认兜底）
-   * 严格匹配要求 providerId 与 modelId 全等；不再做模糊匹配。
+   * Resolve model configuration from user intent, the authoritative capability identity,
+   * provider-managed cache, or safe defaults in that order.
    */
   getModelConfig(modelId: string, providerId?: string): ModelConfig {
     this.initializeCache()
@@ -467,47 +453,16 @@ export class ModelConfigHelper {
 
     let finalConfig: ModelConfig | null = null
 
-    // 严格匹配：仅当提供 providerId 时从 Provider DB 查找
-    const db = providerDbLoader.getDb()
-    const providers = db?.providers
-    const resolvedProviderId = normProviderId ? this.resolveProviderId(normProviderId) : undefined
-    const providerEntry = resolvedProviderId ? providers?.[resolvedProviderId] : undefined
-    const providerFound = Boolean(providerEntry)
-
-    if (
-      normProviderId &&
-      resolvedProviderId &&
-      providerEntry &&
-      Array.isArray(providerEntry.models)
-    ) {
-      for (let i = 0; i < providerEntry.models.length; i += 1) {
-        const candidate = providerEntry.models[i]
-        if (candidate && normalizeProviderDbModelId(candidate.id) === normModelId) {
-          finalConfig = this.buildConfigFromProviderModel(candidate, resolvedProviderId)
-          break
-        }
-      }
-    }
-
-    if (!finalConfig && normProviderId && !providerFound && providers && normModelId) {
-      for (const key in providers) {
-        if (!Object.prototype.hasOwnProperty.call(providers, key)) continue
-        const candidateProvider = providers[key]
-        if (!candidateProvider || !Array.isArray(candidateProvider.models)) {
-          continue
-        }
-
-        for (let j = 0; j < candidateProvider.models.length; j += 1) {
-          const candidateModel = candidateProvider.models[j]
-          if (candidateModel && normalizeProviderDbModelId(candidateModel.id) === normModelId) {
-            finalConfig = this.buildConfigFromProviderModel(candidateModel, candidateProvider.id)
-            break
-          }
-        }
-
-        if (finalConfig) {
-          break
-        }
+    if (normProviderId && normModelId) {
+      const identity = resolveCapabilityIdentity({
+        providerId: normProviderId,
+        modelId
+      })
+      const match = identity.catalogMatched
+        ? modelCapabilities.getProviderCapabilityModelMatch(identity.providerId, identity.modelId)
+        : undefined
+      if (match) {
+        finalConfig = this.buildConfigFromProviderModel(match)
       }
     }
 

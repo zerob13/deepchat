@@ -18,6 +18,12 @@ const createDefaultReasoningCapabilities = (providerId = 'openai', modelId = 'gp
     source: 'transport-fallback',
     catalogMatched: false
   },
+  requestPolicy: {
+    temperature: { mode: 'passthrough' },
+    topP: { mode: 'passthrough' },
+    reasoning: { mode: 'passthrough' },
+    legacyThinking: { mode: 'passthrough' }
+  },
   supportsReasoning: true,
   reasoningPortrait: null,
   thinkingBudgetRange: null,
