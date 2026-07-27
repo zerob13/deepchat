@@ -516,6 +516,7 @@
       "queryRecall": "查詢召回",
       "overhead": "結構開銷",
       "unused": "未使用",
+      "overheadSummary": "結構開銷 {overhead} · 未使用 {unused}",
       "countOnly": "呢筆記錄只包含數量摘要。",
       "unavailable": "呢條記憶已不可用。",
       "noSelectedDetails": "本輪冇可顯示嘅記憶明細。",

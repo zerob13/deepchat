@@ -1,4 +1,4 @@
-import { createHash } from 'crypto'
+import { createHash } from 'node:crypto'
 import {
   AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
   AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
@@ -9,6 +9,10 @@ import {
 import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 
 export type { AgentMemoryDirectiveKind, AgentMemoryDirectiveSource, AgentMemoryDirectiveStatus }
+export type ExplicitMemoryDirectiveSource = Extract<
+  AgentMemoryDirectiveSource,
+  'explicit_user' | 'manual'
+>
 
 export interface AgentMemoryDirectiveRow {
   agent_id: string
@@ -34,6 +38,11 @@ export type MemoryDirectiveInput =
       content: string
       topic: string
     }
+
+export interface MemoryDirectiveListOptions {
+  statuses?: readonly AgentMemoryDirectiveStatus[]
+  limit?: number
+}
 
 export interface NormalizedMemoryDirective {
   kind: AgentMemoryDirectiveKind
@@ -131,7 +140,6 @@ export function normalizeMemoryDirective(input: MemoryDirectiveInput): Normalize
       'topic',
       AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
     )
-    if (!normalizedTopic) throw new Error('[Memory] directive topic must not be empty')
   }
 
   const identity =

@@ -14,7 +14,7 @@ import { MaintenanceBudget } from '../core/maintenanceBudget'
 import { buildScopedMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
 import { memoryScopeFromRow, rowsShareMemoryScope } from '../core/scope'
 import {
-  evaluateMemoryTemporalPolicy,
+  evaluateNormalizedMemoryTemporalPolicy,
   resolveMergedClaimTemporalMetadata,
   temporalMetadataFromRow
 } from '../core/temporal'
@@ -337,14 +337,17 @@ export class ConflictService {
           {
             content: pair.target.content,
             temporalAnnotation:
-              evaluateMemoryTemporalPolicy(temporalMetadataFromRow(pair.target), now, 'evidence')
-                .annotation ?? undefined
+              evaluateNormalizedMemoryTemporalPolicy(
+                temporalMetadataFromRow(pair.target),
+                now,
+                'evidence'
+              ).annotation ?? undefined
           }
         ],
         {
           candidateTemporalAnnotation:
-            evaluateMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence').annotation ??
-            undefined
+            evaluateNormalizedMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence')
+              .annotation ?? undefined
         }
       )
       if (!budget.reserve('challenge', estimateTokens(prompt))) {

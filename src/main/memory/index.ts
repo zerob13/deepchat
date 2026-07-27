@@ -61,6 +61,13 @@ import { MaintenanceService } from './services/maintenanceService'
 import { WriteCoordinator } from './services/writeCoordinator'
 import { ManagementService } from './services/managementService'
 import { DirectiveService } from './services/directiveService'
+import type {
+  AgentMemoryDirectiveRow,
+  ExplicitMemoryDirectiveSource,
+  MemoryDirectiveCommandResult,
+  MemoryDirectiveInput,
+  MemoryDirectiveListOptions
+} from './domain/directives'
 import {
   createCompositeMemoryPerfObserver,
   MemoryDiagnosticsCollector
@@ -612,43 +619,43 @@ export class MemoryService implements MemoryRuntimePort {
     return this.persona.rejectPersonaDraft(agentId, draftId)
   }
 
-  listDirectives(agentId: string, options?: Parameters<DirectiveService['listDirectives']>[1]) {
+  listDirectives(agentId: string, options?: MemoryDirectiveListOptions): AgentMemoryDirectiveRow[] {
     return this.directives.listDirectives(agentId, options)
   }
 
-  listActiveDirectives(agentId: string) {
+  listActiveDirectives(agentId: string): AgentMemoryDirectiveRow[] {
     return this.directives.listActiveDirectives(agentId)
   }
 
   createDirective(
     agentId: string,
-    input: Parameters<DirectiveService['createExplicitDirective']>[1],
-    source?: Parameters<DirectiveService['createExplicitDirective']>[2]
-  ) {
+    input: MemoryDirectiveInput,
+    source?: ExplicitMemoryDirectiveSource
+  ): AgentMemoryDirectiveRow | null {
     return this.directives.createExplicitDirective(agentId, input, source)
   }
 
   createDirectiveResult(
     agentId: string,
-    input: Parameters<DirectiveService['createExplicitDirectiveResult']>[1],
-    source?: Parameters<DirectiveService['createExplicitDirectiveResult']>[2]
-  ) {
+    input: MemoryDirectiveInput,
+    source?: ExplicitMemoryDirectiveSource
+  ): MemoryDirectiveCommandResult {
     return this.directives.createExplicitDirectiveResult(agentId, input, source)
   }
 
-  suggestDirective(agentId: string, input: Parameters<DirectiveService['suggestDirective']>[1]) {
+  suggestDirective(agentId: string, input: MemoryDirectiveInput): AgentMemoryDirectiveRow | null {
     return this.directives.suggestDirective(agentId, input)
   }
 
-  approveDirective(agentId: string, directiveId: string) {
+  approveDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
     return this.directives.approveDirective(agentId, directiveId)
   }
 
-  approveDirectiveResult(agentId: string, directiveId: string) {
+  approveDirectiveResult(agentId: string, directiveId: string): MemoryDirectiveCommandResult {
     return this.directives.approveDirectiveResult(agentId, directiveId)
   }
 
-  rejectDirective(agentId: string, directiveId: string) {
+  rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
     return this.directives.rejectDirective(agentId, directiveId)
   }
 

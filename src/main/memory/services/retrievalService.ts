@@ -14,7 +14,7 @@ import {
 } from '../core/scoring'
 import { withSoftDeadline } from '../core/asyncDeadline'
 import { isMemoryProviderCancellationError } from '../core/providerCancellation'
-import { evaluateMemoryTemporalPolicy, temporalMetadataFromRow } from '../core/temporal'
+import { evaluateNormalizedMemoryTemporalPolicy, temporalMetadataFromRow } from '../core/temporal'
 import {
   createMemoryTopicSuppressionPolicy,
   directiveSuppressionAppliesToPurpose
@@ -101,7 +101,7 @@ function selectTemporalCandidates<T>(
   const selected: T[] = []
   for (const candidate of candidates) {
     const temporal = temporalMetadataFromRow(rowOf(candidate))
-    if (!evaluateMemoryTemporalPolicy(temporal, now, mode).eligible) continue
+    if (!evaluateNormalizedMemoryTemporalPolicy(temporal, now, mode).eligible) continue
     selected.push(candidate)
     if (selected.length >= limit) break
   }

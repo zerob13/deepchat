@@ -516,6 +516,7 @@
       "queryRecall": "查询召回",
       "overhead": "结构开销",
       "unused": "未使用",
+      "overheadSummary": "结构开销 {overhead} · 未使用 {unused}",
       "countOnly": "这条记录只包含计数摘要。",
       "unavailable": "这条记忆已不可用。",
       "noSelectedDetails": "本轮没有可展示的记忆明细。",

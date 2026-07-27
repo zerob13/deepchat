@@ -17,16 +17,16 @@ import {
   type FuseOptions,
   type MemoryRecallItem
 } from '../types'
-import type { MemoryScope } from '../domain/types'
 import { normalizeMemoryScope } from './scope'
 import type {
   AgentMemoryKind,
+  MemoryScope,
   MemoryTemporalMetadata,
   MemoryTemporalPolicyResult
 } from '../domain/types'
 import type { DeepChatAgentMemoryRetrieval } from '@shared/types/agent-interface'
 import { parseAgentMemorySourceEntryIds } from '@shared/lib/agentMemoryLineage'
-import { evaluateMemoryTemporalPolicy, temporalMetadataFromRow } from './temporal'
+import { evaluateNormalizedMemoryTemporalPolicy, temporalMetadataFromRow } from './temporal'
 
 // Recency half-life per cognitive layer: reflections persist longest, episodic summaries next,
 // everything else on the semantic default. persona/working never reach recall, so they fall through.
@@ -210,7 +210,7 @@ export function fuse(
   return Array.from(candidates.values())
     .flatMap((candidate) => {
       const temporal = temporalMetadataFromRow(candidate.row)
-      const temporalPolicy = evaluateMemoryTemporalPolicy(
+      const temporalPolicy = evaluateNormalizedMemoryTemporalPolicy(
         temporal,
         opts.now,
         opts.temporalMode ?? 'evidence'

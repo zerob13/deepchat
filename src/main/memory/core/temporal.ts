@@ -373,12 +373,11 @@ function temporalAnnotation(
   return `[${details.join('; ')}]`
 }
 
-export function evaluateMemoryTemporalPolicy(
-  input: MemoryTemporalMetadata,
+export function evaluateNormalizedMemoryTemporalPolicy(
+  temporal: MemoryTemporalMetadata,
   now: number,
   mode: MemoryTemporalPolicyMode = 'current'
 ): MemoryTemporalPolicyResult {
-  const temporal = normalizeMemoryTemporalMetadata(input)
   if (temporal.temporalKind === 'atemporal') {
     return { eligible: true, scoreFactor: 1, status: 'atemporal', annotation: null }
   }
@@ -463,4 +462,12 @@ export function evaluateMemoryTemporalPolicy(
       }
     }
   }
+}
+
+export function evaluateMemoryTemporalPolicy(
+  input: MemoryTemporalMetadata,
+  now: number,
+  mode: MemoryTemporalPolicyMode = 'current'
+): MemoryTemporalPolicyResult {
+  return evaluateNormalizedMemoryTemporalPolicy(normalizeMemoryTemporalMetadata(input), now, mode)
 }

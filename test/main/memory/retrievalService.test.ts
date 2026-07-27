@@ -19,6 +19,7 @@ import { enabledConfig, makePresenter, textToVector } from './support/memoryFake
 import {
   DAY,
   deferred,
+  flushMicrotasks,
   makeLLMPresenter,
   makeRow,
   memoryRuntimeForTests,
@@ -382,13 +383,18 @@ describe('MemoryService recall + injection', () => {
     await presenter.processPendingEmbeddings('a')
     expect(store.vectors.has(sessionOneId)).toBe(true)
     expect(store.vectors.has(sessionTwoId)).toBe(true)
+    const deletePrunableVectors = vi.spyOn(
+      memoryRuntimeForTests(presenter).vectorStoreService,
+      'deletePrunableVectorsForMemoryIds'
+    )
 
     await presenter.recall('a', 'exclusive second session topic', undefined, {
       sessionId: 'session-1'
     })
-    await vi.waitFor(() => {
-      expect(store.vectors.has(sessionTwoId)).toBe(true)
-    })
+    await flushMicrotasks()
+
+    expect(deletePrunableVectors).not.toHaveBeenCalled()
+    expect(store.vectors.has(sessionTwoId)).toBe(true)
     expect(repo.getById(sessionTwoId)).toMatchObject({
       scope_type: 'session',
       scope_id: 'session-2',

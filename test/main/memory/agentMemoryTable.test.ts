@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
+import { Database, dropV48DerivedArtifacts, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
 
 const tableModule = Database
   ? await import('@/memory/data/tables/agentMemory').catch(() => null)
@@ -252,16 +252,6 @@ function dropV42CanonicalArtifacts(db: InstanceType<typeof DatabaseCtor>): void 
     DROP INDEX IF EXISTS idx_agent_memory_embedding_pending_global_v2;
     DROP INDEX IF EXISTS idx_agent_memory_conflict_target_v2;
     DROP INDEX IF EXISTS idx_agent_memory_conflict_link_anomaly_v2;
-  `)
-}
-
-function dropV48DerivedArtifacts(db: InstanceType<typeof DatabaseCtor>): void {
-  db.exec(`
-    DROP TRIGGER IF EXISTS agent_memory_dirty_ai;
-    DROP TRIGGER IF EXISTS agent_memory_dirty_au;
-    DROP TRIGGER IF EXISTS agent_memory_dirty_ad;
-    DROP TABLE IF EXISTS agent_memory_dirty;
-    DROP TABLE IF EXISTS agent_memory_derivation;
   `)
 }
 

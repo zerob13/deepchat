@@ -214,6 +214,28 @@ describe('structured working projection', () => {
     expect(projection.droppedIds).toContain('oversized')
   })
 
+  it('admits the full projection at its exact estimated budget', () => {
+    const rows = [
+      row('fact', 'Stable ASCII fact.'),
+      row('plan', '未来の計画です。', {
+        temporal_kind: 'plan',
+        valid_from: 300,
+        temporal_confidence: 0.9,
+        temporal_precision: 'day',
+        temporal_timezone: 'UTC'
+      }),
+      row('reflection', 'A compact reflection.', { kind: 'reflection' })
+    ]
+    const unconstrained = buildStructuredWorkingProjection(rows, 100, 2_000)
+
+    const exact = buildStructuredWorkingProjection(rows, 100, unconstrained.estimatedTokens)
+    const below = buildStructuredWorkingProjection(rows, 100, unconstrained.estimatedTokens - 1)
+
+    expect(exact.selectedIds).toEqual(unconstrained.selectedIds)
+    expect(exact.estimatedTokens).toBe(unconstrained.estimatedTokens)
+    expect(below.selectedIds.length).toBeLessThan(unconstrained.selectedIds.length)
+  })
+
   it('indents claim continuations so content cannot impersonate projection sections', () => {
     const projection = buildStructuredWorkingProjection(
       [

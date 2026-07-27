@@ -6,6 +6,7 @@ import type {
   MemoryDirectiveItem,
   MemoryItem
 } from '../../../src/shared/contracts/routes'
+import { AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT } from '../../../src/shared/types/agent-memory'
 
 const passthrough = (name: string, tag = 'div') =>
   defineComponent({ name, template: `<${tag}><slot /></${tag}>` })
@@ -116,7 +117,7 @@ describe('MemoryInboxBar directives', () => {
 
     expect(memoryClient.listDirectives).toHaveBeenCalledWith('deepchat', {
       statuses: ['draft'],
-      limit: 64
+      limit: AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
     })
     expect(wrapper.text()).toContain('Do not proactively mention Project X.')
     expect(wrapper.text()).toContain('project x')
@@ -174,7 +175,7 @@ describe('MemoryInboxBar directives', () => {
     expect(toast).toHaveBeenCalledWith({
       variant: 'destructive',
       title: 'settings.memory.redesign.directiveCapacityTitle',
-      description: 'settings.memory.redesign.directiveCapacityDescription:{"max":64}'
+      description: `settings.memory.redesign.directiveCapacityDescription:{"max":${AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT}}`
     })
   })
 

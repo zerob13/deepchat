@@ -4,8 +4,10 @@ import { AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT } from '@shared/types/agent-mem
 import {
   normalizeMemoryDirective,
   type AgentMemoryDirectiveRow,
+  type ExplicitMemoryDirectiveSource,
   type MemoryDirectiveCommandResult,
-  type MemoryDirectiveInput
+  type MemoryDirectiveInput,
+  type MemoryDirectiveListOptions
 } from '../domain/directives'
 import type { MemoryRuntimeContext } from '../context'
 import type { MemoryDirectiveRepositoryPort } from '../ports'
@@ -24,10 +26,7 @@ export class DirectiveService {
 
   listDirectives(
     agentId: string,
-    options: {
-      statuses?: readonly AgentMemoryDirectiveRow['status'][]
-      limit?: number
-    } = {}
+    options: MemoryDirectiveListOptions = {}
   ): AgentMemoryDirectiveRow[] {
     this.ports.ctx.assertSafeAgentId(agentId)
     if (!this.ports.ctx.isManagedAgent(agentId)) return []
@@ -55,7 +54,7 @@ export class DirectiveService {
   createExplicitDirective(
     agentId: string,
     input: MemoryDirectiveInput,
-    source: 'explicit_user' | 'manual' = 'manual'
+    source: ExplicitMemoryDirectiveSource = 'manual'
   ): AgentMemoryDirectiveRow | null {
     const result = this.createExplicitDirectiveResult(agentId, input, source)
     return result.action === 'applied' ? result.directive : null
@@ -64,7 +63,7 @@ export class DirectiveService {
   createExplicitDirectiveResult(
     agentId: string,
     input: MemoryDirectiveInput,
-    source: 'explicit_user' | 'manual' = 'manual'
+    source: ExplicitMemoryDirectiveSource = 'manual'
   ): MemoryDirectiveCommandResult {
     this.ports.ctx.assertSafeAgentId(agentId)
     if (!this.ports.ctx.canManageAgentMemory(agentId)) {

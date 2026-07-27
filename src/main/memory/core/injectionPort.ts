@@ -321,37 +321,26 @@ function assembleMemorySection(payload: MemoryInjectionPayload | null): {
   const workingBody = payload.working ? sanitizeForInjection(payload.working) : ''
   placeHighPrioritySections(sections, personaBody, workingBody, budget)
 
-  // Working blobs are injected as their own section, never as recalled memories. recall() already
-  // excludes kind='working', so this is defense in depth against a hand-built or stale payload.
-  const recalled = payload.memories.filter((memory) => memory.kind !== 'working')
-  const ordered = [
-    ...recalled.filter((memory) => memory.kind !== 'episodic'),
-    ...recalled.filter((memory) => memory.kind === 'episodic')
-  ]
+  const recallCandidates = buildRecallCandidates(payload.memories)
   const lines: string[] = []
   const selected: MemoryInjectionManifest['selected'] = []
   const dropped: MemoryInjectionManifest['dropped'] = []
-  for (const memory of ordered) {
-    const rendered = memory.temporalAnnotation
-      ? `${memory.content} ${memory.temporalAnnotation}`
-      : memory.content
-    const candidate = [...lines, `- ${sanitizeForInjection(rendered)}`]
-    const projected = [...sections, buildSection(MEMORIES_HEADER, candidate.join('\n'))].join(
-      '\n\n'
-    )
-    if (estimateTokens(projected) > budget) {
-      dropped.push({ id: memory.id, kind: memory.kind, reason: 'budget' })
+  const existingWeight = estimateTokenWeight(sections.join('\n\n'))
+  const sectionJoinWeight = sections.length > 0 ? estimateTokenWeight('\n\n') : 0
+  const recallShellWeight = estimateTokenWeight(buildSection(MEMORIES_HEADER, ''))
+  const lineBreakWeight = estimateTokenWeight('\n')
+  let bodyWeight = 0
+  for (const candidate of recallCandidates) {
+    const nextBodyWeight =
+      bodyWeight + (lines.length > 0 ? lineBreakWeight : 0) + estimateTokenWeight(candidate.line)
+    const projectedWeight = existingWeight + sectionJoinWeight + recallShellWeight + nextBodyWeight
+    if (Math.ceil(projectedWeight) > budget) {
+      dropped.push({ id: candidate.memory.id, kind: candidate.memory.kind, reason: 'budget' })
       continue
     }
-    lines.push(candidate[candidate.length - 1])
-    selected.push({
-      id: memory.id,
-      kind: memory.kind,
-      score: memory.score,
-      sources: memory.sources,
-      similarity: memory.similarity,
-      breakdown: memory.breakdown
-    })
+    lines.push(candidate.line)
+    bodyWeight = nextBodyWeight
+    selected.push(toSelectedMemory(candidate.memory))
   }
   if (lines.length) {
     sections.push(buildSection(MEMORIES_HEADER, lines.join('\n')))

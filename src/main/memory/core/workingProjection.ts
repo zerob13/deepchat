@@ -1,9 +1,9 @@
 import {
   MEMORY_TEMPORAL_HARD_FILTER_CONFIDENCE,
-  evaluateMemoryTemporalPolicy,
+  evaluateNormalizedMemoryTemporalPolicy,
   temporalMetadataFromRow
 } from './temporal'
-import { estimateTokens } from './injectionPort'
+import { estimateTokens, estimateTokenWeight } from './injectionPort'
 import type {
   CanonicalAgentMemoryRow,
   MemoryTemporalMetadata,
@@ -47,6 +47,17 @@ const PLAN_STATUS_PRIORITY: Partial<Record<MemoryTemporalStatus, number>> = {
   future_recurrence: 3,
   previously_planned: 4,
   ended_recurrence: 5
+}
+
+const LINE_BREAK_WEIGHT = estimateTokenWeight('\n')
+const SECTION_BREAK_WEIGHT = estimateTokenWeight('\n\n')
+const SECTION_LABEL_WEIGHTS: Readonly<Record<WorkingProjectionSection, number>> = {
+  currentState: estimateTokenWeight(WORKING_PROJECTION_SECTION_LABELS.currentState),
+  qualifiedState: estimateTokenWeight(WORKING_PROJECTION_SECTION_LABELS.qualifiedState),
+  stableFact: estimateTokenWeight(WORKING_PROJECTION_SECTION_LABELS.stableFact),
+  recentEvent: estimateTokenWeight(WORKING_PROJECTION_SECTION_LABELS.recentEvent),
+  plan: estimateTokenWeight(WORKING_PROJECTION_SECTION_LABELS.plan),
+  reflection: estimateTokenWeight(WORKING_PROJECTION_SECTION_LABELS.reflection)
 }
 
 interface ProjectionCandidate {
@@ -179,11 +190,14 @@ function indentContinuationLines(content: string): string {
     .join('\n')
 }
 
-function toCandidate(row: CanonicalAgentMemoryRow, now: number): ProjectionCandidate | null {
+function toCandidate(
+  row: CanonicalAgentMemoryRow,
+  temporal: MemoryTemporalMetadata,
+  now: number
+): ProjectionCandidate | null {
   const content = row.content.trim()
   if (!content) return null
-  const temporal = temporalMetadataFromRow(row)
-  const policy = evaluateMemoryTemporalPolicy(temporal, now, 'current')
+  const policy = evaluateNormalizedMemoryTemporalPolicy(temporal, now, 'current')
   const section = classifyCandidate(row, temporal, policy)
   if (!section) return null
   return {
@@ -214,12 +228,11 @@ function renderSections(
 }
 
 function resolveNextRefreshAt(
-  rows: readonly CanonicalAgentMemoryRow[],
+  temporalRows: readonly MemoryTemporalMetadata[],
   now: number
 ): number | null {
   let nextRefreshAt: number | null = null
-  for (const row of rows) {
-    const temporal = temporalMetadataFromRow(row)
+  for (const temporal of temporalRows) {
     for (const boundary of [temporal.validFrom, temporal.validUntil]) {
       if (boundary === null || boundary <= now) continue
       nextRefreshAt = nextRefreshAt === null ? boundary : Math.min(nextRefreshAt, boundary)
@@ -247,9 +260,12 @@ export function buildStructuredWorkingProjection(
     reflection: []
   }
   const droppedIds: string[] = []
+  const temporalRows: MemoryTemporalMetadata[] = []
 
   for (const row of rows) {
-    const candidate = toCandidate(row, normalizedNow)
+    const temporal = temporalMetadataFromRow(row)
+    temporalRows.push(temporal)
+    const candidate = toCandidate(row, temporal, normalizedNow)
     if (!candidate) {
       droppedIds.push(row.id)
       continue
@@ -270,17 +286,24 @@ export function buildStructuredWorkingProjection(
     0,
     ...SECTION_ORDER.map((section) => candidates[section].length)
   )
+  let selectedWeight = 0
+  let activeSectionCount = 0
   for (let index = 0; index < maxSectionLength; index += 1) {
     for (const section of SECTION_ORDER) {
       const candidate = candidates[section][index]
       if (!candidate) continue
-      const next = {
-        ...selected,
-        [section]: [...selected[section], candidate]
-      }
-      const projected = renderSections(next)
-      if (estimateTokens(projected) <= budget) {
+      const sectionIsEmpty = selected[section].length === 0
+      const candidateWeight =
+        estimateTokenWeight(candidate.line) +
+        (sectionIsEmpty
+          ? SECTION_LABEL_WEIGHTS[section] +
+            LINE_BREAK_WEIGHT +
+            (activeSectionCount > 0 ? SECTION_BREAK_WEIGHT : 0)
+          : LINE_BREAK_WEIGHT)
+      if (Math.ceil(selectedWeight + candidateWeight) <= budget) {
         selected[section].push(candidate)
+        selectedWeight += candidateWeight
+        if (sectionIsEmpty) activeSectionCount += 1
       } else {
         droppedIds.push(candidate.row.id)
       }
@@ -295,7 +318,7 @@ export function buildStructuredWorkingProjection(
       selected[section].map((candidate) => candidate.row.id)
     ),
     droppedIds: [...new Set(droppedIds)].sort(compareText),
-    nextRefreshAt: resolveNextRefreshAt(rows, normalizedNow),
+    nextRefreshAt: resolveNextRefreshAt(temporalRows, normalizedNow),
     estimatedTokens: estimateTokens(content)
   }
 }

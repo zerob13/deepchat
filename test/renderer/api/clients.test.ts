@@ -993,7 +993,7 @@ describe('renderer api clients', () => {
                       : 'directive-created',
                   agentId: payload?.agentId ?? 'agent-1',
                   kind: 'instruction',
-                  status: routeName === 'memory.rejectDirective' ? 'rejected' : 'active',
+                  status: 'active',
                   source: 'manual',
                   content: 'Be concise.',
                   topic: null,

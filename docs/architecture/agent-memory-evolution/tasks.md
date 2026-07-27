@@ -145,7 +145,27 @@ corrected before this record was closed.
 - [x] Keep transient embedding-readiness work in the generation-aware dirty queue.
 - [x] Enforce persistence-equivalent temporal and directive-kind invariants on response DTOs.
 - [x] Preserve extraction audit coverage when cancellation interrupts directive suggestions.
-- [ ] Remove verified projection and retrieval hot-path overhead without changing output.
-- [ ] Localize the new directive and contribution-budget UI across maintained locales.
-- [ ] Run final formatting, i18n, lint, typecheck, focused, native, and maintained Memory gates.
-- [ ] Complete the final severity-ordered review and resolve every actionable finding.
+- [x] Remove verified projection and retrieval hot-path overhead without changing output.
+- [x] Localize the new directive and contribution-budget UI across maintained locales.
+- [x] Run final formatting, i18n, lint, typecheck, focused, native, and maintained Memory gates.
+- [x] Complete the final severity-ordered review and resolve every actionable finding.
+
+## Pull-request review hardening validation record
+
+Completed on 2026-07-27:
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run format` | Passed on 2,334 files |
+| `pnpm run i18n` | Passed with no missing or invalid translations |
+| `pnpm run lint` | Passed; Agent cleanup baseline remains zero |
+| `pnpm run typecheck` | Node and renderer passed |
+| `pnpm run test:memory` | Classification and type gates passed; 54 behavior files and 863 tests passed |
+| `pnpm run test:memory:eval` | 6 tests passed and 1 conditional test skipped |
+| Focused renderer gate | 3 files and 49 tests passed |
+| Electron native migration gate | 2 files and 121 tests passed |
+
+The final review found no unresolved actionable high-, medium-, or low-severity findings. Two
+suggested broad renderer/context-builder extractions were intentionally not applied: their similar
+surface mechanics conceal different state and fallback contracts, so sharing them would increase
+coupling without improving correctness.

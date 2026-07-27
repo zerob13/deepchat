@@ -199,10 +199,12 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
 
     expect(querySpy).toHaveBeenCalledWith('00-source', { topK: 6 })
     expect(decisionCalls(generateText)).toBeGreaterThan(0)
+    const source = repo.getById('00-source')
+    const neighbor = repo.getById('99-neighbor')
+    expect(source).toBeDefined()
+    expect(neighbor).toBeDefined()
     expect(
-      [repo.getById('00-source'), repo.getById('99-neighbor')].filter(
-        (row) => row?.superseded_by === null
-      )
+      [source!.superseded_by, neighbor!.superseded_by].filter((id) => id === null)
     ).toHaveLength(1)
   })
 

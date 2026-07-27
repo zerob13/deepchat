@@ -189,6 +189,7 @@ import { Button } from '@shadcn/components/ui/button'
 import { useToast } from '@/components/use-toast'
 import { createMemoryClient } from '@api/MemoryClient'
 import type { MemoryConflictItem, MemoryDirectiveItem, MemoryItem } from '@shared/contracts/routes'
+import { AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT } from '@shared/types/agent-memory'
 import {
   notifyMemoryActionFailed,
   notifyMemoryDirectiveCommandRejected
@@ -261,7 +262,10 @@ async function load(): Promise<void> {
         memoryClient.listPersonaDrafts(agentId),
         memoryClient.listPersonaVersions(agentId)
       ]),
-      memoryClient.listDirectives(agentId, { statuses: ['draft'], limit: 64 })
+      memoryClient.listDirectives(agentId, {
+        statuses: ['draft'],
+        limit: AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
+      })
     ])
     if (current !== requestId || props.agentId !== agentId) return
 

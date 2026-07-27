@@ -285,8 +285,6 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
 
   private refreshWorkingMemoryAtTemporalBoundary(agentId: string): void {
     if (!this.ctx.canReadAgentMemory(agentId)) return
-    const existing = this.resolveWorkingRow(agentId)
-    if (!existing) return
     const freshness = this.workingProjectionFreshness.get(agentId)
     const now = this.ctx.now()
     if (
@@ -296,6 +294,8 @@ export class WorkingMemoryService implements WorkingMemoryReadPort {
     ) {
       return
     }
+    const existing = this.resolveWorkingRow(agentId)
+    if (!existing) return
     this.refreshWorkingMemory(agentId, { preserveOrphanedExisting: true })
   }
 

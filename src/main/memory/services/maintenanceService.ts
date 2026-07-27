@@ -13,7 +13,7 @@ import {
 } from '../core/scoring'
 import { memoryScopeFromRow, rowsShareMemoryScope } from '../core/scope'
 import {
-  evaluateMemoryTemporalPolicy,
+  evaluateNormalizedMemoryTemporalPolicy,
   resolveMergedClaimTemporalMetadata,
   temporalMetadataFromRow
 } from '../core/temporal'
@@ -622,7 +622,7 @@ export class MaintenanceService {
             {
               content: neighborSnapshot.content,
               temporalAnnotation:
-                evaluateMemoryTemporalPolicy(
+                evaluateNormalizedMemoryTemporalPolicy(
                   temporalMetadataFromRow(neighborSnapshot),
                   now,
                   'evidence'
@@ -631,8 +631,8 @@ export class MaintenanceService {
           ],
           {
             candidateTemporalAnnotation:
-              evaluateMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence').annotation ??
-              undefined
+              evaluateNormalizedMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence')
+                .annotation ?? undefined
           }
         )
         const promptTokens = estimateTokens(prompt)

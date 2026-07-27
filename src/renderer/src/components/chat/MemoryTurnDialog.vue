@@ -92,8 +92,12 @@
               </div>
             </div>
             <p class="mt-2 text-[11px] text-muted-foreground">
-              {{ t('chat.memory.turn.overhead') }} {{ allocation.overheadTokens }} ·
-              {{ t('chat.memory.turn.unused') }} {{ allocation.unusedTokens }}
+              {{
+                t('chat.memory.turn.overheadSummary', {
+                  overhead: allocation.overheadTokens,
+                  unused: allocation.unusedTokens
+                })
+              }}
             </p>
           </div>
 

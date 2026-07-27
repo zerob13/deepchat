@@ -327,21 +327,21 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
     expect(repo.getById('target-project')?.category).toBe('project_fact')
   })
 
-  it('keeps decision rewrites atomic when they would recreate a forgotten claim', async () => {
-    const cases = [
-      {
-        decision: '{"decision":"UPDATE","targetIndex":0,"mergedContent":"redis forgotten claim"}',
-        candidate: 'redis update candidate'
-      },
-      {
-        decision:
-          '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"redis forgotten claim"}',
-        candidate: 'redis supersede candidate'
-      }
-    ]
-
-    for (const testCase of cases) {
-      const { presenter, repo } = makeLLM(testCase.decision)
+  it.each([
+    {
+      decisionKind: 'UPDATE',
+      decision: '{"decision":"UPDATE","targetIndex":0,"mergedContent":"redis forgotten claim"}',
+      candidate: 'redis update candidate'
+    },
+    {
+      decisionKind: 'SUPERSEDE',
+      decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"redis forgotten claim"}',
+      candidate: 'redis supersede candidate'
+    }
+  ])(
+    'keeps $decisionKind rewrites atomic when they would recreate a forgotten claim',
+    async ({ decision, candidate }) => {
+      const { presenter, repo } = makeLLM(decision)
       const forgotten = repo.insert({
         id: 'forgotten',
         agentId: 'deepchat',
@@ -364,9 +364,10 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
       })
       const targetRevision = target.decision_revision
 
-      await expect(
-        presenter.addUserMemory('deepchat', { content: testCase.candidate })
-      ).resolves.toEqual({ action: 'noop', reason: 'forgotten' })
+      await expect(presenter.addUserMemory('deepchat', { content: candidate })).resolves.toEqual({
+        action: 'noop',
+        reason: 'forgotten'
+      })
       expect(repo.getById(target.id)).toMatchObject({
         content: 'redis current target',
         superseded_by: null,
@@ -375,7 +376,7 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
       })
       expect(repo.listByAgent('deepchat', { includeSuperseded: true })).toHaveLength(1)
     }
-  })
+  )
 
   it('reauthorizes an exact forgotten claim before invoking the decision model', async () => {
     const { presenter, repo, generateText } = makeLLM(

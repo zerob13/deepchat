@@ -16,7 +16,7 @@ import {
 } from '../core/batchDecision'
 import { normalizeMemoryCandidate } from '../core/candidates'
 import {
-  evaluateMemoryTemporalPolicy,
+  evaluateNormalizedMemoryTemporalPolicy,
   memoryTemporalMetadataEquals,
   reconcileEquivalentClaimTemporalMetadata,
   resolveMergedClaimTemporalMetadata,
@@ -252,7 +252,7 @@ function temporalDecisionAnnotation(
   temporal: MemoryTemporalMetadata,
   now: number
 ): string | undefined {
-  return evaluateMemoryTemporalPolicy(temporal, now, 'evidence').annotation ?? undefined
+  return evaluateNormalizedMemoryTemporalPolicy(temporal, now, 'evidence').annotation ?? undefined
 }
 
 function toBatchDecisionInput(

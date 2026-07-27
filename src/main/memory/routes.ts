@@ -58,8 +58,10 @@ import type {
 } from './types'
 import type {
   AgentMemoryDirectiveRow,
+  ExplicitMemoryDirectiveSource,
   MemoryDirectiveCommandResult,
-  MemoryDirectiveInput
+  MemoryDirectiveInput,
+  MemoryDirectiveListOptions
 } from './domain/directives'
 import type { CanonicalAgentMemoryRow as AgentMemoryRow, MemoryClearResult } from './domain/types'
 import { projectLegacyStatus } from './domain/stateModel'
@@ -285,24 +287,12 @@ interface MemoryRouteService {
   approvePersonaDraft(agentId: string, draftId: string): Promise<boolean>
   rejectPersonaDraft(agentId: string, draftId: string): Promise<boolean>
   setPersonaAnchor(agentId: string, versionId: string, anchored: boolean): Promise<boolean>
-  listDirectives(
-    agentId: string,
-    options?: {
-      statuses?: readonly AgentMemoryDirectiveRow['status'][]
-      limit?: number
-    }
-  ): AgentMemoryDirectiveRow[]
-  createDirective(
-    agentId: string,
-    input: MemoryDirectiveInput,
-    source?: 'explicit_user' | 'manual'
-  ): AgentMemoryDirectiveRow | null
+  listDirectives(agentId: string, options?: MemoryDirectiveListOptions): AgentMemoryDirectiveRow[]
   createDirectiveResult(
     agentId: string,
     input: MemoryDirectiveInput,
-    source?: 'explicit_user' | 'manual'
+    source?: ExplicitMemoryDirectiveSource
   ): MemoryDirectiveCommandResult
-  approveDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
   approveDirectiveResult(agentId: string, directiveId: string): MemoryDirectiveCommandResult
   rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
   deleteDirective(agentId: string, directiveId: string): boolean
