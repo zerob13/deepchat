@@ -64,7 +64,7 @@
 - `pnpm run typecheck` passed both node and renderer type checking.
 - `pnpm test` passed 636 files with 19 skipped; 6,653 tests passed with 241 skipped.
 - `pnpm run build` passed and refreshed the provider and ACP registry resources.
-- The refreshed provider database contains 175 providers and 7,727 models. Both Moonshot K3
+- The refreshed provider database contains 175 providers and 7,728 models. Both Moonshot K3
   records retain `temperature: false` and the complete reasoning portrait required by this
   specification.
 - The final severity review found no remaining P0-P3 issue in the implementation or generated

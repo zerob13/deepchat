@@ -2266,50 +2266,6 @@
           "type": "chat"
         },
         {
-          "id": "accounts/fireworks/routers/glm-5p1-fast",
-          "name": "GLM 5.1 Fast",
-          "display_name": "GLM 5.1 Fast",
-          "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 202800,
-            "output": 131072
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
-            }
-          },
-          "attachment": false,
-          "open_weights": true,
-          "release_date": "2026-04-01",
-          "last_updated": "2026-04-01",
-          "cost": {
-            "input": 2.8,
-            "output": 8.8,
-            "cache_read": 0.52
-          },
-          "type": "chat"
-        },
-        {
           "id": "accounts/fireworks/routers/kimi-k2p6-turbo",
           "name": "Kimi K2.6 Turbo",
           "display_name": "Kimi K2.6 Turbo",
@@ -2652,50 +2608,6 @@
           "type": "chat"
         },
         {
-          "id": "accounts/fireworks/models/glm-5p1",
-          "name": "GLM 5.1",
-          "display_name": "GLM 5.1",
-          "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 202800,
-            "output": 131072
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
-            }
-          },
-          "attachment": false,
-          "open_weights": true,
-          "release_date": "2026-04-01",
-          "last_updated": "2026-04-01",
-          "cost": {
-            "input": 1.4,
-            "output": 4.4,
-            "cache_read": 0.26
-          },
-          "type": "chat"
-        },
-        {
           "id": "accounts/fireworks/models/deepseek-v4-pro",
           "name": "DeepSeek V4 Pro",
           "display_name": "DeepSeek V4 Pro",
@@ -3008,9 +2920,9 @@
           "release_date": "2026-04-02",
           "last_updated": "2026-04-02",
           "cost": {
-            "input": 0.12,
-            "output": 0.35,
-            "cache_read": 0.09
+            "input": 0.1,
+            "output": 0.34,
+            "cache_read": 0.1
           },
           "type": "chat"
         },
@@ -3046,9 +2958,9 @@
           "release_date": "2026-06-16",
           "last_updated": "2026-06-16",
           "cost": {
-            "input": 1.39,
-            "output": 4.4,
-            "cache_read": 0.26
+            "input": 0.76,
+            "output": 2.42,
+            "cache_read": 0.14
           },
           "type": "chat"
         },
@@ -3516,9 +3428,9 @@
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
           "cost": {
-            "input": 0.29,
-            "output": 1.2,
-            "cache_read": 0.06
+            "input": 0.23,
+            "output": 0.96,
+            "cache_read": 0.05
           },
           "type": "chat"
         },
@@ -3742,9 +3654,9 @@
           "release_date": "2026-04-20",
           "last_updated": "2026-04-20",
           "cost": {
-            "input": 0.95,
-            "output": 4,
-            "cache_read": 0.16
+            "input": 0.65,
+            "output": 3.41,
+            "cache_read": 0.15
           },
           "type": "chat"
         },
@@ -3828,9 +3740,9 @@
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
           "cost": {
-            "input": 0.94,
-            "output": 4,
-            "cache_read": 0.19
+            "input": 0.71,
+            "output": 3.5,
+            "cache_read": 0.15
           },
           "type": "chat"
         },
@@ -3904,9 +3816,9 @@
           "release_date": "2025-08-05",
           "last_updated": "2025-08-05",
           "cost": {
-            "input": 0.04,
-            "output": 0.14,
-            "cache_read": 0.04
+            "input": 0.03,
+            "output": 0.17,
+            "cache_read": 0.03
           },
           "type": "chat"
         },
@@ -22379,8 +22291,8 @@
       "models": [
         {
           "id": "thinkingmachines/Inkling:peft:262144",
-          "name": "Inkling",
-          "display_name": "Inkling",
+          "name": "Inkling (256K)",
+          "display_name": "Inkling (256K)",
           "modalities": {
             "input": [
               "text",
@@ -62204,6 +62116,11 @@
             "supported": true,
             "default": true
           },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
           "attachment": false,
           "open_weights": false,
           "release_date": "2026-07-23",
@@ -78631,9 +78548,9 @@
           "release_date": "2026-06-13",
           "last_updated": "2026-06-13",
           "cost": {
-            "input": 1.05,
-            "output": 4.4,
-            "cache_read": 0.2,
+            "input": 0.76,
+            "output": 2.42,
+            "cache_read": 0.14,
             "cache_write": 0
           },
           "type": "chat"
@@ -78754,9 +78671,9 @@
           "release_date": "2026-06-13",
           "last_updated": "2026-06-13",
           "cost": {
-            "input": 1.05,
-            "output": 4.4,
-            "cache_read": 0.2,
+            "input": 0.76,
+            "output": 2.42,
+            "cache_read": 0.14,
             "cache_write": 0
           },
           "type": "chat"
@@ -78843,7 +78760,7 @@
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
           "cost": {
-            "input": 0.78,
+            "input": 0.73,
             "output": 3.5,
             "cache_read": 0.15,
             "cache_write": 0
@@ -165746,47 +165663,6 @@
           "type": "chat"
         },
         {
-          "id": "google/gemini-3.1-flash-lite-preview",
-          "name": "Gemini 3.1 Flash Lite Preview",
-          "display_name": "Gemini 3.1 Flash Lite Preview",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 1000000,
-            "output": 65000
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2025-01",
-          "release_date": "2026-03-03",
-          "last_updated": "2026-03-03",
-          "cost": {
-            "input": 0.25,
-            "output": 1.5,
-            "cache_read": 0.03
-          },
-          "type": "chat"
-        },
-        {
           "id": "google/gemini-3-flash",
           "name": "Gemini 3 Flash",
           "display_name": "Gemini 3 Flash",
@@ -168464,6 +168340,11 @@
           "reasoning": {
             "supported": true,
             "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
           },
           "attachment": false,
           "open_weights": false,
@@ -172745,69 +172626,6 @@
           "type": "chat"
         },
         {
-          "id": "anthropic/claude-opus-4.7-fast",
-          "name": "Claude Opus 4.7 (Fast)",
-          "display_name": "Claude Opus 4.7 (Fast)",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 1000000,
-            "output": 128000
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": false
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": false,
-              "mode": "effort",
-              "effort": "high",
-              "effort_options": [
-                "low",
-                "medium",
-                "high",
-                "xhigh",
-                "max"
-              ],
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "omitted",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Claude Opus 4.7 and newer Opus models require thinking.type = \"adaptive\" to enable thinking explicitly.",
-                "Manual budget_tokens requests return 400 on Claude Opus 4.7 and newer adaptive-only Opus models.",
-                "task_budget is separate from thinking control and should not be treated as a thinking budget."
-              ]
-            }
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2026-01-31",
-          "release_date": "2026-04-16",
-          "last_updated": "2026-04-16",
-          "cost": {
-            "input": 30,
-            "output": 150,
-            "cache_read": 3,
-            "cache_write": 37.5
-          },
-          "type": "chat"
-        },
-        {
           "id": "anthropic/claude-sonnet-4.5",
           "name": "Claude Sonnet 4.5",
           "display_name": "Claude Sonnet 4.5",
@@ -173502,43 +173320,6 @@
           "cost": {
             "input": 30,
             "output": 180
-          },
-          "type": "chat"
-        },
-        {
-          "id": "openai/gpt-5-chat",
-          "name": "GPT-5 Chat",
-          "display_name": "GPT-5 Chat",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text",
-              "image"
-            ]
-          },
-          "limit": {
-            "context": 128000,
-            "output": 16384
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-10",
-          "release_date": "2025-08-07",
-          "last_updated": "2025-08-07",
-          "cost": {
-            "input": 1.25,
-            "output": 10,
-            "cache_read": 0.125
           },
           "type": "chat"
         },
@@ -174393,41 +174174,6 @@
           "open_weights": false,
           "release_date": "2026-05-07",
           "last_updated": "2026-05-07",
-          "type": "chat"
-        },
-        {
-          "id": "openai/gpt-5.2-chat",
-          "name": "GPT-5.2 Chat",
-          "display_name": "GPT-5.2 Chat",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 128000,
-            "output": 16384
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": false
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2024-10",
-          "release_date": "2025-12-11",
-          "last_updated": "2025-08-07",
-          "cost": {
-            "input": 1.75,
-            "output": 14,
-            "cache_read": 0.175
-          },
           "type": "chat"
         },
         {
@@ -195508,6 +195254,48 @@
             "output": 10,
             "cache_read": 0.2,
             "cache_write": 2.5
+          },
+          "type": "chat"
+        },
+        {
+          "id": "anthropic/claude-opus-5",
+          "name": "Claude Opus 5",
+          "display_name": "Claude Opus 5",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "pdf"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "knowledge": "2026-05",
+          "release_date": "2026-07-24",
+          "last_updated": "2026-07-24",
+          "cost": {
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5,
+            "cache_write": 6.25
           },
           "type": "chat"
         },
@@ -238412,6 +238200,35 @@
           "type": "chat"
         },
         {
+          "id": "ling-3.0-flash-free",
+          "name": "ling-3.0-flash-free",
+          "display_name": "ling-3.0-flash-free",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "chat"
+        },
+        {
           "id": "qwen3.8-max-preview",
           "name": "qwen3.8-max-preview",
           "display_name": "qwen3.8-max-preview",
@@ -239201,7 +239018,7 @@
           "cost": {
             "input": 0.24,
             "output": 0.879998,
-            "cache_read": 0.024
+            "cache_read": 0.036
           },
           "type": "chat"
         },
@@ -242239,6 +242056,44 @@
           "type": "chat"
         },
         {
+          "id": "qwen3.5-122b-a10b",
+          "name": "qwen3.5-122b-a10b",
+          "display_name": "qwen3.5-122b-a10b",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 991000,
+            "output": 991000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "cost": {
+            "input": 0.1126,
+            "output": 0.9008,
+            "cache_read": 0.1126
+          },
+          "type": "chat"
+        },
+        {
           "id": "qwen3.5-27b",
           "name": "qwen3.5-27b",
           "display_name": "qwen3.5-27b",
@@ -242602,205 +242457,6 @@
           "type": "imageGeneration"
         },
         {
-          "id": "qwen3.5-122b-a10b",
-          "name": "qwen3.5-122b-a10b",
-          "display_name": "qwen3.5-122b-a10b",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ]
-          },
-          "limit": {
-            "context": 991000,
-            "output": 991000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
-            }
-          },
-          "cost": {
-            "input": 0.1126,
-            "output": 0.9008,
-            "cache_read": 0.1126
-          },
-          "type": "chat"
-        },
-        {
-          "id": "qwen3-coder-next",
-          "name": "qwen3-coder-next",
-          "display_name": "qwen3-coder-next",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 2000000,
-            "output": 2000000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0.137,
-            "output": 0.548,
-            "cache_read": 0.137
-          },
-          "type": "chat"
-        },
-        {
-          "id": "coding-glm-5.1",
-          "name": "coding-glm-5.1",
-          "display_name": "coding-glm-5.1",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true
-            }
-          },
-          "cost": {
-            "input": 0.06,
-            "output": 0.22
-          },
-          "type": "chat"
-        },
-        {
-          "id": "xiaomi-mimo-v2.5-pro-free",
-          "name": "xiaomi-mimo-v2.5-pro-free",
-          "display_name": "xiaomi-mimo-v2.5-pro-free",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio"
-            ]
-          },
-          "limit": {
-            "context": 256000,
-            "output": 256000
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "chat"
-        },
-        {
-          "id": "xiaomi-mimo-v2.5-free",
-          "name": "xiaomi-mimo-v2.5-free",
-          "display_name": "xiaomi-mimo-v2.5-free",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio"
-            ]
-          },
-          "limit": {
-            "context": 256000,
-            "output": 256000
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "chat"
-        },
-        {
-          "id": "xiaomi-mimo-v2-pro-free",
-          "name": "xiaomi-mimo-v2-pro-free",
-          "display_name": "xiaomi-mimo-v2-pro-free",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio"
-            ]
-          },
-          "limit": {
-            "context": 256000,
-            "output": 256000
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "chat"
-        },
-        {
-          "id": "xiaomi-mimo-v2-omni-free",
-          "name": "xiaomi-mimo-v2-omni-free",
-          "display_name": "xiaomi-mimo-v2-omni-free",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio"
-            ]
-          },
-          "limit": {
-            "context": 256000,
-            "output": 256000
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "chat"
-        },
-        {
           "id": "doubao-seed-2-0-pro",
           "name": "doubao-seed-2-0-pro",
           "display_name": "doubao-seed-2-0-pro",
@@ -242975,17 +242631,178 @@
           "type": "chat"
         },
         {
-          "id": "glm-5",
-          "name": "glm-5",
-          "display_name": "glm-5",
+          "id": "coding-glm-5.1",
+          "name": "coding-glm-5.1",
+          "display_name": "coding-glm-5.1",
           "modalities": {
             "input": [
               "text"
             ]
           },
           "limit": {
-            "context": 202752,
-            "output": 202752
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "cost": {
+            "input": 0.06,
+            "output": 0.22
+          },
+          "type": "chat"
+        },
+        {
+          "id": "xiaomi-mimo-v2.5-pro-free",
+          "name": "xiaomi-mimo-v2.5-pro-free",
+          "display_name": "xiaomi-mimo-v2.5-pro-free",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 256000
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "xiaomi-mimo-v2.5-free",
+          "name": "xiaomi-mimo-v2.5-free",
+          "display_name": "xiaomi-mimo-v2.5-free",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 256000
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "xiaomi-mimo-v2-pro-free",
+          "name": "xiaomi-mimo-v2-pro-free",
+          "display_name": "xiaomi-mimo-v2-pro-free",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 256000
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "xiaomi-mimo-v2-omni-free",
+          "name": "xiaomi-mimo-v2-omni-free",
+          "display_name": "xiaomi-mimo-v2-omni-free",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "limit": {
+            "context": 256000,
+            "output": 256000
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "qwen3-coder-next",
+          "name": "qwen3-coder-next",
+          "display_name": "qwen3-coder-next",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 2000000,
+            "output": 2000000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0.137,
+            "output": 0.548,
+            "cache_read": 0.137
+          },
+          "type": "chat"
+        },
+        {
+          "id": "minimax-m2.7",
+          "name": "minimax-m2.7",
+          "display_name": "minimax-m2.7",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 200000
           },
           "tool_call": true,
           "reasoning": {
@@ -243004,35 +242821,9 @@
             }
           },
           "cost": {
-            "input": 0.88,
-            "output": 2.816,
-            "cache_read": 0.176
-          },
-          "type": "chat"
-        },
-        {
-          "id": "glm-5v-turbo",
-          "name": "glm-5v-turbo",
-          "display_name": "glm-5v-turbo",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ]
-          },
-          "limit": {
-            "context": 200000,
-            "output": 200000
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 0.7042,
-            "output": 3.09848,
-            "cache_read": 0.169008
+            "input": 0.2958,
+            "output": 1.1832,
+            "cache_read": 0.05916
           },
           "type": "chat"
         },
@@ -243150,17 +242941,17 @@
           "type": "chat"
         },
         {
-          "id": "minimax-m2.7",
-          "name": "minimax-m2.7",
-          "display_name": "minimax-m2.7",
+          "id": "glm-5",
+          "name": "glm-5",
+          "display_name": "glm-5",
           "modalities": {
             "input": [
               "text"
             ]
           },
           "limit": {
-            "context": 200000,
-            "output": 200000
+            "context": 202752,
+            "output": 202752
           },
           "tool_call": true,
           "reasoning": {
@@ -243179,152 +242970,35 @@
             }
           },
           "cost": {
-            "input": 0.2958,
-            "output": 1.1832,
-            "cache_read": 0.05916
+            "input": 0.88,
+            "output": 2.816,
+            "cache_read": 0.176
           },
           "type": "chat"
         },
         {
-          "id": "claude-opus-4-6-think",
-          "name": "claude-opus-4-6-think",
-          "display_name": "claude-opus-4-6-think",
+          "id": "glm-5v-turbo",
+          "name": "glm-5v-turbo",
+          "display_name": "glm-5v-turbo",
           "modalities": {
             "input": [
+              "text",
               "image",
-              "text"
+              "video"
             ]
           },
           "limit": {
             "context": 200000,
             "output": 200000
           },
-          "tool_call": true,
+          "tool_call": false,
           "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true,
-              "default_enabled": true,
-              "mode": "mixed",
-              "budget": {
-                "min": 1024,
-                "unit": "tokens"
-              },
-              "effort": "high",
-              "effort_options": [
-                "low",
-                "medium",
-                "high",
-                "max"
-              ],
-              "interleaved": true,
-              "summaries": true,
-              "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic recommends adaptive thinking with effort for Claude 4.6; budget_tokens remains a deprecated compatibility path.",
-                "Anthropic API defaults effort to high; lower effort levels should be chosen per workload."
-              ]
-            }
+            "supported": false
           },
           "cost": {
-            "input": 5,
-            "output": 25,
-            "cache_read": 0.5
-          },
-          "type": "chat"
-        },
-        {
-          "id": "coding-glm-5-free",
-          "name": "coding-glm-5-free",
-          "display_name": "coding-glm-5-free",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true
-            }
-          },
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "chat"
-        },
-        {
-          "id": "coding-glm-5-turbo-free",
-          "name": "coding-glm-5-turbo-free",
-          "display_name": "coding-glm-5-turbo-free",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true
-            }
-          },
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "chat"
-        },
-        {
-          "id": "coding-minimax-m2.5-free",
-          "name": "coding-minimax-m2.5-free",
-          "display_name": "coding-minimax-m2.5-free",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 204800,
-            "output": 204800
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true
-            }
-          },
-          "cost": {
-            "input": 0,
-            "output": 0
+            "input": 0.7042,
+            "output": 3.09848,
+            "cache_read": 0.169008
           },
           "type": "chat"
         },
@@ -243547,66 +243221,76 @@
           "type": "chat"
         },
         {
-          "id": "embed-v-4-0",
-          "name": "embed-v-4-0",
-          "display_name": "embed-v-4-0",
+          "id": "claude-opus-4-6-think",
+          "name": "claude-opus-4-6-think",
+          "display_name": "claude-opus-4-6-think",
           "modalities": {
             "input": [
-              "text",
-              "image"
+              "image",
+              "text"
             ]
           },
           "limit": {
-            "context": 128000,
-            "output": 128000
+            "context": 200000,
+            "output": 200000
           },
-          "tool_call": false,
+          "tool_call": true,
           "reasoning": {
-            "supported": false
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "mixed",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Anthropic recommends adaptive thinking with effort for Claude 4.6; budget_tokens remains a deprecated compatibility path.",
+                "Anthropic API defaults effort to high; lower effort levels should be chosen per workload."
+              ]
+            }
           },
           "cost": {
-            "input": 0.12,
-            "output": 0,
-            "cache_read": 0.12
+            "input": 5,
+            "output": 25,
+            "cache_read": 0.5
           },
-          "type": "embedding"
+          "type": "chat"
         },
         {
-          "id": "ernie-image-turbo",
-          "name": "ernie-image-turbo",
-          "display_name": "ernie-image-turbo",
+          "id": "coding-glm-5-free",
+          "name": "coding-glm-5-free",
+          "display_name": "coding-glm-5-free",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
           "limit": {
             "context": 8192,
             "output": 8192
           },
-          "tool_call": false,
+          "tool_call": true,
           "reasoning": {
-            "supported": false
-          },
-          "cost": {
-            "input": 2,
-            "output": 0,
-            "cache_read": 0
-          },
-          "type": "imageGeneration"
-        },
-        {
-          "id": "gemini-3.1-flash-image-preview-free",
-          "name": "gemini-3.1-flash-image-preview-free",
-          "display_name": "gemini-3.1-flash-image-preview-free",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
-          },
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": true
+            "supported": true,
+            "default": true
           },
           "extra_capabilities": {
             "reasoning": {
@@ -243618,7 +243302,66 @@
             "output": 0,
             "cache_read": 0
           },
-          "type": "imageGeneration"
+          "type": "chat"
+        },
+        {
+          "id": "coding-glm-5-turbo-free",
+          "name": "coding-glm-5-turbo-free",
+          "display_name": "coding-glm-5-turbo-free",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "chat"
+        },
+        {
+          "id": "coding-minimax-m2.5-free",
+          "name": "coding-minimax-m2.5-free",
+          "display_name": "coding-minimax-m2.5-free",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 204800,
+            "output": 204800
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "type": "chat"
         },
         {
           "id": "cc-glm-5.1",
@@ -243754,6 +243497,80 @@
             "cache_read": 0.5
           },
           "type": "chat"
+        },
+        {
+          "id": "embed-v-4-0",
+          "name": "embed-v-4-0",
+          "display_name": "embed-v-4-0",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 128000
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 0.12,
+            "output": 0,
+            "cache_read": 0.12
+          },
+          "type": "embedding"
+        },
+        {
+          "id": "ernie-image-turbo",
+          "name": "ernie-image-turbo",
+          "display_name": "ernie-image-turbo",
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "cost": {
+            "input": 2,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "imageGeneration"
+        },
+        {
+          "id": "gemini-3.1-flash-image-preview-free",
+          "name": "gemini-3.1-flash-image-preview-free",
+          "display_name": "gemini-3.1-flash-image-preview-free",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0
+          },
+          "type": "imageGeneration"
         },
         {
           "id": "mimo-v2-omni",
@@ -262466,50 +262283,6 @@
           "type": "chat"
         },
         {
-          "id": "inflection/inflection-3-pi",
-          "name": "Inflection: Inflection 3 Pi",
-          "display_name": "Inflection: Inflection 3 Pi",
-          "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8000,
-            "output": 1024
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "type": "chat"
-        },
-        {
-          "id": "inflection/inflection-3-productivity",
-          "name": "Inflection: Inflection 3 Productivity",
-          "display_name": "Inflection: Inflection 3 Productivity",
-          "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8000,
-            "output": 1024
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "type": "chat"
-        },
-        {
           "id": "kwaipilot/kat-coder-air-v2.5",
           "name": "Kwaipilot: KAT-Coder-Air V2.5",
           "display_name": "Kwaipilot: KAT-Coder-Air V2.5",
@@ -264088,8 +263861,8 @@
             ]
           },
           "limit": {
-            "context": 512288,
-            "output": 512288
+            "context": 262144,
+            "output": 16384
           },
           "temperature": true,
           "tool_call": true,
@@ -264570,28 +264343,6 @@
           },
           "attachment": true,
           "type": "imageGeneration"
-        },
-        {
-          "id": "openai/gpt-4o-mini-search-preview",
-          "name": "OpenAI: GPT-4o-mini Search Preview",
-          "display_name": "OpenAI: GPT-4o-mini Search Preview",
-          "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 128000,
-            "output": 16384
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "type": "chat"
         },
         {
           "id": "openai/gpt-4o-search-preview",
@@ -265105,7 +264856,7 @@
           },
           "limit": {
             "context": 400000,
-            "output": 100000
+            "output": 128000
           },
           "tool_call": true,
           "reasoning": {
@@ -267263,8 +267014,8 @@
             ]
           },
           "limit": {
-            "context": 131072,
-            "output": 8192
+            "context": 40960,
+            "output": 16384
           },
           "tool_call": true,
           "reasoning": {
@@ -269500,6 +269251,35 @@
                 "Manual budget_tokens requests return 400 on Claude Opus 4.7 and newer adaptive-only Opus models.",
                 "task_budget is separate from thinking control and should not be treated as a thinking budget."
               ]
+            }
+          },
+          "type": "chat"
+        },
+        {
+          "id": "claude-opus-5",
+          "name": "claude-opus-5",
+          "display_name": "claude-opus-5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
             }
           },
           "type": "chat"
@@ -273960,35 +273740,6 @@
           "type": "chat"
         },
         {
-          "id": "claude-opus-5",
-          "name": "claude-opus-5",
-          "display_name": "claude-opus-5",
-          "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 1000000,
-            "output": 128000
-          },
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "extra_capabilities": {
-            "reasoning": {
-              "supported": true
-            }
-          },
-          "type": "chat"
-        },
-        {
           "id": "gemini-3.6-flash",
           "name": "gemini-3.6-flash",
           "display_name": "gemini-3.6-flash",
@@ -276696,6 +276447,11 @@
             "supported": true,
             "default": true
           },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
           "attachment": false,
           "open_weights": false,
           "release_date": "2026-07-23",
@@ -277387,9 +277143,9 @@
           "release_date": "2026-04-20",
           "last_updated": "2026-04-20",
           "cost": {
-            "input": 0.95,
-            "output": 4,
-            "cache_read": 0.16
+            "input": 0.65,
+            "output": 3.41,
+            "cache_read": 0.15
           },
           "type": "chat"
         },
@@ -277427,9 +277183,9 @@
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
           "cost": {
-            "input": 0.94,
-            "output": 4,
-            "cache_read": 0.19
+            "input": 0.71,
+            "output": 3.5,
+            "cache_read": 0.15
           },
           "type": "chat"
         },
