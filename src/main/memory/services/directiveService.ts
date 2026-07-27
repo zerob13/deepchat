@@ -41,7 +41,7 @@ export class DirectiveService {
 
   listActiveDirectives(agentId: string): AgentMemoryDirectiveRow[] {
     this.ports.ctx.assertSafeAgentId(agentId)
-    if (!this.ports.ctx.canReadAgentMemory(agentId)) return []
+    if (!this.ports.ctx.canReadDirectivePlane(agentId)) return []
     return this.ports.repository.listActiveDirectives(agentId, ACTIVE_DIRECTIVE_READ_LIMIT)
   }
 

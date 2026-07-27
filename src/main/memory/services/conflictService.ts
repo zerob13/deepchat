@@ -70,7 +70,7 @@ export class ConflictService {
 
   listConflicts(agentId: string): MemoryConflictPair[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     const challengers = this.ports.repository.listByAgent(agentId, { statuses: ['conflicted'] })
     const pairs: MemoryConflictPair[] = []
     for (const challenger of challengers) {
@@ -95,6 +95,14 @@ export class ConflictService {
   }
 
   repairConflictIntegrity(agentId: string): ConflictIntegrityRepairResult {
+    if (!this.ctx.canManageClaimMemory(agentId)) {
+      return {
+        repairedTargets: 0,
+        archivedChallengers: 0,
+        clearedTargets: 0,
+        clearedLinks: 0
+      }
+    }
     const result = this.ports.repository.repairConflictIntegrityBatch(agentId, 256)
 
     const total =
@@ -129,7 +137,7 @@ export class ConflictService {
   ): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     if (!this.ctx.canWriteAgentMemory(agentId)) return false
     const challenger = this.ports.repository.getById(challengerId)
     const target = challenger?.conflict_with

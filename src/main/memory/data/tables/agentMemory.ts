@@ -29,6 +29,8 @@ import type {
   InternalMemoryInsertInput,
   MemoryTransitionTarget,
   MemoryClaimContentUpdateResult,
+  MemoryClearBatchResult,
+  MemoryClearJob,
   MemoryDerivationInsertInput,
   MemoryDirtySeed,
   MemoryScope,
@@ -89,20 +91,22 @@ import type { MemoryTombstoneDeleteInput, MemoryTombstoneReason } from '../../do
 // embedding state while retaining the legacy status shadow; v46 adds temporal claim metadata; v47
 // adds privacy-preserving exact-forgetting tombstones; v48 adds durable derivation edges and the
 // rebuildable dirty-work index; v49 extends dirty work to reflection claims; v51 introduces typed
-// applicability scopes while retaining user_scope as a write-only compatibility shadow.
+// applicability scopes while retaining user_scope as a write-only compatibility shadow; v52 makes
+// Agent-wide clear resumable and bounds each synchronous deletion transaction.
 const AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION = 42
 const AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION = 46
 const AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION = 47
 const AGENT_MEMORY_LINEAGE_SCHEMA_VERSION = 48
 const AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION = 49
 const AGENT_MEMORY_SCOPE_SCHEMA_VERSION = 51
-const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_SCOPE_SCHEMA_VERSION
+const AGENT_MEMORY_RESUMABLE_CLEAR_SCHEMA_VERSION = 52
+const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_RESUMABLE_CLEAR_SCHEMA_VERSION
 
 const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
 const AGENT_MEMORY_FTS_RECOVERY_COOLDOWN_MS = 30_000
 const PREVIOUS_AGENT_MEMORY_FTS_POLICY_VERSION = 2
-const AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE = 256
+const AGENT_MEMORY_CLEAR_BATCH_SIZE = 256
 
 type FtsCapability = { available: boolean; tokenizer: 'trigram' | 'unicode61' }
 type SearchMatchMode = 'all' | 'any'
@@ -112,11 +116,28 @@ type TombstoneSourceRow = Pick<
   'agent_id' | 'scope_type' | 'scope_id' | 'kind' | 'content' | 'provenance_key'
 >
 type TombstoneSourcePageRow = TombstoneSourceRow & { storage_rowid: number }
+type MemoryClearJobRow = {
+  agent_id: string
+  cutoff_rowid: number
+  created_at: number
+  removed_count: number
+  phase: MemoryClearJob['phase']
+}
 type TombstoneClaimIdentityInput = Pick<
   AgentMemoryInsertInput,
   'agentId' | 'kind' | 'content' | 'provenanceKey'
 > & {
   scope: MemoryScope
+}
+
+function toMemoryClearJob(row: MemoryClearJobRow): MemoryClearJob {
+  return {
+    agentId: row.agent_id,
+    cutoffRowId: row.cutoff_rowid,
+    createdAt: row.created_at,
+    removed: row.removed_count,
+    phase: row.phase
+  }
 }
 
 const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
@@ -131,6 +152,49 @@ const AGENT_MEMORY_TOMBSTONE_TABLE_SQL = `
       CHECK (reason IN ('selective_delete', 'agent_clear')),
     PRIMARY KEY (agent_id, identity_kind, identity_hash)
   ) WITHOUT ROWID;
+`
+
+const AGENT_MEMORY_CLEAR_JOB_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS agent_memory_clear_job (
+    agent_id TEXT PRIMARY KEY,
+    cutoff_rowid INTEGER NOT NULL CHECK (cutoff_rowid >= 0),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    removed_count INTEGER NOT NULL DEFAULT 0 CHECK (removed_count >= 0),
+    phase TEXT NOT NULL DEFAULT 'claims' CHECK (phase IN ('claims', 'vectors'))
+  ) WITHOUT ROWID;
+`
+
+const AGENT_MEMORY_CLEAR_GUARD_INSERT_TRIGGER_NAME = 'agent_memory_clear_guard_bi_v1'
+const AGENT_MEMORY_CLEAR_GUARD_UPDATE_TRIGGER_NAME = 'agent_memory_clear_guard_bu_v1'
+const AGENT_MEMORY_CLEAR_GUARD_TRIGGER_DROP_SQL = `
+  DROP TRIGGER IF EXISTS ${AGENT_MEMORY_CLEAR_GUARD_INSERT_TRIGGER_NAME};
+  DROP TRIGGER IF EXISTS ${AGENT_MEMORY_CLEAR_GUARD_UPDATE_TRIGGER_NAME};
+`
+const AGENT_MEMORY_CLEAR_GUARD_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ${AGENT_MEMORY_CLEAR_GUARD_INSERT_TRIGGER_NAME}
+  BEFORE INSERT ON agent_memory
+  WHEN EXISTS (
+    SELECT 1 FROM agent_memory_clear_job WHERE agent_id = NEW.agent_id
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'agent memory clear in progress');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS ${AGENT_MEMORY_CLEAR_GUARD_UPDATE_TRIGGER_NAME}
+  BEFORE UPDATE ON agent_memory
+  WHEN EXISTS (
+    SELECT 1
+    FROM agent_memory_clear_job
+    WHERE agent_id IN (OLD.agent_id, NEW.agent_id)
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'agent memory clear in progress');
+  END;
+`
+
+const AGENT_MEMORY_CLEAR_ARTIFACT_SQL = `
+  ${AGENT_MEMORY_CLEAR_JOB_TABLE_SQL}
+  ${AGENT_MEMORY_CLEAR_GUARD_TRIGGER_SQL}
 `
 
 const AGENT_MEMORY_DERIVATION_TABLE_SQL = `
@@ -862,6 +926,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         )
       );
       ${AGENT_MEMORY_TOMBSTONE_TABLE_SQL}
+      ${AGENT_MEMORY_CLEAR_ARTIFACT_SQL}
       ${AGENT_MEMORY_DERIVATION_TABLE_SQL}
       ${AGENT_MEMORY_DIRTY_TABLE_SQL}
       ${AGENT_MEMORY_DIRTY_BACKFILL_SQL}
@@ -916,6 +981,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         this.ensureScopeArtifacts()
       }
     }
+    this.ensureClearArtifacts()
     const currentColumns = this.db.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
       name: string
     }>
@@ -943,6 +1009,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     this.db.exec(AGENT_MEMORY_DIRTY_TABLE_SQL)
     if (!dirtyTableExists) this.db.exec(AGENT_MEMORY_DIRTY_BACKFILL_SQL)
     this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
+  }
+
+  private ensureClearArtifacts(): void {
+    this.db.transaction(() => {
+      this.db.exec(AGENT_MEMORY_CLEAR_GUARD_TRIGGER_DROP_SQL)
+      this.db.exec(AGENT_MEMORY_CLEAR_ARTIFACT_SQL)
+    })()
   }
 
   private ensureTemporalArtifacts(): void {
@@ -1343,6 +1416,52 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       throw new Error('[Memory] agent_memory_tombstone constraints are incomplete')
     }
+    const clearJobSql = (
+      this.db
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_clear_job'"
+        )
+        .get() as { sql: string | null } | undefined
+    )?.sql
+    const normalizedClearJobSql = clearJobSql?.replace(/\s+/gu, ' ').trim()
+    if (
+      !normalizedClearJobSql?.includes('CHECK (cutoff_rowid >= 0)') ||
+      !normalizedClearJobSql.includes('CHECK (created_at >= 0)') ||
+      !normalizedClearJobSql.includes('CHECK (removed_count >= 0)') ||
+      !normalizedClearJobSql.includes("CHECK (phase IN ('claims', 'vectors'))") ||
+      !normalizedClearJobSql.includes('agent_id TEXT PRIMARY KEY') ||
+      !normalizedClearJobSql.endsWith('WITHOUT ROWID')
+    ) {
+      throw new Error('[Memory] agent_memory_clear_job constraints are incomplete')
+    }
+    for (const [name, signature, identityGuard] of [
+      [
+        AGENT_MEMORY_CLEAR_GUARD_INSERT_TRIGGER_NAME,
+        'BEFORE INSERT ON agent_memory',
+        'WHERE agent_id = NEW.agent_id'
+      ],
+      [
+        AGENT_MEMORY_CLEAR_GUARD_UPDATE_TRIGGER_NAME,
+        'BEFORE UPDATE ON agent_memory',
+        'WHERE agent_id IN (OLD.agent_id, NEW.agent_id)'
+      ]
+    ] as const) {
+      const triggerSql = (
+        this.db
+          .prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+          .get(name) as { sql: string | null } | undefined
+      )?.sql
+        ?.replace(/\s+/gu, ' ')
+        .trim()
+      if (
+        !triggerSql?.includes(signature) ||
+        !triggerSql.includes('SELECT 1 FROM agent_memory_clear_job') ||
+        !triggerSql.includes(identityGuard) ||
+        !triggerSql.includes("SELECT RAISE(ABORT, 'agent memory clear in progress')")
+      ) {
+        throw new Error(`[Memory] ${name} is incomplete`)
+      }
+    }
     const derivationSql = (
       this.db
         .prepare(
@@ -1472,6 +1591,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   }
 
   finalizeMigration(version: number): void {
+    if (version === AGENT_MEMORY_RESUMABLE_CLEAR_SCHEMA_VERSION) {
+      this.ensureClearArtifacts()
+      return
+    }
     if (version === AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION) {
       this.ensureTemporalArtifacts()
       return
@@ -1610,6 +1733,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         `ALTER TABLE agent_memory ADD COLUMN scope_id TEXT CHECK (scope_id IS NULL OR (length(scope_id) BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} AND scope_id = trim(scope_id)));`,
         AGENT_MEMORY_SCOPE_INDEX_SQL
       ].join('\n')
+    }
+    if (version === AGENT_MEMORY_RESUMABLE_CLEAR_SCHEMA_VERSION) {
+      return AGENT_MEMORY_CLEAR_JOB_TABLE_SQL
     }
     return null
   }
@@ -4007,39 +4133,156 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     return result.changes
   }
 
-  tombstoneAndClearByAgent(agentId: string, createdAt: number): number {
+  listPendingMemoryClearJobs(): MemoryClearJob[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT agent_id, cutoff_rowid, created_at, removed_count, phase
+           FROM agent_memory_clear_job
+           ORDER BY created_at, agent_id`
+        )
+        .all() as MemoryClearJobRow[]
+    ).map(toMemoryClearJob)
+  }
+
+  beginMemoryClear(agentId: string, createdAt: number): MemoryClearJob {
     return this.db.transaction(() => {
-      const selectFirstPage = this.db.prepare(
-        `SELECT rowid AS storage_rowid, agent_id, scope_type, scope_id,
-                kind, content, provenance_key
-         FROM agent_memory NOT INDEXED
-         WHERE agent_id = ?
-         ORDER BY rowid
-         LIMIT ?`
-      )
-      const selectNextPage = this.db.prepare(
-        `SELECT rowid AS storage_rowid, agent_id, scope_type, scope_id,
-                kind, content, provenance_key
-         FROM agent_memory NOT INDEXED
-         WHERE rowid > ? AND agent_id = ?
-         ORDER BY rowid
-         LIMIT ?`
-      )
-      let rows = selectFirstPage.all(
-        agentId,
-        AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE
-      ) as TombstoneSourcePageRow[]
-      while (rows.length > 0) {
-        this.insertTombstonesForRows(rows, createdAt, 'agent_clear')
-        rows = selectNextPage.all(
-          rows[rows.length - 1].storage_rowid,
-          agentId,
-          AGENT_MEMORY_CLEAR_TOMBSTONE_BATCH_SIZE
-        ) as TombstoneSourcePageRow[]
+      const cutoff = (
+        this.db
+          .prepare(
+            `SELECT COALESCE(MAX(rowid), 0) AS cutoff_rowid
+             FROM agent_memory
+             WHERE agent_id = ?`
+          )
+          .get(agentId) as { cutoff_rowid: number }
+      ).cutoff_rowid
+      this.db
+        .prepare(
+          `INSERT INTO agent_memory_clear_job (
+             agent_id, cutoff_rowid, created_at, removed_count, phase
+           )
+           VALUES (?, ?, ?, 0, 'claims')
+           ON CONFLICT (agent_id) DO NOTHING`
+        )
+        .run(agentId, cutoff, createdAt)
+      const row = this.db
+        .prepare(
+          `SELECT agent_id, cutoff_rowid, created_at, removed_count, phase
+           FROM agent_memory_clear_job
+           WHERE agent_id = ?`
+        )
+        .get(agentId) as MemoryClearJobRow | undefined
+      if (!row) throw new Error(`[Memory] failed to create clear job for ${agentId}`)
+      return toMemoryClearJob(row)
+    })()
+  }
+
+  processMemoryClearBatch(agentId: string): MemoryClearBatchResult | null {
+    return this.db.transaction(() => {
+      const current = this.db
+        .prepare(
+          `SELECT agent_id, cutoff_rowid, created_at, removed_count, phase
+           FROM agent_memory_clear_job
+           WHERE agent_id = ?`
+        )
+        .get(agentId) as MemoryClearJobRow | undefined
+      if (!current) return null
+      if (current.phase === 'vectors') {
+        return { job: toMemoryClearJob(current), removedInBatch: 0 }
       }
-      const removed = this.clearByAgent(agentId)
-      this.db.prepare('DELETE FROM agent_memory_dirty WHERE agent_id = ?').run(agentId)
-      return removed
+
+      const rows = this.db
+        .prepare(
+          `SELECT rowid AS storage_rowid, agent_id, scope_type, scope_id,
+                  kind, content, provenance_key
+           FROM agent_memory NOT INDEXED
+           WHERE agent_id = ? AND rowid <= ?
+           ORDER BY rowid
+           LIMIT ?`
+        )
+        .all(
+          agentId,
+          current.cutoff_rowid,
+          AGENT_MEMORY_CLEAR_BATCH_SIZE
+        ) as TombstoneSourcePageRow[]
+      let removedInBatch = 0
+      if (rows.length > 0) {
+        this.insertTombstonesForRows(rows, current.created_at, 'agent_clear')
+        const rowIds = rows.map((row) => row.storage_rowid)
+        const placeholders = rowIds.map(() => '?').join(', ')
+        const result = this.runRecallBulkDelete(
+          () =>
+            this.db
+              .prepare(
+                `INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, agent_id)
+                 SELECT 'delete', rowid, content, ${buildAgentFtsScopeSql('agent_id')}
+                 FROM agent_memory
+                 WHERE agent_id = ?
+                   AND rowid IN (${placeholders})
+                   AND ${buildRecallablePredicate()}`
+              )
+              .run(agentId, ...rowIds),
+          () =>
+            this.db
+              .prepare(
+                `DELETE FROM agent_memory
+                 WHERE agent_id = ? AND rowid IN (${placeholders})`
+              )
+              .run(agentId, ...rowIds)
+        )
+        removedInBatch = result.changes
+        this.db
+          .prepare(
+            `UPDATE agent_memory_clear_job
+             SET removed_count = removed_count + ?
+             WHERE agent_id = ? AND phase = 'claims'`
+          )
+          .run(removedInBatch, agentId)
+      }
+
+      if (rows.length < AGENT_MEMORY_CLEAR_BATCH_SIZE) {
+        this.db.prepare('DELETE FROM agent_memory_derivation WHERE agent_id = ?').run(agentId)
+        this.db.prepare('DELETE FROM agent_memory_dirty WHERE agent_id = ?').run(agentId)
+        this.db
+          .prepare(
+            `UPDATE agent_memory_clear_job
+             SET phase = 'vectors'
+             WHERE agent_id = ? AND phase = 'claims'`
+          )
+          .run(agentId)
+      }
+
+      const updated = this.db
+        .prepare(
+          `SELECT agent_id, cutoff_rowid, created_at, removed_count, phase
+           FROM agent_memory_clear_job
+           WHERE agent_id = ?`
+        )
+        .get(agentId) as MemoryClearJobRow | undefined
+      if (!updated) return null
+      return { job: toMemoryClearJob(updated), removedInBatch }
+    })()
+  }
+
+  completeMemoryClear(agentId: string): boolean {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT phase
+           FROM agent_memory_clear_job
+           WHERE agent_id = ?`
+        )
+        .get(agentId) as Pick<MemoryClearJobRow, 'phase'> | undefined
+      if (!row) return true
+      if (row.phase !== 'vectors') return false
+      return (
+        this.db
+          .prepare(
+            `DELETE FROM agent_memory_clear_job
+           WHERE agent_id = ? AND phase = 'vectors'`
+          )
+          .run(agentId).changes === 1
+      )
     })()
   }
 
@@ -4049,6 +4292,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       this.db.prepare('DELETE FROM agent_memory_tombstone WHERE agent_id = ?').run(agentId)
       this.db.prepare('DELETE FROM agent_memory_derivation WHERE agent_id = ?').run(agentId)
       this.db.prepare('DELETE FROM agent_memory_dirty WHERE agent_id = ?').run(agentId)
+      this.db.prepare('DELETE FROM agent_memory_clear_job WHERE agent_id = ?').run(agentId)
       return removed
     })()
   }

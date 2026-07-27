@@ -19,6 +19,21 @@ export interface MemoryClearResult {
   cleanupPendingRestart: boolean
 }
 
+export type MemoryClearPhase = 'claims' | 'vectors'
+
+export interface MemoryClearJob {
+  agentId: string
+  cutoffRowId: number
+  createdAt: number
+  removed: number
+  phase: MemoryClearPhase
+}
+
+export interface MemoryClearBatchResult {
+  job: MemoryClearJob
+  removedInBatch: number
+}
+
 export interface DeletedAgentMemoryCleanupResult {
   cleanupPendingRestart: boolean
 }

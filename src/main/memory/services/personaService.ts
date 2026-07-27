@@ -192,9 +192,9 @@ export class PersonaService {
   async approvePersonaDraft(agentId: string, draftId: string): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     return this.withPersonaLock(agentId, () => {
-      if (this.ctx.isDisposed) return false
+      if (!this.ctx.canManageClaimMemory(agentId)) return false
       const draft = this.ports.repository.getById(draftId)
       if (
         !draft ||
@@ -218,9 +218,9 @@ export class PersonaService {
   async rejectPersonaDraft(agentId: string, draftId: string): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     return this.withPersonaLock(agentId, () => {
-      if (this.ctx.isDisposed) return false
+      if (!this.ctx.canManageClaimMemory(agentId)) return false
       const draft = this.ports.repository.getById(draftId)
       if (
         !draft ||
@@ -240,9 +240,9 @@ export class PersonaService {
   async setPersonaAnchor(agentId: string, versionId: string, anchored: boolean): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     return this.withPersonaLock(agentId, () => {
-      if (this.ctx.isDisposed) return false
+      if (!this.ctx.canManageClaimMemory(agentId)) return false
       const row = this.ports.repository.getById(versionId)
       if (!row || row.agent_id !== agentId || row.kind !== 'persona') return false
       if ((row.is_anchor === 1) === anchored) return true
@@ -255,13 +255,13 @@ export class PersonaService {
 
   listPersonaVersions(agentId: string): AgentMemoryRow[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     return this.ports.repository.listPersonaVersions(agentId)
   }
 
   listPersonaDrafts(agentId: string): { row: AgentMemoryRow; needsReview: boolean }[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     const active = this.ports.repository.getActivePersona(agentId)
     return this.ports.repository
       .listPersonaVersions(agentId)
@@ -277,9 +277,9 @@ export class PersonaService {
   async rollbackPersona(agentId: string, versionId: string): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     return this.withPersonaLock(agentId, () => {
-      if (this.ctx.isDisposed) return false
+      if (!this.ctx.canManageClaimMemory(agentId)) return false
       const target = this.ports.repository.getById(versionId)
       if (!target || target.agent_id !== agentId || target.kind !== 'persona') return false
       const current = this.ports.repository.getActivePersona(agentId)

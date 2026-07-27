@@ -161,7 +161,7 @@ describeIfNative('Memory native SQLite migration', () => {
       })
       expect(
         db.prepare('SELECT version FROM schema_versions WHERE version >= 46 ORDER BY version').all()
-      ).toEqual([46, 47, 48, 49, 50, 51].map((version) => ({ version })))
+      ).toEqual([46, 47, 48, 49, 50, 51, 52].map((version) => ({ version })))
       expect(
         db
           .prepare(
@@ -193,6 +193,7 @@ describeIfNative('Memory native SQLite migration', () => {
       ])
       for (const tableName of [
         'agent_memory_tombstone',
+        'agent_memory_clear_job',
         'agent_memory_derivation',
         'agent_memory_dirty',
         'agent_memory_directive'
@@ -268,6 +269,57 @@ describeIfNative('Memory native SQLite migration', () => {
 
       const reopened = new MainDatabaseCtor(databasePath)
       expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(46)
+      reopened.close()
+    })
+  })
+
+  it('resumes an interrupted Agent clear after reopening the database', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      const table = memoryTable(seeded)
+      for (let index = 0; index < 300; index += 1) {
+        table.insert({
+          id: `clear-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `clear claim ${index}`,
+          provenanceKey: `clear-source-${index}`
+        })
+      }
+      table.beginMemoryClear('a', 2_000)
+      expect(table.processMemoryClearBatch('a')).toMatchObject({
+        removedInBatch: 256,
+        job: { phase: 'claims', removed: 256 }
+      })
+      seeded.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      const resumedTable = memoryTable(reopened)
+      expect(resumedTable.listPendingMemoryClearJobs()).toEqual([
+        expect.objectContaining({ agentId: 'a', phase: 'claims', removed: 256 })
+      ])
+      const finalBatch = resumedTable.processMemoryClearBatch('a')
+      expect(finalBatch).toMatchObject({
+        removedInBatch: 44,
+        job: { phase: 'vectors', removed: 300 }
+      })
+      expect(resumedTable.countByAgent('a')).toBe(0)
+      expect(resumedTable.completeMemoryClear('a')).toBe(true)
+      expect(resumedTable.listPendingMemoryClearJobs()).toEqual([])
+      expect(
+        reopened
+          .getDatabase()
+          .prepare("SELECT COUNT(*) AS count FROM agent_memory_tombstone WHERE agent_id = 'a'")
+          .get()
+      ).toEqual({ count: 600 })
+      expect(() =>
+        resumedTable.insert({
+          id: 'after-clear',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'new independent claim'
+        })
+      ).not.toThrow()
       reopened.close()
     })
   })
@@ -579,7 +631,7 @@ describeIfNative('Memory native SQLite migration', () => {
       migrated.close()
 
       const reopened = new MainDatabaseCtor(databasePath)
-      expect(reopened.getLatestSchemaVersion()).toBe(51)
+      expect(reopened.getLatestSchemaVersion()).toBe(52)
       expect(
         reopened
           .getDatabase()

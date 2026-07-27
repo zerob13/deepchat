@@ -19,6 +19,8 @@ import type {
   MemoryAuditListOptions,
   MemoryAuditRepositoryPort,
   MemoryDirectiveRepositoryPort,
+  MemoryClearBatchResult,
+  MemoryClearJob,
   MemoryRepositoryPort,
   MemoryScope,
   MemoryServiceDeps,
@@ -130,6 +132,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       reason: MemoryTombstoneReason
     }
   >()
+  clearJobs = new Map<string, MemoryClearJob>()
+  private clearJobMemoryIds = new Map<string, string[]>()
   transactionCalls = 0
 
   private derivationKey(input: {
@@ -212,6 +216,9 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   insert(input: AgentMemoryInsertInput): AgentMemoryRow {
+    if (this.clearJobs.has(input.agentId)) {
+      throw new Error('agent memory clear in progress')
+    }
     if ((input.lifecycleState === undefined) !== (input.embeddingState === undefined)) {
       throw new Error('Memory inserts must provide both canonical state fields or neither')
     }
@@ -1633,17 +1640,69 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     return removed
   }
 
-  tombstoneAndClearByAgent(agentId: string, createdAt: number): number {
-    for (const row of this.rows.values()) {
-      if (row.agent_id === agentId) {
-        this.addTombstonesForRow(row, createdAt, 'agent_clear')
+  listPendingMemoryClearJobs(): MemoryClearJob[] {
+    return [...this.clearJobs.values()]
+      .sort(
+        (left, right) =>
+          left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId)
+      )
+      .map((job) => ({ ...job }))
+  }
+
+  beginMemoryClear(agentId: string, createdAt: number): MemoryClearJob {
+    const existing = this.clearJobs.get(agentId)
+    if (existing) return { ...existing }
+    const memoryIds = [...this.rows.values()]
+      .filter((row) => row.agent_id === agentId)
+      .map((row) => row.id)
+    const job: MemoryClearJob = {
+      agentId,
+      cutoffRowId: memoryIds.length,
+      createdAt,
+      removed: 0,
+      phase: 'claims'
+    }
+    this.clearJobs.set(agentId, job)
+    this.clearJobMemoryIds.set(agentId, memoryIds)
+    return { ...job }
+  }
+
+  processMemoryClearBatch(agentId: string): MemoryClearBatchResult | null {
+    const job = this.clearJobs.get(agentId)
+    if (!job) return null
+    if (job.phase === 'vectors') {
+      return { job: { ...job }, removedInBatch: 0 }
+    }
+    const pendingIds = this.clearJobMemoryIds.get(agentId) ?? []
+    const batchIds = pendingIds.splice(0, 256)
+    let removedInBatch = 0
+    for (const id of batchIds) {
+      const row = this.rows.get(id)
+      if (!row || row.agent_id !== agentId) continue
+      this.addTombstonesForRow(row, job.createdAt, 'agent_clear')
+      this.delete(id)
+      removedInBatch += 1
+    }
+    job.removed += removedInBatch
+    if (pendingIds.length === 0) {
+      job.phase = 'vectors'
+      for (const [key, derivation] of this.derivations) {
+        if (derivation.agent_id === agentId) this.derivations.delete(key)
+      }
+      for (const [key, seed] of this.dirtySeeds) {
+        if (seed.agentId === agentId) this.dirtySeeds.delete(key)
       }
     }
-    const removed = this.clearByAgent(agentId)
-    for (const [key, seed] of this.dirtySeeds) {
-      if (seed.agentId === agentId) this.dirtySeeds.delete(key)
-    }
-    return removed
+    return { job: { ...job }, removedInBatch }
+  }
+
+  completeMemoryClear(agentId: string): boolean {
+    const job = this.clearJobs.get(agentId)
+    if (!job) return true
+    if (job.phase !== 'vectors') return false
+    this.clearJobs.delete(agentId)
+    this.clearJobMemoryIds.delete(agentId)
+    return true
   }
 
   retireAgentMemoryNamespace(agentId: string): number {
@@ -1657,6 +1716,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     for (const [key, seed] of this.dirtySeeds) {
       if (seed.agentId === agentId) this.dirtySeeds.delete(key)
     }
+    this.clearJobs.delete(agentId)
+    this.clearJobMemoryIds.delete(agentId)
     return removed
   }
 
@@ -2163,7 +2224,8 @@ const READ_CAPABILITY_KEYS = [
   'listWorkingCandidates',
   'listAgentIdsWithMemories',
   'listRecentlyActiveAgentIds',
-  'hasActiveMemory'
+  'hasActiveMemory',
+  'listPendingMemoryClearJobs'
 ] as const satisfies readonly (keyof MemoryReadRepositoryPort)[]
 
 const MUTATION_CAPABILITY_KEYS = [
@@ -2181,7 +2243,9 @@ const MUTATION_CAPABILITY_KEYS = [
   'markConflictIfRevision',
   'deleteInternalMemory',
   'tombstoneAndDelete',
-  'tombstoneAndClearByAgent',
+  'beginMemoryClear',
+  'processMemoryClearBatch',
+  'completeMemoryClear',
   'retireAgentMemoryNamespace'
 ] as const satisfies readonly (keyof MemoryMutationRepositoryPort)[]
 

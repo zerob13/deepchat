@@ -38,6 +38,23 @@ type AgentMemorySearchInternals = {
   searchLike(...args: unknown[]): unknown[]
 }
 
+function completeAgentMemoryClear(
+  table: InstanceType<typeof AgentMemoryTableCtor>,
+  agentId: string,
+  createdAt: number
+): number {
+  let job = table.beginMemoryClear(agentId, createdAt)
+  while (job.phase === 'claims') {
+    const batch = table.processMemoryClearBatch(agentId)
+    if (!batch) throw new Error('clear job disappeared before completion')
+    job = batch.job
+  }
+  if (!table.completeMemoryClear(agentId)) {
+    throw new Error('clear job did not reach vector cleanup')
+  }
+  return job.removed
+}
+
 function setTestMemoryStatus(
   db: InstanceType<typeof DatabaseCtor>,
   table: InstanceType<typeof AgentMemoryTableCtor>,
@@ -2902,7 +2919,7 @@ describeIfSqlite('AgentMemoryTable', () => {
         provenanceKey: 'claim-source'
       })
 
-      expect(table.tombstoneAndClearByAgent('a', 2_000)).toBe(4)
+      expect(completeAgentMemoryClear(table, 'a', 2_000)).toBe(4)
       expect(table.countByAgent('a')).toBe(0)
       expect(table.countDirtySeeds('a')).toBe(0)
       expect(table.getById('other')).toBeDefined()
@@ -2967,7 +2984,7 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
-  it('tombstones a large clear across bounded source pages', () => {
+  it('persists and resumes a large clear across bounded transactions', () => {
     const db = new DatabaseCtor(':memory:')
     try {
       const table = new AgentMemoryTableCtor(db)
@@ -2990,7 +3007,45 @@ describeIfSqlite('AgentMemoryTable', () => {
         provenanceKey: 'other-agent-source'
       })
 
-      expect(table.tombstoneAndClearByAgent('a', 2_000)).toBe(claimCount)
+      expect(table.beginMemoryClear('a', 2_000)).toMatchObject({
+        agentId: 'a',
+        removed: 0,
+        phase: 'claims'
+      })
+      expect(table.completeMemoryClear('a')).toBe(false)
+      expect(table.listPendingMemoryClearJobs()).toHaveLength(1)
+      const firstBatch = table.processMemoryClearBatch('a')
+      expect(firstBatch).toMatchObject({
+        removedInBatch: 256,
+        job: { removed: 256, phase: 'claims' }
+      })
+      expect(table.countByAgent('a')).toBe(claimCount - 256)
+      expect(() =>
+        table.insert({
+          id: 'late-write',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'must not survive clear'
+        })
+      ).toThrow(/agent memory clear in progress/)
+      expect(() =>
+        db.prepare("UPDATE agent_memory SET content = 'escaped' WHERE id = 'claim-256'").run()
+      ).toThrow(/agent memory clear in progress/)
+      expect(() =>
+        db.prepare("UPDATE agent_memory SET agent_id = 'b' WHERE id = 'claim-256'").run()
+      ).toThrow(/agent memory clear in progress/)
+      expect(() =>
+        db.prepare("UPDATE agent_memory SET agent_id = 'a' WHERE id = 'other-agent'").run()
+      ).toThrow(/agent memory clear in progress/)
+
+      let job = firstBatch!.job
+      while (job.phase === 'claims') {
+        const batch = table.processMemoryClearBatch('a')
+        if (!batch) throw new Error('clear job disappeared before completion')
+        job = batch.job
+      }
+      expect(job.removed).toBe(claimCount)
+      expect(table.listPendingMemoryClearJobs()).toEqual([job])
       expect(table.countByAgent('a')).toBe(0)
       expect(table.getById('other-agent')).toBeDefined()
       expect(
@@ -3002,6 +3057,17 @@ describeIfSqlite('AgentMemoryTable', () => {
           )
           .get()
       ).toEqual({ count: claimCount * 2 })
+      expect(table.completeMemoryClear('a')).toBe(true)
+      expect(table.completeMemoryClear('a')).toBe(true)
+      expect(table.listPendingMemoryClearJobs()).toEqual([])
+      expect(() =>
+        table.insert({
+          id: 'post-clear-write',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'allowed after cleanup'
+        })
+      ).not.toThrow()
     } finally {
       db.close()
     }
@@ -3521,13 +3587,14 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain("temporal_kind TEXT NOT NULL DEFAULT 'atemporal'")
       expect(createSql).toContain('temporal_confidence REAL')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_tombstone')
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_clear_job')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_derivation')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_dirty')
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai')
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_temporal_bi_v1')
       expect(createSql).toContain("scope_type TEXT NOT NULL DEFAULT 'agent'")
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_scope_bi_v1')
-      expect(table.getLatestVersion()).toBe(51)
+      expect(table.getLatestVersion()).toBe(52)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
@@ -3541,6 +3608,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       )
       expect(table.getMigrationSQL(49)).toMatch(/DROP TRIGGER IF EXISTS agent_memory_dirty_ai/)
       expect(table.getMigrationSQL(51)).toMatch(/ADD COLUMN scope_type/)
+      expect(table.getMigrationSQL(52)).toMatch(/CREATE TABLE IF NOT EXISTS agent_memory_clear_job/)
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()

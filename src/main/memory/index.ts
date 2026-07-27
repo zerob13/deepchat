@@ -181,7 +181,8 @@ export class MemoryService implements MemoryRuntimePort {
       auditWriter: deps.auditRepository,
       changeSink: { onMemoryChanged: deps.onMemoryChanged },
       providerControl: providerGateway,
-      clock: deps.clock
+      clock: deps.clock,
+      pendingMemoryClearAgentIds: repository.listPendingMemoryClearJobs().map((job) => job.agentId)
     })
     this.directives = new DirectiveService({
       ctx: this.runtime,
@@ -361,6 +362,9 @@ export class MemoryService implements MemoryRuntimePort {
   }
 
   startBackgroundMaintenance(): void {
+    void this.management.resumePendingMemoryClears().catch((error) => {
+      logger.error(`[Memory] pending clear recovery failed: ${String(error)}`)
+    })
     this.maintenance.startBackgroundMaintenance()
   }
 
@@ -779,7 +783,11 @@ export class MemoryService implements MemoryRuntimePort {
     this.vectorStore.stopAdmission()
     const drain = (async () => {
       for (let i = 0; i < REINDEX_MAX_BATCHES; i += 1) {
-        const inflight = [...this.maintenance.getInFlight(), ...this.embedding.getInFlight()]
+        const inflight = [
+          ...this.maintenance.getInFlight(),
+          ...this.embedding.getInFlight(),
+          ...this.management.getInFlightMemoryClears()
+        ]
         if (!inflight.length) break
         await Promise.allSettled(inflight)
       }

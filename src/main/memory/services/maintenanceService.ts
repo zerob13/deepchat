@@ -203,7 +203,7 @@ export class MaintenanceService {
   }
 
   private shouldArmMaintenance(agentId: string): boolean {
-    return isSafeAgentId(agentId) && this.ctx.isManagedAgent(agentId) && this.ctx.isEnabled(agentId)
+    return isSafeAgentId(agentId) && this.ctx.canContinueAgentMemoryTask(agentId)
   }
 
   private armCurrentActiveAgents(): void {

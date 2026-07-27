@@ -36,6 +36,8 @@ import type {
   ManualEditFieldFlags,
   MemoryCognitiveMaintenanceInput,
   MemoryManagementPageCursor,
+  MemoryClearBatchResult,
+  MemoryClearJob,
   MemoryDerivationInsertInput,
   MemoryDirtySeed,
   MemoryModelRef,
@@ -103,6 +105,7 @@ export interface MemoryReadRepositoryPort {
   listAgentIdsWithMemories(): string[]
   listRecentlyActiveAgentIds(candidateAgentIds: readonly string[], limit: number): string[]
   hasActiveMemory(agentId: string): boolean
+  listPendingMemoryClearJobs(): MemoryClearJob[]
 }
 
 export interface MemoryMutationRepositoryPort {
@@ -132,7 +135,9 @@ export interface MemoryMutationRepositoryPort {
   ): boolean
   deleteInternalMemory(agentId: string, id: string): boolean
   tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null
-  tombstoneAndClearByAgent(agentId: string, createdAt: number): number
+  beginMemoryClear(agentId: string, createdAt: number): MemoryClearJob
+  processMemoryClearBatch(agentId: string): MemoryClearBatchResult | null
+  completeMemoryClear(agentId: string): boolean
   retireAgentMemoryNamespace(agentId: string): number
 }
 

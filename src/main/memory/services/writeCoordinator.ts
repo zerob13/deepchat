@@ -323,7 +323,7 @@ export class WriteCoordinator {
   }
 
   writeMemoriesSync(candidates: MemoryCandidate[], options: WriteMemoriesOptions): string[] {
-    if (!candidates.length) return []
+    if (!candidates.length || !this.ctx.canWriteAgentMemory(options.agentId)) return []
     const created: string[] = []
     let touched = false
     const now = this.ctx.now()
