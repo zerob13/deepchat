@@ -12,6 +12,8 @@ import {
   AGENT_MEMORY_DIRECTIVE_STATUSES,
   AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
   AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
+  AGENT_MEMORY_SCOPE_ID_MAX_CHARS,
+  AGENT_MEMORY_SCOPE_TYPES,
   AGENT_MEMORY_HEALTH_CATEGORY_KEYS,
   AGENT_MEMORY_HEALTH_KIND_KEYS,
   AGENT_MEMORY_HEALTH_STATUS_KEYS,
@@ -54,9 +56,58 @@ const DirectiveTopicSchema = z
 /** URL-safe agent ids, matching the main-process memory storage guard. */
 const AgentIdSchema = z.string().regex(AGENT_MEMORY_AGENT_ID_PATTERN, 'invalid agentId')
 
-export const MemoryItemSchema = z.object({
+const CanonicalMemoryScopeIdSchema = z
+  .string()
+  .min(1)
+  .refine((id) => id === id.trim(), {
+    message: 'scope id must not contain surrounding whitespace'
+  })
+  .refine((id) => unicodeCodePointLength(id) <= AGENT_MEMORY_SCOPE_ID_MAX_CHARS, {
+    message: `scope id must be at most ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} Unicode code points`
+  })
+
+const MemoryScopeIdInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((id) => unicodeCodePointLength(id) <= AGENT_MEMORY_SCOPE_ID_MAX_CHARS, {
+    message: `scope id must be at most ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} Unicode code points`
+  })
+
+export const MemoryScopeSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('agent') }).strict(),
+  z.object({ type: z.literal('user'), id: MemoryScopeIdInputSchema }).strict(),
+  z.object({ type: z.literal('project'), id: MemoryScopeIdInputSchema }).strict(),
+  z.object({ type: z.literal('session'), id: MemoryScopeIdInputSchema }).strict()
+])
+
+export const MemoryScopeContextSchema = z
+  .object({
+    userId: MemoryScopeIdInputSchema.optional(),
+    projectId: MemoryScopeIdInputSchema.optional(),
+    sessionId: MemoryScopeIdInputSchema.optional()
+  })
+  .strict()
+
+function enforceProjectedScopeInvariant(
+  value: { scopeType: (typeof AGENT_MEMORY_SCOPE_TYPES)[number]; scopeId: string | null },
+  context: z.RefinementCtx
+): void {
+  const valid = value.scopeType === 'agent' ? value.scopeId === null : value.scopeId !== null
+  if (!valid) {
+    context.addIssue({
+      code: 'custom',
+      path: ['scopeId'],
+      message: 'scopeId must be null only for agent scope'
+    })
+  }
+}
+
+const MemoryItemBaseSchema = z.object({
   id: z.string(),
   agentId: z.string(),
+  scopeType: z.enum(AGENT_MEMORY_SCOPE_TYPES),
+  scopeId: CanonicalMemoryScopeIdSchema.nullable(),
   kind: z.enum(AGENT_MEMORY_HEALTH_TOP_KIND_KEYS),
   category: z.enum(AGENT_MEMORY_CATEGORIES).nullable(),
   content: z.string(),
@@ -82,13 +133,15 @@ export const MemoryItemSchema = z.object({
   needsReview: z.boolean().optional()
 })
 
+export const MemoryItemSchema = MemoryItemBaseSchema.superRefine(enforceProjectedScopeInvariant)
+
 // Search results reuse the management DTO and add the retrieval score plus which path(s) surfaced
 // the row. Persona/working/archived/conflicted rows are excluded by the retrieval semantics.
-export const MemorySearchResultSchema = MemoryItemSchema.extend({
+export const MemorySearchResultSchema = MemoryItemBaseSchema.extend({
   score: z.number(),
   sources: z.object({ vec: z.boolean().optional(), fts: z.boolean().optional() }).optional(),
   similarity: z.number().optional()
-})
+}).superRefine(enforceProjectedScopeInvariant)
 
 const NonnegativeCountSchema = z.number().int().nonnegative()
 
@@ -748,7 +801,8 @@ export const memorySearchRoute = defineRouteContract({
     agentId: AgentIdSchema,
     query: z.string(),
     // Search-only retrieval depth/result cap. Defaults to 50 and is clamped by the presenter to 100.
-    limit: z.number().int().positive().max(100).optional()
+    limit: z.number().int().positive().max(100).optional(),
+    scopeContext: MemoryScopeContextSchema.optional()
   }),
   output: z.object({ results: z.array(MemorySearchResultSchema) })
 })
@@ -763,7 +817,8 @@ export const memoryAddRoute = defineRouteContract({
     kind: z.enum(['episodic', 'semantic']).optional(),
     category: z.enum(AGENT_MEMORY_CATEGORIES).optional(),
     importance: z.number().min(0).max(1).optional(),
-    sessionId: z.string().optional()
+    sessionId: z.string().optional(),
+    scope: MemoryScopeSchema.optional()
   }),
   output: z.object({ result: MemoryAddResultSchema })
 })
@@ -961,6 +1016,8 @@ export const memoryDeleteDirectiveRoute = defineRouteContract({
 })
 
 export type MemoryItem = z.infer<typeof MemoryItemSchema>
+export type MemoryScopeInput = z.infer<typeof MemoryScopeSchema>
+export type MemoryScopeContextInput = z.infer<typeof MemoryScopeContextSchema>
 export type MemoryPage = z.infer<typeof memoryPageRoute.output>
 export type MemorySearchResult = z.infer<typeof MemorySearchResultSchema>
 export type MemoryAddResult = z.infer<typeof MemoryAddResultSchema>

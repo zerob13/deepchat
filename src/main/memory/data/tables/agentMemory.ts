@@ -4,7 +4,8 @@ import { BaseTable } from '@/data/baseTable'
 import {
   AGENT_MEMORY_CATEGORIES,
   AGENT_MEMORY_HEALTH_KIND_KEYS,
-  AGENT_MEMORY_HEALTH_STATUS_KEYS
+  AGENT_MEMORY_HEALTH_STATUS_KEYS,
+  AGENT_MEMORY_SCOPE_ID_MAX_CHARS
 } from '@shared/types/agent-memory'
 import { serializeAgentMemorySourceEntryIds } from '@shared/lib/agentMemoryLineage'
 import { MEMORY_PAGE_MAX_LIMIT } from '@shared/contracts/routes/memory.routes'
@@ -30,6 +31,7 @@ import type {
   MemoryClaimContentUpdateResult,
   MemoryDerivationInsertInput,
   MemoryDirtySeed,
+  MemoryScope,
   ResolveChallengerTransition,
   ReviveSupersededTransition,
   UserContentTransition,
@@ -65,6 +67,13 @@ import {
 } from './agentMemoryStateSql'
 import { normalizeMemoryTemporalMetadata } from '../../core/temporal'
 import { buildMemoryTombstoneIdentities, isTombstoneEligibleMemoryKind } from '../../core/tombstone'
+import {
+  AGENT_MEMORY_AGENT_SCOPE_FILTER,
+  buildMemoryScopePredicateSql,
+  legacyUserScopeForMemoryScope,
+  normalizeMemoryScope,
+  normalizeMemoryScopeFilter
+} from '../../core/scope'
 import type { MemoryTombstoneDeleteInput, MemoryTombstoneReason } from '../../domain/types'
 
 // 'working' is an internal session-open injection cache (a single blob row per agent); it is never
@@ -77,13 +86,15 @@ import type { MemoryTombstoneDeleteInput, MemoryTombstoneReason } from '../../do
 // optimistic concurrency control for semantic decision writes; v42 normalizes lifecycle and
 // embedding state while retaining the legacy status shadow; v46 adds temporal claim metadata; v47
 // adds privacy-preserving exact-forgetting tombstones; v48 adds durable derivation edges and the
-// rebuildable dirty-work index; v49 extends dirty work to reflection claims.
+// rebuildable dirty-work index; v49 extends dirty work to reflection claims; v51 introduces typed
+// applicability scopes while retaining user_scope as a write-only compatibility shadow.
 const AGENT_MEMORY_STATE_MODEL_SCHEMA_VERSION = 42
 const AGENT_MEMORY_TEMPORAL_SCHEMA_VERSION = 46
 const AGENT_MEMORY_TOMBSTONE_SCHEMA_VERSION = 47
 const AGENT_MEMORY_LINEAGE_SCHEMA_VERSION = 48
 const AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION = 49
-const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION
+const AGENT_MEMORY_SCOPE_SCHEMA_VERSION = 51
+const AGENT_MEMORY_SCHEMA_VERSION = AGENT_MEMORY_SCOPE_SCHEMA_VERSION
 
 const AGENT_MEMORY_FTS_META_KEY = 'agent_memory_fts'
 const AGENT_MEMORY_FTS_META_VERSION = 4
@@ -207,6 +218,60 @@ const AGENT_MEMORY_DIRTY_TRIGGER_DROP_SQL = `
 `
 
 const DIRTY_SEED_REPOSITORY_LIMIT = 256
+
+const AGENT_MEMORY_SCOPE_TRIGGER_INSERT_NAME = 'agent_memory_scope_bi_v1'
+const AGENT_MEMORY_SCOPE_TRIGGER_UPDATE_NAME = 'agent_memory_scope_bu_v1'
+const AGENT_MEMORY_SCOPE_TRIGGER_DROP_SQL = `
+  DROP TRIGGER IF EXISTS ${AGENT_MEMORY_SCOPE_TRIGGER_INSERT_NAME};
+  DROP TRIGGER IF EXISTS ${AGENT_MEMORY_SCOPE_TRIGGER_UPDATE_NAME};
+`
+const AGENT_MEMORY_SCOPE_INVALID_SQL = `
+  NEW.scope_type NOT IN ('agent', 'user', 'project', 'session')
+  OR (
+    NEW.scope_type = 'agent'
+    AND NEW.scope_id IS NOT NULL
+  )
+  OR (
+    NEW.scope_type != 'agent'
+    AND (
+      NEW.scope_id IS NULL
+      OR length(NEW.scope_id) NOT BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS}
+      OR NEW.scope_id != trim(NEW.scope_id)
+    )
+  )
+  OR (
+    NEW.scope_type = 'user'
+    AND NEW.user_scope IS NOT NEW.scope_id
+  )
+  OR (
+    NEW.scope_type IN ('project', 'session')
+    AND NEW.user_scope IS NOT NULL
+  )
+`
+const AGENT_MEMORY_SCOPE_TRIGGER_SQL = `
+  CREATE TRIGGER IF NOT EXISTS ${AGENT_MEMORY_SCOPE_TRIGGER_INSERT_NAME}
+  BEFORE INSERT ON agent_memory
+  WHEN ${AGENT_MEMORY_SCOPE_INVALID_SQL}
+  BEGIN
+    SELECT RAISE(ABORT, 'invalid agent_memory scope');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS ${AGENT_MEMORY_SCOPE_TRIGGER_UPDATE_NAME}
+  BEFORE UPDATE OF user_scope, scope_type, scope_id ON agent_memory
+  WHEN ${AGENT_MEMORY_SCOPE_INVALID_SQL}
+  BEGIN
+    SELECT RAISE(ABORT, 'invalid agent_memory scope');
+  END;
+`
+
+const AGENT_MEMORY_SCOPE_INDEX_SQL = `
+  DROP INDEX IF EXISTS idx_agent_memory_recall_importance_v5;
+  CREATE INDEX IF NOT EXISTS idx_agent_memory_recall_scope_v6
+    ON agent_memory(agent_id, scope_type, scope_id, importance DESC, created_at DESC, id ASC)
+    WHERE lifecycle_state = 'active'
+      AND superseded_by IS NULL
+      AND kind NOT IN ('persona', 'working');
+`
 
 function embeddingRefsState(
   row: Pick<AgentMemoryRow, 'embedding_id' | 'embedding_dim' | 'embedding_model'>
@@ -604,6 +669,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL,
         user_scope TEXT,
+        scope_type TEXT NOT NULL DEFAULT 'agent'
+          CHECK (scope_type IN ('agent', 'user', 'project', 'session')),
+        scope_id TEXT
+          CHECK (scope_id IS NULL OR
+                 (length(scope_id) BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS}
+                  AND scope_id = trim(scope_id))),
         kind TEXT NOT NULL,
         category TEXT,
         content TEXT NOT NULL,
@@ -653,6 +724,15 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
           OR
           (temporal_kind != 'atemporal' AND temporal_confidence IS NOT NULL
             AND temporal_precision IS NOT NULL AND temporal_timezone IS NOT NULL)
+        ),
+        CHECK (
+          (scope_type = 'agent' AND scope_id IS NULL)
+          OR (scope_type != 'agent' AND scope_id IS NOT NULL)
+        ),
+        CHECK (
+          scope_type = 'agent'
+          OR (scope_type = 'user' AND user_scope IS scope_id)
+          OR (scope_type IN ('project', 'session') AND user_scope IS NULL)
         )
       );
       ${AGENT_MEMORY_TOMBSTONE_TABLE_SQL}
@@ -663,6 +743,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       ${AGENT_MEMORY_BASE_INDEX_SQL}
       ${AGENT_MEMORY_CONFLICT_INDEX_SQL}
       ${AGENT_MEMORY_CANONICAL_INDEX_SQL}
+      ${AGENT_MEMORY_SCOPE_INDEX_SQL}
+      ${AGENT_MEMORY_SCOPE_TRIGGER_SQL}
       ${AGENT_MEMORY_LEGACY_STATUS_BRIDGE_SQL}
     `
   }
@@ -689,6 +771,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       ) {
         this.ensureLineageAndDirtyArtifacts()
       }
+      if (
+        columns.some((column) => column.name === 'scope_type') &&
+        columns.some((column) => column.name === 'scope_id')
+      ) {
+        this.ensureScopeArtifacts()
+      }
     }
     const currentColumns = this.db.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
       name: string
@@ -711,6 +799,34 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     this.db.exec(AGENT_MEMORY_DIRTY_TABLE_SQL)
     if (!dirtyTableExists) this.db.exec(AGENT_MEMORY_DIRTY_BACKFILL_SQL)
     this.db.exec(AGENT_MEMORY_DIRTY_TRIGGER_SQL)
+  }
+
+  private ensureScopeArtifacts(): void {
+    const columns = new Set(
+      (
+        this.db.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
+          name: string
+        }>
+      ).map((column) => column.name)
+    )
+    if (!columns.has('scope_type') || !columns.has('scope_id')) return
+
+    this.db.exec(AGENT_MEMORY_SCOPE_TRIGGER_DROP_SQL)
+    this.db.exec(AGENT_MEMORY_SCOPE_TRIGGER_SQL)
+    const indexColumns = [
+      'agent_id',
+      'scope_type',
+      'scope_id',
+      'importance',
+      'created_at',
+      'id',
+      'lifecycle_state',
+      'superseded_by',
+      'kind'
+    ]
+    if (indexColumns.every((column) => columns.has(column))) {
+      this.db.exec(AGENT_MEMORY_SCOPE_INDEX_SQL)
+    }
   }
 
   private insertTombstonesForRows(
@@ -866,7 +982,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       'valid_until',
       'temporal_confidence',
       'temporal_precision',
-      'temporal_timezone'
+      'temporal_timezone',
+      'scope_type',
+      'scope_id'
     ]) {
       if (!columns.some((column) => column.name === columnName)) {
         throw new Error(`[Memory] agent_memory schema migration is incomplete: ${columnName}`)
@@ -880,6 +998,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     const lifecycleColumn = columns.find((column) => column.name === 'lifecycle_state')
     const embeddingColumn = columns.find((column) => column.name === 'embedding_state')
     const temporalKindColumn = columns.find((column) => column.name === 'temporal_kind')
+    const scopeTypeColumn = columns.find((column) => column.name === 'scope_type')
     const normalizedTableSql = tableSql?.replace(/\s+/gu, ' ')
     if (
       lifecycleColumn?.notnull !== 1 ||
@@ -915,6 +1034,18 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     ) {
       throw new Error('[Memory] agent_memory temporal constraints are incomplete')
     }
+    if (
+      scopeTypeColumn?.notnull !== 1 ||
+      scopeTypeColumn.dflt_value !== "'agent'" ||
+      !normalizedTableSql?.includes(
+        "CHECK (scope_type IN ('agent', 'user', 'project', 'session'))"
+      ) ||
+      !normalizedTableSql.includes(
+        `CHECK (scope_id IS NULL OR (length(scope_id) BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} AND scope_id = trim(scope_id)))`
+      )
+    ) {
+      throw new Error('[Memory] agent_memory scope constraints are incomplete')
+    }
     const invalidTemporalRows = (
       this.db
         .prepare(
@@ -948,10 +1079,34 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         `[Memory] agent_memory contains ${invalidTemporalRows} invalid temporal claim rows`
       )
     }
+    const invalidScopeRows = (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM agent_memory
+           WHERE scope_type NOT IN ('agent', 'user', 'project', 'session')
+              OR (scope_type = 'agent' AND scope_id IS NOT NULL)
+              OR (
+                scope_type != 'agent'
+                AND (
+                  scope_id IS NULL
+                  OR length(scope_id) NOT BETWEEN 1 AND ?
+                  OR scope_id != trim(scope_id)
+                )
+              )
+              OR (scope_type = 'user' AND user_scope IS NOT scope_id)
+              OR (scope_type IN ('project', 'session') AND user_scope IS NOT NULL)`
+        )
+        .get(AGENT_MEMORY_SCOPE_ID_MAX_CHARS) as { count: number }
+    ).count
+    if (invalidScopeRows !== 0) {
+      throw new Error(`[Memory] agent_memory contains ${invalidScopeRows} invalid scope rows`)
+    }
     this.db.exec(AGENT_MEMORY_BASE_INDEX_SQL)
     this.db.exec(AGENT_MEMORY_RETIRED_INDEX_SQL)
     this.db.exec(AGENT_MEMORY_CONFLICT_INDEX_SQL)
     this.db.exec(AGENT_MEMORY_CANONICAL_INDEX_SQL)
+    this.ensureScopeArtifacts()
     this.ensureCurrentLegacyStatusBridge(options?.backupBeforeLegacyBridgeRecovery)
     const tombstoneSql = (
       this.db
@@ -1041,7 +1196,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     }
     for (const indexName of [
       'idx_agent_memory_derivation_child_v1',
-      'idx_agent_memory_dirty_order_v1'
+      'idx_agent_memory_dirty_order_v1',
+      'idx_agent_memory_recall_scope_v6'
     ]) {
       if (
         !this.db
@@ -1051,10 +1207,37 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         throw new Error(`[Memory] required index is missing: ${indexName}`)
       }
     }
+    for (const [name, signature] of [
+      [AGENT_MEMORY_SCOPE_TRIGGER_INSERT_NAME, 'BEFORE INSERT ON agent_memory'],
+      [
+        AGENT_MEMORY_SCOPE_TRIGGER_UPDATE_NAME,
+        'BEFORE UPDATE OF user_scope, scope_type, scope_id ON agent_memory'
+      ]
+    ] as const) {
+      const triggerSql = (
+        this.db
+          .prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+          .get(name) as { sql: string | null } | undefined
+      )?.sql
+        ?.replace(/\s+/gu, ' ')
+        .trim()
+      if (
+        !triggerSql?.includes(signature) ||
+        !triggerSql.includes("NEW.scope_type NOT IN ('agent', 'user', 'project', 'session')") ||
+        !triggerSql.includes('NEW.user_scope IS NOT NEW.scope_id') ||
+        !triggerSql.includes("SELECT RAISE(ABORT, 'invalid agent_memory scope')")
+      ) {
+        throw new Error(`[Memory] ${name} is incomplete`)
+      }
+    }
     this.ensureFtsIndex()
   }
 
   finalizeMigration(version: number): void {
+    if (version === AGENT_MEMORY_SCOPE_SCHEMA_VERSION) {
+      this.ensureScopeArtifacts()
+      return
+    }
     if (
       version === AGENT_MEMORY_LINEAGE_SCHEMA_VERSION ||
       version === AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION
@@ -1179,6 +1362,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     if (version === AGENT_MEMORY_REFLECTION_DIRTY_SCHEMA_VERSION) {
       return [AGENT_MEMORY_DIRTY_TRIGGER_DROP_SQL, AGENT_MEMORY_DIRTY_BACKFILL_SQL].join('\n')
     }
+    if (version === AGENT_MEMORY_SCOPE_SCHEMA_VERSION) {
+      return [
+        "ALTER TABLE agent_memory ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'agent' CHECK (scope_type IN ('agent', 'user', 'project', 'session'));",
+        `ALTER TABLE agent_memory ADD COLUMN scope_id TEXT CHECK (scope_id IS NULL OR (length(scope_id) BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} AND scope_id = trim(scope_id)));`,
+        AGENT_MEMORY_SCOPE_INDEX_SQL
+      ].join('\n')
+    }
     return null
   }
 
@@ -1203,6 +1393,9 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         this.db.prepare("DELETE FROM agent_memory_fts_meta WHERE key = 'agent_memory_fts'").run()
       }
       this.replaceLegacyStatusBridge()
+    }
+    if (addedColumns.has('scope_type') || addedColumns.has('scope_id')) {
+      this.ensureScopeArtifacts()
     }
   }
 
@@ -1511,10 +1704,13 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       })
     }
     const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+    const scope = normalizeMemoryScope(input.scope)
     const row: AgentMemoryRow = {
       id: input.id,
       agent_id: input.agentId,
-      user_scope: input.userScope ?? null,
+      user_scope: legacyUserScopeForMemoryScope(scope),
+      scope_type: scope.type,
+      scope_id: scope.type === 'agent' ? null : scope.id,
       kind: input.kind,
       category: input.category ?? null,
       content: input.content,
@@ -1556,6 +1752,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
            id,
            agent_id,
            user_scope,
+           scope_type,
+           scope_id,
            kind,
            category,
            content,
@@ -1588,12 +1786,14 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
            lifecycle_state,
            embedding_state
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .run(
             row.id,
             row.agent_id,
             row.user_scope,
+            row.scope_type,
+            row.scope_id,
             row.kind,
             row.category,
             row.content,
@@ -1809,6 +2009,27 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       .all(agentId, ...uniqueIds) as AgentMemoryRow[]
   }
 
+  listApplicableByIds(
+    agentId: string,
+    ids: string[],
+    scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
+  ): AgentMemoryRow[] {
+    const uniqueIds = [...new Set(ids.filter((id) => id.length > 0))]
+    if (uniqueIds.length === 0) return []
+    const scopes = normalizeMemoryScopeFilter(scopeFilter)
+    const scopePredicate = buildMemoryScopePredicateSql('am', scopes)
+    const placeholders = uniqueIds.map(() => '?').join(', ')
+    return this.db
+      .prepare(
+        `SELECT am.*
+         FROM agent_memory am
+         WHERE am.agent_id = ?
+           AND am.id IN (${placeholders})
+           AND ${scopePredicate.sql}`
+      )
+      .all(agentId, ...uniqueIds, ...scopePredicate.params) as AgentMemoryRow[]
+  }
+
   getCognitiveMaintenanceInput(
     agentId: string,
     options: { kinds: AgentMemoryKind[]; watermark: number; limit: number }
@@ -1827,6 +2048,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     const predicate = `agent_id = ?
       AND superseded_by IS NULL
       AND lifecycle_state = 'active'
+      AND scope_type = 'agent'
+      AND scope_id IS NULL
       AND kind IN ('episodic', 'semantic', 'reflection')
       AND kind IN (${placeholders})`
     const aggregate = this.db
@@ -1938,6 +2161,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       .prepare(
         `SELECT * FROM agent_memory
          WHERE agent_id = ? AND kind = 'persona'
+           AND scope_type = 'agent' AND scope_id IS NULL
            AND (
              persona_state = 'active'
              OR (persona_state IS NULL AND superseded_by IS NULL)
@@ -1953,6 +2177,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       .prepare(
         `SELECT * FROM agent_memory
          WHERE agent_id = ? AND kind = 'persona' AND persona_state = 'draft'
+           AND scope_type = 'agent' AND scope_id IS NULL
          ORDER BY created_at DESC
          LIMIT 1`
       )
@@ -1990,6 +2215,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       .prepare(
         `SELECT * FROM agent_memory
          WHERE agent_id = ? AND kind = 'persona'
+           AND scope_type = 'agent' AND scope_id IS NULL
          ORDER BY created_at DESC`
       )
       .all(agentId) as AgentMemoryRow[]
@@ -2002,7 +2228,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     agentId: string,
     query: string,
     limit: number = 20,
-    options: { matchMode?: SearchMatchMode } = {}
+    options: { matchMode?: SearchMatchMode; scopeFilter?: readonly MemoryScope[] } = {}
   ): AgentMemoryRow[] {
     return this.searchWithStrategy(agentId, query, limit, options).rows
   }
@@ -2011,7 +2237,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     agentId: string,
     query: string,
     limit: number = 20,
-    options: { matchMode?: SearchMatchMode } = {}
+    options: { matchMode?: SearchMatchMode; scopeFilter?: readonly MemoryScope[] } = {}
   ): AgentMemorySearchResult {
     this.recoverFtsIfNeeded()
     this.perfObserver?.increment('repositoryCalls')
@@ -2025,6 +2251,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     }
     const cappedLimit = Math.min(Math.max(Math.floor(limit), 1), 100)
     const matchMode = options.matchMode ?? 'all'
+    const scopeFilter = normalizeMemoryScopeFilter(options.scopeFilter)
     const terms = tokenizeSearchQuery(normalized)
     if (!terms.length) {
       return finish({ rows: [], strategy: this.ftsReady ? 'fts-only' : 'like-fallback' })
@@ -2037,7 +2264,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       terms.every((term) => unicodeCodePointLength(term) >= 3)
     if (!safeTrigramQuery) {
       return finish({
-        rows: this.searchLike(agentId, terms, cappedLimit, matchMode),
+        rows: this.searchLike(agentId, terms, cappedLimit, matchMode, scopeFilter),
         strategy: 'like-fallback'
       })
     }
@@ -2045,7 +2272,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     try {
       const match = this.buildFtsMatch(agentId, terms, matchMode)
       return finish({
-        rows: this.searchFts(agentId, match, cappedLimit),
+        rows: this.searchFts(agentId, match, cappedLimit, scopeFilter),
         strategy: 'fts-only'
       })
     } catch (error) {
@@ -2054,7 +2281,7 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         this.markFtsDirty()
       }
       return finish({
-        rows: this.searchLike(agentId, terms, cappedLimit, matchMode),
+        rows: this.searchLike(agentId, terms, cappedLimit, matchMode, scopeFilter),
         strategy: 'like-fallback'
       })
     }
@@ -2070,41 +2297,56 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     return `content : (${contentMatch}) AND agent_id : "${agentFtsScope(agentId)}"`
   }
 
-  private searchFts(agentId: string, match: string, limit: number): AgentMemoryRow[] {
+  private searchFts(
+    agentId: string,
+    match: string,
+    limit: number,
+    scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
+  ): AgentMemoryRow[] {
     const lexicalScanLimit = Math.min(100, Math.max(1, limit))
     const importanceCandidateLimit = Math.min(800, Math.max(64, limit * 8))
+    const scopePredicate = buildMemoryScopePredicateSql('am', scopeFilter)
     return this.db
       .prepare(
         `WITH lexical_hits AS MATERIALIZED (
-           SELECT rowid AS memory_rowid,
-                  bm25(agent_memory_fts, 1.0, 0.0) AS lexical_score
-           FROM agent_memory_fts
-           WHERE agent_memory_fts MATCH ?
-           LIMIT ?
-         ), lexical AS MATERIALIZED (
            SELECT am.rowid AS memory_rowid,
                   am.id,
                   am.importance,
                   am.created_at,
-                  lexical_hits.lexical_score
-           FROM lexical_hits
+                  bm25(agent_memory_fts, 1.0, 0.0) AS lexical_score
+           FROM agent_memory_fts
            CROSS JOIN agent_memory am NOT INDEXED
-           WHERE am.rowid = lexical_hits.memory_rowid
+           WHERE agent_memory_fts MATCH ?
+             AND am.rowid = agent_memory_fts.rowid
              AND am.agent_id = ?
              AND ${buildRecallablePredicate('am')}
-           ORDER BY lexical_hits.lexical_score ASC,
+             AND ${scopePredicate.sql}
+           ORDER BY lexical_score ASC,
                     am.importance DESC,
                     am.created_at DESC,
                     am.id ASC
+           LIMIT ?
+         ), lexical AS MATERIALIZED (
+           SELECT memory_rowid,
+                  id,
+                  importance,
+                  created_at,
+                  lexical_score
+           FROM lexical_hits
+           ORDER BY lexical_score ASC,
+                    importance DESC,
+                    created_at DESC,
+                    id ASC
            LIMIT ?
          ), importance_candidates AS MATERIALIZED (
            SELECT am.rowid AS memory_rowid,
                   am.id,
                   am.importance,
                   am.created_at
-           FROM agent_memory am INDEXED BY idx_agent_memory_recall_importance_v5
+           FROM agent_memory am INDEXED BY idx_agent_memory_recall_scope_v6
            WHERE am.agent_id = ?
              AND ${buildRecallablePredicate('am')}
+             AND ${scopePredicate.sql}
            ORDER BY am.importance DESC, am.created_at DESC, am.id ASC
            LIMIT ?
          ), importance AS MATERIALIZED (
@@ -2142,10 +2384,12 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       )
       .all(
         match,
-        lexicalScanLimit,
         agentId,
+        ...scopePredicate.params,
+        lexicalScanLimit,
         limit,
         agentId,
+        ...scopePredicate.params,
         importanceCandidateLimit,
         match,
         limit
@@ -2156,22 +2400,25 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     agentId: string,
     terms: string[],
     limit: number,
-    matchMode: SearchMatchMode
+    matchMode: SearchMatchMode,
+    scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
   ): AgentMemoryRow[] {
     if (!terms.length) return []
-    const clauses = terms.map(() => "content LIKE ? ESCAPE '\\'")
+    const clauses = terms.map(() => "am.content LIKE ? ESCAPE '\\'")
     const params = terms.map((term) => `%${escapeLikePattern(term)}%`)
     const operator = matchMode === 'any' ? ' OR ' : ' AND '
+    const scopePredicate = buildMemoryScopePredicateSql('am', scopeFilter)
     return this.db
       .prepare(
-        `SELECT * FROM agent_memory
-         WHERE agent_id = ?
-           AND ${buildRecallablePredicate()}
+        `SELECT am.* FROM agent_memory am
+         WHERE am.agent_id = ?
+           AND ${buildRecallablePredicate('am')}
+           AND ${scopePredicate.sql}
            AND (${clauses.join(operator)})
-         ORDER BY importance DESC, created_at DESC
+         ORDER BY am.importance DESC, am.created_at DESC
          LIMIT ?`
       )
-      .all(agentId, ...params, limit) as AgentMemoryRow[]
+      .all(agentId, ...scopePredicate.params, ...params, limit) as AgentMemoryRow[]
   }
 
   listPendingEmbedding(limit: number = 50, agentId?: string): AgentMemoryRow[] {
@@ -2267,6 +2514,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                    AND challenger.lifecycle_state = 'conflicted'
                    AND challenger.superseded_by IS NULL
                    AND challenger.conflict_with = memory.id
+                   AND challenger.scope_type = memory.scope_type
+                   AND challenger.scope_id IS memory.scope_id
                )`
           )
           .run(input.agentId, input.id, input.expectedRevision),
@@ -2438,6 +2687,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                  SELECT 1 FROM agent_memory target
                  WHERE target.agent_id = challenger.agent_id
                    AND target.id = challenger.conflict_with
+                   AND target.scope_type = challenger.scope_type
+                   AND target.scope_id IS challenger.scope_id
                    AND target.lifecycle_state = 'active'
                    AND target.conflict_state = 'challenged'
                    AND target.superseded_by IS NULL
@@ -2490,12 +2741,29 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
              SELECT 1 FROM agent_memory target
              WHERE target.agent_id = challenger.agent_id
                AND target.id = challenger.conflict_with
+               AND target.scope_type = challenger.scope_type
+               AND target.scope_id IS challenger.scope_id
                AND target.lifecycle_state = 'active'
                AND target.conflict_state = 'challenged'
                AND target.superseded_by IS NULL
+           )
+           AND EXISTS (
+             SELECT 1 FROM agent_memory winner
+             WHERE winner.agent_id = challenger.agent_id
+               AND winner.id = ?
+               AND winner.id != challenger.id
+               AND winner.scope_type = challenger.scope_type
+               AND winner.scope_id IS challenger.scope_id
            )`
       )
-      .run(input.winnerId, input.agentId, input.id, input.expectedRevision, input.targetId)
+      .run(
+        input.winnerId,
+        input.agentId,
+        input.id,
+        input.expectedRevision,
+        input.targetId,
+        input.winnerId
+      )
     return result.changes === 1
   }
 
@@ -2540,6 +2808,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                  SELECT 1 FROM agent_memory challenger
                  WHERE challenger.agent_id = target.agent_id
                    AND challenger.id = ?
+                   AND challenger.scope_type = target.scope_type
+                   AND challenger.scope_id IS target.scope_id
                    AND challenger.lifecycle_state = 'active'
                    AND challenger.superseded_by IS NULL
                    AND challenger.conflict_state IS NULL
@@ -2773,15 +3043,23 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
       mutate: () =>
         this.db
           .prepare(
-            `UPDATE agent_memory
+            `UPDATE agent_memory AS memory
          SET superseded_by = ?, decision_revision = decision_revision + 1
-         WHERE id = ? AND agent_id = ? AND decision_revision = ?
-           AND superseded_by IS NULL
-           AND conflict_state IS NULL AND conflict_with IS NULL
-           AND kind NOT IN ('persona', 'working')
-           AND lifecycle_state = 'active'`
+         WHERE memory.id = ? AND memory.agent_id = ? AND memory.decision_revision = ?
+           AND memory.superseded_by IS NULL
+           AND memory.conflict_state IS NULL AND memory.conflict_with IS NULL
+           AND memory.kind NOT IN ('persona', 'working')
+           AND memory.lifecycle_state = 'active'
+           AND EXISTS (
+             SELECT 1 FROM agent_memory successor
+             WHERE successor.id = ?
+               AND successor.id != memory.id
+               AND successor.agent_id = memory.agent_id
+               AND successor.scope_type = memory.scope_type
+               AND successor.scope_id IS memory.scope_id
+           )`
           )
-          .run(supersededBy, id, agentId, expectedRevision),
+          .run(supersededBy, id, agentId, expectedRevision, supersededBy),
       didMutate: (mutationResult) => mutationResult.changes === 1,
       maintainFts: () => this.replaceFtsMirrorRow(before, id)
     })
@@ -3221,6 +3499,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                    AND challenger.lifecycle_state = 'conflicted'
                    AND challenger.superseded_by IS NULL
                    AND challenger.conflict_with = memory.id
+                   AND challenger.scope_type = memory.scope_type
+                   AND challenger.scope_id IS memory.scope_id
                )`
           )
           .run(input.agentId, input.id, input.expectedRevision),
@@ -3508,6 +3788,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
            AND challenger.lifecycle_state = 'conflicted'
            AND challenger.superseded_by IS NULL
            AND target.agent_id = challenger.agent_id
+           AND target.scope_type = challenger.scope_type
+           AND target.scope_id IS challenger.scope_id
            AND target.conflict_state = 'challenged'
            AND target.superseded_by IS NULL`
       )
@@ -3531,6 +3813,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                  AND challenger.lifecycle_state = 'conflicted'
                  AND challenger.superseded_by IS NULL
                  AND challenger.conflict_with = candidate.id
+                 AND challenger.scope_type = candidate.scope_type
+                 AND challenger.scope_id IS candidate.scope_id
              )
            )
          LIMIT 1`
@@ -3568,6 +3852,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
              FROM agent_memory target
              WHERE target.id = challenger.conflict_with
                AND target.agent_id = challenger.agent_id
+               AND target.scope_type = challenger.scope_type
+               AND target.scope_id IS challenger.scope_id
                AND target.conflict_state = 'challenged'
                AND target.superseded_by IS NULL
            )
@@ -3586,16 +3872,20 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   ): AgentMemoryRow[] {
     return this.db
       .prepare(
-        `SELECT *
-         FROM agent_memory
-         WHERE agent_id = ?
-           AND conflict_with = ?
-           AND lifecycle_state = 'conflicted'
-           AND superseded_by IS NULL
-           AND id != ?
-         ORDER BY created_at ASC, id ASC`
+        `SELECT sibling.*
+         FROM agent_memory sibling
+         JOIN agent_memory target ON target.id = ?
+         WHERE sibling.agent_id = ?
+           AND target.agent_id = sibling.agent_id
+           AND sibling.scope_type = target.scope_type
+           AND sibling.scope_id IS target.scope_id
+           AND sibling.conflict_with = target.id
+           AND sibling.lifecycle_state = 'conflicted'
+           AND sibling.superseded_by IS NULL
+           AND sibling.id != ?
+         ORDER BY sibling.created_at ASC, sibling.id ASC`
       )
-      .all(agentId, targetId, excludeChallengerId) as AgentMemoryRow[]
+      .all(targetId, agentId, excludeChallengerId) as AgentMemoryRow[]
   }
 
   retireConflictSiblings(
@@ -3617,9 +3907,28 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
            AND conflict_with = ?
            AND lifecycle_state = 'conflicted'
            AND superseded_by IS NULL
-           AND id != ?`
+           AND id != ?
+           AND EXISTS (
+             SELECT 1
+             FROM agent_memory target
+             WHERE target.id = ?
+               AND target.agent_id = agent_memory.agent_id
+               AND target.scope_type = agent_memory.scope_type
+               AND target.scope_id IS agent_memory.scope_id
+           )
+           AND EXISTS (
+             SELECT 1
+             FROM agent_memory winner
+             WHERE winner.id = ?
+               AND winner.id != agent_memory.id
+               AND winner.agent_id = agent_memory.agent_id
+               AND winner.scope_type = agent_memory.scope_type
+               AND winner.scope_id IS agent_memory.scope_id
+               AND winner.lifecycle_state = 'active'
+               AND winner.superseded_by IS NULL
+           )`
       )
-      .run(winnerId, agentId, targetId, excludeChallengerId).changes
+      .run(winnerId, agentId, targetId, excludeChallengerId, targetId, winnerId).changes
   }
 
   clearTargetConflictIfNoChallengers(agentId: string, targetId: string): boolean {
@@ -3637,6 +3946,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                AND challenger.conflict_with = target.id
                AND challenger.lifecycle_state = 'conflicted'
                AND challenger.superseded_by IS NULL
+               AND challenger.scope_type = target.scope_type
+               AND challenger.scope_id IS target.scope_id
            )`
       )
       .run(agentId, targetId)
@@ -3692,6 +4003,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                      SELECT 1 FROM agent_memory target
                      WHERE target.id = challenger.conflict_with
                        AND target.agent_id = challenger.agent_id
+                       AND target.scope_type = challenger.scope_type
+                       AND target.scope_id IS challenger.scope_id
                        AND target.lifecycle_state = 'active'
                        AND target.superseded_by IS NULL
                    )
@@ -3709,6 +4022,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                      AND challenger.conflict_with = target.id
                      AND challenger.lifecycle_state = 'conflicted'
                      AND challenger.superseded_by IS NULL
+                     AND challenger.scope_type = target.scope_type
+                     AND challenger.scope_id IS target.scope_id
                  )
                LIMIT ?
              )
@@ -3723,6 +4038,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                      AND challenger.conflict_with = target.id
                      AND challenger.lifecycle_state = 'conflicted'
                      AND challenger.superseded_by IS NULL
+                     AND challenger.scope_type = target.scope_type
+                     AND challenger.scope_id IS target.scope_id
                  )
                LIMIT ?
              )
@@ -3770,6 +4087,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                  FROM agent_memory target
                  WHERE target.id = challenger.conflict_with
                    AND target.agent_id = challenger.agent_id
+                   AND target.scope_type = challenger.scope_type
+                   AND target.scope_id IS challenger.scope_id
                    AND target.lifecycle_state = 'active'
                    AND target.superseded_by IS NULL
                )
@@ -3790,6 +4109,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                  AND challenger.conflict_with = target.id
                  AND challenger.lifecycle_state = 'conflicted'
                  AND challenger.superseded_by IS NULL
+                 AND challenger.scope_type = target.scope_type
+                 AND challenger.scope_id IS target.scope_id
              )`
         )
         .run(agentId).changes
@@ -3807,6 +4128,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
                  AND challenger.conflict_with = target.id
                  AND challenger.lifecycle_state = 'conflicted'
                  AND challenger.superseded_by IS NULL
+                 AND challenger.scope_type = target.scope_type
+                 AND challenger.scope_id IS target.scope_id
              )`
         )
         .run(agentId).changes
@@ -3884,6 +4207,8 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         `SELECT *
          FROM agent_memory
          WHERE agent_id = ?
+           AND scope_type = 'agent'
+           AND scope_id IS NULL
            AND superseded_by IS NULL
            AND lifecycle_state = 'active'
            AND kind IN ('semantic', 'reflection', 'episodic')

@@ -48,6 +48,8 @@ function makeRow(overrides: Partial<AgentMemoryRow> = {}): AgentMemoryRow {
     id: 'm1',
     agent_id: 'agent',
     user_scope: null,
+    scope_type: 'agent',
+    scope_id: null,
     kind: 'semantic',
     category: null,
     content: 'redis listens on 6379',
@@ -560,6 +562,13 @@ describe('memory.search route contract', () => {
       memorySearchRoute.input.parse({ agentId: 'deepchat', query: 'redis', limit: 5 }).limit
     ).toBe(5)
     expect(
+      memorySearchRoute.input.parse({
+        agentId: 'deepchat',
+        query: 'redis',
+        scopeContext: { userId: ' user-1 ', projectId: 'project-1', sessionId: 'session-1' }
+      }).scopeContext
+    ).toEqual({ userId: 'user-1', projectId: 'project-1', sessionId: 'session-1' })
+    expect(
       memorySearchRoute.input.parse({ agentId: 'deepchat', query: 'redis', limit: 100 }).limit
     ).toBe(100)
     expect(
@@ -568,6 +577,13 @@ describe('memory.search route contract', () => {
     expect(memorySearchRoute.input.safeParse({ agentId: 'has space', query: 'x' }).success).toBe(
       false
     )
+    expect(
+      memorySearchRoute.input.safeParse({
+        agentId: 'deepchat',
+        query: 'x',
+        scopeContext: { sessionId: ' ' }
+      }).success
+    ).toBe(false)
   })
 
   it('carries the retrieval score and source flags on a projected memory row', () => {
@@ -582,6 +598,16 @@ describe('memory.search route contract', () => {
     expect(parsed.results[0].score).toBe(0.83)
     expect(parsed.results[0].sources).toEqual({ fts: true })
     expect(parsed.results[0].similarity).toBe(0.42)
+    expect(
+      memorySearchRoute.output.safeParse({
+        results: [{ ...result, scopeType: 'session', scopeId: null }]
+      }).success
+    ).toBe(false)
+    expect(
+      memorySearchRoute.output.safeParse({
+        results: [{ ...result, scopeType: 'session', scopeId: ' session-1 ' }]
+      }).success
+    ).toBe(false)
   })
 })
 
@@ -597,16 +623,32 @@ describe('memory.add route contract', () => {
       kind: 'episodic',
       category: 'project_fact',
       importance: 0.8,
-      sessionId: 'session-1'
+      sessionId: 'session-1',
+      scope: { type: 'project', id: ' project-1 ' }
     })
     expect(full.kind).toBe('episodic')
     expect(full.category).toBe('project_fact')
     expect(full.importance).toBe(0.8)
     expect(full.sessionId).toBe('session-1')
+    expect(full.scope).toEqual({ type: 'project', id: 'project-1' })
     expect(memoryAddRoute.input.safeParse({ agentId: 'has space', content: 'x' }).success).toBe(
       false
     )
     expect(memoryAddRoute.input.safeParse({ agentId: 'deepchat', content: '' }).success).toBe(false)
+    expect(
+      memoryAddRoute.input.safeParse({
+        agentId: 'deepchat',
+        content: 'x',
+        scope: { type: 'agent', id: 'unexpected' }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryAddRoute.input.safeParse({
+        agentId: 'deepchat',
+        content: 'x',
+        scope: { type: 'session', id: ' ' }
+      }).success
+    ).toBe(false)
     expect(
       memoryAddRoute.input.safeParse({ agentId: 'deepchat', content: 'x', importance: 2 }).success
     ).toBe(false)

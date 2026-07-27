@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3-multiple-ciphers'
+import { AGENT_MEMORY_SCOPE_ID_MAX_CHARS } from '@shared/types/agent-memory'
 import { ConversationsTable } from '@/session/data/tables/conversations'
 import { MessagesTable } from '@/session/data/tables/messages'
 import { MessageAttachmentsTable } from '@/session/data/tables/messageAttachments'
@@ -269,8 +270,12 @@ const CATALOG_DEFINITIONS: CatalogDefinition[] = [
       lifecycle_state:
         "ALTER TABLE agent_memory ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_state IN ('active', 'archived', 'conflicted'));",
       embedding_state:
-        "ALTER TABLE agent_memory ADD COLUMN embedding_state TEXT NOT NULL DEFAULT 'pending' CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'));"
+        "ALTER TABLE agent_memory ADD COLUMN embedding_state TEXT NOT NULL DEFAULT 'pending' CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'));",
+      scope_type:
+        "ALTER TABLE agent_memory ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'agent' CHECK (scope_type IN ('agent', 'user', 'project', 'session'));",
+      scope_id: `ALTER TABLE agent_memory ADD COLUMN scope_id TEXT CHECK (scope_id IS NULL OR (length(scope_id) BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} AND scope_id = trim(scope_id)));`
     },
+    typeCheckedColumns: ['scope_type'],
     afterRepair: (db, addedColumns) => {
       new AgentMemoryTable(db).repairCanonicalStateAfterSchemaRepair(addedColumns)
     }

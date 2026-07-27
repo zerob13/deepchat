@@ -25,6 +25,8 @@ import type {
   MemoryConflictResolution,
   MemoryServiceDeps,
   MemoryRecallItem,
+  MemoryScope,
+  MemoryScopeContext,
   MemorySearchHit,
   MemoryStatus,
   MemoryWriteOutcome,
@@ -301,15 +303,23 @@ export class MemoryService implements MemoryRuntimePort {
       policy,
       textGeneration: providerGateway,
       rows: this.rows,
-      retrieveForDecision: (agentId, query, now) =>
-        this.retrieval.retrieveForDecision(agentId, query, now),
-      retrieveForDecisions: (agentId, candidates, now, queryVectors, pinnedIdsByCandidate) =>
+      retrieveForDecision: (agentId, query, now, scopeFilter) =>
+        this.retrieval.retrieveForDecision(agentId, query, now, scopeFilter),
+      retrieveForDecisions: (
+        agentId,
+        candidates,
+        now,
+        queryVectors,
+        pinnedIdsByCandidate,
+        scopeFilter
+      ) =>
         this.retrieval.retrieveForDecisions(
           agentId,
           candidates,
           now,
           queryVectors,
-          pinnedIdsByCandidate
+          pinnedIdsByCandidate,
+          scopeFilter
         ),
       markWorkingMemoryDirty: (agentId) => this.workingMemory.markWorkingMemoryDirty(agentId),
       triggerEmbedding: (agentId) => this.embedding.processPendingEmbeddings(agentId),
@@ -480,17 +490,22 @@ export class MemoryService implements MemoryRuntimePort {
     return this.writeCoordinator.rememberMemory(candidate, options, model)
   }
 
-  async recall(agentId: string, query: string, now?: number): Promise<MemoryRecallItem[]> {
+  async recall(
+    agentId: string,
+    query: string,
+    now?: number,
+    scopeContext?: MemoryScopeContext
+  ): Promise<MemoryRecallItem[]> {
     if (isSafeAgentId(agentId) && this.runtime.isManagedAgent(agentId)) {
       this.syncAgentExecutionConfig(agentId)
     }
-    return this.retrieval.recall(agentId, query, now)
+    return this.retrieval.recall(agentId, query, now, scopeContext)
   }
 
   async searchMemories(
     agentId: string,
     query: string,
-    options: { limit?: number } = {}
+    options: { limit?: number; scopeContext?: MemoryScopeContext } = {}
   ): Promise<MemorySearchHit[]> {
     if (isSafeAgentId(agentId) && this.runtime.isManagedAgent(agentId)) {
       this.syncAgentExecutionConfig(agentId)
@@ -505,6 +520,7 @@ export class MemoryService implements MemoryRuntimePort {
       kind?: 'episodic' | 'semantic'
       category?: string | null
       importance?: number
+      scope?: MemoryScope
     },
     sessionId?: string | null
   ): Promise<MemoryWriteOutcome> {

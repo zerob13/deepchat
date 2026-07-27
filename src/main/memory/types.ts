@@ -63,6 +63,8 @@ export type {
   MemoryTombstoneReason,
   MemoryReflectionResult,
   MemorySearchHit,
+  MemoryScope,
+  MemoryScopeContext,
   MemoryStatus,
   MemoryTransitionTarget,
   ResolveChallengerTransition,

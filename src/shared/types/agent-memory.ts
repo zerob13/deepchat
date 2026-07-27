@@ -24,6 +24,8 @@ export const AGENT_MEMORY_TEMPORAL_PRECISIONS = [
   'unknown'
 ] as const
 
+export const AGENT_MEMORY_SCOPE_TYPES = ['agent', 'user', 'project', 'session'] as const
+
 export const AGENT_MEMORY_DIRECTIVE_KINDS = ['instruction', 'suppress_topic'] as const
 export const AGENT_MEMORY_DIRECTIVE_STATUSES = ['draft', 'active', 'rejected'] as const
 export const AGENT_MEMORY_DIRECTIVE_SOURCES = [
@@ -89,6 +91,7 @@ export const AGENT_MEMORY_AUTO_CONTENT_MAX_CHARS = 2_000
 export const AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS = 2_000
 export const AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS = 512
 export const AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT = 64
+export const AGENT_MEMORY_SCOPE_ID_MAX_CHARS = 256
 
 export const AGENT_MEMORY_AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/
 
@@ -99,6 +102,7 @@ export function isSafeAgentId(agentId: unknown): agentId is string {
 export type AgentMemoryCategory = (typeof AGENT_MEMORY_CATEGORIES)[number]
 export type AgentMemoryTemporalKind = (typeof AGENT_MEMORY_TEMPORAL_KINDS)[number]
 export type AgentMemoryTemporalPrecision = (typeof AGENT_MEMORY_TEMPORAL_PRECISIONS)[number]
+export type AgentMemoryScopeType = (typeof AGENT_MEMORY_SCOPE_TYPES)[number]
 export type AgentMemoryDirectiveKind = (typeof AGENT_MEMORY_DIRECTIVE_KINDS)[number]
 export type AgentMemoryDirectiveStatus = (typeof AGENT_MEMORY_DIRECTIVE_STATUSES)[number]
 export type AgentMemoryDirectiveSource = (typeof AGENT_MEMORY_DIRECTIVE_SOURCES)[number]

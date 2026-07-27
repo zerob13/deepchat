@@ -52,6 +52,7 @@ import type {
   InternalContentTransition,
   InternalMemoryInsertInput,
   MemoryRecallItem,
+  MemoryScope,
   MemoryVectorMatch,
   MemoryVectorQueryOptions,
   MemoryVectorRecord,
@@ -72,6 +73,11 @@ export interface MemoryReadRepositoryPort {
   ): AgentMemoryRow[]
   listManagementVisibleByIds(agentId: string, ids: string[]): AgentMemoryRow[]
   listByIds(agentId: string, ids: string[]): AgentMemoryRow[]
+  listApplicableByIds(
+    agentId: string,
+    ids: string[],
+    scopeFilter?: readonly MemoryScope[]
+  ): AgentMemoryRow[]
   getActivePersona(agentId: string): AgentMemoryRow | undefined
   getDraftPersona(agentId: string): AgentMemoryRow | undefined
   listPersonaVersions(agentId: string): AgentMemoryRow[]
@@ -79,13 +85,13 @@ export interface MemoryReadRepositoryPort {
     agentId: string,
     query: string,
     limit?: number,
-    options?: { matchMode?: 'all' | 'any' }
+    options?: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] }
   ): AgentMemoryRow[]
   searchWithStrategy(
     agentId: string,
     query: string,
     limit?: number,
-    options?: { matchMode?: 'all' | 'any' }
+    options?: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] }
   ): { rows: AgentMemoryRow[]; strategy: 'fts-only' | 'like-fallback' }
   listWorkingCandidates(
     agentId: string,
@@ -441,7 +447,12 @@ export interface MemoryChangeSinkPort {
 }
 
 export interface MemoryProvenanceResolverPort {
-  resolveProvenance(agentId: string, kind: string, content: string): AgentMemoryRow | undefined
+  resolveProvenance(
+    agentId: string,
+    kind: string,
+    content: string,
+    scope: MemoryScope
+  ): AgentMemoryRow | undefined
 }
 
 export interface MemoryPendingEmbeddableRowPort {

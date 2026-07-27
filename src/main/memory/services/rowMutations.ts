@@ -3,13 +3,14 @@ import { nanoid } from 'nanoid'
 
 import {
   buildLegacyMemoryProvenanceKey,
-  buildMemoryProvenanceKey,
+  buildScopedMemoryProvenanceKey,
   normalizeForProvenanceV2
 } from '../core/scoring'
 import {
   CONFIDENCE_INCREMENT,
   DEFAULT_CONFIDENCE,
   type AgentMemoryRow,
+  type MemoryScope,
   type MemoryTemporalMetadata,
   type NormalizedMemoryCandidate,
   type WriteMemoriesOptions
@@ -27,6 +28,12 @@ import {
   reconcileEquivalentClaimTemporalMetadata,
   temporalMetadataFromRow
 } from '../core/temporal'
+import {
+  memoryScopeFromRow,
+  memoryScopesEqual,
+  normalizeMemoryScope,
+  rowsShareMemoryScope
+} from '../core/scope'
 import type {
   MemoryAuditReadPort,
   MemoryEmbeddingRepositoryPort,
@@ -67,19 +74,29 @@ export class MemoryRowMutations {
     }
   }
 
-  resolveProvenance(agentId: string, kind: string, content: string): AgentMemoryRow | undefined {
+  resolveProvenance(
+    agentId: string,
+    kind: string,
+    content: string,
+    scope: MemoryScope
+  ): AgentMemoryRow | undefined {
+    const normalizedScope = normalizeMemoryScope(scope)
     const normalizedContent = normalizeForProvenanceV2(content)
-    const v2Key = buildMemoryProvenanceKey(agentId, kind, content)
+    const v2Key = buildScopedMemoryProvenanceKey(agentId, kind, content, normalizedScope)
     const resolveEquivalentV2Owner = (): AgentMemoryRow | undefined => {
       const owner = this.ports.repository.getByProvenanceKey(agentId, v2Key)
-      return this.isEquivalentProvenanceOwner(owner, kind, normalizedContent) ? owner : undefined
+      return this.isEquivalentProvenanceOwner(owner, kind, normalizedContent, normalizedScope)
+        ? owner
+        : undefined
     }
     const v2Owner = resolveEquivalentV2Owner()
     if (v2Owner) return v2Owner
+    if (normalizedScope.type !== 'agent') return undefined
 
     const legacyKey = buildLegacyMemoryProvenanceKey(agentId, kind, content)
     const legacyOwner = this.ports.repository.getByProvenanceKey(agentId, legacyKey)
-    if (!this.isEquivalentProvenanceOwner(legacyOwner, kind, normalizedContent)) return undefined
+    if (!this.isEquivalentProvenanceOwner(legacyOwner, kind, normalizedContent, normalizedScope))
+      return undefined
 
     try {
       let rekeyed = false
@@ -98,11 +115,13 @@ export class MemoryRowMutations {
   private isEquivalentProvenanceOwner(
     owner: AgentMemoryRow | undefined,
     kind: string,
-    normalizedContent: string
+    normalizedContent: string,
+    scope: MemoryScope
   ): owner is AgentMemoryRow {
     return (
       owner !== undefined &&
       owner.kind === kind &&
+      memoryScopesEqual(memoryScopeFromRow(owner), scope) &&
       normalizeForProvenanceV2(owner.content) === normalizedContent
     )
   }
@@ -133,7 +152,7 @@ export class MemoryRowMutations {
         lifecycleState: 'active',
         embeddingState: 'pending',
         sourceSession,
-        userScope: options.userScope ?? null,
+        scope: normalizeMemoryScope(options.scope),
         provenanceKey,
         sourceEntryIds,
         createdAt,
@@ -170,7 +189,7 @@ export class MemoryRowMutations {
         lifecycleState: 'conflicted',
         embeddingState: 'pending',
         sourceSession,
-        userScope: options.userScope ?? null,
+        scope: normalizeMemoryScope(options.scope),
         provenanceKey,
         sourceEntryIds,
         conflictWith: targetId,
@@ -215,11 +234,13 @@ export class MemoryRowMutations {
     options: WriteMemoriesOptions,
     providedFields: ManualEditFieldFlags
   ): ContentUpdateResult {
-    const newKey = buildMemoryProvenanceKey(agentId, row.kind, content)
+    const scope = memoryScopeFromRow(row)
+    const scopedOptions = { ...options, scope }
+    const newKey = buildScopedMemoryProvenanceKey(agentId, row.kind, content, scope)
     const nextCategory = canCarryCategory(row.kind) ? candidate.category : undefined
 
     if (newKey !== row.provenance_key) {
-      const owner = this.resolveProvenance(agentId, row.kind, content)
+      const owner = this.resolveProvenance(agentId, row.kind, content, scope)
       if (owner && owner.id !== row.id) {
         return this.resolveManualEditFold(agentId, row, owner, candidate, providedFields, now)
       }
@@ -248,7 +269,7 @@ export class MemoryRowMutations {
       | Extract<MemoryClaimInsertResult, { action: 'suppressed' }>['reason']
       | null = null
     const insertedAndSuperseded = this.runAtomicTransition(() => {
-      const insert = this.insertMemory(agentId, candidate, content, newKey, options, now)
+      const insert = this.insertMemory(agentId, candidate, content, newKey, scopedOptions, now)
       if (insert.action === 'suppressed') {
         insertSuppression = insert.reason
         return false
@@ -266,7 +287,7 @@ export class MemoryRowMutations {
       if (insertSuppression === 'forgotten') {
         return { action: 'suppressed', id: row.id, reason: 'forgotten' }
       }
-      const owner = this.resolveProvenance(agentId, row.kind, content)
+      const owner = this.resolveProvenance(agentId, row.kind, content, scope)
       if (owner && owner.id !== row.id) {
         return this.resolveManualEditFold(agentId, row, owner, candidate, providedFields, now)
       }
@@ -393,7 +414,13 @@ export class MemoryRowMutations {
     const seen = new Set<string>([row.id])
     while (current.superseded_by) {
       const next = this.ports.repository.getById(current.superseded_by)
-      if (!next || next.agent_id !== agentId || seen.has(next.id)) break
+      if (
+        !next ||
+        next.agent_id !== agentId ||
+        !rowsShareMemoryScope(row, next) ||
+        seen.has(next.id)
+      )
+        break
       seen.add(next.id)
       current = next
     }

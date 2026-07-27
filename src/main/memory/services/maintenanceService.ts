@@ -7,10 +7,11 @@ import {
 } from '@shared/types/agent-memory'
 import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
 import {
-  buildMemoryProvenanceKey,
+  buildScopedMemoryProvenanceKey,
   distanceToSimilarity,
   normalizeForProvenanceV2
 } from '../core/scoring'
+import { memoryScopeFromRow, rowsShareMemoryScope } from '../core/scope'
 import {
   evaluateMemoryTemporalPolicy,
   resolveMergedClaimTemporalMetadata,
@@ -36,6 +37,7 @@ import {
   MAINTENANCE_HEAVY_MAX_CONCURRENCY,
   MAINTENANCE_MAX_INPUT_TOKENS,
   MAINTENANCE_START_DELAY_MS,
+  SCOPE_VECTOR_OVERSAMPLE_MULTIPLIER,
   STARTUP_ARM_STAGGER_MS,
   STARTUP_PREWARM_AGENT_LIMIT,
   STARTUP_PREWARM_DELAY_MS,
@@ -558,7 +560,7 @@ export class MaintenanceService {
             currentEmbedding,
             dimensions,
             source.id,
-            DECISION_NEIGHBOR_TOP_S
+            DECISION_NEIGHBOR_TOP_S * SCOPE_VECTOR_OVERSAMPLE_MULTIPLIER
           )
         } catch {
           deferSeed(seed)
@@ -571,7 +573,13 @@ export class MaintenanceService {
           if (distanceToSimilarity(match.distance) < CONSOLIDATION_MERGE_SIMILARITY) continue
           const neighborRow = this.ports.repository.getById(match.memoryId)
           if (
-            !this.isCurrentEmbeddedConsolidationRow(agentId, neighborRow, dimensions, fingerprint)
+            !this.isCurrentEmbeddedConsolidationRow(
+              agentId,
+              neighborRow,
+              dimensions,
+              fingerprint
+            ) ||
+            !rowsShareMemoryScope(source, neighborRow)
           )
             continue
           neighbor = neighborRow
@@ -696,7 +704,9 @@ export class MaintenanceService {
     mergedContent: string,
     now: number
   ): boolean {
-    const owner = this.ports.rows.resolveProvenance(agentId, primary.kind, mergedContent)
+    if (!rowsShareMemoryScope(primary, secondary)) return false
+    const scope = memoryScopeFromRow(primary)
+    const owner = this.ports.rows.resolveProvenance(agentId, primary.kind, mergedContent, scope)
     if (owner && owner.id !== primary.id && owner.id !== secondary.id) {
       this.ports.repository.setLastConsolidatedAt(primary.id, now)
       this.ports.repository.setLastConsolidatedAt(secondary.id, now)
@@ -710,7 +720,12 @@ export class MaintenanceService {
       survivor.kind === 'episodic' || survivor.kind === 'semantic'
         ? (survivor.category ?? otherCategory)
         : undefined
-    const provenanceKey = buildMemoryProvenanceKey(agentId, survivor.kind, mergedContent)
+    const provenanceKey = buildScopedMemoryProvenanceKey(
+      agentId,
+      survivor.kind,
+      mergedContent,
+      scope
+    )
     const normalizedMergedContent = normalizeForProvenanceV2(mergedContent)
     const nextTemporal = resolveMergedClaimTemporalMetadata(
       temporalMetadataFromRow(survivor),

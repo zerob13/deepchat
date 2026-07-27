@@ -216,12 +216,13 @@ describe('RetrievalService diagnostics', () => {
       providerControl: { abortAgent: vi.fn(), abortAll: vi.fn() }
     })
     const recordRecall = vi.fn()
+    const getEmbeddings = vi.fn(async () => [[1, 2, 3, 4]])
     const service = new RetrievalService({
       ctx,
       repository,
       policy,
       embeddingGateway: {
-        getEmbeddings: async () => [[1, 2, 3, 4]],
+        getEmbeddings,
         getDimensions: async () => ({ data: { dimensions: 4, normalized: false } })
       },
       vectorStore: {
@@ -249,21 +250,37 @@ describe('RetrievalService diagnostics', () => {
       diagnostics: { recordRecall }
     })
 
+    const candidates = [
+      {
+        kind: 'semantic' as const,
+        category: null,
+        content: 'redis',
+        importance: 0.5,
+        temporal: ATEMPORAL_MEMORY_METADATA
+      }
+    ]
     await expect(
-      service.retrieveForDecisions(
-        'agent',
-        [
-          {
-            kind: 'semantic',
-            category: null,
-            content: 'redis',
-            importance: 0.5,
-            temporal: ATEMPORAL_MEMORY_METADATA
-          }
-        ],
-        Date.now()
-      )
+      service.retrieveForDecisions('agent', candidates, Date.now())
     ).resolves.toHaveLength(1)
+    expect(getEmbeddings).toHaveBeenCalledOnce()
+    expect(recordRecall).toHaveBeenCalledWith(
+      'agent',
+      expect.objectContaining({ degradations: expect.arrayContaining(['storeTimeout']) })
+    )
+
+    getEmbeddings.mockClear()
+    recordRecall.mockClear()
+    await expect(
+      service.retrieveForDecisions('agent', candidates, Date.now(), [
+        {
+          vector: [1, 2, 3, 4],
+          providerId: 'p',
+          modelId: 'm',
+          dimensions: 4
+        }
+      ])
+    ).resolves.toHaveLength(1)
+    expect(getEmbeddings).not.toHaveBeenCalled()
     expect(recordRecall).toHaveBeenCalledWith(
       'agent',
       expect.objectContaining({ degradations: expect.arrayContaining(['storeTimeout']) })

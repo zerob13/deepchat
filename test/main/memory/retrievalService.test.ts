@@ -296,6 +296,106 @@ describe('MemoryService recall + injection', () => {
     expect(results[0].content).toContain('redis')
   })
 
+  it('recalls only global and explicitly applicable narrow scopes', async () => {
+    const { presenter, repo } = makePresenter({ memoryEnabled: true, memoryEmbedding: null })
+    const insert = (
+      id: string,
+      scope:
+        | { type: 'agent' }
+        | { type: 'user'; id: string }
+        | { type: 'project'; id: string }
+        | { type: 'session'; id: string }
+    ) =>
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis scoped fact ${id}`,
+        scope
+      })
+    insert('global', { type: 'agent' })
+    insert('user-1', { type: 'user', id: 'user-1' })
+    insert('project-1', { type: 'project', id: 'project-1' })
+    insert('session-1', { type: 'session', id: 'session-1' })
+    insert('session-2', { type: 'session', id: 'session-2' })
+
+    expect((await presenter.recall('a', 'redis')).map((item) => item.id)).toEqual(['global'])
+    expect(
+      (await presenter.recall('a', 'redis', undefined, { sessionId: 'session-1' }))
+        .map((item) => item.id)
+        .sort()
+    ).toEqual(['global', 'session-1'])
+    expect(
+      (
+        await presenter.searchMemories('a', 'redis', {
+          scopeContext: {
+            userId: 'user-1',
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          }
+        })
+      )
+        .map((hit) => hit.row.id)
+        .sort()
+    ).toEqual(['global', 'project-1', 'session-1', 'user-1'])
+  })
+
+  it('bounded vector oversampling prevents other scopes from starving applicable recall', async () => {
+    const { presenter, store } = makePresenter({
+      ...enabledConfig,
+      memoryRetrieval: { topK: 1 }
+    })
+    for (let index = 0; index < 4; index += 1) {
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: `unrelated other scope ${index}` }],
+        { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
+      )
+    }
+    const [applicableId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'applicable vector-only fact' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } }
+    )
+    await presenter.processPendingEmbeddings('a')
+    for (const memoryId of store.vectors.keys()) {
+      store.vectors.set(memoryId, textToVector('redis'))
+    }
+    const querySpy = vi.spyOn(store, 'query')
+
+    const recalled = await presenter.recall('a', 'redis', undefined, {
+      sessionId: 'session-1'
+    })
+
+    expect(recalled.map((item) => item.id)).toEqual([applicableId])
+    expect(querySpy).toHaveBeenCalledWith(expect.any(Array), { topK: 8 })
+  })
+
+  it('retains vectors that belong to an inapplicable scope during inline cleanup', async () => {
+    const { presenter, repo, store } = makePresenter(enabledConfig)
+    const [sessionOneId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'session one redis fact' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } }
+    )
+    const [sessionTwoId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'exclusive second session topic' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
+    )
+    await presenter.processPendingEmbeddings('a')
+    expect(store.vectors.has(sessionOneId)).toBe(true)
+    expect(store.vectors.has(sessionTwoId)).toBe(true)
+
+    await presenter.recall('a', 'exclusive second session topic', undefined, {
+      sessionId: 'session-1'
+    })
+    await vi.waitFor(() => {
+      expect(store.vectors.has(sessionTwoId)).toBe(true)
+    })
+    expect(repo.getById(sessionTwoId)).toMatchObject({
+      scope_type: 'session',
+      scope_id: 'session-2',
+      embedding_state: 'ready'
+    })
+  })
+
   it('buildInjection returns null when disabled', async () => {
     const { presenter } = makePresenter({ memoryEnabled: false })
     presenter.writeMemoriesSync([{ kind: 'semantic', content: 'x' }], { agentId: 'a' })

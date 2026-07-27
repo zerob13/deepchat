@@ -90,7 +90,9 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
     expect(JSON.parse(event.input_refs_json)).toEqual({
       kind: 'semantic',
       category: null,
-      importance: 0.8
+      importance: 0.8,
+      scopeType: 'agent',
+      scopeId: null
     })
     expect(JSON.parse(event.output_refs_json)).toEqual({ action: 'created', memoryId })
     // Direct-add path has no extraction model, so the audit records no model context.

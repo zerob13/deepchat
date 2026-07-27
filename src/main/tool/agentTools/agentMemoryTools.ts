@@ -190,7 +190,9 @@ export class AgentMemoryToolHandler {
 
     if (toolName === MEMORY_TOOL_NAMES.recall) {
       const args = memoryToolSchemas[toolName].parse(rawArgs)
-      const memories = await this.memory.recallMemory(agentId, args.query)
+      const memories = await this.memory.recallMemory(agentId, args.query, {
+        sessionId: conversationId
+      })
       return createMemoryResult(toolName, { memories }, `Recalled ${memories.length} memories.`)
     }
 

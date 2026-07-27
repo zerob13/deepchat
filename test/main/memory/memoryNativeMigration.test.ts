@@ -53,6 +53,7 @@ function dropV42CanonicalArtifacts(db: InstanceType<typeof DatabaseCtor>): void 
     DROP INDEX IF EXISTS idx_agent_memory_active_recall;
     DROP INDEX IF EXISTS idx_agent_memory_management_page_v3;
     DROP INDEX IF EXISTS idx_agent_memory_recall_importance_v5;
+    DROP INDEX IF EXISTS idx_agent_memory_recall_scope_v6;
     DROP INDEX IF EXISTS idx_agent_memory_archive_eligible_v3;
     DROP INDEX IF EXISTS idx_agent_memory_cognitive_top_v3;
     DROP INDEX IF EXISTS idx_agent_memory_conflict_fairness_v3;
@@ -100,6 +101,8 @@ describeIfNative('Memory native SQLite migration', () => {
       expect(columns.some((column) => column.name === 'embedding_state')).toBe(true)
       expect(columns.some((column) => column.name === 'temporal_kind')).toBe(true)
       expect(columns.some((column) => column.name === 'temporal_confidence')).toBe(true)
+      expect(columns.some((column) => column.name === 'scope_type')).toBe(true)
+      expect(columns.some((column) => column.name === 'scope_id')).toBe(true)
       expect(() =>
         db.exec(
           "INSERT INTO agent_memory (id, agent_id, kind, content, lifecycle_state, created_at) VALUES ('bad-life', 'a', 'semantic', 'bad', 'invalid', 1)"
@@ -120,6 +123,11 @@ describeIfNative('Memory native SQLite migration', () => {
           "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, created_at) VALUES ('bad-zone', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', ' UTC ', 1)"
         )
       ).toThrow(/CHECK constraint failed/)
+      expect(() =>
+        db.exec(
+          "INSERT INTO agent_memory (id, agent_id, kind, content, scope_type, scope_id, created_at) VALUES ('bad-scope', 'a', 'semantic', 'bad', 'agent', 'unexpected', 1)"
+        )
+      ).toThrow(/CHECK constraint failed|invalid agent_memory scope/)
       expect(
         db.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'agent_memory_fts'").get()
       ).toEqual({ present: 1 })
@@ -317,7 +325,7 @@ describeIfNative('Memory native SQLite migration', () => {
       migrated.close()
 
       const reopened = new MainDatabaseCtor(databasePath)
-      expect(reopened.getLatestSchemaVersion()).toBe(50)
+      expect(reopened.getLatestSchemaVersion()).toBe(51)
       expect(
         reopened
           .getDatabase()

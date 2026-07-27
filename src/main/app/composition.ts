@@ -790,8 +790,8 @@ export async function createMainProcessControl(dependencies: {
           { agentId, sourceSession },
           model
         ),
-      recallMemory: async (agentId, query) => {
-        const items = await memoryService.recall(agentId, query)
+      recallMemory: async (agentId, query, scopeContext) => {
+        const items = await memoryService.recall(agentId, query, undefined, scopeContext)
         return items.map((item) => ({
           id: item.id,
           kind: item.kind,

@@ -25,6 +25,11 @@ import {
   selectRecallKeywordTerms
 } from '../core/recallKeyword'
 import {
+  AGENT_MEMORY_AGENT_SCOPE_FILTER,
+  memoryScopeFilterFromContext,
+  normalizeMemoryScopeFilter
+} from '../core/scope'
+import {
   resolveInjectionTokenBudget,
   type MemoryInjectionManifest,
   type MemoryInjectionOptions,
@@ -36,7 +41,8 @@ import {
   MEMORY_SEARCH_DEFAULT_LIMIT,
   RECALL_QUERY_EMBEDDING_MAX_CONCURRENT,
   RECALL_QUERY_EMBEDDING_STALE_MS,
-  RECALL_QUERY_EMBEDDING_TIMEOUT_MS
+  RECALL_QUERY_EMBEDDING_TIMEOUT_MS,
+  SCOPE_VECTOR_OVERSAMPLE_MULTIPLIER
 } from '../runtimeConstants'
 import {
   MAX_TOP_K,
@@ -44,6 +50,8 @@ import {
   type MemoryDecisionNeighborSet,
   type MemoryDecisionQueryVectorSnapshot,
   type MemoryRecallItem,
+  type MemoryScope,
+  type MemoryScopeContext,
   type MemorySearchHit,
   type MemoryTemporalPolicyMode,
   type NormalizedMemoryCandidate
@@ -72,6 +80,11 @@ type QueryEmbeddingInFlight = {
 const LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER = 2
 const TEMPORAL_RETRIEVAL_CANDIDATE_MULTIPLIER = 4
 const DIRECTIVE_RETRIEVAL_CANDIDATE_MULTIPLIER = 4
+const MAX_VECTOR_RETRIEVAL_CANDIDATES = MAX_TOP_K * TEMPORAL_RETRIEVAL_CANDIDATE_MULTIPLIER
+
+function scopeAwareVectorCandidateLimit(baseLimit: number): number {
+  return Math.min(MAX_VECTOR_RETRIEVAL_CANDIDATES, baseLimit * SCOPE_VECTOR_OVERSAMPLE_MULTIPLIER)
+}
 
 function temporalPolicyModeForPurpose(purpose: MemoryRetrievalPurpose): MemoryTemporalPolicyMode {
   return purpose === 'recall' || purpose === 'injection' ? 'current' : 'evidence'
@@ -207,25 +220,33 @@ export class RetrievalService {
     this.ctx = ports.ctx
   }
 
-  async recall(agentId: string, query: string, now?: number): Promise<MemoryRecallItem[]> {
+  async recall(
+    agentId: string,
+    query: string,
+    now?: number,
+    scopeContext?: MemoryScopeContext
+  ): Promise<MemoryRecallItem[]> {
     return this.retrieve(agentId, query, now ?? this.ctx.now(), true, {
       purpose: 'recall',
       keywordQuery: this.buildAgentFacingRecallKeywordQuery(query),
-      keywordMatchMode: 'any'
+      keywordMatchMode: 'any',
+      scopeFilter: memoryScopeFilterFromContext(scopeContext)
     })
   }
 
   async retrieveForDecision(
     agentId: string,
     query: string,
-    now: number
+    now: number,
+    scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
   ): Promise<MemoryRecallItem[]> {
     return this.retrieve(agentId, query, now, false, {
       purpose: 'decision',
       keywordQuery: this.buildAgentFacingRecallKeywordQuery(query),
       keywordMatchMode: 'any',
       enableInlinePrune: false,
-      excludeConflictParticipants: true
+      excludeConflictParticipants: true,
+      scopeFilter
     })
   }
 
@@ -234,7 +255,8 @@ export class RetrievalService {
     candidates: readonly NormalizedMemoryCandidate[],
     now: number,
     queryVectors?: readonly (MemoryDecisionQueryVectorSnapshot | undefined)[],
-    pinnedIdsByCandidate?: readonly (readonly string[] | undefined)[]
+    pinnedIdsByCandidate?: readonly (readonly string[] | undefined)[],
+    scopeFilter?: readonly MemoryScope[]
   ): Promise<MemoryDecisionNeighborSet[]> {
     const totalStartedAt = performance.now()
     const latencyMs: Partial<Record<MemoryRecallLatencyStage, number>> = {}
@@ -255,15 +277,25 @@ export class RetrievalService {
       }
 
       const config = this.ports.policy.resolveAgentConfig(agentId)
+      const normalizedScopeFilter = normalizeMemoryScopeFilter(
+        scopeFilter,
+        AGENT_MEMORY_AGENT_SCOPE_FILTER
+      )
+      if (!normalizedScopeFilter.length) {
+        outcome = 'completed'
+        return candidates.map(() => ({ neighbors: [] }))
+      }
       const { rrfK, similarityThreshold, weights } = resolveRetrieval(config?.memoryRetrieval)
       const candidateLimit = DECISION_NEIGHBOR_TOP_S * 2
+      const vectorCandidateLimit = scopeAwareVectorCandidateLimit(candidateLimit)
       const keywordStartedAt = performance.now()
       activeStage = 'keyword'
       const keywordSearches = candidates.map((candidate) => {
         const keywordQuery = this.buildAgentFacingRecallKeywordQuery(candidate.content)
         return keywordQuery
           ? this.ports.repository.searchWithStrategy(agentId, keywordQuery, candidateLimit, {
-              matchMode: 'any'
+              matchMode: 'any',
+              scopeFilter: normalizedScopeFilter
             })
           : null
       })
@@ -347,7 +379,7 @@ export class RetrievalService {
                 currentEmbedding,
                 dimensions,
                 queryIndexes.map((index) => vectors[index] as number[]),
-                candidateLimit
+                vectorCandidateLimit
               )
               latencyMs.vector = performance.now() - vectorStartedAt
               if (
@@ -398,7 +430,11 @@ export class RetrievalService {
       const revalidationStartedAt = performance.now()
       activeStage = 'authoritativeRevalidation'
       const authoritativeRows = candidateIds.size
-        ? this.ports.repository.listByIds(agentId, [...candidateIds])
+        ? this.ports.repository.listApplicableByIds(
+            agentId,
+            [...candidateIds],
+            normalizedScopeFilter
+          )
         : []
       latencyMs.authoritativeRevalidation = performance.now() - revalidationStartedAt
       const rowsById = new Map(authoritativeRows.map((row) => [row.id, row]))
@@ -562,7 +598,7 @@ export class RetrievalService {
   async searchMemories(
     agentId: string,
     query: string,
-    options: { limit?: number } = {}
+    options: { limit?: number; scopeContext?: MemoryScopeContext } = {}
   ): Promise<MemorySearchHit[]> {
     const limit =
       options.limit != null
@@ -571,16 +607,27 @@ export class RetrievalService {
     if (limit === 0) return []
     if (!this.ctx.canReadAgentMemory(agentId)) return []
     const operationFence = this.ctx.captureOperationFence(agentId)
+    const scopeFilter = memoryScopeFilterFromContext(options.scopeContext)
     const hits = await this.retrieve(agentId, query, this.ctx.now(), false, {
       purpose: 'search',
       topKOverride: limit,
-      enableInlinePrune: false
+      enableInlinePrune: false,
+      scopeFilter
     })
     if (!this.ctx.canContinueOperation(operationFence)) return []
     const limited = hits.slice(0, limit)
+    const rowsById = new Map(
+      this.ports.repository
+        .listApplicableByIds(
+          agentId,
+          limited.map((hit) => hit.id),
+          scopeFilter
+        )
+        .map((row) => [row.id, row])
+    )
     const results: MemorySearchHit[] = []
     for (const hit of limited) {
-      const row = this.ports.repository.getById(hit.id)
+      const row = rowsById.get(hit.id)
       if (row)
         results.push({ row, score: hit.score, sources: hit.sources, similarity: hit.similarity })
     }
@@ -602,6 +649,7 @@ export class RetrievalService {
       excludeConflictParticipants?: boolean
       degradationCollector?: Set<MemoryRetrievalDegradationCause>
       signal?: AbortSignal
+      scopeFilter?: readonly MemoryScope[]
     }
   ): Promise<MemoryRecallItem[]> {
     const totalStartedAt = performance.now()
@@ -622,6 +670,14 @@ export class RetrievalService {
       operationFence = this.ctx.captureOperationFence(agentId)
       throwIfAborted(options.signal)
       const config = this.ports.policy.resolveAgentConfig(agentId)
+      const scopeFilter = normalizeMemoryScopeFilter(
+        options.scopeFilter,
+        AGENT_MEMORY_AGENT_SCOPE_FILTER
+      )
+      if (!scopeFilter.length) {
+        outcome = 'completed'
+        return []
+      }
       const { topK, rrfK, similarityThreshold, weights } = resolveRetrieval(config?.memoryRetrieval)
       const normalizedQuery = query.trim()
       if (!normalizedQuery) {
@@ -647,6 +703,7 @@ export class RetrievalService {
             ? DIRECTIVE_RETRIEVAL_CANDIDATE_MULTIPLIER
             : LEGACY_RETRIEVAL_CANDIDATE_MULTIPLIER
       const candidateLimit = effectiveTopK * candidateMultiplier
+      const vectorCandidateLimit = scopeAwareVectorCandidateLimit(candidateLimit)
       const keywordStartedAt = performance.now()
       activeStage = 'keyword'
       const keywordSearch = normalizedKeywordQuery
@@ -655,7 +712,8 @@ export class RetrievalService {
             normalizedKeywordQuery,
             candidateLimit,
             {
-              matchMode: options.keywordMatchMode ?? 'all'
+              matchMode: options.keywordMatchMode ?? 'all',
+              scopeFilter
             }
           )
         : null
@@ -726,7 +784,7 @@ export class RetrievalService {
                     currentEmbedding,
                     vector.length,
                     vector,
-                    candidateLimit
+                    vectorCandidateLimit
                   )
                   throwIfAborted(options.signal)
                   latencyMs.vector = performance.now() - vectorStartedAt
@@ -813,7 +871,11 @@ export class RetrievalService {
       const revalidationStartedAt = performance.now()
       activeStage = 'authoritativeRevalidation'
       const authoritativeRows = candidateIds.length
-        ? this.ports.repository.listByIds(agentId, [...new Set(candidateIds)])
+        ? this.ports.repository.listApplicableByIds(
+            agentId,
+            [...new Set(candidateIds)],
+            scopeFilter
+          )
         : []
       latencyMs.authoritativeRevalidation = performance.now() - revalidationStartedAt
       const rowsById = new Map(authoritativeRows.map((row) => [row.id, row]))
@@ -875,11 +937,31 @@ export class RetrievalService {
         // Temporal ineligibility is not structural deletion: future states can become eligible
         // later, so inline pruning must retain every otherwise-live vector.
         const liveVectorIds = new Set(structurallyValidVecMatches.map((match) => match.row.id))
+        const applicableIds = new Set(authoritativeRows.map((row) => row.id))
+        const unmatchedVectorIds = [
+          ...new Set(
+            vecCandidates
+              .map((candidate) => candidate.memoryId)
+              .filter((memoryId) => !applicableIds.has(memoryId))
+          )
+        ]
+        // An unmatched vector can belong to a valid row outside this request's scope. Resolve only
+        // those misses against the owner namespace so inline cleanup never deletes another scope's
+        // vector while still removing true orphans.
+        const existingUnmatchedIds = new Set(
+          unmatchedVectorIds.length
+            ? this.ports.repository.listByIds(agentId, unmatchedVectorIds).map((row) => row.id)
+            : []
+        )
         const deadVectorIds = [
           ...new Set(
             vecCandidates
               .map((candidate) => candidate.memoryId)
-              .filter((memoryId) => !liveVectorIds.has(memoryId))
+              .filter(
+                (memoryId) =>
+                  (applicableIds.has(memoryId) && !liveVectorIds.has(memoryId)) ||
+                  (!applicableIds.has(memoryId) && !existingUnmatchedIds.has(memoryId))
+              )
           )
         ]
         if (deadVectorIds.length > 0) {
@@ -957,10 +1039,12 @@ export class RetrievalService {
     const readEpoch = this.ctx.captureReadEpoch(agentId)
     const config = this.ports.policy.resolveAgentConfig(agentId)
     const degradations = new Set<MemoryRetrievalDegradationCause>()
+    const scopeFilter = memoryScopeFilterFromContext(options.scopeContext)
     const recalled = await this.retrieve(agentId, query, this.ctx.now(), false, {
       purpose: 'injection',
       keywordQuery: this.buildAgentFacingRecallKeywordQuery(query),
       keywordMatchMode: 'any',
+      scopeFilter,
       degradationCollector: degradations,
       signal: options.signal
     })

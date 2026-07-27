@@ -3,6 +3,7 @@ import type {
   AgentMemoryEmbeddingState,
   AgentMemoryHealthCategory,
   AgentMemoryLifecycleState,
+  AgentMemoryScopeType,
   AgentMemoryTemporalKind,
   AgentMemoryTemporalPrecision,
   LegacyAgentMemoryStatus
@@ -65,6 +66,7 @@ export class VectorStoreLeaseUnavailableError extends Error {
 export type AgentMemoryKind = (typeof AGENT_MEMORY_HEALTH_KIND_KEYS)[number]
 export type AgentMemoryStatus = LegacyAgentMemoryStatus
 export type { AgentMemoryEmbeddingState, AgentMemoryLifecycleState }
+export type { AgentMemoryScopeType }
 export type AgentMemoryConflictState = 'challenged'
 export type AgentMemoryPersonaState = 'draft' | 'active' | 'superseded' | 'rejected'
 export type { AgentMemoryTemporalKind, AgentMemoryTemporalPrecision }
@@ -76,6 +78,16 @@ export interface MemoryTemporalMetadata {
   temporalConfidence: number | null
   temporalPrecision: AgentMemoryTemporalPrecision | null
   temporalTimeZone: string | null
+}
+
+export type MemoryScope =
+  | { type: 'agent' }
+  | { type: Exclude<AgentMemoryScopeType, 'agent'>; id: string }
+
+export interface MemoryScopeContext {
+  userId?: string
+  projectId?: string
+  sessionId?: string
 }
 
 export type MemoryTemporalPolicyMode = 'current' | 'evidence'
@@ -223,6 +235,8 @@ export interface AgentMemoryRow {
   id: string
   agent_id: string
   user_scope: string | null
+  scope_type: AgentMemoryScopeType
+  scope_id: string | null
   kind: AgentMemoryKind
   category: string | null
   content: string
@@ -301,7 +315,7 @@ export type AgentMemoryInsertInput = {
   content: string
   importance?: number
   status?: AgentMemoryStatus
-  userScope?: string | null
+  scope?: MemoryScope
   sourceSession?: string | null
   provenanceKey?: string | null
   isAnchor?: boolean
@@ -406,7 +420,7 @@ export interface NormalizedMemoryCandidate {
 export interface WriteMemoriesOptions {
   agentId: string
   sourceSession?: string | null
-  userScope?: string | null
+  scope?: MemoryScope
   sourceEntryIds?: number[] | null
 }
 
@@ -539,6 +553,7 @@ export interface MemoryExtractionInput {
   agentId: string
   spanText: string
   model: MemoryModelRef
+  scope?: MemoryScope
   sourceSession?: string | null
   sourceEntryIds?: number[] | null
 }

@@ -402,6 +402,44 @@ describe('MemoryService decision ring (T-A1..T-A5)', () => {
     expect(repairAudits[0].output_refs_json).not.toContain('missing-target-challenger')
   })
 
+  it('rejects and repairs conflict links that cross applicability scopes', async () => {
+    const { presenter, repo } = makeLLMPresenter(routedLLM({}))
+    repo.insert({
+      id: 'project-target',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'project target',
+      status: 'embedded',
+      scope: { type: 'project', id: 'project-1' }
+    })
+    repo.seedConflictState('project-target', 'challenged')
+    repo.insert({
+      id: 'session-challenger',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'session challenger',
+      status: 'conflicted',
+      conflictWith: 'project-target',
+      scope: { type: 'session', id: 'session-1' }
+    })
+
+    expect(presenter.listConflicts('a')).toEqual([])
+    await expect(
+      presenter.resolveConflict('a', 'session-challenger', 'keep_challenger')
+    ).resolves.toBe(false)
+    expect(memoryRuntimeForTests(presenter).conflictService.repairConflictIntegrity('a')).toEqual({
+      repairedTargets: 0,
+      archivedChallengers: 1,
+      clearedTargets: 1,
+      clearedLinks: 0
+    })
+    expect(repo.getById('session-challenger')).toMatchObject({
+      status: 'archived',
+      conflict_with: null
+    })
+    expect(repo.getById('project-target')?.conflict_state).toBeNull()
+  })
+
   it('keeps sibling challengers resolvable when keeping the target', async () => {
     const { presenter, repo } = makeLLMPresenter(routedLLM({}))
     const targetId = await seedEmbedded(presenter, 'user likes redis')

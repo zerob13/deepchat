@@ -102,6 +102,18 @@ describe('Agent memory tools', () => {
     expect(JSON.parse(result.content)).toMatchObject({ ok: true, action: 'created', id: 'mem-1' })
   })
 
+  it('recalls the current session scope without broadening the agent owner boundary', async () => {
+    const recallMemory = vi.fn().mockResolvedValue([])
+    const runtimePort = buildRuntimePort({ recallMemory })
+    const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
+
+    await handler.call(MEMORY_TOOL_NAMES.recall, { query: 'redis' }, 'conv-1')
+
+    expect(recallMemory).toHaveBeenCalledWith('deepchat', 'redis', {
+      sessionId: 'conv-1'
+    })
+  })
+
   it('exposes memory_forget as a soft forget operation', async () => {
     const runtimePort = buildRuntimePort()
     const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)

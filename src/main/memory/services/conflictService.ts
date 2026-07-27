@@ -11,7 +11,8 @@ import {
 import { normalizeMemoryCandidate } from '../core/candidates'
 import { estimateTokens } from '../core/injectionPort'
 import { MaintenanceBudget } from '../core/maintenanceBudget'
-import { buildMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
+import { buildScopedMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
+import { memoryScopeFromRow, rowsShareMemoryScope } from '../core/scope'
 import {
   evaluateMemoryTemporalPolicy,
   resolveMergedClaimTemporalMetadata,
@@ -81,6 +82,7 @@ export class ConflictService {
       if (
         !target ||
         target.agent_id !== agentId ||
+        !rowsShareMemoryScope(challenger, target) ||
         target.conflict_state !== 'challenged' ||
         target.superseded_by !== null
       ) {
@@ -138,6 +140,7 @@ export class ConflictService {
       challenger.lifecycle_state === 'conflicted' &&
       challenger.superseded_by === null &&
       target?.agent_id === agentId &&
+      rowsShareMemoryScope(challenger, target) &&
       target.conflict_state === 'challenged' &&
       target.superseded_by === null
         ? { challenger, target }
@@ -181,6 +184,9 @@ export class ConflictService {
     options: ConflictResolutionOptions = {}
   ): void {
     const now = this.ctx.now()
+    if (!rowsShareMemoryScope(pair.challenger, pair.target)) {
+      throw new ConflictTransitionRejectedError()
+    }
     switch (outcome) {
       case 'keep_challenger': {
         const siblingIds = this.ports.repository
@@ -199,7 +205,12 @@ export class ConflictService {
             ? this.ports.repository.activateResolvedChallenger({
                 ...transitionTarget,
                 content,
-                provenanceKey: buildMemoryProvenanceKey(agentId, pair.challenger.kind, content),
+                provenanceKey: buildScopedMemoryProvenanceKey(
+                  agentId,
+                  pair.challenger.kind,
+                  content,
+                  memoryScopeFromRow(pair.challenger)
+                ),
                 category: pair.challenger.category,
                 temporal: resolveMergedClaimTemporalMetadata(
                   temporalMetadataFromRow(pair.challenger),

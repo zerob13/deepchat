@@ -387,6 +387,12 @@ describeIfSqlite('AgentMemoryTable', () => {
           WHEN 'fts_only' THEN 'fts_only'
           ELSE 'pending'
         END;
+        UPDATE agent_memory
+        SET status = 'embedded',
+            lifecycle_state = 'active',
+            embedding_state = 'ready',
+            conflict_with = NULL
+        WHERE id = 'winner';
       `)
 
       statements.length = 0
@@ -1283,6 +1289,165 @@ describeIfSqlite('AgentMemoryTable', () => {
       expect(xMemories).toHaveLength(1)
       expect(xMemories[0]?.id).toBe('a1')
       expect(table.countByAgent('agent-y')).toBe(1)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies identical exact-scope filters to id lookup and keyword recall', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const insert = (id: string, scope?: { type: 'agent' } | { type: 'session'; id: string }) =>
+        table.insert({
+          id,
+          agentId: 'agent-x',
+          kind: 'semantic',
+          content: `scopekeyword ${id}`,
+          scope
+        })
+
+      insert('global')
+      insert('session-1', { type: 'session', id: 'session-1' })
+      insert('session-2', { type: 'session', id: 'session-2' })
+      table.insert({
+        id: 'other-agent',
+        agentId: 'agent-y',
+        kind: 'semantic',
+        content: 'scopekeyword other agent',
+        scope: { type: 'session', id: 'session-1' }
+      })
+
+      const applicable = [{ type: 'agent' as const }, { type: 'session' as const, id: 'session-1' }]
+      expect(
+        table
+          .listApplicableByIds(
+            'agent-x',
+            ['session-2', 'global', 'other-agent', 'session-1'],
+            applicable
+          )
+          .map((row) => row.id)
+          .sort()
+      ).toEqual(['global', 'session-1'])
+      expect(table.search('agent-x', 'scopekeyword').map((row) => row.id)).toEqual(['global'])
+      expect(
+        table
+          .search('agent-x', 'scopekeyword', 20, { scopeFilter: applicable })
+          .map((row) => row.id)
+          .sort()
+      ).toEqual(['global', 'session-1'])
+      expect(
+        table
+          .search('agent-x', 'scopekeyword', 20, {
+            scopeFilter: [{ type: 'session', id: 'session-2' }]
+          })
+          .map((row) => row.id)
+      ).toEqual(['session-2'])
+      expect(
+        table.getCognitiveMaintenanceInput('agent-x', {
+          kinds: ['semantic'],
+          watermark: 0,
+          limit: 20
+        })
+      ).toMatchObject({
+        eligibleCount: 1,
+        topRows: [expect.objectContaining({ id: 'global' })]
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects cross-scope supersession links at the repository transition boundary', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const source = table.insert({
+        id: 'source',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'source',
+        scope: { type: 'session', id: 'session-1' }
+      })
+      table.insert({
+        id: 'other-scope',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'other scope',
+        scope: { type: 'session', id: 'session-2' }
+      })
+      table.insert({
+        id: 'same-scope',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'same scope',
+        scope: { type: 'session', id: 'session-1' }
+      })
+
+      expect(
+        table.markSupersededIfRevision(
+          'agent-x',
+          source.id,
+          source.decision_revision,
+          'other-scope'
+        )
+      ).toBe(false)
+      expect(table.getById(source.id)?.superseded_by).toBeNull()
+      expect(
+        table.markSupersededIfRevision('agent-x', source.id, source.decision_revision, 'same-scope')
+      ).toBe(true)
+
+      const target = table.insert({
+        id: 'conflict-target',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'conflict target',
+        scope: { type: 'session', id: 'session-1' }
+      })
+      expect(
+        table.markConflictIfRevision('agent-x', target.id, target.decision_revision, 'challenged')
+      ).toBe(true)
+      const challenger = table.insert({
+        id: 'cross-scope-challenger',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'cross scope challenger',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: target.id,
+        scope: { type: 'session', id: 'session-2' }
+      })
+      expect(
+        table.activateResolvedChallenger({
+          agentId: 'agent-x',
+          id: challenger.id,
+          targetId: target.id,
+          expectedRevision: challenger.decision_revision
+        })
+      ).toBe(false)
+
+      const sibling = table.insert({
+        id: 'same-scope-sibling',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'same scope sibling',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: target.id,
+        scope: { type: 'session', id: 'session-1' }
+      })
+      expect(
+        table.retireConflictSiblings('agent-x', target.id, challenger.id, 'other-scope', 100)
+      ).toBe(0)
+      expect(table.getById(sibling.id)).toMatchObject({
+        lifecycle_state: 'conflicted',
+        superseded_by: null
+      })
+      expect(
+        table.retireConflictSiblings('agent-x', target.id, challenger.id, 'same-scope', 100)
+      ).toBe(1)
     } finally {
       db.close()
     }
@@ -2511,6 +2676,15 @@ describeIfSqlite('AgentMemoryTable', () => {
       })
       archiveTestMemory(table, archived.id)
       table.insert({ id: 'working', agentId: 'a', kind: 'working', content: 'working' })
+      table.insert({
+        id: 'session-only',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'session-only',
+        importance: 1,
+        createdAt: 10_000,
+        scope: { type: 'session', id: 'session-1' }
+      })
       const superseded = table.insert({
         id: 'superseded',
         agentId: 'a',
@@ -2803,7 +2977,9 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_derivation')
       expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_dirty')
       expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai')
-      expect(table.getLatestVersion()).toBe(49)
+      expect(createSql).toContain("scope_type TEXT NOT NULL DEFAULT 'agent'")
+      expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_scope_bi_v1')
+      expect(table.getLatestVersion()).toBe(51)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
@@ -2816,6 +2992,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
         /CREATE TABLE IF NOT EXISTS agent_memory_derivation/
       )
       expect(table.getMigrationSQL(49)).toMatch(/DROP TRIGGER IF EXISTS agent_memory_dirty_ai/)
+      expect(table.getMigrationSQL(51)).toMatch(/ADD COLUMN scope_type/)
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()
@@ -2833,6 +3010,8 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(columns).toContain('temporal_confidence')
       expect(columns).toContain('temporal_precision')
       expect(columns).toContain('temporal_timezone')
+      expect(columns).toContain('scope_type')
+      expect(columns).toContain('scope_id')
       expect(
         db
           .prepare(
@@ -2907,6 +3086,91 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(() =>
         db.prepare('UPDATE agent_memory SET temporal_confidence = 2 WHERE id = ?').run('legacy')
       ).toThrow(/CHECK constraint failed/)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('migrates legacy rows to agent scope and enforces persisted scope pairs', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE agent_memory (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          user_scope TEXT,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          importance REAL NOT NULL DEFAULT 0.5,
+          lifecycle_state TEXT NOT NULL DEFAULT 'active',
+          superseded_by TEXT,
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO agent_memory (
+          id, agent_id, user_scope, kind, content, importance,
+          lifecycle_state, superseded_by, created_at
+        )
+        VALUES (
+          'legacy', 'a', 'legacy-user', 'semantic', 'legacy memory', 0.5,
+          'active', NULL, 1
+        );
+      `)
+      const table = new AgentMemoryTableCtor(db)
+      const migration = table.getMigrationSQL(51)
+      if (!migration) throw new Error('expected scope migration')
+
+      db.exec(migration)
+      table.finalizeMigration(51)
+
+      expect(
+        db
+          .prepare('SELECT user_scope, scope_type, scope_id FROM agent_memory WHERE id = ?')
+          .get('legacy')
+      ).toEqual({
+        user_scope: 'legacy-user',
+        scope_type: 'agent',
+        scope_id: null
+      })
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET scope_type = 'agent', scope_id = 'invalid' WHERE id = ?"
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory scope/)
+      expect(() =>
+        db
+          .prepare("UPDATE agent_memory SET scope_type = 'session', scope_id = NULL WHERE id = ?")
+          .run('legacy')
+      ).toThrow(/invalid agent_memory scope/)
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET user_scope = NULL, scope_type = 'session', scope_id = 'session-1' WHERE id = ?"
+          )
+          .run('legacy')
+      ).not.toThrow()
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET scope_type = 'user', scope_id = 'user-1', user_scope = 'other-user' WHERE id = ?"
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory scope/)
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET scope_type = 'user', scope_id = 'user-1', user_scope = 'user-1' WHERE id = ?"
+          )
+          .run('legacy')
+      ).not.toThrow()
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_memory_recall_scope_v6'"
+          )
+          .get()
+      ).toEqual({ present: 1 })
     } finally {
       db.close()
     }

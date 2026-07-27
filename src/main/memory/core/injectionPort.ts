@@ -1,6 +1,6 @@
 import type { MemoryRetrievalDegradationCause } from '@shared/types/agent-memory'
 
-import type { AgentMemoryKind, MemoryTemporalTrace } from '../domain/types'
+import type { AgentMemoryKind, MemoryScopeContext, MemoryTemporalTrace } from '../domain/types'
 import type { MemoryExecutionToken } from './executionIdentity'
 import type {
   MemoryExtractionResult,
@@ -67,6 +67,7 @@ export interface MemoryInjectionResult {
 
 export interface MemoryInjectionOptions {
   signal?: AbortSignal
+  scopeContext?: MemoryScopeContext
 }
 
 // Default token ceiling for the assembled memory injection (persona + working + recalled).

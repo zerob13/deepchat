@@ -51,6 +51,8 @@ import type {
   MemoryConflictResolution,
   MemoryManagementPage,
   MemorySearchHit,
+  MemoryScope,
+  MemoryScopeContext,
   MemoryStatus,
   MemoryWriteOutcome
 } from './types'
@@ -96,6 +98,8 @@ export function toMemoryItemDto(row: AgentMemoryRow) {
   return {
     id: row.id,
     agentId: row.agent_id,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id,
     kind: row.kind,
     category: isAgentMemoryCategory(row.category) ? row.category : null,
     content: row.content,
@@ -223,7 +227,7 @@ interface MemoryRouteService {
   searchMemories(
     agentId: string,
     query: string,
-    options: { limit?: number }
+    options: { limit?: number; scopeContext?: MemoryScopeContext }
   ): Promise<MemorySearchHit[]>
   addUserMemory(
     agentId: string,
@@ -232,6 +236,7 @@ interface MemoryRouteService {
       kind?: 'episodic' | 'semantic'
       category?: string | null
       importance?: number
+      scope?: MemoryScope
     },
     sessionId?: string | null
   ): Promise<MemoryWriteOutcome>
@@ -348,7 +353,8 @@ export function createMemoryRoutes(deps: {
       async (rawInput) => {
         const input = memorySearchRoute.input.parse(rawInput)
         const hits = await memoryService.searchMemories(input.agentId, input.query, {
-          limit: input.limit
+          limit: input.limit,
+          scopeContext: input.scopeContext
         })
         return memorySearchRoute.output.parse({
           results: hits.map((hit) => ({
@@ -370,7 +376,8 @@ export function createMemoryRoutes(deps: {
             content: input.content,
             kind: input.kind,
             category: input.category,
-            importance: input.importance
+            importance: input.importance,
+            scope: input.scope
           },
           input.sessionId
         )

@@ -20,6 +20,7 @@ import type {
   MemoryAuditRepositoryPort,
   MemoryDirectiveRepositoryPort,
   MemoryRepositoryPort,
+  MemoryScope,
   MemoryServiceDeps,
   MemoryVectorMatch,
   MemoryVectorRecord
@@ -68,9 +69,19 @@ import type {
   MemoryTombstoneReason,
   ResolveChallengerTransition
 } from '@/memory/domain/types'
+import {
+  AGENT_MEMORY_AGENT_SCOPE_FILTER,
+  legacyUserScopeForMemoryScope,
+  normalizeMemoryScope,
+  normalizeMemoryScopeFilter,
+  rowMatchesMemoryScopeFilter,
+  rowsShareMemoryScope
+} from '@/memory/core/scope'
 
 class MemoryRowMap extends Map<string, AgentMemoryRow> {
   override set(key: string, row: AgentMemoryRow): this {
+    row.scope_type ??= 'agent'
+    row.scope_id ??= null
     if (row.lifecycle_state === undefined || row.embedding_state === undefined) {
       const state = deriveCanonicalStateFromLegacy(row)
       row.lifecycle_state = state.lifecycleState
@@ -221,10 +232,13 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       })
     }
     const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+    const scope = normalizeMemoryScope(input.scope)
     const row: AgentMemoryRow = {
       id: input.id,
       agent_id: input.agentId,
-      user_scope: input.userScope ?? null,
+      user_scope: legacyUserScopeForMemoryScope(scope),
+      scope_type: scope.type,
+      scope_id: scope.type === 'agent' ? null : scope.id,
       kind: input.kind,
       category: input.category ?? null,
       content: input.content,
@@ -471,6 +485,19 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     return [...this.rows.values()].filter((row) => row.agent_id === agentId && idSet.has(row.id))
   }
 
+  listApplicableByIds(
+    agentId: string,
+    ids: string[],
+    scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
+  ) {
+    const idSet = new Set(ids)
+    const scopes = normalizeMemoryScopeFilter(scopeFilter)
+    return [...this.rows.values()].filter(
+      (row) =>
+        row.agent_id === agentId && idSet.has(row.id) && rowMatchesMemoryScopeFilter(row, scopes)
+    )
+  }
+
   getCognitiveMaintenanceInput(
     agentId: string,
     options: { kinds: AgentMemoryRow['kind'][]; watermark: number; limit: number }
@@ -478,6 +505,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     const eligible = [...this.rows.values()].filter(
       (row) =>
         row.agent_id === agentId &&
+        row.scope_type === 'agent' &&
+        row.scope_id === null &&
         row.superseded_by === null &&
         row.status !== 'archived' &&
         row.status !== 'conflicted' &&
@@ -504,6 +533,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
           row.kind === 'persona' &&
           (row.persona_state === 'active' ||
             (row.persona_state == null && row.superseded_by === null))
@@ -514,7 +545,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   getDraftPersona(agentId: string) {
     return [...this.rows.values()]
       .filter(
-        (row) => row.agent_id === agentId && row.kind === 'persona' && row.persona_state === 'draft'
+        (row) =>
+          row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
+          row.kind === 'persona' &&
+          row.persona_state === 'draft'
       )
       .sort((a, b) => b.created_at - a.created_at)[0]
   }
@@ -539,18 +575,31 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
   listPersonaVersions(agentId: string) {
     return [...this.rows.values()]
-      .filter((row) => row.agent_id === agentId && row.kind === 'persona')
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
+          row.kind === 'persona'
+      )
       .sort((a, b) => b.created_at - a.created_at)
   }
 
-  search(agentId: string, query: string, limit = 20, options: { matchMode?: 'all' | 'any' } = {}) {
+  search(
+    agentId: string,
+    query: string,
+    limit = 20,
+    options: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] } = {}
+  ) {
     const terms = query.trim().toLowerCase().split(/\s+/u).filter(Boolean)
     if (!terms.length) return []
     const matchMode = options.matchMode ?? 'all'
+    const scopeFilter = normalizeMemoryScopeFilter(options.scopeFilter)
     return [...this.rows.values()]
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          rowMatchesMemoryScopeFilter(row, scopeFilter) &&
           !row.superseded_by &&
           row.status !== 'archived' &&
           row.status !== 'conflicted' &&
@@ -567,7 +616,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     agentId: string,
     query: string,
     limit = 20,
-    options: { matchMode?: 'all' | 'any' } = {}
+    options: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] } = {}
   ) {
     return {
       rows: this.search(agentId, query, limit, options),
@@ -651,7 +700,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.conflict_state !== null ||
       row.conflict_with !== null ||
       row.kind === 'persona' ||
-      row.kind === 'working'
+      row.kind === 'working' ||
+      this.isUnresolvedConflictParticipant(input.agentId, input.id)
     ) {
       return false
     }
@@ -705,6 +755,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       (!retiredHead ||
         retiredHead.id === row.id ||
         retiredHead.agent_id !== input.agentId ||
+        !rowsShareMemoryScope(row, retiredHead) ||
         retiredHead.decision_revision !== input.retiredHead.expectedRevision ||
         retiredHead.lifecycle_state !== 'active' ||
         retiredHead.superseded_by !== null ||
@@ -748,7 +799,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.kind === 'working' ||
       target.lifecycle_state !== 'active' ||
       target.conflict_state !== 'challenged' ||
-      target.superseded_by !== null
+      target.superseded_by !== null ||
+      !rowsShareMemoryScope(row, target)
     ) {
       return false
     }
@@ -799,11 +851,14 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }) {
     const row = this.rows.get(input.id)
     const target = this.rows.get(input.targetId)
+    const winner = this.rows.get(input.winnerId)
     if (
       !row ||
       !target ||
+      !winner ||
       row.agent_id !== input.agentId ||
       target.agent_id !== input.agentId ||
+      winner.agent_id !== input.agentId ||
       row.decision_revision !== input.expectedRevision ||
       row.lifecycle_state !== 'conflicted' ||
       row.conflict_with !== input.targetId ||
@@ -813,7 +868,9 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.kind === 'working' ||
       target.lifecycle_state !== 'active' ||
       target.conflict_state !== 'challenged' ||
-      target.superseded_by !== null
+      target.superseded_by !== null ||
+      !rowsShareMemoryScope(row, target) ||
+      !rowsShareMemoryScope(row, winner)
     ) {
       return false
     }
@@ -833,14 +890,21 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     challengerId: string
   }) {
     const row = this.rows.get(input.id)
+    const challenger = this.rows.get(input.challengerId)
     if (
       !row ||
+      !challenger ||
       row.agent_id !== input.agentId ||
+      challenger.agent_id !== input.agentId ||
       row.decision_revision !== input.expectedRevision ||
       row.lifecycle_state !== 'active' ||
       row.conflict_state !== 'challenged' ||
       row.superseded_by !== null ||
-      !this.rows.has(input.challengerId)
+      challenger.lifecycle_state !== 'active' ||
+      challenger.superseded_by !== null ||
+      challenger.conflict_state !== null ||
+      challenger.conflict_with !== null ||
+      !rowsShareMemoryScope(row, challenger)
     ) {
       return false
     }
@@ -1023,9 +1087,14 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     supersededBy: string
   ) {
     const row = this.rows.get(id)
+    const successor = this.rows.get(supersededBy)
     if (
       !row ||
+      !successor ||
       row.agent_id !== agentId ||
+      successor.agent_id !== agentId ||
+      successor.id === row.id ||
+      !rowsShareMemoryScope(row, successor) ||
       row.decision_revision !== expectedRevision ||
       row.superseded_by !== null ||
       row.conflict_state !== null ||
@@ -1592,6 +1661,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       return (
         !!target &&
         target.agent_id === agentId &&
+        rowsShareMemoryScope(challenger, target) &&
         target.conflict_state === 'challenged' &&
         target.superseded_by === null
       )
@@ -1607,7 +1677,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         challenger.agent_id === agentId &&
         challenger.status === 'conflicted' &&
         challenger.superseded_by === null &&
-        challenger.conflict_with === memoryId
+        challenger.conflict_with === memoryId &&
+        rowsShareMemoryScope(challenger, row)
     )
   }
 
@@ -1632,6 +1703,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
           challenger.status === 'conflicted' &&
           challenger.superseded_by === null &&
           target?.agent_id === agentId &&
+          rowsShareMemoryScope(challenger, target) &&
           target.conflict_state === 'challenged' &&
           target.superseded_by === null
         )
@@ -1650,10 +1722,13 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     targetId: string,
     excludeChallengerId: string
   ): AgentMemoryRow[] {
+    const target = this.rows.get(targetId)
+    if (!target || target.agent_id !== agentId) return []
     return [...this.rows.values()]
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          rowsShareMemoryScope(row, target) &&
           row.conflict_with === targetId &&
           row.status === 'conflicted' &&
           row.superseded_by === null &&
@@ -1669,7 +1744,22 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     winnerId: string,
     at: number
   ) {
-    const siblings = this.listConflictSiblings(agentId, targetId, excludeChallengerId)
+    const target = this.rows.get(targetId)
+    const winner = this.rows.get(winnerId)
+    if (
+      !target ||
+      !winner ||
+      target.agent_id !== agentId ||
+      winner.agent_id !== agentId ||
+      !rowsShareMemoryScope(target, winner) ||
+      winner.lifecycle_state !== 'active' ||
+      winner.superseded_by !== null
+    ) {
+      return 0
+    }
+    const siblings = this.listConflictSiblings(agentId, targetId, excludeChallengerId).filter(
+      (sibling) => sibling.id !== winner.id
+    )
     for (const sibling of siblings) {
       sibling.conflict_with = null
       sibling.superseded_by = winnerId
@@ -1718,6 +1808,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         !!target &&
         target.id !== challenger.id &&
         target.agent_id === agentId &&
+        rowsShareMemoryScope(challenger, target) &&
         target.status !== 'archived' &&
         target.status !== 'conflicted' &&
         target.superseded_by === null
@@ -1818,6 +1909,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
           row.superseded_by === null &&
           row.status !== 'archived' &&
           row.status !== 'conflicted' &&
@@ -2023,6 +2116,7 @@ const READ_CAPABILITY_KEYS = [
   'listManagementPage',
   'listManagementVisibleByIds',
   'listByIds',
+  'listApplicableByIds',
   'getActivePersona',
   'getDraftPersona',
   'listPersonaVersions',

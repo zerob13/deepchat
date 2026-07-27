@@ -9,7 +9,8 @@ import {
   REFLECTION_MEMORY_LIMIT,
   REFLECTION_PROMPT_OVERHEAD_TOKENS
 } from '../runtimeConstants'
-import { buildMemoryProvenanceKey } from '../core/scoring'
+import { buildScopedMemoryProvenanceKey } from '../core/scoring'
+import { AGENT_MEMORY_AGENT_SCOPE } from '../core/scope'
 import { buildReflectionInsightsPrompt, parseReflectionInsights } from '../core/extraction'
 import { estimateTokens } from '../core/injectionPort'
 import { selectMaintenanceRowsWithinTokenBudget } from '../core/maintenanceBudget'
@@ -169,8 +170,21 @@ export class ReflectionService {
     if (!this.ctx.canWriteAgentMemory(agentId)) return null
     const trimmed = content.trim()
     if (!trimmed) return null
-    const provenanceKey = buildMemoryProvenanceKey(agentId, 'reflection', trimmed)
-    if (this.ports.provenance.resolveProvenance(agentId, 'reflection', trimmed)) return null
+    const provenanceKey = buildScopedMemoryProvenanceKey(
+      agentId,
+      'reflection',
+      trimmed,
+      AGENT_MEMORY_AGENT_SCOPE
+    )
+    if (
+      this.ports.provenance.resolveProvenance(
+        agentId,
+        'reflection',
+        trimmed,
+        AGENT_MEMORY_AGENT_SCOPE
+      )
+    )
+      return null
     const id = `mem-${nanoid(12)}`
     try {
       const inserted = this.ports.repository.insertClaimUnlessTombstoned({
@@ -181,6 +195,7 @@ export class ReflectionService {
         importance: REFLECTION_IMPORTANCE,
         lifecycleState: 'active',
         embeddingState: 'pending',
+        scope: AGENT_MEMORY_AGENT_SCOPE,
         sourceSession,
         provenanceKey,
         createdAt

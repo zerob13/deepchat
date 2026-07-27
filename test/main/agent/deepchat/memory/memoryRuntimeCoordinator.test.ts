@@ -107,7 +107,13 @@ function createHarness() {
     ),
     getInjectionTokenBudget: vi.fn(() => 1_200),
     buildInjection: vi
-      .fn<(agentId: string, query: string, options?: { signal?: AbortSignal }) => Promise<any>>()
+      .fn<
+        (
+          agentId: string,
+          query: string,
+          options?: { signal?: AbortSignal; scopeContext?: { sessionId?: string } }
+        ) => Promise<any>
+      >()
       .mockResolvedValue(null),
     buildDirectiveContribution: vi.fn(() => ({ content: null, manifest: null })),
     recordInjectionAccess: vi.fn(),
@@ -333,6 +339,11 @@ describe('MemoryRuntimeCoordinator', () => {
     expect(contribution.memory.content).not.toContain('PRIVATE_')
     expect(contribution.memory.content).not.toContain('raw-internal-query-hash')
     expect(contribution.memory.anchorEntryId).toBeNull()
+    expect(port.buildInjection).toHaveBeenCalledWith(
+      'agent-a',
+      'redis',
+      expect.objectContaining({ scopeContext: { sessionId: 's1' } })
+    )
     expect(port.recordInjectionAccess).toHaveBeenCalledWith('agent-a', ['selected'])
     expect(deps.appendTapeAnchor).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -243,7 +243,8 @@ export class MemoryRuntimeCoordinator implements MemoryPromptContributor, Memory
       const injectionAbort = new AbortController()
       const deadlineResult = await withSoftDeadline(
         this.memoryPort.buildInjection(input.agentId, input.query, {
-          signal: injectionAbort.signal
+          signal: injectionAbort.signal,
+          scopeContext: { sessionId: input.sessionId }
         }),
         MEMORY_INJECTION_TIMEOUT_MS
       )

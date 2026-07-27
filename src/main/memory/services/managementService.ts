@@ -23,6 +23,7 @@ import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
 import { deriveLifecycle, type DeriveLifecycleOptions } from '../core/lifecycle'
 import { resolveRetrieval } from '../core/scoring'
 import { temporalMetadataFromRow } from '../core/temporal'
+import { memoryScopeFromRow } from '../core/scope'
 import {
   MEMORY_HEALTH_AUDIT_SCAN_LIMIT,
   MEMORY_HEALTH_RECENT_FAILURES_LIMIT,
@@ -597,7 +598,7 @@ export class ManagementService {
         {
           agentId,
           sourceSession: row.source_session,
-          userScope: row.user_scope,
+          scope: memoryScopeFromRow(row),
           sourceEntryIds: parseAgentMemorySourceEntryIds(row.source_entry_ids)
         },
         providedFields

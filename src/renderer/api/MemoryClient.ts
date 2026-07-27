@@ -42,6 +42,8 @@ import {
   type MemoryPage,
   type MemoryLifecycle,
   type MemorySearchResult,
+  type MemoryScopeContextInput,
+  type MemoryScopeInput,
   type MemorySourceSpan,
   type MemoryStatusDto,
   type MemoryUpdateResult,
@@ -58,6 +60,7 @@ type MemoryAddInputBase = {
   content: string
   importance?: number
   sessionId?: string
+  scope?: MemoryScopeInput
 }
 type MemoryAddByKindInput = MemoryAddInputBase & {
   kind?: MemoryAddKind
@@ -75,6 +78,7 @@ type MemoryAddPayload = {
   category?: AgentMemoryCategory
   importance?: number
   sessionId?: string
+  scope?: MemoryScopeInput
 }
 type MemoryUpdateInput = {
   content?: string
@@ -127,12 +131,13 @@ export function createMemoryClient(bridge: DeepchatBridge = getDeepchatBridge())
   async function search(
     agentId: string,
     query: string,
-    options?: { limit?: number }
+    options?: { limit?: number; scopeContext?: MemoryScopeContextInput }
   ): Promise<MemorySearchResult[]> {
     const result = await bridge.invoke(memorySearchRoute.name, {
       agentId,
       query,
-      limit: options?.limit
+      limit: options?.limit,
+      scopeContext: options?.scopeContext
     })
     return result.results
   }
@@ -142,7 +147,8 @@ export function createMemoryClient(bridge: DeepchatBridge = getDeepchatBridge())
       agentId,
       content: input.content,
       importance: input.importance,
-      sessionId: input.sessionId
+      sessionId: input.sessionId,
+      scope: input.scope
     }
     if (input.category !== undefined) {
       payload.category = input.category

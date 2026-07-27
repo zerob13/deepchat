@@ -17,6 +17,8 @@ import {
   type FuseOptions,
   type MemoryRecallItem
 } from '../types'
+import type { MemoryScope } from '../domain/types'
+import { normalizeMemoryScope } from './scope'
 import type {
   AgentMemoryKind,
   MemoryTemporalMetadata,
@@ -300,4 +302,26 @@ export function buildMemoryProvenanceKey(agentId: string, kind: string, content:
     .update(`${agentId}\0${kind}\0${normalized}`, 'utf8')
     .digest('hex')
   return `v2:${kind}:${digest}`
+}
+
+export function buildScopedMemoryProvenanceKey(
+  agentId: string,
+  kind: string,
+  content: string,
+  scope?: MemoryScope | null
+): string {
+  const normalizedScope = normalizeMemoryScope(scope)
+  if (normalizedScope.type === 'agent') {
+    return buildMemoryProvenanceKey(agentId, kind, content)
+  }
+  const normalizedContent = normalizeForProvenanceV2(content)
+  const digest = createHash('sha256')
+    // JSON array framing keeps every field boundary unambiguous even if a caller-controlled scope
+    // id or claim contains a NUL character.
+    .update(
+      JSON.stringify([agentId, kind, normalizedScope.type, normalizedScope.id, normalizedContent]),
+      'utf8'
+    )
+    .digest('hex')
+  return `v3:${kind}:${digest}`
 }

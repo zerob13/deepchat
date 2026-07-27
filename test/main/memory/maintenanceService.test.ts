@@ -107,6 +107,107 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(derivations.every((edge) => edge.derivation_kind === 'merge')).toBe(true)
   })
 
+  it('never consolidates vector neighbors across applicability scopes', async () => {
+    const generateText = routedLLM({
+      decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"merged redis fact"}'
+    })
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
+    const now = 1_000 * DAY
+    const rows = [
+      repo.insert({
+        id: 'session-1',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user likes redis a',
+        status: 'embedded',
+        createdAt: now - 2_000,
+        scope: { type: 'session', id: 'session-1' }
+      }),
+      repo.insert({
+        id: 'session-2',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user likes redis b',
+        status: 'embedded',
+        createdAt: now - 1_000,
+        scope: { type: 'session', id: 'session-2' }
+      })
+    ]
+    for (const row of rows) {
+      repo.seedLegacyStatus(row.id, 'embedded', {
+        embeddingId: row.id,
+        embeddingDim: 4,
+        embeddingModel: 'p:m'
+      })
+      store.vectors.set(row.id, textToVector(row.content))
+    }
+
+    await presenter.runConsolidationPass('a', now)
+
+    expect(decisionCalls(generateText)).toBe(0)
+    expect(repo.getById('session-1')?.superseded_by).toBeNull()
+    expect(repo.getById('session-2')?.superseded_by).toBeNull()
+  })
+
+  it('oversamples bounded vector neighbors before exact-scope consolidation', async () => {
+    const generateText = routedLLM({
+      decision:
+        '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"merged scoped redis fact"}'
+    })
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
+    const now = 1_000 * DAY
+    const rows = [
+      repo.insert({
+        id: '00-source',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'scoped redis source',
+        status: 'embedded',
+        createdAt: now - 5_000,
+        scope: { type: 'session', id: 'session-1' }
+      }),
+      ...Array.from({ length: 3 }, (_, index) =>
+        repo.insert({
+          id: `10-other-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `other scoped redis ${index}`,
+          status: 'embedded',
+          createdAt: now - 4_000 + index,
+          scope: { type: 'session', id: `other-${index}` }
+        })
+      ),
+      repo.insert({
+        id: '99-neighbor',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'scoped redis neighbor',
+        status: 'embedded',
+        createdAt: now - 1_000,
+        scope: { type: 'session', id: 'session-1' }
+      })
+    ]
+    for (const row of rows) {
+      repo.seedLegacyStatus(row.id, 'embedded', {
+        embeddingId: row.id,
+        embeddingDim: 4,
+        embeddingModel: 'p:m'
+      })
+      store.vectors.set(row.id, textToVector('redis'))
+    }
+    const querySpy = vi.spyOn(store, 'queryByMemoryId')
+
+    await presenter.runConsolidationPass('a', now)
+
+    expect(querySpy).toHaveBeenCalledWith('00-source', { topK: 6 })
+    expect(decisionCalls(generateText)).toBeGreaterThan(0)
+    expect(
+      [repo.getById('00-source'), repo.getById('99-neighbor')].filter(
+        (row) => row?.superseded_by === null
+      )
+    ).toHaveLength(1)
+  })
+
   it('does not merge a pair into an exact hard-deleted claim', async () => {
     const generateText = routedLLM({
       decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"user prefers redis"}'
