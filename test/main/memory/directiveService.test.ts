@@ -7,7 +7,7 @@ describe('DirectiveService', () => {
   it('requires explicit approval before a derived suggestion becomes active', () => {
     let now = 1_000
     const onMemoryChanged = vi.fn()
-    const { presenter, directiveRepo, auditRepo } = makePresenter(
+    const { presenter, auditRepo } = makePresenter(
       { memoryEnabled: true },
       undefined,
       { clock: { now: () => now, timeZone: () => 'UTC' }, onMemoryChanged }
@@ -41,7 +41,7 @@ describe('DirectiveService', () => {
       activeDirectiveCount: 1
     })
     expect(presenter.approveDirective('a', draft!.id)).toBeNull()
-    expect(directiveRepo.rows.size).toBe(1)
+    expect(presenter.listDirectives('a')).toHaveLength(1)
 
     const serializedAudit = JSON.stringify(auditRepo.rows)
     expect(serializedAudit).not.toContain('Project Saffron')

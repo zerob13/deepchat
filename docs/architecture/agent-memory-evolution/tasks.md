@@ -100,7 +100,7 @@ Memory-owned entries to the shared schema catalog.
 
 ## 8. Post-implementation hardening
 
-- [ ] Classify all Memory tests and run native directive persistence tests in CI.
+- [x] Classify all Memory tests and run native directive persistence tests in CI.
 - [ ] Enforce temporal invariants on upgraded databases and repair invalid legacy rows.
 - [ ] Skip malformed temporal/scope import rows without rolling back valid data.
 - [ ] Retire the superseded recall index without rebuilding it at startup.

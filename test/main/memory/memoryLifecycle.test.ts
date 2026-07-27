@@ -24,6 +24,8 @@ function makeRow(overrides: Partial<AgentMemoryRow> = {}): AgentMemoryRow {
     id: 'm1',
     agent_id: 'a',
     user_scope: null,
+    scope_type: 'agent',
+    scope_id: null,
     kind,
     category: null,
     content: 'redis memory',

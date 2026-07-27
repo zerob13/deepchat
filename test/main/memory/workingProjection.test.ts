@@ -11,6 +11,8 @@ function row(id: string, content: string, overrides: Partial<AgentMemoryRow> = {
     id,
     agent_id: 'agent-a',
     user_scope: null,
+    scope_type: 'agent',
+    scope_id: null,
     kind: 'semantic',
     category: null,
     content,
