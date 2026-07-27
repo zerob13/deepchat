@@ -36,6 +36,7 @@ import {
   type MemoryConflictItem,
   type MemoryAuditEvent,
   type MemoryDirectiveCreateInput,
+  type MemoryDirectiveCommandResult,
   type MemoryDirectiveItem,
   type MemoryHealthDto,
   type MemoryItem,
@@ -307,17 +308,15 @@ export function createMemoryClient(bridge: DeepchatBridge = getDeepchatBridge())
   async function createDirective(
     agentId: string,
     directive: MemoryDirectiveCreateInput
-  ): Promise<MemoryDirectiveItem | null> {
-    const result = await bridge.invoke(memoryCreateDirectiveRoute.name, { agentId, directive })
-    return result.directive
+  ): Promise<MemoryDirectiveCommandResult> {
+    return bridge.invoke(memoryCreateDirectiveRoute.name, { agentId, directive })
   }
 
   async function approveDirective(
     agentId: string,
     directiveId: string
-  ): Promise<MemoryDirectiveItem | null> {
-    const result = await bridge.invoke(memoryApproveDirectiveRoute.name, { agentId, directiveId })
-    return result.directive
+  ): Promise<MemoryDirectiveCommandResult> {
+    return bridge.invoke(memoryApproveDirectiveRoute.name, { agentId, directiveId })
   }
 
   async function rejectDirective(

@@ -41,6 +41,7 @@ import type {
   AgentMemoryDirectiveRow,
   MemoryDirectiveCounts,
   MemoryDirectiveInsertResult,
+  MemoryDirectiveTransitionResult,
   MemoryDirectiveWriteInput,
   MemoryDirectiveWriteResult
 } from '@/memory/domain/directives'
@@ -2390,18 +2391,18 @@ export class FakeDirectiveRepository implements MemoryDirectiveRepositoryPort {
     fromStatus: AgentMemoryDirectiveRow['status'],
     toStatus: AgentMemoryDirectiveRow['status'],
     updatedAt: number
-  ): AgentMemoryDirectiveRow | null {
+  ): MemoryDirectiveTransitionResult {
     if (fromStatus !== 'draft' || (toStatus !== 'active' && toStatus !== 'rejected')) {
       throw new Error('[Memory] invalid directive trust transition')
     }
     const key = this.key(agentId, directiveId)
     const row = this.rows.get(key)
-    if (!row || row.status !== fromStatus) return null
+    if (!row || row.status !== fromStatus) return { action: 'not-found', row: null }
     if (
       toStatus === 'active' &&
       this.countDirectivesByStatus(agentId).active >= AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
     ) {
-      return null
+      return { action: 'capacity', row: null }
     }
     const updated = {
       ...row,
@@ -2409,7 +2410,7 @@ export class FakeDirectiveRepository implements MemoryDirectiveRepositoryPort {
       updated_at: Math.max(row.updated_at, Math.max(0, Math.floor(updatedAt)))
     }
     this.rows.set(key, updated)
-    return copyDirective(updated)
+    return { action: 'transitioned', row: copyDirective(updated) }
   }
 
   deleteDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {

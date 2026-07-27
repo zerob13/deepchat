@@ -2270,14 +2270,20 @@ describe('dispatchDeepchatRoute', () => {
       updated_at: 1_000
     } as const
     const listDirectives = vi.fn().mockReturnValue([row])
-    const createDirective = vi.fn().mockReturnValue({ ...row, status: 'active', source: 'manual' })
-    const approveDirective = vi.fn().mockReturnValue({ ...row, status: 'active' })
+    const createDirectiveResult = vi.fn().mockReturnValue({
+      action: 'applied',
+      directive: { ...row, status: 'active', source: 'manual' }
+    })
+    const approveDirectiveResult = vi.fn().mockReturnValue({
+      action: 'applied',
+      directive: { ...row, status: 'active' }
+    })
     const rejectDirective = vi.fn().mockReturnValue({ ...row, status: 'rejected' })
     const deleteDirective = vi.fn().mockReturnValue(true)
     ;(runtime as any).memoryService = {
       listDirectives,
-      createDirective,
-      approveDirective,
+      createDirectiveResult,
+      approveDirectiveResult,
       rejectDirective,
       deleteDirective
     }
@@ -2325,7 +2331,7 @@ describe('dispatchDeepchatRoute', () => {
       statuses: ['draft'],
       limit: 200
     })
-    expect(createDirective).toHaveBeenCalledWith(
+    expect(createDirectiveResult).toHaveBeenCalledWith(
       'deepchat',
       {
         kind: 'suppress_topic',
@@ -2334,20 +2340,26 @@ describe('dispatchDeepchatRoute', () => {
       },
       'manual'
     )
-    expect(approved.directive).toMatchObject({ status: 'active' })
+    expect(approved).toMatchObject({
+      action: 'applied',
+      directive: { status: 'active' }
+    })
     expect(rejected.directive).toMatchObject({ status: 'rejected' })
     expect(deleted).toEqual({ ok: true })
     expect(listed.directives[0]).not.toHaveProperty('identityHash')
     expect(listed.directives[0]).not.toHaveProperty('identity_hash')
-    expect(created.directive).toMatchObject({ source: 'manual', topic: 'project saffron' })
+    expect(created).toMatchObject({
+      action: 'applied',
+      directive: { source: 'manual', topic: 'project saffron' }
+    })
   })
 
   it('rejects directive mutations outside DeepChat agents', async () => {
     const { runtime, providerSettings } = createRuntime()
     vi.mocked(providerSettings.getAgentType).mockResolvedValue('acp')
-    const createDirective = vi.fn()
+    const createDirectiveResult = vi.fn()
     const deleteDirective = vi.fn()
-    ;(runtime as any).memoryService = { createDirective, deleteDirective }
+    ;(runtime as any).memoryService = { createDirectiveResult, deleteDirective }
     const context = { webContentsId: 42, windowId: 7 }
 
     await expect(
@@ -2360,7 +2372,7 @@ describe('dispatchDeepchatRoute', () => {
         },
         context
       )
-    ).resolves.toEqual({ directive: null })
+    ).resolves.toEqual({ action: 'rejected', directive: null, reason: 'unavailable' })
     await expect(
       dispatchDeepchatRoute(
         runtime,
@@ -2369,7 +2381,7 @@ describe('dispatchDeepchatRoute', () => {
         context
       )
     ).resolves.toEqual({ ok: false })
-    expect(createDirective).not.toHaveBeenCalled()
+    expect(createDirectiveResult).not.toHaveBeenCalled()
     expect(deleteDirective).not.toHaveBeenCalled()
   })
 

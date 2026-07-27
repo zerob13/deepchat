@@ -3101,6 +3101,8 @@
       "directiveSuppressHint": "主题会过滤召回记忆，指令用于指导回答；这不是输出防火墙。",
       "directiveLength": "指令 {content}/{contentMax} · 主题 {topic}/{topicMax}",
       "directiveCreateAction": "启用指令",
+      "directiveCapacityTitle": "已达到生效指令上限",
+      "directiveCapacityDescription": "每个智能体最多可有 {max} 条生效指令。请先删除一条生效指令，再新增或批准其他指令。",
       "directiveListTitle": "已保存指令",
       "directiveListDescription": "{active} 个生效中 · {draft} 个待批准",
       "directiveEmptyTitle": "暂无指令",

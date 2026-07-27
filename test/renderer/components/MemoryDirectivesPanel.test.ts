@@ -151,7 +151,7 @@ describe('MemoryDirectivesPanel', () => {
   it('creates an explicit instruction and adds the returned active row', async () => {
     const { wrapper, memoryClient } = await setup()
     const created = directive('created', 'active', { content: 'Keep answers concise.' })
-    memoryClient.createDirective.mockResolvedValue(created)
+    memoryClient.createDirective.mockResolvedValue({ action: 'applied', directive: created })
 
     wrapper
       .findComponent({ name: 'Textarea' })
@@ -176,7 +176,7 @@ describe('MemoryDirectivesPanel', () => {
       content: 'Do not proactively mention Project X.',
       topic: 'Project X'
     })
-    memoryClient.createDirective.mockResolvedValue(created)
+    memoryClient.createDirective.mockResolvedValue({ action: 'applied', directive: created })
 
     wrapper.findComponent({ name: 'Select' }).vm.$emit('update:modelValue', 'suppress_topic')
     await flushPromises()
@@ -237,7 +237,7 @@ describe('MemoryDirectivesPanel', () => {
     const stale = deferred<MemoryDirectiveItem[]>()
     const created = directive('created', 'active', { content: 'Keep answers concise.' })
     memoryClient.listDirectives.mockReturnValueOnce(stale.promise)
-    memoryClient.createDirective.mockResolvedValue(created)
+    memoryClient.createDirective.mockResolvedValue({ action: 'applied', directive: created })
 
     await buttonContaining(wrapper, 'settings.memory.redesign.refresh').trigger('click')
     wrapper
@@ -259,7 +259,7 @@ describe('MemoryDirectivesPanel', () => {
     const draft = directive('draft', 'draft')
     const active = { ...draft, status: 'active' as const, updatedAt: 2 }
     const { wrapper, memoryClient } = await setup([draft])
-    memoryClient.approveDirective.mockResolvedValue(active)
+    memoryClient.approveDirective.mockResolvedValue({ action: 'applied', directive: active })
     memoryClient.deleteDirective.mockResolvedValue(true)
 
     await buttonContaining(wrapper, 'settings.deepchatAgents.memoryManager.approve').trigger(
@@ -294,5 +294,41 @@ describe('MemoryDirectivesPanel', () => {
       'settings.memory.redesign.directiveStatus.rejected'
     )
     expect(memoryClient.approveDirective).not.toHaveBeenCalled()
+  })
+
+  it('explains active-capacity rejection for create and approval', async () => {
+    const draft = directive('draft', 'draft')
+    const { wrapper, memoryClient, toast } = await setup([draft])
+    memoryClient.createDirective.mockResolvedValue({
+      action: 'rejected',
+      directive: null,
+      reason: 'capacity'
+    })
+    memoryClient.approveDirective.mockResolvedValue({
+      action: 'rejected',
+      directive: null,
+      reason: 'capacity'
+    })
+
+    wrapper
+      .findComponent({ name: 'Textarea' })
+      .vm.$emit('update:modelValue', 'Keep answers concise.')
+    await flushPromises()
+    await wrapper.find('[data-testid="memory-directive-create"]').trigger('click')
+    await flushPromises()
+    await buttonContaining(wrapper, 'settings.deepchatAgents.memoryManager.approve').trigger(
+      'click'
+    )
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="memory-directive-draft"]').text()).toContain(
+      'settings.memory.redesign.directiveStatus.draft'
+    )
+    expect(toast).toHaveBeenCalledTimes(2)
+    expect(toast).toHaveBeenLastCalledWith({
+      variant: 'destructive',
+      title: 'settings.memory.redesign.directiveCapacityTitle',
+      description: expect.stringContaining(String(AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT))
+    })
   })
 })

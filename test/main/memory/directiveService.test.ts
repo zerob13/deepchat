@@ -1,17 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS } from '@shared/types/agent-memory'
+import {
+  AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT,
+  AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
+  AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
+} from '@shared/types/agent-memory'
 
+import { normalizeMemoryDirective } from '@/memory/domain/directives'
 import { makePresenter } from './support/memoryFakes'
 
 describe('DirectiveService', () => {
   it('requires explicit approval before a derived suggestion becomes active', () => {
     let now = 1_000
     const onMemoryChanged = vi.fn()
-    const { presenter, auditRepo } = makePresenter(
-      { memoryEnabled: true },
-      undefined,
-      { clock: { now: () => now, timeZone: () => 'UTC' }, onMemoryChanged }
-    )
+    const { presenter, auditRepo } = makePresenter({ memoryEnabled: true }, undefined, {
+      clock: { now: () => now, timeZone: () => 'UTC' },
+      onMemoryChanged
+    })
 
     const draft = presenter.suggestDirective('a', {
       kind: 'suppress_topic',
@@ -131,5 +135,57 @@ describe('DirectiveService', () => {
     expect(disabledDirective).toMatchObject({ status: 'active' })
     expect(disabled.listActiveDirectives('a')).toEqual([])
     expect(disabled.deleteDirective('a', disabledDirective!.id)).toBe(true)
+  })
+
+  it('removes invisible controls before a directive can be reviewed or persisted', () => {
+    const normalized = normalizeMemoryDirective({
+      kind: 'suppress_topic',
+      content: 'Keep\u202e\u200b\nanswers visible.',
+      topic: 'Project\u202e\u200b\nSaffron'
+    })
+
+    expect(normalized.content).toBe('Keep answers visible.')
+    expect(normalized.normalizedTopic).toBe('project saffron')
+    expect(normalized.content).not.toMatch(/[\p{Cc}\p{Cf}]/u)
+    expect(normalized.normalizedTopic).not.toMatch(/[\p{Cc}\p{Cf}]/u)
+    expect(() =>
+      normalizeMemoryDirective({ kind: 'instruction', content: '\u202e\u200b\n' })
+    ).toThrow(/must not be empty/)
+    expect(() =>
+      normalizeMemoryDirective({
+        kind: 'suppress_topic',
+        content: 'Suppress compatibility ligatures.',
+        topic: '\ufb03'.repeat(AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS)
+      })
+    ).toThrow(/topic exceeds 512 Unicode code points/)
+  })
+
+  it('returns typed capacity results for explicit creation and draft approval', () => {
+    const { presenter } = makePresenter({ memoryEnabled: true })
+    for (let index = 0; index < AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT; index += 1) {
+      expect(
+        presenter.createDirective('a', {
+          kind: 'instruction',
+          content: `Active directive ${index}`
+        })
+      ).not.toBeNull()
+    }
+    const draft = presenter.suggestDirective('a', {
+      kind: 'instruction',
+      content: 'Pending approval'
+    })
+    expect(draft).not.toBeNull()
+
+    expect(
+      presenter.createDirectiveResult('a', {
+        kind: 'instruction',
+        content: 'One directive too many'
+      })
+    ).toEqual({ action: 'rejected', directive: null, reason: 'capacity' })
+    expect(presenter.approveDirectiveResult('a', draft!.id)).toEqual({
+      action: 'rejected',
+      directive: null,
+      reason: 'capacity'
+    })
   })
 })

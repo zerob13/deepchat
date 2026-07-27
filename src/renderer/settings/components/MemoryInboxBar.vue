@@ -189,7 +189,10 @@ import { Button } from '@shadcn/components/ui/button'
 import { useToast } from '@/components/use-toast'
 import { createMemoryClient } from '@api/MemoryClient'
 import type { MemoryConflictItem, MemoryDirectiveItem, MemoryItem } from '@shared/contracts/routes'
-import { notifyMemoryActionFailed } from './memoryRedesignUtils'
+import {
+  notifyMemoryActionFailed,
+  notifyMemoryDirectiveCommandRejected
+} from './memoryRedesignUtils'
 
 const props = defineProps<{
   agentId: string
@@ -329,10 +332,10 @@ async function approveDirective(directiveId: string): Promise<void> {
   setDirectivePending(directiveId, true)
   let shouldReload = false
   try {
-    const approved = await memoryClient.approveDirective(agentId, directiveId)
+    const result = await memoryClient.approveDirective(agentId, directiveId)
     if (props.agentId !== agentId) return
-    if (!approved) {
-      notifyFailed()
+    if (result.action === 'rejected') {
+      notifyMemoryDirectiveCommandRejected(toast, t, result.reason)
       return
     }
     directiveDrafts.value = directiveDrafts.value.filter(

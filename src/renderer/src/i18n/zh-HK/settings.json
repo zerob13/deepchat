@@ -3135,6 +3135,8 @@
       "directiveSuppressHint": "The topic gates recalled memory; the instruction guides the response. This is not an output firewall.",
       "directiveLength": "Instruction {content}/{contentMax} · Topic {topic}/{topicMax}",
       "directiveCreateAction": "Activate directive",
+      "directiveCapacityTitle": "已達生效指令上限",
+      "directiveCapacityDescription": "每個智能體最多可有 {max} 條生效指令。請先刪除一條生效指令，再新增或批准其他指令。",
       "directiveListTitle": "Saved directives",
       "directiveListDescription": "{active} active · {draft} awaiting approval",
       "directiveEmptyTitle": "No directives yet",

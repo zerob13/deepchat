@@ -284,7 +284,11 @@ import {
 } from '@shared/types/agent-memory'
 import type { MemoryDirectiveCreateInput, MemoryDirectiveItem } from '@shared/contracts/routes'
 import { unicodeCodePointLength } from '@shared/lib/unicodeText'
-import { notifyMemoryActionFailed, shortDate } from './memoryRedesignUtils'
+import {
+  notifyMemoryActionFailed,
+  notifyMemoryDirectiveCommandRejected,
+  shortDate
+} from './memoryRedesignUtils'
 
 const props = defineProps<{
   agentId: string
@@ -429,13 +433,13 @@ async function create(): Promise<void> {
   creating.value = true
   let shouldReload = false
   try {
-    const created = await memoryClient.createDirective(agentId, input)
+    const result = await memoryClient.createDirective(agentId, input)
     if (props.agentId !== agentId) return
-    if (!created) {
-      notifyFailed()
+    if (result.action === 'rejected') {
+      notifyMemoryDirectiveCommandRejected(toast, t, result.reason)
       return
     }
-    upsertDirective(created)
+    upsertDirective(result.directive)
     resetForm()
   } catch (error) {
     if (props.agentId === agentId) {
@@ -460,14 +464,22 @@ async function transition(
   setPending(directiveId, true)
   let shouldReload = false
   try {
-    const updated =
-      status === 'active'
-        ? await memoryClient.approveDirective(agentId, directiveId)
-        : await memoryClient.rejectDirective(agentId, directiveId)
-    if (props.agentId !== agentId) return
-    if (!updated) {
-      notifyFailed()
-      return
+    let updated: MemoryDirectiveItem | null
+    if (status === 'active') {
+      const result = await memoryClient.approveDirective(agentId, directiveId)
+      if (props.agentId !== agentId) return
+      if (result.action === 'rejected') {
+        notifyMemoryDirectiveCommandRejected(toast, t, result.reason)
+        return
+      }
+      updated = result.directive
+    } else {
+      updated = await memoryClient.rejectDirective(agentId, directiveId)
+      if (props.agentId !== agentId) return
+      if (!updated) {
+        notifyFailed()
+        return
+      }
     }
     upsertDirective(updated)
   } catch (error) {

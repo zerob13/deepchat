@@ -238,6 +238,18 @@ export const MemoryDirectiveInputSchema = z.discriminatedUnion('kind', [
     .strict()
 ])
 
+export const MemoryDirectiveCommandResultSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('applied'),
+    directive: MemoryDirectiveItemSchema
+  }),
+  z.object({
+    action: z.literal('rejected'),
+    directive: z.null(),
+    reason: z.enum(['capacity', 'not-found', 'unavailable'])
+  })
+])
+
 export const MEMORY_HEALTH_DEFAULT_AUDIT_SCAN_LIMIT = 200
 export const MEMORY_ARCHIVE_CANDIDATE_LIFECYCLE_PREVIEW_LIMIT = 25
 export const MEMORY_ARCHIVE_CANDIDATE_LIFECYCLE_SCAN_LIMIT = 200
@@ -995,13 +1007,13 @@ export const memoryCreateDirectiveRoute = defineRouteContract({
     agentId: AgentIdSchema,
     directive: MemoryDirectiveInputSchema
   }),
-  output: z.object({ directive: MemoryDirectiveItemSchema.nullable() })
+  output: MemoryDirectiveCommandResultSchema
 })
 
 export const memoryApproveDirectiveRoute = defineRouteContract({
   name: 'memory.approveDirective',
   input: z.object({ agentId: AgentIdSchema, directiveId: z.string().trim().min(1).max(128) }),
-  output: z.object({ directive: MemoryDirectiveItemSchema.nullable() })
+  output: MemoryDirectiveCommandResultSchema
 })
 
 export const memoryRejectDirectiveRoute = defineRouteContract({
@@ -1029,6 +1041,7 @@ export type MemoryViewManifest = z.infer<typeof MemoryViewManifestSchema>
 export type MemorySourceSpan = z.infer<typeof memoryGetSourceSpanRoute.output>['span']
 export type MemoryDirectiveItem = z.infer<typeof MemoryDirectiveItemSchema>
 export type MemoryDirectiveCreateInput = z.infer<typeof MemoryDirectiveInputSchema>
+export type MemoryDirectiveCommandResult = z.infer<typeof MemoryDirectiveCommandResultSchema>
 export type MemoryConflictItem = z.infer<
   typeof memoryListConflictsRoute.output
 >['conflicts'][number]

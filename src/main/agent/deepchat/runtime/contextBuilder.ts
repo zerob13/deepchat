@@ -1208,17 +1208,40 @@ function omitMemoryFromActiveTurn(
     return activeTurn
   }
 
-  let removed = false
-  const messages = activeTurn.map((message) => {
-    if (removed) return message
-    const stripped = stripLeadingUserContext(message, context.memory.content!)
-    removed = stripped.removed
-    return stripped.message
-  })
-  if (removed) {
+  const messages = omitLeadingContributionFromActiveTurn(activeTurn, context.memory.content)
+  if (messages !== activeTurn) {
     context.memoryIncluded = false
   }
   return messages
+}
+
+function omitDirectivesFromActiveTurn(
+  activeTurn: ChatMessage[],
+  context: ContextRuntimeContributions
+): ChatMessage[] {
+  if (!context.directivesIncluded || !context.directives.content) {
+    return activeTurn
+  }
+
+  const messages = omitLeadingContributionFromActiveTurn(activeTurn, context.directives.content)
+  if (messages !== activeTurn) {
+    context.directivesIncluded = false
+  }
+  return messages
+}
+
+function omitLeadingContributionFromActiveTurn(
+  activeTurn: ChatMessage[],
+  content: string
+): ChatMessage[] {
+  let removed = false
+  const messages = activeTurn.map((message) => {
+    if (removed) return message
+    const stripped = stripLeadingUserContext(message, content)
+    removed = stripped.removed
+    return stripped.message
+  })
+  return removed ? messages : activeTurn
 }
 
 function activeTurnContainsLeadingContext(
@@ -1365,6 +1388,25 @@ export function buildCacheAwareContextWithMetadata(
     fixedTokens = estimateMessagesTokens(fixedMessages)
   }
 
+  if (
+    fixedTokens > physicalInputBudget &&
+    context.directivesIncluded &&
+    context.directives.content
+  ) {
+    context.directivesIncluded = false
+    newUserMessage = createUserChatMessage(
+      newUserContent,
+      supportsVision,
+      supportsAudioInput,
+      buildActiveTurnLeadingContext(context)
+    )
+    fixedMessages = [
+      ...leadingMessages,
+      ...(hasPromptMessageContent(newUserMessage) ? [newUserMessage] : [])
+    ]
+    fixedTokens = estimateMessagesTokens(fixedMessages)
+  }
+
   if (fixedTokens > physicalInputBudget) {
     throw buildCacheAwareOverflowError({
       contextLength,
@@ -1473,6 +1515,23 @@ export function buildCacheAwareResumeContextWithMetadata(
     context.memory.content
   ) {
     const messages = omitMemoryFromActiveTurn(activeTurn.messages, context)
+    activeTurn = {
+      ...activeTurn,
+      messages,
+      tokens: estimateMessagesTokens(messages)
+    }
+    historyTurns = historyTurns.map((turn, index) => (index === activeTurnIndex ? activeTurn! : turn))
+    fixedMessages = [...leadingMessages, ...messages]
+    fixedTokens = estimateMessagesTokens(fixedMessages)
+  }
+
+  if (
+    fixedTokens > physicalInputBudget &&
+    activeTurn &&
+    context.directivesIncluded &&
+    context.directives.content
+  ) {
+    const messages = omitDirectivesFromActiveTurn(activeTurn.messages, context)
     activeTurn = {
       ...activeTurn,
       messages,
@@ -1753,7 +1812,21 @@ export function fitCacheAwareMessagesToContextWindow(
     totalTokens -= turns.shift()?.tokens ?? 0
   }
 
-  const fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
+  let fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
+  if (
+    fixedTokens > physicalInputBudget &&
+    context.directivesIncluded &&
+    context.directives.content
+  ) {
+    const activeMessages = omitDirectivesFromActiveTurn(activeTurn.messages, context)
+    if (activeMessages !== activeTurn.messages) {
+      activeTurn = {
+        messages: activeMessages,
+        tokens: estimateMessagesTokens(activeMessages)
+      }
+      fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
+    }
+  }
   if (fixedTokens > physicalInputBudget) {
     throw buildCacheAwareOverflowError({
       contextLength,

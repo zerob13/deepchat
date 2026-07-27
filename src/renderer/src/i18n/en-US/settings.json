@@ -3102,6 +3102,8 @@
       "directiveSuppressHint": "The topic gates recalled memory; the instruction guides the response. This is not an output firewall.",
       "directiveLength": "Instruction {content}/{contentMax} · Topic {topic}/{topicMax}",
       "directiveCreateAction": "Activate directive",
+      "directiveCapacityTitle": "Active directive limit reached",
+      "directiveCapacityDescription": "Each agent can have up to {max} active directives. Delete an active directive before adding or approving another.",
       "directiveListTitle": "Saved directives",
       "directiveListDescription": "{active} active · {draft} awaiting approval",
       "directiveEmptyTitle": "No directives yet",

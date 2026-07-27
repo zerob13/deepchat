@@ -628,12 +628,24 @@ export class MemoryService implements MemoryRuntimePort {
     return this.directives.createExplicitDirective(agentId, input, source)
   }
 
+  createDirectiveResult(
+    agentId: string,
+    input: Parameters<DirectiveService['createExplicitDirectiveResult']>[1],
+    source?: Parameters<DirectiveService['createExplicitDirectiveResult']>[2]
+  ) {
+    return this.directives.createExplicitDirectiveResult(agentId, input, source)
+  }
+
   suggestDirective(agentId: string, input: Parameters<DirectiveService['suggestDirective']>[1]) {
     return this.directives.suggestDirective(agentId, input)
   }
 
   approveDirective(agentId: string, directiveId: string) {
     return this.directives.approveDirective(agentId, directiveId)
+  }
+
+  approveDirectiveResult(agentId: string, directiveId: string) {
+    return this.directives.approveDirectiveResult(agentId, directiveId)
   }
 
   rejectDirective(agentId: string, directiveId: string) {

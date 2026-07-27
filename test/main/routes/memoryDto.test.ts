@@ -954,6 +954,29 @@ describe('memory directive route contracts', () => {
       ).toBe(false)
     }
   })
+
+  it('distinguishes directive capacity from missing or unavailable mutations', () => {
+    expect(
+      memoryCreateDirectiveRoute.output.parse({
+        action: 'rejected',
+        directive: null,
+        reason: 'capacity'
+      })
+    ).toEqual({ action: 'rejected', directive: null, reason: 'capacity' })
+    expect(
+      memoryApproveDirectiveRoute.output.parse({
+        action: 'rejected',
+        directive: null,
+        reason: 'not-found'
+      })
+    ).toEqual({ action: 'rejected', directive: null, reason: 'not-found' })
+    expect(
+      memoryCreateDirectiveRoute.output.safeParse({
+        action: 'applied',
+        directive: null
+      }).success
+    ).toBe(false)
+  })
 })
 
 describe('memory.updated event contract', () => {

@@ -66,14 +66,38 @@ export interface MemoryDirectiveInsertResult {
   row: AgentMemoryDirectiveRow
 }
 
+export type MemoryDirectiveTransitionResult =
+  | {
+      action: 'transitioned'
+      row: AgentMemoryDirectiveRow
+    }
+  | {
+      action: 'capacity' | 'not-found'
+      row: null
+    }
+
 export interface MemoryDirectiveCounts {
   draft: number
   active: number
   rejected: number
 }
 
+export type MemoryDirectiveCommandResult =
+  | { action: 'applied'; directive: AgentMemoryDirectiveRow }
+  | {
+      action: 'rejected'
+      directive: null
+      reason: 'capacity' | 'not-found' | 'unavailable'
+    }
+
+const INVISIBLE_DIRECTIVE_CONTROL_PATTERN = /[\p{Cc}\p{Cf}]+/gu
+
+function sanitizeDirectiveDisplayText(value: string): string {
+  return value.replace(INVISIBLE_DIRECTIVE_CONTROL_PATTERN, ' ')
+}
+
 function normalizeWhitespace(value: string): string {
-  return value.normalize('NFKC').trim().replace(/\s+/gu, ' ')
+  return sanitizeDirectiveDisplayText(value.normalize('NFKC')).trim().replace(/\s+/gu, ' ')
 }
 
 export function normalizeDirectiveMatchText(value: string): string {
@@ -81,7 +105,7 @@ export function normalizeDirectiveMatchText(value: string): string {
 }
 
 function assertBoundedText(value: string, label: string, maxChars: number): string {
-  const trimmed = value.trim()
+  const trimmed = sanitizeDirectiveDisplayText(value).trim()
   if (!trimmed) throw new Error(`[Memory] directive ${label} must not be empty`)
   if (unicodeCodePointLength(trimmed) > maxChars) {
     throw new Error(`[Memory] directive ${label} exceeds ${maxChars} Unicode code points`)
@@ -102,7 +126,11 @@ export function normalizeMemoryDirective(input: MemoryDirectiveInput): Normalize
     }
   } else {
     const topic = assertBoundedText(input.topic, 'topic', AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS)
-    normalizedTopic = normalizeDirectiveMatchText(topic)
+    normalizedTopic = assertBoundedText(
+      normalizeDirectiveMatchText(topic),
+      'topic',
+      AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
+    )
     if (!normalizedTopic) throw new Error('[Memory] directive topic must not be empty')
   }
 

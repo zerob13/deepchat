@@ -1895,6 +1895,90 @@ describe('cache-aware context assembly', () => {
     ])
   })
 
+  it('sheds directives only as the final optional fixed-context fallback', () => {
+    const directives = `DIRECTIVES_${'d'.repeat(240)}`
+    const normalBaseline = buildCacheAwareContextWithMetadata(
+      's1',
+      { text: 'latest instruction', files: [] },
+      'System',
+      10_000,
+      0,
+      createMockMessageStore(),
+      false,
+      { contextContributions: createCacheAwareContributions() }
+    )
+    const normalContext = createCacheAwareContributions({ directives })
+    const normal = buildCacheAwareContextWithMetadata(
+      's1',
+      { text: 'latest instruction', files: [] },
+      'System',
+      estimateMessagesTokens(normalBaseline.messages) + 1,
+      0,
+      createMockMessageStore(),
+      false,
+      { contextContributions: normalContext }
+    )
+
+    expect(normalContext.directivesIncluded).toBe(false)
+    expect(normal.messages.at(-1)?.content).toBe('latest instruction')
+    expect(normal.metadata.syntheticContributions).toEqual([])
+
+    const resumeRecords = [
+      makeUserRecord(1, 'resume owner'),
+      {
+        ...makeAssistantRecord(2, 'partial answer'),
+        id: 'resume-target',
+        status: 'pending' as const
+      }
+    ]
+    const resumeBaseline = buildCacheAwareResumeContextWithMetadata(
+      's1',
+      'resume-target',
+      'System',
+      10_000,
+      0,
+      createMockMessageStore(resumeRecords),
+      false,
+      {
+        historyRecords: resumeRecords,
+        contextContributions: createCacheAwareContributions()
+      }
+    )
+    const resumeContext = createCacheAwareContributions({ directives })
+    const resume = buildCacheAwareResumeContextWithMetadata(
+      's1',
+      'resume-target',
+      'System',
+      estimateMessagesTokens(resumeBaseline.messages) + 1,
+      0,
+      createMockMessageStore(resumeRecords),
+      false,
+      { historyRecords: resumeRecords, contextContributions: resumeContext }
+    )
+
+    expect(resumeContext.directivesIncluded).toBe(false)
+    expect(resume.messages[1]?.content).toBe('resume owner')
+    expect(resume.metadata.syntheticContributions).toEqual([])
+
+    const fitContext = createCacheAwareContributions({ directives })
+    const fitBaseline = [
+      { role: 'system' as const, content: 'System' },
+      { role: 'user' as const, content: 'latest instruction' }
+    ]
+    const fitted = fitCacheAwareMessagesToContextWindow(
+      [
+        fitBaseline[0],
+        { role: 'user', content: `${directives}\n\nlatest instruction` }
+      ],
+      estimateMessagesTokens(fitBaseline) + 1,
+      0,
+      fitContext
+    )
+
+    expect(fitContext.directivesIncluded).toBe(false)
+    expect(fitted).toEqual(fitBaseline)
+  })
+
   it('omits normal-turn memory before dropping history when only the combined view exceeds budget', () => {
     const records = [
       makeUserRecord(1, 'old user context'),

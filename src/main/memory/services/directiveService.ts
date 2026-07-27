@@ -4,6 +4,7 @@ import { AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT } from '@shared/types/agent-mem
 import {
   normalizeMemoryDirective,
   type AgentMemoryDirectiveRow,
+  type MemoryDirectiveCommandResult,
   type MemoryDirectiveInput
 } from '../domain/directives'
 import type { MemoryRuntimeContext } from '../context'
@@ -56,8 +57,19 @@ export class DirectiveService {
     input: MemoryDirectiveInput,
     source: 'explicit_user' | 'manual' = 'manual'
   ): AgentMemoryDirectiveRow | null {
+    const result = this.createExplicitDirectiveResult(agentId, input, source)
+    return result.action === 'applied' ? result.directive : null
+  }
+
+  createExplicitDirectiveResult(
+    agentId: string,
+    input: MemoryDirectiveInput,
+    source: 'explicit_user' | 'manual' = 'manual'
+  ): MemoryDirectiveCommandResult {
     this.ports.ctx.assertSafeAgentId(agentId)
-    if (!this.ports.ctx.canManageAgentMemory(agentId)) return null
+    if (!this.ports.ctx.canManageAgentMemory(agentId)) {
+      return { action: 'rejected', directive: null, reason: 'unavailable' }
+    }
     const normalized = normalizeMemoryDirective(input)
     const now = this.ports.ctx.now()
     const result = this.ports.repository.upsertExplicitDirective({
@@ -69,8 +81,12 @@ export class DirectiveService {
       createdAt: now,
       updatedAt: now
     })
-    if (result.action === 'capacity') return null
-    if (result.action === 'unchanged') return result.row
+    if (result.action === 'capacity') {
+      return { action: 'rejected', directive: null, reason: 'capacity' }
+    }
+    if (result.action === 'unchanged') {
+      return { action: 'applied', directive: result.row }
+    }
 
     this.ports.ctx.markDomainMutationCommitted(agentId)
     this.ports.ctx.writeAudit(agentId, {
@@ -86,7 +102,7 @@ export class DirectiveService {
       createdAt: now
     })
     this.ports.ctx.emitChanged(agentId, 'directive-create', { directiveId: result.row.id })
-    return result.row
+    return { action: 'applied', directive: result.row }
   }
 
   suggestDirective(agentId: string, input: MemoryDirectiveInput): AgentMemoryDirectiveRow | null {
@@ -123,25 +139,40 @@ export class DirectiveService {
   }
 
   approveDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
-    return this.transitionDraft(agentId, directiveId, 'active')
+    const result = this.approveDirectiveResult(agentId, directiveId)
+    return result.action === 'applied' ? result.directive : null
+  }
+
+  approveDirectiveResult(agentId: string, directiveId: string): MemoryDirectiveCommandResult {
+    return this.transitionDraftResult(agentId, directiveId, 'active')
   }
 
   rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
-    return this.transitionDraft(agentId, directiveId, 'rejected')
+    const result = this.transitionDraftResult(agentId, directiveId, 'rejected')
+    return result.action === 'applied' ? result.directive : null
   }
 
-  private transitionDraft(
+  private transitionDraftResult(
     agentId: string,
     directiveId: string,
     status: 'active' | 'rejected'
-  ): AgentMemoryDirectiveRow | null {
+  ): MemoryDirectiveCommandResult {
     this.ports.ctx.assertSafeAgentId(agentId)
-    if (!this.ports.ctx.canManageAgentMemory(agentId)) return null
+    if (!this.ports.ctx.canManageAgentMemory(agentId)) {
+      return { action: 'rejected', directive: null, reason: 'unavailable' }
+    }
     const id = directiveId.trim()
-    if (!id) return null
+    if (!id) return { action: 'rejected', directive: null, reason: 'not-found' }
     const now = this.ports.ctx.now()
-    const row = this.ports.repository.transitionDirective(agentId, id, 'draft', status, now)
-    if (!row) return null
+    const transition = this.ports.repository.transitionDirective(agentId, id, 'draft', status, now)
+    if (transition.action !== 'transitioned') {
+      return {
+        action: 'rejected',
+        directive: null,
+        reason: transition.action
+      }
+    }
+    const row = transition.row
 
     this.ports.ctx.markDomainMutationCommitted(agentId)
     this.ports.ctx.writeAudit(agentId, {
@@ -157,7 +188,7 @@ export class DirectiveService {
       status === 'active' ? 'directive-approve' : 'directive-reject',
       { directiveId: id }
     )
-    return row
+    return { action: 'applied', directive: row }
   }
 
   deleteDirective(agentId: string, directiveId: string): boolean {

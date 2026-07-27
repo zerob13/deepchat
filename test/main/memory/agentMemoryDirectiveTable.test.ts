@@ -89,11 +89,17 @@ describeIfSqlite('AgentMemoryDirectiveTable', () => {
       expect(
         table.transitionDirective('a', 'directive-draft', 'draft', 'rejected', 3_000)
       ).toMatchObject({
-        id: 'directive-draft',
-        status: 'rejected',
-        updated_at: 3_000
+        action: 'transitioned',
+        row: {
+          id: 'directive-draft',
+          status: 'rejected',
+          updated_at: 3_000
+        }
       })
-      expect(table.transitionDirective('a', 'directive-draft', 'draft', 'active', 4_000)).toBeNull()
+      expect(table.transitionDirective('a', 'directive-draft', 'draft', 'active', 4_000)).toEqual({
+        action: 'not-found',
+        row: null
+      })
 
       const explicit = table.upsertExplicitDirective(
         writeInput(
@@ -159,7 +165,10 @@ describeIfSqlite('AgentMemoryDirectiveTable', () => {
       expect(table.listDirectives('a', { statuses: ['draft'], limit: 10 })).toHaveLength(1)
       expect(table.listDirectives('a', { limit: Number.NaN })).toEqual([])
       expect(table.listActiveDirectives('a', 10).map((row) => row.id)).toEqual(['active'])
-      expect(table.transitionDirective('b', 'draft', 'draft', 'active', 4_000)).toBeNull()
+      expect(table.transitionDirective('b', 'draft', 'draft', 'active', 4_000)).toEqual({
+        action: 'not-found',
+        row: null
+      })
       expect(table.deleteDirective('b', 'draft')).toBeNull()
       expect(table.deleteDirective('a', 'draft')).toMatchObject({ id: 'draft' })
       expect(table.retireDirectiveNamespace('a')).toBe(1)
@@ -267,11 +276,17 @@ describeIfSqlite('AgentMemoryDirectiveTable', () => {
           { id: 'pending', source: 'derived_suggestion', status: 'draft' }
         )
       )
-      expect(table.transitionDirective('a', 'pending', 'draft', 'active', 2_000)).toBeNull()
+      expect(table.transitionDirective('a', 'pending', 'draft', 'active', 2_000)).toEqual({
+        action: 'capacity',
+        row: null
+      })
       expect(table.deleteDirective('a', 'active-1')).toMatchObject({ id: 'active-1' })
       expect(table.transitionDirective('a', 'pending', 'draft', 'active', 2_000)).toMatchObject({
-        id: 'pending',
-        status: 'active'
+        action: 'transitioned',
+        row: {
+          id: 'pending',
+          status: 'active'
+        }
       })
       expect(table.countDirectivesByStatus('a').active).toBe(
         AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT

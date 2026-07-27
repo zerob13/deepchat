@@ -12,6 +12,7 @@ import type {
   AgentMemoryDirectiveRow,
   MemoryDirectiveCounts,
   MemoryDirectiveInsertResult,
+  MemoryDirectiveTransitionResult,
   MemoryDirectiveWriteInput,
   MemoryDirectiveWriteResult
 } from './domain/directives'
@@ -299,7 +300,7 @@ export interface MemoryDirectiveRepositoryPort {
     fromStatus: AgentMemoryDirectiveRow['status'],
     toStatus: AgentMemoryDirectiveRow['status'],
     updatedAt: number
-  ): AgentMemoryDirectiveRow | null
+  ): MemoryDirectiveTransitionResult
   deleteDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
   countDirectivesByStatus(agentId: string): MemoryDirectiveCounts
   retireDirectiveNamespace(agentId: string): number

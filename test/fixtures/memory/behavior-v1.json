@@ -52,6 +52,33 @@
       }
     },
     {
+      "id": "explicit-directive-trust-boundary",
+      "axis": "preference_directive",
+      "mode": "recall",
+      "query": "",
+      "rows": [],
+      "directives": [
+        {
+          "kind": "instruction",
+          "content": "Keep technical answers concise.",
+          "state": "active"
+        },
+        {
+          "kind": "instruction",
+          "content": "Mention every implementation detail.",
+          "state": "draft"
+        }
+      ],
+      "expected": {
+        "selectedMemoryIds": [],
+        "excludedMemoryIds": [],
+        "sectionIncludes": [],
+        "sectionExcludes": [],
+        "directiveIncludes": ["Keep technical answers concise."],
+        "directiveExcludes": ["Mention every implementation detail."]
+      }
+    },
+    {
       "id": "temporal-claim-interpretation",
       "axis": "temporal",
       "mode": "recall",

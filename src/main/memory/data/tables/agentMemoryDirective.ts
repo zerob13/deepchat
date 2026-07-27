@@ -10,6 +10,7 @@ import type {
   AgentMemoryDirectiveRow,
   MemoryDirectiveCounts,
   MemoryDirectiveInsertResult,
+  MemoryDirectiveTransitionResult,
   MemoryDirectiveWriteInput,
   MemoryDirectiveWriteResult
 } from '../../domain/directives'
@@ -286,7 +287,7 @@ export class AgentMemoryDirectiveTable extends BaseTable implements MemoryDirect
     fromStatus: AgentMemoryDirectiveRow['status'],
     toStatus: AgentMemoryDirectiveRow['status'],
     updatedAt: number
-  ): AgentMemoryDirectiveRow | null {
+  ): MemoryDirectiveTransitionResult {
     if (
       fromStatus !== 'draft' ||
       (toStatus !== 'active' && toStatus !== 'rejected') ||
@@ -295,24 +296,28 @@ export class AgentMemoryDirectiveTable extends BaseTable implements MemoryDirect
       throw new Error('[Memory] invalid directive trust transition')
     }
     return this.db.transaction(() => {
+      const current = this.getDirective(agentId, directiveId)
+      if (!current || current.status !== fromStatus) {
+        return { action: 'not-found' as const, row: null }
+      }
       if (
         toStatus === 'active' &&
         this.countActive(agentId) >= AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
       ) {
-        return null
+        return { action: 'capacity' as const, row: null }
       }
-      return (
-        (this.db
-          .prepare(
-            `UPDATE agent_memory_directive
-             SET status = ?, updated_at = max(updated_at, ?)
-             WHERE agent_id = ? AND id = ? AND status = ?
-             RETURNING *`
-          )
-          .get(toStatus, Math.max(0, Math.floor(updatedAt)), agentId, directiveId, fromStatus) as
-          | AgentMemoryDirectiveRow
-          | undefined) ?? null
-      )
+      const row = this.db
+        .prepare(
+          `UPDATE agent_memory_directive
+           SET status = ?, updated_at = max(updated_at, ?)
+           WHERE agent_id = ? AND id = ? AND status = ?
+           RETURNING *`
+        )
+        .get(toStatus, Math.max(0, Math.floor(updatedAt)), agentId, directiveId, fromStatus) as
+        | AgentMemoryDirectiveRow
+        | undefined
+      if (!row) throw new Error('[Memory] directive transition did not materialize')
+      return { action: 'transitioned' as const, row }
     })()
   }
 

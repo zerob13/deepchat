@@ -56,7 +56,11 @@ import type {
   MemoryStatus,
   MemoryWriteOutcome
 } from './types'
-import type { AgentMemoryDirectiveRow, MemoryDirectiveInput } from './domain/directives'
+import type {
+  AgentMemoryDirectiveRow,
+  MemoryDirectiveCommandResult,
+  MemoryDirectiveInput
+} from './domain/directives'
 import type { CanonicalAgentMemoryRow as AgentMemoryRow, MemoryClearResult } from './domain/types'
 import { projectLegacyStatus } from './domain/stateModel'
 import type { AgentMemoryAuditRow, MemoryAuditListOptions } from './domain/audit'
@@ -135,6 +139,12 @@ export function toMemoryDirectiveDto(row: AgentMemoryDirectiveRow) {
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
+}
+
+function toMemoryDirectiveCommandDto(result: MemoryDirectiveCommandResult) {
+  return result.action === 'applied'
+    ? { action: 'applied' as const, directive: toMemoryDirectiveDto(result.directive) }
+    : result
 }
 
 function toMemoryAddResultDto(outcome: MemoryWriteOutcome) {
@@ -287,7 +297,13 @@ interface MemoryRouteService {
     input: MemoryDirectiveInput,
     source?: 'explicit_user' | 'manual'
   ): AgentMemoryDirectiveRow | null
+  createDirectiveResult(
+    agentId: string,
+    input: MemoryDirectiveInput,
+    source?: 'explicit_user' | 'manual'
+  ): MemoryDirectiveCommandResult
   approveDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
+  approveDirectiveResult(agentId: string, directiveId: string): MemoryDirectiveCommandResult
   rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
   deleteDirective(agentId: string, directiveId: string): boolean
 }
@@ -661,26 +677,22 @@ export function createMemoryRoutes(deps: {
       memoryCreateDirectiveRoute.name,
       async (rawInput) => {
         const input = memoryCreateDirectiveRoute.input.parse(rawInput)
-        const directive =
+        const result =
           (await deps.getAgentType(input.agentId)) === 'deepchat'
-            ? memoryService.createDirective(input.agentId, input.directive, 'manual')
-            : null
-        return memoryCreateDirectiveRoute.output.parse({
-          directive: directive ? toMemoryDirectiveDto(directive) : null
-        })
+            ? memoryService.createDirectiveResult(input.agentId, input.directive, 'manual')
+            : { action: 'rejected' as const, directive: null, reason: 'unavailable' as const }
+        return memoryCreateDirectiveRoute.output.parse(toMemoryDirectiveCommandDto(result))
       }
     ],
     [
       memoryApproveDirectiveRoute.name,
       async (rawInput) => {
         const input = memoryApproveDirectiveRoute.input.parse(rawInput)
-        const directive =
+        const result =
           (await deps.getAgentType(input.agentId)) === 'deepchat'
-            ? memoryService.approveDirective(input.agentId, input.directiveId)
-            : null
-        return memoryApproveDirectiveRoute.output.parse({
-          directive: directive ? toMemoryDirectiveDto(directive) : null
-        })
+            ? memoryService.approveDirectiveResult(input.agentId, input.directiveId)
+            : { action: 'rejected' as const, directive: null, reason: 'unavailable' as const }
+        return memoryApproveDirectiveRoute.output.parse(toMemoryDirectiveCommandDto(result))
       }
     ],
     [

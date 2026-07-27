@@ -984,8 +984,8 @@ describe('renderer api clients', () => {
               }
             case 'memory.createDirective':
             case 'memory.approveDirective':
-            case 'memory.rejectDirective':
               return {
+                action: 'applied',
                 directive: {
                   id:
                     typeof payload?.directiveId === 'string'
@@ -994,6 +994,20 @@ describe('renderer api clients', () => {
                   agentId: payload?.agentId ?? 'agent-1',
                   kind: 'instruction',
                   status: routeName === 'memory.rejectDirective' ? 'rejected' : 'active',
+                  source: 'manual',
+                  content: 'Be concise.',
+                  topic: null,
+                  createdAt: 1_000,
+                  updatedAt: 2_000
+                }
+              }
+            case 'memory.rejectDirective':
+              return {
+                directive: {
+                  id: payload?.directiveId ?? 'directive-rejected',
+                  agentId: payload?.agentId ?? 'agent-1',
+                  kind: 'instruction',
+                  status: 'rejected',
                   source: 'manual',
                   content: 'Be concise.',
                   topic: null,
@@ -1638,8 +1652,8 @@ describe('renderer api clients', () => {
       directiveId: 'directive-3'
     })
     expect(listed[0]).toMatchObject({ id: 'directive-1', status: 'active' })
-    expect(created?.id).toBe('directive-created')
-    expect(approved?.status).toBe('active')
+    expect(created.directive.id).toBe('directive-created')
+    expect(approved.directive?.status).toBe('active')
     expect(rejected?.status).toBe('rejected')
     expect(deleted).toBe(true)
   })

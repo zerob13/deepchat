@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import type { MemoryDirectiveItem, MemoryItem } from '../../../src/shared/contracts/routes'
+import type {
+  MemoryDirectiveCommandResult,
+  MemoryDirectiveItem,
+  MemoryItem
+} from '../../../src/shared/contracts/routes'
 
 const passthrough = (name: string, tag = 'div') =>
   defineComponent({ name, template: `<${tag}><slot /></${tag}>` })
@@ -74,7 +78,10 @@ async function setup() {
     resolveConflict: vi.fn(),
     approvePersonaDraft: vi.fn(),
     rejectPersonaDraft: vi.fn(),
-    approveDirective: vi.fn().mockResolvedValue({ ...draft, status: 'active' }),
+    approveDirective: vi.fn().mockResolvedValue({
+      action: 'applied',
+      directive: { ...draft, status: 'active' }
+    }),
     rejectDirective: vi.fn().mockResolvedValue({ ...draft, status: 'rejected' })
   }
   const toast = vi.fn()
@@ -117,7 +124,7 @@ describe('MemoryInboxBar directives', () => {
 
   it('removes an approved suggestion from the inbox immediately', async () => {
     const { wrapper, memoryClient } = await setup()
-    const approval = deferred<MemoryDirectiveItem | null>()
+    const approval = deferred<MemoryDirectiveCommandResult>()
     const stale = deferred<MemoryDirectiveItem[]>()
     memoryClient.approveDirective.mockReturnValueOnce(approval.promise)
     const approve = wrapper
@@ -134,7 +141,10 @@ describe('MemoryInboxBar directives', () => {
     if (!refresh) throw new Error('Refresh button not found')
     await refresh.trigger('click')
 
-    approval.resolve({ ...draftDirective(), status: 'active' })
+    approval.resolve({
+      action: 'applied',
+      directive: { ...draftDirective(), status: 'active' }
+    })
     await flushPromises()
 
     expect(memoryClient.approveDirective).toHaveBeenCalledWith('deepchat', 'directive-draft')
@@ -143,6 +153,29 @@ describe('MemoryInboxBar directives', () => {
     stale.resolve([draftDirective()])
     await flushPromises()
     expect(wrapper.text()).not.toContain('Do not proactively mention Project X.')
+  })
+
+  it('keeps a draft visible and explains capacity rejection', async () => {
+    const { wrapper, memoryClient, toast } = await setup()
+    memoryClient.approveDirective.mockResolvedValueOnce({
+      action: 'rejected',
+      directive: null,
+      reason: 'capacity'
+    })
+    const approve = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('settings.deepchatAgents.memoryManager.approve'))
+    if (!approve) throw new Error('Approve button not found')
+
+    await approve.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Do not proactively mention Project X.')
+    expect(toast).toHaveBeenCalledWith({
+      variant: 'destructive',
+      title: 'settings.memory.redesign.directiveCapacityTitle',
+      description: 'settings.memory.redesign.directiveCapacityDescription:{"max":64}'
+    })
   })
 
   it('keeps persona results available when directive loading fails', async () => {

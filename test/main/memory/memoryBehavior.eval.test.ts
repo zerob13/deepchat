@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildMemorySection } from '@/memory'
+import type { MemoryDirectiveInput } from '@/memory/domain/directives'
 import type { AgentMemoryKind, MemoryTemporalMetadata } from '@/memory/domain/types'
 import fixtureValue from '../../fixtures/memory/behavior-v1.json'
 import { makePresenter } from './support/memoryFakes'
@@ -23,12 +24,15 @@ interface MemoryBehaviorReplayRow extends Omit<MemoryBehaviorRow, 'kind'> {
   kind: 'episodic' | 'semantic'
 }
 
+type MemoryBehaviorDirective = MemoryDirectiveInput & { state: 'active' | 'draft' }
+
 interface MemoryBehaviorScenario {
   id: string
   axis: MemoryBehaviorAxis
   mode: 'working' | 'recall'
   query: string
   rows: MemoryBehaviorRow[]
+  directives?: MemoryBehaviorDirective[]
   deleteIds?: string[]
   replayRows?: MemoryBehaviorReplayRow[]
   expected: {
@@ -37,6 +41,8 @@ interface MemoryBehaviorScenario {
     excludedMemoryIds: string[]
     sectionIncludes: string[]
     sectionExcludes: string[]
+    directiveIncludes?: string[]
+    directiveExcludes?: string[]
     annotationIncludes?: Record<string, string>
   }
 }
@@ -90,6 +96,13 @@ function validateFixture(value: unknown): asserts value is MemoryBehaviorFixture
       throw new Error(`memory behavior scenario deletes an unknown row: ${scenario.id}`)
     }
   }
+  if (
+    !fixture.scenarios.some(
+      (scenario) => scenario.axis === 'preference_directive' && scenario.directives?.length
+    )
+  ) {
+    throw new Error('preference/directive axis requires an explicit directive scenario')
+  }
 }
 
 validateFixture(fixtureValue)
@@ -127,6 +140,13 @@ describe('agent memory behavior fixture v1', () => {
       for (const id of scenario.deleteIds ?? []) {
         await expect(presenter.deleteMemory('behavior-agent', id)).resolves.toBe(true)
       }
+      for (const { state, ...directive } of scenario.directives ?? []) {
+        if (state === 'active') {
+          expect(presenter.createDirective('behavior-agent', directive)).not.toBeNull()
+        } else {
+          expect(presenter.suggestDirective('behavior-agent', directive)).not.toBeNull()
+        }
+      }
       const replayCreatedIds = presenter.writeMemoriesSync(
         (scenario.replayRows ?? []).map(({ kind, content, importance, temporal }) => ({
           kind,
@@ -143,6 +163,7 @@ describe('agent memory behavior fixture v1', () => {
       const selected = injection?.payload.memories ?? []
       const selectedIds = selected.map((memory) => memory.id)
       const section = buildMemorySection(injection)
+      const directiveSection = presenter.buildDirectiveContribution('behavior-agent').content ?? ''
 
       expect(new Set(selectedIds)).toEqual(new Set(scenario.expected.selectedMemoryIds))
       for (const id of scenario.expected.excludedMemoryIds) {
@@ -150,6 +171,12 @@ describe('agent memory behavior fixture v1', () => {
       }
       for (const text of scenario.expected.sectionIncludes) expect(section).toContain(text)
       for (const text of scenario.expected.sectionExcludes) expect(section).not.toContain(text)
+      for (const text of scenario.expected.directiveIncludes ?? []) {
+        expect(directiveSection).toContain(text)
+      }
+      for (const text of scenario.expected.directiveExcludes ?? []) {
+        expect(directiveSection).not.toContain(text)
+      }
       for (const [id, text] of Object.entries(scenario.expected.annotationIncludes ?? {})) {
         expect(selected.find((memory) => memory.id === id)?.temporalAnnotation).toContain(text)
       }
