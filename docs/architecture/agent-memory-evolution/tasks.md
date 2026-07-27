@@ -19,12 +19,12 @@
 
 ## 2. Exact forgetting
 
-- [ ] Add hash-only tombstone persistence and indexes.
-- [ ] Tombstone and delete selectively in one transaction.
-- [ ] Tombstone claims during clear and preserve tombstones until Agent retirement.
-- [ ] Suppress exact provenance/content recreation inside the insert transaction.
-- [ ] Keep clear/Agent retirement semantics explicit.
-- [ ] Cover replay, concurrent mutation, privacy, and independent-source behavior.
+- [x] Add hash-only tombstone persistence and indexes.
+- [x] Tombstone and delete selectively in one transaction.
+- [x] Tombstone claims during clear and preserve tombstones until Agent retirement.
+- [x] Suppress exact provenance/content recreation inside the insert transaction.
+- [x] Keep clear/Agent retirement semantics explicit.
+- [x] Cover replay, concurrent mutation, privacy, and independent-source behavior.
 
 ## 3. Durable lineage and dirty consolidation
 
@@ -38,36 +38,62 @@
 
 ## 4. Directive plane
 
-- [ ] Add directive types, persistence, state transitions, and owner indexes.
-- [ ] Add explicit/manual creation and derived draft suggestions.
-- [ ] Add approve/reject/delete management routes and typed client methods.
-- [ ] Gate retrieval with active suppression directives before access accounting.
-- [ ] Render a separate bounded user-role directive contribution.
-- [ ] Reuse the inbox approval interaction without mixing directives into persona state.
-- [ ] Cover trust transitions, prompt separation, injection safety, and suppression false positives.
+- [x] Add directive types, persistence, state transitions, and owner indexes.
+- [x] Add explicit/manual creation and derived draft suggestions.
+- [x] Add approve/reject/delete management routes and typed client methods.
+- [x] Gate retrieval with active suppression directives before access accounting.
+- [x] Render a separate bounded user-role directive contribution.
+- [x] Reuse the inbox approval interaction without mixing directives into persona state.
+- [x] Cover trust transitions, prompt separation, injection safety, and suppression false positives.
 
 ## 5. Projection and budget
 
-- [ ] Build deterministic structured working projections from claims.
-- [ ] Annotate state/event/plan/recurring claims without changing claim content.
-- [ ] Add one total-budget allocator with floors, ceilings, reservation, and borrowing.
-- [ ] Extend manifests/diagnostics with allocation decisions.
-- [ ] Cover determinism, starvation, truncation, CJK density, and hard ceilings.
+- [x] Build deterministic structured working projections from claims.
+- [x] Annotate state/event/plan/recurring claims without changing claim content.
+- [x] Add one total-budget allocator with floors, ceilings, reservation, and borrowing.
+- [x] Extend manifests/diagnostics with allocation decisions.
+- [x] Cover determinism, starvation, truncation, CJK density, and hard ceilings.
 
 ## 6. Scope applicability
 
-- [ ] Add scope fields and backfill `user_scope`.
-- [ ] Keep the `user_scope` compatibility shadow synchronized.
-- [ ] Extend write and query contexts with typed scopes.
-- [ ] Apply identical owner-and-scope predicates to FTS and vector results.
-- [ ] Surface scope metadata through additive DTO fields.
-- [ ] Cover missing, mismatched, and matching user/project/session contexts.
+- [x] Add scope fields and backfill `user_scope`.
+- [x] Keep the `user_scope` compatibility shadow synchronized.
+- [x] Extend write and query contexts with typed scopes.
+- [x] Apply identical owner-and-scope predicates to FTS and vector results.
+- [x] Surface scope metadata through additive DTO fields.
+- [x] Cover missing, mismatched, and matching user/project/session contexts.
 
 ## 7. Documentation and validation
 
-- [ ] Update `docs/architecture/memory-system.md` as the maintained contract.
-- [ ] Run formatting and i18n maintenance.
-- [ ] Run lint and full typecheck.
-- [ ] Run focused Memory suites and maintained behavior/retrieval gates.
-- [ ] Run broader main-process tests when runtime permits.
-- [ ] Complete a final severity-ordered review and resolve every actionable finding.
+- [x] Update `docs/architecture/memory-system.md` as the maintained contract.
+- [x] Run formatting and i18n maintenance.
+- [x] Run lint and full typecheck.
+- [x] Run focused Memory suites and maintained behavior/retrieval gates.
+- [x] Run broader main-process tests and classify unrelated baseline failures.
+- [x] Complete a final severity-ordered review and resolve every actionable finding.
+
+## Validation record
+
+Completed on 2026-07-26:
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run format` and `pnpm run format:check` | Passed |
+| `pnpm run i18n` | Passed with no missing or invalid translations |
+| `pnpm run lint` | Passed |
+| `pnpm run typecheck` | Node and renderer passed |
+| Focused Memory, route, coordinator, and tool suites | 59 files passed; 978 tests passed, 2 skipped |
+| Full suite excluding three reproduced baseline-failure files | 661 files passed; 6,944 tests passed, 2 skipped |
+
+The first default full-suite run found 13 failures. Two were scoped route fixtures introduced by this
+branch; they were corrected and the dispatcher suite then passed 59/59. The remaining 11 failures
+reproduce when their files run alone and are already present at the `dev` merge base:
+
+- `test/main/scheduler/schedulerService.test.ts`: 1 provider-config snapshot expectation;
+- `test/main/app/startupMigrations/sessionDataMigrations.sqlite.test.ts`: 2 legacy bootstrap
+  expectations for `new_session_active_skills`;
+- `test/main/data/mainDatabase.test.ts`: 8 stale table/API and per-table-version expectations.
+
+The missing APIs and legacy migration behavior targeted by those assertions are unchanged by this
+architecture goal and already disagree with the tests at the `dev` merge base. This branch only adds
+Memory-owned entries to the shared schema catalog.

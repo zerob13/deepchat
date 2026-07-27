@@ -2,7 +2,8 @@
 
 ## Status
 
-- State: In progress
+- State: Complete
+- Completed: 2026-07-26
 - Branch: `feat/agent-memory-evolution`
 - Classification: Architecture evolution with user-visible behavior
 - Naming: This work does not assign a numeric version to the Agent Memory system. Existing `v1` and
