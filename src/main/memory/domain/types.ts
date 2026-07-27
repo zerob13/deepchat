@@ -161,6 +161,11 @@ export type MemoryClaimInsertResult =
   | { action: 'inserted'; id: string }
   | { action: 'suppressed'; reason: 'forgotten' | 'collision' }
 
+export type MemoryExplicitRelearnResult =
+  | { action: 'inserted'; id: string }
+  | { action: 'not-forgotten' }
+  | { action: 'suppressed'; reason: 'collision' }
+
 export type MemoryClaimContentUpdateResult =
   | { action: 'updated' }
   | { action: 'suppressed'; reason: 'forgotten' | 'concurrent-update' }
@@ -425,7 +430,7 @@ export interface WriteMemoriesOptions {
 }
 
 export type MemoryWriteOutcome =
-  | { action: 'created'; id: string }
+  | { action: 'created'; id: string; reauthorized?: boolean }
   | { action: 'updated'; id: string }
   | { action: 'superseded'; id: string; supersededId: string; created?: boolean }
   | { action: 'noop'; reason: string; id?: string }

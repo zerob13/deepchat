@@ -288,6 +288,25 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     return this.insert(input)
   }
 
+  insertExplicitlyReauthorizedClaim(input: AgentMemoryInsertInput): AgentMemoryRow | null {
+    return this.runInTransaction(() => {
+      if (!isTombstoneEligibleMemoryKind(input.kind)) return null
+      const identities = buildMemoryTombstoneIdentities({
+        agentId: input.agentId,
+        content: input.content,
+        provenanceKey: input.provenanceKey ?? null
+      })
+      const matchingKeys = identities
+        .map((identity) =>
+          this.tombstoneKey(input.agentId, identity.identityKind, identity.identityHash)
+        )
+        .filter((key) => this.tombstones.has(key))
+      if (matchingKeys.length === 0) return null
+      for (const key of matchingKeys) this.tombstones.delete(key)
+      return this.insert(input)
+    })
+  }
+
   insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number {
     let inserted = 0
     for (const input of inputs) {
@@ -2133,6 +2152,7 @@ const READ_CAPABILITY_KEYS = [
 const MUTATION_CAPABILITY_KEYS = [
   'insertInternalMemory',
   'insertClaimUnlessTombstoned',
+  'insertExplicitlyReauthorizedClaim',
   'rekeyProvenance',
   'updateInternalContent',
   'updateUserContentAndInvalidateEmbedding',

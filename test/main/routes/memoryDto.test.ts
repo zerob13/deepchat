@@ -687,8 +687,10 @@ describe('memory.add route contract', () => {
 
   it('accepts each flattened write outcome shape on output', () => {
     expect(
-      memoryAddRoute.output.parse({ result: { action: 'created', memoryId: 'm1' } }).result.action
-    ).toBe('created')
+      memoryAddRoute.output.parse({
+        result: { action: 'created', memoryId: 'm1', reauthorized: true }
+      }).result
+    ).toMatchObject({ action: 'created', reauthorized: true })
     expect(
       memoryAddRoute.output.parse({
         result: { action: 'superseded', memoryId: 'm2', supersededId: 'm1' }

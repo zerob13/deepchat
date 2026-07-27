@@ -53,6 +53,7 @@ export type {
   MemoryTemporalTrace,
   MemoryClaimContentUpdateResult,
   MemoryClaimInsertResult,
+  MemoryExplicitRelearnResult,
   MemoryDerivationInsertInput,
   MemoryDerivationKind,
   MemoryDirtySeed,

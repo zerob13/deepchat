@@ -141,7 +141,11 @@ function toMemoryAddResultDto(outcome: MemoryWriteOutcome) {
   switch (outcome.action) {
     case 'created':
     case 'updated':
-      return { action: outcome.action, memoryId: outcome.id }
+      return {
+        action: outcome.action,
+        memoryId: outcome.id,
+        ...(outcome.action === 'created' && outcome.reauthorized ? { reauthorized: true } : {})
+      }
     case 'superseded':
       return { action: outcome.action, memoryId: outcome.id, supersededId: outcome.supersededId }
     case 'challenged':

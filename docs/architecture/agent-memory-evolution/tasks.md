@@ -106,7 +106,7 @@ Memory-owned entries to the shared schema catalog.
 - [x] Retire the superseded recall index without rebuilding it at startup.
 - [x] Preserve one-sided temporal metadata across all rewrite paths.
 - [x] Reject malformed extracted temporal candidates independently.
-- [ ] Allow explicit relearning to atomically supersede exact tombstones.
+- [x] Allow explicit relearning to atomically supersede exact tombstones.
 - [ ] Strip invisible directive controls and return typed capacity failures.
 - [ ] Preserve indexed ordering for multi-scope FTS importance candidates.
 - [ ] Keep suppressed claims visible to management search.

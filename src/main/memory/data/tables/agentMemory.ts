@@ -951,10 +951,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
     }
   }
 
-  private hasTombstoneForClaim(
+  private findTombstoneIdentitiesForClaim(
     input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
-  ): boolean {
-    if (!isTombstoneEligibleMemoryKind(input.kind)) return false
+  ): ReturnType<typeof buildMemoryTombstoneIdentities> {
+    if (!isTombstoneEligibleMemoryKind(input.kind)) return []
     const identities = buildMemoryTombstoneIdentities({
       agentId: input.agentId,
       content: input.content,
@@ -966,9 +966,15 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
        WHERE agent_id = ? AND identity_kind = ? AND identity_hash = ?
        LIMIT 1`
     )
-    return identities.some((identity) =>
+    return identities.filter((identity) =>
       find.get(input.agentId, identity.identityKind, identity.identityHash)
     )
+  }
+
+  private hasTombstoneForClaim(
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey'>
+  ): boolean {
+    return this.findTombstoneIdentitiesForClaim(input).length > 0
   }
 
   private replaceLegacyStatusBridge(): void {
@@ -1964,6 +1970,25 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
     return this.db.transaction(() => {
       if (this.hasTombstoneForClaim(input)) return null
+      return this.insert(input)
+    })()
+  }
+
+  insertExplicitlyReauthorizedClaim(input: AgentMemoryInsertInput): AgentMemoryRow | null {
+    return this.db.transaction(() => {
+      const identities = this.findTombstoneIdentitiesForClaim(input)
+      if (identities.length === 0) return null
+      const remove = this.db.prepare(
+        `DELETE FROM agent_memory_tombstone
+         WHERE agent_id = ? AND identity_kind = ? AND identity_hash = ?`
+      )
+      let released = 0
+      for (const identity of identities) {
+        released += remove.run(input.agentId, identity.identityKind, identity.identityHash).changes
+      }
+      if (released !== identities.length) {
+        throw new Error('[Memory] exact tombstone release lost transactional consistency')
+      }
       return this.insert(input)
     })()
   }

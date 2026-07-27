@@ -2250,6 +2250,131 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('atomically releases exact tombstones only for an explicitly reauthorized insert', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Secret launch plan',
+        provenanceKey: 'session:secret-span'
+      })
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: original.id })
+
+      expect(
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'unrelated',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Independent claim',
+          provenanceKey: 'independent-source'
+        })
+      ).toBeNull()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 2
+      })
+
+      db.exec(`
+        CREATE TRIGGER fail_explicit_relearn
+        BEFORE INSERT ON agent_memory
+        WHEN NEW.id = 'reauthorized'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced relearn failure');
+        END;
+      `)
+      expect(() =>
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'reauthorized',
+          agentId: 'a',
+          kind: 'semantic',
+          content: '  Secret   launch plan ',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toThrow(/forced relearn failure/)
+      expect(table.getById('reauthorized')).toBeUndefined()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 2
+      })
+
+      db.exec('DROP TRIGGER fail_explicit_relearn')
+      expect(
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'reauthorized',
+          agentId: 'a',
+          kind: 'semantic',
+          content: '  Secret   launch plan ',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toMatchObject({ id: 'reauthorized' })
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('keeps unmatched provenance tombstones after content-only reauthorization', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Private source detail',
+        provenanceKey: 'old-source'
+      })
+      table.tombstoneAndDelete({
+        agentId: 'a',
+        id: original.id,
+        expectedRevision: original.decision_revision,
+        createdAt: 1_000
+      })
+
+      expect(
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'reauthorized',
+          agentId: 'a',
+          kind: 'semantic',
+          content: ' Private   source detail ',
+          provenanceKey: 'new-source'
+        })
+      ).toMatchObject({ id: 'reauthorized' })
+      expect(
+        db
+          .prepare(
+            `SELECT identity_kind
+             FROM agent_memory_tombstone
+             WHERE agent_id = ?`
+          )
+          .all('a')
+      ).toEqual([{ identity_kind: 'provenance' }])
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'old-source-replay',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Different replayed content',
+          provenanceKey: 'old-source'
+        })
+      ).toBeNull()
+    } finally {
+      db.close()
+    }
+  })
+
   it('keeps raw insertion and deletion outside the runtime mutation port', () => {
     const db = new DatabaseCtor(':memory:')
     try {

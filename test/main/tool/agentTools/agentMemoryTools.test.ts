@@ -69,7 +69,9 @@ describe('Agent memory tools', () => {
 
   it('passes memory_remember category through to the runtime port', async () => {
     const runtimePort = buildRuntimePort({
-      rememberMemory: vi.fn().mockResolvedValue({ action: 'created', id: 'mem-1' })
+      rememberMemory: vi
+        .fn()
+        .mockResolvedValue({ action: 'created', id: 'mem-1', reauthorized: true })
     })
     const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
 
@@ -99,7 +101,12 @@ describe('Agent memory tools', () => {
       'conv-1',
       { providerId: 'openai', modelId: 'gpt-4.1' }
     )
-    expect(JSON.parse(result.content)).toMatchObject({ ok: true, action: 'created', id: 'mem-1' })
+    expect(JSON.parse(result.content)).toMatchObject({
+      ok: true,
+      action: 'created',
+      id: 'mem-1',
+      reauthorized: true
+    })
   })
 
   it('recalls the current session scope without broadening the agent owner boundary', async () => {

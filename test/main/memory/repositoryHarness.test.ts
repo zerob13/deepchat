@@ -237,6 +237,44 @@ describe('memory repository fakes', () => {
     ).toMatchObject({ id: 'after-retirement' })
   })
 
+  it('matches AgentMemoryTable explicit relearn behavior', () => {
+    const repo = createFakeRepository()
+    const claim = repo.insert({
+      id: 'forgotten',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'private fact',
+      provenanceKey: 'private-source'
+    })
+    repo.tombstoneAndDelete({
+      agentId: 'a',
+      id: claim.id,
+      expectedRevision: claim.decision_revision,
+      createdAt: 1_000
+    })
+
+    expect(
+      repo.insertExplicitlyReauthorizedClaim({
+        id: 'unrelated',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'unrelated fact',
+        provenanceKey: 'unrelated-source'
+      })
+    ).toBeNull()
+    expect(repo.tombstones.size).toBe(2)
+    expect(
+      repo.insertExplicitlyReauthorizedClaim({
+        id: 'reauthorized',
+        agentId: 'a',
+        kind: 'semantic',
+        content: ' private   fact ',
+        provenanceKey: 'private-source'
+      })
+    ).toMatchObject({ id: 'reauthorized' })
+    expect(repo.tombstones.size).toBe(0)
+  })
+
   it('restricts runtime raw mutations to internal memory kinds', () => {
     const repo = createFakeRepository()
     expect(() =>

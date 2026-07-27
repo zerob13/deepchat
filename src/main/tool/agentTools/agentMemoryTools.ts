@@ -184,7 +184,11 @@ export class AgentMemoryToolHandler {
       return createMemoryResult(
         toolName,
         { ok, ...outcome },
-        ok ? 'Stored or updated long-term memory.' : 'Memory write made no change.'
+        outcome.action === 'created' && outcome.reauthorized
+          ? 'Reauthorized and stored the previously forgotten memory.'
+          : ok
+            ? 'Stored or updated long-term memory.'
+            : 'Memory write made no change.'
       )
     }
 

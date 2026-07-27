@@ -9,6 +9,7 @@ import {
 import {
   CONFIDENCE_INCREMENT,
   DEFAULT_CONFIDENCE,
+  type AgentMemoryInsertInput,
   type AgentMemoryRow,
   type MemoryScope,
   type MemoryTemporalMetadata,
@@ -19,6 +20,7 @@ import type {
   ContentUpdateResult,
   ManualEditFieldFlags,
   MemoryClaimInsertResult,
+  MemoryExplicitRelearnResult,
   ProvenanceHitResult
 } from '../domain/types'
 import { isEmbeddingEligibleState } from '../domain/stateModel'
@@ -130,6 +132,67 @@ export class MemoryRowMutations {
     return !!row && row.agent_id === agentId && isEmbeddingEligibleState(row)
   }
 
+  private buildClaimInsertInput(input: {
+    id: string
+    agentId: string
+    candidate: NormalizedMemoryCandidate
+    content: string
+    provenanceKey: string
+    options: WriteMemoriesOptions
+    createdAt: number
+    lifecycleState: Extract<AgentMemoryRow['lifecycle_state'], 'active' | 'conflicted'>
+    conflictWith?: string
+  }): AgentMemoryInsertInput {
+    const sourceSession = input.options.sourceSession ?? null
+    return {
+      id: input.id,
+      agentId: input.agentId,
+      kind: input.candidate.kind,
+      category: input.candidate.category,
+      content: input.content,
+      importance: input.candidate.importance,
+      lifecycleState: input.lifecycleState,
+      embeddingState: 'pending',
+      sourceSession,
+      scope: normalizeMemoryScope(input.options.scope),
+      provenanceKey: input.provenanceKey,
+      sourceEntryIds: sourceSession ? (input.options.sourceEntryIds ?? null) : null,
+      conflictWith: input.conflictWith,
+      createdAt: input.createdAt,
+      temporal: input.candidate.temporal
+    }
+  }
+
+  reauthorizeForgottenMemory(
+    agentId: string,
+    candidate: NormalizedMemoryCandidate,
+    content: string,
+    provenanceKey: string,
+    options: WriteMemoriesOptions,
+    createdAt: number
+  ): MemoryExplicitRelearnResult {
+    const id = `mem-${nanoid(12)}`
+    try {
+      const inserted = this.ports.repository.insertExplicitlyReauthorizedClaim(
+        this.buildClaimInsertInput({
+          id,
+          agentId,
+          candidate,
+          content,
+          provenanceKey,
+          options,
+          createdAt,
+          lifecycleState: 'active'
+        })
+      )
+      return inserted ? { action: 'inserted', id } : { action: 'not-forgotten' }
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) throw error
+      logger.warn(`[Memory] explicit relearn skipped (dedupe/race): ${String(error)}`)
+      return { action: 'suppressed', reason: 'collision' }
+    }
+  }
+
   insertMemory(
     agentId: string,
     candidate: NormalizedMemoryCandidate,
@@ -138,26 +201,20 @@ export class MemoryRowMutations {
     options: WriteMemoriesOptions,
     createdAt: number
   ): MemoryClaimInsertResult {
-    const sourceSession = options.sourceSession ?? null
-    const sourceEntryIds = sourceSession ? (options.sourceEntryIds ?? null) : null
     const id = `mem-${nanoid(12)}`
     try {
-      const inserted = this.ports.repository.insertClaimUnlessTombstoned({
-        id,
-        agentId,
-        kind: candidate.kind,
-        category: candidate.category,
-        content,
-        importance: candidate.importance,
-        lifecycleState: 'active',
-        embeddingState: 'pending',
-        sourceSession,
-        scope: normalizeMemoryScope(options.scope),
-        provenanceKey,
-        sourceEntryIds,
-        createdAt,
-        temporal: candidate.temporal
-      })
+      const inserted = this.ports.repository.insertClaimUnlessTombstoned(
+        this.buildClaimInsertInput({
+          id,
+          agentId,
+          candidate,
+          content,
+          provenanceKey,
+          options,
+          createdAt,
+          lifecycleState: 'active'
+        })
+      )
       return inserted ? { action: 'inserted', id } : { action: 'suppressed', reason: 'forgotten' }
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
@@ -175,27 +232,21 @@ export class MemoryRowMutations {
     options: WriteMemoriesOptions,
     createdAt: number
   ): MemoryClaimInsertResult {
-    const sourceSession = options.sourceSession ?? null
-    const sourceEntryIds = sourceSession ? (options.sourceEntryIds ?? null) : null
     const id = `mem-${nanoid(12)}`
     try {
-      const inserted = this.ports.repository.insertClaimUnlessTombstoned({
-        id,
-        agentId,
-        kind: candidate.kind,
-        category: candidate.category,
-        content,
-        importance: candidate.importance,
-        lifecycleState: 'conflicted',
-        embeddingState: 'pending',
-        sourceSession,
-        scope: normalizeMemoryScope(options.scope),
-        provenanceKey,
-        sourceEntryIds,
-        conflictWith: targetId,
-        createdAt,
-        temporal: candidate.temporal
-      })
+      const inserted = this.ports.repository.insertClaimUnlessTombstoned(
+        this.buildClaimInsertInput({
+          id,
+          agentId,
+          candidate,
+          content,
+          provenanceKey,
+          options,
+          createdAt,
+          lifecycleState: 'conflicted',
+          conflictWith: targetId
+        })
+      )
       return inserted ? { action: 'inserted', id } : { action: 'suppressed', reason: 'forgotten' }
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error

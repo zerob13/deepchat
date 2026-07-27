@@ -40,6 +40,7 @@ import type {
   MemoryModelRef,
   MemoryClaimContentUpdateResult,
   MemoryClaimInsertResult,
+  MemoryExplicitRelearnResult,
   MemoryTransitionTarget,
   MemoryTemporalMetadata,
   MemoryTombstoneDeleteInput,
@@ -106,6 +107,7 @@ export interface MemoryReadRepositoryPort {
 export interface MemoryMutationRepositoryPort {
   insertInternalMemory(input: InternalMemoryInsertInput): AgentMemoryRow
   insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null
+  insertExplicitlyReauthorizedClaim(input: AgentMemoryInsertInput): AgentMemoryRow | null
   rekeyProvenance(agentId: string, id: string, expectedKey: string, nextKey: string): boolean
   updateInternalContent(input: InternalContentTransition): boolean
   updateUserContentAndInvalidateEmbedding(
@@ -460,6 +462,14 @@ export interface MemoryPendingEmbeddableRowPort {
 }
 
 export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
+  reauthorizeForgottenMemory(
+    agentId: string,
+    candidate: NormalizedMemoryCandidate,
+    content: string,
+    provenanceKey: string,
+    options: WriteMemoriesOptions,
+    createdAt: number
+  ): MemoryExplicitRelearnResult
   insertMemory(
     agentId: string,
     candidate: NormalizedMemoryCandidate,

@@ -112,7 +112,11 @@ function userAddAuditFromOutcome(outcome: MemoryWriteOutcome): {
       return {
         status: 'completed',
         reason: null,
-        outputRefs: { action: 'created', memoryId: outcome.id }
+        outputRefs: {
+          action: 'created',
+          memoryId: outcome.id,
+          ...(outcome.reauthorized ? { reauthorized: true } : {})
+        }
       }
     case 'updated':
       return {
@@ -1608,6 +1612,8 @@ export class WriteCoordinator {
     options: WriteMemoriesOptions,
     model?: MemoryModelRef | null
   ): Promise<MemoryWriteOutcome> {
+    // This entry point is reserved for explicit manual/tool writes. Background extraction,
+    // maintenance, and replay use suppression-only paths and must never release tombstones.
     if (!this.ctx.canWriteAgentMemory(options.agentId)) {
       return { action: 'noop', reason: 'disposed' }
     }
@@ -1615,18 +1621,28 @@ export class WriteCoordinator {
       ...options,
       scope: normalizeMemoryScope(options.scope)
     }
-    const resolvedModel = model ? this.ctx.resolveExtractionModel(options.agentId, model) : null
     const operationFence = this.ctx.captureOperationFence(options.agentId)
-    const outcome = resolvedModel
-      ? await this.coordinateWrite(
-          options.agentId,
-          candidate,
-          resolvedModel,
-          normalizedOptions,
-          this.ctx.now(),
-          operationFence
-        )
-      : this.directAddMemory(options.agentId, candidate, normalizedOptions, this.ctx.now())
+    const now = this.ctx.now()
+    const explicitlyRelearned = this.tryExplicitRelearn(
+      options.agentId,
+      candidate,
+      normalizedOptions,
+      now
+    )
+    const resolvedModel =
+      explicitlyRelearned || !model ? null : this.ctx.resolveExtractionModel(options.agentId, model)
+    const outcome =
+      explicitlyRelearned ??
+      (resolvedModel
+        ? await this.coordinateWrite(
+            options.agentId,
+            candidate,
+            resolvedModel,
+            normalizedOptions,
+            now,
+            operationFence
+          )
+        : this.directAddMemory(options.agentId, candidate, normalizedOptions, now))
     if (!this.ctx.canContinueOperation(operationFence)) {
       return { action: 'noop', reason: 'disposed' }
     }
@@ -1642,6 +1658,34 @@ export class WriteCoordinator {
       this.ports.scheduleConsolidation(options.agentId)
     }
     return outcome
+  }
+
+  private tryExplicitRelearn(
+    agentId: string,
+    candidate: MemoryCandidate,
+    options: WriteMemoriesOptions,
+    now: number
+  ): MemoryWriteOutcome | null {
+    const normalized = normalizeMemoryCandidate(candidate)
+    if (!normalized) return null
+    const scope = normalizeMemoryScope(options.scope)
+    const provenanceKey = buildScopedMemoryProvenanceKey(
+      agentId,
+      normalized.kind,
+      normalized.content,
+      scope
+    )
+    const result = this.ports.rows.reauthorizeForgottenMemory(
+      agentId,
+      normalized,
+      normalized.content,
+      provenanceKey,
+      options,
+      now
+    )
+    return result.action === 'inserted'
+      ? { action: 'created', id: result.id, reauthorized: true }
+      : null
   }
 
   private directAddMemory(

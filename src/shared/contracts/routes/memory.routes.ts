@@ -152,6 +152,7 @@ export const MemoryAddResultSchema = z.object({
   memoryId: z.string().optional(),
   supersededId: z.string().optional(),
   conflictWith: z.string().optional(),
+  reauthorized: z.boolean().optional(),
   reason: z.string().optional()
 })
 
