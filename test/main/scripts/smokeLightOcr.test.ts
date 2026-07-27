@@ -2,8 +2,18 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { gzipSync } from 'node:zlib'
+import { deflateSync, gzipSync } from 'node:zlib'
+import pdfParse from 'pdf-parse-new'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  LIGHT_OCR_DOCUMENT_MAX_PAGES,
+  LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS,
+  LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+  LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES,
+  LIGHT_OCR_PROTOCOL_VERSION
+} from '../../../src/main/ocr/lightOcrProtocol'
 
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs')
@@ -12,11 +22,16 @@ vi.mock('node:fs', async () => {
 
 import {
   assertSupportExpectation,
+  assertDocumentFixtureRecognized,
   assertFixtureRecognized,
+  buildRasterPdfFixture,
   createPackagedLightOcrEnvironment,
+  DOCUMENT_SMOKE_OPTIONS,
   measurePackagedComponents,
   normalizeArch,
   normalizePlatform,
+  PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES,
+  PACKAGED_LIGHT_OCR_PROTOCOL_VERSION,
   parseArgs,
   resolvePackagedOcrLayout
 } from '../../../scripts/smoke-light-ocr.js'
@@ -34,9 +49,13 @@ const runtimeVersions = {
     }
   },
   lightOcr: {
-    version: '0.3.4',
+    facadeVersion: '0.5.5',
+    runtimePackage: '@arcships/light-ocr-runtime',
+    runtimeVersion: '0.1.5',
     bundleId: 'ppocrv6-small-native-20260719.1',
     modelPackage: '@arcships/light-ocr-model-ppocrv6-small',
+    modelVersion: '0.3.4',
+    nativeVersion: '0.5.5',
     nativePackages: {
       'darwin-arm64': '@arcships/light-ocr-darwin-arm64',
       'darwin-x64': '@arcships/light-ocr-darwin-x64',
@@ -46,6 +65,20 @@ const runtimeVersions = {
       'win32-x64': '@arcships/light-ocr-win32-x64'
     }
   }
+}
+
+const darwinNativeInventory = {
+  nativeCode: ['native/addon.node'],
+  pdfiumCode: ['pdfium/libpdfium.dylib', 'pdfium/pdfium.node'],
+  pdfiumLoader: ['pdfium/index.cjs'],
+  other: ['native/runtime-descriptor.json']
+}
+
+const linuxNativeInventory = {
+  nativeCode: ['native/addon.node'],
+  pdfiumCode: ['pdfium/libpdfium.so', 'pdfium/pdfium.node'],
+  pdfiumLoader: ['pdfium/index.cjs'],
+  other: ['native/runtime-descriptor.json']
 }
 
 async function writeTree(root: string, files: Record<string, string>) {
@@ -119,6 +152,21 @@ describe('smoke-light-ocr', () => {
     ).toThrow(/mutually exclusive/)
   })
 
+  it('keeps packaged smoke limits aligned with the host protocol', () => {
+    expect(PACKAGED_LIGHT_OCR_PROTOCOL_VERSION).toBe(LIGHT_OCR_PROTOCOL_VERSION)
+    expect(PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES).toBe(
+      LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES
+    )
+    expect(DOCUMENT_SMOKE_OPTIONS).toEqual({
+      dpi: 150,
+      pageRange: { start: 1, end: LIGHT_OCR_DOCUMENT_MAX_PAGES },
+      maxPages: LIGHT_OCR_DOCUMENT_MAX_PAGES,
+      maxFileBytes: LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+      maxPagePixels: LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+      maxTotalPixels: LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS
+    })
+  })
+
   it('does not inherit credentials or code-injection variables in smoke helpers', () => {
     expect(
       createPackagedLightOcrEnvironment({
@@ -127,7 +175,8 @@ describe('smoke-light-ocr', () => {
         GITHUB_TOKEN: 'secret',
         HTTP_PROXY: 'http://credentials@example.com',
         NODE_OPTIONS: '--require malicious.js',
-        LD_PRELOAD: '/tmp/injected.so'
+        LD_PRELOAD: '/tmp/injected.so',
+        LIGHT_OCR_PDFIUM_MODULE: '/tmp/injected.cjs'
       })
     ).toEqual({
       PATH: '/usr/bin',
@@ -139,6 +188,7 @@ describe('smoke-light-ocr', () => {
 
   it('validates identities and checksums for a supported packaged target', async () => {
     const facadeDir = path.join(unpackedRoot, 'node_modules/@arcships/light-ocr')
+    const runtimeDir = path.join(unpackedRoot, 'node_modules/@arcships/light-ocr-runtime')
     const modelDir = path.join(
       unpackedRoot,
       'node_modules/@arcships/light-ocr-model-ppocrv6-small'
@@ -148,15 +198,30 @@ describe('smoke-light-ocr', () => {
     const modelPayload = 'model-payload'
     const nativePayload = 'native-payload'
     const nativeDescriptor = '{}'
+    const pdfiumLoader = 'module.exports = require("./pdfium.node")'
+    const pdfiumAddon = 'pdfium-addon'
+    const pdfiumLibrary = 'pdfium-library'
 
     await writeTree(unpackedRoot, {
       'runtime/node/bin/node': 'node',
       'out/main/lightOcrHelper.js': 'helper',
       'node_modules/@arcships/light-ocr/package.json': JSON.stringify({
         name: '@arcships/light-ocr',
-        version: '0.3.4'
+        version: '0.5.5',
+        dependencies: {
+          '@arcships/light-ocr-runtime': '0.1.5',
+          '@arcships/light-ocr-model-ppocrv6-small': '0.3.4'
+        }
       }),
-      'node_modules/@arcships/light-ocr/js/index.cjs': 'module.exports = {}',
+      'node_modules/@arcships/light-ocr/src/index.cjs': 'module.exports = {}',
+      'node_modules/@arcships/light-ocr-runtime/package.json': JSON.stringify({
+        name: '@arcships/light-ocr-runtime',
+        version: '0.1.5',
+        optionalDependencies: {
+          '@arcships/light-ocr-darwin-arm64': '0.5.5'
+        }
+      }),
+      'node_modules/@arcships/light-ocr-runtime/src/index.cjs': 'module.exports = {}',
       'node_modules/@arcships/light-ocr-model-ppocrv6-small/package.json': JSON.stringify({
         name: runtimeVersions.lightOcr.modelPackage,
         version: '0.3.4'
@@ -169,13 +234,19 @@ describe('smoke-light-ocr', () => {
       ].join('\n'),
       'node_modules/@arcships/light-ocr-darwin-arm64/package.json': JSON.stringify({
         name: '@arcships/light-ocr-darwin-arm64',
-        version: '0.3.4'
+        version: '0.5.5'
       }),
       'node_modules/@arcships/light-ocr-darwin-arm64/native/addon.node.gz.b64': gzipSync(
         nativePayload
       ).toString('base64'),
       'node_modules/@arcships/light-ocr-darwin-arm64/native/runtime-descriptor.json':
         nativeDescriptor,
+      'node_modules/@arcships/light-ocr-darwin-arm64/pdfium/index.cjs': pdfiumLoader,
+      'node_modules/@arcships/light-ocr-darwin-arm64/pdfium/pdfium.node.gz.b64': gzipSync(
+        pdfiumAddon
+      ).toString('base64'),
+      'node_modules/@arcships/light-ocr-darwin-arm64/pdfium/libpdfium.dylib.gz.b64':
+        gzipSync(pdfiumLibrary).toString('base64'),
       'node_modules/@arcships/light-ocr-darwin-arm64/artifact-hashes.json': JSON.stringify({
         files: [
           {
@@ -187,24 +258,45 @@ describe('smoke-light-ocr', () => {
             path: 'native/runtime-descriptor.json',
             bytes: Buffer.byteLength(nativeDescriptor),
             sha256: sha256(nativeDescriptor)
+          },
+          {
+            path: 'pdfium/index.cjs',
+            bytes: Buffer.byteLength(pdfiumLoader),
+            sha256: sha256(pdfiumLoader)
+          },
+          {
+            path: 'pdfium/libpdfium.dylib',
+            bytes: Buffer.byteLength(pdfiumLibrary),
+            sha256: sha256(pdfiumLibrary)
+          },
+          {
+            path: 'pdfium/pdfium.node',
+            bytes: Buffer.byteLength(pdfiumAddon),
+            sha256: sha256(pdfiumAddon)
           }
         ]
       }),
       'runtime/ocr/manifest.json': JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         supported: true,
         platform: 'darwin',
         arch: 'arm64',
-        lightOcrVersion: '0.3.4',
+        facadeVersion: '0.5.5',
+        runtimeVersion: '0.1.5',
+        modelVersion: '0.3.4',
+        nativeVersion: '0.5.5',
+        pdfSupport: true,
         bundleId: runtimeVersions.lightOcr.bundleId,
         nodeVersion: runtimeVersions.node,
         nodeSha256: runtimeVersions.nodeArtifacts['darwin-arm64'].executableSha256,
         nativePackage: '@arcships/light-ocr-darwin-arm64',
         nativePayloadEncoding: 'gzip-base64-v1',
+        nativeArtifactInventory: darwinNativeInventory,
         paths: {
           node: 'runtime/node/bin/node',
           helper: 'out/main/lightOcrHelper.js',
           facade: 'node_modules/@arcships/light-ocr',
+          runtime: 'node_modules/@arcships/light-ocr-runtime',
           bundle: 'node_modules/@arcships/light-ocr-model-ppocrv6-small/bundle',
           native: 'node_modules/@arcships/light-ocr-darwin-arm64'
         }
@@ -221,6 +313,7 @@ describe('smoke-light-ocr', () => {
     expect(layout).toMatchObject({
       supported: true,
       facadeDir,
+      runtimeDir,
       modelPackageDir: modelDir,
       nativePackageDir: nativeDir,
       nativePayloadEncoding: 'gzip-base64-v1',
@@ -272,6 +365,25 @@ describe('smoke-light-ocr', () => {
     expect(verifySignature).toHaveBeenCalledOnce()
     expect(path.relative(unpackedRoot, verifySignature.mock.calls[0][0])).toBe(
       'runtime/node/bin/node'
+    )
+
+    await writeTree(unpackedRoot, {
+      'node_modules/@arcships/light-ocr-darwin-arm64/pdfium/unexpected.node': 'unmanifested'
+    })
+    await expect(
+      resolvePackagedOcrLayout({
+        resourcesPath,
+        platform: 'darwin',
+        arch: 'arm64',
+        runtimeVersions,
+        verifySignature
+      })
+    ).rejects.toThrow(/PDFium directory mismatch/)
+    await rm(
+      path.join(
+        unpackedRoot,
+        'node_modules/@arcships/light-ocr-darwin-arm64/pdfium/unexpected.node'
+      )
     )
 
     await expect(
@@ -339,15 +451,28 @@ describe('smoke-light-ocr', () => {
     const nativePayload = 'native-payload'
     const nativeDescriptor = '{}'
     const nativePackage = '@arcships/light-ocr-linux-arm64-gnu'
+    const pdfiumLoader = 'module.exports = require("./pdfium.node")'
+    const pdfiumAddon = 'pdfium-addon'
+    const pdfiumLibrary = 'pdfium-library'
 
     await writeTree(unpackedRoot, {
       'runtime/node/bin/node': 'node',
       'out/main/lightOcrHelper.js': 'helper',
       'node_modules/@arcships/light-ocr/package.json': JSON.stringify({
         name: '@arcships/light-ocr',
-        version: '0.3.4'
+        version: '0.5.5',
+        dependencies: {
+          '@arcships/light-ocr-runtime': '0.1.5',
+          '@arcships/light-ocr-model-ppocrv6-small': '0.3.4'
+        }
       }),
-      'node_modules/@arcships/light-ocr/js/index.cjs': 'module.exports = {}',
+      'node_modules/@arcships/light-ocr/src/index.cjs': 'module.exports = {}',
+      'node_modules/@arcships/light-ocr-runtime/package.json': JSON.stringify({
+        name: '@arcships/light-ocr-runtime',
+        version: '0.1.5',
+        optionalDependencies: { [nativePackage]: '0.5.5' }
+      }),
+      'node_modules/@arcships/light-ocr-runtime/src/index.cjs': 'module.exports = {}',
       'node_modules/@arcships/light-ocr-model-ppocrv6-small/package.json': JSON.stringify({
         name: runtimeVersions.lightOcr.modelPackage,
         version: '0.3.4'
@@ -360,10 +485,13 @@ describe('smoke-light-ocr', () => {
       ].join('\n'),
       [`node_modules/${nativePackage}/package.json`]: JSON.stringify({
         name: nativePackage,
-        version: '0.3.4'
+        version: '0.5.5'
       }),
       [`node_modules/${nativePackage}/native/addon.node`]: nativePayload,
       [`node_modules/${nativePackage}/native/runtime-descriptor.json`]: nativeDescriptor,
+      [`node_modules/${nativePackage}/pdfium/index.cjs`]: pdfiumLoader,
+      [`node_modules/${nativePackage}/pdfium/pdfium.node`]: pdfiumAddon,
+      [`node_modules/${nativePackage}/pdfium/libpdfium.so`]: pdfiumLibrary,
       [`node_modules/${nativePackage}/artifact-hashes.json`]: JSON.stringify({
         files: [
           {
@@ -375,24 +503,45 @@ describe('smoke-light-ocr', () => {
             path: 'native/runtime-descriptor.json',
             bytes: Buffer.byteLength(nativeDescriptor),
             sha256: sha256(nativeDescriptor)
+          },
+          {
+            path: 'pdfium/index.cjs',
+            bytes: Buffer.byteLength(pdfiumLoader),
+            sha256: sha256(pdfiumLoader)
+          },
+          {
+            path: 'pdfium/libpdfium.so',
+            bytes: Buffer.byteLength(pdfiumLibrary),
+            sha256: sha256(pdfiumLibrary)
+          },
+          {
+            path: 'pdfium/pdfium.node',
+            bytes: Buffer.byteLength(pdfiumAddon),
+            sha256: sha256(pdfiumAddon)
           }
         ]
       }),
       'runtime/ocr/manifest.json': JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         supported: true,
         platform: 'linux',
         arch: 'arm64',
-        lightOcrVersion: '0.3.4',
+        facadeVersion: '0.5.5',
+        runtimeVersion: '0.1.5',
+        modelVersion: '0.3.4',
+        nativeVersion: '0.5.5',
+        pdfSupport: true,
         bundleId: runtimeVersions.lightOcr.bundleId,
         nodeVersion: runtimeVersions.node,
         nodeSha256: runtimeVersions.nodeArtifacts['linux-arm64'].executableSha256,
         nativePackage,
         nativePayloadEncoding: 'direct',
+        nativeArtifactInventory: linuxNativeInventory,
         paths: {
           node: 'runtime/node/bin/node',
           helper: 'out/main/lightOcrHelper.js',
           facade: 'node_modules/@arcships/light-ocr',
+          runtime: 'node_modules/@arcships/light-ocr-runtime',
           bundle: 'node_modules/@arcships/light-ocr-model-ppocrv6-small/bundle',
           native: `node_modules/${nativePackage}`
         }
@@ -416,20 +565,26 @@ describe('smoke-light-ocr', () => {
   it('rejects a manifest path that escapes the packaged app root', async () => {
     await writeTree(unpackedRoot, {
       'runtime/ocr/manifest.json': JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         supported: true,
         platform: 'darwin',
         arch: 'arm64',
-        lightOcrVersion: '0.3.4',
+        facadeVersion: '0.5.5',
+        runtimeVersion: '0.1.5',
+        modelVersion: '0.3.4',
+        nativeVersion: '0.5.5',
+        pdfSupport: true,
         bundleId: runtimeVersions.lightOcr.bundleId,
         nodeVersion: runtimeVersions.node,
         nodeSha256: runtimeVersions.nodeArtifacts['darwin-arm64'].executableSha256,
         nativePackage: '@arcships/light-ocr-darwin-arm64',
         nativePayloadEncoding: 'gzip-base64-v1',
+        nativeArtifactInventory: darwinNativeInventory,
         paths: {
           node: '../node',
           helper: 'out/main/lightOcrHelper.js',
           facade: 'node_modules/@arcships/light-ocr',
+          runtime: 'node_modules/@arcships/light-ocr-runtime',
           bundle: 'node_modules/@arcships/light-ocr-model-ppocrv6-small/bundle',
           native: 'node_modules/@arcships/light-ocr-darwin-arm64'
         }
@@ -449,12 +604,16 @@ describe('smoke-light-ocr', () => {
   it('accepts unsupported targets only when OCR executable assets are absent', async () => {
     await writeTree(unpackedRoot, {
       'runtime/ocr/manifest.json': JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         supported: false,
         reason: 'unsupported_platform',
         platform: 'win32',
         arch: 'ia32',
-        lightOcrVersion: '0.3.4',
+        facadeVersion: '0.5.5',
+        runtimeVersion: '0.1.5',
+        modelVersion: '0.3.4',
+        nativeVersion: '0.5.5',
+        pdfSupport: false,
         bundleId: runtimeVersions.lightOcr.bundleId
       })
     })
@@ -486,5 +645,26 @@ describe('smoke-light-ocr', () => {
     expect(() => assertFixtureRecognized({ lines: [{ text: 'unrelated' }] })).toThrow(
       /did not recognize/
     )
+    expect(() =>
+      assertDocumentFixtureRecognized([
+        { index: 0, lines: ['DeepChat', 'OCR TEST 2026'] }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      assertDocumentFixtureRecognized([
+        { index: 0, lines: ['DeepChat'] },
+        { index: 1, lines: ['2026'] }
+      ])
+    ).toThrow(/PDF OCR did not recognize/)
+  })
+
+  it('builds a one-page image-only PDF fixture', async () => {
+    const pdf = buildRasterPdfFixture(deflateSync(Buffer.from([255, 255, 255])), 1, 1)
+
+    expect(pdf.subarray(0, 8).toString('ascii')).toBe('%PDF-1.4')
+    await expect(pdfParse(pdf)).resolves.toMatchObject({
+      numpages: 1,
+      text: expect.stringMatching(/^\s*$/)
+    })
   })
 })

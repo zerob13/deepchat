@@ -5,6 +5,7 @@ describe('fileAttachment node', () => {
   it.each([
     ['ocr_text', 'ocr_text'],
     ['image', 'image'],
+    ['embedded_text', 'embedded_text'],
     ['auto', 'auto'],
     ['invalid', 'auto'],
     [null, 'auto']

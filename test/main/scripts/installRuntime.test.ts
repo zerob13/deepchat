@@ -1,3 +1,5 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -13,6 +15,7 @@ import {
   buildRuntimeInstallPlan,
   loadRuntimeVersions,
   parseRuntimeInstallArgs,
+  runtimeVersionsPath,
   runRuntimeInstallPlan
 } from '../../../scripts/install-runtime.mjs'
 
@@ -27,6 +30,25 @@ describe('install-runtime', () => {
     expect(loadRuntimeVersions().nodeArtifacts['darwin-arm64'].executableSha256).toMatch(
       /^[a-f0-9]{64}$/
     )
+  })
+
+  it('keeps the schema-v2 toolchain envelope readable after OCR metadata advances', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'deepchat-runtime-versions-test-'))
+    try {
+      const manifest = JSON.parse(await readFile(runtimeVersionsPath, 'utf8'))
+      manifest.schemaVersion = 2
+      const manifestPath = path.join(tempDir, 'runtime-versions.json')
+      await writeFile(manifestPath, JSON.stringify(manifest))
+
+      expect(loadRuntimeVersions(manifestPath)).toMatchObject({
+        tinyRuntimeInjector: manifest.tinyRuntimeInjector,
+        node: manifest.node,
+        uv: manifest.uv,
+        rtk: manifest.rtk
+      })
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('builds an explicitly versioned plan for supported targets', () => {

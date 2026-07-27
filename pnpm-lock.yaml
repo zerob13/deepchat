@@ -40,8 +40,8 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3
       '@arcships/light-ocr':
-        specifier: 0.3.4
-        version: 0.3.4
+        specifier: 0.5.5
+        version: 0.5.5
       '@aws-sdk/client-bedrock':
         specifier: ^3.1057.0
         version: 3.1093.0
@@ -160,7 +160,7 @@ importers:
         specifier: ^0.35.3
         version: 0.35.3(@types/node@24.13.3)
       tokenx:
-        specifier: ^0.4.1
+        specifier: 0.4.1
         version: 0.4.1
       turndown:
         specifier: ^7.2.4
@@ -532,27 +532,27 @@ packages:
   '@antv/util@3.3.11':
     resolution: {integrity: sha512-FII08DFM4ABh2q5rPYdr0hMtKXRgeZazvXaFYCs7J7uTcWDHUhczab2qOCJLNDugoj8jFag1djb7wS9ehaRYBg==}
 
-  '@arcships/light-ocr-darwin-arm64@0.3.4':
-    resolution: {integrity: sha512-5gu/4LJTGY8D16fjWHBVXLs6Xr2rEXiy5EYNOIRlQj0zdCVIs/fkmFxti1Y3oYI3kNHOduWcDkN94YeF09xK/A==}
+  '@arcships/light-ocr-darwin-arm64@0.5.5':
+    resolution: {integrity: sha512-JthToOGzdM4wW3YJ+vLwX6pXL0i5nljgmMYkMVBuuauV6JHQByewQIzmGWqkQxz9CDnbovb0OX863QV/w36Clw==}
     engines: {node: ^22.0.0 || ^24.0.0}
     cpu: [arm64]
     os: [darwin]
 
-  '@arcships/light-ocr-darwin-x64@0.3.4':
-    resolution: {integrity: sha512-YqNGinCzlKzCnCMRIO4KG5bF4XBPPY6jTkz8M7ypm2D3lahpZi5uQbNtnj+EZS7JvgTni0MWLy++4eff69a2Sg==}
+  '@arcships/light-ocr-darwin-x64@0.5.5':
+    resolution: {integrity: sha512-ShS6SslVeIJCsQEmfxq15ICorGpEbxw5DiFmjK1yenprEhLKDa88lAMqkIdlOTAL0ZoZ7h/cELM6Pz2kG6UZJQ==}
     engines: {node: ^22.0.0 || ^24.0.0}
     cpu: [x64]
     os: [darwin]
 
-  '@arcships/light-ocr-linux-arm64-gnu@0.3.4':
-    resolution: {integrity: sha512-O5DA/RcobHsgEm4jXwIisBJkiIFArW//wHecGU58px/m7x/utrcx6WnuuigBl81nfw2+jQhRmkjfwMJMifLJJw==}
+  '@arcships/light-ocr-linux-arm64-gnu@0.5.5':
+    resolution: {integrity: sha512-29q7qssTa+Wx3lT9TTZiURdm2al7Aa78P7Whdiy+ISi18qTogcYd1tGjpze23JOGfvSHEcJo9vwWEsrm7T1HnQ==}
     engines: {node: ^22.0.0 || ^24.0.0}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@arcships/light-ocr-linux-x64-gnu@0.3.4':
-    resolution: {integrity: sha512-hYH3ujFKU+Un7XVtafPuPDlvQPKFCcXUO9Q7PKmP612IlQ3u5v9uuP+9gzNPcZisRTpYgHhIzIi4JNwt2PbCxQ==}
+  '@arcships/light-ocr-linux-x64-gnu@0.5.5':
+    resolution: {integrity: sha512-XfNe1gKs3kegvNd5NpJHBh+YGUEBi0iZar+okroP3ubQJOqiHHyctM8Hr6yNLbnQyOJuDsaF2Gmj/BFw+UAr+A==}
     engines: {node: ^22.0.0 || ^24.0.0}
     cpu: [x64]
     os: [linux]
@@ -561,20 +561,24 @@ packages:
   '@arcships/light-ocr-model-ppocrv6-small@0.3.4':
     resolution: {integrity: sha512-F2Rjx3xoiKw1eUc/DW5k5/t1AlvWfReUDTdpRdQKNCDz5Y8YYif+15CHdPz7Wdt/Nza7drDOM3NTGUIuA20ERw==}
 
-  '@arcships/light-ocr-win32-arm64@0.3.4':
-    resolution: {integrity: sha512-hROMzPkCRIaEvMPkuLKUPKZE18EZXuOfyt0fgZMJtkaObC+/pvI98z8UsK7ycMSMNjjSRcvDSZMWxrqO88heNg==}
+  '@arcships/light-ocr-runtime@0.1.5':
+    resolution: {integrity: sha512-/InQ1wgg1H6eRnkaTHvI/p+MWGNfEKJzZ+uPH9RM3sSL32QRvhRxWvjOUCZA8Fz7JfhsqhPIVVVjmK6INuXylg==}
+    engines: {node: ^22.0.0 || ^24.0.0}
+
+  '@arcships/light-ocr-win32-arm64@0.5.5':
+    resolution: {integrity: sha512-UgqOLwg2Z66qaJ3Uxy6mAj35Rg7wPSuzSu/DJPIV7/EX854fTjZ6x9FZoEyyogwR4D97uTrZmxM4LNgI6lG9dw==}
     engines: {node: ^22.0.0 || ^24.0.0}
     cpu: [arm64]
     os: [win32]
 
-  '@arcships/light-ocr-win32-x64@0.3.4':
-    resolution: {integrity: sha512-O9shzQsEhhZ38gZJwjZLVkEjoaDKjN/6tH5NPf4d9I6DOtKAbCXP7um2QvS+sWADhQdDSQv+2XJo/Y1eLQvYwg==}
+  '@arcships/light-ocr-win32-x64@0.5.5':
+    resolution: {integrity: sha512-9rvg8E2V+GGS8DXwzwpmPcK7TizTshFKyd7Gw24EN/csheP7Ll/Im1mqaTRsAgJcvD0iKig0LIUnpq+i1Ie9Yg==}
     engines: {node: ^22.0.0 || ^24.0.0}
     cpu: [x64]
     os: [win32]
 
-  '@arcships/light-ocr@0.3.4':
-    resolution: {integrity: sha512-PCmYA+UqE/7YcSHE6WnMVFxF/newuQlLzARPnM/TKzmTy0zRuCxJuC2XrOtiXd8Da0I/s2s6tszufesqIPfViQ==}
+  '@arcships/light-ocr@0.5.5':
+    resolution: {integrity: sha512-FXeNhNXjjW8nEVmPKPPaPS3mtA52O4zSdPtPdSyxSBgxmjPTGpZAI0RvVD2s+I3MGP/YCC0qsC1H6MJOBv/8iA==}
     engines: {node: ^22.0.0 || ^24.0.0}
     hasBin: true
 
@@ -7231,36 +7235,39 @@ snapshots:
       gl-matrix: 3.4.4
       tslib: 2.8.1
 
-  '@arcships/light-ocr-darwin-arm64@0.3.4':
+  '@arcships/light-ocr-darwin-arm64@0.5.5':
     optional: true
 
-  '@arcships/light-ocr-darwin-x64@0.3.4':
+  '@arcships/light-ocr-darwin-x64@0.5.5':
     optional: true
 
-  '@arcships/light-ocr-linux-arm64-gnu@0.3.4':
+  '@arcships/light-ocr-linux-arm64-gnu@0.5.5':
     optional: true
 
-  '@arcships/light-ocr-linux-x64-gnu@0.3.4':
+  '@arcships/light-ocr-linux-x64-gnu@0.5.5':
     optional: true
 
   '@arcships/light-ocr-model-ppocrv6-small@0.3.4': {}
 
-  '@arcships/light-ocr-win32-arm64@0.3.4':
+  '@arcships/light-ocr-runtime@0.1.5':
+    optionalDependencies:
+      '@arcships/light-ocr-darwin-arm64': 0.5.5
+      '@arcships/light-ocr-darwin-x64': 0.5.5
+      '@arcships/light-ocr-linux-arm64-gnu': 0.5.5
+      '@arcships/light-ocr-linux-x64-gnu': 0.5.5
+      '@arcships/light-ocr-win32-arm64': 0.5.5
+      '@arcships/light-ocr-win32-x64': 0.5.5
+
+  '@arcships/light-ocr-win32-arm64@0.5.5':
     optional: true
 
-  '@arcships/light-ocr-win32-x64@0.3.4':
+  '@arcships/light-ocr-win32-x64@0.5.5':
     optional: true
 
-  '@arcships/light-ocr@0.3.4':
+  '@arcships/light-ocr@0.5.5':
     dependencies:
       '@arcships/light-ocr-model-ppocrv6-small': 0.3.4
-    optionalDependencies:
-      '@arcships/light-ocr-darwin-arm64': 0.3.4
-      '@arcships/light-ocr-darwin-x64': 0.3.4
-      '@arcships/light-ocr-linux-arm64-gnu': 0.3.4
-      '@arcships/light-ocr-linux-x64-gnu': 0.3.4
-      '@arcships/light-ocr-win32-arm64': 0.3.4
-      '@arcships/light-ocr-win32-x64': 0.3.4
+      '@arcships/light-ocr-runtime': 0.1.5
 
   '@asamuzakjp/css-color@3.2.0':
     dependencies:

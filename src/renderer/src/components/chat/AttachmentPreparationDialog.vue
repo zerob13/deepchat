@@ -14,7 +14,7 @@
           :key="`${issue.attachmentIndex}-${issue.reason}`"
           class="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-sm"
         >
-          <Icon icon="lucide:image-off" class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <Icon icon="lucide:file-warning" class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div class="min-w-0">
             <div class="font-medium">
               {{ t('chat.attachments.attachmentNumber', { number: issue.attachmentIndex + 1 }) }}

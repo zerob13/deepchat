@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { MessageFile } from '@shared/types/agent-interface'
 import {
   applyAcceptedComposerSubmission,
+  copyComposerFiles,
   createComposerTextDocument,
   type ComposerSessionDraft,
   type ComposerSubmissionSnapshot
@@ -112,5 +113,57 @@ describe('composerDraftState', () => {
     }
 
     expect(applyAcceptedComposerSubmission(current, submitted).rawMessage).toBe('same text')
+  })
+
+  it('keeps PDF drafts with different representation choices distinct', () => {
+    const embedded: MessageFile = {
+      name: 'report.pdf',
+      path: '/tmp/report.pdf',
+      mimeType: 'application/pdf',
+      requestedRepresentation: 'embedded_text'
+    }
+    const ocr: MessageFile = { ...embedded, requestedRepresentation: 'ocr_text' }
+    const current: ComposerSessionDraft = {
+      revision: 2,
+      rawMessage: 'read this',
+      files: [ocr],
+      activeSkills: [],
+      document: documentWithFiles('read this', [ocr])
+    }
+    const submitted: ComposerSubmissionSnapshot = {
+      revision: 1,
+      rawMessage: 'read this',
+      files: [embedded],
+      activeSkills: [],
+      document: documentWithFiles('read this', [embedded]),
+      inlineItems: [],
+      clearText: true
+    }
+
+    const next = applyAcceptedComposerSubmission(current, submitted)
+
+    expect(next.files).toEqual([ocr])
+    expect(JSON.stringify(next.document)).toContain('ocr_text')
+  })
+
+  it('detaches nested PDF coverage from reactive draft files', () => {
+    const original: MessageFile = {
+      name: 'report.pdf',
+      path: '/tmp/report.pdf',
+      mimeType: 'application/pdf',
+      pdfTextCoverage: {
+        routingRevision: 'pdf-text-coverage-v1',
+        pageCount: 2,
+        substantivePageCount: 1,
+        lowTextPageCount: 1,
+        lowTextPageSamples: [2],
+        hasEmbeddedText: true
+      }
+    }
+
+    const [copied] = copyComposerFiles([original])
+    copied.pdfTextCoverage!.lowTextPageSamples.push(1)
+
+    expect(original.pdfTextCoverage?.lowTextPageSamples).toEqual([2])
   })
 })

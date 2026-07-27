@@ -109,7 +109,7 @@
                 })
               "
             >
-              <Icon icon="lucide:image-off" class="h-3.5 w-3.5" />
+              <Icon icon="lucide:file-x-2" class="h-3.5 w-3.5" />
             </Button>
             <Button
               v-if="item.state === 'pending' || item.state === 'blocked'"
@@ -268,7 +268,7 @@
                         })
                       "
                     >
-                      <Icon icon="lucide:image-off" class="h-3.5 w-3.5" />
+                      <Icon icon="lucide:file-x-2" class="h-3.5 w-3.5" />
                     </Button>
                   </template>
                   <Button

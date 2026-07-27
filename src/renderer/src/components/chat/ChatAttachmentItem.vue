@@ -25,16 +25,33 @@
       type="button"
       data-testid="attachment-ocr-preview-trigger"
       :title="t('chat.attachments.inspectOcrText')"
+      :aria-label="t('chat.attachments.inspectOcrText')"
       @mousedown.stop
       @click.stop="isOcrPreviewOpen = true"
     >
-      <Badge variant="secondary" class="h-4 px-1.5 text-[9px] font-medium">
-        {{ t('chat.attachments.ocrBadge') }}
+      <Badge
+        variant="secondary"
+        data-testid="attachment-representation-status"
+        class="h-4 px-1.5 text-[9px] font-medium"
+        :class="
+          ocrStatus === 'complete' ? '' : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+        "
+      >
+        {{ ocrStatusLabel }}
       </Badge>
     </button>
     <Badge
+      v-else-if="resolvedRepresentation?.kind === 'embedded_text'"
+      variant="secondary"
+      data-testid="attachment-representation-status"
+      class="h-4 px-1.5 text-[9px] font-medium"
+    >
+      {{ t('chat.attachments.embeddedTextBadge') }}
+    </Badge>
+    <Badge
       v-else-if="resolvedRepresentation?.kind === 'image'"
       variant="secondary"
+      data-testid="attachment-representation-status"
       class="h-4 px-1.5 text-[9px] font-medium"
     >
       {{ t('chat.attachments.imageBadge') }}
@@ -42,6 +59,7 @@
     <Badge
       v-else-if="resolvedRepresentation?.kind === 'unavailable'"
       variant="outline"
+      data-testid="attachment-representation-status"
       class="h-4 border-amber-500/40 px-1.5 text-[9px] font-medium text-amber-700 dark:text-amber-300"
       :title="t(`chat.attachments.reasons.${resolvedRepresentation.reason}`)"
     >
@@ -62,18 +80,21 @@
       <DialogHeader>
         <DialogTitle>{{ t('chat.attachments.ocrPreviewTitle', { name: file.name }) }}</DialogTitle>
         <DialogDescription v-if="ocrRepresentation">
-          {{
-            t('chat.attachments.ocrPreviewDescription', {
-              tokens: ocrRepresentation.tokenCount
-            })
-          }}
+          <span class="block">
+            {{
+              t('chat.attachments.ocrPreviewDescription', {
+                tokens: ocrRepresentation.tokenCount
+              })
+            }}
+          </span>
+          <span v-if="ocrPageCoverage" class="block">{{ ocrPageCoverage }}</span>
         </DialogDescription>
       </DialogHeader>
       <div
-        v-if="ocrRepresentation?.truncated"
+        v-if="ocrNotice"
         class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
       >
-        {{ t('chat.attachments.ocrTextTruncated') }}
+        {{ ocrNotice }}
       </div>
       <pre
         data-testid="attachment-ocr-preview-text"
@@ -117,6 +138,7 @@ defineEmits<{
   remove: []
 }>()
 
+const { t } = useI18n()
 const mimeType = computed(() => props.file.mimeType || 'application/octet-stream')
 const thumbnail = computed(() => props.file.thumbnail || '')
 const fileIcon = computed(() => getMimeTypeIcon(mimeType.value))
@@ -125,6 +147,33 @@ const ocrRepresentation = computed(() => {
   const representation = resolvedRepresentation.value
   return representation?.kind === 'ocr_text' ? representation : null
 })
+const ocrStatus = computed<'complete' | 'partial' | 'limited'>(() => {
+  const representation = ocrRepresentation.value
+  if (representation?.document?.artifactTermination === 'resource_limited') return 'limited'
+  return representation?.truncated ? 'partial' : 'complete'
+})
+const ocrStatusLabel = computed(() => {
+  if (ocrStatus.value === 'limited') return t('chat.attachments.ocrLimitedBadge')
+  if (ocrStatus.value === 'partial') return t('chat.attachments.ocrPartialBadge')
+  return t('chat.attachments.ocrBadge')
+})
+const ocrPageCoverage = computed(() => {
+  const document = ocrRepresentation.value?.document
+  if (!document) return ''
+  return t(
+    document.includedThroughPageComplete
+      ? 'chat.attachments.ocrPageCoverage'
+      : 'chat.attachments.ocrPageCoveragePartial',
+    { page: document.includedThroughPage }
+  )
+})
+const ocrNotice = computed(() => {
+  const representation = ocrRepresentation.value
+  if (!representation) return ''
+  if (representation.document?.artifactTermination === 'resource_limited') {
+    return t('chat.attachments.reasons.ocr_resource_limited')
+  }
+  return representation.truncated ? t('chat.attachments.ocrTextTruncated') : ''
+})
 const isOcrPreviewOpen = ref(false)
-const { t } = useI18n()
 </script>

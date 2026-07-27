@@ -2,7 +2,9 @@
 
 Status: implemented; six-target native package behavior validated in
 [Build Application run 29978292769](https://github.com/ThinkInAIXYZ/deepchat/actions/runs/29978292769);
-the reusable packaging workflow refactor still requires its first remote run.
+the reusable packaging workflow refactor still requires its first remote run. The implemented
+[Light OCR 0.5.5 PDF support](../light-ocr-pdf-support/spec.md) increment supersedes this original
+increment's pinned runtime version and scanned-PDF non-goal while retaining its image OCR contract.
 
 ## User Need
 
@@ -31,7 +33,8 @@ fails.
 
 - No OCR of MCP sampling images, tool output, generated images or thumbnails.
 - No automatic vision-model invocation or conversation-model switching.
-- No scanned-PDF support, language selection or runtime/model download flow.
+- No language selection or runtime/model download flow. Scanned-PDF support is specified separately
+  by the 0.5.5 PDF increment.
 - No knowledge-base integration in v1. A later increment can inject the same
   `ImageTextExtractionPort` into knowledge ingestion with background priority.
 - No Linux musl support. Official Linux packages target glibc and are validated only on the

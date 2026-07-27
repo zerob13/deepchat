@@ -143,6 +143,13 @@ const imageFile = (): MessageFile => ({
   requestedRepresentation: 'auto'
 })
 
+const pdfFile = (): MessageFile => ({
+  name: 'scan.pdf',
+  path: '/tmp/scan.pdf',
+  mimeType: 'application/pdf',
+  requestedRepresentation: 'ocr_text'
+})
+
 const blockedSummary = (): AttachmentPreparationSummary => ({
   status: 'needs_user_action',
   issues: [{ attachmentIndex: 0, reason: 'ocr_empty' }],
@@ -247,6 +254,36 @@ describe('useComposerSubmit attachment preflight', () => {
 
     expect(harness.actions.message.value).toBe('keep this draft')
     expect(harness.actions.attachedFiles.value).toEqual([imageFile()])
+    expect(harness.toast).not.toHaveBeenCalled()
+    expect(harness.actions.isPreparingAttachments.value).toBe(false)
+    harness.stop()
+  })
+
+  it('keeps PDF preparation visible and cancellable through the main process', async () => {
+    const harness = createHarness()
+    const deferred = createDeferred<{ accepted: boolean }>()
+    harness.chatClient.sendMessage.mockReturnValueOnce(deferred.promise)
+    harness.actions.message.value = 'read this PDF'
+    harness.actions.attachedFiles.value = [pdfFile()]
+
+    const submit = harness.actions.onSubmit()
+    await vi.waitFor(() => expect(harness.chatClient.sendMessage).toHaveBeenCalledTimes(1))
+    const submissionOptions = harness.chatClient.sendMessage.mock.calls[0]?.[2]
+
+    expect(harness.actions.isPreparingAttachments.value).toBe(true)
+    expect(submissionOptions).toEqual({ submissionId: expect.any(String) })
+
+    harness.actions.cancelAttachmentPreparation()
+    expect(harness.chatClient.cancelSubmission).toHaveBeenCalledWith(
+      submissionOptions?.submissionId
+    )
+    const abortError = new Error('Aborted')
+    abortError.name = 'AbortError'
+    deferred.reject(abortError)
+    await submit
+
+    expect(harness.actions.message.value).toBe('read this PDF')
+    expect(harness.actions.attachedFiles.value).toEqual([pdfFile()])
     expect(harness.toast).not.toHaveBeenCalled()
     expect(harness.actions.isPreparingAttachments.value).toBe(false)
     harness.stop()

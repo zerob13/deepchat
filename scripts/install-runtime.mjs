@@ -11,13 +11,14 @@ export const runtimeVersionsPath = path.join(repositoryRoot, 'resources', 'runti
 const supportedPlatforms = new Set(['darwin', 'linux', 'win32'])
 const supportedArchitectures = new Set(['arm64', 'x64'])
 const supportedRuntimeTypes = new Set(['node', 'rtk', 'uv'])
+const supportedToolchainManifestSchemas = new Set([2, 3])
 const sha256Pattern = /^[a-f0-9]{64}$/
 
 export function loadRuntimeVersions(manifestPath = runtimeVersionsPath) {
   const parsed = JSON.parse(readFileSync(manifestPath, 'utf8'))
   const requiredKeys = ['tinyRuntimeInjector', 'node', 'uv', 'rtk']
 
-  if (parsed.schemaVersion !== 2) {
+  if (!supportedToolchainManifestSchemas.has(parsed.schemaVersion)) {
     throw new Error(`Unsupported runtime version manifest schema: ${parsed.schemaVersion}`)
   }
   for (const key of requiredKeys) {

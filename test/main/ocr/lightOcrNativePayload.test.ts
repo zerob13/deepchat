@@ -20,6 +20,7 @@ describe('Light OCR encoded native payload', () => {
     runtimeTempRoot = path.join(tempDir, 'runtime')
     await Promise.all([
       mkdir(path.join(nativePackageDir, 'native'), { recursive: true }),
+      mkdir(path.join(nativePackageDir, 'pdfium'), { recursive: true }),
       mkdir(runtimeTempRoot, { mode: 0o700 })
     ])
   })
@@ -31,6 +32,9 @@ describe('Light OCR encoded native payload', () => {
   async function seedEncodedPackage() {
     const addon = Buffer.from('qualified-addon')
     const runtime = Buffer.from('qualified-runtime')
+    const pdfiumLoader = Buffer.from('module.exports = require("./pdfium.node")')
+    const pdfiumAddon = Buffer.from('qualified-pdfium-addon')
+    const pdfiumLibrary = Buffer.from('qualified-pdfium-library')
     const addonArtifact = {
       path: 'native/light_ocr_node.node',
       bytes: addon.byteLength,
@@ -49,6 +53,21 @@ describe('Light OCR encoded native payload', () => {
       bytes: descriptor.byteLength,
       sha256: sha256(descriptor)
     }
+    const pdfiumLoaderArtifact = {
+      path: 'pdfium/index.cjs',
+      bytes: pdfiumLoader.byteLength,
+      sha256: sha256(pdfiumLoader)
+    }
+    const pdfiumAddonArtifact = {
+      path: 'pdfium/pdfium.node',
+      bytes: pdfiumAddon.byteLength,
+      sha256: sha256(pdfiumAddon)
+    }
+    const pdfiumLibraryArtifact = {
+      path: 'pdfium/libpdfium.dylib',
+      bytes: pdfiumLibrary.byteLength,
+      sha256: sha256(pdfiumLibrary)
+    }
     await Promise.all([
       writeFile(
         path.join(nativePackageDir, `${addonArtifact.path}.gz.b64`),
@@ -58,13 +77,39 @@ describe('Light OCR encoded native payload', () => {
         path.join(nativePackageDir, `${runtimeArtifact.path}.gz.b64`),
         gzipSync(runtime).toString('base64')
       ),
+      writeFile(
+        path.join(nativePackageDir, `${pdfiumAddonArtifact.path}.gz.b64`),
+        gzipSync(pdfiumAddon).toString('base64')
+      ),
+      writeFile(
+        path.join(nativePackageDir, `${pdfiumLibraryArtifact.path}.gz.b64`),
+        gzipSync(pdfiumLibrary).toString('base64')
+      ),
       writeFile(path.join(nativePackageDir, descriptorArtifact.path), descriptor),
+      writeFile(path.join(nativePackageDir, pdfiumLoaderArtifact.path), pdfiumLoader),
       writeFile(
         path.join(nativePackageDir, 'artifact-hashes.json'),
-        JSON.stringify({ files: [addonArtifact, runtimeArtifact, descriptorArtifact] })
+        JSON.stringify({
+          files: [
+            addonArtifact,
+            runtimeArtifact,
+            descriptorArtifact,
+            pdfiumLoaderArtifact,
+            pdfiumAddonArtifact,
+            pdfiumLibraryArtifact
+          ]
+        })
       )
     ])
-    return { addon, runtime, addonArtifact, runtimeArtifact }
+    return {
+      addon,
+      runtime,
+      pdfiumLoader,
+      pdfiumAddon,
+      pdfiumLibrary,
+      addonArtifact,
+      runtimeArtifact
+    }
   }
 
   it('restores exact qualified bytes into a private runtime directory', async () => {
@@ -79,6 +124,14 @@ describe('Light OCR encoded native payload', () => {
     await expect(
       readFile(path.join(path.dirname(override.nodeBinaryPath), 'libonnxruntime.1.22.0.dylib'))
     ).resolves.toEqual(seeded.runtime)
+    await expect(readFile(override.pdfiumModulePath)).resolves.toEqual(seeded.pdfiumLoader)
+    await expect(
+      readFile(path.join(path.dirname(override.pdfiumModulePath), 'pdfium.node'))
+    ).resolves.toEqual(seeded.pdfiumAddon)
+    await expect(
+      readFile(path.join(path.dirname(override.pdfiumModulePath), 'libpdfium.dylib'))
+    ).resolves.toEqual(seeded.pdfiumLibrary)
+    expect(path.dirname(override.pdfiumModulePath)).toContain(`${path.sep}pdfium`)
     if (process.platform !== 'win32') {
       expect((await stat(override.nodeBinaryPath)).mode & 0o777).toBe(0o600)
     }
@@ -117,5 +170,20 @@ describe('Light OCR encoded native payload', () => {
     await expect(
       materializeLightOcrNativePayload({ nativePackageDir, tempRoot: runtimeTempRoot })
     ).rejects.toThrow(/Invalid Light OCR native artifact path/)
+  })
+
+  it('rejects an incomplete PDFium inventory before materializing code', async () => {
+    await seedEncodedPackage()
+    await rm(path.join(nativePackageDir, 'pdfium', 'libpdfium.dylib.gz.b64'))
+    const manifestPath = path.join(nativePackageDir, 'artifact-hashes.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      files: Array<{ path: string }>
+    }
+    manifest.files = manifest.files.filter((entry) => entry.path !== 'pdfium/libpdfium.dylib')
+    await writeFile(manifestPath, JSON.stringify(manifest))
+
+    await expect(
+      materializeLightOcrNativePayload({ nativePackageDir, tempRoot: runtimeTempRoot })
+    ).rejects.toThrow(/PDFium artifact inventory/)
   })
 })

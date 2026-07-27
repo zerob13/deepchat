@@ -714,6 +714,13 @@ describe('SessionTape recall', () => {
                   tokenCount: 3,
                   truncated: false
                 }
+              },
+              {
+                name: 'report.pdf',
+                path: '/tmp/missing-report.pdf',
+                mimeType: 'application/pdf',
+                content: 'embedded PDF projection marker',
+                resolvedRepresentation: { kind: 'embedded_text' }
               }
             ],
             links: []
@@ -741,6 +748,7 @@ describe('SessionTape recall', () => {
     expect(projectedRows[0].searchText).toContain('a.md')
     expect(projectedRows[0].searchText).toContain('workspace-a.md')
     expect(projectedRows[0].searchText).toContain('ocr projection marker')
+    expect(projectedRows[0].searchText).toContain('embedded PDF projection marker')
     expect(projectedRows[0].searchText).not.toContain('raw attachment body should not be projected')
   })
 

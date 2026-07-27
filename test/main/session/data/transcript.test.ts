@@ -236,6 +236,87 @@ describe('SessionTranscript', () => {
       })
     })
 
+    it('persists PDF routing coverage and page-aware OCR metadata', () => {
+      const text = '## Page 1\n\ninvoice total 84'
+      const pdfTextCoverage = {
+        routingRevision: 'pdf-text-coverage-v1',
+        pageCount: 2,
+        substantivePageCount: 0,
+        lowTextPageCount: 2,
+        lowTextPageSamples: [1, 2],
+        hasEmbeddedText: false
+      }
+      const content: UserMessageContent = {
+        text: '',
+        files: [
+          {
+            name: 'scan.pdf',
+            path: '/tmp/scan.pdf',
+            mimeType: 'application/pdf',
+            pdfTextCoverage,
+            resolvedRepresentation: {
+              kind: 'ocr_text',
+              text,
+              tokenCount: 7,
+              truncated: false,
+              document: {
+                pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: true }],
+                sourcePageCountHint: 2,
+                includedThroughPage: 1,
+                includedThroughPageComplete: true,
+                artifactTermination: 'request_complete',
+                generationOutputLimitReached: false,
+                embeddedTextCoverage: pdfTextCoverage
+              }
+            }
+          }
+        ],
+        links: [],
+        search: false,
+        think: false
+      }
+      store.createUserMessage('s1', 1, content)
+      const persistedFiles =
+        sqlitePresenter.deepchatUserMessageFilesTable.replaceForMessage.mock.calls[0][1]
+      const metadataJson = persistedFiles[0].metadataJson
+
+      expect(JSON.parse(metadataJson)).toMatchObject({
+        pdfTextCoverage,
+        resolvedRepresentation: {
+          kind: 'ocr_text',
+          document: {
+            includedThroughPage: 1,
+            embeddedTextCoverage: pdfTextCoverage
+          }
+        }
+      })
+
+      sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue([createMessageRow()])
+      sqlitePresenter.deepchatUserMessagesTable.listByMessageIds.mockReturnValue([
+        { message_id: 'm1', text: '', search_enabled: 0, think_enabled: 0 }
+      ])
+      sqlitePresenter.deepchatUserMessageFilesTable.listByMessageIds.mockReturnValue([
+        {
+          message_id: 'm1',
+          ordinal: 0,
+          name: 'scan.pdf',
+          path: '/tmp/scan.pdf',
+          mime_type: 'application/pdf',
+          size: null,
+          metadata_json: metadataJson
+        }
+      ])
+
+      const [message] = store.getMessages('s1')
+      expect(JSON.parse(message.content).files[0]).toMatchObject({
+        pdfTextCoverage,
+        resolvedRepresentation: {
+          kind: 'ocr_text',
+          document: { includedThroughPage: 1 }
+        }
+      })
+    })
+
     it('adds bounded OCR snapshots to message search documents', () => {
       const longOcrText = `searchable-head-${'x'.repeat(40_000)}-searchable-tail`
       store.createUserMessage('s1', 1, {
@@ -261,8 +342,29 @@ describe('SessionTranscript', () => {
       const document = sqlitePresenter.deepchatSearchDocumentsTable.upsert.mock.calls[0][0]
       expect(document.content).toContain('searchable-head')
       expect(document.content).toContain('searchable-tail')
-      expect(document.content).toContain('OCR search text truncated')
+      expect(document.content).toContain('Attachment search text truncated')
       expect(document.content.length).toBeLessThanOrEqual(32_000)
+    })
+
+    it('indexes the persisted embedded PDF snapshot without reopening its path', () => {
+      store.createUserMessage('s1', 1, {
+        text: '',
+        files: [
+          {
+            name: 'report.pdf',
+            path: '/tmp/missing-report.pdf',
+            mimeType: 'application/pdf',
+            content: 'embedded searchable quarterly total 84',
+            resolvedRepresentation: { kind: 'embedded_text' }
+          }
+        ],
+        links: [],
+        search: false,
+        think: false
+      })
+
+      const document = sqlitePresenter.deepchatSearchDocumentsTable.upsert.mock.calls[0][0]
+      expect(document.content).toContain('embedded searchable quarterly total 84')
     })
   })
 
