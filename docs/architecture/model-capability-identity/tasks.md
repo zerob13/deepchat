@@ -58,11 +58,11 @@
 
 ## Validation Result
 
-- Focused provider, agent, shared, contract, and renderer suites passed, including 566 tests after
-  the final request-facts module extraction.
+- Focused provider, agent, shared, contract, and renderer suites passed; the final provider-model
+  helper suite passed all 18 tests after the cache-path optimization.
 - `pnpm run format`, `pnpm run i18n`, and `pnpm run lint` passed.
 - `pnpm run typecheck` passed both node and renderer type checking.
-- `pnpm test` passed 636 files with 19 skipped; 6,653 tests passed with 241 skipped.
+- `pnpm test` passed 636 files with 19 skipped; 6,654 tests passed with 241 skipped.
 - `pnpm run build` passed and refreshed the provider and ACP registry resources.
 - The refreshed provider database contains 175 providers and 7,728 models. Both Moonshot K3
   records retain `temperature: false` and the complete reasoning portrait required by this
