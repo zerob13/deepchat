@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "一致するトピック",
       "directiveTopicPlaceholder": "呼び出したメモリから抑制する正確なトピックまたはフレーズ",
+      "directiveTopicTooBroad": "CJK文字を含むトピックには、無関係なメモリの抑制を避けるため、{min}文字以上の表示可能な文字が必要です。",
       "directiveContentLabel": "指示",
       "directiveInstructionPlaceholder": "このエージェントへの常設指示を入力してください。",
       "directiveSuppressPlaceholder": "このトピックをエージェントがどう扱うべきか説明してください。",

@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Argomento corrispondente",
       "directiveTopicPlaceholder": "Argomento o frase esatta da escludere dalla memoria richiamata",
+      "directiveTopicTooBroad": "Gli argomenti con caratteri CJK richiedono almeno {min} caratteri visibili per non escludere ricordi non correlati.",
       "directiveContentLabel": "Istruzione",
       "directiveInstructionPlaceholder": "Scrivi un’istruzione permanente per questo agente.",
       "directiveSuppressPlaceholder": "Spiega come l’agente deve gestire questo argomento.",

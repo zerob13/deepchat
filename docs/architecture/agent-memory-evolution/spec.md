@@ -177,6 +177,9 @@ Behavior:
    and policy version.
 6. Natural-language directives are prompt-level guidance, not a hard output guarantee. Strict
    “never mention” guarantees would require output verification/regeneration and are a non-goal.
+7. Because CJK suppression uses normalized substring matching, a topic containing CJK characters
+   requires at least two visible base characters. New writes are rejected and malformed persisted
+   topics are ignored so a single broad character cannot suppress unrelated recall.
 
 ## Durable derivation contract
 
@@ -340,6 +343,8 @@ premise:
   `forgotten` domain result but maps it to `requires_user_reauthorization`; only the explicit
   renderer add action can atomically release matching tombstones. Generic deletion now rejects
   internal persona and working rows.
+- Corrected after suppression-boundary verification: single-character CJK topics are rejected at
+  write time, ignored if already persisted, and explained in the directive editor.
 - Rejected: adding an unknown allocation lane does not null Tape inspection. The parser ignores
   unknown object fields while retaining the four known lanes, and a Tape-to-route allocation
   fixture already exists.

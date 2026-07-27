@@ -141,4 +141,15 @@ describe('directive contribution', () => {
       ])
     ).toEqual({ content: null, manifest: null })
   })
+
+  it('ignores persisted suppression directives with overbroad CJK topics', () => {
+    expect(
+      buildDirectiveContribution([
+        directive('overbroad', 'Do not recall this broad topic.', {
+          kind: 'suppress_topic',
+          normalized_topic: '工'
+        })
+      ])
+    ).toEqual({ content: null, manifest: null })
+  })
 })

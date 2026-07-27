@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Pasujący temat",
       "directiveTopicPlaceholder": "Dokładny temat lub fraza do ukrycia w przywołanej pamięci",
+      "directiveTopicTooBroad": "Tematy zawierające znaki CJK muszą mieć co najmniej {min} widoczne znaki, aby nie ukrywać niepowiązanych wspomnień.",
       "directiveContentLabel": "Instrukcja",
       "directiveInstructionPlaceholder": "Napisz stałą instrukcję dla tego agenta.",
       "directiveSuppressPlaceholder": "Wyjaśnij, jak agent ma postępować z tym tematem.",

@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "Sujet correspondant",
       "directiveTopicPlaceholder": "Sujet ou expression exacte à masquer dans la mémoire rappelée",
+      "directiveTopicTooBroad": "Les sujets contenant des caractères CJK doivent comporter au moins {min} caractères visibles pour ne pas masquer des souvenirs sans rapport.",
       "directiveContentLabel": "Instruction",
       "directiveInstructionPlaceholder": "Rédigez une instruction permanente pour cet agent.",
       "directiveSuppressPlaceholder": "Expliquez comment l’agent doit traiter ce sujet.",

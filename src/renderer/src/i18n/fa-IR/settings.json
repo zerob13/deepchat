@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "موضوع منطبق",
       "directiveTopicPlaceholder": "موضوع یا عبارت دقیق برای حذف از حافظهٔ بازیابی‌شده",
+      "directiveTopicTooBroad": "موضوع‌های دارای نویسه‌های CJK باید دست‌کم {min} نویسهٔ قابل مشاهده داشته باشند تا حافظه‌های نامرتبط پنهان نشوند.",
       "directiveContentLabel": "دستورالعمل",
       "directiveInstructionPlaceholder": "یک دستورالعمل پایدار برای این عامل بنویسید.",
       "directiveSuppressPlaceholder": "توضیح دهید عامل چگونه باید با این موضوع برخورد کند.",

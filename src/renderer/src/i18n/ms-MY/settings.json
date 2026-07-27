@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Topik sepadan",
       "directiveTopicPlaceholder": "Topik atau frasa tepat untuk disekat daripada memori yang diingat semula",
+      "directiveTopicTooBroad": "Topik yang mengandungi aksara CJK memerlukan sekurang-kurangnya {min} aksara yang kelihatan agar memori tidak berkaitan tidak disekat.",
       "directiveContentLabel": "Arahan",
       "directiveInstructionPlaceholder": "Tulis arahan tetap untuk ejen ini.",
       "directiveSuppressPlaceholder": "Terangkan cara ejen harus mengendalikan topik ini.",

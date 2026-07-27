@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Topik yang cocok",
       "directiveTopicPlaceholder": "Topik atau frasa persis yang akan disaring dari memori yang dipanggil kembali",
+      "directiveTopicTooBroad": "Topik yang memuat karakter CJK memerlukan sedikitnya {min} karakter terlihat agar tidak menyaring memori yang tidak terkait.",
       "directiveContentLabel": "Instruksi",
       "directiveInstructionPlaceholder": "Tulis instruksi tetap untuk agen ini.",
       "directiveSuppressPlaceholder": "Jelaskan cara agen menangani topik ini.",

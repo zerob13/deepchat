@@ -102,7 +102,8 @@ evidence 视角，不能把时间过滤误当作物理删除。
 Active `suppress_topic` directive 在 access accounting 前过滤 recall candidate。普通 memory、
 persona 和 working projection 进入只读 `<context-data>` 容器，内容严格作为 data；Active directive
 进入独立 typed contribution。抽取结果只能创建 draft directive，只有用户显式创建或 approve
-操作能让 directive active。
+操作能让 directive active。CJK topic 使用标准化 substring 匹配，因此至少需要两个可见 base
+character；写入端拒绝过宽 topic，运行时也忽略历史脏值。
 
 一个纯 allocator 管理总 memory contribution budget：directive ceiling、persona/working
 floor/ceiling、query-recall reservation，以及未使用份额的有界 borrowing。最终 assembler 仍执行

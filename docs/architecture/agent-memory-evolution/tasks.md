@@ -145,6 +145,7 @@ corrected before this record was closed.
 - [x] Keep transient embedding-readiness work in the generation-aware dirty queue.
 - [x] Enforce persistence-equivalent temporal and directive-kind invariants on response DTOs.
 - [x] Preserve extraction audit coverage when cancellation interrupts directive suggestions.
+- [x] Reject single-character CJK suppression topics and ignore equivalent persisted values.
 - [x] Remove verified projection and retrieval hot-path overhead without changing output.
 - [x] Localize the new directive and contribution-budget UI across maintained locales.
 - [x] Run final formatting, i18n, lint, typecheck, focused, native, and maintained Memory gates.

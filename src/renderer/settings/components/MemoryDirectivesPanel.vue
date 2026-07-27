@@ -46,9 +46,20 @@
           <Input
             v-model="form.topic"
             :placeholder="t('settings.memory.redesign.directiveTopicPlaceholder')"
-            :aria-invalid="topicLength > AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS"
+            :aria-invalid="topicLength > AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS || topicTooBroad"
             data-testid="memory-directive-topic"
           />
+          <p
+            v-if="topicTooBroad"
+            class="text-[11px] text-destructive"
+            data-testid="memory-directive-topic-specificity"
+          >
+            {{
+              t('settings.memory.redesign.directiveTopicTooBroad', {
+                min: AGENT_MEMORY_DIRECTIVE_CJK_TOPIC_MIN_VISIBLE_CHARS
+              })
+            }}
+          </p>
         </label>
       </div>
 
@@ -277,12 +288,14 @@ import { useToast } from '@/components/use-toast'
 import { createMemoryClient } from '@api/MemoryClient'
 import {
   AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT,
+  AGENT_MEMORY_DIRECTIVE_CJK_TOPIC_MIN_VISIBLE_CHARS,
   AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
   AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
   type AgentMemoryDirectiveKind,
   type AgentMemoryDirectiveStatus
 } from '@shared/types/agent-memory'
 import type { MemoryDirectiveCreateInput, MemoryDirectiveItem } from '@shared/contracts/routes'
+import { isMemoryDirectiveTopicSpecificEnough } from '@shared/lib/memoryDirectiveTopic'
 import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 import {
   notifyMemoryActionFailed,
@@ -324,6 +337,12 @@ const directiveContentPlaceholder = computed(() =>
 
 const contentLength = computed(() => unicodeCodePointLength(form.content.trim()))
 const topicLength = computed(() => unicodeCodePointLength(form.topic.trim()))
+const topicTooBroad = computed(
+  () =>
+    form.kind === 'suppress_topic' &&
+    Boolean(form.topic.trim()) &&
+    !isMemoryDirectiveTopicSpecificEnough(form.topic)
+)
 
 const canCreate = computed(
   () =>
@@ -332,7 +351,9 @@ const canCreate = computed(
     Boolean(form.content.trim()) &&
     contentLength.value <= AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS &&
     (form.kind !== 'suppress_topic' ||
-      (Boolean(form.topic.trim()) && topicLength.value <= AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS))
+      (Boolean(form.topic.trim()) &&
+        topicLength.value <= AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS &&
+        !topicTooBroad.value))
 )
 
 const activeCount = computed(

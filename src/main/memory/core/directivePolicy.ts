@@ -2,12 +2,14 @@ import {
   AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
   type MemoryRetrievalPurpose
 } from '@shared/types/agent-memory'
+import {
+  containsCjkScript,
+  isMemoryDirectiveTopicSpecificEnough
+} from '@shared/lib/memoryDirectiveTopic'
 import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 
 import { normalizeDirectiveMatchText } from '../domain/directives'
 
-const CJK_SCRIPT_PATTERN =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u
 const LETTER_OR_NUMBER_PATTERN = /[\p{L}\p{N}]/u
 
 type TopicMatcher = (content: string) => boolean
@@ -26,7 +28,7 @@ function escapeRegExp(value: string): string {
 }
 
 function createTopicMatcher(topic: string): TopicMatcher {
-  if (CJK_SCRIPT_PATTERN.test(topic)) {
+  if (containsCjkScript(topic)) {
     return (content) => content.includes(topic)
   }
 
@@ -49,7 +51,8 @@ export function createMemoryTopicSuppressionPolicy(
         .filter(
           (topic) =>
             topic.length > 0 &&
-            unicodeCodePointLength(topic) <= AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
+            unicodeCodePointLength(topic) <= AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS &&
+            isMemoryDirectiveTopicSpecificEnough(topic)
         )
     )
   ]

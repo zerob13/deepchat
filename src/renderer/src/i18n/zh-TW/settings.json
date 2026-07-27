@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "比對主題",
       "directiveTopicPlaceholder": "要從召回記憶中排除的確切主題或片語",
+      "directiveTopicTooBroad": "含中日韓字元的主題至少需要 {min} 個可見字元，以免誤排除無關記憶。",
       "directiveContentLabel": "指令內容",
       "directiveInstructionPlaceholder": "寫下此代理應長期遵循的指令。",
       "directiveSuppressPlaceholder": "說明代理應如何處理此主題。",

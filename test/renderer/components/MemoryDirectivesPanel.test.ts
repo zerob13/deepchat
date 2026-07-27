@@ -198,6 +198,31 @@ describe('MemoryDirectivesPanel', () => {
     })
   })
 
+  it('explains and rejects overbroad single-character CJK topics', async () => {
+    const { wrapper } = await setup()
+    const createButton = wrapper.find('[data-testid="memory-directive-create"]')
+
+    wrapper.findComponent({ name: 'Select' }).vm.$emit('update:modelValue', 'suppress_topic')
+    await flushPromises()
+    wrapper
+      .findComponent({ name: 'Textarea' })
+      .vm.$emit('update:modelValue', 'Do not recall this topic.')
+    wrapper.findComponent({ name: 'Input' }).vm.$emit('update:modelValue', '工\u200d')
+    await flushPromises()
+
+    expect(createButton.attributes('disabled')).toBe('')
+    expect(wrapper.findComponent({ name: 'Input' }).attributes('aria-invalid')).toBe('true')
+    expect(wrapper.find('[data-testid="memory-directive-topic-specificity"]').text()).toContain(
+      'settings.memory.redesign.directiveTopicTooBroad'
+    )
+
+    wrapper.findComponent({ name: 'Input' }).vm.$emit('update:modelValue', '工作')
+    await flushPromises()
+
+    expect(createButton.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('[data-testid="memory-directive-topic-specificity"]').exists()).toBe(false)
+  })
+
   it('uses trimmed Unicode code points for content and topic limits', async () => {
     const { wrapper } = await setup()
     const createButton = wrapper.find('[data-testid="memory-directive-create"]')

@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Chủ đề khớp",
       "directiveTopicPlaceholder": "Chủ đề hoặc cụm từ chính xác cần ẩn khỏi bộ nhớ được truy hồi",
+      "directiveTopicTooBroad": "Chủ đề chứa ký tự CJK cần ít nhất {min} ký tự hiển thị để không ẩn các bộ nhớ không liên quan.",
       "directiveContentLabel": "Hướng dẫn",
       "directiveInstructionPlaceholder": "Viết hướng dẫn thường trực cho tác nhân này.",
       "directiveSuppressPlaceholder": "Giải thích cách tác nhân nên xử lý chủ đề này.",

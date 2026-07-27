@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "Tópico correspondente",
       "directiveTopicPlaceholder": "Tópico ou frase exata a suprimir da memória recuperada",
+      "directiveTopicTooBroad": "Tópicos com caracteres CJK precisam de pelo menos {min} caracteres visíveis para não suprimir memórias não relacionadas.",
       "directiveContentLabel": "Instrução",
       "directiveInstructionPlaceholder": "Escreva uma instrução permanente para este agente.",
       "directiveSuppressPlaceholder": "Explique como o agente deve lidar com este tópico.",

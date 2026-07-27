@@ -160,6 +160,24 @@ describe('DirectiveService', () => {
     ).toThrow(/topic exceeds 512 Unicode code points/)
   })
 
+  it('rejects overbroad single-character CJK suppression topics', () => {
+    expect(() =>
+      normalizeMemoryDirective({
+        kind: 'suppress_topic',
+        content: 'Do not recall this broad topic.',
+        topic: '工\u200d'
+      })
+    ).toThrow(/CJK topic requires at least 2 visible characters/)
+
+    expect(
+      normalizeMemoryDirective({
+        kind: 'suppress_topic',
+        content: 'Do not recall this exact topic.',
+        topic: '工作'
+      })
+    ).toMatchObject({ normalizedTopic: '工作' })
+  })
+
   it('returns typed capacity results for explicit creation and draft approval', () => {
     const { presenter } = makePresenter({ memoryEnabled: true })
     for (let index = 0; index < AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT; index += 1) {

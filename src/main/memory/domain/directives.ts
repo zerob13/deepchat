@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
 import {
   AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
+  AGENT_MEMORY_DIRECTIVE_CJK_TOPIC_MIN_VISIBLE_CHARS,
   AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS,
   type AgentMemoryDirectiveKind,
   type AgentMemoryDirectiveSource,
   type AgentMemoryDirectiveStatus
 } from '@shared/types/agent-memory'
+import { isMemoryDirectiveTopicSpecificEnough } from '@shared/lib/memoryDirectiveTopic'
 import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 
 export type { AgentMemoryDirectiveKind, AgentMemoryDirectiveSource, AgentMemoryDirectiveStatus }
@@ -91,6 +93,16 @@ export interface MemoryDirectiveCounts {
   rejected: number
 }
 
+export function isMemoryDirectiveRuntimeEligible(
+  row: Pick<AgentMemoryDirectiveRow, 'kind' | 'normalized_topic'>
+): boolean {
+  return (
+    row.kind !== 'suppress_topic' ||
+    (typeof row.normalized_topic === 'string' &&
+      isMemoryDirectiveTopicSpecificEnough(row.normalized_topic))
+  )
+}
+
 export type MemoryDirectiveCommandResult =
   | { action: 'applied'; directive: AgentMemoryDirectiveRow }
   | {
@@ -140,6 +152,11 @@ export function normalizeMemoryDirective(input: MemoryDirectiveInput): Normalize
       'topic',
       AGENT_MEMORY_DIRECTIVE_TOPIC_MAX_CHARS
     )
+    if (!isMemoryDirectiveTopicSpecificEnough(normalizedTopic)) {
+      throw new Error(
+        `[Memory] directive CJK topic requires at least ${AGENT_MEMORY_DIRECTIVE_CJK_TOPIC_MIN_VISIBLE_CHARS} visible characters`
+      )
+    }
   }
 
   const identity =

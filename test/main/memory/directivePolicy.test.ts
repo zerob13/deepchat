@@ -32,6 +32,14 @@ describe('memory directive suppression policy', () => {
     expect(policy.suppresses('项目玄武与它无关。')).toBe(false)
   })
 
+  it('ignores persisted single-character CJK topics instead of over-suppressing recall', () => {
+    const policy = createMemoryTopicSuppressionPolicy(['工', '工作'])
+
+    expect(policy.topics).toEqual(['工作'])
+    expect(policy.suppresses('工作安排已经更新。')).toBe(true)
+    expect(policy.suppresses('这个工程已经完成。')).toBe(false)
+  })
+
   it('deduplicates bounded topics and ignores malformed persisted values', () => {
     const policy = createMemoryTopicSuppressionPolicy([
       null,

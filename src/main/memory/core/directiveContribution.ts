@@ -3,7 +3,10 @@ import type {
   AgentMemoryDirectiveSource
 } from '@shared/types/agent-memory'
 
-import type { AgentMemoryDirectiveRow } from '../domain/directives'
+import {
+  isMemoryDirectiveRuntimeEligible,
+  type AgentMemoryDirectiveRow
+} from '../domain/directives'
 import { DIRECTIVE_TOKEN_CEILING } from './contributionBudget'
 import { estimateTokens } from './injectionPort'
 
@@ -106,7 +109,7 @@ export function buildDirectiveContribution(
   const tokenBudget = Math.min(totalTokenBudget, DIRECTIVE_TOKEN_CEILING)
   const seenIds = new Set<string>()
   const activeRows = rows
-    .filter((row) => row.status === 'active')
+    .filter((row) => row.status === 'active' && isMemoryDirectiveRuntimeEligible(row))
     .sort(compareDirectivePriority)
     .filter((row) => {
       if (seenIds.has(row.id)) return false

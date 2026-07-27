@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Übereinstimmendes Thema",
       "directiveTopicPlaceholder": "Genaues Thema oder Ausdruck, der aus abgerufenen Erinnerungen unterdrückt werden soll",
+      "directiveTopicTooBroad": "Themen mit CJK-Zeichen benötigen mindestens {min} sichtbare Zeichen, damit keine unbeteiligten Erinnerungen unterdrückt werden.",
       "directiveContentLabel": "Anweisung",
       "directiveInstructionPlaceholder": "Schreibe eine dauerhafte Anweisung für diesen Agenten.",
       "directiveSuppressPlaceholder": "Beschreibe, wie der Agent mit diesem Thema umgehen soll.",

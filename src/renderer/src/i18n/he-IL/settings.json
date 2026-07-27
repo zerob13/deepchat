@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "נושא תואם",
       "directiveTopicPlaceholder": "נושא או ביטוי מדויק שיושתק מהזיכרון המאוחזר",
+      "directiveTopicTooBroad": "נושאים הכוללים תווי CJK חייבים להכיל לפחות {min} תווים גלויים כדי שלא להסתיר זיכרונות שאינם קשורים.",
       "directiveContentLabel": "הנחיה",
       "directiveInstructionPlaceholder": "כתבו הנחיה קבועה לסוכן הזה.",
       "directiveSuppressPlaceholder": "הסבירו כיצד הסוכן צריך לטפל בנושא הזה.",

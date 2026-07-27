@@ -3094,6 +3094,7 @@
       },
       "directiveTopicLabel": "匹配主题",
       "directiveTopicPlaceholder": "要从召回记忆中屏蔽的准确主题或短语",
+      "directiveTopicTooBroad": "含中日韩字符的主题至少需要 {min} 个可见字符，以免误屏蔽无关记忆。",
       "directiveContentLabel": "指令内容",
       "directiveInstructionPlaceholder": "写下此智能体应长期遵循的指令。",
       "directiveSuppressPlaceholder": "说明智能体应如何处理该主题。",

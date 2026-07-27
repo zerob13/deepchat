@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "Совпавшая тема",
       "directiveTopicPlaceholder": "Точная тема или фраза, которую нужно скрыть из извлечённой памяти",
+      "directiveTopicTooBroad": "Темы с символами CJK должны содержать не менее {min} видимых символов, чтобы не скрывать несвязанные воспоминания.",
       "directiveContentLabel": "Инструкция",
       "directiveInstructionPlaceholder": "Напишите постоянную инструкцию для этого агента.",
       "directiveSuppressPlaceholder": "Опишите, как агент должен обращаться с этой темой.",

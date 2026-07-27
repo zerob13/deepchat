@@ -3095,6 +3095,7 @@
       },
       "directiveTopicLabel": "Matched topic",
       "directiveTopicPlaceholder": "Exact topic or phrase to suppress from recalled memory",
+      "directiveTopicTooBroad": "Topics containing CJK characters need at least {min} visible characters to avoid suppressing unrelated memories.",
       "directiveContentLabel": "Instruction",
       "directiveInstructionPlaceholder": "Write a standing instruction for this agent.",
       "directiveSuppressPlaceholder": "Explain how the agent should handle this topic.",

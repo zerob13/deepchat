@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Tema coincidente",
       "directiveTopicPlaceholder": "Tema o frase exactos que se excluirán de la memoria recuperada",
+      "directiveTopicTooBroad": "Los temas con caracteres CJK necesitan al menos {min} caracteres visibles para no ocultar recuerdos no relacionados.",
       "directiveContentLabel": "Instrucción",
       "directiveInstructionPlaceholder": "Escribe una instrucción permanente para este agente.",
       "directiveSuppressPlaceholder": "Explica cómo debe tratar este tema el agente.",

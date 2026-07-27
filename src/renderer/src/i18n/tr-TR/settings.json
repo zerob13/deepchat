@@ -3119,6 +3119,7 @@
       },
       "directiveTopicLabel": "Eşleşen konu",
       "directiveTopicPlaceholder": "Geri çağrılan bellekten bastırılacak tam konu veya ifade",
+      "directiveTopicTooBroad": "CJK karakterleri içeren konuların ilgisiz anıları bastırmaması için en az {min} görünür karakter içermesi gerekir.",
       "directiveContentLabel": "Talimat",
       "directiveInstructionPlaceholder": "Bu ajan için kalıcı bir talimat yazın.",
       "directiveSuppressPlaceholder": "Ajanın bu konuyu nasıl ele alması gerektiğini açıklayın.",

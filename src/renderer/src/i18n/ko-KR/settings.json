@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "일치하는 주제",
       "directiveTopicPlaceholder": "회상된 메모리에서 억제할 정확한 주제 또는 문구",
+      "directiveTopicTooBroad": "CJK 문자가 포함된 주제에는 관련 없는 메모리 차단을 피하기 위해 표시되는 문자가 최소 {min}개 필요합니다.",
       "directiveContentLabel": "지침",
       "directiveInstructionPlaceholder": "이 에이전트의 상시 지침을 작성하세요.",
       "directiveSuppressPlaceholder": "에이전트가 이 주제를 어떻게 다뤄야 하는지 설명하세요.",

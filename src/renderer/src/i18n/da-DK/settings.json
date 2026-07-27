@@ -3128,6 +3128,7 @@
       },
       "directiveTopicLabel": "Matchet emne",
       "directiveTopicPlaceholder": "Præcist emne eller udtryk, der skal undertrykkes fra genkaldt hukommelse",
+      "directiveTopicTooBroad": "Emner med CJK-tegn skal have mindst {min} synlige tegn for ikke at skjule uvedkommende hukommelse.",
       "directiveContentLabel": "Instruktion",
       "directiveInstructionPlaceholder": "Skriv en fast instruktion til denne agent.",
       "directiveSuppressPlaceholder": "Forklar, hvordan agenten skal håndtere dette emne.",
