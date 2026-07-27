@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { buildLegacyMemoryProvenanceKey, buildMemoryProvenanceKey } from '@/memory/core/scoring'
+import {
+  buildLegacyMemoryProvenanceKey,
+  buildMemoryProvenanceKey,
+  buildScopedMemoryProvenanceKey
+} from '@/memory/core/scoring'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
 import {
   FakeVectorStore,
@@ -9,7 +13,7 @@ import {
   makePresenter,
   textToVector
 } from './support/memoryFakes'
-import { routedLLM, seedEmbedded } from './serviceTestSupport'
+import { makeLLMPresenter, routedLLM, seedEmbedded } from './serviceTestSupport'
 
 import { MemoryService, embeddingDimensions, waitForMemoryCondition } from './serviceTestSupport'
 
@@ -26,6 +30,219 @@ describe('MemoryService write + two-phase embedding', () => {
     expect(first).toHaveLength(1)
     expect(second).toHaveLength(0)
     expect(repo.countByAgent('a')).toBe(1)
+  })
+
+  it('deduplicates only within one exact applicability scope', () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    const content = 'user likes redis'
+    const [globalId] = presenter.writeMemoriesSync([{ kind: 'semantic', content }], {
+      agentId: 'a'
+    })
+    const [sessionOneId] = presenter.writeMemoriesSync([{ kind: 'semantic', content }], {
+      agentId: 'a',
+      scope: { type: 'session', id: 'session-1' }
+    })
+    const [sessionTwoId] = presenter.writeMemoriesSync([{ kind: 'semantic', content }], {
+      agentId: 'a',
+      scope: { type: 'session', id: 'session-2' }
+    })
+
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content: ' user   likes redis ' }], {
+        agentId: 'a',
+        scope: { type: 'session', id: 'session-1' }
+      })
+    ).toEqual([])
+    expect(repo.countByAgent('a')).toBe(3)
+    expect(repo.getById(globalId)).toMatchObject({
+      scope_type: 'agent',
+      scope_id: null,
+      provenance_key: buildMemoryProvenanceKey('a', 'semantic', content)
+    })
+    expect(repo.getById(sessionOneId)).toMatchObject({
+      scope_type: 'session',
+      scope_id: 'session-1',
+      provenance_key: buildScopedMemoryProvenanceKey('a', 'semantic', content, {
+        type: 'session',
+        id: 'session-1'
+      })
+    })
+    expect(repo.getById(sessionTwoId)?.provenance_key).not.toBe(
+      repo.getById(sessionOneId)?.provenance_key
+    )
+  })
+
+  it('never offers a different scope as a correction target', async () => {
+    const repo = createFakeRepository()
+    const generateText = vi.fn(async () =>
+      JSON.stringify({ decision: 'UPDATE', targetIndex: 0, mergedContent: 'updated global fact' })
+    )
+    const presenter = new MemoryService({
+      repository: repo,
+      resolveAgentConfig: () => ({ memoryEnabled: true, memoryEmbedding: null }),
+      getEmbeddings: async () => [],
+      generateText,
+      createVectorStore: async () => new FakeVectorStore()
+    })
+    repo.insert({
+      id: 'global',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user prefers redis globally'
+    })
+
+    const result = await presenter.rememberMemory(
+      { kind: 'semantic', content: 'user prefers redis for this session' },
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } },
+      { providerId: 'p', modelId: 'm' }
+    )
+
+    expect(result.action).toBe('created')
+    expect(generateText).not.toHaveBeenCalled()
+    expect(repo.getById('global')?.content).toBe('user prefers redis globally')
+    expect(repo.listByAgent('a')).toContainEqual(
+      expect.objectContaining({ scope_type: 'session', scope_id: 'session-1' })
+    )
+  })
+
+  it('enriches a migrated atemporal duplicate without replacing an established interval', () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    const content = 'user works on the memory project'
+    const initial = presenter.writeMemoriesSync([{ kind: 'semantic', content }], { agentId: 'a' })
+    const temporal = {
+      temporalKind: 'state' as const,
+      validFrom: 100,
+      validUntil: 200,
+      temporalConfidence: 0.8,
+      temporalPrecision: 'exact' as const,
+      temporalTimeZone: 'UTC'
+    }
+
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content, temporal }], { agentId: 'a' })
+    ).toEqual([])
+    expect(repo.getById(initial[0])).toMatchObject({
+      temporal_kind: 'state',
+      valid_from: 100,
+      valid_until: 200,
+      temporal_confidence: 0.8,
+      confidence: null,
+      decision_revision: 2
+    })
+
+    expect(
+      presenter.writeMemoriesSync(
+        [
+          {
+            kind: 'semantic',
+            content,
+            temporal: { ...temporal, validFrom: 120, temporalConfidence: 1 }
+          }
+        ],
+        { agentId: 'a' }
+      )
+    ).toEqual([])
+    expect(repo.getById(initial[0])).toMatchObject({
+      valid_from: 100,
+      temporal_confidence: 0.8,
+      decision_revision: 2
+    })
+  })
+
+  it('retains temporal metadata from duplicate extraction candidates', async () => {
+    const content = 'The release is planned for tomorrow.'
+    const { presenter, repo } = makeLLMPresenter(
+      routedLLM({
+        extraction: JSON.stringify({
+          memories: [
+            { content, importance: 0.8 },
+            {
+              content,
+              importance: 0.8,
+              temporal: {
+                temporalKind: 'plan',
+                validFrom: '2026-07-27T00:00:00Z',
+                validUntil: '2026-07-28T00:00:00Z',
+                temporalConfidence: 0.9,
+                temporalPrecision: 'day',
+                timeZone: 'UTC'
+              }
+            }
+          ]
+        })
+      })
+    )
+
+    await expect(
+      presenter.extractAndStore({
+        agentId: 'a',
+        spanText: 'User: the release is planned for tomorrow',
+        model: { providerId: 'main', modelId: 'main' }
+      })
+    ).resolves.toMatchObject({ ok: true })
+    expect(repo.listByAgent('a')).toEqual([
+      expect.objectContaining({
+        content,
+        temporal_kind: 'plan',
+        valid_from: Date.parse('2026-07-27T00:00:00Z'),
+        valid_until: Date.parse('2026-07-28T00:00:00Z'),
+        temporal_confidence: 0.9
+      })
+    ])
+  })
+
+  it('supplies temporal context to correction decisions', async () => {
+    const now = Date.parse('2026-07-26T00:00:00Z')
+    const repo = createFakeRepository()
+    let decisionPrompt = ''
+    const presenter = new MemoryService({
+      repository: repo,
+      resolveAgentConfig: () => ({ memoryEnabled: true, memoryEmbedding: null }),
+      getEmbeddings: async () => [],
+      generateText: async (_providerId, _modelId, prompt) => {
+        decisionPrompt = prompt
+        return '{"decision":"ADD","targetIndex":null}'
+      },
+      createVectorStore: async () => new FakeVectorStore(),
+      clock: {
+        now: () => now,
+        timeZone: () => 'UTC'
+      }
+    })
+    repo.insert({
+      id: 'previous-location',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user works in paris',
+      temporal: {
+        temporalKind: 'state',
+        validFrom: Date.parse('2025-01-01T00:00:00Z'),
+        validUntil: Date.parse('2026-01-01T00:00:00Z'),
+        temporalConfidence: 0.95,
+        temporalPrecision: 'day',
+        temporalTimeZone: 'UTC'
+      }
+    })
+
+    await presenter.rememberMemory(
+      {
+        kind: 'semantic',
+        content: 'user works in berlin',
+        temporal: {
+          temporalKind: 'state',
+          validFrom: Date.parse('2026-07-01T00:00:00Z'),
+          validUntil: null,
+          temporalConfidence: 0.95,
+          temporalPrecision: 'day',
+          temporalTimeZone: 'UTC'
+        }
+      },
+      { agentId: 'a' },
+      { providerId: 'p', modelId: 'm' }
+    )
+
+    expect(decisionPrompt).toContain('user works in berlin [Temporal: current state')
+    expect(decisionPrompt).toContain('user works in paris [Temporal: expired state')
   })
 
   it('lazy re-keys a matching legacy provenance owner without bumping its decision revision', () => {

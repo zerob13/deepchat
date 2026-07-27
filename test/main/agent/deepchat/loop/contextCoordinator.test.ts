@@ -254,7 +254,9 @@ describe('DeepChatContextCoordinator', () => {
       contextContributions: {
         checkpoint: { message: null, contributions: [] },
         memory: { content: null, manifest: null, anchorEntryId: null },
-        memoryIncluded: false
+        directives: { content: null, manifest: null, anchorEntryId: null },
+        memoryIncluded: false,
+        directivesIncluded: false
       },
       prepareCompaction: async () => ({ applied: false as const }),
       assembleCheckpoint,
@@ -274,7 +276,9 @@ describe('DeepChatContextCoordinator', () => {
     const contextContributions = {
       checkpoint: { message: oldCheckpoint, contributions: [] },
       memory: { content: null, manifest: null, anchorEntryId: null },
-      memoryIncluded: false
+      directives: { content: null, manifest: null, anchorEntryId: null },
+      memoryIncluded: false,
+      directivesIncluded: false
     }
     const recovered = await new DeepChatContextCoordinator().recoverFromPressure({
       requestMessages: [

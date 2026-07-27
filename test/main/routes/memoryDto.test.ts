@@ -1,26 +1,36 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatMemorySourceRecordContent, toMemoryItemDto } from '@/memory/routes'
+import {
+  formatMemorySourceRecordContent,
+  toMemoryDirectiveDto,
+  toMemoryItemDto
+} from '@/memory/routes'
 import {
   createEmptyMemoryHealth,
   createEmptyMemoryRuntimeDiagnostics,
   decodeMemoryPageCursor,
   encodeMemoryPageCursor,
   memoryAddRoute,
+  memoryApproveDirectiveRoute,
   memoryArchiveRoute,
+  memoryCreateDirectiveRoute,
+  memoryDeleteDirectiveRoute,
   memoryGetArchiveCandidateLifecyclePreviewRoute,
   memoryGetByIdsRoute,
   memoryGetHealthRoute,
   memoryGetLifecycleRoute,
   memoryGetStatusRoute,
   memoryListRoute,
+  memoryListDirectivesRoute,
   memoryPageRoute,
+  memoryRejectDirectiveRoute,
   memoryReindexRoute,
   memoryRestoreRoute,
   memorySearchRoute,
   memoryUpdateRoute
 } from '@shared/contracts/routes'
 import {
+  AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS,
   AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
   MEMORY_MAINTENANCE_BUDGET_STEPS,
   MEMORY_RECALL_LATENCY_STAGES,
@@ -38,6 +48,8 @@ function makeRow(overrides: Partial<AgentMemoryRow> = {}): AgentMemoryRow {
     id: 'm1',
     agent_id: 'agent',
     user_scope: null,
+    scope_type: 'agent',
+    scope_id: null,
     kind: 'semantic',
     category: null,
     content: 'redis listens on 6379',
@@ -57,6 +69,12 @@ function makeRow(overrides: Partial<AgentMemoryRow> = {}): AgentMemoryRow {
     decay_score: null,
     source_entry_ids: null,
     confidence: null,
+    temporal_kind: 'atemporal',
+    valid_from: null,
+    valid_until: null,
+    temporal_confidence: null,
+    temporal_precision: null,
+    temporal_timezone: null,
     last_consolidated_at: null,
     conflict_state: null,
     conflict_with: null,
@@ -159,6 +177,62 @@ describe('toMemoryItemDto sourceEntryIds passthrough', () => {
     const parsed = memoryListRoute.output.parse({ memories })
     expect(parsed.memories[0].sourceEntryIds).toEqual([1, 2])
     expect(parsed.memories[1].sourceEntryIds).toBeNull()
+  })
+
+  it('enforces temporal persistence invariants on management and search DTOs', () => {
+    const atemporal = toMemoryItemDto(makeRow())
+    const temporal = {
+      ...atemporal,
+      temporalKind: 'state' as const,
+      validFrom: 100,
+      validUntil: 200,
+      temporalConfidence: 0.9,
+      temporalPrecision: 'exact' as const,
+      temporalTimeZone: 'UTC'
+    }
+
+    expect(memoryListRoute.output.safeParse({ memories: [temporal] }).success).toBe(true)
+    expect(
+      memorySearchRoute.output.safeParse({ results: [{ ...temporal, score: 0.8 }] }).success
+    ).toBe(true)
+
+    const malformed = [
+      { ...atemporal, validFrom: 100 },
+      { ...temporal, temporalConfidence: null },
+      { ...temporal, temporalPrecision: null },
+      { ...temporal, temporalTimeZone: null },
+      { ...temporal, temporalTimeZone: '' },
+      { ...temporal, temporalTimeZone: ' UTC ' },
+      { ...temporal, validFrom: 200, validUntil: 200 },
+      { ...temporal, validFrom: 300, validUntil: 200 }
+    ]
+    for (const memory of malformed) {
+      expect(memoryListRoute.output.safeParse({ memories: [memory] }).success).toBe(false)
+      expect(
+        memorySearchRoute.output.safeParse({ results: [{ ...memory, score: 0.8 }] }).success
+      ).toBe(false)
+    }
+  })
+
+  it('projects pre-migration row shapes as atemporal', () => {
+    const {
+      temporal_kind: _temporalKind,
+      valid_from: _validFrom,
+      valid_until: _validUntil,
+      temporal_confidence: _temporalConfidence,
+      temporal_precision: _temporalPrecision,
+      temporal_timezone: _temporalTimeZone,
+      ...legacyRow
+    } = makeRow()
+
+    expect(toMemoryItemDto(legacyRow as unknown as AgentMemoryRow)).toMatchObject({
+      temporalKind: 'atemporal',
+      validFrom: null,
+      validUntil: null,
+      temporalConfidence: null,
+      temporalPrecision: null,
+      temporalTimeZone: null
+    })
   })
 
   it('maps conflict_with to camelCase conflictWith and accepts conflicted status', () => {
@@ -523,6 +597,13 @@ describe('memory.search route contract', () => {
       memorySearchRoute.input.parse({ agentId: 'deepchat', query: 'redis', limit: 5 }).limit
     ).toBe(5)
     expect(
+      memorySearchRoute.input.parse({
+        agentId: 'deepchat',
+        query: 'redis',
+        scopeContext: { userId: ' user-1 ', projectId: 'project-1', sessionId: 'session-1' }
+      }).scopeContext
+    ).toEqual({ userId: 'user-1', projectId: 'project-1', sessionId: 'session-1' })
+    expect(
       memorySearchRoute.input.parse({ agentId: 'deepchat', query: 'redis', limit: 100 }).limit
     ).toBe(100)
     expect(
@@ -531,6 +612,13 @@ describe('memory.search route contract', () => {
     expect(memorySearchRoute.input.safeParse({ agentId: 'has space', query: 'x' }).success).toBe(
       false
     )
+    expect(
+      memorySearchRoute.input.safeParse({
+        agentId: 'deepchat',
+        query: 'x',
+        scopeContext: { sessionId: ' ' }
+      }).success
+    ).toBe(false)
   })
 
   it('carries the retrieval score and source flags on a projected memory row', () => {
@@ -545,6 +633,16 @@ describe('memory.search route contract', () => {
     expect(parsed.results[0].score).toBe(0.83)
     expect(parsed.results[0].sources).toEqual({ fts: true })
     expect(parsed.results[0].similarity).toBe(0.42)
+    expect(
+      memorySearchRoute.output.safeParse({
+        results: [{ ...result, scopeType: 'session', scopeId: null }]
+      }).success
+    ).toBe(false)
+    expect(
+      memorySearchRoute.output.safeParse({
+        results: [{ ...result, scopeType: 'session', scopeId: ' session-1 ' }]
+      }).success
+    ).toBe(false)
   })
 })
 
@@ -560,16 +658,32 @@ describe('memory.add route contract', () => {
       kind: 'episodic',
       category: 'project_fact',
       importance: 0.8,
-      sessionId: 'session-1'
+      sessionId: 'session-1',
+      scope: { type: 'project', id: ' project-1 ' }
     })
     expect(full.kind).toBe('episodic')
     expect(full.category).toBe('project_fact')
     expect(full.importance).toBe(0.8)
     expect(full.sessionId).toBe('session-1')
+    expect(full.scope).toEqual({ type: 'project', id: 'project-1' })
     expect(memoryAddRoute.input.safeParse({ agentId: 'has space', content: 'x' }).success).toBe(
       false
     )
     expect(memoryAddRoute.input.safeParse({ agentId: 'deepchat', content: '' }).success).toBe(false)
+    expect(
+      memoryAddRoute.input.safeParse({
+        agentId: 'deepchat',
+        content: 'x',
+        scope: { type: 'agent', id: 'unexpected' }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryAddRoute.input.safeParse({
+        agentId: 'deepchat',
+        content: 'x',
+        scope: { type: 'session', id: ' ' }
+      }).success
+    ).toBe(false)
     expect(
       memoryAddRoute.input.safeParse({ agentId: 'deepchat', content: 'x', importance: 2 }).success
     ).toBe(false)
@@ -608,8 +722,10 @@ describe('memory.add route contract', () => {
 
   it('accepts each flattened write outcome shape on output', () => {
     expect(
-      memoryAddRoute.output.parse({ result: { action: 'created', memoryId: 'm1' } }).result.action
-    ).toBe('created')
+      memoryAddRoute.output.parse({
+        result: { action: 'created', memoryId: 'm1', reauthorized: true }
+      }).result
+    ).toMatchObject({ action: 'created', reauthorized: true })
     expect(
       memoryAddRoute.output.parse({
         result: { action: 'superseded', memoryId: 'm2', supersededId: 'm1' }
@@ -717,10 +833,27 @@ describe('memory.getStatus route contract', () => {
       conflictCount: 1,
       personaDraftCount: 1,
       personaVersionCount: 4,
+      directiveDraftCount: 2,
+      activeDirectiveCount: 3,
       reindexing: false
     }
 
     expect(memoryGetStatusRoute.output.parse({ status }).status).toEqual(status)
+    expect(
+      memoryGetStatusRoute.output.parse({
+        status: {
+          total: 3,
+          pendingEmbedding: 1,
+          hasPersona: true,
+          activeMemoryCount: 3,
+          archivedMemoryCount: 2,
+          conflictCount: 1,
+          personaDraftCount: 1,
+          personaVersionCount: 4,
+          reindexing: false
+        }
+      }).status
+    ).toMatchObject({ directiveDraftCount: 0, activeDirectiveCount: 0 })
     expect(
       memoryGetStatusRoute.output.safeParse({
         status: { total: 3, pendingEmbedding: 1, hasPersona: true }
@@ -765,6 +898,160 @@ describe('memory.archive route contract', () => {
     expect(memoryArchiveRoute.input.safeParse({ agentId: 'bad/id', memoryId: 'm1' }).success).toBe(
       false
     )
+  })
+})
+
+describe('memory directive route contracts', () => {
+  it('maps persistence rows without exposing stable identity hashes', () => {
+    const directive = toMemoryDirectiveDto({
+      agent_id: 'deepchat',
+      id: 'directive-1',
+      kind: 'suppress_topic',
+      status: 'draft',
+      source: 'derived_suggestion',
+      content: 'Do not mention Project Saffron.',
+      normalized_topic: 'project saffron',
+      identity_hash: 'a'.repeat(64),
+      created_at: 1_000,
+      updated_at: 2_000
+    })
+
+    expect(memoryListDirectivesRoute.output.parse({ directives: [directive] })).toEqual({
+      directives: [
+        {
+          id: 'directive-1',
+          agentId: 'deepchat',
+          kind: 'suppress_topic',
+          status: 'draft',
+          source: 'derived_suggestion',
+          content: 'Do not mention Project Saffron.',
+          topic: 'project saffron',
+          createdAt: 1_000,
+          updatedAt: 2_000
+        }
+      ]
+    })
+    expect(directive).not.toHaveProperty('identityHash')
+  })
+
+  it('enforces directive topics according to directive kind in response DTOs', () => {
+    const common = {
+      id: 'directive-1',
+      agentId: 'deepchat',
+      status: 'active' as const,
+      source: 'manual' as const,
+      content: 'Be concise.',
+      createdAt: 1_000,
+      updatedAt: 2_000
+    }
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'instruction', topic: null }]
+      }).success
+    ).toBe(true)
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'suppress_topic', topic: 'project saffron' }]
+      }).success
+    ).toBe(true)
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'instruction', topic: 'unexpected' }]
+      }).success
+    ).toBe(false)
+    expect(
+      memoryListDirectivesRoute.output.safeParse({
+        directives: [{ ...common, kind: 'suppress_topic', topic: null }]
+      }).success
+    ).toBe(false)
+  })
+
+  it('enforces closed directive inputs and bounded identifiers', () => {
+    expect(
+      memoryCreateDirectiveRoute.input.parse({
+        agentId: 'deepchat',
+        directive: {
+          kind: 'suppress_topic',
+          content: 'Do not mention Project Saffron.',
+          topic: 'Project Saffron'
+        }
+      })
+    ).toEqual({
+      agentId: 'deepchat',
+      directive: {
+        kind: 'suppress_topic',
+        content: 'Do not mention Project Saffron.',
+        topic: 'Project Saffron'
+      }
+    })
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: {
+          kind: 'instruction',
+          content: '😀'.repeat(AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS)
+        }
+      }).success
+    ).toBe(true)
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: { kind: 'instruction', content: 'Be concise.', topic: 'unexpected' }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: { kind: 'suppress_topic', content: 'Hide it.' }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryCreateDirectiveRoute.input.safeParse({
+        agentId: 'deepchat',
+        directive: {
+          kind: 'instruction',
+          content: '😀'.repeat(AGENT_MEMORY_DIRECTIVE_CONTENT_MAX_CHARS + 1)
+        }
+      }).success
+    ).toBe(false)
+    expect(
+      memoryListDirectivesRoute.input.parse({
+        agentId: 'deepchat',
+        statuses: ['draft', 'active']
+      })
+    ).toEqual({ agentId: 'deepchat', statuses: ['draft', 'active'], limit: 200 })
+    for (const route of [
+      memoryApproveDirectiveRoute,
+      memoryRejectDirectiveRoute,
+      memoryDeleteDirectiveRoute
+    ]) {
+      expect(
+        route.input.safeParse({ agentId: 'deepchat', directiveId: 'x'.repeat(129) }).success
+      ).toBe(false)
+    }
+  })
+
+  it('distinguishes directive capacity from missing or unavailable mutations', () => {
+    expect(
+      memoryCreateDirectiveRoute.output.parse({
+        action: 'rejected',
+        directive: null,
+        reason: 'capacity'
+      })
+    ).toEqual({ action: 'rejected', directive: null, reason: 'capacity' })
+    expect(
+      memoryApproveDirectiveRoute.output.parse({
+        action: 'rejected',
+        directive: null,
+        reason: 'not-found'
+      })
+    ).toEqual({ action: 'rejected', directive: null, reason: 'not-found' })
+    expect(
+      memoryCreateDirectiveRoute.output.safeParse({
+        action: 'applied',
+        directive: null
+      }).success
+    ).toBe(false)
   })
 })
 
@@ -816,6 +1103,22 @@ describe('memory.updated event contract', () => {
       reason: 'manual-edit',
       version: 1000,
       memoryId: 'm1'
+    })
+  })
+
+  it('carries content-free directive identity for targeted refreshes', () => {
+    expect(
+      memoryUpdatedEvent.payload.parse({
+        agentId: 'deepchat',
+        reason: 'directive-approve',
+        version: 1000,
+        directiveId: 'directive-1'
+      })
+    ).toEqual({
+      agentId: 'deepchat',
+      reason: 'directive-approve',
+      version: 1000,
+      directiveId: 'directive-1'
     })
   })
 })

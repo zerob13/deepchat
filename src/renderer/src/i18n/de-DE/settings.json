@@ -231,9 +231,9 @@
       "tabMemories": "Erinnerungen",
       "tabPersona": "Persona-Zeitleiste",
       "memoriesCount": "{count} Erinnerungen",
-      "clearAll": "Alle löschen",
-      "clearConfirmTitle": "Alle Erinnerungen löschen?",
-      "clearConfirmBody": "Dadurch werden alle Erinnerungen dieses Agenten dauerhaft entfernt. Dies kann nicht rückgängig gemacht werden.",
+      "clearAll": "Erinnerungen löschen",
+      "clearConfirmTitle": "Faktische Erinnerungen und Persona löschen?",
+      "clearConfirmBody": "Dadurch werden faktische Erinnerungen und die Persona dieses Agenten dauerhaft entfernt. Dauerhafte Anweisungen bleiben erhalten und können separat verwaltet werden. Dies kann nicht rückgängig gemacht werden.",
       "cleanupPendingRestart": "Gesperrte Vektordateien werden nach dem Neustart gelöscht",
       "emptyMemories": "Noch keine Erinnerungen. Sie sammeln sich an, während Sie mit diesem Agenten chatten.",
       "emptyPersona": "Noch keine Selbstmodell-Versionen.",
@@ -3057,7 +3057,7 @@
       "archivedMatches": "Treffer im Archiv",
       "refresh": "Aktualisieren",
       "inboxTitle": "Benötigt Aufmerksamkeit",
-      "inboxDescription": "Löse Erinnerungskonflikte und Profilentwürfe, bevor sie aus dem Blick geraten.",
+      "inboxDescription": "Löse Erinnerungskonflikte, Profilentwürfe und vorgeschlagene Anweisungen, bevor sie aus dem Blick geraten.",
       "conflictBadge": "{count} Konflikte",
       "personaDraftBadge": "{count} Profilentwürfe",
       "conflictSectionTitle": "Erinnerungskonflikte ({count})",
@@ -3104,7 +3104,48 @@
         "memory-persona-rollback": "Profil zurückgesetzt",
         "memory-persona-anchor": "Profilanker aktualisiert",
         "memory-reindex": "Erinnerung neu indiziert"
-      }
+      },
+      "tabDirectives": "Anweisungen",
+      "directiveDraftBadge": "{count} Anweisungsentwürfe",
+      "directiveDraftSectionTitle": "Vorgeschlagene Anweisungen ({count})",
+      "directiveCreateTitle": "Dauerhafte Anweisung erstellen",
+      "directiveCreateDescription": "Manuelle Anweisungen werden sofort aktiv. Modellvorschläge bleiben Entwürfe, bis du sie genehmigst.",
+      "directiveRuntimeEnabled": "Zur Laufzeit angewendet",
+      "directiveRuntimeDisabled": "Inaktiv, solange die Erinnerung ausgeschaltet ist",
+      "directiveKindLabel": "Anweisungstyp",
+      "directiveKind": {
+        "instruction": "Dauerhafte Anweisung",
+        "suppress_topic": "Thema unterdrücken"
+      },
+      "directiveTopicLabel": "Übereinstimmendes Thema",
+      "directiveTopicPlaceholder": "Genaues Thema oder Ausdruck, der aus abgerufenen Erinnerungen unterdrückt werden soll",
+      "directiveTopicTooBroad": "Themen mit CJK-Zeichen benötigen mindestens {min} sichtbare Zeichen, damit keine unbeteiligten Erinnerungen unterdrückt werden.",
+      "directiveContentLabel": "Anweisung",
+      "directiveInstructionPlaceholder": "Schreibe eine dauerhafte Anweisung für diesen Agenten.",
+      "directiveSuppressPlaceholder": "Beschreibe, wie der Agent mit diesem Thema umgehen soll.",
+      "directiveInstructionHint": "Dies ist eine Vorgabe auf Benutzerebene und kann System- oder Sicherheitsregeln nicht außer Kraft setzen.",
+      "directiveSuppressHint": "Das Thema filtert abgerufene Erinnerungen; die Anweisung steuert die Antwort. Dies ist kein Ausgabefilter.",
+      "directiveLength": "Anweisung {content}/{contentMax} · Thema {topic}/{topicMax}",
+      "directiveCreateAction": "Anweisung aktivieren",
+      "directiveCapacityTitle": "Limit für aktive Anweisungen erreicht",
+      "directiveCapacityDescription": "Jeder Agent kann bis zu {max} aktive Anweisungen haben. Lösche eine aktive Anweisung, bevor du eine weitere hinzufügst oder genehmigst.",
+      "directiveListTitle": "Gespeicherte Anweisungen",
+      "directiveListDescription": "{active} aktiv · {draft} warten auf Genehmigung",
+      "directiveEmptyTitle": "Noch keine Anweisungen",
+      "directiveEmptyDescription": "Erstelle hier eine dauerhafte Anweisung oder genehmige einen Vorschlag aus dem Posteingang.",
+      "directiveStatus": {
+        "active": "Aktiv",
+        "draft": "Entwurf",
+        "rejected": "Abgelehnt"
+      },
+      "directiveSource": {
+        "explicit_user": "Explizite Benutzeraktion",
+        "manual": "Einstellungen",
+        "derived_suggestion": "Aus dem Gespräch vorgeschlagen"
+      },
+      "directiveTopicValue": "Thema: {topic}",
+      "directiveDeleteTitle": "Diese Anweisung löschen?",
+      "directiveDeleteDescription": "Die Anweisung gilt sofort nicht mehr. Du kannst sie später erneut erstellen."
     }
   },
   "pluginsHub": {

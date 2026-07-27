@@ -2701,9 +2701,9 @@
       "tabMemories": "記憶",
       "tabPersona": "人格時間軸",
       "memoriesCount": "{count} 條記憶",
-      "clearAll": "清空全部",
-      "clearConfirmTitle": "清空全部記憶？",
-      "clearConfirmBody": "將永久刪除此助理的所有記憶，此操作無法復原。",
+      "clearAll": "清空記憶",
+      "clearConfirmTitle": "清空事實記憶與人格？",
+      "clearConfirmBody": "這將永久刪除此助理的事實記憶與人格。長期指令會保留，可單獨管理。此操作無法復原。",
       "cleanupPendingRestart": "已鎖定的向量檔案將在重新啟動後刪除",
       "emptyMemories": "尚無記憶。隨著與此助理對話會逐漸累積。",
       "emptyPersona": "尚無自我模型版本。",
@@ -3066,7 +3066,7 @@
       "archivedMatches": "已封存中的相符項目",
       "refresh": "重新整理",
       "inboxTitle": "待處理",
-      "inboxDescription": "優先處理記憶衝突和人格草稿，避免它們被列表淹沒。",
+      "inboxDescription": "優先處理記憶衝突、人格草稿和建議指令，避免它們淹沒在清單中。",
       "conflictBadge": "{count} 個衝突",
       "personaDraftBadge": "{count} 個人格草稿",
       "conflictSectionTitle": "記憶衝突（{count}）",
@@ -3113,7 +3113,48 @@
         "memory-persona-rollback": "回復人格",
         "memory-persona-anchor": "更新人格錨點",
         "memory-reindex": "重建記憶索引"
-      }
+      },
+      "tabDirectives": "指令",
+      "directiveDraftBadge": "{count} 個指令草稿",
+      "directiveDraftSectionTitle": "建議指令（{count}）",
+      "directiveCreateTitle": "建立常駐指令",
+      "directiveCreateDescription": "手動建立的指令會立即生效；模型建議會維持草稿狀態，直到你核准。",
+      "directiveRuntimeEnabled": "執行時生效",
+      "directiveRuntimeDisabled": "記憶關閉時不生效",
+      "directiveKindLabel": "指令類型",
+      "directiveKind": {
+        "instruction": "常駐指令",
+        "suppress_topic": "封鎖主題"
+      },
+      "directiveTopicLabel": "比對主題",
+      "directiveTopicPlaceholder": "要從召回記憶中排除的確切主題或片語",
+      "directiveTopicTooBroad": "含中日韓字元的主題至少需要 {min} 個可見字元，以免誤排除無關記憶。",
+      "directiveContentLabel": "指令內容",
+      "directiveInstructionPlaceholder": "寫下此代理應長期遵循的指令。",
+      "directiveSuppressPlaceholder": "說明代理應如何處理此主題。",
+      "directiveInstructionHint": "這是使用者層級的指引，不能覆寫系統指令或安全規則。",
+      "directiveSuppressHint": "主題會篩除召回記憶，指令用於引導回覆；這不是輸出防火牆。",
+      "directiveLength": "指令 {content}/{contentMax} · 主題 {topic}/{topicMax}",
+      "directiveCreateAction": "啟用指令",
+      "directiveCapacityTitle": "已達生效指令上限",
+      "directiveCapacityDescription": "每個代理最多可有 {max} 條生效指令。請先刪除一條生效指令，再新增或核准其他指令。",
+      "directiveListTitle": "已儲存的指令",
+      "directiveListDescription": "{active} 個生效中 · {draft} 個待核准",
+      "directiveEmptyTitle": "尚無指令",
+      "directiveEmptyDescription": "可在此建立常駐指令，或在待處理區核准建議。",
+      "directiveStatus": {
+        "active": "生效中",
+        "draft": "草稿",
+        "rejected": "已拒絕"
+      },
+      "directiveSource": {
+        "explicit_user": "使用者明確操作",
+        "manual": "設定頁",
+        "derived_suggestion": "從對話中建議"
+      },
+      "directiveTopicValue": "主題：{topic}",
+      "directiveDeleteTitle": "要刪除此指令嗎？",
+      "directiveDeleteDescription": "此指令會立即停止生效，之後仍可重新建立。"
     }
   },
   "pluginsHub": {

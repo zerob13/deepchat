@@ -180,6 +180,13 @@ export class AgentMemoryToolHandler {
         conversationId,
         session ? { providerId: session.providerId, modelId: session.modelId } : null
       )
+      if (outcome.action === 'noop' && outcome.reason === 'forgotten') {
+        return createMemoryResult(
+          toolName,
+          { ok: false, action: 'noop', reason: 'requires_user_reauthorization' },
+          'This matches permanently deleted memory and requires an explicit user action to restore.'
+        )
+      }
       const ok = outcome.action !== 'noop'
       return createMemoryResult(
         toolName,
@@ -190,12 +197,20 @@ export class AgentMemoryToolHandler {
 
     if (toolName === MEMORY_TOOL_NAMES.recall) {
       const args = memoryToolSchemas[toolName].parse(rawArgs)
-      const memories = await this.memory.recallMemory(agentId, args.query)
+      const memories = await this.memory.recallMemory(agentId, args.query, {
+        sessionId: conversationId
+      })
       return createMemoryResult(toolName, { memories }, `Recalled ${memories.length} memories.`)
     }
 
     const args = memoryToolSchemas[MEMORY_TOOL_NAMES.forget].parse(rawArgs)
     const ok = await this.memory.forgetMemory(agentId, args.memoryId)
-    return createMemoryResult(toolName, { ok }, ok ? 'Forgot the memory.' : 'Memory not found.')
+    return createMemoryResult(
+      toolName,
+      { ok },
+      ok
+        ? 'Archived the memory. It is retained locally but excluded from normal recall.'
+        : 'Memory not found.'
+    )
   }
 }

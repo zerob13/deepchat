@@ -88,7 +88,10 @@ vi.mock('@shadcn/components/ui/dialog', () => ({
   })
 }))
 
-function makeTurn(overrides: Record<string, unknown> = {}) {
+function makeTurn(
+  overrides: Record<string, unknown> = {},
+  manifestOverrides: Record<string, unknown> = {}
+) {
   return {
     messageId: 'assistant-1',
     userMessageId: 'user-1',
@@ -104,7 +107,8 @@ function makeTurn(overrides: Record<string, unknown> = {}) {
       selectedIds: ['m1'],
       droppedCount: 0,
       queryHash: 'hash',
-      createdAt: 200
+      createdAt: 200,
+      ...manifestOverrides
     },
     details: [
       {
@@ -177,6 +181,35 @@ describe('MemoryTurnDialog', () => {
     expect(wrapper.text()).toContain('memory content')
     expect(wrapper.text()).not.toContain('chat.memory.turn.error')
     expect(wrapper.text()).not.toContain('db down')
+  })
+
+  it('shows the assembled contribution budget allocation when available', () => {
+    memoryActivity.selectedTurn = makeTurn(
+      {},
+      {
+        allocation: {
+          policyVersion: 1,
+          totalTokenBudget: 1000,
+          overheadTokens: 40,
+          demand: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+          allocated: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+          used: { directive: 49, persona: 90, working: 180, queryRecall: 450 },
+          borrowed: { directive: 0, persona: 0, working: 8, queryRecall: 194 },
+          unallocatedTokens: 110,
+          estimatedTotalTokens: 809,
+          unusedTokens: 191,
+          constrained: false
+        }
+      }
+    )
+
+    const wrapper = mount(MemoryTurnDialog)
+    const allocationText = wrapper.get('[data-testid="memory-budget-allocation"]').text()
+
+    expect(allocationText).toContain('chat.memory.turn.allocation')
+    expect(allocationText).toContain('809 / 1000')
+    expect(allocationText).toContain('450 / 500')
+    expect(allocationText).toContain('chat.memory.turn.overheadSummary')
   })
 
   it('disables forget mutations in read-only mode', async () => {

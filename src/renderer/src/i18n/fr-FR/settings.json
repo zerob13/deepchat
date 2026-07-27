@@ -2701,9 +2701,9 @@
       "tabMemories": "Mémoires",
       "tabPersona": "Chronologie du persona",
       "memoriesCount": "{count} mémoires",
-      "clearAll": "Tout effacer",
-      "clearConfirmTitle": "Effacer toutes les mémoires ?",
-      "clearConfirmBody": "Cela supprime définitivement toutes les mémoires de cet agent. Cette action est irréversible.",
+      "clearAll": "Effacer les mémoires",
+      "clearConfirmTitle": "Effacer les mémoires factuelles et la persona ?",
+      "clearConfirmBody": "Cela supprime définitivement les mémoires factuelles et la persona de cet agent. Les directives permanentes sont conservées et peuvent être gérées séparément. Cette action est irréversible.",
       "cleanupPendingRestart": "Les fichiers vectoriels verrouillés seront supprimés après le redémarrage",
       "emptyMemories": "Aucune mémoire pour l'instant. Elles s'accumulent au fil de vos échanges avec cet agent.",
       "emptyPersona": "Aucune version du modèle de soi pour le moment.",
@@ -3066,7 +3066,7 @@
       "archivedMatches": "Correspondances archivées",
       "refresh": "Actualiser",
       "inboxTitle": "À traiter",
-      "inboxDescription": "Résolvez les conflits de mémoire et les brouillons de profil avant qu’ils ne disparaissent de la vue.",
+      "inboxDescription": "Résolvez les conflits de mémoire, les brouillons de profil et les directives suggérées avant qu’ils ne disparaissent de la vue.",
       "conflictBadge": "{count} conflits",
       "personaDraftBadge": "{count} brouillons de profil",
       "conflictSectionTitle": "Conflits de mémoire ({count})",
@@ -3113,7 +3113,48 @@
         "memory-persona-rollback": "Profil restauré",
         "memory-persona-anchor": "Ancre de profil mise à jour",
         "memory-reindex": "Mémoire réindexée"
-      }
+      },
+      "tabDirectives": "Directives",
+      "directiveDraftBadge": "{count} brouillons de directive",
+      "directiveDraftSectionTitle": "Directives suggérées ({count})",
+      "directiveCreateTitle": "Créer une directive permanente",
+      "directiveCreateDescription": "Les directives manuelles deviennent actives immédiatement. Les suggestions du modèle restent des brouillons jusqu’à leur approbation.",
+      "directiveRuntimeEnabled": "Appliquée à l’exécution",
+      "directiveRuntimeDisabled": "Inactive lorsque la mémoire est désactivée",
+      "directiveKindLabel": "Type de directive",
+      "directiveKind": {
+        "instruction": "Instruction permanente",
+        "suppress_topic": "Masquer un sujet"
+      },
+      "directiveTopicLabel": "Sujet correspondant",
+      "directiveTopicPlaceholder": "Sujet ou expression exacte à masquer dans la mémoire rappelée",
+      "directiveTopicTooBroad": "Les sujets contenant des caractères CJK doivent comporter au moins {min} caractères visibles pour ne pas masquer des souvenirs sans rapport.",
+      "directiveContentLabel": "Instruction",
+      "directiveInstructionPlaceholder": "Rédigez une instruction permanente pour cet agent.",
+      "directiveSuppressPlaceholder": "Expliquez comment l’agent doit traiter ce sujet.",
+      "directiveInstructionHint": "Il s’agit d’une consigne de niveau utilisateur qui ne peut pas remplacer les règles système ou de sécurité.",
+      "directiveSuppressHint": "Le sujet filtre la mémoire rappelée ; l’instruction guide la réponse. Ce n’est pas un filtre de sortie.",
+      "directiveLength": "Instruction {content}/{contentMax} · Sujet {topic}/{topicMax}",
+      "directiveCreateAction": "Activer la directive",
+      "directiveCapacityTitle": "Limite de directives actives atteinte",
+      "directiveCapacityDescription": "Chaque agent peut avoir jusqu’à {max} directives actives. Supprimez une directive active avant d’en ajouter ou d’en approuver une autre.",
+      "directiveListTitle": "Directives enregistrées",
+      "directiveListDescription": "{active} actives · {draft} en attente d’approbation",
+      "directiveEmptyTitle": "Aucune directive pour le moment",
+      "directiveEmptyDescription": "Créez ici une instruction permanente ou approuvez une suggestion de la boîte de réception.",
+      "directiveStatus": {
+        "active": "Active",
+        "draft": "Brouillon",
+        "rejected": "Rejetée"
+      },
+      "directiveSource": {
+        "explicit_user": "Action explicite de l’utilisateur",
+        "manual": "Paramètres",
+        "derived_suggestion": "Suggérée à partir de la conversation"
+      },
+      "directiveTopicValue": "Sujet : {topic}",
+      "directiveDeleteTitle": "Supprimer cette directive ?",
+      "directiveDeleteDescription": "La directive cessera de s’appliquer immédiatement. Vous pourrez la recréer plus tard."
     }
   },
   "pluginsHub": {

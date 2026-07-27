@@ -2,8 +2,14 @@ import { createHash } from 'crypto'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { DeepChatTapeViewSyntheticContribution } from '@shared/types/tape-view-manifest'
 import type { ReconstructionAnchorPromptState } from '@/session/data/settings'
-import type { MemoryPromptContribution } from '@/agent/deepchat/memory/memoryPromptContributor'
-import { EMPTY_MEMORY_PROMPT_CONTRIBUTION } from '@/agent/deepchat/memory/memoryPromptContributor'
+import type {
+  DirectiveContextContribution,
+  MemoryContextContribution
+} from '@/agent/deepchat/memory/memoryPromptContributor'
+import {
+  EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION,
+  EMPTY_MEMORY_CONTEXT_CONTRIBUTION
+} from '@/agent/deepchat/memory/memoryPromptContributor'
 
 const CHECKPOINT_NOTICE = [
   '## Conversation Checkpoint',
@@ -17,15 +23,19 @@ export interface ContextCheckpoint {
 
 export interface ContextRuntimeContributions {
   checkpoint: ContextCheckpoint
-  readonly memory: MemoryPromptContribution
+  readonly memory: MemoryContextContribution
+  readonly directives: DirectiveContextContribution
   memoryIncluded: boolean
+  directivesIncluded: boolean
 }
 
 export function createEmptyContextRuntimeContributions(): ContextRuntimeContributions {
   return {
     checkpoint: { message: null, contributions: [] },
-    memory: EMPTY_MEMORY_PROMPT_CONTRIBUTION,
-    memoryIncluded: false
+    memory: EMPTY_MEMORY_CONTEXT_CONTRIBUTION,
+    directives: EMPTY_DIRECTIVE_CONTEXT_CONTRIBUTION,
+    memoryIncluded: false,
+    directivesIncluded: false
   }
 }
 
@@ -140,6 +150,15 @@ export function getContextSyntheticContributions(
         'memory_context',
         context.memory.content,
         context.memory.anchorEntryId === null ? [] : [context.memory.anchorEntryId]
+      )
+    )
+  }
+  if (context.directivesIncluded && context.directives.content) {
+    contributions.push(
+      buildContribution(
+        'directive_context',
+        context.directives.content,
+        context.directives.anchorEntryId === null ? [] : [context.directives.anchorEntryId]
       )
     )
   }

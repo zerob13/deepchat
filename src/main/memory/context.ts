@@ -20,6 +20,11 @@ import type {
   MemoryChangeSinkPort,
   MemoryProviderControlPort
 } from './ports'
+import {
+  canonicalizeMemoryTimeZone,
+  systemMemoryDomainClock,
+  type MemoryDomainClock
+} from './domain/clock'
 
 export type { MemoryModelRef } from './domain/types'
 
@@ -36,6 +41,8 @@ export interface MemoryRuntimeContextOptions {
   changeSink?: MemoryChangeSinkPort
   onAgentMemoryMutated?: (agentId: string) => void
   providerControl: MemoryProviderControlPort
+  clock?: MemoryDomainClock
+  pendingMemoryClearAgentIds?: readonly string[]
 }
 
 export function embeddingFingerprint(providerId: string, modelId: string): string {
@@ -53,11 +60,28 @@ export class MemoryRuntimeContext {
   private disposed = false
   private readonly readEpochByAgent = new Map<string, number>()
   private readonly executionStateByAgent = new Map<string, MemoryExecutionState>()
+  private readonly pendingMemoryClearAgentIds: Set<string>
+  private readonly clock: MemoryDomainClock
 
-  constructor(private readonly options: MemoryRuntimeContextOptions) {}
+  constructor(private readonly options: MemoryRuntimeContextOptions) {
+    this.clock = options.clock ?? systemMemoryDomainClock
+    this.pendingMemoryClearAgentIds = new Set(options.pendingMemoryClearAgentIds)
+  }
 
   get isDisposed(): boolean {
     return this.disposed
+  }
+
+  now(): number {
+    const now = this.clock.now()
+    if (!Number.isFinite(now)) {
+      throw new Error(`[Memory] domain clock returned a non-finite timestamp: ${String(now)}`)
+    }
+    return Math.trunc(now)
+  }
+
+  timeZone(): string {
+    return canonicalizeMemoryTimeZone(this.clock.timeZone()) ?? 'UTC'
   }
 
   markDisposed(): void {
@@ -132,6 +156,7 @@ export class MemoryRuntimeContext {
 
   cleanupAgent(agentId: string): void {
     this.readEpochByAgent.delete(agentId)
+    this.pendingMemoryClearAgentIds.delete(agentId)
     const executionState = this.executionStateByAgent.get(agentId)
     if (executionState) executionState.configFingerprint = undefined
   }
@@ -139,6 +164,7 @@ export class MemoryRuntimeContext {
   clearRuntimeState(): void {
     this.readEpochByAgent.clear()
     this.executionStateByAgent.clear()
+    this.pendingMemoryClearAgentIds.clear()
   }
 
   private getOrCreateExecutionState(agentId: string): MemoryExecutionState {
@@ -170,16 +196,45 @@ export class MemoryRuntimeContext {
     return isManagedAgent ? isManagedAgent(agentId) : true
   }
 
+  isMemoryClearPending(agentId: string): boolean {
+    return this.pendingMemoryClearAgentIds.has(agentId)
+  }
+
+  markMemoryClearPending(agentId: string): void {
+    this.pendingMemoryClearAgentIds.add(agentId)
+  }
+
+  markMemoryClearCompleted(agentId: string): void {
+    this.pendingMemoryClearAgentIds.delete(agentId)
+  }
+
   canWriteAgentMemory(agentId: string): boolean {
+    return (
+      !this.disposed &&
+      !this.isMemoryClearPending(agentId) &&
+      this.isManagedAgent(agentId) &&
+      this.isEnabled(agentId)
+    )
+  }
+
+  canManageAgentMemory(agentId: string): boolean {
+    return !this.disposed && this.isManagedAgent(agentId)
+  }
+
+  canManageClaimMemory(agentId: string): boolean {
+    return this.canManageAgentMemory(agentId) && !this.isMemoryClearPending(agentId)
+  }
+
+  canReadDirectivePlane(agentId: string): boolean {
     return !this.disposed && this.isManagedAgent(agentId) && this.isEnabled(agentId)
   }
 
   canReadAgentMemory(agentId: string): boolean {
-    return !this.disposed && this.isManagedAgent(agentId) && this.isEnabled(agentId)
+    return this.canReadDirectivePlane(agentId) && !this.isMemoryClearPending(agentId)
   }
 
   canContinueAgentMemoryTask(agentId: string): boolean {
-    return !this.disposed && this.isManagedAgent(agentId) && this.isEnabled(agentId)
+    return this.canReadAgentMemory(agentId)
   }
 
   canUseCurrentMemoryEmbedding(agentId: string, embedding: MemoryModelRef): boolean {
@@ -225,7 +280,7 @@ export class MemoryRuntimeContext {
       modelProviderId: input.model?.providerId ?? null,
       modelId: input.model?.modelId ?? null,
       sessionId: input.sessionId ?? null,
-      createdAt: input.createdAt
+      createdAt: input.createdAt ?? this.now()
     })
   }
 

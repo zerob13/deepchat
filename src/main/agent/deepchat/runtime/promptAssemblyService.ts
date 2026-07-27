@@ -86,15 +86,17 @@ export class PromptAssemblyService {
   createPostCompactionPromptAssembler(): PostCompactionPromptAssembler {
     return {
       assemble: async (input) => {
-        const memory = await this.deps.memoryPromptContributor.contribute({
+        const contribution = await this.deps.memoryPromptContributor.contribute({
           session: input.memorySession,
           query: input.memoryQuery,
           messageId: input.memoryMessageId
         })
         return {
           checkpoint: buildContextCheckpoint(input.summaryText, input.reconstructionAnchor),
-          memory,
-          memoryIncluded: Boolean(memory.content)
+          memory: contribution.memory,
+          directives: contribution.directives,
+          memoryIncluded: Boolean(contribution.memory.content),
+          directivesIncluded: Boolean(contribution.directives.content)
         }
       }
     }

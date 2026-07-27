@@ -35,6 +35,16 @@ describe('MemoryService facade', () => {
     await expect(presenter.dispose()).resolves.toBeUndefined()
   })
 
+  it('exposes the configured shared injection budget to the runtime boundary', async () => {
+    const { presenter } = makePresenter({
+      ...enabledConfig,
+      memoryInjectionTokenBudget: 75
+    })
+
+    expect(presenter.getInjectionTokenBudget('deepchat')).toBe(75)
+    await presenter.dispose()
+  })
+
   it('does not scan or repair legacy shadow during presenter startup', async () => {
     const repository = createFakeRepository()
     const row = repository.insert({

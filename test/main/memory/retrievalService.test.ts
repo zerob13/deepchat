@@ -11,6 +11,7 @@ import {
   resolveRetrieval,
   retrievalScore
 } from '@/memory/core/scoring'
+import { MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR } from '@/memory/core/temporal'
 import { createMemoryProviderCapacityError } from '@/memory/core/providerCancellation'
 import { FTS_SIMILARITY_BASELINE } from '@/memory/types'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
@@ -18,6 +19,7 @@ import { enabledConfig, makePresenter, textToVector } from './support/memoryFake
 import {
   DAY,
   deferred,
+  flushMicrotasks,
   makeLLMPresenter,
   makeRow,
   memoryRuntimeForTests,
@@ -171,6 +173,50 @@ describe('memory fuse (RRF)', () => {
     expect(item.sourceEntryIds).toEqual([7, 8])
   })
 
+  it('filters stale current-state claims and traces uncertain temporal penalties', () => {
+    const current = makeRow('current', {
+      temporal_kind: 'state',
+      valid_from: 500,
+      valid_until: 1_500,
+      temporal_confidence: 0.9,
+      temporal_precision: 'exact',
+      temporal_timezone: 'UTC'
+    })
+    const uncertain = makeRow('uncertain', {
+      temporal_kind: 'state',
+      valid_from: 0,
+      valid_until: 500,
+      temporal_confidence: 0.6,
+      temporal_precision: 'exact',
+      temporal_timezone: 'UTC'
+    })
+    const expired = makeRow('expired', {
+      temporal_kind: 'state',
+      valid_from: 0,
+      valid_until: 500,
+      temporal_confidence: 0.9,
+      temporal_precision: 'exact',
+      temporal_timezone: 'UTC'
+    })
+
+    const result = fuse([uncertain, expired, current], [], {
+      ...opts,
+      temporalMode: 'current',
+      trace: true
+    })
+
+    expect(result.map((item) => item.id)).toEqual(['current', 'uncertain'])
+    expect(result[1].temporalAnnotation).toContain('possibly outdated state')
+    expect(result[1].breakdown?.temporal).toEqual({
+      status: 'expired',
+      confidence: 0.6,
+      factor: MEMORY_TEMPORAL_UNCERTAIN_STATE_FACTOR
+    })
+    expect(
+      fuse([expired], [], { ...opts, temporalMode: 'evidence' }).map((item) => item.id)
+    ).toEqual(['expired'])
+  })
+
   it('decays reflections slower than semantic units via per-kind half-life', () => {
     const day = 24 * 60 * 60 * 1000
     const semantic = makeRow('semantic', { kind: 'semantic', created_at: 0 })
@@ -208,6 +254,24 @@ describe('buildMemorySection / appendMemorySection', () => {
     expect(section).toContain('user likes redis')
   })
 
+  it('renders temporal qualification without changing stored claim content', () => {
+    const section = buildMemorySection({
+      selfModel: null,
+      memories: [
+        {
+          id: 'plan',
+          kind: 'semantic',
+          content: 'The release was planned for July.',
+          temporalAnnotation: '[Temporal: previously planned; 2026-07 (UTC)]'
+        }
+      ]
+    })
+
+    expect(section).toContain(
+      'The release was planned for July. [Temporal: previously planned; 2026-07 (UTC)]'
+    )
+  })
+
   it('appends to existing prompt without overwriting', () => {
     const result = appendMemorySection('USER PROMPT', {
       selfModel: 'persona',
@@ -231,6 +295,153 @@ describe('MemoryService recall + injection', () => {
     await presenter.processPendingEmbeddings('a')
     const results = await presenter.recall('a', 'redis question')
     expect(results[0].content).toContain('redis')
+  })
+
+  it('recalls only global and explicitly applicable narrow scopes', async () => {
+    const { presenter, repo } = makePresenter({ memoryEnabled: true, memoryEmbedding: null })
+    const insert = (
+      id: string,
+      scope:
+        | { type: 'agent' }
+        | { type: 'user'; id: string }
+        | { type: 'project'; id: string }
+        | { type: 'session'; id: string }
+    ) =>
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis scoped fact ${id}`,
+        scope
+      })
+    insert('global', { type: 'agent' })
+    insert('user-1', { type: 'user', id: 'user-1' })
+    insert('project-1', { type: 'project', id: 'project-1' })
+    insert('session-1', { type: 'session', id: 'session-1' })
+    insert('session-2', { type: 'session', id: 'session-2' })
+
+    expect((await presenter.recall('a', 'redis')).map((item) => item.id)).toEqual(['global'])
+    expect(
+      (await presenter.recall('a', 'redis', undefined, { sessionId: 'session-1' }))
+        .map((item) => item.id)
+        .sort()
+    ).toEqual(['global', 'session-1'])
+    expect(
+      (
+        await presenter.searchMemories('a', 'redis', {
+          scopeContext: {
+            userId: 'user-1',
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          }
+        })
+      )
+        .map((hit) => hit.row.id)
+        .sort()
+    ).toEqual(['global', 'project-1', 'session-1', 'user-1'])
+  })
+
+  it('adaptively refills vector candidates when other scopes fill the first page', async () => {
+    const { presenter, store } = makePresenter({
+      ...enabledConfig,
+      memoryRetrieval: { topK: 1 }
+    })
+    for (let index = 0; index < 20; index += 1) {
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: `unrelated other scope ${index}` }],
+        { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
+      )
+    }
+    const [applicableId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'applicable vector-only fact' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } }
+    )
+    await presenter.processPendingEmbeddings('a')
+    for (const memoryId of store.vectors.keys()) {
+      store.vectors.set(memoryId, textToVector('redis'))
+    }
+    const querySpy = vi.spyOn(store, 'query')
+
+    const recalled = await presenter.recall('a', 'redis', undefined, {
+      sessionId: 'session-1'
+    })
+
+    expect(recalled.map((item) => item.id)).toEqual([applicableId])
+    expect(querySpy.mock.calls.map(([, options]) => options.topK)).toEqual([8, 32])
+  })
+
+  it('cancels an adaptive vector refill when the directive read epoch changes', async () => {
+    const { presenter, repo, store } = makePresenter({
+      ...enabledConfig,
+      memoryRetrieval: { topK: 1 }
+    })
+    for (let index = 0; index < 20; index += 1) {
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: `unrelated other scope ${index}` }],
+        { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
+      )
+    }
+    const [applicableId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'applicable vector-only fact' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } }
+    )
+    await presenter.processPendingEmbeddings('a')
+    for (const memoryId of store.vectors.keys()) {
+      store.vectors.set(memoryId, textToVector('redis'))
+    }
+    const draft = presenter.suggestDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+    const originalQuery = store.query.bind(store)
+    const pendingRefill = deferred<Array<{ memoryId: string; distance: number }>>()
+    const querySpy = vi.spyOn(store, 'query').mockImplementation((embedding, options) => {
+      if (options.topK === 32) return pendingRefill.promise
+      return originalQuery(embedding, options)
+    })
+
+    const recall = presenter.recall('a', 'redis', undefined, {
+      sessionId: 'session-1'
+    })
+    await vi.waitFor(() => expect(querySpy).toHaveBeenCalledTimes(2))
+    expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
+    pendingRefill.resolve(await originalQuery(textToVector('redis'), { topK: 32 }))
+
+    await expect(recall).resolves.toEqual([])
+    expect(repo.getById(applicableId)?.access_count).toBe(0)
+  })
+
+  it('retains vectors that belong to an inapplicable scope during inline cleanup', async () => {
+    const { presenter, repo, store } = makePresenter(enabledConfig)
+    const [sessionOneId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'session one redis fact' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-1' } }
+    )
+    const [sessionTwoId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'exclusive second session topic' }],
+      { agentId: 'a', scope: { type: 'session', id: 'session-2' } }
+    )
+    await presenter.processPendingEmbeddings('a')
+    expect(store.vectors.has(sessionOneId)).toBe(true)
+    expect(store.vectors.has(sessionTwoId)).toBe(true)
+    const deletePrunableVectors = vi.spyOn(
+      memoryRuntimeForTests(presenter).vectorStoreService,
+      'deletePrunableVectorsForMemoryIds'
+    )
+
+    await presenter.recall('a', 'exclusive second session topic', undefined, {
+      sessionId: 'session-1'
+    })
+    await flushMicrotasks()
+
+    expect(deletePrunableVectors).not.toHaveBeenCalled()
+    expect(store.vectors.has(sessionTwoId)).toBe(true)
+    expect(repo.getById(sessionTwoId)).toMatchObject({
+      scope_type: 'session',
+      scope_id: 'session-2',
+      embedding_state: 'ready'
+    })
   })
 
   it('buildInjection returns null when disabled', async () => {
@@ -264,6 +475,196 @@ describe('MemoryService recall + injection', () => {
     presenter.recordInjectionAccess('a', [id, id], 1234)
     expect(repo.getById(id)?.access_count).toBe(1)
     expect(repo.getById(id)?.last_accessed).toBe(1234)
+  })
+
+  it('adaptively refills recall candidates after filtering expired states', async () => {
+    const config: DeepChatAgentConfig = {
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 2 }
+    }
+    const { presenter, repo } = makePresenter(config)
+    for (let index = 0; index < 50; index += 1) {
+      repo.insert({
+        id: `expired-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis expired state ${index}`,
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 0,
+          validUntil: 1,
+          temporalConfidence: 0.95,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+    }
+    repo.insert({
+      id: 'current-a',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis current fact a'
+    })
+    repo.insert({
+      id: 'current-b',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis current fact b'
+    })
+    const recordAccess = vi.spyOn(repo, 'recordAccessBatch')
+    const search = vi.spyOn(repo, 'searchWithStrategy')
+
+    const recalled = await presenter.recall('a', 'redis')
+
+    expect(recalled.map((item) => item.id)).toEqual(['current-a', 'current-b'])
+    expect(recordAccess).toHaveBeenCalledWith(['current-a', 'current-b'], expect.any(Number))
+    expect(search.mock.calls.map(([, , limit]) => limit)).toEqual([8, 32, 128])
+  })
+
+  it('adaptively refills after topic suppression before top-k and access accounting', async () => {
+    const config: DeepChatAgentConfig = {
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 2 }
+    }
+    const { presenter, repo } = makePresenter(config)
+    for (let index = 0; index < 50; index += 1) {
+      repo.insert({
+        id: `saffron-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis Project Saffron detail ${index}`,
+        createdAt: 10_000 - index
+      })
+    }
+    repo.insert({
+      id: 'safe-a',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis safe fact a',
+      createdAt: 1_000
+    })
+    repo.insert({
+      id: 'safe-b',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis safe fact b',
+      createdAt: 900
+    })
+    presenter.createDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+    const recordAccess = vi.spyOn(repo, 'recordAccessBatch')
+    const search = vi.spyOn(repo, 'searchWithStrategy')
+
+    const recalled = await presenter.recall('a', 'redis')
+
+    expect(recalled.map((item) => item.id)).toEqual(['safe-a', 'safe-b'])
+    expect(recordAccess).toHaveBeenCalledWith(['safe-a', 'safe-b'], expect.any(Number))
+    expect(repo.getById('saffron-0')?.access_count).toBe(0)
+    expect(search.mock.calls.map(([, , limit]) => limit)).toEqual([8, 32, 128])
+  })
+
+  it('reports candidate budget exhaustion when every bounded page is ineligible', async () => {
+    const { presenter, repo } = makePresenter({
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 1 }
+    })
+    for (let index = 0; index <= 800; index += 1) {
+      repo.insert({
+        id: `expired-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `redis expired state ${index}`,
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 0,
+          validUntil: 1,
+          temporalConfidence: 0.95,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+    }
+
+    const injection = await presenter.buildInjection('a', 'redis')
+
+    expect(injection).toMatchObject({
+      payload: { memories: [] },
+      manifest: {
+        degradations: expect.arrayContaining(['candidateBudgetExhausted'])
+      }
+    })
+  })
+
+  it('keeps draft suppressions inert and revalidates runtime access against active directives', async () => {
+    const { presenter, repo } = makePresenter({
+      memoryEnabled: true,
+      memoryEmbedding: null,
+      memoryRetrieval: { topK: 4 }
+    })
+    repo.insert({
+      id: 'saffron',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis Project Saffron detail'
+    })
+    repo.insert({
+      id: 'safe',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'redis public detail'
+    })
+    const draft = presenter.suggestDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+
+    expect((await presenter.recall('a', 'redis')).map((item) => item.id)).toContain('saffron')
+    const suppressedAccessBeforeApproval = repo.getById('saffron')?.access_count
+    expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
+    expect((await presenter.searchMemories('a', 'redis')).map((item) => item.row.id)).toEqual(
+      expect.arrayContaining(['saffron', 'safe'])
+    )
+    const injection = await presenter.buildInjection('a', 'redis')
+    expect(injection?.payload.memories.map((memory) => memory.id)).toEqual(['safe'])
+
+    presenter.recordInjectionAccess('a', ['saffron', 'safe'], 1_234)
+    expect(repo.getById('saffron')?.access_count).toBe(suppressedAccessBeforeApproval)
+    expect(repo.getById('safe')?.access_count).toBe(2)
+    expect(repo.getById('safe')?.last_accessed).toBe(1_234)
+  })
+
+  it('cancels a stale recall when suppression is approved during asynchronous retrieval', async () => {
+    const { presenter, repo, getEmbeddings } = makePresenter(enabledConfig)
+    const [memoryId] = presenter.writeMemoriesSync(
+      [{ kind: 'semantic', content: 'redis Project Saffron detail' }],
+      { agentId: 'a' }
+    )
+    await presenter.processPendingEmbeddings('a')
+    const draft = presenter.suggestDirective('a', {
+      kind: 'suppress_topic',
+      content: 'Do not surface Project Saffron.',
+      topic: 'Project Saffron'
+    })
+    const pendingEmbedding = deferred<number[][]>()
+    const callsBeforeRecall = getEmbeddings.mock.calls.length
+    getEmbeddings.mockImplementationOnce(() => pendingEmbedding.promise)
+
+    const recall = presenter.recall('a', 'redis')
+    await vi.waitFor(() => {
+      expect(getEmbeddings).toHaveBeenCalledTimes(callsBeforeRecall + 1)
+    })
+    expect(presenter.approveDirective('a', draft!.id)).toMatchObject({ status: 'active' })
+    pendingEmbedding.resolve([textToVector('redis')])
+
+    await expect(recall).resolves.toEqual([])
+    expect(repo.getById(memoryId)?.access_count).toBe(0)
   })
 
   it('records injection access only for rows owned by the requested agent', () => {

@@ -24,14 +24,154 @@ import {
 } from './serviceTestSupport'
 
 describe('MemoryService management', () => {
-  it('clearMemories removes all and clears vectors', async () => {
+  it('clearMemories removes claims and vectors while preserving standing directives', async () => {
     const { presenter, store } = makePresenter(enabledConfig)
     presenter.writeMemoriesSync([{ kind: 'semantic', content: 'redis' }], { agentId: 'a' })
+    const directive = presenter.createDirective('a', {
+      kind: 'instruction',
+      content: 'Prefer concise answers.'
+    })
     await presenter.processPendingEmbeddings('a')
     expect(store.vectors.size).toBe(1)
     const removed = await presenter.clearMemories('a')
     expect(removed).toBe(1)
     expect(store.vectors.size).toBe(0)
+    expect(presenter.listActiveDirectives('a')).toEqual([
+      expect.objectContaining({ id: directive?.id, status: 'active' })
+    ])
+  })
+
+  it('clearMemories suppresses exact replay without suppressing new claims', async () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    presenter.writeMemoriesSync([{ kind: 'semantic', content: 'Project Atlas uses SQLite.' }], {
+      agentId: 'a'
+    })
+
+    await expect(presenter.clearMemories('a')).resolves.toBe(1)
+    expect(repo.tombstones.size).toBe(2)
+    expect(
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: ' Project   Atlas uses SQLite. ' }],
+        { agentId: 'a' }
+      )
+    ).toEqual([])
+    expect(
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: 'Project Atlas uses SQLite and FTS5.' }],
+        { agentId: 'a' }
+      )
+    ).toHaveLength(1)
+  })
+
+  it('clears large corpora in event-loop batches while claims stay unavailable', async () => {
+    const repo = createFakeRepository()
+    for (let index = 0; index < 600; index += 1) {
+      repo.insert({
+        id: `clear-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `clear claim ${index}`,
+        provenanceKey: `clear-source-${index}`
+      })
+    }
+    const { presenter } = makePresenter(enabledConfig, repo)
+    const directive = presenter.createDirective('a', {
+      kind: 'instruction',
+      content: 'Keep answers concise.'
+    })
+
+    const firstClear = presenter.clearMemories('a')
+    const secondClear = presenter.clearMemories('a')
+
+    expect(repo.countByAgent('a')).toBe(344)
+    expect(repo.listPendingMemoryClearJobs()).toEqual([
+      expect.objectContaining({ agentId: 'a', phase: 'claims', removed: 256 })
+    ])
+    expect(presenter.getStatus('a').total).toBe(0)
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content: 'late claim' }], {
+        agentId: 'a'
+      })
+    ).toEqual([])
+    expect(presenter.listActiveDirectives('a')).toEqual([
+      expect.objectContaining({ id: directive?.id })
+    ])
+    expect(await presenter.recall('a', 'clear claim')).toEqual([])
+
+    await expect(Promise.all([firstClear, secondClear])).resolves.toEqual([600, 600])
+    expect(repo.countByAgent('a')).toBe(0)
+    expect(repo.listPendingMemoryClearJobs()).toEqual([])
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content: 'new independent claim' }], {
+        agentId: 'a'
+      })
+    ).toHaveLength(1)
+  })
+
+  it('resumes a persisted clear job when background maintenance starts', async () => {
+    const repo = createFakeRepository()
+    for (let index = 0; index < 300; index += 1) {
+      repo.insert({
+        id: `resume-${index}`,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `resume clear claim ${index}`,
+        provenanceKey: `resume-source-${index}`
+      })
+    }
+    repo.beginMemoryClear('a', 2_000)
+    expect(repo.processMemoryClearBatch('a')).toMatchObject({
+      removedInBatch: 256,
+      job: { phase: 'claims' }
+    })
+    const resetVectorStore = vi.fn(async () => undefined)
+    const presenter = new MemoryService({
+      repository: repo,
+      resolveAgentConfig: () => enabledConfig,
+      getEmbeddings: async (_p, _m, texts) => texts.map((text) => textToVector(text)),
+      createVectorStore: async () => new FakeVectorStore(),
+      resetVectorStore
+    })
+
+    expect(presenter.getStatus('a').total).toBe(0)
+    presenter.startBackgroundMaintenance()
+    await waitForMemoryCondition(() => repo.listPendingMemoryClearJobs().length === 0)
+
+    expect(repo.countByAgent('a')).toBe(0)
+    expect(resetVectorStore).toHaveBeenCalledWith('a')
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content: 'write after recovery' }], {
+        agentId: 'a'
+      })
+    ).toHaveLength(1)
+    presenter.stopBackgroundMaintenance()
+    await presenter.dispose()
+  })
+
+  it('keeps claims fenced when durable clear progress disappears prematurely', async () => {
+    const repo = createFakeRepository()
+    repo.insert({
+      id: 'guarded-claim',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'must remain fenced'
+    })
+    const processBatch = vi.spyOn(repo, 'processMemoryClearBatch').mockReturnValueOnce(null)
+    const { presenter } = makePresenter(enabledConfig, repo)
+
+    await expect(presenter.clearMemories('a')).rejects.toThrow(
+      'clear job disappeared with 1 authoritative rows remaining'
+    )
+    expect(presenter.getStatus('a').total).toBe(0)
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content: 'must stay blocked' }], {
+        agentId: 'a'
+      })
+    ).toEqual([])
+
+    processBatch.mockRestore()
+    await expect(presenter.clearMemories('a')).resolves.toBe(1)
+    expect(repo.countByAgent('a')).toBe(0)
   })
 
   it('clearMemories clears the latest reindex result', async () => {
@@ -85,6 +225,7 @@ describe('MemoryService management', () => {
     })
     expect(markVectorStoreQuarantined).toHaveBeenCalledTimes(2)
     expect(repo.countByAgent('a')).toBe(0)
+    expect(repo.listPendingMemoryClearJobs()).toEqual([])
   })
 
   it('surfaces quarantine marker persistence failure during clear', async () => {
@@ -118,6 +259,14 @@ describe('MemoryService management', () => {
       name: 'VectorStoreQuarantineMarkerError'
     })
     expect(repo.countByAgent('a')).toBe(0)
+    expect(repo.listPendingMemoryClearJobs()).toEqual([
+      expect.objectContaining({ agentId: 'a', phase: 'vectors', removed: 1 })
+    ])
+    expect(
+      presenter.writeMemoriesSync([{ kind: 'semantic', content: 'blocked until recovery' }], {
+        agentId: 'a'
+      })
+    ).toEqual([])
     expect(onMemoryChanged).toHaveBeenCalledWith('a', 'clear')
     expect(clearCooldown).toHaveBeenCalledWith('a')
     expect(cleanupDiagnostics).toHaveBeenCalledWith('a')
@@ -681,7 +830,7 @@ describe('MemoryService management', () => {
         ),
         at: Date.now()
       })
-    ).toBe(true)
+    ).toEqual({ action: 'updated' })
     expect(repo.getById(memoryId)?.status).toBe('pending_embedding')
 
     const recalled = await presenter.recall('a', 'redis obsolete wording')
@@ -1288,6 +1437,7 @@ describe('MemoryService management', () => {
     expect(await presenter.forgetMemory('other-agent', ids[0])).toBe(false)
     expect(repo.getById(ids[0])?.status).toBe('embedded')
     expect(await presenter.forgetMemory('a', ids[0])).toBe(true)
+    expect(repo.tombstones.size).toBe(0)
     expect(repo.getById(ids[0])?.status).toBe('archived')
     expect(repo.rows.has(ids[0])).toBe(true)
     expect(store.vectors.has(ids[0])).toBe(true)
@@ -1311,6 +1461,41 @@ describe('MemoryService management', () => {
     await presenter.recall('a', 'redis')
 
     await waitForMemoryCondition(() => !store.vectors.has(id), 'dead vector was not pruned')
+  })
+
+  it('does not prune a live vector solely because its state is not yet effective', async () => {
+    const now = Date.parse('2026-07-26T00:00:00Z')
+    const { presenter, repo, store } = makePresenter(enabledConfig, undefined, {
+      clock: {
+        now: () => now,
+        timeZone: () => 'UTC'
+      }
+    })
+    const [id] = presenter.writeMemoriesSync(
+      [
+        {
+          kind: 'semantic',
+          content: 'redis migration starts next year',
+          temporal: {
+            temporalKind: 'state',
+            validFrom: now + 365 * DAY,
+            validUntil: null,
+            temporalConfidence: 0.95,
+            temporalPrecision: 'year',
+            temporalTimeZone: 'UTC'
+          }
+        }
+      ],
+      { agentId: 'a' }
+    )
+    await presenter.processPendingEmbeddings('a')
+    const filterPrunable = vi.spyOn(repo, 'filterPrunableVectorRefs')
+
+    expect(await presenter.recall('a', 'redis migration')).toEqual([])
+    await Promise.resolve()
+
+    expect(filterPrunable).not.toHaveBeenCalled()
+    expect(store.vectors.has(id)).toBe(true)
   })
 
   it('does not delete restored vectors from an in-flight inline prune', async () => {
@@ -1592,15 +1777,31 @@ describe('MemoryService management', () => {
     expect(repo.getById(id)?.status).toBe('pending_embedding')
   })
 
-  it('refuses generic archive/restore/forget for persona and working rows without audit writes', async () => {
+  it('refuses generic lifecycle and delete operations for persona and working rows', async () => {
     const { presenter, repo, auditRepo } = makePresenter(enabledConfig)
     repo.insert({
-      id: 'persona',
+      id: 'persona-active',
       agentId: 'a',
       kind: 'persona',
       content: 'active self model',
       status: 'archived',
       personaState: 'active'
+    })
+    repo.insert({
+      id: 'persona-draft',
+      agentId: 'a',
+      kind: 'persona',
+      content: 'draft self model',
+      status: 'fts_only',
+      personaState: 'draft'
+    })
+    repo.insert({
+      id: 'persona-superseded',
+      agentId: 'a',
+      kind: 'persona',
+      content: 'superseded self model',
+      status: 'fts_only',
+      personaState: 'superseded'
     })
     repo.insert({
       id: 'working',
@@ -1610,23 +1811,27 @@ describe('MemoryService management', () => {
       status: 'fts_only'
     })
 
+    const internalIds = ['persona-active', 'persona-draft', 'persona-superseded', 'working']
     expect(presenter.listMemories('a').map((row) => row.id)).not.toEqual(
-      expect.arrayContaining(['persona', 'working'])
+      expect.arrayContaining(internalIds)
     )
-    expect(presenter.getByIds('a', ['persona', 'working']).map((row) => row.id)).toEqual([
-      'persona',
-      'working'
-    ])
-    await expect(presenter.forgetMemory('a', 'persona')).resolves.toBe(false)
-    await expect(presenter.archiveUserMemory('a', 'persona')).resolves.toBe(false)
-    expect(presenter.restoreMemory('a', 'persona')).toBe(false)
+    expect(presenter.getByIds('a', internalIds).map((row) => row.id)).toEqual(internalIds)
+    await expect(presenter.forgetMemory('a', 'persona-active')).resolves.toBe(false)
+    await expect(presenter.archiveUserMemory('a', 'persona-active')).resolves.toBe(false)
+    expect(presenter.restoreMemory('a', 'persona-active')).toBe(false)
     await expect(presenter.forgetMemory('a', 'working')).resolves.toBe(false)
+    for (const id of internalIds) {
+      await expect(presenter.deleteMemory('a', id)).resolves.toBe(false)
+    }
 
-    expect(repo.getById('persona')).toMatchObject({
+    expect(repo.getById('persona-active')).toMatchObject({
       status: 'archived',
       persona_state: 'active'
     })
+    expect(repo.getById('persona-draft')?.persona_state).toBe('draft')
+    expect(repo.getById('persona-superseded')?.persona_state).toBe('superseded')
     expect(repo.getById('working')?.status).toBe('fts_only')
+    expect(repo.tombstones.size).toBe(0)
     expect(auditRepo.listByAgent('a', { eventType: 'memory/archive' })).toHaveLength(0)
   })
 
@@ -1773,7 +1978,9 @@ describe('MemoryService agentId safety guards', () => {
       archivedMemoryCount: 0,
       conflictCount: 0,
       personaDraftCount: 0,
-      personaVersionCount: 0
+      personaVersionCount: 0,
+      directiveDraftCount: 0,
+      activeDirectiveCount: 0
     })
     expect(presenter.getHealth('ghost')).toEqual(createEmptyMemoryHealth())
     expect(await presenter.clearMemories('ghost')).toBe(0)

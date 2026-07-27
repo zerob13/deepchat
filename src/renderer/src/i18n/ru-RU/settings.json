@@ -2701,9 +2701,9 @@
       "tabMemories": "Память",
       "tabPersona": "Хронология персоны",
       "memoriesCount": "Воспоминаний: {count}",
-      "clearAll": "Очистить всё",
-      "clearConfirmTitle": "Очистить всю память?",
-      "clearConfirmBody": "Это навсегда удалит все воспоминания этого агента. Действие нельзя отменить.",
+      "clearAll": "Очистить воспоминания",
+      "clearConfirmTitle": "Очистить фактические воспоминания и персону?",
+      "clearConfirmBody": "Это навсегда удалит фактические воспоминания и персону этого агента. Постоянные директивы сохранятся, и ими можно управлять отдельно. Действие нельзя отменить.",
       "cleanupPendingRestart": "Заблокированные векторные файлы будут удалены после перезапуска",
       "emptyMemories": "Пока нет воспоминаний. Они накапливаются по мере общения с этим агентом.",
       "emptyPersona": "Пока нет версий самомодели.",
@@ -3066,7 +3066,7 @@
       "archivedMatches": "Совпадения в архиве",
       "refresh": "Обновить",
       "inboxTitle": "Требует внимания",
-      "inboxDescription": "Разрешите конфликты памяти и черновики персоны, пока они не скрылись из вида.",
+      "inboxDescription": "Разрешите конфликты памяти, черновики персоны и предложенные директивы, пока они не скрылись из вида.",
       "conflictBadge": "{count} конфликтов",
       "personaDraftBadge": "{count} черновиков персоны",
       "conflictSectionTitle": "Конфликты памяти ({count})",
@@ -3113,7 +3113,48 @@
         "memory-persona-rollback": "Персона восстановлена",
         "memory-persona-anchor": "Якорь персоны обновлен",
         "memory-reindex": "Память переиндексирована"
-      }
+      },
+      "tabDirectives": "Директивы",
+      "directiveDraftBadge": "Черновиков директив: {count}",
+      "directiveDraftSectionTitle": "Предложенные директивы ({count})",
+      "directiveCreateTitle": "Создать постоянную директиву",
+      "directiveCreateDescription": "Директивы, созданные вручную, активируются сразу. Предложения модели остаются черновиками до вашего подтверждения.",
+      "directiveRuntimeEnabled": "Применяется во время выполнения",
+      "directiveRuntimeDisabled": "Неактивна, пока память отключена",
+      "directiveKindLabel": "Тип директивы",
+      "directiveKind": {
+        "instruction": "Постоянная инструкция",
+        "suppress_topic": "Скрыть тему"
+      },
+      "directiveTopicLabel": "Совпавшая тема",
+      "directiveTopicPlaceholder": "Точная тема или фраза, которую нужно скрыть из извлечённой памяти",
+      "directiveTopicTooBroad": "Темы с символами CJK должны содержать не менее {min} видимых символов, чтобы не скрывать несвязанные воспоминания.",
+      "directiveContentLabel": "Инструкция",
+      "directiveInstructionPlaceholder": "Напишите постоянную инструкцию для этого агента.",
+      "directiveSuppressPlaceholder": "Опишите, как агент должен обращаться с этой темой.",
+      "directiveInstructionHint": "Это указание уровня пользователя, которое не может отменять системные правила или правила безопасности.",
+      "directiveSuppressHint": "Тема фильтрует извлечённую память, а инструкция направляет ответ. Это не фильтр вывода.",
+      "directiveLength": "Инструкция {content}/{contentMax} · Тема {topic}/{topicMax}",
+      "directiveCreateAction": "Активировать директиву",
+      "directiveCapacityTitle": "Достигнут лимит активных директив",
+      "directiveCapacityDescription": "У каждого агента может быть до {max} активных директив. Удалите активную директиву, прежде чем добавлять или подтверждать новую.",
+      "directiveListTitle": "Сохранённые директивы",
+      "directiveListDescription": "{active} активных · {draft} ожидают подтверждения",
+      "directiveEmptyTitle": "Директив пока нет",
+      "directiveEmptyDescription": "Создайте здесь постоянную инструкцию или подтвердите предложение из входящих.",
+      "directiveStatus": {
+        "active": "Активна",
+        "draft": "Черновик",
+        "rejected": "Отклонена"
+      },
+      "directiveSource": {
+        "explicit_user": "Явное действие пользователя",
+        "manual": "Настройки",
+        "derived_suggestion": "Предложена на основе разговора"
+      },
+      "directiveTopicValue": "Тема: {topic}",
+      "directiveDeleteTitle": "Удалить эту директиву?",
+      "directiveDeleteDescription": "Директива немедленно перестанет применяться. Позже её можно создать снова."
     }
   },
   "pluginsHub": {

@@ -1,7 +1,9 @@
 import {
   appendMemorySection,
   appendMemorySectionWithManifest,
+  buildDirectiveContribution,
   buildMemorySection,
+  resolveInjectionTokenBudget,
   type MemoryExecutionToken,
   type MemoryInjectionOptions,
   type MemoryInjectionPayload,
@@ -23,6 +25,8 @@ import type {
   MemoryConflictResolution,
   MemoryServiceDeps,
   MemoryRecallItem,
+  MemoryScope,
+  MemoryScopeContext,
   MemorySearchHit,
   MemoryStatus,
   MemoryWriteOutcome,
@@ -56,6 +60,14 @@ import { ConflictService } from './services/conflictService'
 import { MaintenanceService } from './services/maintenanceService'
 import { WriteCoordinator } from './services/writeCoordinator'
 import { ManagementService } from './services/managementService'
+import { DirectiveService } from './services/directiveService'
+import type {
+  AgentMemoryDirectiveRow,
+  ExplicitMemoryDirectiveSource,
+  MemoryDirectiveCommandResult,
+  MemoryDirectiveInput,
+  MemoryDirectiveListOptions
+} from './domain/directives'
 import {
   createCompositeMemoryPerfObserver,
   MemoryDiagnosticsCollector
@@ -64,6 +76,7 @@ import {
   resolveMemoryEmbedding,
   type MemoryExecutionConfigObservation
 } from './core/executionIdentity'
+import { createMemoryTopicSuppressionPolicy } from './core/directivePolicy'
 import type {
   MemoryAgentPolicyPort,
   MemoryPerfObserver,
@@ -129,6 +142,7 @@ export class MemoryService implements MemoryRuntimePort {
   private readonly maintenance: MaintenanceService
   private readonly writeCoordinator: WriteCoordinator
   private readonly management: ManagementService
+  private readonly directives: DirectiveService
   private readonly diagnostics: MemoryDiagnosticsCollector
 
   constructor(deps: MemoryServiceDeps) {
@@ -166,7 +180,13 @@ export class MemoryService implements MemoryRuntimePort {
       policy,
       auditWriter: deps.auditRepository,
       changeSink: { onMemoryChanged: deps.onMemoryChanged },
-      providerControl: providerGateway
+      providerControl: providerGateway,
+      clock: deps.clock,
+      pendingMemoryClearAgentIds: repository.listPendingMemoryClearJobs().map((job) => job.agentId)
+    })
+    this.directives = new DirectiveService({
+      ctx: this.runtime,
+      repository: deps.directiveRepository
     })
     this.rows = new MemoryRowMutations({
       repository,
@@ -214,6 +234,7 @@ export class MemoryService implements MemoryRuntimePort {
           dimensions,
           memoryIds
         ),
+      getActiveSuppressionTopics: (agentId) => this.directives.listActiveSuppressionTopics(agentId),
       diagnostics: this.diagnostics
     })
     this.reflection = new ReflectionService({
@@ -290,19 +311,30 @@ export class MemoryService implements MemoryRuntimePort {
       policy,
       textGeneration: providerGateway,
       rows: this.rows,
-      retrieveForDecision: (agentId, query, now) =>
-        this.retrieval.retrieveForDecision(agentId, query, now),
-      retrieveForDecisions: (agentId, candidates, now, queryVectors, pinnedIdsByCandidate) =>
+      retrieveForDecision: (agentId, query, now, scopeFilter) =>
+        this.retrieval.retrieveForDecision(agentId, query, now, scopeFilter),
+      retrieveForDecisions: (
+        agentId,
+        candidates,
+        now,
+        queryVectors,
+        pinnedIdsByCandidate,
+        scopeFilter
+      ) =>
         this.retrieval.retrieveForDecisions(
           agentId,
           candidates,
           now,
           queryVectors,
-          pinnedIdsByCandidate
+          pinnedIdsByCandidate,
+          scopeFilter
         ),
       markWorkingMemoryDirty: (agentId) => this.workingMemory.markWorkingMemoryDirty(agentId),
       triggerEmbedding: (agentId) => this.embedding.processPendingEmbeddings(agentId),
       scheduleConsolidation: (agentId) => this.maintenance.scheduleConsolidation(agentId),
+      suggestDirective: (agentId, input) => {
+        this.directives.suggestDirective(agentId, input)
+      },
       diagnostics: this.diagnostics
     })
 
@@ -330,6 +362,9 @@ export class MemoryService implements MemoryRuntimePort {
   }
 
   startBackgroundMaintenance(): void {
+    void this.management.resumePendingMemoryClears().catch((error) => {
+      logger.error(`[Memory] pending clear recovery failed: ${String(error)}`)
+    })
     this.maintenance.startBackgroundMaintenance()
   }
 
@@ -418,11 +453,11 @@ export class MemoryService implements MemoryRuntimePort {
     return { observation, embeddingIdentityChanged }
   }
 
-  async runConsolidationPass(agentId: string, now: number = Date.now()): Promise<void> {
+  async runConsolidationPass(agentId: string, now?: number): Promise<void> {
     return this.maintenance.runConsolidationPass(agentId, now)
   }
 
-  archiveStale(agentId: string, now: number = Date.now()): number {
+  archiveStale(agentId: string, now?: number): number {
     return this.maintenance.archiveStale(agentId, now)
   }
 
@@ -466,17 +501,22 @@ export class MemoryService implements MemoryRuntimePort {
     return this.writeCoordinator.rememberMemory(candidate, options, model)
   }
 
-  async recall(agentId: string, query: string, now = Date.now()): Promise<MemoryRecallItem[]> {
+  async recall(
+    agentId: string,
+    query: string,
+    now?: number,
+    scopeContext?: MemoryScopeContext
+  ): Promise<MemoryRecallItem[]> {
     if (isSafeAgentId(agentId) && this.runtime.isManagedAgent(agentId)) {
       this.syncAgentExecutionConfig(agentId)
     }
-    return this.retrieval.recall(agentId, query, now)
+    return this.retrieval.recall(agentId, query, now, scopeContext)
   }
 
   async searchMemories(
     agentId: string,
     query: string,
-    options: { limit?: number } = {}
+    options: { limit?: number; scopeContext?: MemoryScopeContext } = {}
   ): Promise<MemorySearchHit[]> {
     if (isSafeAgentId(agentId) && this.runtime.isManagedAgent(agentId)) {
       this.syncAgentExecutionConfig(agentId)
@@ -491,6 +531,7 @@ export class MemoryService implements MemoryRuntimePort {
       kind?: 'episodic' | 'semantic'
       category?: string | null
       importance?: number
+      scope?: MemoryScope
     },
     sessionId?: string | null
   ): Promise<MemoryWriteOutcome> {
@@ -522,17 +563,32 @@ export class MemoryService implements MemoryRuntimePort {
     return this.retrieval.buildInjection(agentId, query, options)
   }
 
-  recordInjectionAccess(
-    agentId: string,
-    memoryIds: string[],
-    accessedAt: number = Date.now()
-  ): void {
+  getInjectionTokenBudget(agentId: string): number {
+    this.runtime.assertSafeAgentId(agentId)
+    return resolveInjectionTokenBudget(
+      this.policy.resolveAgentConfig(agentId)?.memoryInjectionTokenBudget
+    )
+  }
+
+  buildDirectiveContribution(agentId: string, totalTokenBudget?: number) {
+    return buildDirectiveContribution(this.directives.listActiveDirectives(agentId), {
+      tokenBudget: totalTokenBudget ?? this.getInjectionTokenBudget(agentId)
+    })
+  }
+
+  recordInjectionAccess(agentId: string, memoryIds: string[], accessedAt?: number): void {
     if (!this.runtime.canReadAgentMemory(agentId)) return
     const uniqueIds = [...new Set(memoryIds.map((id) => id.trim()).filter(Boolean))]
     if (!uniqueIds.length) return
-    const ownedIds = this.repository.listByIds(agentId, uniqueIds).map((row) => row.id)
+    const suppressionPolicy = createMemoryTopicSuppressionPolicy(
+      this.directives.listActiveSuppressionTopics(agentId)
+    )
+    const ownedIds = this.repository
+      .listByIds(agentId, uniqueIds)
+      .filter((row) => !suppressionPolicy.suppresses(row.content))
+      .map((row) => row.id)
     if (!ownedIds.length) return
-    this.repository.recordAccessBatch(ownedIds, accessedAt)
+    this.repository.recordAccessBatch(ownedIds, accessedAt ?? this.runtime.now())
   }
 
   refreshWorkingMemory(agentId: string): void {
@@ -565,6 +621,50 @@ export class MemoryService implements MemoryRuntimePort {
 
   async rejectPersonaDraft(agentId: string, draftId: string): Promise<boolean> {
     return this.persona.rejectPersonaDraft(agentId, draftId)
+  }
+
+  listDirectives(agentId: string, options?: MemoryDirectiveListOptions): AgentMemoryDirectiveRow[] {
+    return this.directives.listDirectives(agentId, options)
+  }
+
+  listActiveDirectives(agentId: string): AgentMemoryDirectiveRow[] {
+    return this.directives.listActiveDirectives(agentId)
+  }
+
+  createDirective(
+    agentId: string,
+    input: MemoryDirectiveInput,
+    source?: ExplicitMemoryDirectiveSource
+  ): AgentMemoryDirectiveRow | null {
+    return this.directives.createExplicitDirective(agentId, input, source)
+  }
+
+  createDirectiveResult(
+    agentId: string,
+    input: MemoryDirectiveInput,
+    source?: ExplicitMemoryDirectiveSource
+  ): MemoryDirectiveCommandResult {
+    return this.directives.createExplicitDirectiveResult(agentId, input, source)
+  }
+
+  suggestDirective(agentId: string, input: MemoryDirectiveInput): AgentMemoryDirectiveRow | null {
+    return this.directives.suggestDirective(agentId, input)
+  }
+
+  approveDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
+    return this.directives.approveDirective(agentId, directiveId)
+  }
+
+  approveDirectiveResult(agentId: string, directiveId: string): MemoryDirectiveCommandResult {
+    return this.directives.approveDirectiveResult(agentId, directiveId)
+  }
+
+  rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
+    return this.directives.rejectDirective(agentId, directiveId)
+  }
+
+  deleteDirective(agentId: string, directiveId: string): boolean {
+    return this.directives.deleteDirective(agentId, directiveId)
   }
 
   async setPersonaAnchor(agentId: string, versionId: string, anchored: boolean): Promise<boolean> {
@@ -667,7 +767,13 @@ export class MemoryService implements MemoryRuntimePort {
   }
 
   getStatus(agentId: string): MemoryStatus {
-    return this.management.getStatus(agentId)
+    const status = this.management.getStatus(agentId)
+    const directives = this.directives.getCounts(agentId)
+    return {
+      ...status,
+      directiveDraftCount: directives.draft,
+      activeDirectiveCount: directives.active
+    }
   }
 
   async dispose(): Promise<void> {
@@ -677,7 +783,11 @@ export class MemoryService implements MemoryRuntimePort {
     this.vectorStore.stopAdmission()
     const drain = (async () => {
       for (let i = 0; i < REINDEX_MAX_BATCHES; i += 1) {
-        const inflight = [...this.maintenance.getInFlight(), ...this.embedding.getInFlight()]
+        const inflight = [
+          ...this.maintenance.getInFlight(),
+          ...this.embedding.getInFlight(),
+          ...this.management.getInFlightMemoryClears()
+        ]
         if (!inflight.length) break
         await Promise.allSettled(inflight)
       }

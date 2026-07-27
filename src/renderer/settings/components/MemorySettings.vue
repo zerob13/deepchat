@@ -99,13 +99,14 @@
         :agent-id="selectedAgentId"
         :conflict-count="status?.conflictCount ?? 0"
         :draft-count="status?.personaDraftCount ?? 0"
+        :directive-draft-count="status?.directiveDraftCount ?? 0"
         :refresh-token="refreshToken"
       />
 
       <Tabs v-model="activeTab" class="flex min-h-0 w-full flex-1 flex-col">
         <TabsList
-          class="grid w-full max-w-lg"
-          :class="personaTabVisible ? 'grid-cols-3' : 'grid-cols-2'"
+          class="grid w-full max-w-2xl"
+          :class="personaTabVisible ? 'grid-cols-4' : 'grid-cols-3'"
         >
           <TabsTrigger value="memories">
             {{ t('settings.memory.redesign.tabMemories') }}
@@ -118,6 +119,16 @@
               class="ml-1.5 text-[10px]"
             >
               {{ status?.personaDraftCount }}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="directives">
+            {{ t('settings.memory.redesign.tabDirectives') }}
+            <Badge
+              v-if="(status?.directiveDraftCount ?? 0) > 0"
+              variant="secondary"
+              class="ml-1.5 text-[10px]"
+            >
+              {{ status?.directiveDraftCount }}
             </Badge>
           </TabsTrigger>
           <TabsTrigger value="diagnostics">
@@ -138,6 +149,14 @@
           <MemoryPersonaPanel
             :agent-id="selectedAgentId"
             :persona-evolution-enabled="personaEvolutionEnabled"
+            :refresh-token="refreshToken"
+          />
+        </TabsContent>
+
+        <TabsContent value="directives" class="mt-4 min-h-0 flex-1">
+          <MemoryDirectivesPanel
+            :agent-id="selectedAgentId"
+            :memory-enabled="memoryEnabled"
             :refresh-token="refreshToken"
           />
         </TabsContent>
@@ -176,6 +195,7 @@ import type { Agent, DeepChatAgentConfig } from '@shared/types/agent-interface'
 import SettingsPageShell from './control-center/SettingsPageShell.vue'
 import MemoryConfigInlinePanel from './MemoryConfigInlinePanel.vue'
 import MemoryDiagnosticsPanel from './MemoryDiagnosticsPanel.vue'
+import MemoryDirectivesPanel from './MemoryDirectivesPanel.vue'
 import MemoryInboxBar from './MemoryInboxBar.vue'
 import MemoryListView from './MemoryListView.vue'
 import MemoryPersonaPanel from './MemoryPersonaPanel.vue'
@@ -191,7 +211,7 @@ const memoryClient = createMemoryClient()
 const loading = ref(true)
 const agents = ref<Agent[]>([])
 const selectedAgentId = ref('')
-const activeTab = ref<'memories' | 'persona' | 'diagnostics'>('memories')
+const activeTab = ref<'memories' | 'persona' | 'directives' | 'diagnostics'>('memories')
 const resolvedSelected = ref<DeepChatAgentConfig | null>(null)
 const resolvedAgentId = ref('')
 const status = ref<MemoryStatusDto | null>(null)

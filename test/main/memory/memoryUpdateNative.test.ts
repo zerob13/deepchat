@@ -170,6 +170,20 @@ describeIfNative('Memory update SQLite integration', () => {
           .map((row) => row.id)
       ).toEqual(['memory-a'])
       expect(memoryTable(sqlite).search('deepchat', 'beta')).toHaveLength(0)
+      expect(memoryTable(sqlite).listDerivationsByParent('deepchat', 'memory-a')).toEqual([
+        expect.objectContaining({
+          parent_memory_id: 'memory-a',
+          child_memory_id: memoryBId,
+          derivation_kind: 'manual_edit'
+        })
+      ])
+      expect(memoryTable(sqlite).listDerivationsByParent('deepchat', memoryBId)).toEqual([
+        expect.objectContaining({
+          parent_memory_id: memoryBId,
+          child_memory_id: 'memory-a',
+          derivation_kind: 'manual_edit'
+        })
+      ])
 
       expect(
         presenter.updateMemory('deepchat', memoryBId, { content: 'user prefers alpha' })

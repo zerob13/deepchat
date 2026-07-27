@@ -11,6 +11,7 @@ import {
 import {
   createFakeRepository,
   enabledConfig,
+  FakeDirectiveRepository,
   FakeVectorStore,
   textToVector,
   type FakeRepository
@@ -18,7 +19,11 @@ import {
 
 class MemoryService extends BaseMemoryService {
   constructor(deps: ConstructorParameters<typeof BaseMemoryService>[0]) {
-    super({ executeWithRateLimit: vi.fn(async () => undefined), ...deps })
+    super({
+      directiveRepository: new FakeDirectiveRepository(),
+      executeWithRateLimit: vi.fn(async () => undefined),
+      ...deps
+    })
   }
 }
 

@@ -17,9 +17,16 @@ import {
   type FuseOptions,
   type MemoryRecallItem
 } from '../types'
-import type { AgentMemoryKind } from '../domain/types'
+import { normalizeMemoryScope } from './scope'
+import type {
+  AgentMemoryKind,
+  MemoryScope,
+  MemoryTemporalMetadata,
+  MemoryTemporalPolicyResult
+} from '../domain/types'
 import type { DeepChatAgentMemoryRetrieval } from '@shared/types/agent-interface'
 import { parseAgentMemorySourceEntryIds } from '@shared/lib/agentMemoryLineage'
+import { evaluateNormalizedMemoryTemporalPolicy, temporalMetadataFromRow } from './temporal'
 
 // Recency half-life per cognitive layer: reflections persist longest, episodic summaries next,
 // everything else on the semantic default. persona/working never reach recall, so they fall through.
@@ -139,6 +146,8 @@ function toRecallItem(
   row: AgentMemoryRow,
   score: number,
   sources: { vec?: boolean; fts?: boolean },
+  temporal: MemoryTemporalMetadata,
+  temporalPolicy: MemoryTemporalPolicyResult,
   similarity?: number
 ): MemoryRecallItem {
   return {
@@ -151,7 +160,9 @@ function toRecallItem(
     sources,
     similarity,
     sourceSession: row.source_session,
-    sourceEntryIds: parseSourceEntryIds(row.source_entry_ids)
+    sourceEntryIds: parseSourceEntryIds(row.source_entry_ids),
+    temporal,
+    temporalAnnotation: temporalPolicy.annotation ?? undefined
   }
 }
 
@@ -197,39 +208,61 @@ export function fuse(
   vec.forEach(({ row, similarity }, index) => add(row, index, 'vec', similarity))
 
   return Array.from(candidates.values())
-    .map((candidate) => {
-      const score = retrievalScore(
+    .flatMap((candidate) => {
+      const temporal = temporalMetadataFromRow(candidate.row)
+      const temporalPolicy = evaluateNormalizedMemoryTemporalPolicy(
+        temporal,
+        opts.now,
+        opts.temporalMode ?? 'evidence'
+      )
+      if (!temporalPolicy.eligible) return []
+      const baseScore = retrievalScore(
         candidate.row,
         candidate.similarity ?? baseline,
         opts.now,
         opts.weights,
         opts.halfLifeMs ?? halfLifeForKind(candidate.row.kind)
       )
+      const score = baseScore * temporalPolicy.scoreFactor
       // retrievalScore is the primary signal; RRF is folded in as a small additive boost.
-      return {
-        combined: score + candidate.rrf,
-        score,
-        item: {
-          ...toRecallItem(candidate.row, score, candidate.sources, candidate.similarity),
-          breakdown: opts.trace
-            ? {
-                similarity: candidate.similarity ?? baseline,
-                recency: recencyScore(
-                  candidate.row.created_at,
-                  opts.now,
-                  opts.halfLifeMs ?? halfLifeForKind(candidate.row.kind)
-                ),
-                importance: Math.min(1, Math.max(0, candidate.row.importance)),
-                confidence: Math.min(
-                  1,
-                  Math.max(0, candidate.row.confidence ?? DEFAULT_CONFIDENCE)
-                ),
-                rrf: candidate.rrf,
-                final: score
-              }
-            : undefined
+      return [
+        {
+          combined: (baseScore + candidate.rrf) * temporalPolicy.scoreFactor,
+          score,
+          item: {
+            ...toRecallItem(
+              candidate.row,
+              score,
+              candidate.sources,
+              temporal,
+              temporalPolicy,
+              candidate.similarity
+            ),
+            breakdown: opts.trace
+              ? {
+                  similarity: candidate.similarity ?? baseline,
+                  recency: recencyScore(
+                    candidate.row.created_at,
+                    opts.now,
+                    opts.halfLifeMs ?? halfLifeForKind(candidate.row.kind)
+                  ),
+                  importance: Math.min(1, Math.max(0, candidate.row.importance)),
+                  confidence: Math.min(
+                    1,
+                    Math.max(0, candidate.row.confidence ?? DEFAULT_CONFIDENCE)
+                  ),
+                  rrf: candidate.rrf,
+                  final: score,
+                  temporal: {
+                    status: temporalPolicy.status,
+                    confidence: temporal.temporalConfidence,
+                    factor: temporalPolicy.scoreFactor
+                  }
+                }
+              : undefined
+          }
         }
-      }
+      ]
     })
     .sort((a, b) => b.combined - a.combined || b.score - a.score)
     .slice(0, opts.topK)
@@ -269,4 +302,26 @@ export function buildMemoryProvenanceKey(agentId: string, kind: string, content:
     .update(`${agentId}\0${kind}\0${normalized}`, 'utf8')
     .digest('hex')
   return `v2:${kind}:${digest}`
+}
+
+export function buildScopedMemoryProvenanceKey(
+  agentId: string,
+  kind: string,
+  content: string,
+  scope?: MemoryScope | null
+): string {
+  const normalizedScope = normalizeMemoryScope(scope)
+  if (normalizedScope.type === 'agent') {
+    return buildMemoryProvenanceKey(agentId, kind, content)
+  }
+  const normalizedContent = normalizeForProvenanceV2(content)
+  const digest = createHash('sha256')
+    // JSON array framing keeps every field boundary unambiguous even if a caller-controlled scope
+    // id or claim contains a NUL character.
+    .update(
+      JSON.stringify([agentId, kind, normalizedScope.type, normalizedScope.id, normalizedContent]),
+      'utf8'
+    )
+    .digest('hex')
+  return `v3:${kind}:${digest}`
 }

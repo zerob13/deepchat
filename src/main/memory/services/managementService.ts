@@ -15,6 +15,7 @@ import {
 import {
   AGENT_MEMORY_MANUAL_CONTENT_MAX_CHARS,
   isAgentMemoryCategory,
+  isSafeAgentId,
   type AgentMemoryCategory
 } from '@shared/types/agent-memory'
 import { parseAgentMemorySourceEntryIds } from '@shared/lib/agentMemoryLineage'
@@ -22,6 +23,8 @@ import { unicodeCodePointLength } from '@shared/lib/unicodeText'
 import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
 import { deriveLifecycle, type DeriveLifecycleOptions } from '../core/lifecycle'
 import { resolveRetrieval } from '../core/scoring'
+import { temporalMetadataFromRow } from '../core/temporal'
+import { memoryScopeFromRow } from '../core/scope'
 import {
   MEMORY_HEALTH_AUDIT_SCAN_LIMIT,
   MEMORY_HEALTH_RECENT_FAILURES_LIMIT,
@@ -30,6 +33,7 @@ import {
 import {
   VectorStoreQuarantineMarkerError,
   type MemoryClearResult,
+  type MemoryDerivationInsertInput,
   type MemoryManagementPage,
   type MemoryManagementPageCursor,
   type MemoryStatus,
@@ -45,11 +49,14 @@ import type {
   MemoryEmbeddingRepositoryPort,
   MemoryHealthRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryManualEditPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTransactionPort
 } from '../ports'
+
+type ClaimMemoryStatus = Omit<MemoryStatus, 'directiveDraftCount' | 'activeDirectiveCount'>
 
 function toHealthTopAccessedItem(
   row: AgentMemoryRow
@@ -107,16 +114,24 @@ function isConflictParticipant(row: AgentMemoryRow | undefined): boolean {
   return !!row && (row.lifecycle_state === 'conflicted' || row.conflict_state === 'challenged')
 }
 
-function mapContentSuppressedReason(reason: string): 'conflict' | 'duplicate' | 'suppressed' {
+function mapContentSuppressedReason(
+  reason: string
+): 'conflict' | 'duplicate' | 'forgotten' | 'suppressed' {
   if (reason === 'conflict') return 'conflict'
   if (reason === 'duplicate') return 'duplicate'
+  if (reason === 'forgotten') return 'forgotten'
   return 'suppressed'
 }
 
 type DeleteVectorResult = 'deleted' | 'skipped' | 'unusable'
 
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
 export class ManagementService {
   private readonly ctx: MemoryRuntimeContext
+  private readonly clearOperations = new Map<string, Promise<MemoryClearResult>>()
 
   constructor(
     private readonly ports: {
@@ -126,6 +141,7 @@ export class ManagementService {
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
         MemoryHealthRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       policy: MemoryAgentPolicyPort
       auditReader?: MemoryAuditReadPort
@@ -146,6 +162,39 @@ export class ManagementService {
     }
   ) {
     this.ctx = ports.ctx
+  }
+
+  private enqueueMemoryClear(agentId: string): Promise<MemoryClearResult> {
+    const existing = this.clearOperations.get(agentId)
+    if (existing) return existing
+    const operation = this.runMemoryClear(agentId)
+    this.clearOperations.set(agentId, operation)
+    const cleanup = () => {
+      if (this.clearOperations.get(agentId) === operation) {
+        this.clearOperations.delete(agentId)
+      }
+    }
+    void operation.then(cleanup, cleanup)
+    return operation
+  }
+
+  getInFlightMemoryClears(): Promise<MemoryClearResult>[] {
+    return [...this.clearOperations.values()]
+  }
+
+  async resumePendingMemoryClears(): Promise<void> {
+    const jobs = this.ports.repository.listPendingMemoryClearJobs()
+    for (const job of jobs) {
+      if (!isSafeAgentId(job.agentId)) {
+        logger.error(`[Memory] refusing to resume clear job with invalid agent id: ${job.agentId}`)
+        continue
+      }
+      try {
+        await this.enqueueMemoryClear(job.agentId)
+      } catch (error) {
+        logger.error(`[Memory] failed to resume clear job for ${job.agentId}: ${String(error)}`)
+      }
+    }
   }
 
   restoreMemory(agentId: string, memoryId: string): boolean {
@@ -185,7 +234,7 @@ export class ManagementService {
   async forgetMemory(agentId: string, memoryId: string): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     const row = this.ports.repository.getById(memoryId)
     if (!row || row.agent_id !== agentId) return false
     if (this.ports.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
@@ -223,7 +272,7 @@ export class ManagementService {
   async archiveUserMemory(agentId: string, memoryId: string): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     const row = this.ports.repository.getById(memoryId)
     if (!row || row.agent_id !== agentId) return false
     if (this.ports.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
@@ -261,7 +310,7 @@ export class ManagementService {
   /** @deprecated Use pageMemories for bounded management reads. */
   listMemories(agentId: string): AgentMemoryRow[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     return this.ports.repository
       .listByAgent(agentId, { includeArchived: true })
       .filter((row) => !isInternalMemoryKind(row))
@@ -273,7 +322,7 @@ export class ManagementService {
     limit: number
   ): MemoryManagementPage {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return { rows: [], nextCursor: null }
+    if (!this.ctx.canManageClaimMemory(agentId)) return { rows: [], nextCursor: null }
     const normalizedLimit = Number.isFinite(limit)
       ? Math.min(MEMORY_PAGE_MAX_LIMIT, Math.max(1, Math.floor(limit)))
       : MEMORY_PAGE_DEFAULT_LIMIT
@@ -291,7 +340,7 @@ export class ManagementService {
 
   getByIds(agentId: string, memoryIds: string[]): AgentMemoryRow[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     const orderedIds = [...new Set(memoryIds.filter((id) => id.length > 0))]
     const rows = this.ports.repository.listByIds(agentId, orderedIds)
     const rowsById = new Map(rows.map((row) => [row.id, row]))
@@ -300,7 +349,7 @@ export class ManagementService {
 
   getManagementVisibleByIds(agentId: string, memoryIds: string[]): AgentMemoryRow[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     const orderedIds = [...new Set(memoryIds.filter((id) => id.length > 0))]
     const rows = this.ports.repository.listManagementVisibleByIds(agentId, orderedIds)
     const rowsById = new Map(rows.map((row) => [row.id, row]))
@@ -309,7 +358,7 @@ export class ManagementService {
 
   getLifecycle(agentId: string, memoryId: string): MemoryLifecycle | null {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return null
+    if (!this.ctx.canManageClaimMemory(agentId)) return null
 
     const row = this.ports.repository.getById(memoryId)
     if (!row || row.agent_id !== agentId || row.kind === 'working') return null
@@ -319,7 +368,7 @@ export class ManagementService {
 
   getArchiveCandidateLifecyclePreview(agentId: string): MemoryArchiveCandidateLifecyclePreview {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) {
+    if (!this.ctx.canManageClaimMemory(agentId)) {
       return {
         lifecycles: [],
         previewLimit: MEMORY_ARCHIVE_CANDIDATE_LIFECYCLE_PREVIEW_LIMIT,
@@ -365,7 +414,7 @@ export class ManagementService {
   } {
     const config = this.ports.policy.resolveAgentConfig(agentId)
     return {
-      now: Date.now(),
+      now: this.ctx.now(),
       options: {
         weights: resolveRetrieval(config?.memoryRetrieval).weights,
         archiveAgeMs: ARCHIVE_AGE_MS,
@@ -376,7 +425,7 @@ export class ManagementService {
 
   getHealth(agentId: string): MemoryHealthDto {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) {
+    if (!this.ctx.canManageClaimMemory(agentId)) {
       const health = createEmptyMemoryHealth(MEMORY_HEALTH_AUDIT_SCAN_LIMIT)
       health.runtime = this.ports.getRuntimeDiagnostics(agentId)
       return health
@@ -403,7 +452,7 @@ export class ManagementService {
       .map(toHealthTopAccessedItem)
       .filter((item): item is MemoryHealthDto['access']['topAccessed'][number] => item !== null)
 
-    const now = Date.now()
+    const now = this.ctx.now()
     const minimumBaseAgeMs =
       FORGET_HALF_LIFE_MS * (Math.log(ARCHIVE_DECAY_THRESHOLD) / Math.log(0.5))
     return {
@@ -557,7 +606,8 @@ export class ManagementService {
       kind: row.kind,
       category: nextCategory,
       content,
-      importance: nextImportance
+      importance: nextImportance,
+      temporal: temporalMetadataFromRow(row)
     }
     const providedFields: ManualEditFieldFlags = {
       category: categoryProvided,
@@ -566,17 +616,18 @@ export class ManagementService {
 
     // Wrapped in one transaction so the row mutation and its audit event commit atomically, same as
     // the metadata-only path below — a suppressed/noop outcome writes neither.
+    const now = this.ctx.now()
     const result = this.ports.repository.runInTransaction((): MemoryUpdateResult => {
       const update = this.ports.rows.applyManualContentEdit(
         agentId,
         row,
         candidate,
         content,
-        Date.now(),
+        now,
         {
           agentId,
           sourceSession: row.source_session,
-          userScope: row.user_scope,
+          scope: memoryScopeFromRow(row),
           sourceEntryIds: parseAgentMemorySourceEntryIds(row.source_entry_ids)
         },
         providedFields
@@ -593,6 +644,28 @@ export class ManagementService {
             ? { action: 'superseded', memoryId, supersededId: update.supersededId }
             : { action: 'updated', memoryId }
 
+      const derivations: MemoryDerivationInsertInput[] =
+        row.id === memoryId
+          ? []
+          : [
+              {
+                agentId,
+                parentMemoryId: row.id,
+                childMemoryId: memoryId,
+                derivationKind: 'manual_edit' as const,
+                createdAt: now
+              }
+            ]
+      if ((update.action === 'folded' || update.action === 'superseded') && update.retiredHeadId) {
+        derivations.push({
+          agentId,
+          parentMemoryId: update.retiredHeadId,
+          childMemoryId: memoryId,
+          derivationKind: 'supersede',
+          createdAt: now
+        })
+      }
+      this.ports.repository.insertDerivations(derivations)
       this.ctx.writeAudit(agentId, {
         eventType: 'memory/manual_edit',
         actorType: 'user',
@@ -619,19 +692,24 @@ export class ManagementService {
   async deleteMemory(agentId: string, memoryId: string): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     const row = this.ports.repository.getById(memoryId)
     if (!row || row.agent_id !== agentId) return false
     if (this.ports.repository.isUnresolvedConflictParticipant(agentId, memoryId)) return false
+    if (isInternalMemoryKind(row)) return false
     this.ctx.invalidateAgentOperations(agentId)
-    this.ports.repository.delete(memoryId)
+    const deleted = this.ports.repository.tombstoneAndDelete({
+      agentId,
+      id: memoryId,
+      expectedRevision: row.decision_revision,
+      createdAt: this.ctx.now()
+    })
+    if (!deleted) return false
     this.ctx.markDomainMutationCommitted(agentId)
-    if (row.kind !== 'working') {
-      this.ports.syncWorkingMemoryAfterMutation(agentId)
-    }
+    this.ports.syncWorkingMemoryAfterMutation(agentId)
     const deleteResult = await this.ports.deleteVectorsForDeletedMemory(agentId, [memoryId], {
-      embeddingModel: row.embedding_model,
-      embeddingDim: row.embedding_dim
+      embeddingModel: deleted.embedding_model,
+      embeddingDim: deleted.embedding_dim
     })
     if (deleteResult === 'unusable' && !this.ports.isReindexing(agentId)) {
       void this.ports.reindexEmbeddings(agentId, true).catch((error) => {
@@ -643,18 +721,47 @@ export class ManagementService {
     return true
   }
 
-  async clearMemories(agentId: string): Promise<MemoryClearResult> {
-    if (this.ctx.isDisposed) return { removed: 0, cleanupPendingRestart: false }
+  clearMemories(agentId: string): Promise<MemoryClearResult> {
+    if (this.ctx.isDisposed) {
+      return Promise.resolve({ removed: 0, cleanupPendingRestart: false })
+    }
     this.ctx.assertSafeAgentId(agentId)
     if (!this.ctx.isManagedAgent(agentId)) {
-      return { removed: 0, cleanupPendingRestart: false }
+      return Promise.resolve({ removed: 0, cleanupPendingRestart: false })
     }
+    return this.enqueueMemoryClear(agentId)
+  }
+
+  private async runMemoryClear(agentId: string): Promise<MemoryClearResult> {
     this.ctx.invalidateAgentOperations(agentId)
-    const removed = this.ports.repository.clearByAgent(agentId)
-    if (removed > 0) {
-      this.ctx.markDomainMutationCommitted(agentId)
-      this.ports.syncWorkingMemoryAfterMutation(agentId)
+    let job = this.ports.repository.beginMemoryClear(agentId, this.ctx.now())
+    this.ctx.markMemoryClearPending(agentId)
+    this.ctx.markDomainMutationCommitted(agentId)
+    this.ports.syncWorkingMemoryAfterMutation(agentId)
+
+    while (job.phase === 'claims') {
+      const batch = this.ports.repository.processMemoryClearBatch(agentId)
+      if (!batch) {
+        const remaining = this.ports.repository.countByAgent(agentId)
+        if (remaining > 0) {
+          throw new Error(
+            `[Memory] clear job disappeared with ${remaining} authoritative rows remaining for ${agentId}`
+          )
+        }
+        this.ctx.markMemoryClearCompleted(agentId)
+        return { removed: job.removed, cleanupPendingRestart: false }
+      }
+      job = batch.job
+      if (this.ctx.isDisposed) {
+        return { removed: job.removed, cleanupPendingRestart: false }
+      }
+      if (job.phase === 'claims') await yieldToEventLoop()
     }
+
+    if (this.ctx.isDisposed) {
+      return { removed: job.removed, cleanupPendingRestart: false }
+    }
+
     let cleanupPendingRestart = false
     let markerError: VectorStoreQuarantineMarkerError | undefined
     try {
@@ -664,21 +771,36 @@ export class ManagementService {
         markerError = error
       } else {
         logger.error(
-          `[Memory] vector reset failed for ${agentId}; on-disk store may persist: ${String(error)}`
+          `[Memory] vector reset failed for ${agentId}; the manager will retry before the next vector lease: ${String(error)}`
         )
       }
     }
-    if (removed > 0) this.ctx.emitChanged(agentId, 'clear')
-    if (removed > 0 && this.ports.repository.countByAgent(agentId) === 0) {
+
+    if (markerError) {
+      if (job.removed > 0) {
+        this.ctx.emitChanged(agentId, 'clear')
+        this.ports.clearConsolidationCooldown(agentId)
+      }
+      throw markerError
+    }
+    if (this.ctx.isDisposed) {
+      return { removed: job.removed, cleanupPendingRestart }
+    }
+
+    if (!this.ports.repository.completeMemoryClear(agentId)) {
+      throw new Error(`[Memory] clear job returned to claim cleanup for ${agentId}`)
+    }
+    this.ctx.markMemoryClearCompleted(agentId)
+    if (job.removed > 0) this.ctx.emitChanged(agentId, 'clear')
+    if (job.removed > 0) {
       this.ports.clearConsolidationCooldown(agentId)
     }
-    if (markerError) throw markerError
-    return { removed, cleanupPendingRestart }
+    return { removed: job.removed, cleanupPendingRestart }
   }
 
-  getStatus(agentId: string): MemoryStatus {
+  getStatus(agentId: string): ClaimMemoryStatus {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) {
+    if (!this.ctx.canManageClaimMemory(agentId)) {
       return {
         total: 0,
         pendingEmbedding: 0,

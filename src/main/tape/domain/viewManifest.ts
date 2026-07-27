@@ -195,7 +195,7 @@ export function createTapeViewManifest(
   const assembledAt = input.assembledAt ?? Date.now()
   const excludedRanges = buildExcludedRanges(input.summaryCursor)
   const draft: DeepChatTapeViewManifest = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     hashVersion: TAPE_VIEW_MANIFEST_HASH_VERSION,
     viewId: '',
     sessionId: input.sessionId,
@@ -266,7 +266,8 @@ export function buildIncludedRefs(
   refs.push(
     ...buildSyntheticContributionRefs(
       (selection.syntheticContributions ?? []).filter(
-        (contribution) => contribution.reason !== 'memory_context'
+        (contribution) =>
+          contribution.reason !== 'memory_context' && contribution.reason !== 'directive_context'
       )
     )
   )
@@ -285,7 +286,8 @@ export function buildIncludedRefs(
   refs.push(
     ...buildSyntheticContributionRefs(
       (selection.syntheticContributions ?? []).filter(
-        (contribution) => contribution.reason === 'memory_context'
+        (contribution) =>
+          contribution.reason === 'memory_context' || contribution.reason === 'directive_context'
       )
     )
   )

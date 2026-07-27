@@ -231,9 +231,9 @@
       "tabMemories": "Ký ức",
       "tabPersona": "Dòng thời gian persona",
       "memoriesCount": "{count} ký ức",
-      "clearAll": "Xóa tất cả",
-      "clearConfirmTitle": "Xóa tất cả ký ức?",
-      "clearConfirmBody": "Thao tác này xóa vĩnh viễn mọi ký ức của tác nhân này. Không thể hoàn tác.",
+      "clearAll": "Xóa ký ức",
+      "clearConfirmTitle": "Xóa ký ức thực tế và persona?",
+      "clearConfirmBody": "Thao tác này xóa vĩnh viễn ký ức thực tế và persona của tác nhân này. Các chỉ thị lâu dài được giữ lại và có thể quản lý riêng. Không thể hoàn tác.",
       "cleanupPendingRestart": "Các tệp vectơ bị khóa sẽ được xóa sau khi khởi động lại",
       "emptyMemories": "Chưa có ký ức. Chúng được tích lũy khi bạn trò chuyện với tác nhân này.",
       "emptyPersona": "Chưa có phiên bản mô hình bản thân.",
@@ -3057,7 +3057,7 @@
       "archivedMatches": "Kết quả trong lưu trữ",
       "refresh": "Làm mới",
       "inboxTitle": "Cần chú ý",
-      "inboxDescription": "Giải quyết xung đột bộ nhớ và bản nháp chân dung trước khi chúng khuất khỏi tầm nhìn.",
+      "inboxDescription": "Giải quyết xung đột bộ nhớ, bản nháp chân dung và chỉ dẫn được đề xuất trước khi chúng khuất khỏi tầm nhìn.",
       "conflictBadge": "{count} xung đột",
       "personaDraftBadge": "{count} bản nháp chân dung",
       "conflictSectionTitle": "Xung đột bộ nhớ ({count})",
@@ -3104,7 +3104,48 @@
         "memory-persona-rollback": "Đã khôi phục chân dung",
         "memory-persona-anchor": "Đã cập nhật neo chân dung",
         "memory-reindex": "Đã lập chỉ mục lại bộ nhớ"
-      }
+      },
+      "tabDirectives": "Chỉ dẫn",
+      "directiveDraftBadge": "{count} bản nháp chỉ dẫn",
+      "directiveDraftSectionTitle": "Chỉ dẫn được đề xuất ({count})",
+      "directiveCreateTitle": "Tạo chỉ dẫn thường trực",
+      "directiveCreateDescription": "Chỉ dẫn thủ công có hiệu lực ngay lập tức. Đề xuất của mô hình vẫn là bản nháp cho đến khi bạn phê duyệt.",
+      "directiveRuntimeEnabled": "Được áp dụng khi chạy",
+      "directiveRuntimeDisabled": "Không hoạt động khi bộ nhớ tắt",
+      "directiveKindLabel": "Loại chỉ dẫn",
+      "directiveKind": {
+        "instruction": "Hướng dẫn thường trực",
+        "suppress_topic": "Ẩn chủ đề"
+      },
+      "directiveTopicLabel": "Chủ đề khớp",
+      "directiveTopicPlaceholder": "Chủ đề hoặc cụm từ chính xác cần ẩn khỏi bộ nhớ được truy hồi",
+      "directiveTopicTooBroad": "Chủ đề chứa ký tự CJK cần ít nhất {min} ký tự hiển thị để không ẩn các bộ nhớ không liên quan.",
+      "directiveContentLabel": "Hướng dẫn",
+      "directiveInstructionPlaceholder": "Viết hướng dẫn thường trực cho tác nhân này.",
+      "directiveSuppressPlaceholder": "Giải thích cách tác nhân nên xử lý chủ đề này.",
+      "directiveInstructionHint": "Đây là hướng dẫn ở cấp người dùng và không thể ghi đè quy tắc hệ thống hoặc an toàn.",
+      "directiveSuppressHint": "Chủ đề lọc bộ nhớ được truy hồi; hướng dẫn định hướng câu trả lời. Đây không phải bộ lọc đầu ra.",
+      "directiveLength": "Hướng dẫn {content}/{contentMax} · Chủ đề {topic}/{topicMax}",
+      "directiveCreateAction": "Kích hoạt chỉ dẫn",
+      "directiveCapacityTitle": "Đã đạt giới hạn chỉ dẫn hoạt động",
+      "directiveCapacityDescription": "Mỗi tác nhân có thể có tối đa {max} chỉ dẫn hoạt động. Hãy xóa một chỉ dẫn hoạt động trước khi thêm hoặc phê duyệt chỉ dẫn khác.",
+      "directiveListTitle": "Chỉ dẫn đã lưu",
+      "directiveListDescription": "{active} đang hoạt động · {draft} chờ phê duyệt",
+      "directiveEmptyTitle": "Chưa có chỉ dẫn",
+      "directiveEmptyDescription": "Tạo hướng dẫn thường trực tại đây hoặc phê duyệt một đề xuất từ hộp thư đến.",
+      "directiveStatus": {
+        "active": "Đang hoạt động",
+        "draft": "Bản nháp",
+        "rejected": "Đã từ chối"
+      },
+      "directiveSource": {
+        "explicit_user": "Thao tác rõ ràng của người dùng",
+        "manual": "Cài đặt",
+        "derived_suggestion": "Được đề xuất từ cuộc trò chuyện"
+      },
+      "directiveTopicValue": "Chủ đề: {topic}",
+      "directiveDeleteTitle": "Xóa chỉ dẫn này?",
+      "directiveDeleteDescription": "Chỉ dẫn sẽ ngừng áp dụng ngay lập tức. Bạn có thể tạo lại sau."
     }
   },
   "pluginsHub": {

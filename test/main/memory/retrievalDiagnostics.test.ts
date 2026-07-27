@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ATEMPORAL_MEMORY_METADATA } from '@/memory/core/temporal'
 
 import { MemoryService } from '@/memory'
 import { MemoryRuntimeContext } from '@/memory/context'
 import { VectorStoreQueryTimeoutError } from '@/memory/domain/types'
 import { RetrievalService } from '@/memory/services/retrievalService'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
-import { createFakeRepository, FakeVectorStore } from './support/memoryFakes'
+import {
+  createFakeRepository,
+  FakeDirectiveRepository,
+  FakeVectorStore
+} from './support/memoryFakes'
 import { createControlledPromise } from './serviceHarness'
 
 function createPresenter(options: { enabled?: boolean; embedding?: boolean } = {}) {
@@ -15,6 +20,7 @@ function createPresenter(options: { enabled?: boolean; embedding?: boolean } = {
   let embedding = options.embedding === false ? undefined : { providerId: 'p', modelId: 'm' }
   const presenter = new MemoryService({
     repository,
+    directiveRepository: new FakeDirectiveRepository(),
     executeWithRateLimit: vi.fn(async () => undefined),
     resolveAgentConfig: () => ({
       memoryEnabled: options.enabled !== false,
@@ -210,12 +216,13 @@ describe('RetrievalService diagnostics', () => {
       providerControl: { abortAgent: vi.fn(), abortAll: vi.fn() }
     })
     const recordRecall = vi.fn()
+    const getEmbeddings = vi.fn(async () => [[1, 2, 3, 4]])
     const service = new RetrievalService({
       ctx,
       repository,
       policy,
       embeddingGateway: {
-        getEmbeddings: async () => [[1, 2, 3, 4]],
+        getEmbeddings,
         getDimensions: async () => ({ data: { dimensions: 4, normalized: false } })
       },
       vectorStore: {
@@ -239,16 +246,41 @@ describe('RetrievalService diagnostics', () => {
       backfillEmbeddings: async () => undefined,
       isReindexing: () => false,
       deletePrunableVectorsForMemoryIds: async () => [],
+      getActiveSuppressionTopics: () => [],
       diagnostics: { recordRecall }
     })
 
+    const candidates = [
+      {
+        kind: 'semantic' as const,
+        category: null,
+        content: 'redis',
+        importance: 0.5,
+        temporal: ATEMPORAL_MEMORY_METADATA
+      }
+    ]
     await expect(
-      service.retrieveForDecisions(
-        'agent',
-        [{ kind: 'semantic', category: null, content: 'redis', importance: 0.5 }],
-        Date.now()
-      )
+      service.retrieveForDecisions('agent', candidates, Date.now())
     ).resolves.toHaveLength(1)
+    expect(getEmbeddings).toHaveBeenCalledOnce()
+    expect(recordRecall).toHaveBeenCalledWith(
+      'agent',
+      expect.objectContaining({ degradations: expect.arrayContaining(['storeTimeout']) })
+    )
+
+    getEmbeddings.mockClear()
+    recordRecall.mockClear()
+    await expect(
+      service.retrieveForDecisions('agent', candidates, Date.now(), [
+        {
+          vector: [1, 2, 3, 4],
+          providerId: 'p',
+          modelId: 'm',
+          dimensions: 4
+        }
+      ])
+    ).resolves.toHaveLength(1)
+    expect(getEmbeddings).not.toHaveBeenCalled()
     expect(recordRecall).toHaveBeenCalledWith(
       'agent',
       expect.objectContaining({ degradations: expect.arrayContaining(['storeTimeout']) })

@@ -2,6 +2,7 @@ import { vi } from 'vitest'
 
 import { MemoryService } from '@/memory'
 import {
+  AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT,
   AGENT_MEMORY_CATEGORIES,
   AGENT_MEMORY_HEALTH_KIND_KEYS,
   AGENT_MEMORY_HEALTH_STATUS_KEYS,
@@ -17,7 +18,11 @@ import type {
   IMemoryVectorStore,
   MemoryAuditListOptions,
   MemoryAuditRepositoryPort,
+  MemoryDirectiveRepositoryPort,
+  MemoryClearBatchResult,
+  MemoryClearJob,
   MemoryRepositoryPort,
+  MemoryScope,
   MemoryServiceDeps,
   MemoryVectorMatch,
   MemoryVectorRecord
@@ -27,21 +32,60 @@ import type {
   MemoryAccessRepositoryPort,
   MemoryEmbeddingRepositoryPort,
   MemoryHealthRepositoryPort,
+  MemoryDirtyRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTransactionPort
 } from '@/memory/ports'
+import type {
+  AgentMemoryDirectiveRow,
+  MemoryDirectiveCounts,
+  MemoryDirectiveInsertResult,
+  MemoryDirectiveTransitionResult,
+  MemoryDirectiveWriteInput,
+  MemoryDirectiveWriteResult
+} from '@/memory/domain/directives'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
+import { normalizeMemoryTemporalMetadata, temporalMetadataFromRow } from '@/memory/core/temporal'
+import {
+  buildMemoryTombstoneIdentities,
+  isTombstoneEligibleMemoryKind
+} from '@/memory/core/tombstone'
 import {
   assertValidMemoryInsertState,
   deriveCanonicalStateFromLegacy,
   projectLegacyStatus
 } from '@/memory/domain/stateModel'
-import type { AgentMemoryEmbeddingState, AgentMemoryRow } from '@/memory/domain/types'
+import type {
+  AgentMemoryEmbeddingState,
+  AgentMemoryDerivationRow,
+  AgentMemoryRow,
+  InternalMemoryInsertInput,
+  MemoryTemporalMetadata,
+  MemoryClaimContentUpdateResult,
+  MemoryDerivationInsertInput,
+  MemoryDirtySeed,
+  MemoryTombstoneDeleteInput,
+  MemoryTombstoneIdentityKind,
+  MemoryTombstoneReason,
+  ResolveChallengerTransition
+} from '@/memory/domain/types'
+import {
+  AGENT_MEMORY_AGENT_SCOPE_FILTER,
+  legacyUserScopeForMemoryScope,
+  memoryScopeFromRow,
+  normalizeMemoryScope,
+  normalizeMemoryScopeFilter,
+  rowMatchesMemoryScopeFilter,
+  rowsShareMemoryScope
+} from '@/memory/core/scope'
 
 class MemoryRowMap extends Map<string, AgentMemoryRow> {
   override set(key: string, row: AgentMemoryRow): this {
+    row.scope_type ??= 'agent'
+    row.scope_id ??= null
     if (row.lifecycle_state === undefined || row.embedding_state === undefined) {
       const state = deriveCanonicalStateFromLegacy(row)
       row.lifecycle_state = state.lifecycleState
@@ -76,9 +120,110 @@ function toLifecycleRow(row: AgentMemoryRow): AgentMemoryLifecycleRow {
 // exercise the presenter without a native database.
 class FakeRepositoryBehavior implements MemoryRepositoryPort {
   rows = new MemoryRowMap()
+  derivations = new Map<string, AgentMemoryDerivationRow>()
+  dirtySeeds = new Map<string, MemoryDirtySeed & { agentId: string }>()
+  tombstones = new Map<
+    string,
+    {
+      agentId: string
+      identityKind: MemoryTombstoneIdentityKind
+      identityHash: string
+      createdAt: number
+      reason: MemoryTombstoneReason
+    }
+  >()
+  clearJobs = new Map<string, MemoryClearJob>()
+  private clearJobMemoryIds = new Map<string, string[]>()
   transactionCalls = 0
 
+  private derivationKey(input: {
+    agentId: string
+    parentMemoryId: string
+    childMemoryId: string
+    derivationKind: string
+  }): string {
+    return JSON.stringify([
+      input.agentId,
+      input.parentMemoryId,
+      input.childMemoryId,
+      input.derivationKind
+    ])
+  }
+
+  private dirtyKey(agentId: string, memoryId: string): string {
+    return JSON.stringify([agentId, memoryId])
+  }
+
+  private touchDirty(row: AgentMemoryRow): void {
+    if (row.kind !== 'episodic' && row.kind !== 'semantic' && row.kind !== 'reflection') return
+    const key = this.dirtyKey(row.agent_id, row.id)
+    const existing = this.dirtySeeds.get(key)
+    this.dirtySeeds.set(key, {
+      agentId: row.agent_id,
+      memoryId: row.id,
+      generation: (existing?.generation ?? 0) + 1,
+      claimRevision: Math.max(1, row.decision_revision),
+      enqueuedAt: Math.max(existing?.enqueuedAt ?? 0, row.last_accessed ?? row.created_at)
+    })
+  }
+
+  private getBookkeepingWritableRow(id: string): AgentMemoryRow | undefined {
+    const row = this.rows.get(id)
+    return row && !this.clearJobs.has(row.agent_id) ? row : undefined
+  }
+
+  private tombstoneKey(
+    agentId: string,
+    identityKind: MemoryTombstoneIdentityKind,
+    identityHash: string
+  ): string {
+    return `${agentId}\0${identityKind}\0${identityHash}`
+  }
+
+  private addTombstonesForRow(
+    row: AgentMemoryRow,
+    createdAt: number,
+    reason: MemoryTombstoneReason
+  ): void {
+    if (!isTombstoneEligibleMemoryKind(row.kind)) return
+    for (const identity of buildMemoryTombstoneIdentities({
+      agentId: row.agent_id,
+      content: row.content,
+      provenanceKey: row.provenance_key,
+      scope: memoryScopeFromRow(row)
+    })) {
+      const key = this.tombstoneKey(row.agent_id, identity.identityKind, identity.identityHash)
+      if (this.tombstones.has(key)) continue
+      this.tombstones.set(key, {
+        agentId: row.agent_id,
+        identityKind: identity.identityKind,
+        identityHash: identity.identityHash,
+        createdAt,
+        reason
+      })
+    }
+  }
+
+  private hasTombstoneForClaim(
+    input: Pick<AgentMemoryInsertInput, 'agentId' | 'kind' | 'content' | 'provenanceKey' | 'scope'>
+  ): boolean {
+    if (!isTombstoneEligibleMemoryKind(input.kind)) return false
+    return buildMemoryTombstoneIdentities({
+      agentId: input.agentId,
+      content: input.content,
+      provenanceKey: input.provenanceKey ?? null,
+      scope: normalizeMemoryScope(input.scope)
+    }).some((identity) =>
+      this.tombstones.has(
+        this.tombstoneKey(input.agentId, identity.identityKind, identity.identityHash)
+      )
+    )
+  }
+
   insert(input: AgentMemoryInsertInput): AgentMemoryRow {
+    if (this.clearJobs.has(input.agentId)) {
+      throw new Error('agent memory clear in progress')
+    }
     if ((input.lifecycleState === undefined) !== (input.embeddingState === undefined)) {
       throw new Error('Memory inserts must provide both canonical state fields or neither')
     }
@@ -102,10 +247,14 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         conflictWith: input.conflictWith ?? null
       })
     }
+    const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+    const scope = normalizeMemoryScope(input.scope)
     const row: AgentMemoryRow = {
       id: input.id,
       agent_id: input.agentId,
-      user_scope: input.userScope ?? null,
+      user_scope: legacyUserScopeForMemoryScope(scope),
+      scope_type: scope.type,
+      scope_id: scope.type === 'agent' ? null : scope.id,
       kind: input.kind,
       category: input.category ?? null,
       content: input.content,
@@ -126,6 +275,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       decay_score: null,
       source_entry_ids: input.sourceEntryIds?.length ? JSON.stringify(input.sourceEntryIds) : null,
       confidence: null,
+      temporal_kind: temporal.temporalKind,
+      valid_from: temporal.validFrom,
+      valid_until: temporal.validUntil,
+      temporal_confidence: temporal.temporalConfidence,
+      temporal_precision: temporal.temporalPrecision,
+      temporal_timezone: temporal.temporalTimeZone,
       last_consolidated_at: null,
       conflict_state: null,
       conflict_with: input.conflictWith ?? null,
@@ -133,7 +288,157 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       decision_revision: 1
     }
     this.rows.set(row.id, row)
+    this.touchDirty(row)
     return row
+  }
+
+  insertInternalMemory(input: InternalMemoryInsertInput): AgentMemoryRow {
+    if (input.kind !== 'persona' && input.kind !== 'working') {
+      throw new Error(`[Memory] unsupported internal memory kind: ${String(input.kind)}`)
+    }
+    return this.insert(input)
+  }
+
+  insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null {
+    if (this.hasTombstoneForClaim(input)) return null
+    return this.insert(input)
+  }
+
+  insertExplicitlyReauthorizedClaim(input: AgentMemoryInsertInput): AgentMemoryRow | null {
+    return this.runInTransaction(() => {
+      if (!isTombstoneEligibleMemoryKind(input.kind)) return null
+      const identities = buildMemoryTombstoneIdentities({
+        agentId: input.agentId,
+        content: input.content,
+        provenanceKey: input.provenanceKey ?? null,
+        scope: normalizeMemoryScope(input.scope)
+      })
+      const matchingKeys = identities
+        .map((identity) =>
+          this.tombstoneKey(input.agentId, identity.identityKind, identity.identityHash)
+        )
+        .filter((key) => this.tombstones.has(key))
+      if (matchingKeys.length === 0) return null
+      for (const key of matchingKeys) this.tombstones.delete(key)
+      return this.insert(input)
+    })
+  }
+
+  insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number {
+    let inserted = 0
+    for (const input of inputs) {
+      if (input.parentMemoryId === input.childMemoryId) continue
+      const key = this.derivationKey(input)
+      if (this.derivations.has(key)) continue
+      this.derivations.set(key, {
+        agent_id: input.agentId,
+        parent_memory_id: input.parentMemoryId,
+        child_memory_id: input.childMemoryId,
+        derivation_kind: input.derivationKind,
+        created_at: input.createdAt
+      })
+      inserted += 1
+    }
+    return inserted
+  }
+
+  listDerivationsByChild(agentId: string, childMemoryId: string) {
+    return [...this.derivations.values()]
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.child_memory_id === childMemoryId &&
+          row.parent_memory_id !== row.child_memory_id
+      )
+      .sort(
+        (left, right) =>
+          left.created_at - right.created_at ||
+          left.parent_memory_id.localeCompare(right.parent_memory_id) ||
+          left.derivation_kind.localeCompare(right.derivation_kind)
+      )
+  }
+
+  listDerivationsByParent(agentId: string, parentMemoryId: string) {
+    return [...this.derivations.values()]
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.parent_memory_id === parentMemoryId &&
+          row.parent_memory_id !== row.child_memory_id
+      )
+      .sort(
+        (left, right) =>
+          left.created_at - right.created_at ||
+          left.child_memory_id.localeCompare(right.child_memory_id) ||
+          left.derivation_kind.localeCompare(right.derivation_kind)
+      )
+  }
+
+  listDirtySeeds(agentId: string, limit: number): MemoryDirtySeed[] {
+    const cappedLimit = Number.isFinite(limit)
+      ? Math.min(256, Math.max(0, Math.floor(limit)))
+      : limit === Number.POSITIVE_INFINITY
+        ? 256
+        : 0
+    return [...this.dirtySeeds.values()]
+      .filter((seed) => seed.agentId === agentId)
+      .sort(
+        (left, right) =>
+          left.enqueuedAt - right.enqueuedAt || left.memoryId.localeCompare(right.memoryId)
+      )
+      .slice(0, cappedLimit)
+      .map(({ memoryId, generation, claimRevision, enqueuedAt }) => ({
+        memoryId,
+        generation,
+        claimRevision,
+        enqueuedAt
+      }))
+  }
+
+  settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number {
+    let removed = 0
+    const unique = [
+      ...new Map(
+        seeds.map((seed) => [JSON.stringify([seed.memoryId, seed.generation]), seed] as const)
+      ).values()
+    ].slice(0, 256)
+    for (const seed of unique) {
+      const key = this.dirtyKey(agentId, seed.memoryId)
+      if (this.dirtySeeds.get(key)?.generation !== seed.generation) continue
+      this.dirtySeeds.delete(key)
+      removed += 1
+    }
+    return removed
+  }
+
+  deferDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[], deferredAt: number): number {
+    if (!Number.isFinite(deferredAt)) return 0
+    let deferred = 0
+    const normalizedDeferredAt = Math.max(0, Math.floor(deferredAt))
+    const unique = [
+      ...new Map(
+        seeds.map((seed) => [JSON.stringify([seed.memoryId, seed.generation]), seed] as const)
+      ).values()
+    ].slice(0, 256)
+    let latestEnqueuedAt = -1
+    for (const queued of this.dirtySeeds.values()) {
+      if (queued.agentId === agentId) {
+        latestEnqueuedAt = Math.max(latestEnqueuedAt, queued.enqueuedAt)
+      }
+    }
+    for (const seed of unique) {
+      const key = this.dirtyKey(agentId, seed.memoryId)
+      const current = this.dirtySeeds.get(key)
+      if (!current || current.generation !== seed.generation) continue
+      current.enqueuedAt = Math.max(latestEnqueuedAt + 1, normalizedDeferredAt)
+      latestEnqueuedAt = current.enqueuedAt
+      deferred += 1
+    }
+    return deferred
+  }
+
+  countDirtySeeds(agentId: string): number {
+    return [...this.dirtySeeds.values()].filter((seed) => seed.agentId === agentId).length
   }
 
   getById(id: string) {
@@ -227,6 +532,19 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     return [...this.rows.values()].filter((row) => row.agent_id === agentId && idSet.has(row.id))
   }
 
+  listApplicableByIds(
+    agentId: string,
+    ids: string[],
+    scopeFilter: readonly MemoryScope[] = AGENT_MEMORY_AGENT_SCOPE_FILTER
+  ) {
+    const idSet = new Set(ids)
+    const scopes = normalizeMemoryScopeFilter(scopeFilter)
+    return [...this.rows.values()].filter(
+      (row) =>
+        row.agent_id === agentId && idSet.has(row.id) && rowMatchesMemoryScopeFilter(row, scopes)
+    )
+  }
+
   getCognitiveMaintenanceInput(
     agentId: string,
     options: { kinds: AgentMemoryRow['kind'][]; watermark: number; limit: number }
@@ -234,6 +552,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     const eligible = [...this.rows.values()].filter(
       (row) =>
         row.agent_id === agentId &&
+        row.scope_type === 'agent' &&
+        row.scope_id === null &&
         row.superseded_by === null &&
         row.status !== 'archived' &&
         row.status !== 'conflicted' &&
@@ -260,6 +580,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
           row.kind === 'persona' &&
           (row.persona_state === 'active' ||
             (row.persona_state == null && row.superseded_by === null))
@@ -270,7 +592,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   getDraftPersona(agentId: string) {
     return [...this.rows.values()]
       .filter(
-        (row) => row.agent_id === agentId && row.kind === 'persona' && row.persona_state === 'draft'
+        (row) =>
+          row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
+          row.kind === 'persona' &&
+          row.persona_state === 'draft'
       )
       .sort((a, b) => b.created_at - a.created_at)[0]
   }
@@ -281,6 +608,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.persona_state = state
     if (supersededBy !== undefined) row.superseded_by = supersededBy
     row.decision_revision += 1
+    this.touchDirty(row)
   }
 
   setAnchor(id: string, anchored: boolean) {
@@ -288,23 +616,37 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.is_anchor = anchored ? 1 : 0
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
   listPersonaVersions(agentId: string) {
     return [...this.rows.values()]
-      .filter((row) => row.agent_id === agentId && row.kind === 'persona')
+      .filter(
+        (row) =>
+          row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
+          row.kind === 'persona'
+      )
       .sort((a, b) => b.created_at - a.created_at)
   }
 
-  search(agentId: string, query: string, limit = 20, options: { matchMode?: 'all' | 'any' } = {}) {
+  search(
+    agentId: string,
+    query: string,
+    limit = 20,
+    options: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] } = {}
+  ) {
     const terms = query.trim().toLowerCase().split(/\s+/u).filter(Boolean)
     if (!terms.length) return []
     const matchMode = options.matchMode ?? 'all'
+    const scopeFilter = normalizeMemoryScopeFilter(options.scopeFilter)
     return [...this.rows.values()]
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          rowMatchesMemoryScopeFilter(row, scopeFilter) &&
           !row.superseded_by &&
           row.status !== 'archived' &&
           row.status !== 'conflicted' &&
@@ -321,7 +663,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     agentId: string,
     query: string,
     limit = 20,
-    options: { matchMode?: 'all' | 'any' } = {}
+    options: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] } = {}
   ) {
     return {
       rows: this.search(agentId, query, limit, options),
@@ -371,6 +713,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_id = embedding?.embeddingId ?? null
     row.embedding_dim = embedding?.embeddingDim ?? null
     row.embedding_model = embedding?.embeddingModel ?? null
+    this.touchDirty(row)
   }
 
   activateForEmbedding(id: string) {
@@ -383,6 +726,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
+    this.touchDirty(row)
   }
 
   activateForEmbeddingIfRevision(agentId: string, id: string, expectedRevision: number) {
@@ -403,7 +747,18 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.conflict_state !== null ||
       row.conflict_with !== null ||
       row.kind === 'persona' ||
-      row.kind === 'working'
+      row.kind === 'working' ||
+      this.isUnresolvedConflictParticipant(input.agentId, input.id)
+    ) {
+      return false
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: row.content,
+        provenanceKey: row.provenance_key
+      })
     ) {
       return false
     }
@@ -433,10 +788,21 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       return false
     }
     if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: row.content,
+        provenanceKey: row.provenance_key
+      })
+    ) {
+      return false
+    }
+    if (
       input.retiredHead &&
       (!retiredHead ||
         retiredHead.id === row.id ||
         retiredHead.agent_id !== input.agentId ||
+        !rowsShareMemoryScope(row, retiredHead) ||
         retiredHead.decision_revision !== input.retiredHead.expectedRevision ||
         retiredHead.lifecycle_state !== 'active' ||
         retiredHead.superseded_by !== null ||
@@ -450,6 +816,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (retiredHead) {
       retiredHead.superseded_by = row.id
       retiredHead.decision_revision += 1
+      this.touchDirty(retiredHead)
     }
     row.superseded_by = null
     row.embedding_state = 'pending'
@@ -458,19 +825,11 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
-  activateResolvedChallenger(input: {
-    agentId: string
-    id: string
-    expectedRevision: number
-    targetId: string
-    content?: string
-    provenanceKey?: string | null
-    category?: string | null
-    at?: number
-  }) {
+  activateResolvedChallenger(input: ResolveChallengerTransition) {
     const row = this.rows.get(input.id)
     const target = this.rows.get(input.targetId)
     if (
@@ -487,7 +846,19 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.kind === 'working' ||
       target.lifecycle_state !== 'active' ||
       target.conflict_state !== 'challenged' ||
-      target.superseded_by !== null
+      target.superseded_by !== null ||
+      !rowsShareMemoryScope(row, target)
+    ) {
+      return false
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: input.content ?? row.content,
+        provenanceKey:
+          input.content === undefined ? row.provenance_key : (input.provenanceKey ?? null)
+      })
     ) {
       return false
     }
@@ -504,9 +875,19 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       if (Object.prototype.hasOwnProperty.call(input, 'category')) {
         row.category = input.category ?? null
       }
+      const temporal = input.temporal
+        ? normalizeMemoryTemporalMetadata(input.temporal)
+        : temporalMetadataFromRow(row)
+      row.temporal_kind = temporal.temporalKind
+      row.valid_from = temporal.validFrom
+      row.valid_until = temporal.validUntil
+      row.temporal_confidence = temporal.temporalConfidence
+      row.temporal_precision = temporal.temporalPrecision
+      row.temporal_timezone = temporal.temporalTimeZone
       row.last_accessed = input.at ?? 0
     }
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -519,11 +900,14 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }) {
     const row = this.rows.get(input.id)
     const target = this.rows.get(input.targetId)
+    const winner = this.rows.get(input.winnerId)
     if (
       !row ||
       !target ||
+      !winner ||
       row.agent_id !== input.agentId ||
       target.agent_id !== input.agentId ||
+      winner.agent_id !== input.agentId ||
       row.decision_revision !== input.expectedRevision ||
       row.lifecycle_state !== 'conflicted' ||
       row.conflict_with !== input.targetId ||
@@ -533,7 +917,9 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.kind === 'working' ||
       target.lifecycle_state !== 'active' ||
       target.conflict_state !== 'challenged' ||
-      target.superseded_by !== null
+      target.superseded_by !== null ||
+      !rowsShareMemoryScope(row, target) ||
+      !rowsShareMemoryScope(row, winner)
     ) {
       return false
     }
@@ -542,6 +928,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.conflict_with = null
     row.superseded_by = input.winnerId
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -552,14 +939,21 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     challengerId: string
   }) {
     const row = this.rows.get(input.id)
+    const challenger = this.rows.get(input.challengerId)
     if (
       !row ||
+      !challenger ||
       row.agent_id !== input.agentId ||
+      challenger.agent_id !== input.agentId ||
       row.decision_revision !== input.expectedRevision ||
       row.lifecycle_state !== 'active' ||
       row.conflict_state !== 'challenged' ||
       row.superseded_by !== null ||
-      !this.rows.has(input.challengerId)
+      challenger.lifecycle_state !== 'active' ||
+      challenger.superseded_by !== null ||
+      challenger.conflict_state !== null ||
+      challenger.conflict_with !== null ||
+      !rowsShareMemoryScope(row, challenger)
     ) {
       return false
     }
@@ -568,6 +962,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     row.conflict_state = null
     row.superseded_by = input.challengerId
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -601,6 +996,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = update.embeddingId
       row.embedding_dim = update.embeddingDim
       row.embedding_model = update.embeddingModel
+      this.touchDirty(row)
       updated.push(row.id)
     }
     return updated
@@ -631,6 +1027,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = null
       row.embedding_dim = null
       row.embedding_model = null
+      this.touchDirty(row)
       updated.push(row.id)
     }
     return updated
@@ -670,6 +1067,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = null
       row.embedding_dim = null
       row.embedding_model = null
+      this.touchDirty(row)
       changed += 1
     }
     return changed
@@ -727,6 +1125,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.superseded_by = supersededBy
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -737,9 +1136,14 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     supersededBy: string
   ) {
     const row = this.rows.get(id)
+    const successor = this.rows.get(supersededBy)
     if (
       !row ||
+      !successor ||
       row.agent_id !== agentId ||
+      successor.agent_id !== agentId ||
+      successor.id === row.id ||
+      !rowsShareMemoryScope(row, successor) ||
       row.decision_revision !== expectedRevision ||
       row.superseded_by !== null ||
       row.conflict_state !== null ||
@@ -752,11 +1156,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     row.superseded_by = supersededBy
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
   recordAccess(id: string, accessedAt = 0) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row) {
       row.last_accessed = accessedAt
       row.access_count += 1
@@ -770,7 +1175,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   updateDecayScore(id: string, decayScore: number | null, consolidatedAt: number | null = null) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row) {
       row.decay_score = decayScore
       if (consolidatedAt !== null) row.last_consolidated_at = consolidatedAt
@@ -791,6 +1196,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.last_accessed = at
       if (category !== undefined) row.category = category
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -836,7 +1242,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     at: number
     category?: string | null
     importance?: number
-  }) {
+    temporal?: MemoryTemporalMetadata
+  }): MemoryClaimContentUpdateResult {
     const row = this.rows.get(input.id)
     if (
       !row ||
@@ -849,20 +1256,40 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.kind === 'persona' ||
       row.kind === 'working'
     ) {
-      return false
+      return { action: 'suppressed', reason: 'concurrent-update' }
+    }
+    if (
+      this.hasTombstoneForClaim({
+        agentId: input.agentId,
+        kind: row.kind,
+        content: input.content,
+        provenanceKey: input.provenanceKey
+      })
+    ) {
+      return { action: 'suppressed', reason: 'forgotten' }
     }
     row.content = input.content
     row.provenance_key = input.provenanceKey
     row.last_accessed = input.at
     if (input.category !== undefined) row.category = input.category
     if (input.importance !== undefined) row.importance = input.importance
+    if (input.temporal !== undefined) {
+      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      row.temporal_kind = temporal.temporalKind
+      row.valid_from = temporal.validFrom
+      row.valid_until = temporal.validUntil
+      row.temporal_confidence = temporal.temporalConfidence
+      row.temporal_precision = temporal.temporalPrecision
+      row.temporal_timezone = temporal.temporalTimeZone
+    }
     row.embedding_state = 'pending'
     row.status = 'pending_embedding'
     row.embedding_id = null
     row.embedding_dim = null
     row.embedding_model = null
     row.decision_revision += 1
-    return true
+    this.touchDirty(row)
+    return { action: 'updated' }
   }
 
   updateUserMetadataIfRevision(input: {
@@ -872,6 +1299,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     category?: string | null
     importance?: number
     lastAccessedAt?: number
+    temporal?: MemoryTemporalMetadata
   }) {
     const row = this.rows.get(input.id)
     if (
@@ -896,12 +1324,22 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (Object.prototype.hasOwnProperty.call(input, 'lastAccessedAt')) {
       row.last_accessed = input.lastAccessedAt ?? row.last_accessed
     }
+    if (input.temporal !== undefined) {
+      const temporal = normalizeMemoryTemporalMetadata(input.temporal)
+      row.temporal_kind = temporal.temporalKind
+      row.valid_from = temporal.validFrom
+      row.valid_until = temporal.validUntil
+      row.temporal_confidence = temporal.temporalConfidence
+      row.temporal_precision = temporal.temporalPrecision
+      row.temporal_timezone = temporal.temporalTimeZone
+    }
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
   setConfidence(id: string, confidence: number) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row)
       row.confidence = row.confidence === null ? confidence : Math.max(row.confidence, confidence)
   }
@@ -911,6 +1349,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.conflict_state = state
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -934,6 +1373,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     }
     row.conflict_state = state
     row.decision_revision += 1
+    this.touchDirty(row)
     return true
   }
 
@@ -942,11 +1382,12 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     if (row) {
       row.conflict_with = targetId
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
   setLastConsolidatedAt(id: string, at = 0) {
-    const row = this.rows.get(id)
+    const row = this.getBookkeepingWritableRow(id)
     if (row) row.last_consolidated_at = at
   }
 
@@ -1047,6 +1488,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.lifecycle_state = 'archived'
       row.status = 'archived'
       row.decision_revision += 1
+      this.touchDirty(row)
     }
   }
 
@@ -1162,17 +1604,125 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
   }
 
   delete(id: string) {
+    const row = this.rows.get(id)
+    if (row) this.touchDirty(row)
     this.rows.delete(id)
+  }
+
+  deleteInternalMemory(agentId: string, id: string): boolean {
+    const row = this.rows.get(id)
+    if (!row || row.agent_id !== agentId || (row.kind !== 'persona' && row.kind !== 'working')) {
+      return false
+    }
+    this.delete(id)
+    return true
+  }
+
+  tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null {
+    const row = this.rows.get(input.id)
+    if (
+      !row ||
+      row.agent_id !== input.agentId ||
+      row.decision_revision !== input.expectedRevision ||
+      !isTombstoneEligibleMemoryKind(row.kind) ||
+      this.isUnresolvedConflictParticipant(input.agentId, input.id)
+    ) {
+      return null
+    }
+    this.addTombstonesForRow(row, input.createdAt, 'selective_delete')
+    this.delete(row.id)
+    return row
   }
 
   clearByAgent(agentId: string) {
     let removed = 0
     for (const [id, row] of this.rows) {
       if (row.agent_id === agentId) {
-        this.rows.delete(id)
+        this.delete(id)
         removed += 1
       }
     }
+    return removed
+  }
+
+  listPendingMemoryClearJobs(): MemoryClearJob[] {
+    return [...this.clearJobs.values()]
+      .sort(
+        (left, right) =>
+          left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId)
+      )
+      .map((job) => ({ ...job }))
+  }
+
+  beginMemoryClear(agentId: string, createdAt: number): MemoryClearJob {
+    const existing = this.clearJobs.get(agentId)
+    if (existing) return { ...existing }
+    const memoryIds = [...this.rows.values()]
+      .filter((row) => row.agent_id === agentId)
+      .map((row) => row.id)
+    const job: MemoryClearJob = {
+      agentId,
+      cutoffRowId: memoryIds.length,
+      createdAt,
+      removed: 0,
+      phase: 'claims'
+    }
+    this.clearJobs.set(agentId, job)
+    this.clearJobMemoryIds.set(agentId, memoryIds)
+    return { ...job }
+  }
+
+  processMemoryClearBatch(agentId: string): MemoryClearBatchResult | null {
+    const job = this.clearJobs.get(agentId)
+    if (!job) return null
+    if (job.phase === 'vectors') {
+      return { job: { ...job }, removedInBatch: 0 }
+    }
+    const pendingIds = this.clearJobMemoryIds.get(agentId) ?? []
+    const batchIds = pendingIds.splice(0, 256)
+    let removedInBatch = 0
+    for (const id of batchIds) {
+      const row = this.rows.get(id)
+      if (!row || row.agent_id !== agentId) continue
+      this.addTombstonesForRow(row, job.createdAt, 'agent_clear')
+      this.delete(id)
+      removedInBatch += 1
+    }
+    job.removed += removedInBatch
+    if (pendingIds.length === 0) {
+      job.phase = 'vectors'
+      for (const [key, derivation] of this.derivations) {
+        if (derivation.agent_id === agentId) this.derivations.delete(key)
+      }
+      for (const [key, seed] of this.dirtySeeds) {
+        if (seed.agentId === agentId) this.dirtySeeds.delete(key)
+      }
+    }
+    return { job: { ...job }, removedInBatch }
+  }
+
+  completeMemoryClear(agentId: string): boolean {
+    const job = this.clearJobs.get(agentId)
+    if (!job) return true
+    if (job.phase !== 'vectors') return false
+    this.clearJobs.delete(agentId)
+    this.clearJobMemoryIds.delete(agentId)
+    return true
+  }
+
+  retireAgentMemoryNamespace(agentId: string): number {
+    const removed = this.clearByAgent(agentId)
+    for (const [key, tombstone] of this.tombstones) {
+      if (tombstone.agentId === agentId) this.tombstones.delete(key)
+    }
+    for (const [key, derivation] of this.derivations) {
+      if (derivation.agent_id === agentId) this.derivations.delete(key)
+    }
+    for (const [key, seed] of this.dirtySeeds) {
+      if (seed.agentId === agentId) this.dirtySeeds.delete(key)
+    }
+    this.clearJobs.delete(agentId)
+    this.clearJobMemoryIds.delete(agentId)
     return removed
   }
 
@@ -1215,6 +1765,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       return (
         !!target &&
         target.agent_id === agentId &&
+        rowsShareMemoryScope(challenger, target) &&
         target.conflict_state === 'challenged' &&
         target.superseded_by === null
       )
@@ -1230,7 +1781,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         challenger.agent_id === agentId &&
         challenger.status === 'conflicted' &&
         challenger.superseded_by === null &&
-        challenger.conflict_with === memoryId
+        challenger.conflict_with === memoryId &&
+        rowsShareMemoryScope(challenger, row)
     )
   }
 
@@ -1255,6 +1807,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
           challenger.status === 'conflicted' &&
           challenger.superseded_by === null &&
           target?.agent_id === agentId &&
+          rowsShareMemoryScope(challenger, target) &&
           target.conflict_state === 'challenged' &&
           target.superseded_by === null
         )
@@ -1273,10 +1826,13 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     targetId: string,
     excludeChallengerId: string
   ): AgentMemoryRow[] {
+    const target = this.rows.get(targetId)
+    if (!target || target.agent_id !== agentId) return []
     return [...this.rows.values()]
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          rowsShareMemoryScope(row, target) &&
           row.conflict_with === targetId &&
           row.status === 'conflicted' &&
           row.superseded_by === null &&
@@ -1292,7 +1848,22 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
     winnerId: string,
     at: number
   ) {
-    const siblings = this.listConflictSiblings(agentId, targetId, excludeChallengerId)
+    const target = this.rows.get(targetId)
+    const winner = this.rows.get(winnerId)
+    if (
+      !target ||
+      !winner ||
+      target.agent_id !== agentId ||
+      winner.agent_id !== agentId ||
+      !rowsShareMemoryScope(target, winner) ||
+      winner.lifecycle_state !== 'active' ||
+      winner.superseded_by !== null
+    ) {
+      return 0
+    }
+    const siblings = this.listConflictSiblings(agentId, targetId, excludeChallengerId).filter(
+      (sibling) => sibling.id !== winner.id
+    )
     for (const sibling of siblings) {
       sibling.conflict_with = null
       sibling.superseded_by = winnerId
@@ -1330,6 +1901,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       if (row.status !== 'conflicted' && row.conflict_with !== null) {
         row.conflict_with = null
         row.decision_revision += 1
+        this.touchDirty(row)
         result.clearedLinks += 1
       }
     }
@@ -1340,6 +1912,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
         !!target &&
         target.id !== challenger.id &&
         target.agent_id === agentId &&
+        rowsShareMemoryScope(challenger, target) &&
         target.status !== 'archived' &&
         target.status !== 'conflicted' &&
         target.superseded_by === null
@@ -1398,12 +1971,24 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
   runInTransaction<T>(fn: () => T): T {
     this.transactionCalls += 1
-    const snapshot = new MemoryRowMap()
-    for (const [id, row] of this.rows) snapshot.set(id, { ...row })
+    const rowSnapshot = new MemoryRowMap()
+    for (const [id, row] of this.rows) rowSnapshot.set(id, { ...row })
+    const tombstoneSnapshot = new Map(
+      [...this.tombstones].map(([key, tombstone]) => [key, { ...tombstone }])
+    )
+    const derivationSnapshot = new Map(
+      [...this.derivations].map(([key, derivation]) => [key, { ...derivation }])
+    )
+    const dirtySeedSnapshot = new Map(
+      [...this.dirtySeeds].map(([key, dirtySeed]) => [key, { ...dirtySeed }])
+    )
     try {
       return fn()
     } catch (error) {
-      this.rows = snapshot
+      this.rows = rowSnapshot
+      this.tombstones = tombstoneSnapshot
+      this.derivations = derivationSnapshot
+      this.dirtySeeds = dirtySeedSnapshot
       throw error
     }
   }
@@ -1428,6 +2013,8 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       .filter(
         (row) =>
           row.agent_id === agentId &&
+          row.scope_type === 'agent' &&
+          row.scope_id === null &&
           row.superseded_by === null &&
           row.status !== 'archived' &&
           row.status !== 'conflicted' &&
@@ -1474,33 +2061,6 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, Math.max(0, Math.floor(limit)))
       .map(([agentId]) => agentId)
-  }
-
-  listConsolidationScanRows(
-    agentId: string,
-    options: {
-      embeddingDim: number
-      embeddingModel: string
-      after?: { createdAt: number; id: string }
-      limit: number
-    }
-  ) {
-    return [...this.rows.values()]
-      .filter(
-        (row) =>
-          row.agent_id === agentId &&
-          row.status === 'embedded' &&
-          row.superseded_by === null &&
-          row.kind !== 'persona' &&
-          row.kind !== 'working' &&
-          row.embedding_dim === options.embeddingDim &&
-          row.embedding_model === options.embeddingModel &&
-          (!options.after ||
-            row.created_at > options.after.createdAt ||
-            (row.created_at === options.after.createdAt && row.id > options.after.id))
-      )
-      .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
-      .slice(0, Math.max(0, Math.floor(options.limit)))
   }
 
   repairInternalKindStatuses(agentId: string) {
@@ -1580,6 +2140,7 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
       row.embedding_id = null
       row.embedding_dim = null
       row.embedding_model = null
+      this.touchDirty(row)
       changed += 1
     }
     return changed
@@ -1588,11 +2149,15 @@ class FakeRepositoryBehavior implements MemoryRepositoryPort {
 
 export interface FakeRepositoryState {
   rows: Map<string, AgentMemoryRow>
+  tombstones: FakeRepositoryBehavior['tombstones']
+  derivations: FakeRepositoryBehavior['derivations']
+  dirtySeeds: FakeRepositoryBehavior['dirtySeeds']
   transactionCalls: number
 }
 
 interface FakeRepositoryRowAccess {
-  insert(...args: Parameters<MemoryRepositoryPort['insert']>): AgentMemoryRow
+  insert(input: AgentMemoryInsertInput): AgentMemoryRow
+  delete(id: string): void
   getById(...args: Parameters<MemoryRepositoryPort['getById']>): AgentMemoryRow | undefined
   getByProvenanceKey(
     ...args: Parameters<MemoryRepositoryPort['getByProvenanceKey']>
@@ -1631,6 +2196,8 @@ export interface FakeRepositoryHarness {
   embedding: MemoryEmbeddingRepositoryPort
   lifecycle: MemoryLifecycleRepositoryPort
   health: MemoryHealthRepositoryPort
+  lineage: MemoryLineageRepositoryPort
+  dirty: MemoryDirtyRepositoryPort
   transaction: MemoryTransactionPort
 }
 
@@ -1653,6 +2220,7 @@ const READ_CAPABILITY_KEYS = [
   'listManagementPage',
   'listManagementVisibleByIds',
   'listByIds',
+  'listApplicableByIds',
   'getActivePersona',
   'getDraftPersona',
   'listPersonaVersions',
@@ -1661,11 +2229,14 @@ const READ_CAPABILITY_KEYS = [
   'listWorkingCandidates',
   'listAgentIdsWithMemories',
   'listRecentlyActiveAgentIds',
-  'hasActiveMemory'
+  'hasActiveMemory',
+  'listPendingMemoryClearJobs'
 ] as const satisfies readonly (keyof MemoryReadRepositoryPort)[]
 
 const MUTATION_CAPABILITY_KEYS = [
-  'insert',
+  'insertInternalMemory',
+  'insertClaimUnlessTombstoned',
+  'insertExplicitlyReauthorizedClaim',
   'rekeyProvenance',
   'updateInternalContent',
   'updateUserContentAndInvalidateEmbedding',
@@ -1675,8 +2246,12 @@ const MUTATION_CAPABILITY_KEYS = [
   'setAnchor',
   'markSupersededIfRevision',
   'markConflictIfRevision',
-  'delete',
-  'clearByAgent'
+  'deleteInternalMemory',
+  'tombstoneAndDelete',
+  'beginMemoryClear',
+  'processMemoryClearBatch',
+  'completeMemoryClear',
+  'retireAgentMemoryNamespace'
 ] as const satisfies readonly (keyof MemoryMutationRepositoryPort)[]
 
 const ACCESS_CAPABILITY_KEYS = [
@@ -1722,7 +2297,6 @@ const LIFECYCLE_CAPABILITY_KEYS = [
   'retireConflictSiblings',
   'clearTargetConflictIfNoChallengers',
   'repairConflictIntegrityBatch',
-  'listConsolidationScanRows',
   'repairInternalKindStatuses'
 ] as const satisfies readonly (keyof MemoryLifecycleRepositoryPort)[]
 
@@ -1734,6 +2308,19 @@ const HEALTH_CAPABILITY_KEYS = [
   'getPersonaCounts',
   'countLegacyShadowMismatches'
 ] as const satisfies readonly (keyof MemoryHealthRepositoryPort)[]
+
+const LINEAGE_CAPABILITY_KEYS = [
+  'insertDerivations',
+  'listDerivationsByChild',
+  'listDerivationsByParent'
+] as const satisfies readonly (keyof MemoryLineageRepositoryPort)[]
+
+const DIRTY_CAPABILITY_KEYS = [
+  'listDirtySeeds',
+  'settleDirtySeeds',
+  'deferDirtySeeds',
+  'countDirtySeeds'
+] as const satisfies readonly (keyof MemoryDirtyRepositoryPort)[]
 
 const TRANSACTION_CAPABILITY_KEYS = [
   'runInTransaction'
@@ -1749,6 +2336,8 @@ export function createFakeRepositoryHarness(): FakeRepositoryHarness {
     embedding: bindCapability(state, EMBEDDING_CAPABILITY_KEYS),
     lifecycle: bindCapability(state, LIFECYCLE_CAPABILITY_KEYS),
     health: bindCapability(state, HEALTH_CAPABILITY_KEYS),
+    lineage: bindCapability(state, LINEAGE_CAPABILITY_KEYS),
+    dirty: bindCapability(state, DIRTY_CAPABILITY_KEYS),
     transaction: bindCapability(state, TRANSACTION_CAPABILITY_KEYS)
   }
 }
@@ -1763,8 +2352,177 @@ export function createFakeRepository(): FakeRepository {
     harness.embedding,
     harness.lifecycle,
     harness.health,
+    harness.lineage,
+    harness.dirty,
     harness.transaction
   ) as FakeRepository
+}
+
+function copyDirective(row: AgentMemoryDirectiveRow): AgentMemoryDirectiveRow {
+  return { ...row }
+}
+
+export class FakeDirectiveRepository implements MemoryDirectiveRepositoryPort {
+  readonly rows = new Map<string, AgentMemoryDirectiveRow>()
+
+  private key(agentId: string, directiveId: string): string {
+    return JSON.stringify([agentId, directiveId])
+  }
+
+  private findByIdentity(
+    agentId: string,
+    kind: AgentMemoryDirectiveRow['kind'],
+    identityHash: string
+  ): AgentMemoryDirectiveRow | undefined {
+    return [...this.rows.values()].find(
+      (row) => row.agent_id === agentId && row.kind === kind && row.identity_hash === identityHash
+    )
+  }
+
+  getDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | undefined {
+    const row = this.rows.get(this.key(agentId, directiveId))
+    return row ? copyDirective(row) : undefined
+  }
+
+  listDirectives(
+    agentId: string,
+    options: {
+      statuses?: readonly AgentMemoryDirectiveRow['status'][]
+      limit?: number
+    } = {}
+  ): AgentMemoryDirectiveRow[] {
+    const statuses = options.statuses?.length ? new Set(options.statuses) : null
+    const limit = Math.min(200, Math.max(0, Math.floor(options.limit ?? 100)))
+    return [...this.rows.values()]
+      .filter((row) => row.agent_id === agentId && (!statuses || statuses.has(row.status)))
+      .sort((left, right) => right.updated_at - left.updated_at || left.id.localeCompare(right.id))
+      .slice(0, limit)
+      .map(copyDirective)
+  }
+
+  listActiveDirectives(agentId: string, limit: number): AgentMemoryDirectiveRow[] {
+    return this.listDirectives(agentId, { statuses: ['active'], limit })
+  }
+
+  upsertExplicitDirective(input: MemoryDirectiveWriteInput): MemoryDirectiveWriteResult {
+    if (input.status !== 'active' || input.source === 'derived_suggestion') {
+      throw new Error('[Memory] explicit directives must enter the active trust state')
+    }
+    const existing = this.findByIdentity(input.agentId, input.kind, input.identityHash)
+    if (
+      existing?.status !== 'active' &&
+      this.countDirectivesByStatus(input.agentId).active >= AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
+    ) {
+      return { action: 'capacity', row: null }
+    }
+    if (
+      existing?.status === input.status &&
+      existing.source === input.source &&
+      existing.content === input.content &&
+      existing.normalized_topic === input.normalizedTopic
+    ) {
+      return { action: 'unchanged', row: copyDirective(existing) }
+    }
+    const row: AgentMemoryDirectiveRow = existing
+      ? {
+          ...existing,
+          status: input.status,
+          source: input.source,
+          content: input.content,
+          normalized_topic: input.normalizedTopic,
+          updated_at: Math.max(existing.updated_at, input.updatedAt)
+        }
+      : {
+          agent_id: input.agentId,
+          id: input.id,
+          kind: input.kind,
+          status: input.status,
+          source: input.source,
+          content: input.content,
+          normalized_topic: input.normalizedTopic,
+          identity_hash: input.identityHash,
+          created_at: input.createdAt,
+          updated_at: input.updatedAt
+        }
+    this.rows.set(this.key(row.agent_id, row.id), row)
+    return { action: existing ? 'updated' : 'created', row: copyDirective(row) }
+  }
+
+  insertDerivedDirectiveDraft(input: MemoryDirectiveWriteInput): MemoryDirectiveInsertResult {
+    if (input.status !== 'draft' || input.source !== 'derived_suggestion') {
+      throw new Error('[Memory] derived directives must enter the draft trust state')
+    }
+    const existing = this.findByIdentity(input.agentId, input.kind, input.identityHash)
+    if (existing) return { inserted: false, row: copyDirective(existing) }
+    const row: AgentMemoryDirectiveRow = {
+      agent_id: input.agentId,
+      id: input.id,
+      kind: input.kind,
+      status: 'draft',
+      source: 'derived_suggestion',
+      content: input.content,
+      normalized_topic: input.normalizedTopic,
+      identity_hash: input.identityHash,
+      created_at: input.createdAt,
+      updated_at: input.updatedAt
+    }
+    this.rows.set(this.key(row.agent_id, row.id), row)
+    return { inserted: true, row: copyDirective(row) }
+  }
+
+  transitionDirective(
+    agentId: string,
+    directiveId: string,
+    fromStatus: AgentMemoryDirectiveRow['status'],
+    toStatus: AgentMemoryDirectiveRow['status'],
+    updatedAt: number
+  ): MemoryDirectiveTransitionResult {
+    if (fromStatus !== 'draft' || (toStatus !== 'active' && toStatus !== 'rejected')) {
+      throw new Error('[Memory] invalid directive trust transition')
+    }
+    const key = this.key(agentId, directiveId)
+    const row = this.rows.get(key)
+    if (!row || row.status !== fromStatus) return { action: 'not-found', row: null }
+    if (
+      toStatus === 'active' &&
+      this.countDirectivesByStatus(agentId).active >= AGENT_MEMORY_ACTIVE_DIRECTIVE_MAX_COUNT
+    ) {
+      return { action: 'capacity', row: null }
+    }
+    const updated = {
+      ...row,
+      status: toStatus,
+      updated_at: Math.max(row.updated_at, Math.max(0, Math.floor(updatedAt)))
+    }
+    this.rows.set(key, updated)
+    return { action: 'transitioned', row: copyDirective(updated) }
+  }
+
+  deleteDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null {
+    const key = this.key(agentId, directiveId)
+    const row = this.rows.get(key)
+    if (!row) return null
+    this.rows.delete(key)
+    return copyDirective(row)
+  }
+
+  countDirectivesByStatus(agentId: string): MemoryDirectiveCounts {
+    const counts: MemoryDirectiveCounts = { draft: 0, active: 0, rejected: 0 }
+    for (const row of this.rows.values()) {
+      if (row.agent_id === agentId) counts[row.status] += 1
+    }
+    return counts
+  }
+
+  retireDirectiveNamespace(agentId: string): number {
+    let removed = 0
+    for (const [key, row] of this.rows) {
+      if (row.agent_id !== agentId) continue
+      this.rows.delete(key)
+      removed += 1
+    }
+    return removed
+  }
 }
 
 export class FakeAuditRepository implements MemoryAuditRepositoryPort {
@@ -1975,12 +2733,15 @@ export function makePresenter(
   repo = createFakeRepository(),
   options: {
     isManagedAgent?: (agentId: string) => boolean
+    directiveRepository?: MemoryDirectiveRepositoryPort
     markVectorStoreQuarantined?: MemoryServiceDeps['markVectorStoreQuarantined']
     onMemoryChanged?: MemoryServiceDeps['onMemoryChanged']
+    clock?: MemoryServiceDeps['clock']
   } = {}
 ) {
   const store = new FakeVectorStore()
   const auditRepo = new FakeAuditRepository()
+  const directiveRepo = options.directiveRepository ?? new FakeDirectiveRepository()
   const getEmbeddings = vi.fn(async (_p: string, _m: string, texts: string[]) =>
     texts.map((text) => textToVector(text))
   )
@@ -1994,6 +2755,7 @@ export function makePresenter(
   const presenter = new MemoryService({
     executeWithRateLimit: vi.fn(async () => undefined),
     repository: repo,
+    directiveRepository: directiveRepo,
     auditRepository: auditRepo,
     resolveAgentConfig: () => config,
     isManagedAgent: options.isManagedAgent,
@@ -2005,7 +2767,17 @@ export function makePresenter(
     getDimensions,
     generateText: vi.fn(async () => ''),
     createVectorStore: async () => store,
-    resetVectorStore
+    resetVectorStore,
+    clock: options.clock
   })
-  return { presenter, repo, auditRepo, store, getEmbeddings, getDimensions, resetVectorStore }
+  return {
+    presenter,
+    repo,
+    directiveRepo,
+    auditRepo,
+    store,
+    getEmbeddings,
+    getDimensions,
+    resetVectorStore
+  }
 }

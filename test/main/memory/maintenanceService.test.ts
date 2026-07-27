@@ -100,6 +100,143 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     const active = repo.listByAgent('a')
     expect(active).toHaveLength(1)
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
+    const derivations = repo.listDerivationsByChild('a', newId)
+    expect(derivations.map((edge) => edge.parent_memory_id)).toEqual([oldId])
+    expect(derivations.every((edge) => edge.derivation_kind === 'merge')).toBe(true)
+  })
+
+  it('never consolidates vector neighbors across applicability scopes', async () => {
+    const generateText = routedLLM({
+      decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"merged redis fact"}'
+    })
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
+    const now = 1_000 * DAY
+    const rows = [
+      repo.insert({
+        id: 'session-1',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user likes redis a',
+        status: 'embedded',
+        createdAt: now - 2_000,
+        scope: { type: 'session', id: 'session-1' }
+      }),
+      repo.insert({
+        id: 'session-2',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user likes redis b',
+        status: 'embedded',
+        createdAt: now - 1_000,
+        scope: { type: 'session', id: 'session-2' }
+      })
+    ]
+    for (const row of rows) {
+      repo.seedLegacyStatus(row.id, 'embedded', {
+        embeddingId: row.id,
+        embeddingDim: 4,
+        embeddingModel: 'p:m'
+      })
+      store.vectors.set(row.id, textToVector(row.content))
+    }
+
+    await presenter.runConsolidationPass('a', now)
+
+    expect(decisionCalls(generateText)).toBe(0)
+    expect(repo.getById('session-1')?.superseded_by).toBeNull()
+    expect(repo.getById('session-2')?.superseded_by).toBeNull()
+  })
+
+  it('oversamples bounded vector neighbors before exact-scope consolidation', async () => {
+    const generateText = routedLLM({
+      decision:
+        '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"merged scoped redis fact"}'
+    })
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
+    const now = 1_000 * DAY
+    const rows = [
+      repo.insert({
+        id: '00-source',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'scoped redis source',
+        status: 'embedded',
+        createdAt: now - 5_000,
+        scope: { type: 'session', id: 'session-1' }
+      }),
+      ...Array.from({ length: 3 }, (_, index) =>
+        repo.insert({
+          id: `10-other-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `other scoped redis ${index}`,
+          status: 'embedded',
+          createdAt: now - 4_000 + index,
+          scope: { type: 'session', id: `other-${index}` }
+        })
+      ),
+      repo.insert({
+        id: '99-neighbor',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'scoped redis neighbor',
+        status: 'embedded',
+        createdAt: now - 1_000,
+        scope: { type: 'session', id: 'session-1' }
+      })
+    ]
+    for (const row of rows) {
+      repo.seedLegacyStatus(row.id, 'embedded', {
+        embeddingId: row.id,
+        embeddingDim: 4,
+        embeddingModel: 'p:m'
+      })
+      store.vectors.set(row.id, textToVector('redis'))
+    }
+    const querySpy = vi.spyOn(store, 'queryByMemoryId')
+
+    await presenter.runConsolidationPass('a', now)
+
+    expect(querySpy).toHaveBeenCalledWith('00-source', { topK: 6 })
+    expect(decisionCalls(generateText)).toBeGreaterThan(0)
+    const source = repo.getById('00-source')
+    const neighbor = repo.getById('99-neighbor')
+    expect(source).toBeDefined()
+    expect(neighbor).toBeDefined()
+    expect(
+      [source!.superseded_by, neighbor!.superseded_by].filter((id) => id === null)
+    ).toHaveLength(1)
+  })
+
+  it('does not merge a pair into an exact hard-deleted claim', async () => {
+    const generateText = routedLLM({
+      decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"user prefers redis"}'
+    })
+    const { presenter, repo } = makeLLMPresenter(generateText)
+    const forgotten = repo.insert({
+      id: 'forgotten-merge',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user prefers redis',
+      provenanceKey: 'forgotten-merge-source'
+    })
+    repo.tombstoneAndDelete({
+      agentId: 'a',
+      id: forgotten.id,
+      expectedRevision: forgotten.decision_revision,
+      createdAt: 1
+    })
+    const now = 1_000 * DAY
+    const oldId = await seedEmbedded(presenter, 'user likes redis a')
+    const newId = await seedEmbedded(presenter, 'user likes redis b')
+    repo.rows.get(oldId)!.created_at = now - 2_000
+    repo.rows.get(newId)!.created_at = now - 1_000
+
+    await presenter.runConsolidationPass('a', now)
+
+    expect(repo.getById(oldId)?.superseded_by).toBeNull()
+    expect(repo.getById(newId)?.superseded_by).toBeNull()
+    expect(repo.listByAgent('a')).toHaveLength(2)
   })
 
   it.each(['edit', 'archive', 'delete'] as const)(
@@ -149,6 +286,10 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
       } else {
         expect(repo.getById(currentId)).toBeUndefined()
       }
+      const expectedDirtyId = mutation === 'edit' ? editedId : currentId
+      expect(repo.listDirtySeeds('a', 256).some((seed) => seed.memoryId === expectedDirtyId)).toBe(
+        true
+      )
     }
   )
 
@@ -215,7 +356,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(repo.getById('old')?.superseded_by).toBe('new')
   })
 
-  it('bounds stored-vector consolidation scans and resumes with a compound cursor', async () => {
+  it('bounds dirty consolidation work and resumes from the persistent queue', async () => {
     const generateText = routedLLM({
       decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'
     })
@@ -243,16 +384,130 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', now)
     expect(queryByMemoryId).toHaveBeenCalledTimes(64)
     expect(decisionCalls(generateText)).toBe(0)
+    expect(repo.countDirtySeeds('a')).toBe(6)
 
     await presenter.runConsolidationPass('a', now + 6 * 60 * 60 * 1000 + 1)
     expect(queryByMemoryId).toHaveBeenCalledTimes(70)
+    expect(repo.countDirtySeeds('a')).toBe(0)
+  })
+
+  it('rotates retryable vector failures behind untouched dirty seeds', async () => {
+    const generateText = routedLLM({
+      decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'
+    })
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
+    const now = 1_000 * DAY
+    const queryByMemoryId = vi
+      .spyOn(store, 'queryByMemoryId')
+      .mockRejectedValue(new Error('injected vector query failure'))
+    for (let index = 0; index < 65; index += 1) {
+      const id = `m-${String(index).padStart(2, '0')}`
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `memory ${index}`,
+        status: 'embedded',
+        createdAt: now + index
+      })
+      repo.seedLegacyStatus(id, 'embedded', {
+        embeddingId: id,
+        embeddingDim: 4,
+        embeddingModel: 'p:m'
+      })
+      store.vectors.set(id, textToVector(`memory ${index}`))
+    }
+
+    await presenter.runConsolidationPass('a', now + 100)
+    expect(queryByMemoryId).toHaveBeenCalledTimes(64)
+    expect(queryByMemoryId.mock.calls.map((call) => call[0])).not.toContain('m-64')
+    expect(repo.countDirtySeeds('a')).toBe(65)
+
+    queryByMemoryId.mockClear()
+    await presenter.runConsolidationPass('a', now + 6 * 60 * 60 * 1000 + 101)
+
+    expect(queryByMemoryId.mock.calls[0]?.[0]).toBe('m-64')
+    expect(repo.countDirtySeeds('a')).toBe(65)
+  })
+
+  it('settles deleted dirty seeds without a live embedding dimension', async () => {
+    const { presenter, repo } = makeLLMPresenter(routedLLM({}))
+    const claim = repo.insert({
+      id: 'deleted',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'deleted claim',
+      status: 'embedded',
+      createdAt: 1_000
+    })
+    repo.delete(claim.id)
+    expect(repo.countDirtySeeds('a')).toBe(1)
+
+    await presenter.runConsolidationPass('a', 1_000 * DAY)
+
+    expect(repo.countDirtySeeds('a')).toBe(0)
+  })
+
+  it('defers active dirty seeds until an embedding dimension becomes available', async () => {
+    const { presenter, repo } = makeLLMPresenter(routedLLM({}))
+    repo.insert({
+      id: 'awaiting-embedding',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'claim awaiting its current embedding',
+      status: 'pending_embedding',
+      createdAt: 1_000
+    })
+    const now = 1_000 * DAY
+    await presenter.runConsolidationPass('a', now)
+
+    expect(repo.listDirtySeeds('a', 10)).toEqual([
+      expect.objectContaining({
+        memoryId: 'awaiting-embedding',
+        enqueuedAt: now
+      })
+    ])
+  })
+
+  it('defers current-generation rows whose embedding is not ready', async () => {
+    const { presenter, repo, store } = makeLLMPresenter(routedLLM({}))
+    const ready = repo.insert({
+      id: 'ready',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'ready claim',
+      status: 'embedded',
+      createdAt: 1_000
+    })
+    repo.seedLegacyStatus(ready.id, 'embedded', {
+      embeddingId: ready.id,
+      embeddingDim: 4,
+      embeddingModel: 'p:m'
+    })
+    store.vectors.set(ready.id, textToVector(ready.content))
+    repo.settleDirtySeeds('a', repo.listDirtySeeds('a', 10))
+    repo.insert({
+      id: 'pending',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'pending claim',
+      status: 'pending_embedding',
+      createdAt: 2_000
+    })
+
+    const now = 1_000 * DAY
+    await presenter.runConsolidationPass('a', now)
+
+    expect(repo.listDirtySeeds('a', 10)).toContainEqual(
+      expect.objectContaining({ memoryId: 'pending', enqueuedAt: now })
+    )
   })
 
   it('skips vector neighbor scans after earlier maintenance steps exhaust the token budget', async () => {
     const generateText = routedLLM({
       decision: '{"decision":"ADD","targetIndex":null,"mergedContent":null}'
     })
-    const { presenter, store } = makeLLMPresenter(generateText)
+    const { presenter, repo, store } = makeLLMPresenter(generateText)
     await seedEmbedded(presenter, 'user likes bounded maintenance')
     const queryByMemoryId = vi.spyOn(store, 'queryByMemoryId')
     vi.spyOn(
@@ -268,6 +523,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', 1_000 * DAY)
 
     expect(queryByMemoryId).not.toHaveBeenCalled()
+    expect(repo.countDirtySeeds('a')).toBe(1)
   })
 
   it('respects the cooldown: a second pass within the window does no LLM work (T-B5)', async () => {
@@ -313,8 +569,19 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     const secondId = await seedEmbedded(presenter, 'user likes redis b')
     repo.rows.get(firstId)!.created_at = now
     repo.rows.get(secondId)!.created_at = now + 1
+    repo.insert({
+      id: 'deleted-before-model',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'stale queue entry',
+      createdAt: now + 2
+    })
+    repo.delete('deleted-before-model')
+    expect(repo.countDirtySeeds('a')).toBe(3)
+
     await presenter.runConsolidationPass('a', now)
     expect(decisionCalls(generateText)).toBe(0)
+    expect(repo.countDirtySeeds('a')).toBe(2)
     expect(auditRepo.getLatestCompletedEventAt('a', 'memory/maintenance_llm')).toBeNull()
     expect(auditRepo.listByAgent('a')[0]).toMatchObject({
       event_type: 'memory/maintenance_llm',
@@ -475,6 +742,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', now)
     const callsAfterFailure = decisionCalls(generateText)
     expect(callsAfterFailure).toBeGreaterThan(0)
+    expect(repo.countDirtySeeds('a')).toBe(2)
     expect(auditRepo.getLatestCompletedEventAt('a', 'memory/maintenance_llm')).toBeNull()
     expect(auditRepo.listByAgent('a')[0]).toMatchObject({
       event_type: 'memory/maintenance_llm',
@@ -490,6 +758,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     await presenter.runConsolidationPass('a', now + 31 * 60 * 1000)
     expect(decisionCalls(generateText)).toBeGreaterThan(callsAfterFailure)
     expect(auditRepo.getLatestCompletedEventAt('a', 'memory/maintenance_llm')).toBeNull()
+    expect(repo.countDirtySeeds('a')).toBe(2)
   })
 
   it('does not keep completed cooldown when heavy maintenance aborts after memory is disabled', async () => {
@@ -581,7 +850,7 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     const generateText = routedLLM({
       decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"user prefers redis"}'
     })
-    const { presenter, repo } = makeLLMPresenter(generateText)
+    const { presenter, repo, auditRepo } = makeLLMPresenter(generateText)
     const now = 1_000 * DAY
     const oldId = await seedEmbedded(presenter, 'user likes redis a')
     const newId = await seedEmbedded(presenter, 'user likes redis b')
@@ -593,11 +862,23 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
 
     const callsAfterFirst = decisionCalls(generateText)
+    const derivationsAfterFirst = repo.listDerivationsByChild('a', newId)
+    const maintenanceAudits = () =>
+      auditRepo.rows.filter((row) => row.event_type === 'memory/maintenance_llm')
+    const touchedMaintenanceAudits = () =>
+      maintenanceAudits().filter((row) => JSON.parse(row.output_refs_json).touched === true)
+    expect(touchedMaintenanceAudits()).toHaveLength(1)
     await presenter.runConsolidationPass('a', now + 6 * 60 * 60 * 1000 + 1)
     expect(repo.listByAgent('a')).toHaveLength(1)
     expect(repo.getById(oldId)?.superseded_by).toBe(newId)
     expect(repo.getById(newId)?.superseded_by).toBeNull()
     expect(decisionCalls(generateText)).toBe(callsAfterFirst)
+    expect(repo.listDerivationsByChild('a', newId)).toEqual(derivationsAfterFirst)
+    expect(touchedMaintenanceAudits()).toHaveLength(1)
+    expect(JSON.parse(maintenanceAudits().at(-1)!.output_refs_json)).toMatchObject({
+      touched: false,
+      budget: { calls: 0 }
+    })
   })
 
   it('merge carries forward the higher importance of the pair (T-B5)', async () => {
@@ -634,6 +915,8 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
       status: 'pending_embedding',
       createdAt: now - 2000
     })
+    await presenter.processPendingEmbeddings('a')
+    repo.settleDirtySeeds('a', repo.listDirtySeeds('a', 10))
     repo.insert({
       id: 'reflection-primary',
       agentId: 'a',
@@ -644,6 +927,9 @@ describe('MemoryService offline consolidation (T-B4..T-B6)', () => {
       createdAt: now - 1000
     })
     await presenter.processPendingEmbeddings('a')
+    expect(repo.listDirtySeeds('a', 10).map((seed) => seed.memoryId)).toEqual([
+      'reflection-primary'
+    ])
 
     await presenter.runConsolidationPass('a', now)
 

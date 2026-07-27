@@ -231,9 +231,9 @@
       "tabMemories": "Memorie",
       "tabPersona": "Cronologia persona",
       "memoriesCount": "{count} memorie",
-      "clearAll": "Cancella tutto",
-      "clearConfirmTitle": "Cancellare tutte le memorie?",
-      "clearConfirmBody": "Questo rimuove permanentemente tutte le memorie di questo agente. Non può essere annullato.",
+      "clearAll": "Cancella memorie",
+      "clearConfirmTitle": "Cancellare memorie fattuali e persona?",
+      "clearConfirmBody": "Questo rimuove permanentemente le memorie fattuali e la persona di questo agente. Le direttive permanenti vengono mantenute e possono essere gestite separatamente. Non può essere annullato.",
       "cleanupPendingRestart": "I file vettoriali bloccati verranno eliminati dopo il riavvio",
       "emptyMemories": "Ancora nessuna memoria. Si accumulano mentre chatti con questo agente.",
       "emptyPersona": "Ancora nessuna versione dell'automodello.",
@@ -3057,7 +3057,7 @@
       "archivedMatches": "Corrispondenze archiviate",
       "refresh": "Aggiorna",
       "inboxTitle": "Richiede attenzione",
-      "inboxDescription": "Risolvi i conflitti di memoria e le bozze profilo prima che escano dalla vista.",
+      "inboxDescription": "Risolvi i conflitti di memoria, le bozze profilo e le direttive suggerite prima che escano dalla vista.",
       "conflictBadge": "{count} conflitti",
       "personaDraftBadge": "{count} bozze profilo",
       "conflictSectionTitle": "Conflitti di memoria ({count})",
@@ -3104,7 +3104,48 @@
         "memory-persona-rollback": "Profilo ripristinato",
         "memory-persona-anchor": "Ancora profilo aggiornata",
         "memory-reindex": "Memoria reindicizzata"
-      }
+      },
+      "tabDirectives": "Direttive",
+      "directiveDraftBadge": "{count} bozze di direttiva",
+      "directiveDraftSectionTitle": "Direttive suggerite ({count})",
+      "directiveCreateTitle": "Crea una direttiva permanente",
+      "directiveCreateDescription": "Le direttive manuali diventano subito attive. I suggerimenti del modello restano bozze finché non li approvi.",
+      "directiveRuntimeEnabled": "Applicata durante l’esecuzione",
+      "directiveRuntimeDisabled": "Inattiva quando la memoria è disattivata",
+      "directiveKindLabel": "Tipo di direttiva",
+      "directiveKind": {
+        "instruction": "Istruzione permanente",
+        "suppress_topic": "Sopprimi argomento"
+      },
+      "directiveTopicLabel": "Argomento corrispondente",
+      "directiveTopicPlaceholder": "Argomento o frase esatta da escludere dalla memoria richiamata",
+      "directiveTopicTooBroad": "Gli argomenti con caratteri CJK richiedono almeno {min} caratteri visibili per non escludere ricordi non correlati.",
+      "directiveContentLabel": "Istruzione",
+      "directiveInstructionPlaceholder": "Scrivi un’istruzione permanente per questo agente.",
+      "directiveSuppressPlaceholder": "Spiega come l’agente deve gestire questo argomento.",
+      "directiveInstructionHint": "Questa è una guida a livello utente e non può ignorare le regole di sistema o di sicurezza.",
+      "directiveSuppressHint": "L’argomento filtra la memoria richiamata; l’istruzione guida la risposta. Non è un filtro dell’output.",
+      "directiveLength": "Istruzione {content}/{contentMax} · Argomento {topic}/{topicMax}",
+      "directiveCreateAction": "Attiva direttiva",
+      "directiveCapacityTitle": "Limite di direttive attive raggiunto",
+      "directiveCapacityDescription": "Ogni agente può avere fino a {max} direttive attive. Elimina una direttiva attiva prima di aggiungerne o approvarne un’altra.",
+      "directiveListTitle": "Direttive salvate",
+      "directiveListDescription": "{active} attive · {draft} in attesa di approvazione",
+      "directiveEmptyTitle": "Nessuna direttiva",
+      "directiveEmptyDescription": "Crea qui un’istruzione permanente oppure approva un suggerimento dalla posta in arrivo.",
+      "directiveStatus": {
+        "active": "Attiva",
+        "draft": "Bozza",
+        "rejected": "Rifiutata"
+      },
+      "directiveSource": {
+        "explicit_user": "Azione esplicita dell’utente",
+        "manual": "Impostazioni",
+        "derived_suggestion": "Suggerita dalla conversazione"
+      },
+      "directiveTopicValue": "Argomento: {topic}",
+      "directiveDeleteTitle": "Eliminare questa direttiva?",
+      "directiveDeleteDescription": "La direttiva smetterà di essere applicata immediatamente. Potrai ricrearla in seguito."
     }
   },
   "pluginsHub": {

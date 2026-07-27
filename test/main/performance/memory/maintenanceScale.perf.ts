@@ -33,7 +33,7 @@ describeIfNativeSqlite('Agent Memory #28 maintenance scale', () => {
           )
         }
         insert.run('target', 'target', 1, 'embedded', 50_001, 'challenged', null)
-        insert.run('winner', 'winner', 1, 'conflicted', 50_002, null, 'target')
+        insert.run('winner', 'winner', 1, 'embedded', 50_002, null, null)
         for (let index = 0; index < 1_000; index += 1) {
           insert.run(`sibling-${index}`, 'sibling', 1, 'conflicted', 50_003 + index, null, 'target')
         }

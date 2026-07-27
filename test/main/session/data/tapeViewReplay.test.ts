@@ -143,7 +143,20 @@ describe('SessionTape view and replay', () => {
           3
         ],
         dropped: ['m-dropped'],
-        queryHash: 'query-hash'
+        queryHash: 'query-hash',
+        allocation: {
+          policyVersion: 1,
+          totalTokenBudget: 1000,
+          overheadTokens: 40,
+          demand: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+          allocated: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+          used: { directive: 49, persona: 90, working: 180, queryRecall: 450 },
+          borrowed: { directive: 0, persona: 0, working: 8, queryRecall: 194 },
+          unallocatedTokens: 110,
+          estimatedTotalTokens: 809,
+          unusedTokens: 191,
+          constrained: false
+        }
       },
       meta: { messageId: 'msg-1' },
       createdAt: 300
@@ -172,6 +185,19 @@ describe('SessionTape view and replay', () => {
         selectedIds: ['m-string', 'm-object'],
         droppedCount: 1,
         queryHash: 'query-hash',
+        allocation: {
+          policyVersion: 1,
+          totalTokenBudget: 1000,
+          overheadTokens: 40,
+          demand: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+          allocated: { directive: 50, persona: 100, working: 200, queryRecall: 500 },
+          used: { directive: 49, persona: 90, working: 180, queryRecall: 450 },
+          borrowed: { directive: 0, persona: 0, working: 8, queryRecall: 194 },
+          unallocatedTokens: 110,
+          estimatedTotalTokens: 809,
+          unusedTokens: 191,
+          constrained: false
+        },
         createdAt: 300
       }
     ])

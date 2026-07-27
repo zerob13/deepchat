@@ -29,7 +29,11 @@ import type {
   TapeApplicationProviders,
   TapeMessageTraceRow as DeepChatMessageTraceRow
 } from '../ports/application'
-import type { TapeMemoryViewManifestInspection } from '../ports/capabilities'
+import type {
+  TapeMemoryContributionBudgetInspection,
+  TapeMemoryContributionTokenInspection,
+  TapeMemoryViewManifestInspection
+} from '../ports/capabilities'
 import { parseJsonObject } from './common'
 import type { TapeViewManifestAssemblySources } from './contracts'
 
@@ -90,6 +94,66 @@ function deriveSelectedMemoryIds(value: unknown): string[] | null {
   return [...ids]
 }
 
+function readNonNegativeNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function readContributionTokenMap(value: unknown): TapeMemoryContributionTokenInspection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const directive = readNonNegativeNumber(record.directive)
+  const persona = readNonNegativeNumber(record.persona)
+  const working = readNonNegativeNumber(record.working)
+  const queryRecall = readNonNegativeNumber(record.queryRecall)
+  if (directive === null || persona === null || working === null || queryRecall === null) {
+    return null
+  }
+  return { directive, persona, working, queryRecall }
+}
+
+function readContributionBudget(value: unknown): TapeMemoryContributionBudgetInspection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const policyVersion = readNonNegativeNumber(record.policyVersion)
+  const totalTokenBudget = readNonNegativeNumber(record.totalTokenBudget)
+  const overheadTokens = readNonNegativeNumber(record.overheadTokens)
+  const demand = readContributionTokenMap(record.demand)
+  const allocated = readContributionTokenMap(record.allocated)
+  const used = readContributionTokenMap(record.used)
+  const borrowed = readContributionTokenMap(record.borrowed)
+  const unallocatedTokens = readNonNegativeNumber(record.unallocatedTokens)
+  const estimatedTotalTokens = readNonNegativeNumber(record.estimatedTotalTokens)
+  const unusedTokens = readNonNegativeNumber(record.unusedTokens)
+  if (
+    policyVersion === null ||
+    totalTokenBudget === null ||
+    overheadTokens === null ||
+    !demand ||
+    !allocated ||
+    !used ||
+    !borrowed ||
+    unallocatedTokens === null ||
+    estimatedTotalTokens === null ||
+    unusedTokens === null ||
+    typeof record.constrained !== 'boolean'
+  ) {
+    return null
+  }
+  return {
+    policyVersion,
+    totalTokenBudget,
+    overheadTokens,
+    demand,
+    allocated,
+    used,
+    borrowed,
+    unallocatedTokens,
+    estimatedTotalTokens,
+    unusedTokens,
+    constrained: record.constrained
+  }
+}
+
 function toMemoryViewManifestInspection(
   row: DeepChatTapeEntryRow
 ): TapeMemoryViewManifestInspection | null {
@@ -116,6 +180,7 @@ function toMemoryViewManifestInspection(
     selectedIds: deriveSelectedMemoryIds(manifest.selected),
     droppedCount: Array.isArray(manifest.dropped) ? manifest.dropped.length : 0,
     queryHash: typeof manifest.queryHash === 'string' ? manifest.queryHash : null,
+    allocation: readContributionBudget(manifest.allocation),
     createdAt: row.created_at
   }
 }

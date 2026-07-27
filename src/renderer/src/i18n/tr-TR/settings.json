@@ -231,9 +231,9 @@
       "tabMemories": "Anılar",
       "tabPersona": "Persona zaman çizelgesi",
       "memoriesCount": "{count} anı",
-      "clearAll": "Tümünü temizle",
-      "clearConfirmTitle": "Tüm anılar temizlensin mi?",
-      "clearConfirmBody": "Bu, bu aracının tüm anılarını kalıcı olarak kaldırır. Geri alınamaz.",
+      "clearAll": "Anıları temizle",
+      "clearConfirmTitle": "Olgusal anılar ve persona temizlensin mi?",
+      "clearConfirmBody": "Bu, bu aracının olgusal anılarını ve personasını kalıcı olarak kaldırır. Kalıcı yönergeler korunur ve ayrı olarak yönetilebilir. Geri alınamaz.",
       "cleanupPendingRestart": "Kilitli vektör dosyaları yeniden başlatmanın ardından silinecek",
       "emptyMemories": "Henüz anı yok. Bu aracıyla sohbet ettikçe birikir.",
       "emptyPersona": "Henüz öz-model sürümü yok.",
@@ -3057,7 +3057,7 @@
       "archivedMatches": "Arşivdeki eşleşmeler",
       "refresh": "Yenile",
       "inboxTitle": "Dikkat gerekiyor",
-      "inboxDescription": "Bellek çakışmalarını ve kişilik taslaklarını gözden kaybolmadan önce çözün.",
+      "inboxDescription": "Bellek çakışmalarını, kişilik taslaklarını ve önerilen yönergeleri gözden kaybolmadan önce çözün.",
       "conflictBadge": "{count} çakışma",
       "personaDraftBadge": "{count} kişilik taslağı",
       "conflictSectionTitle": "Bellek çakışmaları ({count})",
@@ -3104,7 +3104,48 @@
         "memory-persona-rollback": "Kişilik geri alındı",
         "memory-persona-anchor": "Kişilik çapası güncellendi",
         "memory-reindex": "Bellek yeniden indekslendi"
-      }
+      },
+      "tabDirectives": "Yönergeler",
+      "directiveDraftBadge": "{count} yönerge taslağı",
+      "directiveDraftSectionTitle": "Önerilen yönergeler ({count})",
+      "directiveCreateTitle": "Kalıcı yönerge oluştur",
+      "directiveCreateDescription": "Elle oluşturulan yönergeler hemen etkinleşir. Model önerileri siz onaylayana kadar taslak olarak kalır.",
+      "directiveRuntimeEnabled": "Çalışma zamanında uygulanır",
+      "directiveRuntimeDisabled": "Bellek kapalıyken etkin değil",
+      "directiveKindLabel": "Yönerge türü",
+      "directiveKind": {
+        "instruction": "Kalıcı talimat",
+        "suppress_topic": "Konuyu bastır"
+      },
+      "directiveTopicLabel": "Eşleşen konu",
+      "directiveTopicPlaceholder": "Geri çağrılan bellekten bastırılacak tam konu veya ifade",
+      "directiveTopicTooBroad": "CJK karakterleri içeren konuların ilgisiz anıları bastırmaması için en az {min} görünür karakter içermesi gerekir.",
+      "directiveContentLabel": "Talimat",
+      "directiveInstructionPlaceholder": "Bu ajan için kalıcı bir talimat yazın.",
+      "directiveSuppressPlaceholder": "Ajanın bu konuyu nasıl ele alması gerektiğini açıklayın.",
+      "directiveInstructionHint": "Bu, kullanıcı düzeyinde bir yönlendirmedir ve sistem ya da güvenlik kurallarını geçersiz kılamaz.",
+      "directiveSuppressHint": "Konu geri çağrılan belleği filtreler; talimat yanıtı yönlendirir. Bu bir çıktı filtresi değildir.",
+      "directiveLength": "Talimat {content}/{contentMax} · Konu {topic}/{topicMax}",
+      "directiveCreateAction": "Yönergeyi etkinleştir",
+      "directiveCapacityTitle": "Etkin yönerge sınırına ulaşıldı",
+      "directiveCapacityDescription": "Her ajanın en fazla {max} etkin yönergesi olabilir. Yeni bir yönerge eklemeden veya onaylamadan önce etkin bir yönergeyi silin.",
+      "directiveListTitle": "Kaydedilmiş yönergeler",
+      "directiveListDescription": "{active} etkin · {draft} onay bekliyor",
+      "directiveEmptyTitle": "Henüz yönerge yok",
+      "directiveEmptyDescription": "Burada kalıcı bir talimat oluşturun veya gelen kutusundaki bir öneriyi onaylayın.",
+      "directiveStatus": {
+        "active": "Etkin",
+        "draft": "Taslak",
+        "rejected": "Reddedildi"
+      },
+      "directiveSource": {
+        "explicit_user": "Açık kullanıcı işlemi",
+        "manual": "Ayarlar",
+        "derived_suggestion": "Konuşmadan önerildi"
+      },
+      "directiveTopicValue": "Konu: {topic}",
+      "directiveDeleteTitle": "Bu yönerge silinsin mi?",
+      "directiveDeleteDescription": "Yönerge hemen uygulanmayı bırakır. Daha sonra yeniden oluşturabilirsiniz."
     }
   },
   "pluginsHub": {

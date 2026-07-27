@@ -11,7 +11,13 @@ import {
 import { normalizeMemoryCandidate } from '../core/candidates'
 import { estimateTokens } from '../core/injectionPort'
 import { MaintenanceBudget } from '../core/maintenanceBudget'
-import { buildMemoryProvenanceKey } from '../core/scoring'
+import { buildScopedMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
+import { memoryScopeFromRow, rowsShareMemoryScope } from '../core/scope'
+import {
+  evaluateNormalizedMemoryTemporalPolicy,
+  resolveMergedClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
 import type {
   MemoryConflictPair,
   MemoryConflictResolution,
@@ -21,6 +27,7 @@ import { isUniqueConstraintError, type MemoryModelRef, type MemoryRuntimeContext
 import type {
   MemoryEmbeddingRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTextGenerationPort,
@@ -50,6 +57,7 @@ export class ConflictService {
         MemoryMutationRepositoryPort &
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       textGeneration: MemoryTextGenerationPort
       scheduleConsolidation: (agentId: string) => void
@@ -62,7 +70,7 @@ export class ConflictService {
 
   listConflicts(agentId: string): MemoryConflictPair[] {
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return []
+    if (!this.ctx.canManageClaimMemory(agentId)) return []
     const challengers = this.ports.repository.listByAgent(agentId, { statuses: ['conflicted'] })
     const pairs: MemoryConflictPair[] = []
     for (const challenger of challengers) {
@@ -74,6 +82,7 @@ export class ConflictService {
       if (
         !target ||
         target.agent_id !== agentId ||
+        !rowsShareMemoryScope(challenger, target) ||
         target.conflict_state !== 'challenged' ||
         target.superseded_by !== null
       ) {
@@ -86,6 +95,14 @@ export class ConflictService {
   }
 
   repairConflictIntegrity(agentId: string): ConflictIntegrityRepairResult {
+    if (!this.ctx.canManageClaimMemory(agentId)) {
+      return {
+        repairedTargets: 0,
+        archivedChallengers: 0,
+        clearedTargets: 0,
+        clearedLinks: 0
+      }
+    }
     const result = this.ports.repository.repairConflictIntegrityBatch(agentId, 256)
 
     const total =
@@ -120,7 +137,7 @@ export class ConflictService {
   ): Promise<boolean> {
     if (this.ctx.isDisposed) return false
     this.ctx.assertSafeAgentId(agentId)
-    if (!this.ctx.isManagedAgent(agentId)) return false
+    if (!this.ctx.canManageClaimMemory(agentId)) return false
     if (!this.ctx.canWriteAgentMemory(agentId)) return false
     const challenger = this.ports.repository.getById(challengerId)
     const target = challenger?.conflict_with
@@ -131,6 +148,7 @@ export class ConflictService {
       challenger.lifecycle_state === 'conflicted' &&
       challenger.superseded_by === null &&
       target?.agent_id === agentId &&
+      rowsShareMemoryScope(challenger, target) &&
       target.conflict_state === 'challenged' &&
       target.superseded_by === null
         ? { challenger, target }
@@ -173,10 +191,17 @@ export class ConflictService {
     outcome: MemoryConflictResolution,
     options: ConflictResolutionOptions = {}
   ): void {
-    const now = Date.now()
+    const now = this.ctx.now()
+    if (!rowsShareMemoryScope(pair.challenger, pair.target)) {
+      throw new ConflictTransitionRejectedError()
+    }
     switch (outcome) {
       case 'keep_challenger': {
+        const siblingIds = this.ports.repository
+          .listConflictSiblings(agentId, pair.target.id, pair.challenger.id)
+          .map((sibling) => sibling.id)
         const content = options.mergedContent?.trim()
+        const normalizedContent = content ? normalizeForProvenanceV2(content) : null
         const transitionTarget = {
           agentId,
           id: pair.challenger.id,
@@ -188,8 +213,22 @@ export class ConflictService {
             ? this.ports.repository.activateResolvedChallenger({
                 ...transitionTarget,
                 content,
-                provenanceKey: buildMemoryProvenanceKey(agentId, pair.challenger.kind, content),
+                provenanceKey: buildScopedMemoryProvenanceKey(
+                  agentId,
+                  pair.challenger.kind,
+                  content,
+                  memoryScopeFromRow(pair.challenger)
+                ),
                 category: pair.challenger.category,
+                temporal: resolveMergedClaimTemporalMetadata(
+                  temporalMetadataFromRow(pair.challenger),
+                  temporalMetadataFromRow(pair.target),
+                  {
+                    existing:
+                      normalizedContent === normalizeForProvenanceV2(pair.challenger.content),
+                    incoming: normalizedContent === normalizeForProvenanceV2(pair.target.content)
+                  }
+                ),
                 at: now
               })
             : this.ports.repository.activateResolvedChallenger(transitionTarget)
@@ -211,6 +250,15 @@ export class ConflictService {
         ) {
           throw new ConflictTransitionRejectedError()
         }
+        this.ports.repository.insertDerivations(
+          [pair.target.id, ...siblingIds].map((parentMemoryId) => ({
+            agentId,
+            parentMemoryId,
+            childMemoryId: pair.challenger.id,
+            derivationKind: 'supersede' as const,
+            createdAt: now
+          }))
+        )
         return
       }
       case 'keep_target':
@@ -226,6 +274,15 @@ export class ConflictService {
           throw new ConflictTransitionRejectedError()
         }
         this.ports.repository.clearTargetConflictIfNoChallengers(agentId, pair.target.id)
+        this.ports.repository.insertDerivations([
+          {
+            agentId,
+            parentMemoryId: pair.challenger.id,
+            childMemoryId: pair.target.id,
+            derivationKind: 'supersede',
+            createdAt: now
+          }
+        ])
         return
       case 'keep_both':
         if (
@@ -251,6 +308,7 @@ export class ConflictService {
     let touched = false
     let calls = 0
     let failures = 0
+    const now = this.ctx.now()
     const operationFence = this.ctx.captureOperationFence(agentId)
     const challengers = this.ports.repository.listConflictChallengersForMaintenance(agentId, 4)
     const targets = this.ports.repository.listByIds(
@@ -274,19 +332,36 @@ export class ConflictService {
         kind: pair.challenger.kind === 'episodic' ? 'episodic' : 'semantic',
         category: pair.challenger.category,
         content: pair.challenger.content,
-        importance: pair.challenger.importance
+        importance: pair.challenger.importance,
+        temporal: temporalMetadataFromRow(pair.challenger)
       })
       if (!promptCandidate) {
         this.ports.repository.setLastConsolidatedAt(pair.challenger.id)
         continue
       }
-      const estimatedPromptTokens =
-        estimateTokens(pair.challenger.content) + estimateTokens(pair.target.content) + 256
-      if (!budget.reserve('challenge', estimatedPromptTokens)) {
+      const prompt = buildDecisionPrompt(
+        promptCandidate,
+        [
+          {
+            content: pair.target.content,
+            temporalAnnotation:
+              evaluateNormalizedMemoryTemporalPolicy(
+                temporalMetadataFromRow(pair.target),
+                now,
+                'evidence'
+              ).annotation ?? undefined
+          }
+        ],
+        {
+          candidateTemporalAnnotation:
+            evaluateNormalizedMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence')
+              .annotation ?? undefined
+        }
+      )
+      if (!budget.reserve('challenge', estimateTokens(prompt))) {
         this.ports.repository.setLastConsolidatedAt(pair.challenger.id)
         continue
       }
-      const prompt = buildDecisionPrompt(promptCandidate, [{ content: pair.target.content }])
       let decision: MemoryDecision = ADD_DECISION
       try {
         calls += 1

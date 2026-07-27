@@ -6,6 +6,7 @@ import {
   partitionBatchDecisions,
   type BatchDecisionInput
 } from '@/memory/core/batchDecision'
+import { ATEMPORAL_MEMORY_METADATA } from '@/memory/core/temporal'
 
 function input(
   candidateIndex: number,
@@ -13,7 +14,13 @@ function input(
 ): BatchDecisionInput {
   return {
     candidateIndex,
-    candidate: { kind: 'semantic', category: null, content, importance: 0.5 },
+    candidate: {
+      kind: 'semantic',
+      category: null,
+      content,
+      importance: 0.5,
+      temporal: ATEMPORAL_MEMORY_METADATA
+    },
     neighbors: [
       { content: `neighbor-${candidateIndex}-0` },
       { content: `neighbor-${candidateIndex}-1` },
@@ -55,9 +62,22 @@ describe('batch memory decisions', () => {
   })
 
   it('renders indexed candidates and untrusted-data guidance', () => {
-    const prompt = buildBatchDecisionPrompt([input(3)])
+    const base = input(3)
+    const temporal: BatchDecisionInput = {
+      ...base,
+      candidateTemporalAnnotation: '[Temporal: current state]',
+      neighbors: [
+        {
+          ...base.neighbors[0],
+          temporalAnnotation: '[Temporal: expired state]'
+        },
+        ...base.neighbors.slice(1)
+      ]
+    }
+    const prompt = buildBatchDecisionPrompt([temporal])
     expect(prompt).toContain('Candidate 3')
-    expect(prompt).toContain('[0] neighbor-3-0')
+    expect(prompt).toContain('candidate-3 [Temporal: current state]')
+    expect(prompt).toContain('[0] neighbor-3-0 [Temporal: expired state]')
     expect(prompt).toContain('untrusted')
   })
 

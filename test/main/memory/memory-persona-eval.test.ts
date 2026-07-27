@@ -4,6 +4,7 @@ import { MemoryService } from '@/memory'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
 import {
   createFakeRepository,
+  FakeDirectiveRepository,
   FakeVectorStore,
   textToVector,
   type FakeRepository
@@ -30,6 +31,7 @@ function makeAgent(generateText: ReturnType<typeof vi.fn>) {
   const presenter = new MemoryService({
     executeWithRateLimit: vi.fn(async () => undefined),
     repository: repo,
+    directiveRepository: new FakeDirectiveRepository(),
     resolveAgentConfig: () => PERSONA_ON,
     getEmbeddings: async (_p: string, _m: string, texts: string[]) =>
       texts.map((text) => textToVector(text)),

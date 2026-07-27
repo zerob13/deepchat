@@ -201,7 +201,7 @@ describe('tapeViewManifest', () => {
     expect(late.assembledAt).toBe(999999)
     expect(early.hashes.manifestHash).toBe(late.hashes.manifestHash)
     expect(early.viewId).toBe(late.viewId)
-    expect(early.schemaVersion).toBe(3)
+    expect(early.schemaVersion).toBe(4)
     expect(early.hashVersion).toBe(2)
     expect(early.viewId).toBe(`view_${early.hashes.manifestHash.slice(0, 16)}`)
   })
@@ -444,8 +444,8 @@ describe('tapeViewManifest', () => {
     expect(verifyTapeViewManifestHash(manifest)).toBe('valid')
   })
 
-  it('normalizes legacy schema 1/2 and cache-aware schema 3 without widening old schemas', () => {
-    const schema3 = createTapeViewManifest({
+  it('normalizes prior schemas without widening their synthetic contribution contract', () => {
+    const schema4 = createTapeViewManifest({
       sessionId: 's1',
       messageId: 'a1',
       requestSeq: 1,
@@ -483,8 +483,9 @@ describe('tapeViewManifest', () => {
       supportsAudioInput: false,
       traceDebugEnabled: false
     })
+    const schema3 = { ...schema4, schemaVersion: 3 as const }
     const legacyBase = {
-      ...schema3,
+      ...schema4,
       policy: 'legacy_context_v1',
       contextBuilderVersion: 'legacy-v1',
       included: []
@@ -496,6 +497,35 @@ describe('tapeViewManifest', () => {
     expect(normalizeStoredTapeViewManifest(schema1, 's1')?.hashVersion).toBe(1)
     expect(normalizeStoredTapeViewManifest(schema2, 's1')?.schemaVersion).toBe(2)
     expect(normalizeStoredTapeViewManifest(schema3, 's1')?.schemaVersion).toBe(3)
+    expect(normalizeStoredTapeViewManifest(schema4, 's1')?.schemaVersion).toBe(4)
+    expect(
+      normalizeStoredTapeViewManifest(
+        {
+          ...schema4,
+          included: [
+            {
+              ...schema4.included[0],
+              reason: 'directive_context'
+            }
+          ]
+        },
+        's1'
+      )?.included[0].reason
+    ).toBe('directive_context')
+    expect(
+      normalizeStoredTapeViewManifest(
+        {
+          ...schema3,
+          included: [
+            {
+              ...schema3.included[0],
+              reason: 'directive_context'
+            }
+          ]
+        },
+        's1'
+      )
+    ).toBeNull()
     expect(
       normalizeStoredTapeViewManifest({ ...schema2, policy: 'cache_aware_context_v1' }, 's1')
     ).toBeNull()
