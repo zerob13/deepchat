@@ -69,6 +69,7 @@ import type {
   ResolvedCapabilityIdentity,
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
+import { getMoonshotKimiTemperaturePolicy } from '@shared/modelRequestPolicy'
 
 // Create interface for model storage
 const defaultProviders = DEFAULT_PROVIDERS.map((provider) => ({
@@ -131,6 +132,8 @@ const isModelSelection = (value: unknown): value is ModelSelection => {
   const record = value as Record<string, unknown>
   return typeof record.providerId === 'string' && typeof record.modelId === 'string'
 }
+
+type CapabilitySnapshotModelConfig = ModelRouteConfig & Partial<Pick<ModelConfig, 'reasoning'>>
 
 const normalizeKnownModelId = (modelId: string): string => {
   const normalizedModelId = modelId.trim().toLowerCase()
@@ -247,7 +250,7 @@ export interface ProviderSettingsPort {
     providerId: string,
     modelId: string,
     options?: CapabilitySnapshotOptions,
-    resolvedModelConfig?: ModelRouteConfig
+    resolvedModelConfig?: CapabilitySnapshotModelConfig
   ): ResolvedModelCapabilitySnapshot
   getCapabilityProviderId(providerId: string, modelId: string): string
   supportsReasoningCapability(providerId: string, modelId: string): boolean
@@ -571,7 +574,7 @@ export class ProviderSettings implements ProviderSettingsPort {
     providerId: string,
     modelId: string,
     options?: CapabilitySnapshotOptions,
-    resolvedModelConfig?: ModelRouteConfig
+    resolvedModelConfig?: CapabilitySnapshotModelConfig
   ): ResolvedModelCapabilitySnapshot {
     const identity = this.resolveCapabilityIdentityForModel(
       providerId,
@@ -579,8 +582,19 @@ export class ProviderSettings implements ProviderSettingsPort {
       options?.routeOverride,
       resolvedModelConfig
     )
+    const fixedTemperaturePolicy = getMoonshotKimiTemperaturePolicy(
+      identity.providerId,
+      identity.requestModelId
+    )
+    const reasoning =
+      options?.reasoning ??
+      resolvedModelConfig?.reasoning ??
+      (fixedTemperaturePolicy
+        ? this.getModelConfig(modelId, providerId, identity).reasoning
+        : undefined)
+
     return buildResolvedCapabilitySnapshot(identity, {
-      reasoning: options?.reasoning
+      reasoning
     })
   }
 

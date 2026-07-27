@@ -167,7 +167,6 @@
     "systemPrompt": "システムプロンプト",
     "systemPromptPlaceholder": "プリセットを選択",
     "temperature": "温度",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 は、思考を有効にすると温度が {enabled} に固定され、無効にすると {disabled} に固定されます。",
     "topP": "Top P",
     "topPDescription": "核サンプリング。空欄でプロバイダーの既定値を使用",
     "contextLength": "コンテキスト長",

@@ -19,6 +19,14 @@ effective wire behavior inconsistent. Reasoning portraits currently have an inde
 cross-provider fallback; for `openai/kimi-k3` it deterministically selects the incomplete
 `aihubmix/kimi-k3` portrait instead of Moonshot's complete record.
 
+The first renderer convergence still leaves generation-control presentation split across multiple
+paths. ModelConfigDialog and ChatStatusBar consume request policy, while ChatConfig receives only
+the flattened temperature-support boolean from `useModelCapabilities`. This produces a stable
+wire/UI mismatch for provider records such as `aihubmix/kimi-k3`: its catalog temperature is
+unknown, so the legacy boolean becomes `true`, but the K3 wire policy still omits temperature.
+Capability loading and failure are also represented as passthrough policy plus unknown support, so
+an editable control can appear before resolution or remain after an IPC failure.
+
 ## Goals
 
 1. Model service identity, transport identity, and provider-db capability identity as separate
@@ -41,6 +49,8 @@ cross-provider fallback; for `openai/kimi-k3` it deterministically selects the i
    subsystem.
 10. Preserve reasoning capabilities for recognized model-origin families without restoring
     provider-order-based cross-provider portrait selection.
+11. Make renderer generation controls an atomic projection of the same effective request policy
+    used by the final wire request, with explicit loading and error states.
 
 ## Required Invariants
 
@@ -124,9 +134,25 @@ Renderer components do not import or execute capability-provider routing rules. 
 ModelConfigDialog consume the snapshot returned by the typed models capability route. Agent
 generation settings consume the same main-process resolution contract.
 
+`useModelCapabilities` is the renderer owner of capability snapshot lifecycle and generation-control
+projection. It stores one atomic snapshot together with `idle`, `loading`, `ready`, or `error`
+status. ChatConfig, ChatStatusBar, and ModelConfigDialog consume that state instead of maintaining
+independent policy and temperature-capability refs. A new query invalidates presentation from the
+previous query immediately; stale responses cannot restore it.
+
+Loading and successful unknown capability are distinct states. Loading reserves the control's
+layout with a skeleton and exposes no editable sampling input. A successful unknown model preserves
+passthrough compatibility. An IPC failure exposes an explicit retryable error and never silently
+becomes passthrough. Model configuration cannot be saved while a non-empty model identity has no
+ready capability snapshot.
+
 The snapshot does not expose a speculative resolution-source field. Request tracing currently has
 no metadata contract that consumes it; diagnostics should be added only together with a real trace
 consumer.
+
+State-dependent fixed policy uses the editor's explicit draft reasoning when supplied. Other
+snapshot consumers fall back to persisted model reasoning only for the narrow fixed-temperature
+model family; unrelated capability queries do not derive complete model configuration.
 
 ### Generation parameter policy
 
@@ -158,6 +184,23 @@ both request policy and the temporary reasoning-metadata fallback.
 Unknown model capabilities retain the current compatibility behavior: user-provided parameters
 pass through unless an explicit model request policy says otherwise. Unknown does not become
 `true` inside the capability layer.
+
+The capability snapshot exposes wire-effective temperature policy. An explicit `fixed` or `omit`
+model policy wins. Otherwise, catalog temperature `false` converts passthrough to `omit`, while
+catalog `true` and unknown remain passthrough. Runtime and renderer consume this normalized policy;
+neither independently combines policy with the legacy flattened support boolean.
+
+Renderer number controls project the normalized policy without provider or model-family branches:
+
+| Effective policy | Renderer control |
+| --- | --- |
+| `passthrough` | Editable |
+| `fixed(value)` | Visible, locked, and explained using `value` |
+| `omit` | Hidden |
+
+Reasoning-effort support is not a sampling-policy proxy. Effort-capable models with explicit
+temperature support remain editable; models such as OpenAI GPT-5 and o3 remain hidden because their
+temperature capability already normalizes policy to `omit`.
 
 Streaming, non-streaming, and request tracing use one effective generation-parameter serialization
 per physical request.
@@ -246,6 +289,19 @@ added.
     inputs; the mapper has no hidden cross-provider portrait fallback.
 20. Existing provider, model import/export, renderer, agent, and direct-provider behavior remains
     compatible unless explicitly changed above.
+21. Direct Aihubmix K3 and any recognized K3 alias hide temperature and top P from every renderer
+    entry even when the selected provider's catalog temperature is unknown.
+22. Initial capability loading and model switching reserve generation-control layout with a
+    skeleton; they never expose stale or editable sampling controls and do not cause the first
+    control section to collapse and reappear.
+23. Capability IPC failure produces an explicit retryable error state. It does not synthesize a
+    passthrough policy.
+24. Fixed temperature and top-P controls use generic request-policy state and policy values;
+    renderer code contains no Kimi-specific lock branch, and rendering hidden or fixed controls
+    does not itself clear or overwrite stored intent. Existing provider normalization at the save
+    boundary remains compatible.
+25. A cross-layer policy matrix proves that renderer hidden, fixed, and editable states correspond
+    to the same omit, fixed, and passthrough policies used by final request serialization.
 
 ## Constraints
 

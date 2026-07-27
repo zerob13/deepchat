@@ -565,6 +565,9 @@
     }
   },
   "model": {
+    "capabilityLoadError": "無法載入模型能力，生成參數暫不可編輯。",
+    "temperatureFixedByPolicy": "此模型將溫度固定為 {value}。",
+    "topPFixedByPolicy": "此模型將 Top P 固定為 {value}。",
     "title": "模型設定",
     "systemPrompt": {
       "label": "系統提示詞",
@@ -692,7 +695,6 @@
       "currentUsingModelDefault": "目前使用模型預設配置",
       "temperature": {
         "description": "控制輸出的隨機性，大部分模型0-1，部分支持0-2之間，越高越隨機",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 在開啟思考時固定為 {enabled}，關閉思考時固定為 {disabled}。",
         "label": "溫度"
       },
       "topP": {

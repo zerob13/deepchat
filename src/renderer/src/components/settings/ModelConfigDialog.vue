@@ -131,7 +131,13 @@
 
           <TtsSettingsFields v-if="showTtsSettings" v-model="config.tts" />
 
-          <!-- 温度 (支持推理努力程度的模型不显示) -->
+          <GenerationParameterControlState
+            v-if="temperatureControl.mode === 'loading' || temperatureControl.mode === 'error'"
+            :state="temperatureControl.mode"
+            @retry="fetchCapabilities"
+          />
+
+          <!-- 温度 -->
           <div
             v-if="!showOpenAIMediaGenerationSettings && showTemperatureControl"
             class="space-y-2"
@@ -139,20 +145,20 @@
             <Label for="temperature">{{ t('settings.model.modelConfig.temperature.label') }}</Label>
             <Input
               id="temperature"
-              v-model.number="config.temperature"
+              v-model.number="temperatureInputValue"
               type="number"
               step="0.1"
               :min="0"
               :max="2"
               :placeholder="t('settings.model.modelConfig.temperature.label')"
               :class="{ 'border-destructive': errors.temperature }"
-              :disabled="isMoonshotKimiTemperatureLocked"
+              :disabled="temperatureControl.mode === 'fixed'"
             />
             <p class="text-xs text-muted-foreground">
               {{ t('settings.model.modelConfig.temperature.description') }}
             </p>
-            <p v-if="moonshotKimiTemperatureHint" class="text-xs text-muted-foreground">
-              {{ moonshotKimiTemperatureHint }}
+            <p v-if="temperaturePolicyHint" class="text-xs text-muted-foreground">
+              {{ temperaturePolicyHint }}
             </p>
             <p v-if="errors.temperature" class="text-xs text-destructive">
               {{ errors.temperature }}
@@ -163,14 +169,18 @@
             <Label for="topP">{{ t('settings.model.modelConfig.topP.label') }}</Label>
             <Input
               id="topP"
-              v-model="topPDraft"
+              v-model="topPInputValue"
               type="text"
               :placeholder="t('settings.model.modelConfig.useModelDefault')"
               :class="{ 'border-destructive': errors.topP }"
+              :disabled="topPControl.mode === 'fixed'"
               @blur="clampTopPDraft"
             />
             <p class="text-xs text-muted-foreground">
               {{ t('settings.model.modelConfig.topP.description') }}
+            </p>
+            <p v-if="topPPolicyHint" class="text-xs text-muted-foreground">
+              {{ topPPolicyHint }}
             </p>
             <p v-if="errors.topP" class="text-xs text-destructive">
               {{ errors.topP }}
@@ -550,16 +560,7 @@ import {
   resolveNewApiSelectableEndpointTypes,
   type NewApiEndpointType
 } from '@shared/model'
-import {
-  MOONSHOT_KIMI_THINKING_DISABLED_TEMPERATURE,
-  MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE,
-  getMoonshotKimiTemperaturePolicy,
-  resolveMoonshotKimiTemperaturePolicy
-} from '@shared/modelRequestPolicy'
-import {
-  createPassthroughModelRequestPolicy,
-  type ModelRequestPolicy
-} from '@shared/modelRequestPolicy'
+import type { ModelRequestPolicy } from '@shared/modelRequestPolicy'
 import type { ModelConfig } from '@shared/types/provider'
 import {
   ANTHROPIC_REASONING_VISIBILITY_VALUES,
@@ -601,7 +602,11 @@ import { useProviderStore } from '@/stores/providerStore'
 import OpenAIImageGenerationSettingsFields from './OpenAIImageGenerationSettingsFields.vue'
 import OpenAIVideoGenerationSettingsFields from './OpenAIVideoGenerationSettingsFields.vue'
 import TtsSettingsFields from './TtsSettingsFields.vue'
-import { createModelClient } from '@api/ModelClient'
+import GenerationParameterControlState from '../GenerationParameterControlState.vue'
+import {
+  useModelCapabilities,
+  type GenerationParameterControl
+} from '@/composables/useModelCapabilities'
 import {
   Dialog,
   DialogContent,
@@ -655,9 +660,8 @@ const modelConfigStore = useModelConfigStore()
 const modelStore = useModelStore()
 const providerStore = useProviderStore()
 const { customModels, allProviderModels } = storeToRefs(modelStore)
-const modelClient = createModelClient()
+const modelCapabilities = useModelCapabilities()
 const providerIdLower = computed(() => props.providerId?.toLowerCase() || '')
-const capabilityProviderId = ref(props.providerId)
 const currentProvider = computed(() =>
   providerStore.providers.find((provider) => provider.id === props.providerId)
 )
@@ -794,6 +798,8 @@ const parseTopPDraft = (): number | undefined => {
 }
 
 const clampTopPDraft = () => {
+  if (topPControl.value.mode !== 'editable') return
+
   const raw = topPDraft.value.trim()
   if (!raw) return
 
@@ -819,8 +825,34 @@ const mutualExclusiveAction = ref<{
 
 // 错误信息
 const errors = ref<Record<string, string>>({})
-const capabilityReasoningPortrait = ref<ReasoningPortrait | null>(null)
-const capabilitySupportsTemperature = ref<boolean | null>(null)
+const capabilityProviderId = computed(
+  () => modelCapabilities.identity.value?.providerId ?? props.providerId
+)
+const capabilityRequestPolicy = computed<ModelRequestPolicy | null>(
+  () => modelCapabilities.requestPolicy.value
+)
+const capabilityReasoningPortrait = computed(
+  () => modelCapabilities.reasoningPortrait.value as ReasoningPortrait | null
+)
+const capabilitySupportsReasoning = computed(() => modelCapabilities.supportsReasoning.value)
+const capabilityBudgetRange = computed(
+  () => modelCapabilities.snapshot.value?.thinkingBudgetRange ?? null
+)
+const capabilitySupportsEffort = computed(
+  () => modelCapabilities.snapshot.value?.supportsReasoningEffort ?? null
+)
+const capabilityEffortDefault = computed(
+  () => modelCapabilities.snapshot.value?.reasoningEffortDefault
+)
+const capabilitySupportsVerbosity = computed(
+  () => modelCapabilities.snapshot.value?.supportsVerbosity ?? null
+)
+const capabilityVerbosityDefault = computed(
+  () => modelCapabilities.snapshot.value?.verbosityDefault
+)
+const capabilityReasoningVisibilityDefault = computed(() =>
+  normalizeAnthropicReasoningVisibilityValue(capabilityReasoningPortrait.value?.visibility)
+)
 
 const getReasoningEffortOptions = (
   portrait: ReasoningPortrait | null | undefined
@@ -938,92 +970,38 @@ const isThinkingBudgetSentinel = (
   return sentinelValues.has(roundedValue)
 }
 
-const capabilitySupportsReasoning = ref<boolean | null>(null)
-const capabilityBudgetRange = ref<{ min?: number; max?: number; default?: number } | null>(null)
-const capabilitySupportsEffort = ref<boolean | null>(null)
-const capabilityEffortDefault = ref<ReasoningEffort | undefined>(undefined)
-const capabilitySupportsVerbosity = ref<boolean | null>(null)
-const capabilityVerbosityDefault = ref<'low' | 'medium' | 'high' | undefined>(undefined)
-const capabilityReasoningVisibilityDefault = ref<AnthropicReasoningVisibility | undefined>(
-  undefined
-)
-const capabilityRequestPolicy = ref<ModelRequestPolicy>(createPassthroughModelRequestPolicy())
-let capabilityRequestId = 0
-
 const fetchCapabilities = async () => {
-  const requestId = ++capabilityRequestId
   const targetModelId = currentModelLookupId.value
 
   if (!props.providerId || !targetModelId) {
-    capabilityProviderId.value = props.providerId
-    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
-    capabilityReasoningPortrait.value = null
-    capabilitySupportsReasoning.value = null
-    capabilityBudgetRange.value = null
-    capabilitySupportsTemperature.value = null
-    capabilitySupportsEffort.value = null
-    capabilityEffortDefault.value = undefined
-    capabilitySupportsVerbosity.value = null
-    capabilityVerbosityDefault.value = undefined
-    capabilityReasoningVisibilityDefault.value = undefined
+    modelCapabilities.clear()
     return
   }
-  try {
-    const capabilities = await modelClient.getCapabilities(props.providerId, targetModelId, {
-      routeOverride: {
-        endpointType: isNewApiEndpointType(config.value.endpointType)
-          ? config.value.endpointType
-          : providerModelMeta.value?.endpointType,
-        supportedEndpointTypes: providerModelMeta.value?.supportedEndpointTypes,
-        type: effectiveNewApiModelType.value,
-        ownedBy: providerModelMeta.value?.ownedBy
-      },
-      reasoning: config.value.reasoning
-    })
-    if (requestId !== capabilityRequestId) return
 
-    capabilityProviderId.value = capabilities.identity.providerId
-    capabilityRequestPolicy.value = capabilities.requestPolicy
-    const portrait = capabilities.reasoningPortrait ?? null
-    capabilityReasoningPortrait.value = portrait
-    capabilitySupportsReasoning.value = capabilities.supportsReasoning
-    capabilityBudgetRange.value = capabilities.thinkingBudgetRange
-    capabilitySupportsTemperature.value =
-      typeof capabilities.supportsTemperatureControl === 'boolean'
-        ? capabilities.supportsTemperatureControl
-        : capabilities.temperatureCapability
-    capabilitySupportsEffort.value = capabilities.supportsReasoningEffort
-    capabilityEffortDefault.value = capabilities.reasoningEffortDefault
-    capabilitySupportsVerbosity.value = capabilities.supportsVerbosity
-    capabilityVerbosityDefault.value = capabilities.verbosityDefault
-    capabilityReasoningVisibilityDefault.value = normalizeAnthropicReasoningVisibilityValue(
-      portrait?.visibility
-    )
-  } catch {
-    if (requestId !== capabilityRequestId) return
-
-    capabilityProviderId.value = props.providerId
-    capabilityRequestPolicy.value = createPassthroughModelRequestPolicy()
-    capabilityReasoningPortrait.value = null
-    capabilitySupportsReasoning.value = null
-    capabilityBudgetRange.value = null
-    capabilitySupportsTemperature.value = null
-    capabilitySupportsEffort.value = null
-    capabilityEffortDefault.value = undefined
-    capabilitySupportsVerbosity.value = null
-    capabilityVerbosityDefault.value = undefined
-    capabilityReasoningVisibilityDefault.value = undefined
-  }
+  await modelCapabilities.load(props.providerId, targetModelId, {
+    routeOverride: {
+      endpointType: isNewApiEndpointType(config.value.endpointType)
+        ? config.value.endpointType
+        : providerModelMeta.value?.endpointType,
+      supportedEndpointTypes: providerModelMeta.value?.supportedEndpointTypes,
+      type: effectiveNewApiModelType.value,
+      ownedBy: providerModelMeta.value?.ownedBy
+    },
+    reasoning: config.value.reasoning
+  })
 }
 
 let capabilityRefreshQueued = false
 const queueCapabilityRefresh = () => {
-  if (capabilityRefreshQueued) return
+  if (capabilityRefreshQueued || !props.open || isLoadingModelConfig.value) return
   capabilityRefreshQueued = true
+  modelCapabilities.beginLoading()
   void nextTick().then(() => {
     capabilityRefreshQueued = false
     if (props.open && !isLoadingModelConfig.value) {
       void fetchCapabilities()
+    } else {
+      modelCapabilities.clear()
     }
   })
 }
@@ -1041,30 +1019,88 @@ const providerStandardModelList = computed(() => {
 })
 
 const currentModelLookupId = computed(() =>
-  (isCreateMode.value ? modelIdField.value : props.modelId || modelIdField.value).trim()
+  (canEditModelIdentity.value ? modelIdField.value : props.modelId || modelIdField.value).trim()
 )
 
-const moonshotKimiTemperaturePolicy = computed(() =>
-  getMoonshotKimiTemperaturePolicy(props.providerId, currentModelLookupId.value)
+const capabilitySnapshotMatchesCurrentModel = computed(
+  () =>
+    !currentModelLookupId.value ||
+    (modelCapabilities.status.value === 'ready' &&
+      modelCapabilities.identity.value?.requestModelId === currentModelLookupId.value)
 )
-const resolvedMoonshotKimiTemperaturePolicy = computed(() =>
-  resolveMoonshotKimiTemperaturePolicy(
-    props.providerId,
-    currentModelLookupId.value,
-    config.value.reasoning
-  )
-)
-const isMoonshotKimiTemperatureLocked = computed(
-  () => moonshotKimiTemperaturePolicy.value?.lockTemperatureControl === true
-)
-const moonshotKimiTemperatureHint = computed(() =>
-  isMoonshotKimiTemperatureLocked.value
-    ? t('settings.model.modelConfig.temperature.fixedMoonshotKimi', {
-        enabled: MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE.toFixed(1),
-        disabled: MOONSHOT_KIMI_THINKING_DISABLED_TEMPERATURE.toFixed(1)
+
+const temperatureControl = computed<GenerationParameterControl>(() => {
+  if (
+    isCreateMode.value &&
+    !currentModelLookupId.value &&
+    modelCapabilities.status.value === 'idle'
+  ) {
+    return { mode: 'editable' }
+  }
+
+  if (
+    currentModelLookupId.value &&
+    modelCapabilities.status.value !== 'error' &&
+    !capabilitySnapshotMatchesCurrentModel.value
+  ) {
+    return { mode: 'loading' }
+  }
+
+  return modelCapabilities.temperatureControl.value
+})
+const topPControl = computed<GenerationParameterControl>(() => {
+  if (
+    isCreateMode.value &&
+    !currentModelLookupId.value &&
+    modelCapabilities.status.value === 'idle'
+  ) {
+    return { mode: 'editable' }
+  }
+
+  if (
+    currentModelLookupId.value &&
+    modelCapabilities.status.value !== 'error' &&
+    !capabilitySnapshotMatchesCurrentModel.value
+  ) {
+    return { mode: 'loading' }
+  }
+
+  return modelCapabilities.topPControl.value
+})
+const temperaturePolicyHint = computed(() =>
+  temperatureControl.value.mode === 'fixed'
+    ? t('settings.model.temperatureFixedByPolicy', {
+        value: temperatureControl.value.value
       })
     : ''
 )
+const topPPolicyHint = computed(() =>
+  topPControl.value.mode === 'fixed'
+    ? t('settings.model.topPFixedByPolicy', {
+        value: topPControl.value.value
+      })
+    : ''
+)
+const temperatureInputValue = computed<number | undefined>({
+  get: () =>
+    temperatureControl.value.mode === 'fixed'
+      ? temperatureControl.value.value
+      : config.value.temperature,
+  set: (value) => {
+    if (temperatureControl.value.mode === 'editable') {
+      config.value.temperature = value
+    }
+  }
+})
+const topPInputValue = computed<string>({
+  get: () =>
+    topPControl.value.mode === 'fixed' ? String(topPControl.value.value) : topPDraft.value,
+  set: (value) => {
+    if (topPControl.value.mode === 'editable') {
+      topPDraft.value = value
+    }
+  }
+})
 
 const providerModelMeta = computed(() => {
   const targetModelId = currentModelLookupId.value
@@ -1158,11 +1194,7 @@ const hasModelIdConflict = (modelId: string, excludeId?: string) => {
 }
 
 const buildCustomModelPayload = (id: string, name: string, enabled?: boolean) => {
-  const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
-    props.providerId,
-    id,
-    config.value.reasoning
-  )
+  const reasoningPolicy = capabilityRequestPolicy.value?.reasoning
 
   return {
     id,
@@ -1172,7 +1204,8 @@ const buildCustomModelPayload = (id: string, name: string, enabled?: boolean) =>
     maxTokens: config.value.maxTokens ?? DEFAULT_MODEL_MAX_TOKENS,
     vision: config.value.vision ?? DEFAULT_MODEL_VISION,
     functionCall: config.value.functionCall ?? DEFAULT_MODEL_FUNCTION_CALL,
-    reasoning: fixedTemperatureKimi?.reasoningEnabled ?? config.value.reasoning ?? false,
+    reasoning:
+      reasoningPolicy?.mode === 'fixed' ? reasoningPolicy.value : (config.value.reasoning ?? false),
     type: effectiveNewApiModelType.value ?? ModelType.Chat,
     endpointType: config.value.endpointType
   }
@@ -1239,6 +1272,7 @@ const loadConfig = async () => {
 
   const requestId = ++loadConfigRequestId
   isLoadingModelConfig.value = true
+  modelCapabilities.beginLoading()
   hasManualModelTypeSelection.value = false
   modelConfigIsUserDefined.value = false
   modelConfigHasExplicitType.value = false
@@ -1398,7 +1432,7 @@ const validateForm = () => {
   // 验证温度 (仅对显示 temperature 控件的模型)
   if (
     !showOpenAIMediaGenerationSettings.value &&
-    showTemperatureControl.value &&
+    temperatureControl.value.mode === 'editable' &&
     config.value.temperature !== undefined
   ) {
     if (config.value.temperature < 0) {
@@ -1408,7 +1442,7 @@ const validateForm = () => {
     }
   }
 
-  if (showTopPControl.value) {
+  if (topPControl.value.mode === 'editable') {
     const parsedTopP = parseTopPDraft()
     if (parsedTopP !== undefined) {
       if (!Number.isFinite(parsedTopP)) {
@@ -1440,7 +1474,11 @@ const validateForm = () => {
 // 表单是否有效
 const isValid = computed(() => {
   validateForm()
-  return Object.keys(errors.value).length === 0 && !genericThinkingBudgetError.value
+  return (
+    Object.keys(errors.value).length === 0 &&
+    !genericThinkingBudgetError.value &&
+    capabilitySnapshotMatchesCurrentModel.value
+  )
 })
 
 // 保存配置
@@ -1457,7 +1495,7 @@ const handleSave = async () => {
     ...config.value,
     ...(normalizedTimeout !== undefined ? { timeout: normalizedTimeout } : {}),
     topP:
-      capabilityRequestPolicy.value.topP.mode !== 'passthrough'
+      topPControl.value.mode !== 'editable'
         ? config.value.topP
         : showTopPControl.value &&
             typeof parsedTopP === 'number' &&
@@ -1566,6 +1604,23 @@ watch(
   { immediate: true }
 )
 
+watch(currentModelLookupId, (nextModelId, previousModelId) => {
+  if (
+    !props.open ||
+    isLoadingModelConfig.value ||
+    nextModelId === previousModelId ||
+    modelCapabilities.identity.value?.requestModelId === nextModelId
+  ) {
+    return
+  }
+
+  if (nextModelId) {
+    modelCapabilities.beginLoading()
+  } else {
+    modelCapabilities.clear()
+  }
+})
+
 watch(
   () =>
     [
@@ -1631,11 +1686,10 @@ const isDeepSeekV31Model = computed(() => {
 })
 
 const supportsReasoningEffort = computed(() => capabilitySupportsEffort.value === true)
-const effectiveReasoningEnabled = computed(() =>
-  capabilityRequestPolicy.value.reasoning.mode === 'fixed'
-    ? capabilityRequestPolicy.value.reasoning.value
-    : Boolean(config.value.reasoning)
-)
+const effectiveReasoningEnabled = computed(() => {
+  const reasoningPolicy = capabilityRequestPolicy.value?.reasoning
+  return reasoningPolicy?.mode === 'fixed' ? reasoningPolicy.value : Boolean(config.value.reasoning)
+})
 const showReasoningEffort = computed(
   () =>
     supportsReasoningEffort.value &&
@@ -1645,23 +1699,16 @@ const showReasoningEffort = computed(
 const showReasoningVisibility = computed(
   () => supportsReasoningVisibility.value && effectiveReasoningEnabled.value
 )
-const supportsTemperatureControl = computed(() => capabilitySupportsTemperature.value !== false)
 const showTemperatureControl = computed(
-  () =>
-    capabilityRequestPolicy.value.temperature.mode !== 'omit' &&
-    (supportsTemperatureControl.value || isMoonshotKimiTemperatureLocked.value) &&
-    !supportsReasoningEffort.value
+  () => temperatureControl.value.mode === 'editable' || temperatureControl.value.mode === 'fixed'
 )
-const supportsTopPControl = computed(() => capabilityRequestPolicy.value.topP.mode !== 'omit')
 const showTopPControl = computed(
-  () => !showOpenAIMediaGenerationSettings.value && supportsTopPControl.value
+  () =>
+    !showOpenAIMediaGenerationSettings.value &&
+    (topPControl.value.mode === 'editable' || topPControl.value.mode === 'fixed')
 )
 const reasoningToggleMode = computed(() => {
-  if (capabilityRequestPolicy.value.reasoning.mode === 'fixed') {
-    return 'indicator' as const
-  }
-
-  if (moonshotKimiTemperaturePolicy.value?.isThinkingVariant) {
+  if (capabilityRequestPolicy.value?.reasoning.mode === 'fixed') {
     return 'indicator' as const
   }
 
@@ -1681,15 +1728,14 @@ const reasoningToggleMode = computed(() => {
     : ('toggle' as const)
 })
 const reasoningToggleDisabled = computed(() => reasoningToggleMode.value === 'indicator')
-const reasoningToggleValue = computed(() =>
-  capabilityRequestPolicy.value.reasoning.mode === 'fixed'
-    ? capabilityRequestPolicy.value.reasoning.value
-    : moonshotKimiTemperaturePolicy.value?.isThinkingVariant
-      ? true
-      : reasoningToggleDisabled.value
-        ? supportsReasoningCapability(capabilityReasoningPortrait.value)
-        : Boolean(config.value.reasoning)
-)
+const reasoningToggleValue = computed(() => {
+  const reasoningPolicy = capabilityRequestPolicy.value?.reasoning
+  return reasoningPolicy?.mode === 'fixed'
+    ? reasoningPolicy.value
+    : reasoningToggleDisabled.value
+      ? supportsReasoningCapability(capabilityReasoningPortrait.value)
+      : Boolean(config.value.reasoning)
+})
 const reasoningToggleLabelKey = computed(() =>
   reasoningToggleDisabled.value
     ? 'settings.model.modelConfig.reasoning.label'
@@ -1759,25 +1805,6 @@ const showInterleavedThinking = computed(() => {
     typeof config.value.forceInterleavedThinkingCompat === 'boolean'
   )
 })
-
-watch(
-  () => [props.providerId, currentModelLookupId.value, config.value.reasoning],
-  () => {
-    const fixedTemperatureKimi = resolvedMoonshotKimiTemperaturePolicy.value
-    if (!fixedTemperatureKimi) {
-      return
-    }
-
-    if (config.value.reasoning !== fixedTemperatureKimi.reasoningEnabled) {
-      config.value.reasoning = fixedTemperatureKimi.reasoningEnabled
-    }
-
-    if (config.value.temperature !== fixedTemperatureKimi.temperature) {
-      config.value.temperature = fixedTemperatureKimi.temperature
-    }
-  },
-  { immediate: true }
-)
 
 watch(
   () => config.value.reasoning,

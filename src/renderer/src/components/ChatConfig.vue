@@ -16,6 +16,7 @@ import {
 import ConfigSliderField from './ChatConfig/ConfigSliderField.vue'
 import ConfigInputField from './ChatConfig/ConfigInputField.vue'
 import ConfigSelectField from './ChatConfig/ConfigSelectField.vue'
+import GenerationParameterControlState from './GenerationParameterControlState.vue'
 
 // === Composables ===
 import { useModelCapabilities } from '@/composables/useModelCapabilities'
@@ -72,6 +73,7 @@ const capabilities = useModelCapabilities({
   providerId: toRef(props, 'providerId'),
   modelId: toRef(props, 'modelId')
 })
+const temperatureControl = capabilities.temperatureControl
 
 // Thinking budget
 const thinkingBudget = useThinkingBudget({
@@ -109,7 +111,7 @@ const { sliderFields, inputFields, selectFields } = useChatConfigFields({
   providerId: toRef(props, 'providerId'),
 
   // Composables
-  supportsTemperatureControl: capabilities.supportsTemperatureControl,
+  temperatureControl: capabilities.temperatureControl,
   showThinkingBudget: thinkingBudget.showThinkingBudget,
   thinkingBudgetError: thinkingBudget.validationError,
   budgetRange: capabilities.budgetRange,
@@ -184,6 +186,13 @@ const modelTypeIcon = computed(() => {
         />
       </div>
 
+      <GenerationParameterControlState
+        v-if="temperatureControl.mode === 'loading' || temperatureControl.mode === 'error'"
+        class="mx-2"
+        :state="temperatureControl.mode"
+        @retry="capabilities.refresh"
+      />
+
       <!-- Slider Fields (Temperature, Context Length, Response Length) -->
       <ConfigSliderField
         v-for="field in sliderFields"
@@ -195,6 +204,8 @@ const modelTypeIcon = computed(() => {
         :min="field.min"
         :max="field.max"
         :step="field.step"
+        :disabled="field.disabled"
+        :hint="field.hint"
         :formatter="field.formatter"
         @update:model-value="field.setValue"
       />

@@ -896,6 +896,9 @@
     }
   },
   "model": {
+    "capabilityLoadError": "Model özellikleri yüklenemedi. Üretim parametreleri geçici olarak kullanılamıyor.",
+    "temperatureFixedByPolicy": "Bu model sıcaklığı {value} olarak sabitler.",
+    "topPFixedByPolicy": "Bu model Top P değerini {value} olarak sabitler.",
     "title": "Modeli Ayarları",
     "systemPrompt": {
       "label": "Sistem prompt",
@@ -959,8 +962,7 @@
       },
       "temperature": {
         "label": "Sıcaklık",
-        "description": "Çıktının rastgeleliğini kontrol edin. Çoğu model 0-1'dir ve bazıları 0-2 arasındadır. Daha yüksek değerler rastgeleliği artırır.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6, düşünme etkinleştirildiğinde sıcaklığı {enabled}'ye ve devre dışı bırakıldığında {disabled}'ye sabitler."
+        "description": "Çıktının rastgeleliğini kontrol edin. Çoğu model 0-1'dir ve bazıları 0-2 arasındadır. Daha yüksek değerler rastgeleliği artırır."
       },
       "topP": {
         "label": "Top P",

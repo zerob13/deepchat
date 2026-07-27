@@ -178,7 +178,6 @@
     "systemPrompt": "Sistem prompt",
     "systemPromptPlaceholder": "Bir ön ayar seçin",
     "temperature": "Sıcaklık",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6, düşünme etkinleştirildiğinde sıcaklığı {enabled}'ye ve devre dışı bırakıldığında {disabled}'ye sabitler.",
     "topP": "Top P",
     "topPDescription": "Nucleus örnekleme; sağlayıcı varsayılanını kullanmak için boş bırakın",
     "contextLength": "Bağlam Uzunluğu",

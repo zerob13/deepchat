@@ -142,10 +142,6 @@ function resolveCapabilityProviderId(context: AiSdkRuntimeContext): string {
   )
 }
 
-function supportsTemperatureControlRuntime(context: AiSdkRuntimeContext): boolean {
-  return context.capabilitySnapshot?.temperatureCapability !== false
-}
-
 function normalizePromptValue(value: unknown): string {
   if (typeof value === 'string') {
     return value
@@ -810,13 +806,7 @@ function resolveEffectiveGenerationRequest(
     applyModelRequestPolicy(modelConfig, requestPolicy),
     context.capabilitySnapshot
   )
-  let temperature = applyRequestParameterPolicy(requestPolicy.temperature, requestedTemperature)
-  if (
-    requestPolicy.temperature.mode === 'passthrough' &&
-    !supportsTemperatureControlRuntime(context)
-  ) {
-    temperature = undefined
-  }
+  const temperature = applyRequestParameterPolicy(requestPolicy.temperature, requestedTemperature)
 
   const topP = applyRequestParameterPolicy(requestPolicy.topP, effectiveModelConfig.topP)
 

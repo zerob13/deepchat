@@ -565,6 +565,9 @@
     }
   },
   "model": {
+    "capabilityLoadError": "Não foi possível carregar os recursos do modelo. Os parâmetros de geração estão temporariamente indisponíveis.",
+    "temperatureFixedByPolicy": "Este modelo fixa a temperatura em {value}.",
+    "topPFixedByPolicy": "Este modelo fixa o Top P em {value}.",
     "title": "Configurações do Modelo",
     "systemPrompt": {
       "label": "Prompt do Sistema",
@@ -692,7 +695,6 @@
       "currentUsingModelDefault": "Usando a configuração padrão do modelo atualmente",
       "temperature": {
         "description": "Controla a aleatoriedade da saída. A maioria dos modelos é de 0 a 1, e alguns suportam entre 0 e 2. Valores mais altos aumentam a aleatoriedade.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 fixa a temperatura em {enabled} quando o modo de pensamento está ativado e em {disabled} quando está desativado.",
         "label": "Temperatura"
       },
       "topP": {

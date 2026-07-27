@@ -108,7 +108,7 @@ describe('AI SDK runtime', () => {
             catalogModelId: null
           },
     requestPolicy: {
-      temperature: { mode: 'passthrough' },
+      temperature: temperatureCapability === false ? { mode: 'omit' } : { mode: 'passthrough' },
       topP: { mode: 'passthrough' },
       reasoning: { mode: 'passthrough' },
       legacyThinking: { mode: 'passthrough' }
@@ -1931,7 +1931,7 @@ describe('AI SDK runtime', () => {
       },
       capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-8', false, {
         requestPolicy: {
-          temperature: { mode: 'passthrough' },
+          temperature: { mode: 'omit' },
           topP: { mode: 'omit' },
           reasoning: { mode: 'passthrough' },
           legacyThinking: { mode: 'passthrough' }

@@ -178,7 +178,6 @@
     "systemPrompt": "Prompt del sistema",
     "systemPromptPlaceholder": "Seleccionar preajuste",
     "temperature": "Temperatura",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 fija la temperatura en {enabled} cuando el razonamiento está activado y en {disabled} cuando está desactivado.",
     "topP": "Top P",
     "topPDescription": "Muestreo núcleo; déjalo vacío para usar el valor predeterminado del proveedor",
     "contextLength": "Longitud del contexto",

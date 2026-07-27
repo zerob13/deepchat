@@ -74,6 +74,19 @@
 - [x] Run focused and full validation.
 - [x] Complete a new severity-ordered review and commit without pushing.
 
+## Renderer generation-control convergence
+
+- [x] Record stable Aihubmix K3 divergence and renderer lifecycle invariants in the SDD.
+- [x] Normalize temperature capability into the wire-effective snapshot policy.
+- [x] Make `useModelCapabilities` own atomic snapshot, status, retry, and control projection.
+- [x] Migrate ChatConfig, ChatStatusBar, and ModelConfigDialog to the shared projection.
+- [x] Replace Kimi-specific fixed temperature UI state with generic fixed policy.
+- [x] Add stable loading skeletons and explicit retryable error states.
+- [x] Add direct Aihubmix K3, loading, error, stale response, fixed, and effort regressions.
+- [x] Add a cross-layer renderer/wire policy matrix test.
+- [x] Run focused and full validation.
+- [x] Review the complete diff by severity, fix findings, and commit without pushing.
+
 ## Validation Result
 
 - Focused provider, agent, shared, contract, and renderer suites passed; the final provider-model
@@ -96,3 +109,13 @@
 - The final severity-ordered review found and fixed a cache-state-dependent route metadata source,
   replacing derived array scans with a compact raw O(1) route index shared by runtime and settings.
   No remaining high, medium, or low-severity findings were identified.
+- Renderer convergence focused validation passed 8 files and 204 tests across request policy,
+  capability identity, final AI SDK serialization, the shared renderer projection, and all three
+  renderer entry points.
+- The final full suite passed 638 files with 19 skipped; 6,693 tests passed with 241 skipped.
+- Renderer convergence formatting, i18n validation, lint, full type checking, and the production
+  build passed. The build refreshed the expected Claude Agent ACP registry entry from 0.62.0 to
+  0.63.0; provider-db content remained stable.
+- The severity-ordered renderer review found and fixed one medium-severity stale-identity window
+  that could enable saving a renamed custom model against the prior capability snapshot, and one
+  low-severity overbroad shared-helper name. No remaining findings were identified.

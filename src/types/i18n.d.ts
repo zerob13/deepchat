@@ -308,7 +308,6 @@ declare module 'vue-i18n' {
       systemPrompt: string
       systemPromptPlaceholder: string
       temperature: string
-      temperatureFixedMoonshotKimi: string
       topP: string
       topPDescription: string
       contextLength: string

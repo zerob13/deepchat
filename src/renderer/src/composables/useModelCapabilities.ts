@@ -1,9 +1,48 @@
-// === Vue Core ===
-import { ref, watch, type Ref } from 'vue'
+import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 
 import { createModelClient } from '@api/ModelClient'
+import type { RequestParameterPolicy } from '@shared/modelRequestPolicy'
+import type { CapabilitySnapshotOptions } from '@shared/types/model-capabilities'
 import type { ReasoningPortrait } from '@shared/types/model-db'
 import type { ThinkingBudgetRange } from './useThinkingBudget'
+
+type ModelClient = ReturnType<typeof createModelClient>
+
+export type RendererModelCapabilities = Awaited<ReturnType<ModelClient['getCapabilities']>>
+
+export type CapabilityLoadStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+export type GenerationParameterControl =
+  | { mode: 'hidden' }
+  | { mode: 'editable' }
+  | { mode: 'fixed'; value: number }
+  | { mode: 'loading' }
+  | { mode: 'error' }
+
+export const resolveGenerationParameterControl = (
+  policy: RequestParameterPolicy<number> | null | undefined,
+  status: CapabilityLoadStatus
+): GenerationParameterControl => {
+  if (status === 'loading') {
+    return { mode: 'loading' }
+  }
+  if (status === 'error') {
+    return { mode: 'error' }
+  }
+  if (status !== 'ready') {
+    return { mode: 'hidden' }
+  }
+
+  switch (policy?.mode) {
+    case 'omit':
+      return { mode: 'hidden' }
+    case 'fixed':
+      return { mode: 'fixed', value: policy.value }
+    case 'passthrough':
+    default:
+      return { mode: 'editable' }
+  }
+}
 
 const normalizeBudgetRange = (
   budget: ReasoningPortrait['budget'] | ThinkingBudgetRange | null | undefined
@@ -35,111 +74,146 @@ const mergeBudgetRanges = (
   return Object.keys(merged).length > 0 ? merged : null
 }
 
-// === Interfaces ===
-export interface ModelCapabilities {
-  supportsReasoning: boolean | null
-  budgetRange: ThinkingBudgetRange | null
-  supportsSearch: boolean | null
-  searchDefaults: {
-    default?: boolean
-    forced?: boolean
-    strategy?: 'turbo' | 'max'
-  } | null
-  supportsTemperatureControl: boolean | null
-}
-
 export interface UseModelCapabilitiesOptions {
   providerId: Ref<string | undefined>
   modelId: Ref<string | undefined>
 }
 
-/**
- * Composable for fetching and managing model capabilities
- * Handles reasoning support, thinking budget ranges, and search capabilities
- */
-export function useModelCapabilities(options: UseModelCapabilitiesOptions) {
-  const { providerId, modelId } = options
-  const modelClient = createModelClient()
+type CapabilityQuery = {
+  providerId: string
+  modelId: string
+  options?: CapabilitySnapshotOptions
+}
 
-  // === Local State ===
-  const capabilitySupportsReasoning = ref<boolean | null>(null)
-  const capabilityBudgetRange = ref<ThinkingBudgetRange | null>(null)
-  const capabilitySupportsSearch = ref<boolean | null>(null)
-  const capabilitySupportsTemperatureControl = ref<boolean | null>(null)
-  const capabilitySearchDefaults = ref<{
-    default?: boolean
-    forced?: boolean
-    strategy?: 'turbo' | 'max'
-  } | null>(null)
-  const isLoading = ref(false)
+export function useModelCapabilities(options?: UseModelCapabilitiesOptions) {
+  const modelClient = createModelClient()
+  const snapshot = shallowRef<RendererModelCapabilities | null>(null)
+  const status = ref<CapabilityLoadStatus>('idle')
+  const error = shallowRef<unknown>(null)
+  const lastQuery = shallowRef<CapabilityQuery | null>(null)
   let requestId = 0
 
-  // === Internal Methods ===
-  const resetCapabilities = () => {
-    capabilitySupportsReasoning.value = null
-    capabilityBudgetRange.value = null
-    capabilitySupportsSearch.value = null
-    capabilitySupportsTemperatureControl.value = null
-    capabilitySearchDefaults.value = null
+  const beginLoading = () => {
+    requestId += 1
+    snapshot.value = null
+    error.value = null
+    lastQuery.value = null
+    status.value = 'loading'
   }
 
-  const fetchCapabilities = async () => {
+  const clear = () => {
+    requestId += 1
+    snapshot.value = null
+    error.value = null
+    lastQuery.value = null
+    status.value = 'idle'
+  }
+
+  const load = async (
+    providerId: string | null | undefined,
+    modelId: string | null | undefined,
+    queryOptions?: CapabilitySnapshotOptions
+  ): Promise<RendererModelCapabilities | null> => {
     const currentRequestId = ++requestId
-    const currentProviderId = providerId.value
-    const currentModelId = modelId.value
+    const normalizedProviderId = providerId?.trim()
+    const normalizedModelId = modelId?.trim()
 
-    if (!currentProviderId || !currentModelId) {
-      resetCapabilities()
-      isLoading.value = false
-      return
+    snapshot.value = null
+    error.value = null
+
+    if (!normalizedProviderId || !normalizedModelId) {
+      lastQuery.value = null
+      status.value = 'idle'
+      return null
     }
 
-    isLoading.value = true
+    lastQuery.value = {
+      providerId: normalizedProviderId,
+      modelId: normalizedModelId,
+      options: queryOptions
+    }
+    status.value = 'loading'
+
     try {
-      const capabilities = await modelClient.getCapabilities(currentProviderId, currentModelId)
-
-      if (currentRequestId !== requestId) return
-
-      capabilitySupportsReasoning.value =
-        typeof capabilities.supportsReasoning === 'boolean' ? capabilities.supportsReasoning : null
-      capabilityBudgetRange.value = mergeBudgetRanges(
-        capabilities.thinkingBudgetRange,
-        capabilities.reasoningPortrait?.budget
+      const capabilities = await modelClient.getCapabilities(
+        normalizedProviderId,
+        normalizedModelId,
+        queryOptions
       )
-      capabilitySupportsSearch.value =
-        typeof capabilities.supportsSearch === 'boolean' ? capabilities.supportsSearch : null
-      capabilitySearchDefaults.value = capabilities.searchDefaults || {}
-      capabilitySupportsTemperatureControl.value =
-        typeof capabilities.supportsTemperatureControl === 'boolean'
-          ? capabilities.supportsTemperatureControl
-          : typeof capabilities.temperatureCapability === 'boolean'
-            ? capabilities.temperatureCapability
-            : null
-    } catch (error) {
-      if (currentRequestId !== requestId) return
+      if (currentRequestId !== requestId) return null
 
-      resetCapabilities()
-      console.error(error)
-    } finally {
-      if (currentRequestId === requestId) {
-        isLoading.value = false
-      }
+      snapshot.value = capabilities
+      status.value = 'ready'
+      return capabilities
+    } catch (caught) {
+      if (currentRequestId !== requestId) return null
+
+      error.value = caught
+      status.value = 'error'
+      console.warn('[ModelCapabilities] Failed to load model capabilities:', caught)
+      return null
     }
   }
 
-  // === Watchers ===
-  watch(() => [providerId.value, modelId.value], fetchCapabilities, { immediate: true })
+  const refresh = async (): Promise<RendererModelCapabilities | null> => {
+    if (options) {
+      return await load(options.providerId.value, options.modelId.value)
+    }
 
-  // === Return Public API ===
+    const query = lastQuery.value
+    return query ? await load(query.providerId, query.modelId, query.options) : null
+  }
+
+  if (options) {
+    watch(
+      () => [options.providerId.value, options.modelId.value] as const,
+      () => {
+        void refresh()
+      },
+      { immediate: true }
+    )
+  }
+
+  const identity = computed(() => snapshot.value?.identity ?? null)
+  const requestPolicy = computed(() => snapshot.value?.requestPolicy ?? null)
+  const reasoningPortrait = computed(() => snapshot.value?.reasoningPortrait ?? null)
+  const supportsReasoning = computed(() => {
+    const value = snapshot.value?.supportsReasoning
+    return typeof value === 'boolean' ? value : null
+  })
+  const budgetRange = computed(() =>
+    mergeBudgetRanges(snapshot.value?.thinkingBudgetRange, reasoningPortrait.value?.budget)
+  )
+  const supportsSearch = computed(() => {
+    const value = snapshot.value?.supportsSearch
+    return typeof value === 'boolean' ? value : null
+  })
+  const searchDefaults = computed(() => snapshot.value?.searchDefaults ?? null)
+  const temperatureControl = computed(() =>
+    resolveGenerationParameterControl(requestPolicy.value?.temperature, status.value)
+  )
+  const topPControl = computed(() =>
+    resolveGenerationParameterControl(requestPolicy.value?.topP, status.value)
+  )
+  const isLoading = computed(() => status.value === 'loading')
+
   return {
-    // Read-only state
-    supportsReasoning: capabilitySupportsReasoning,
-    budgetRange: capabilityBudgetRange,
-    supportsSearch: capabilitySupportsSearch,
-    searchDefaults: capabilitySearchDefaults,
-    supportsTemperatureControl: capabilitySupportsTemperatureControl,
+    snapshot,
+    status,
+    error,
+    identity,
+    requestPolicy,
+    reasoningPortrait,
+    supportsReasoning,
+    budgetRange,
+    supportsSearch,
+    searchDefaults,
+    temperatureControl,
+    topPControl,
     isLoading,
-    // Methods
-    refresh: fetchCapabilities
+    beginLoading,
+    load,
+    refresh,
+    clear
   }
 }

@@ -11,7 +11,10 @@ import type {
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
 import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
-import { resolveModelRequestPolicy } from '@shared/modelRequestPolicy'
+import {
+  resolveCapabilityAwareRequestParameterPolicy,
+  resolveModelRequestPolicy
+} from '@shared/modelRequestPolicy'
 import { normalizeCanonicalModelId } from '@shared/modelId'
 
 export type CapabilityIdentityInput = {
@@ -384,15 +387,27 @@ export const buildResolvedCapabilitySnapshot = (
     identity.requestModelId,
     options.reasoning
   )
-  const requestPolicy =
-    baseRequestPolicy.topP.mode === 'passthrough' &&
+  const temperaturePolicy = resolveCapabilityAwareRequestParameterPolicy(
+    baseRequestPolicy.temperature,
+    catalog.temperatureCapability
+  )
+  const capabilityAwareRequestPolicy =
+    temperaturePolicy === baseRequestPolicy.temperature
+      ? baseRequestPolicy
+      : {
+          ...baseRequestPolicy,
+          temperature: temperaturePolicy
+        }
+  const omitAnthropicTopP =
+    capabilityAwareRequestPolicy.topP.mode === 'passthrough' &&
     identity.providerId === 'anthropic' &&
     catalog.temperatureCapability === false
-      ? {
-          ...baseRequestPolicy,
-          topP: { mode: 'omit' as const }
-        }
-      : baseRequestPolicy
+  const requestPolicy = omitAnthropicTopP
+    ? {
+        ...capabilityAwareRequestPolicy,
+        topP: { mode: 'omit' as const }
+      }
+    : capabilityAwareRequestPolicy
 
   return {
     identity,

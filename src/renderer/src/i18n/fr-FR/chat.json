@@ -167,7 +167,6 @@
     "systemPrompt": "Prompt système",
     "systemPromptPlaceholder": "Sélectionner un préréglage",
     "temperature": "Température",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 fixe la température à {enabled} lorsque la réflexion est activée et à {disabled} lorsqu’elle est désactivée.",
     "topP": "Top P",
     "topPDescription": "Échantillonnage nucleus ; laissez vide pour utiliser la valeur par défaut du fournisseur",
     "contextLength": "Longueur du contexte",

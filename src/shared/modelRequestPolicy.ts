@@ -52,6 +52,17 @@ export const createPassthroughModelRequestPolicy = (): ModelRequestPolicy => ({
   legacyThinking: passthrough()
 })
 
+export const resolveCapabilityAwareRequestParameterPolicy = <T>(
+  policy: RequestParameterPolicy<T>,
+  supported: boolean | null | undefined
+): RequestParameterPolicy<T> => {
+  if (policy.mode !== 'passthrough' || supported !== false) {
+    return policy
+  }
+
+  return { mode: 'omit' }
+}
+
 export const isKimiK3ModelId = (modelId: string | null | undefined): boolean => {
   const canonicalModelId = normalizeCanonicalModelId(modelId)
   return /^(?:coding-)?kimi-k3(?:-free)?$/.test(canonicalModelId)

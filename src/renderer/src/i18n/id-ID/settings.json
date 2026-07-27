@@ -896,6 +896,9 @@
     }
   },
   "model": {
+    "capabilityLoadError": "Kemampuan model tidak dapat dimuat. Parameter pembuatan sementara tidak tersedia.",
+    "temperatureFixedByPolicy": "Model ini menetapkan temperatur ke {value}.",
+    "topPFixedByPolicy": "Model ini menetapkan Top P ke {value}.",
     "title": "Pengaturan model",
     "systemPrompt": {
       "label": "system prompt",
@@ -959,8 +962,7 @@
       },
       "temperature": {
         "label": "suhu",
-        "description": "Kontrol keacakan output. Kebanyakan model mendukung 0-1, dan beberapa mendukung 0-2. Semakin tinggi nilainya, semakin acak.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ditetapkan ke {enabled} saat pemikiran diaktifkan, dan ditetapkan ke {disabled} saat pemikiran dimatikan."
+        "description": "Kontrol keacakan output. Kebanyakan model mendukung 0-1, dan beberapa mendukung 0-2. Semakin tinggi nilainya, semakin acak."
       },
       "topP": {
         "label": "Top P",

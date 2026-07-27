@@ -486,7 +486,8 @@ const setup = async (options: SetupOptions = {}) => {
           catalogModelId: null
         },
         requestPolicy: options.requestPolicy ?? {
-          temperature: { mode: 'passthrough' },
+          temperature:
+            options.temperatureCapability === false ? { mode: 'omit' } : { mode: 'passthrough' },
           topP:
             (options.capabilityProviderId ?? providerId) === 'anthropic' &&
             options.temperatureCapability === false
@@ -1708,6 +1709,12 @@ describe('ChatStatusBar model and session panels', () => {
         temperature: 0.6,
         reasoning: true
       },
+      requestPolicy: {
+        temperature: { mode: 'fixed', value: 1 },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'fixed', value: 'enabled' }
+      },
       reasoningPortrait: {
         supported: true,
         defaultEnabled: true,
@@ -1720,8 +1727,8 @@ describe('ChatStatusBar model and session panels', () => {
     await flushPromises()
 
     expect((wrapper.vm as any).localSettings.temperature).toBe(1)
-    expect((wrapper.vm as any).isMoonshotKimiTemperatureLocked).toBe(true)
-    expect(wrapper.text()).toContain('chat.advancedSettings.temperatureFixedMoonshotKimi')
+    expect((wrapper.vm as any).isTemperatureFixed).toBe(true)
+    expect(wrapper.text()).toContain('settings.model.temperatureFixedByPolicy')
     expect(findNumericButton(wrapper, 'temperature', 'increment').attributes('disabled')).toBe('')
     expect(findNumericInput(wrapper, 'temperature').attributes('disabled')).toBe('')
 
@@ -1784,6 +1791,42 @@ describe('ChatStatusBar model and session panels', () => {
       'settings.model.modelConfig.reasoningEffort.options.medium'
     )
     expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides direct Aihubmix K3 controls when temperature capability is unknown', async () => {
+    const { wrapper } = await setup({
+      agentId: 'deepchat',
+      hasActiveSession: false,
+      preferredModel: { providerId: 'aihubmix', modelId: 'kimi-k3' },
+      defaultModel: { providerId: 'aihubmix', modelId: 'kimi-k3' },
+      capabilityProviderId: 'aihubmix',
+      temperatureCapability: undefined,
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      },
+      extraModelGroups: [
+        {
+          providerId: 'aihubmix',
+          providerName: 'Aihubmix',
+          models: [{ id: 'kimi-k3', name: 'Kimi K3' }]
+        }
+      ],
+      modelConfig: {
+        reasoning: false,
+        temperature: 0.6
+      }
+    })
+
+    await (wrapper.vm as any).openModelSettings('aihubmix', 'kimi-k3')
+    await flushPromises()
+
+    expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).localSettings.temperature).toBe(0.6)
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
   })
 
   it('ignores existing draft generation overrides when loading draft model defaults', async () => {

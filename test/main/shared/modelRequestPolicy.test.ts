@@ -8,6 +8,7 @@ import {
 import {
   applyModelRequestPolicy,
   isKimiK3ModelId,
+  resolveCapabilityAwareRequestParameterPolicy,
   resolveModelRequestPolicy
 } from '../../../src/shared/modelRequestPolicy'
 
@@ -111,6 +112,23 @@ describe('moonshot Kimi temperature policy', () => {
       reasoning: false,
       temperature: 0.6,
       topP: 0.8
+    })
+  })
+
+  it('normalizes unsupported temperature into effective omit without overriding explicit policy', () => {
+    const passthrough = resolveModelRequestPolicy('openai', 'gpt-5', false).temperature
+
+    expect(resolveCapabilityAwareRequestParameterPolicy(passthrough, false)).toEqual({
+      mode: 'omit'
+    })
+    expect(resolveCapabilityAwareRequestParameterPolicy(passthrough, undefined)).toEqual({
+      mode: 'passthrough'
+    })
+
+    const fixed = resolveModelRequestPolicy('moonshot', 'kimi-k2.6', true).temperature
+    expect(resolveCapabilityAwareRequestParameterPolicy(fixed, false)).toEqual({
+      mode: 'fixed',
+      value: 1
     })
   })
 })

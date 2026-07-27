@@ -897,6 +897,9 @@
     }
   },
   "model": {
+    "capabilityLoadError": "Model capabilities could not be loaded. Generation parameters are temporarily unavailable.",
+    "temperatureFixedByPolicy": "This model fixes temperature to {value}.",
+    "topPFixedByPolicy": "This model fixes Top P to {value}.",
     "title": "Model Settings",
     "systemPrompt": {
       "label": "System Prompt",
@@ -1024,7 +1027,6 @@
       "currentUsingModelDefault": "Currently using model default configuration",
       "temperature": {
         "description": "Control the randomness of the output. Most models are 0-1, and some support between 0-2. Higher values increase randomness.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 fixes temperature to {enabled} when thinking is enabled and {disabled} when it is disabled.",
         "label": "Temperature"
       },
       "topP": {

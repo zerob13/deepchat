@@ -175,7 +175,6 @@
     "systemPrompt": "系統提示詞",
     "systemPromptPlaceholder": "選擇預設",
     "temperature": "溫度",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 在開啟思考時固定為 {enabled}，關閉思考時固定為 {disabled}。",
     "topP": "Top P（核心採樣）",
     "topPDescription": "留空使用服務商預設值",
     "contextLength": "上下文長度",

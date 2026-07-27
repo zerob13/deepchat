@@ -178,7 +178,6 @@
     "systemPrompt": "Kata gesaan sistem",
     "systemPromptPlaceholder": "Pilih pratetap",
     "temperature": "suhu",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ditetapkan pada {enabled} apabila pemikiran dihidupkan dan {disabled} apabila pemikiran dimatikan.",
     "topP": "Top P",
     "topPDescription": "Nucleus sampling; leave blank to use provider default",
     "contextLength": "panjang konteks",

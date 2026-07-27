@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
+vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn(() => '/mock/path'),
+    getVersion: vi.fn(() => '0.0.0-test'),
+    getLocale: vi.fn(() => 'en-US')
+  }
+}))
+
 const state = vi.hoisted(() => ({
   mockDb: {
     providers: {
@@ -154,7 +162,34 @@ const state = vi.hoisted(() => ({
       },
       openai: {
         id: 'openai',
-        models: []
+        models: [
+          {
+            id: 'gpt-5',
+            temperature: false,
+            reasoning: { supported: true, default: true },
+            extra_capabilities: {
+              reasoning: {
+                supported: true,
+                mode: 'effort',
+                effort: 'medium',
+                effort_options: ['minimal', 'low', 'medium', 'high']
+              }
+            }
+          },
+          {
+            id: 'o3',
+            temperature: false,
+            reasoning: { supported: true, default: true },
+            extra_capabilities: {
+              reasoning: {
+                supported: true,
+                mode: 'effort',
+                effort: 'medium',
+                effort_options: ['low', 'medium', 'high']
+              }
+            }
+          }
+        ]
       },
       'sole-provider': {
         id: 'sole-provider',
@@ -176,6 +211,7 @@ import {
   resolveCapabilityFamilyHint,
   resolveCapabilityIdentity
 } from '../../../src/main/provider/capabilityIdentity'
+import { ProviderSettings } from '../../../src/main/provider/settings'
 
 describe('capability identity resolution', () => {
   it('resolves New API K3 to the Moonshot catalog record before transport', () => {
@@ -400,6 +436,53 @@ describe('capability identity resolution', () => {
       catalogMatched: true,
       catalogModelId: 'kimi-k3'
     })
+  })
+
+  it.each(['gpt-5', 'o3'])(
+    'keeps effort model %s hidden through explicit temperature capability',
+    (modelId) => {
+      const identity = resolveCapabilityIdentity({
+        providerId: 'openai',
+        modelId
+      })
+
+      expect(buildResolvedCapabilitySnapshot(identity)).toMatchObject({
+        temperatureCapability: false,
+        requestPolicy: {
+          temperature: { mode: 'omit' }
+        },
+        supportsReasoningEffort: true
+      })
+    }
+  )
+
+  it('uses stored reasoning for state-dependent fixed policy unless a draft overrides it', () => {
+    const providerSettings = Object.create(ProviderSettings.prototype) as ProviderSettings
+    const identity = {
+      providerId: 'moonshot',
+      requestModelId: 'kimi-k2.6',
+      catalogMatched: false as const,
+      catalogModelId: null
+    }
+    const resolveIdentity = vi.fn(() => identity)
+    const getModelConfig = vi.fn(() => ({ reasoning: true }))
+
+    Object.assign(providerSettings as object, {
+      resolveCapabilityIdentityForModel: resolveIdentity,
+      getModelConfig
+    })
+
+    expect(
+      providerSettings.getCapabilitySnapshot('new-api', 'kimi-k2.6').requestPolicy.temperature
+    ).toEqual({ mode: 'fixed', value: 1 })
+    expect(getModelConfig).toHaveBeenCalledWith('kimi-k2.6', 'new-api', identity)
+
+    expect(
+      providerSettings.getCapabilitySnapshot('new-api', 'kimi-k2.6', {
+        reasoning: false
+      }).requestPolicy.temperature
+    ).toEqual({ mode: 'fixed', value: 0.6 })
+    expect(getModelConfig).toHaveBeenCalledTimes(1)
   })
 
   it('keeps Phase 1 narrow and transport fallback internal to identity resolution', () => {

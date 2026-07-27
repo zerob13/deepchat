@@ -178,7 +178,6 @@
     "systemPrompt": "System Prompt",
     "systemPromptPlaceholder": "Chọn một cài đặt trước",
     "temperature": "Nhiệt độ",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 sửa nhiệt độ thành {enabled} khi tính năng suy nghĩ được bật và {disabled} khi tính năng này bị tắt.",
     "topP": "Top P",
     "topPDescription": "Nucleus sampling; leave blank to use provider default",
     "contextLength": "Độ dài ngữ cảnh",

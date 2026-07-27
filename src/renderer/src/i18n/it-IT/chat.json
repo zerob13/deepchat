@@ -178,7 +178,6 @@
     "systemPrompt": "Prompt di sistema",
     "systemPromptPlaceholder": "Seleziona preset",
     "temperature": "Temperatura",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 usa {enabled} quando il ragionamento è attivo e {disabled} quando è disattivo.",
     "topP": "Top P",
     "topPDescription": "Campionamento nucleus; lascia vuoto per usare il valore predefinito del provider",
     "contextLength": "Lunghezza contesto",

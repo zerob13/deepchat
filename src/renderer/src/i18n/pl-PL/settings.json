@@ -896,6 +896,9 @@
     }
   },
   "model": {
+    "capabilityLoadError": "Nie udało się wczytać możliwości modelu. Parametry generowania są tymczasowo niedostępne.",
+    "temperatureFixedByPolicy": "Ten model ustala temperaturę na {value}.",
+    "topPFixedByPolicy": "Ten model ustala Top P na {value}.",
     "title": "Ustawienia modelu",
     "systemPrompt": {
       "label": "System Prompt",
@@ -1023,7 +1026,6 @@
       "currentUsingModelDefault": "Obecnie korzystam z domyślnej konfiguracji modelu",
       "temperature": {
         "description": "Kontroluj losowość wyjścia. Większość modeli ma wartość 0-1, a niektóre obsługują wartości w zakresie 0-2. Wyższe wartości zwiększają losowość.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ustala temperaturę na {enabled}, gdy myślenie jest włączone, i {disabled}, gdy jest wyłączone.",
         "label": "Temperatura"
       },
       "topP": {
