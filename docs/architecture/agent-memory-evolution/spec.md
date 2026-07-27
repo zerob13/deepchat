@@ -2,8 +2,9 @@
 
 ## Status
 
-- State: Complete
-- Completed: 2026-07-26
+- State: In progress
+- Initial implementation completed: 2026-07-26
+- Post-implementation hardening opened: 2026-07-27
 - Branch: `feat/agent-memory-evolution`
 - Classification: Architecture evolution with user-visible behavior
 - Naming: This work does not assign a numeric version to the Agent Memory system. Existing `v1` and
@@ -281,6 +282,46 @@ one Agent and cannot cross its ownership boundary.
 - Memory remains fail-open for the conversation and fail-closed for stale writes.
 - No forgotten plaintext appears in tombstones, logs, audit refs, or diagnostics.
 - Hot-path database and vector work remains bounded.
+
+### AC-9: Post-implementation hardening
+
+- Every Memory-owned test is classified into exactly one maintained gate; native trust-boundary
+  tests execute in the native gate.
+- Upgraded databases enforce temporal and scope invariants at write time. Import skips malformed
+  rows independently, and startup repairs legacy invalid temporal metadata instead of boot-looping.
+- A rewrite merge preserves the only available temporal interpretation; conflicting interpretations
+  never erase time semantics without an observable audit decision.
+- Malformed model-produced temporal metadata rejects only that extracted candidate.
+- Explicit user re-authorization may recreate an exactly forgotten claim atomically; background
+  extraction and replay remain suppressed.
+- Scoped FTS importance candidates retain indexed ordering without a whole-Agent temporary sort.
+- Directive approval text is display-safe, capacity rejection is distinguishable, and trusted
+  directives are the last optional contribution shed before a hard context overflow.
+- Management search remains evidence-complete even when a topic is suppressed from runtime recall.
+- Persistent claim lineage contains no self-edges; in-place revisions remain observable through
+  audit rather than pretending to derive a claim from itself.
+- Working projection and reflection tests prove that narrow-scope claims cannot be promoted into
+  Agent-wide projections.
+
+## Review disposition
+
+The 2026-07-27 post-implementation review was verified against the branch rather than accepted as a
+premise:
+
+- Confirmed: test-scope classification, upgraded-schema temporal enforcement, import isolation,
+  temporal merge preservation, explicit relearning, retired-index churn, scoped FTS ordering,
+  directive display controls and capacity results, projection/reflection scope tests, strict
+  extraction temporal validation, management-search visibility, lineage self-edges, directive
+  overflow fallback, Chinese locale gaps, migration/boundary/idempotency coverage, and live system
+  timezone resolution.
+- Partially confirmed: `memory_remember` already returned a structured `forgotten` reason; the real
+  defect was permanent denial of an explicitly authorized relearn and generic renderer feedback.
+- Rejected: adding an unknown allocation lane does not null Tape inspection. The parser ignores
+  unknown object fields while retaining the four known lanes, and a Tape-to-route allocation
+  fixture already exists.
+- Deferred as unrelated or tuning-only: pre-existing vector-sidecar cleanup and abort/resume access
+  deduplication, directive lane share tuning, downgrade release notes, and translations that require
+  native-language review beyond the maintained Chinese variants.
 
 ## Non-goals
 

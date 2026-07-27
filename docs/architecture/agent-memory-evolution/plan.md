@@ -207,6 +207,38 @@ surface scope metadata.
 
 Default callers use only Agent scope, preserving current behavior.
 
+## 9. Post-implementation hardening
+
+Land review hardening in independently reviewable slices:
+
+1. restore the Memory CI manifest before relying on focused-gate results;
+2. add temporal write triggers, startup repair, import prevalidation, and retired-index cleanup;
+3. preserve one-sided temporal metadata and reject malformed extracted temporal candidates;
+4. make explicit relearning atomically consume matching tombstones while keeping background replay
+   suppressed;
+5. harden directive normalization and expose typed capacity outcomes through additive route fields;
+6. replace multi-scope importance scans with bounded per-scope ordered branches;
+7. keep management search unsuppressed and prevent derivation self-edges;
+8. shed directives only after memory when an active turn otherwise cannot physically fit;
+9. add scope, migration, boundary, idempotency, locale, and precision regression coverage.
+
+Storage enforcement is defense in depth:
+
+- SQLite triggers reject future malformed temporal/scope writes;
+- import validates each row before the target statement so one malformed row does not abort the
+  restore transaction;
+- startup normalizes any invalid temporal rows left by older builds or external corruption to
+  atemporal metadata and logs the repair count.
+
+Explicit relearning is not a general tombstone-management API. Only a deliberate manual/tool write
+may remove the exact content/provenance tombstones needed for that claim, in the same transaction as
+the insert. Extraction, migration replay, conflict resolution, and maintenance remain unable to
+override forgetting.
+
+Scoped FTS ordering uses one bounded indexed branch per applicable scope followed by an outer
+bounded merge. Branch count is capped by the closed scope set, and every branch retains Agent
+ownership in its predicate.
+
 ## Compatibility and rollback
 
 - All schema changes are additive.

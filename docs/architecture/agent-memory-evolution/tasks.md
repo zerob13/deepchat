@@ -97,3 +97,23 @@ reproduce when their files run alone and are already present at the `dev` merge 
 The missing APIs and legacy migration behavior targeted by those assertions are unchanged by this
 architecture goal and already disagree with the tests at the `dev` merge base. This branch only adds
 Memory-owned entries to the shared schema catalog.
+
+## 8. Post-implementation hardening
+
+- [ ] Classify all Memory tests and run native directive persistence tests in CI.
+- [ ] Enforce temporal invariants on upgraded databases and repair invalid legacy rows.
+- [ ] Skip malformed temporal/scope import rows without rolling back valid data.
+- [ ] Retire the superseded recall index without rebuilding it at startup.
+- [ ] Preserve one-sided temporal metadata across all rewrite paths.
+- [ ] Reject malformed extracted temporal candidates independently.
+- [ ] Allow explicit relearning to atomically supersede exact tombstones.
+- [ ] Strip invisible directive controls and return typed capacity failures.
+- [ ] Preserve indexed ordering for multi-scope FTS importance candidates.
+- [ ] Keep suppressed claims visible to management search.
+- [ ] Remove and prevent persistent lineage self-edges.
+- [ ] Shed directive contributions as the final optional context-pressure fallback.
+- [ ] Add working/reflection scope, migration, temporal boundary, idempotency, and precision tests.
+- [ ] Localize new Memory strings for maintained Chinese variants.
+- [ ] Resolve system timezone dynamically and bound explicit-clear row materialization.
+- [ ] Run final formatting, i18n, lint, typecheck, focused gates, native gates, and broader tests.
+- [ ] Complete a final severity-ordered review and resolve every actionable finding.
