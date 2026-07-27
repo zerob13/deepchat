@@ -953,9 +953,10 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
         }>
       ).map((column) => column.name)
     )
-    const archiveStateAssignments = columns.has('lifecycle_state')
-      ? "lifecycle_state = 'archived', status = 'archived'"
-      : "status = 'archived'"
+    const archiveStateAssignments = [
+      columns.has('lifecycle_state') ? "lifecycle_state = 'archived'" : null,
+      columns.has('status') ? "status = 'archived'" : null
+    ].filter((assignment): assignment is string => assignment !== null)
     const repair = this.db.transaction(() => {
       this.db.exec(AGENT_MEMORY_TEMPORAL_TRIGGER_DROP_SQL)
       const quarantinedIds = (
@@ -970,20 +971,29 @@ export class AgentMemoryTable extends BaseTable implements MemoryRepositoryPort 
           )
           .all() as Array<{ id: string }>
       ).map((row) => row.id)
-      const quarantined = this.db
-        .prepare(
-          `UPDATE agent_memory
-           SET temporal_kind = 'atemporal',
-               valid_from = NULL,
-               valid_until = NULL,
-               temporal_confidence = NULL,
-               temporal_precision = NULL,
-               temporal_timezone = NULL,
-               ${archiveStateAssignments}
-           WHERE (${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL})
-             AND kind NOT IN ('persona', 'working')`
-        )
-        .run().changes
+      const quarantined =
+        archiveStateAssignments.length > 0
+          ? this.db
+              .prepare(
+                `UPDATE agent_memory
+                 SET temporal_kind = 'atemporal',
+                     valid_from = NULL,
+                     valid_until = NULL,
+                     temporal_confidence = NULL,
+                     temporal_precision = NULL,
+                     temporal_timezone = NULL,
+                     ${archiveStateAssignments.join(', ')}
+                 WHERE (${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL})
+                   AND kind NOT IN ('persona', 'working')`
+              )
+              .run().changes
+          : this.db
+              .prepare(
+                `DELETE FROM agent_memory
+                 WHERE (${AGENT_MEMORY_TEMPORAL_INVALID_ROW_SQL})
+                   AND kind NOT IN ('persona', 'working')`
+              )
+              .run().changes
       const normalizedInternal = this.db
         .prepare(
           `UPDATE agent_memory

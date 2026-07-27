@@ -3614,13 +3614,15 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
           created_at INTEGER NOT NULL
         );
         INSERT INTO agent_memory (id, agent_id, kind, content, created_at)
-        VALUES ('legacy', 'a', 'semantic', 'legacy memory', 1);
+        VALUES ('legacy', 'a', 'semantic', 'legacy memory', 1),
+               ('invalid', 'a', 'semantic', 'invalid temporal memory', 2);
       `)
       const table = new AgentMemoryTableCtor(db)
       const migration = table.getMigrationSQL(46)
       if (!migration) throw new Error('expected temporal migration')
 
       db.exec(migration)
+      db.prepare("UPDATE agent_memory SET temporal_kind = 'state' WHERE id = 'invalid'").run()
       table.finalizeMigration(46)
 
       expect(
@@ -3639,6 +3641,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
         temporal_precision: null,
         temporal_timezone: null
       })
+      expect(db.prepare("SELECT id FROM agent_memory WHERE id = 'invalid'").get()).toBeUndefined()
       expect(() =>
         db.prepare('UPDATE agent_memory SET temporal_confidence = 2 WHERE id = ?').run('legacy')
       ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
