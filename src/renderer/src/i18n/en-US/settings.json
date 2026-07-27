@@ -897,7 +897,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "Model capabilities could not be loaded. Generation parameters are temporarily unavailable.",
     "temperatureFixedByPolicy": "This model fixes temperature to {value}.",
     "topPFixedByPolicy": "This model fixes Top P to {value}.",
     "title": "Model Settings",

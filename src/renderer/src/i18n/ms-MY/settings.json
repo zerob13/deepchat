@@ -896,7 +896,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "Keupayaan model tidak dapat dimuatkan. Parameter penjanaan tidak tersedia buat sementara waktu.",
     "temperatureFixedByPolicy": "Model ini menetapkan suhu kepada {value}.",
     "topPFixedByPolicy": "Model ini menetapkan Top P kepada {value}.",
     "title": "Tetapan model",

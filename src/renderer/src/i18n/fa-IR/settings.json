@@ -565,7 +565,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "قابلیت‌های مدل بارگیری نشد. پارامترهای تولید موقتاً در دسترس نیستند.",
     "temperatureFixedByPolicy": "این مدل دما را روی {value} ثابت می‌کند.",
     "topPFixedByPolicy": "این مدل Top P را روی {value} ثابت می‌کند.",
     "title": "تنظیمات مدل",

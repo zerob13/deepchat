@@ -257,7 +257,7 @@ describe('useModelCapabilities', () => {
     })
   })
 
-  it('keeps loading and failure distinct from passthrough and supports retry', async () => {
+  it('keeps failure distinct from passthrough while hiding failed controls', async () => {
     const pending = deferred<ReturnType<typeof createCapabilities>>()
     modelClient.getCapabilities
       .mockReturnValueOnce(pending.promise)
@@ -275,8 +275,12 @@ describe('useModelCapabilities', () => {
 
     await api.load('openai', 'gpt-4')
     expect(api.status.value).toBe('error')
+    expect(api.queryIdentity.value).toEqual({
+      providerId: 'openai',
+      modelId: 'gpt-4'
+    })
     expect(api.requestPolicy.value).toBeNull()
-    expect(api.temperatureControl.value).toEqual({ mode: 'error' })
+    expect(api.temperatureControl.value).toEqual({ mode: 'hidden' })
 
     await api.refresh()
     expect(api.status.value).toBe('ready')

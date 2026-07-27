@@ -896,7 +896,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "无法加载模型能力，生成参数暂不可编辑。",
     "temperatureFixedByPolicy": "此模型将温度固定为 {value}。",
     "topPFixedByPolicy": "此模型将 Top P 固定为 {value}。",
     "title": "模型设置",

@@ -896,7 +896,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "Model özellikleri yüklenemedi. Üretim parametreleri geçici olarak kullanılamıyor.",
     "temperatureFixedByPolicy": "Bu model sıcaklığı {value} olarak sabitler.",
     "topPFixedByPolicy": "Bu model Top P değerini {value} olarak sabitler.",
     "title": "Modeli Ayarları",

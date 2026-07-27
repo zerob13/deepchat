@@ -50,7 +50,7 @@ an editable control can appear before resolution or remain after an IPC failure.
 10. Preserve reasoning capabilities for recognized model-origin families without restoring
     provider-order-based cross-provider portrait selection.
 11. Make renderer generation controls an atomic projection of the same effective request policy
-    used by the final wire request, with explicit loading and error states.
+    used by the final wire request, with explicit internal loading and error states.
 
 ## Required Invariants
 
@@ -142,9 +142,11 @@ previous query immediately; stale responses cannot restore it.
 
 Loading and successful unknown capability are distinct states. Loading reserves the control's
 layout with a skeleton and exposes no editable sampling input. A successful unknown model preserves
-passthrough compatibility. An IPC failure exposes an explicit retryable error and never silently
-becomes passthrough. Model configuration cannot be saved while a non-empty model identity has no
-ready capability snapshot.
+passthrough compatibility. An IPC failure remains an internal error state for diagnostics and race
+control, but generation controls are silently hidden instead of exposing infrastructure errors to
+the user. It never becomes passthrough. Once the failed query matches the current provider and model
+identity, unrelated model configuration remains saveable while hidden generation values are
+preserved.
 
 The snapshot does not expose a speculative resolution-source field. Request tracing currently has
 no metadata contract that consumes it; diagnostics should be added only together with a real trace
@@ -294,7 +296,8 @@ added.
 22. Initial capability loading and model switching reserve generation-control layout with a
     skeleton; they never expose stale or editable sampling controls and do not cause the first
     control section to collapse and reappear.
-23. Capability IPC failure produces an explicit retryable error state. It does not synthesize a
+23. Capability IPC failure remains internally distinguishable from unknown support, produces no
+    user-facing error or retry control, hides generation controls, and does not synthesize a
     passthrough policy.
 24. Fixed temperature and top-P controls use generic request-policy state and policy values;
     renderer code contains no Kimi-specific lock branch, and rendering hidden or fixed controls

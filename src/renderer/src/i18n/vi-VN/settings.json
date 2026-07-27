@@ -896,7 +896,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "Không thể tải các khả năng của mô hình. Các tham số tạo tạm thời không khả dụng.",
     "temperatureFixedByPolicy": "Mô hình này cố định nhiệt độ ở {value}.",
     "topPFixedByPolicy": "Mô hình này cố định Top P ở {value}.",
     "title": "Cài đặt mẫu",

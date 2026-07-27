@@ -134,23 +134,24 @@ fixed and omitted model policies; convert passthrough to omit only for catalog t
 Unknown remains passthrough. Runtime request serialization consumes this effective policy directly,
 so the snapshot field is the single wire and renderer decision.
 
-Extend `useModelCapabilities` to own an atomic capability snapshot, query lifecycle, error, retry,
-and a pure number-control projection. Support both its existing watched provider/model mode and
-manual queries with route and reasoning options so ModelConfigDialog and ChatStatusBar can use the
-same owner without adding requests. Starting a query clears the prior snapshot and exposes loading;
-request tokens still reject stale responses.
+Extend `useModelCapabilities` to own an atomic capability snapshot, query lifecycle, internal error
+state, query identity, and a pure number-control projection. Support both its existing watched
+provider/model mode and manual queries with route and reasoning options so ModelConfigDialog and
+ChatStatusBar can use the same owner without adding requests. Starting a query clears the prior
+snapshot and exposes loading; request tokens still reject stale responses.
 
 Migrate ChatConfig, ChatStatusBar, and ModelConfigDialog to the composable projection. Remove their
 independent request-policy and temperature refs. Replace Kimi-specific fixed-control checks with
 the generic fixed policy value. Remove reasoning-effort as a temperature-visibility proxy; explicit
 temperature policy remains authoritative.
 
-Render a stable skeleton in the temperature control slot while loading. On error, render a
-retryable capability message and no editable sampling fields. A successful unknown snapshot still
-renders passthrough controls for custom-model compatibility. The renderer does not clear or
-overwrite stored generation values merely because a control becomes hidden or fixed; existing
-save-boundary provider normalization remains unchanged. Require a ready snapshot for the current
-non-empty model identity before saving its configuration.
+Render a stable skeleton in the temperature control slot while loading. On error, silently hide
+generation controls while retaining the internal error and failed query identity; do not expose a
+retry prompt or editable fallback. A successful unknown snapshot still renders passthrough controls
+for custom-model compatibility. The renderer does not clear or overwrite stored generation values
+merely because a control becomes hidden or fixed; existing save-boundary provider normalization
+remains unchanged. Require either a current ready snapshot or a settled failure for the current
+provider/model identity before saving its configuration.
 
 Resolve state-dependent fixed policy from an explicit editor reasoning override when available.
 For read-only consumers, use persisted reasoning only after the fixed-temperature family prefilter
@@ -158,7 +159,7 @@ matches, so ordinary capability queries retain the route-only fast path.
 
 Add a cross-layer matrix test that feeds the same effective policy into renderer presentation and
 runtime serialization, covering passthrough, fixed, capability-derived omit, and explicit K3 omit.
-Add direct Aihubmix K3, initial loading, error/retry, rapid model switch, K2 fixed value, and
+Add direct Aihubmix K3, initial loading, silent error, rapid model switch, K2 fixed value, and
 effort-plus-temperature renderer regressions.
 
 ## Review and commit slices
@@ -190,7 +191,7 @@ Run focused tests after each slice:
 - GLM, MiniMax, GPT-OSS, and ambiguous-family identity tests
 - non-K3 reasoning-effort compatibility tests
 - ChatStatusBar and ModelConfigDialog renderer tests
-- ChatConfig and `useModelCapabilities` loading/error/policy projection tests
+- ChatConfig and `useModelCapabilities` loading/silent-error/policy projection tests
 - direct Aihubmix K3 renderer tests
 - cross-layer renderer/wire policy matrix
 - agent generation settings tests

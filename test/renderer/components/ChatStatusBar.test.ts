@@ -59,6 +59,7 @@ type SetupOptions = {
   capabilityProviderId?: string
   temperatureCapability?: boolean | undefined
   requestPolicy?: ModelRequestPolicy
+  capabilityRequestError?: Error
   projectPath?: string | null
   acpDraftSessionId?: string | null
   acpProcessConfig?: AcpConfigState | null
@@ -477,8 +478,12 @@ const setup = async (options: SetupOptions = {}) => {
       verbosity: 'medium',
       ...options.modelConfig
     }),
-    getCapabilities: vi.fn().mockImplementation((providerId: string, modelId: string) =>
-      Promise.resolve({
+    getCapabilities: vi.fn().mockImplementation((providerId: string, modelId: string) => {
+      if (options.capabilityRequestError) {
+        return Promise.reject(options.capabilityRequestError)
+      }
+
+      return Promise.resolve({
         identity: {
           providerId: options.capabilityProviderId ?? providerId,
           requestModelId: modelId,
@@ -508,7 +513,7 @@ const setup = async (options: SetupOptions = {}) => {
         supportsVerbosity: true,
         verbosityDefault: 'medium'
       })
-    )
+    })
   }
 
   const baseSessionSettings: TestGenerationSettings = {
@@ -1827,6 +1832,27 @@ describe('ChatStatusBar model and session panels', () => {
     expect((wrapper.vm as any).showTemperatureControl).toBe(false)
     expect((wrapper.vm as any).localSettings.temperature).toBe(0.6)
     expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
+  })
+
+  it('silently hides generation controls when capability loading fails', async () => {
+    const { wrapper } = await setup({
+      agentId: 'deepchat',
+      hasActiveSession: false,
+      preferredModel: { providerId: 'openai', modelId: 'gpt-4' },
+      defaultModel: { providerId: 'openai', modelId: 'gpt-4' },
+      capabilityRequestError: new Error('ipc unavailable')
+    })
+
+    await (wrapper.vm as any).openModelSettings('openai', 'gpt-4')
+    await flushPromises()
+
+    expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).topPControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).showTopPControl).toBe(false)
+    expect(wrapper.find('[data-testid="generation-parameter-loading"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.topP')
   })
 
   it('ignores existing draft generation overrides when loading draft model defaults', async () => {

@@ -565,7 +565,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "モデルの機能情報を読み込めませんでした。生成パラメーターは一時的に利用できません。",
     "temperatureFixedByPolicy": "このモデルでは温度が {value} に固定されます。",
     "topPFixedByPolicy": "このモデルでは Top P が {value} に固定されます。",
     "title": "モデル設定",

@@ -565,7 +565,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "לא ניתן לטעון את יכולות המודל. פרמטרי היצירה אינם זמינים זמנית.",
     "temperatureFixedByPolicy": "המודל הזה מקבע את הטמפרטורה ל-{value}.",
     "topPFixedByPolicy": "המודל הזה מקבע את Top P ל-{value}.",
     "title": "הגדרות מודל",

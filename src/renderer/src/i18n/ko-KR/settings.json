@@ -565,7 +565,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "모델 기능을 불러오지 못했습니다. 생성 매개변수를 일시적으로 사용할 수 없습니다.",
     "temperatureFixedByPolicy": "이 모델은 온도를 {value}(으)로 고정합니다.",
     "topPFixedByPolicy": "이 모델은 Top P를 {value}(으)로 고정합니다.",
     "title": "모델 설정",

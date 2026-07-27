@@ -131,11 +131,7 @@
 
           <TtsSettingsFields v-if="showTtsSettings" v-model="config.tts" />
 
-          <GenerationParameterControlState
-            v-if="temperatureControl.mode === 'loading' || temperatureControl.mode === 'error'"
-            :state="temperatureControl.mode"
-            @retry="fetchCapabilities"
-          />
+          <GenerationParameterLoadingSkeleton v-if="temperatureControl.mode === 'loading'" />
 
           <!-- 温度 -->
           <div
@@ -602,7 +598,7 @@ import { useProviderStore } from '@/stores/providerStore'
 import OpenAIImageGenerationSettingsFields from './OpenAIImageGenerationSettingsFields.vue'
 import OpenAIVideoGenerationSettingsFields from './OpenAIVideoGenerationSettingsFields.vue'
 import TtsSettingsFields from './TtsSettingsFields.vue'
-import GenerationParameterControlState from '../GenerationParameterControlState.vue'
+import GenerationParameterLoadingSkeleton from '../GenerationParameterLoadingSkeleton.vue'
 import {
   useModelCapabilities,
   type GenerationParameterControl
@@ -1027,6 +1023,17 @@ const capabilitySnapshotMatchesCurrentModel = computed(
     !currentModelLookupId.value ||
     (modelCapabilities.status.value === 'ready' &&
       modelCapabilities.identity.value?.requestModelId === currentModelLookupId.value)
+)
+const capabilityQueryMatchesCurrentModel = computed(
+  () =>
+    modelCapabilities.queryIdentity.value?.providerId === props.providerId.trim() &&
+    modelCapabilities.queryIdentity.value?.modelId === currentModelLookupId.value
+)
+const capabilityResolutionSettledForCurrentModel = computed(
+  () =>
+    !currentModelLookupId.value ||
+    capabilitySnapshotMatchesCurrentModel.value ||
+    (modelCapabilities.status.value === 'error' && capabilityQueryMatchesCurrentModel.value)
 )
 
 const temperatureControl = computed<GenerationParameterControl>(() => {
@@ -1477,7 +1484,7 @@ const isValid = computed(() => {
   return (
     Object.keys(errors.value).length === 0 &&
     !genericThinkingBudgetError.value &&
-    capabilitySnapshotMatchesCurrentModel.value
+    capabilityResolutionSettledForCurrentModel.value
   )
 })
 

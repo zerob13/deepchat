@@ -259,13 +259,8 @@
 
                   <div v-else-if="localSettings" class="space-y-4">
                     <TooltipProvider :delay-duration="200">
-                      <GenerationParameterControlState
-                        v-if="
-                          temperatureControl.mode === 'loading' ||
-                          temperatureControl.mode === 'error'
-                        "
-                        :state="temperatureControl.mode"
-                        @retry="syncGenerationSettings"
+                      <GenerationParameterLoadingSkeleton
+                        v-if="temperatureControl.mode === 'loading'"
                       />
 
                       <div
@@ -1075,7 +1070,7 @@ import { useProjectStore } from '@/stores/ui/project'
 import { useSessionStore } from '@/stores/ui/session'
 import { scheduleStartupDeferredTask } from '@/lib/startupDeferred'
 import { useChatStatusBarAcpConfig } from './composables/useChatStatusBarAcpConfig'
-import GenerationParameterControlState from '@/components/GenerationParameterControlState.vue'
+import GenerationParameterLoadingSkeleton from '@/components/GenerationParameterLoadingSkeleton.vue'
 import {
   useModelCapabilities,
   type RendererModelCapabilities

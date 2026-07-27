@@ -119,3 +119,27 @@
 - The severity-ordered renderer review found and fixed one medium-severity stale-identity window
   that could enable saving a renamed custom model against the prior capability snapshot, and one
   low-severity overbroad shared-helper name. No remaining findings were identified.
+
+## Silent capability failure presentation
+
+- [x] Replace the user-facing capability error and retry control with silent generation-control
+      hiding.
+- [x] Preserve internal error and failed query identity without synthesizing passthrough.
+- [x] Keep unrelated model configuration saveable after a settled current-query failure.
+- [x] Remove obsolete capability-error translations and retry UI.
+- [x] Update renderer regressions for silent failure behavior.
+- [x] Run focused and required repository validation.
+- [x] Review the complete diff by severity, fix findings, and commit without pushing.
+
+### Validation result
+
+- `pnpm run format`: passed on 2318 files.
+- `pnpm run i18n`: no missing keys or invalid translations.
+- `pnpm run lint`: passed, including the agent cleanup guard.
+- `pnpm run typecheck`: node and renderer checks passed.
+- `pnpm run test:renderer`: 199 files and 1586 tests passed.
+- Focused composable and three-consumer failure suite: 119 tests passed, including the added direct
+  ChatStatusBar coverage.
+- The severity-ordered review found and closed one low-severity consumer coverage gap. No remaining
+  correctness, compatibility, security, performance, naming, or maintenance findings were
+  identified.

@@ -896,7 +896,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "Nie udało się wczytać możliwości modelu. Parametry generowania są tymczasowo niedostępne.",
     "temperatureFixedByPolicy": "Ten model ustala temperaturę na {value}.",
     "topPFixedByPolicy": "Ten model ustala Top P na {value}.",
     "title": "Ustawienia modelu",

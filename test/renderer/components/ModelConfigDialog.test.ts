@@ -836,39 +836,49 @@ describe('ModelConfigDialog reasoning portraits', () => {
     expect(wrapper.find('[data-testid="generation-parameter-loading"]').exists()).toBe(false)
   })
 
-  it('shows an explicit retryable error instead of falling back to passthrough', async () => {
-    let attempts = 0
+  it('silently hides failed capability controls without blocking unrelated configuration', async () => {
     const options: SetupOptions = {
       providerId: 'aihubmix',
       modelId: 'kimi-k3',
       modelName: 'Kimi K3',
+      isCustomModel: true,
+      customModels: [{ id: 'kimi-k3', name: 'Kimi K3' }],
+      modelConfig: {
+        temperature: 0.6,
+        topP: 0.4
+      },
       requestPolicy: {
         temperature: { mode: 'omit' },
         topP: { mode: 'omit' },
         reasoning: { mode: 'fixed', value: true },
         legacyThinking: { mode: 'omit' }
       },
-      getCapabilities: () => {
-        attempts += 1
-        return attempts === 1
-          ? Promise.reject(new Error('ipc unavailable'))
-          : Promise.resolve(createCapabilityResult(options))
-      }
+      getCapabilities: () => Promise.reject(new Error('ipc unavailable'))
     }
-    const { wrapper } = await setup(options)
+    const { wrapper, modelConfigStore } = await setup(options)
 
-    expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'error' })
-    expect((wrapper.vm as any).isValid).toBe(false)
-    expect(wrapper.find('[data-testid="generation-parameter-error"]').exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('settings.model.modelConfig.temperature.label')
-
-    await wrapper.find('[data-testid="generation-parameter-retry"]').trigger('click')
-    await flushPromises()
-
-    expect(attempts).toBe(2)
     expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).topPControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).capabilityResolutionSettledForCurrentModel).toBe(true)
     expect((wrapper.vm as any).isValid).toBe(true)
-    expect(wrapper.find('[data-testid="generation-parameter-error"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('settings.model.modelConfig.temperature.label')
+    expect(wrapper.text()).not.toContain('settings.model.modelConfig.topP.label')
+
+    await (wrapper.vm as any).handleSave()
+
+    expect(modelConfigStore.setModelConfig).toHaveBeenCalledWith(
+      'kimi-k3',
+      'aihubmix',
+      expect.objectContaining({
+        temperature: 0.6,
+        topP: 0.4
+      })
+    )
+
+    ;(wrapper.vm as any).modelIdField = 'other-model'
+    await nextTick()
+    expect((wrapper.vm as any).capabilityResolutionSettledForCurrentModel).toBe(false)
+    expect((wrapper.vm as any).isValid).toBe(false)
   })
 })
 

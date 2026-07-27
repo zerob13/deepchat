@@ -130,4 +130,19 @@ describe('ChatConfig generation policy', () => {
         .map((field) => field.attributes('data-label'))
     ).toEqual(['settings.model.contextLength.label', 'settings.model.responseLength.label'])
   })
+
+  it('silently hides generation controls when capability loading fails', async () => {
+    modelClient.getCapabilities.mockRejectedValue(new Error('ipc unavailable'))
+
+    const wrapper = await mountChatConfig()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="generation-parameter-loading"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('settings.model.temperature.label')
+    expect(
+      wrapper
+        .findAll('[data-testid="config-slider-field"]')
+        .map((field) => field.attributes('data-label'))
+    ).toEqual(['settings.model.contextLength.label', 'settings.model.responseLength.label'])
+  })
 })

@@ -17,7 +17,6 @@ export type GenerationParameterControl =
   | { mode: 'editable' }
   | { mode: 'fixed'; value: number }
   | { mode: 'loading' }
-  | { mode: 'error' }
 
 export const resolveGenerationParameterControl = (
   policy: RequestParameterPolicy<number> | null | undefined,
@@ -25,9 +24,6 @@ export const resolveGenerationParameterControl = (
 ): GenerationParameterControl => {
   if (status === 'loading') {
     return { mode: 'loading' }
-  }
-  if (status === 'error') {
-    return { mode: 'error' }
   }
   if (status !== 'ready') {
     return { mode: 'hidden' }
@@ -79,9 +75,12 @@ export interface UseModelCapabilitiesOptions {
   modelId: Ref<string | undefined>
 }
 
-type CapabilityQuery = {
+export type CapabilityQueryIdentity = {
   providerId: string
   modelId: string
+}
+
+type CapabilityQuery = CapabilityQueryIdentity & {
   options?: CapabilitySnapshotOptions
 }
 
@@ -175,6 +174,15 @@ export function useModelCapabilities(options?: UseModelCapabilitiesOptions) {
   }
 
   const identity = computed(() => snapshot.value?.identity ?? null)
+  const queryIdentity = computed<CapabilityQueryIdentity | null>(() => {
+    const query = lastQuery.value
+    return query
+      ? {
+          providerId: query.providerId,
+          modelId: query.modelId
+        }
+      : null
+  })
   const requestPolicy = computed(() => snapshot.value?.requestPolicy ?? null)
   const reasoningPortrait = computed(() => snapshot.value?.reasoningPortrait ?? null)
   const supportsReasoning = computed(() => {
@@ -202,6 +210,7 @@ export function useModelCapabilities(options?: UseModelCapabilitiesOptions) {
     status,
     error,
     identity,
+    queryIdentity,
     requestPolicy,
     reasoningPortrait,
     supportsReasoning,

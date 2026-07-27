@@ -896,7 +896,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "No se pudieron cargar las capacidades del modelo. Los parámetros de generación no están disponibles temporalmente.",
     "temperatureFixedByPolicy": "Este modelo fija la temperatura en {value}.",
     "topPFixedByPolicy": "Este modelo fija Top P en {value}.",
     "title": "Configuración del modelo",

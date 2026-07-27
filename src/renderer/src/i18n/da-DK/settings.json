@@ -498,7 +498,6 @@
     }
   },
   "model": {
-    "capabilityLoadError": "Modelkapaciteterne kunne ikke indlæses. Genereringsparametrene er midlertidigt utilgængelige.",
     "temperatureFixedByPolicy": "Denne model fastlåser temperaturen til {value}.",
     "topPFixedByPolicy": "Denne model fastlåser Top P til {value}.",
     "title": "Modelindstillinger",

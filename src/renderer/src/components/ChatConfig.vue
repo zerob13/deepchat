@@ -16,7 +16,7 @@ import {
 import ConfigSliderField from './ChatConfig/ConfigSliderField.vue'
 import ConfigInputField from './ChatConfig/ConfigInputField.vue'
 import ConfigSelectField from './ChatConfig/ConfigSelectField.vue'
-import GenerationParameterControlState from './GenerationParameterControlState.vue'
+import GenerationParameterLoadingSkeleton from './GenerationParameterLoadingSkeleton.vue'
 
 // === Composables ===
 import { useModelCapabilities } from '@/composables/useModelCapabilities'
@@ -186,11 +186,9 @@ const modelTypeIcon = computed(() => {
         />
       </div>
 
-      <GenerationParameterControlState
-        v-if="temperatureControl.mode === 'loading' || temperatureControl.mode === 'error'"
+      <GenerationParameterLoadingSkeleton
+        v-if="temperatureControl.mode === 'loading'"
         class="mx-2"
-        :state="temperatureControl.mode"
-        @retry="capabilities.refresh"
       />
 
       <!-- Slider Fields (Temperature, Context Length, Response Length) -->
