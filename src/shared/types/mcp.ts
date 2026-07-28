@@ -238,6 +238,7 @@ export interface McpServicePort {
       signal?: AbortSignal
       agentId?: string
       enabledServerIds?: string[]
+      runId?: string
     }
   ): Promise<{ content: string; rawData: MCPToolResponse }>
   preCheckToolPermission(

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { IpcRendererEvent } from 'electron'
+import { createBridge } from './createBridge'
 import {
   DATABASE_UNLOCK_CANCEL_CHANNEL,
   DATABASE_UNLOCK_PROGRESS_CHANNEL,
@@ -8,6 +9,8 @@ import {
   type DatabaseUnlockProgressPayload,
   type DatabaseUnlockRequestPayload
 } from '@shared/contracts/databaseSecurity'
+import { SPLASH_DEBUG_MODE_CHANNEL, type SplashDebugMode } from '@shared/contracts/splash'
+import { configGetLanguageRoute } from '@shared/contracts/routes/config.routes'
 
 interface SplashActivityItem {
   key: string
@@ -34,6 +37,13 @@ function onSplashChannel<TPayload>(
   }
 }
 
+const bridge = createBridge(ipcRenderer)
+let latestDebugMode: SplashDebugMode | null = null
+
+ipcRenderer.on(SPLASH_DEBUG_MODE_CHANNEL, (_event: IpcRendererEvent, mode: SplashDebugMode) => {
+  latestDebugMode = mode
+})
+
 const splashApi = Object.freeze({
   onUpdate: (listener: SplashListener<SplashUpdatePayload>) =>
     onSplashChannel('splash-update', listener),
@@ -41,6 +51,14 @@ const splashApi = Object.freeze({
     onSplashChannel(DATABASE_UNLOCK_REQUEST_CHANNEL, listener),
   onUnlockProgress: (listener: SplashListener<DatabaseUnlockProgressPayload>) =>
     onSplashChannel(DATABASE_UNLOCK_PROGRESS_CHANNEL, listener),
+  onDebugMode: (listener: SplashListener<SplashDebugMode>) => {
+    const unsubscribe = onSplashChannel(SPLASH_DEBUG_MODE_CHANNEL, listener)
+    if (latestDebugMode) {
+      listener(latestDebugMode)
+    }
+    return unsubscribe
+  },
+  getLanguageState: async () => await bridge.invoke(configGetLanguageRoute.name, {}),
   submitUnlock: (payload: { requestId: string; password: string }) => {
     if (!payload.requestId || typeof payload.password !== 'string') {
       return

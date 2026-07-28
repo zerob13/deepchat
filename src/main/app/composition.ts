@@ -57,6 +57,8 @@ import { TrayPresenter } from '../desktop/tray'
 import { OAuthService } from '../provider/auth'
 import { FloatingButtonPresenter } from '../desktop/floatingButton'
 import { YoBrowserPresenter } from '../desktop/browser/YoBrowserPresenter'
+import { ComputerUsePreviewPresenter } from '@/desktop/computerUse/ComputerUsePreviewPresenter'
+import { AgentPreviewCoordinator } from '@/desktop/preview/AgentPreviewCoordinator'
 import { KnowledgeService } from '../knowledge'
 import { WorkspaceService } from '../workspace'
 import { FileWatcherService } from '../platform/fileWatcher'
@@ -234,6 +236,7 @@ export async function createMainProcessControl(dependencies: {
   startupRunId: string
   requestUpdateInstall: (installAction: () => void) => Promise<void>
   onWindowCreated: (isMainWindow: boolean) => void
+  splash: import('./splashWindow').SplashWindow
   bindControl: (control: MainProcessControl) => void
 }) {
   const databaseSecurityService = dependencies.databaseSecurityService
@@ -263,6 +266,8 @@ export async function createMainProcessControl(dependencies: {
   let toolService: ToolServicePort
   let deepChatAgentHarness: DeepChatAgentHarness
   let yoBrowserPresenter: IYoBrowserPresenter
+  let computerUsePreviewPresenter: ComputerUsePreviewPresenter
+  let agentPreviewCoordinator: AgentPreviewCoordinator
   let dialogService: DialogServicePort
   let skillService: SkillServicePort
   let skillSyncService: SkillSyncServicePort
@@ -611,7 +616,16 @@ export async function createMainProcessControl(dependencies: {
   notificationService = new NotificationService(desktopSettings, publishDeepchatEvent)
   trayPresenter = new TrayPresenter(desktopSettings, windowPresenter)
   dialogService = new DialogService(publishDeepchatEvent)
-  yoBrowserPresenter = new YoBrowserPresenter(windowPresenter, publishDeepchatEvent)
+  agentPreviewCoordinator = new AgentPreviewCoordinator()
+  yoBrowserPresenter = new YoBrowserPresenter(
+    windowPresenter,
+    publishDeepchatEvent,
+    agentPreviewCoordinator
+  )
+  computerUsePreviewPresenter = new ComputerUsePreviewPresenter(
+    windowPresenter,
+    agentPreviewCoordinator
+  )
 
   // Define the storage root for built-in knowledge databases.
   const dbDir = path.join(app.getPath('userData'), 'app_db')
@@ -654,7 +668,8 @@ export async function createMainProcessControl(dependencies: {
     () => deepChatAgentHarness.refreshToolRegistry(),
     publishDeepchatEvent,
     (data) => deviceService.cacheImage(data),
-    pluginRuntimeSupervisor
+    pluginRuntimeSupervisor,
+    computerUsePreviewPresenter
   )
   const deeplinkActions = createDeeplinkActions({
     window: windowPresenter,
@@ -1640,7 +1655,13 @@ export async function createMainProcessControl(dependencies: {
     }
     await runDestroyStep('pluginService.shutdown', () => pluginService.shutdown())
     await runDestroyStep('mcpService.shutdown', () => mcpService.shutdown())
+    await runDestroyStep('computerUsePreviewPresenter.shutdown', () =>
+      computerUsePreviewPresenter.shutdown()
+    )
     await runDestroyStep('yoBrowserPresenter.shutdown', () => yoBrowserPresenter.shutdown())
+    await runDestroyStep('agentPreviewCoordinator.shutdown', () =>
+      agentPreviewCoordinator.shutdown()
+    )
     await runDestroyStep('floatingButtonPresenter.destroy', () => floatingButtonPresenter.destroy())
     await runDestroyStep('windowPresenter.destroyFloatingChatWindow', () =>
       windowPresenter.destroyFloatingChatWindow()
@@ -1752,6 +1773,8 @@ export async function createMainProcessControl(dependencies: {
       windowPresenter,
       shortcutPresenter,
       browserPresenter: yoBrowserPresenter,
+      computerUsePreviewPresenter,
+      desktopSessionBinding,
       tabPresenter,
       dialogService,
       settings: desktopSettings,
@@ -1918,7 +1941,8 @@ export async function createMainProcessControl(dependencies: {
       },
       publishSessionsUpdated: (sessionIds) => {
         publishDeepchatEvent(sessionsUpdatedEvent.name, { sessionIds, reason: 'created' })
-      }
+      },
+      splash: dependencies.splash
     })
     const routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {

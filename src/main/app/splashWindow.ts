@@ -17,6 +17,7 @@ import {
   type DatabaseUnlockReason
 } from '@shared/contracts/databaseSecurity'
 import { activateAppOnMac } from '@/lib/activateApp'
+import { SPLASH_DEBUG_MODE_CHANNEL, type SplashDebugMode } from '@shared/contracts/splash'
 
 const SPLASH_SHOW_DELAY_MS = 200
 
@@ -36,6 +37,7 @@ export class SplashWindow {
   private splashLoadCanceled = false
   private splashLoadPromise: Promise<void> | null = null
   private splashShowDelayTimer: ReturnType<typeof setTimeout> | null = null
+  private debugMode: SplashDebugMode | null = null
   constructor() {
     this.setupDatabaseUnlockListeners()
   }
@@ -86,7 +88,8 @@ export class SplashWindow {
         show: false, // 先隐藏窗口，等待 ready-to-show 以避免白屏
         autoHideMenuBar: true,
         skipTaskbar: true,
-        backgroundColor: '#020817',
+        transparent: true,
+        backgroundColor: '#00000000',
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
@@ -101,6 +104,7 @@ export class SplashWindow {
       })
 
       this.splashWindow.webContents.on('did-finish-load', () => {
+        this.splashDidFinishLoad = false
         this.markSplashLoaded()
       })
 
@@ -163,13 +167,37 @@ export class SplashWindow {
     })
   }
 
+  async showDebugScenario(mode: SplashDebugMode): Promise<void> {
+    this.debugMode = mode
+    if (!this.splashWindow || this.splashWindow.isDestroyed()) {
+      await this.create()
+    }
+    this.forceShowSplash({ skipDelay: true })
+    this.emitDebugMode()
+  }
+
+  async closeDebugScenario(): Promise<boolean> {
+    if (!this.debugMode) {
+      return false
+    }
+    this.debugMode = null
+    await this.close({ resolveUnlockRequest: false, skipTransition: true })
+    return true
+  }
+
   /**
    * Close the splash window
    */
-  async close(): Promise<void> {
-    this.unlockRequest?.resolve(null)
-    this.unlockRequest = null
-    this.pendingUnlockProgress = null
+  async close(
+    options: { resolveUnlockRequest?: boolean; skipTransition?: boolean } = {}
+  ): Promise<void> {
+    if (options.resolveUnlockRequest !== false) {
+      this.unlockRequest?.resolve(null)
+      this.unlockRequest = null
+    }
+    if (options.resolveUnlockRequest !== false) {
+      this.pendingUnlockProgress = null
+    }
     this.forceShowWhenLoaded = false
     this.splashLoadCanceled = true
     this.splashLoadPromise = null
@@ -180,7 +208,7 @@ export class SplashWindow {
     }
 
     try {
-      if (this.splashWindow.isVisible()) {
+      if (this.splashWindow.isVisible() && !options.skipTransition) {
         // Add a small delay for smooth transition when the splash is actually visible.
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
@@ -264,6 +292,18 @@ export class SplashWindow {
     }
   }
 
+  private emitDebugMode(): void {
+    if (
+      !this.debugMode ||
+      !this.splashWindow ||
+      this.splashWindow.isDestroyed() ||
+      !this.splashDidFinishLoad
+    ) {
+      return
+    }
+    this.splashWindow.webContents.send(SPLASH_DEBUG_MODE_CHANNEL, this.debugMode)
+  }
+
   private maybeShowSplash(): void {
     if (
       !this.splashWindow ||
@@ -324,6 +364,7 @@ export class SplashWindow {
     }
     this.splashDidFinishLoad = true
     this.emitDatabaseUnlockState()
+    this.emitDebugMode()
     if (this.forceShowWhenLoaded) {
       this.showSplashWindow()
     }
@@ -447,9 +488,10 @@ export class SplashWindow {
     <title>DeepChat</title>
     <style>
       * { box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; margin: 0; background: #020817; color: #fff; overflow: hidden; }
+      html, body { width: 100%; height: 100%; margin: 0; background: transparent; color: #fff; overflow: hidden; }
       body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       .shell { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 32px; }
+      .shell--manual-unlock { background: #020817; }
       .panel { width: min(340px, 100%); display: flex; flex-direction: column; gap: 11px; }
       .title { font-size: 22px; font-weight: 600; }
       .subtitle, .hint, label { color: rgba(255,255,255,.72); font-size: 13px; line-height: 1.45; }
@@ -482,6 +524,7 @@ export class SplashWindow {
     <script>
       const splash = window.deepchatSplash
       let requestId = ''
+      const shell = document.querySelector('.shell')
       const panel = document.getElementById('panel')
       const subtitle = document.getElementById('subtitle')
       const label = document.getElementById('label')
@@ -491,7 +534,40 @@ export class SplashWindow {
       const submit = document.getElementById('submit')
       const quit = document.getElementById('quit')
       const hint = document.getElementById('hint')
+      const setDebugMode = (mode) => {
+        requestId = ''
+        shell.classList.toggle('shell--manual-unlock', mode === 'unlock')
+        password.value = ''
+        error.hidden = true
+        if (mode === 'loading') {
+          label.hidden = true
+          password.hidden = true
+          actions.hidden = true
+          subtitle.textContent = 'Unlocking local database'
+          hint.textContent = 'DeepChat is starting.'
+          return
+        }
+        if (mode === 'system-unlock') {
+          label.hidden = true
+          password.hidden = true
+          actions.hidden = true
+          subtitle.textContent = 'Unlocking local database'
+          hint.textContent = 'DeepChat is reading the saved password from the system credential store.'
+          return
+        }
+        label.hidden = false
+        password.hidden = false
+        actions.hidden = false
+        password.disabled = true
+        submit.disabled = true
+        quit.disabled = true
+        subtitle.textContent = 'Local database is encrypted'
+        hint.textContent = 'Development preview — password submission is disabled.'
+      }
       const setUnlock = (payload) => {
+        shell.classList.add('shell--manual-unlock')
+        password.disabled = false
+        quit.disabled = false
         requestId = payload.requestId
         subtitle.textContent = 'Local database is encrypted'
         label.hidden = false
@@ -523,6 +599,7 @@ export class SplashWindow {
         if (!splash || !requestId) return
         splash.cancelUnlock({ requestId })
       })
+      splash && splash.onDebugMode((mode) => setDebugMode(mode))
       splash && splash.onUnlockRequest((payload) => setUnlock(payload))
       splash && splash.onUnlockProgress((payload) => {
         if (payload && payload.active && !requestId) {

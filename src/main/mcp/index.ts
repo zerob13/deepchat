@@ -20,7 +20,7 @@ import {
 import type { ProviderRuntimePort } from '@shared/types/provider'
 import { ServerManager } from './serverManager'
 import type { McpClient as RuntimeMcpClient } from './mcpClient'
-import { ToolManager } from './toolManager'
+import { ToolManager, type ComputerUsePreviewObserver } from './toolManager'
 import { McpRouterManager } from './mcprouterManager'
 import { McpOAuthManager } from './mcpOAuthManager'
 import { getErrorMessageLabels } from '@shared/i18n'
@@ -137,7 +137,8 @@ export class McpService implements McpServicePort {
     onRegistryChanged: () => void,
     private readonly publishEvent: DeepchatEventPublisher,
     cacheImage?: (data: string) => Promise<string>,
-    pluginRuntimeSupervisor?: PluginRuntimeSupervisor
+    pluginRuntimeSupervisor?: PluginRuntimeSupervisor,
+    computerUsePreviewObserver?: ComputerUsePreviewObserver
   ) {
     logger.info('Initializing MCP service')
 
@@ -180,7 +181,8 @@ export class McpService implements McpServicePort {
         getAvailableToolCatalogs: () => this.pluginRuntimeSupervisor.getAvailableToolCatalogs(),
         ensureRunning: (serverName, reason) =>
           this.pluginRuntimeSupervisor.ensureRunning(serverName, reason)
-      }
+      },
+      computerUsePreviewObserver
     )
     this.pluginRuntimeSupervisor.attachProcessPort({
       isReady: () => this.isReady(),
@@ -952,6 +954,7 @@ export class McpService implements McpServicePort {
       signal?: AbortSignal
       agentId?: string
       enabledServerIds?: string[]
+      runId?: string
     }
   ): Promise<{ content: string; rawData: MCPToolResponse }> {
     const toolCallResult = await this.toolManager.callTool(request, options)
