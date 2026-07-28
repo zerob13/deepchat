@@ -2897,6 +2897,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "런타임 테스트",
+    "retryRuntime": "런타임 다시 시도",
+    "quarantineDescription": "DeepChat이 비정상 종료 후 이 런타임을 중지했습니다. 데스크톱을 안전하게 제어할 수 있을 때만 다시 시도하세요.",
     "runtime": "Runtime",
     "runtimeState": "상태",
     "version": "Version",
@@ -2910,6 +2913,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "필요할 때 준비됨",
+      "quarantined": "격리됨",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

@@ -21,7 +21,11 @@ import type {
 } from '@shared/types/plugin'
 import { OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
 import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPolicyStore'
-import type { PluginRuntimeSupervisor } from './runtimeSupervisor'
+import type {
+  PluginRuntimeSafetyStore,
+  PluginRuntimeSentinel,
+  PluginRuntimeSupervisor
+} from './runtimeSupervisor'
 import { loadPluginToolCatalog, parsePluginToolCatalogJson } from './toolCatalog'
 import type { McpSettings } from '@/mcp/settings'
 import { CuaEmbeddedRuntimeAdapter } from './cuaEmbeddedAdapter'
@@ -48,6 +52,7 @@ type PluginStoreShape = {
   resources: PluginResourceRecord[]
   runtimes: RuntimeDependencyRecord[]
   migrations: Record<string, number>
+  runtimeSentinels: Record<string, unknown>
 }
 
 type SkillContributionPort = Pick<
@@ -69,10 +74,13 @@ type PluginServiceDeps = {
   runtimeSupervisor: Pick<
     PluginRuntimeSupervisor,
     | 'registerServer'
+    | 'attachSafetyStore'
     | 'commitPluginRegistration'
     | 'unregisterPlugin'
     | 'reconcilePlugin'
     | 'getState'
+    | 'testRuntime'
+    | 'retryRuntime'
   >
   skillService: SkillContributionPort
   settingsWindow: PluginSettingsWindowPort
@@ -134,10 +142,30 @@ export class PluginService implements PluginServicePort {
       installations: [],
       resources: [],
       runtimes: [],
-      migrations: {}
+      migrations: {},
+      runtimeSentinels: {}
     }
   })
+  private readonly runtimeSafetyStore: PluginRuntimeSafetyStore = {
+    read: (key) => this.getRuntimeSentinelMap()[key],
+    write: (key, sentinel) => {
+      this.store.set('runtimeSentinels', {
+        ...this.getRuntimeSentinelMap(),
+        [key]: this.copyRuntimeSentinel(sentinel)
+      })
+    },
+    remove: (key) => {
+      const sentinels = this.getRuntimeSentinelMap()
+      if (!(key in sentinels)) {
+        return
+      }
+      const next = { ...sentinels }
+      delete next[key]
+      this.store.set('runtimeSentinels', next)
+    }
+  }
   private officialPlugins = new Map<string, ResolvedOfficialPlugin>()
+  private readonly activationErrors = new Map<string, string>()
 
   constructor(deps: PluginServiceDeps) {
     this.mcpSettings = deps.mcpSettings
@@ -150,6 +178,7 @@ export class PluginService implements PluginServicePort {
     this.appPath = deps.appPath ?? app.getAppPath()
     this.isPackaged = deps.isPackaged ?? app.isPackaged
     this.resourcesPath = deps.resourcesPath ?? process.resourcesPath ?? ''
+    this.runtimeSupervisor.attachSafetyStore(this.runtimeSafetyStore)
   }
 
   async initialize(): Promise<void> {
@@ -307,6 +336,24 @@ export class PluginService implements PluginServicePort {
             ok: true,
             data: (await this.checkRuntimePermissions(pluginId)) as PluginActionResult['data']
           }
+        case 'runtime.test': {
+          const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
+          if (!this.getInstallation(pluginId)?.enabled) {
+            throw new Error(`Plugin ${pluginId} must be enabled before testing its runtime`)
+          }
+          const serverName = this.getRuntimeActionServerName(plugin)
+          await this.runtimeSupervisor.testRuntime(pluginId, serverName)
+          return { ok: true, status: await this.buildPluginListItem(pluginId) }
+        }
+        case 'runtime.retry': {
+          const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
+          if (!this.getInstallation(pluginId)?.enabled) {
+            throw new Error(`Plugin ${pluginId} must be enabled before retrying its runtime`)
+          }
+          const serverName = this.getRuntimeActionServerName(plugin)
+          await this.runtimeSupervisor.retryRuntime(pluginId, serverName)
+          return { ok: true, status: await this.buildPluginListItem(pluginId) }
+        }
         case 'runtime.openPermissionGuide':
           await this.openRuntimeGuide(pluginId)
           return { ok: true }
@@ -349,6 +396,30 @@ export class PluginService implements PluginServicePort {
   }
 
   private async activatePlugin(pluginId: string): Promise<void> {
+    this.activationErrors.delete(pluginId)
+    try {
+      await this.activatePluginResources(pluginId)
+    } catch (error) {
+      this.activationErrors.set(pluginId, error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+
+  private getRuntimeActionServerName(plugin: ResolvedOfficialPlugin): string {
+    const runtimeId = plugin.manifest.runtime?.id
+    const server = runtimeId
+      ? plugin.manifest.mcpServers?.find((candidate) => candidate.id === runtimeId)
+      : undefined
+    if (!runtimeId || !server) {
+      throw new Error(`Plugin ${plugin.manifest.id} does not declare a matching runtime MCP server`)
+    }
+    if (server.startMode !== 'onDemand') {
+      throw new Error(`Plugin runtime server "${server.id}" is not an on-demand runtime`)
+    }
+    return server.id
+  }
+
+  private async activatePluginResources(pluginId: string): Promise<void> {
     const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
     this.assertTrustedOfficialPlugin(plugin.manifest)
     this.assertPlatformSupported(plugin.manifest)
@@ -1715,6 +1786,7 @@ export class PluginService implements PluginServicePort {
       trustState: 'trusted',
       official: true,
       capabilities: plugin.manifest.capabilities,
+      activationError: this.activationErrors.get(pluginId),
       runtime,
       mcpServers: await this.getPluginMcpRuntimeStatuses(plugin.manifest),
       settings
@@ -1761,6 +1833,25 @@ export class PluginService implements PluginServicePort {
 
   private getInstallations(): PluginInstallationRecord[] {
     return this.store.get('installations') ?? []
+  }
+
+  private getRuntimeSentinelMap(): Record<string, unknown> {
+    const sentinels = this.store.get('runtimeSentinels')
+    if (sentinels === undefined) {
+      return {}
+    }
+    if (!sentinels || typeof sentinels !== 'object' || Array.isArray(sentinels)) {
+      throw new Error('Plugin runtime safety evidence store is corrupt; runtime start is blocked')
+    }
+    return sentinels
+  }
+
+  private copyRuntimeSentinel(sentinel: PluginRuntimeSentinel): PluginRuntimeSentinel {
+    return {
+      ...sentinel,
+      fingerprint: { ...sentinel.fingerprint },
+      ...(sentinel.launchContext ? { launchContext: { ...sentinel.launchContext } } : {})
+    }
   }
 
   private getInstallation(pluginId: string): PluginInstallationRecord | undefined {
@@ -1999,6 +2090,9 @@ export class PluginService implements PluginServicePort {
         serverId: server.id,
         enabled: pluginEnabled,
         running: await this.mcpService.isServerRunning(server.id),
+        lifecycleState: supervisorState?.state,
+        quarantinedAt: supervisorState?.quarantine?.recordedAt,
+        integrityError: supervisorState?.integrityError,
         lastError: pluginEnabled
           ? (supervisorState?.lastError ?? this.mcpService.getServerLastError(server.id))
           : undefined

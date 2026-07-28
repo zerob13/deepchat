@@ -2897,6 +2897,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "בדיקת סביבת הריצה",
+    "retryRuntime": "ניסיון חוזר של סביבת הריצה",
+    "quarantineDescription": "DeepChat עצר את סביבת הריצה לאחר יציאה לא תקינה. יש לנסות שוב רק כאשר בטוח לשלוט בשולחן העבודה.",
     "runtime": "Runtime",
     "runtimeState": "מצב",
     "version": "Version",
@@ -2910,6 +2913,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "מוכן לפי דרישה",
+      "quarantined": "בהסגר",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

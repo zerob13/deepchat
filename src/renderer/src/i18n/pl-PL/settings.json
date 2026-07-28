@@ -2838,6 +2838,9 @@
     "enable": "Włącz",
     "disable": "Wyłącz",
     "openSettings": "Ustawienia",
+    "testRuntime": "Testuj środowisko wykonawcze",
+    "retryRuntime": "Ponów uruchomienie środowiska",
+    "quarantineDescription": "DeepChat zatrzymał to środowisko po nieprawidłowym zakończeniu. Ponów próbę tylko wtedy, gdy można bezpiecznie sterować pulpitem.",
     "runtime": "Czas wykonania",
     "runtimeState": "Stan",
     "version": "Wersja",
@@ -2851,6 +2854,8 @@
       "missing": "Brak",
       "installed": "Zainstalowany",
       "running": "Bieganie",
+      "readyOnDemand": "Gotowe na żądanie",
+      "quarantined": "W kwarantannie",
       "error": "Błąd"
     }
   },

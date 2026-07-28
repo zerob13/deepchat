@@ -2892,6 +2892,9 @@
     "enable": "启用",
     "disable": "停用",
     "openSettings": "设置",
+    "testRuntime": "测试运行时",
+    "retryRuntime": "重试运行时",
+    "quarantineDescription": "DeepChat 检测到运行时上次未正常退出，已阻止其自动启动。请仅在桌面可安全受控时重试。",
     "runtime": "运行时",
     "runtimeState": "状态",
     "version": "版本",
@@ -2905,6 +2908,8 @@
       "missing": "未安装",
       "installed": "已安装",
       "running": "运行中",
+      "readyOnDemand": "按需就绪",
+      "quarantined": "已隔离",
       "error": "错误"
     }
   },

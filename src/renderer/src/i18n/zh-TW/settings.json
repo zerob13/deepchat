@@ -2897,6 +2897,9 @@
     "enable": "启用",
     "disable": "停用",
     "openSettings": "设置",
+    "testRuntime": "測試執行階段",
+    "retryRuntime": "重試執行階段",
+    "quarantineDescription": "DeepChat 偵測到執行階段上次未正常結束，已阻止其自動啟動。請僅在桌面可安全受控時重試。",
     "runtime": "运行时",
     "runtimeState": "狀態",
     "version": "版本",
@@ -2910,6 +2913,8 @@
       "missing": "未安装",
       "installed": "已安装",
       "running": "运行中",
+      "readyOnDemand": "按需就緒",
+      "quarantined": "已隔離",
       "error": "错误"
     },
     "emptyTitle": "No built-in plugins available",

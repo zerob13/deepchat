@@ -19,6 +19,14 @@ export type PluginMcpStartMode = 'eager' | 'onDemand'
 export type PluginMcpSurface = 'tools' | 'prompts' | 'resources'
 export type PluginProcessEnvInheritance = 'legacy' | 'minimal'
 export type PluginRuntimeState = 'missing' | 'installed' | 'running' | 'error'
+export type PluginRuntimeLifecycleState =
+  | 'registered'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'quarantined'
+  | 'error'
 export type PluginTrustState = 'trusted' | 'untrusted' | 'development'
 export type PluginToolPolicyDecision = 'allow' | 'ask' | 'deny'
 
@@ -166,6 +174,9 @@ export interface PluginMcpRuntimeStatus {
   serverId: string
   enabled: boolean
   running: boolean
+  lifecycleState?: PluginRuntimeLifecycleState
+  quarantinedAt?: number
+  integrityError?: string
   lastError?: string
 }
 
@@ -189,6 +200,7 @@ export interface PluginListItem {
   trustState: PluginTrustState
   official: boolean
   capabilities: PluginCapability[]
+  activationError?: string
   runtime?: PluginRuntimeStatus
   mcpServers?: PluginMcpRuntimeStatus[]
   settings?: PluginSettingsContribution
@@ -212,6 +224,7 @@ export interface PluginSettingsApiStatus {
   platform: string
   arch: string
   enabled: boolean
+  activationError?: string
   runtime?: PluginRuntimeStatus
   mcpServers?: PluginMcpRuntimeStatus[]
 }

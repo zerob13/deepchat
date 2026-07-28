@@ -2897,6 +2897,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "Testar runtime",
+    "retryRuntime": "Tentar runtime novamente",
+    "quarantineDescription": "O DeepChat interrompeu este runtime após um encerramento incorreto. Tente novamente apenas quando for seguro controlar a área de trabalho.",
     "runtime": "Runtime",
     "runtimeState": "Estado",
     "version": "Version",
@@ -2910,6 +2913,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "Pronto sob demanda",
+      "quarantined": "Em quarentena",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

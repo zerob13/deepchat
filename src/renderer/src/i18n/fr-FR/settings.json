@@ -2897,6 +2897,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "Tester l’environnement d’exécution",
+    "retryRuntime": "Réessayer l’environnement d’exécution",
+    "quarantineDescription": "DeepChat a arrêté cet environnement d’exécution après une fermeture incorrecte. Réessayez uniquement lorsque le contrôle du bureau est sûr.",
     "runtime": "Runtime",
     "runtimeState": "État",
     "version": "Version",
@@ -2910,6 +2913,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "Prêt à la demande",
+      "quarantined": "En quarantaine",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

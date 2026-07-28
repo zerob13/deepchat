@@ -9,13 +9,20 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { PluginRuntimeAdapterInstance, PluginRuntimeStartReason } from './runtimeSupervisor'
+import type {
+  PluginRuntimeAdapterInstance,
+  PluginRuntimeLaunchContext,
+  PluginRuntimeSafetyHooks,
+  PluginRuntimeStartReason
+} from './runtimeSupervisor'
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 2_000
 const HANDSHAKE_ATTEMPT_TIMEOUT_MS = 500
 const MAX_HANDSHAKE_BYTES = 64 * 1024
 const UNIX_SOCKET_PATH_LIMIT = 104
+const CUA_ENDPOINT_NAME_PATTERN = /^deepchat-cua-\d+-[a-f0-9]{12}\.sock$/i
+const CUA_PIPE_NAME_PATTERN = /^\\\\\.\\pipe\\deepchat-cua-\d+-[a-f0-9]{12}$/i
 
 export interface CuaDaemonMetadata {
   driver_version: string
@@ -282,7 +289,8 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
   }
 
   async start(
-    _reason: PluginRuntimeStartReason
+    _reason: PluginRuntimeStartReason,
+    safetyHooks?: PluginRuntimeSafetyHooks
   ): Promise<{ configOverride: Partial<MCPServerConfig> }> {
     if (this.stopPromise) {
       await this.stopPromise
@@ -290,6 +298,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     if (this.running && !hasExited(this.running.child)) {
       try {
         await this.verifyRunningDaemon(this.running)
+        this.persistLaunchContext(safetyHooks, this.running.endpoint, this.running.endpointIdentity)
         return this.proxyConfiguration(this.running.endpoint)
       } catch {
         await this.stop()
@@ -305,6 +314,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
 
     const endpoint = this.dependencies.createEndpoint(this.options.platform)
     this.assertEndpointAvailable(endpoint)
+    this.persistLaunchContext(safetyHooks, endpoint)
     let endpointIdentity: EndpointIdentity | undefined
     let endpointIdentityCaptureAttempted = false
     const stderrChunks: Buffer[] = []
@@ -361,6 +371,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
       const metadata = await this.waitForReady(child, endpoint, () => childError, stderr)
       endpointIdentityCaptureAttempted = true
       endpointIdentity = this.dependencies.captureEndpointIdentity(endpoint, this.options.platform)
+      this.persistLaunchContext(safetyHooks, endpoint, endpointIdentity)
       validateCuaDaemonMetadata(metadata, child.pid, this.options.contract)
       if (hasExited(child)) {
         throw new Error(
@@ -444,6 +455,27 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     }
   }
 
+  async recoverStaleLaunch(context: PluginRuntimeLaunchContext): Promise<void> {
+    const endpoint = context.endpoint
+    this.assertManagedEndpoint(endpoint)
+    if (this.options.platform === 'win32') {
+      return
+    }
+
+    const device = context.endpointDevice
+    const inode = context.endpointInode
+    if (device === undefined && inode === undefined) {
+      return
+    }
+    if (!/^\d+$/.test(device ?? '') || !/^\d+$/.test(inode ?? '')) {
+      throw new Error('CUA stale endpoint identity is invalid')
+    }
+    this.dependencies.cleanupEndpoint(endpoint, this.options.platform, {
+      device: BigInt(device),
+      inode: BigInt(inode)
+    })
+  }
+
   private async verifyRunningDaemon(running: RunningDaemon): Promise<void> {
     const pid = running.child.pid
     if (!pid) {
@@ -516,6 +548,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
   }
 
   private assertEndpointAvailable(endpoint: string): void {
+    this.assertManagedEndpoint(endpoint)
     if (this.options.platform === 'win32') {
       return
     }
@@ -527,6 +560,49 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
         throw error
       }
     }
+  }
+
+  private assertManagedEndpoint(endpoint: string | undefined): asserts endpoint is string {
+    if (!endpoint) {
+      throw new Error('CUA embedded launch context is missing its endpoint')
+    }
+    if (this.options.platform === 'win32') {
+      if (!CUA_PIPE_NAME_PATTERN.test(endpoint)) {
+        throw new Error(`CUA embedded named pipe is outside the managed namespace: ${endpoint}`)
+      }
+      return
+    }
+
+    const resolved = path.resolve(endpoint)
+    const allowedDirectories = new Set([path.resolve(os.tmpdir()), '/tmp'])
+    if (
+      !path.isAbsolute(endpoint) ||
+      resolved !== endpoint ||
+      Buffer.byteLength(endpoint) >= UNIX_SOCKET_PATH_LIMIT ||
+      !allowedDirectories.has(path.dirname(endpoint)) ||
+      !CUA_ENDPOINT_NAME_PATTERN.test(path.basename(endpoint))
+    ) {
+      throw new Error(`CUA embedded socket is outside the managed namespace: ${endpoint}`)
+    }
+  }
+
+  private persistLaunchContext(
+    safetyHooks: PluginRuntimeSafetyHooks | undefined,
+    endpoint: string,
+    identity?: EndpointIdentity
+  ): void {
+    if (!safetyHooks) {
+      return
+    }
+    safetyHooks.updateLaunchContext({
+      endpoint,
+      ...(identity
+        ? {
+            endpointDevice: identity.device.toString(),
+            endpointInode: identity.inode.toString()
+          }
+        : {})
+    })
   }
 
   private async waitForSpawn(child: ChildProcess): Promise<void> {

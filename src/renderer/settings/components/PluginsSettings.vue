@@ -89,6 +89,10 @@
           {{ plugin.runtime.lastError }}
         </div>
 
+        <div v-if="plugin.activationError" class="text-xs text-destructive">
+          {{ plugin.activationError }}
+        </div>
+
         <div
           v-if="getPluginMcpErrors(plugin).length > 0"
           class="space-y-1 text-xs text-destructive"
@@ -165,9 +169,18 @@ function formatRuntimeState(state?: PluginRuntimeState): string {
 }
 
 function getPluginMcpErrors(plugin: PluginListItem): string[] {
-  return (plugin.mcpServers ?? [])
-    .filter((server) => Boolean(server.lastError))
-    .map((server) => `${server.serverId}: ${server.lastError}`)
+  return (plugin.mcpServers ?? []).flatMap((server) => {
+    if (server.integrityError) {
+      return [`${server.serverId}: ${server.integrityError}`]
+    }
+    if (server.lastError) {
+      return [`${server.serverId}: ${server.lastError}`]
+    }
+    if (server.lifecycleState === 'quarantined') {
+      return [`${server.serverId}: ${t('settings.plugins.runtimeStates.quarantined')}`]
+    }
+    return []
+  })
 }
 
 async function loadPlugins(): Promise<void> {

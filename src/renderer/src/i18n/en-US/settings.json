@@ -2893,6 +2893,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "Test runtime",
+    "retryRuntime": "Retry runtime",
+    "quarantineDescription": "DeepChat stopped this runtime after an unclean exit. Retry only when the desktop is safe to control.",
     "runtime": "Runtime",
     "runtimeState": "State",
     "version": "Version",
@@ -2906,6 +2909,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "Ready on demand",
+      "quarantined": "Quarantined",
       "error": "Error"
     }
   },

@@ -133,7 +133,12 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
     const requestMetadata = vi.fn(async () => metadata(child.pid!))
     const terminateProcess = vi.fn(async () => true)
     const cleanupEndpoint = vi.fn()
-    const endpoint = '/tmp/deepchat-cua-test.sock'
+    const endpoint = '/tmp/deepchat-cua-123-aabbccddeeff.sock'
+    const updateLaunchContext = vi.fn((context: Record<string, string>) => {
+      if (context.endpointDevice === undefined) {
+        expect(spawnProcess).not.toHaveBeenCalled()
+      }
+    })
     const originalSecret = process.env.DEEPCHAT_TEST_SECRET
     const originalDisplay = process.env.DISPLAY
     process.env.DEEPCHAT_TEST_SECRET = 'do-not-inherit'
@@ -160,7 +165,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
         }
       )
 
-      await expect(adapter.start('tool')).resolves.toEqual({
+      await expect(adapter.start('tool', { updateLaunchContext })).resolves.toEqual({
         configOverride: {
           command: '/plugin/cua-driver',
           args: [
@@ -197,8 +202,14 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
         DEEPCHAT_PLUGIN_ID: 'com.deepchat.plugins.cua'
       })
       expect(options.env).not.toHaveProperty('DEEPCHAT_TEST_SECRET')
+      expect(updateLaunchContext.mock.calls[0][0]).toEqual({ endpoint })
+      expect(updateLaunchContext.mock.calls[1][0]).toEqual({
+        endpoint,
+        endpointDevice: '7',
+        endpointInode: '11'
+      })
 
-      await expect(adapter.start('tool')).resolves.toMatchObject({
+      await expect(adapter.start('tool', { updateLaunchContext })).resolves.toMatchObject({
         configOverride: {
           args: [
             'mcp',
@@ -245,7 +256,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
       {
         spawnProcess: () => child,
         requestMetadata: async () => ({ ...metadata(child.pid!), driver_version: '0.12.5' }),
-        createEndpoint: () => '/tmp/deepchat-cua-invalid.sock',
+        createEndpoint: () => '/tmp/deepchat-cua-123-aabbccddeeff.sock',
         captureEndpointIdentity: () => undefined,
         cleanupEndpoint: vi.fn()
       }
@@ -255,5 +266,88 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
     await expect(adapter.start('tool')).rejects.toThrow(/driver_version mismatch/)
     expect(stdinEnd).toHaveBeenCalled()
     expect(child.exitCode).toBe(0)
+  })
+
+  it('recovers only an identity-matched endpoint inside the managed namespace', async () => {
+    const cleanupEndpoint = vi.fn()
+    const adapter = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: {}
+      },
+      { cleanupEndpoint }
+    )
+    const endpoint = '/tmp/deepchat-cua-123-aabbccddeeff.sock'
+
+    await adapter.recoverStaleLaunch({
+      endpoint,
+      endpointDevice: '7',
+      endpointInode: '11'
+    })
+
+    expect(cleanupEndpoint).toHaveBeenCalledWith(endpoint, 'linux', {
+      device: 7n,
+      inode: 11n
+    })
+    await expect(
+      adapter.recoverStaleLaunch({
+        endpoint: '/tmp/unmanaged.sock',
+        endpointDevice: '7',
+        endpointInode: '11'
+      })
+    ).rejects.toThrow(/outside the managed namespace/)
+    await expect(
+      adapter.recoverStaleLaunch({
+        endpoint,
+        endpointDevice: '7'
+      })
+    ).rejects.toThrow(/identity is invalid/)
+    expect(cleanupEndpoint).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not unlink a stale Unix endpoint without its recorded identity', async () => {
+    const cleanupEndpoint = vi.fn()
+    const adapter = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: {}
+      },
+      { cleanupEndpoint }
+    )
+
+    await adapter.recoverStaleLaunch({
+      endpoint: '/tmp/deepchat-cua-123-aabbccddeeff.sock'
+    })
+
+    expect(cleanupEndpoint).not.toHaveBeenCalled()
+  })
+
+  it('accepts only managed Windows pipe names during stale recovery', async () => {
+    const cleanupEndpoint = vi.fn()
+    const adapter = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: 'C:\\plugin\\cua-driver.exe',
+        platform: 'win32',
+        contract,
+        environment: {}
+      },
+      { cleanupEndpoint }
+    )
+
+    await expect(
+      adapter.recoverStaleLaunch({
+        endpoint: '\\\\.\\pipe\\deepchat-cua-123-aabbccddeeff'
+      })
+    ).resolves.toBeUndefined()
+    await expect(
+      adapter.recoverStaleLaunch({
+        endpoint: '\\\\.\\pipe\\unmanaged'
+      })
+    ).rejects.toThrow(/outside the managed namespace/)
+    expect(cleanupEndpoint).not.toHaveBeenCalled()
   })
 })

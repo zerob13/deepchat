@@ -81,6 +81,7 @@ const createPluginService = async (
   }
   const runtimeRegistrations = new Map<string, Record<string, unknown>>()
   const runtimeSupervisor = {
+    attachSafetyStore: vi.fn(),
     registerServer: vi.fn().mockImplementation((registration: Record<string, unknown>) => {
       runtimeRegistrations.set(String(registration.serverName), registration)
     }),
@@ -93,6 +94,8 @@ const createPluginService = async (
       }
     }),
     reconcilePlugin: vi.fn().mockResolvedValue(undefined),
+    testRuntime: vi.fn().mockResolvedValue(undefined),
+    retryRuntime: vi.fn().mockResolvedValue(undefined),
     shutdown: vi.fn().mockResolvedValue(undefined),
     getState: vi.fn().mockReturnValue(undefined)
   }
@@ -130,6 +133,7 @@ const createBundledFixture = async (
     pluginId?: string
     name?: string
     includeSettings?: boolean
+    startMode?: 'eager' | 'onDemand'
   } = {}
 ) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-plugin-test-'))
@@ -142,6 +146,7 @@ const createBundledFixture = async (
   const runtimeRelativePath = `runtime/darwin/${process.arch}/${runtimeFileName}`
   const pluginId = options.pluginId ?? 'com.deepchat.plugins.fixture'
   const includeSettings = options.includeSettings ?? false
+  const startMode = options.startMode ?? 'eager'
   const manifest = {
     id: pluginId,
     name: options.name ?? 'Fixture Runtime',
@@ -179,7 +184,14 @@ const createBundledFixture = async (
         transport: 'stdio',
         command: '${runtime.fixture-runtime.command}',
         args: ['mcp'],
-        autoApprove: []
+        autoApprove: [],
+        ...(startMode === 'onDemand'
+          ? {
+              startMode,
+              surfaces: ['tools'],
+              toolCatalog: 'mcp/tool-catalog.json'
+            }
+          : {})
       }
     ],
     ...(includeSettings
@@ -202,6 +214,23 @@ const createBundledFixture = async (
       process.platform === 'win32'
         ? '@echo off\r\necho fixture-runtime 1.0.0\r\n'
         : '#!/bin/sh\necho fixture-runtime 1.0.0\n'
+    )
+  }
+  if (startMode === 'onDemand') {
+    files['mcp/tool-catalog.json'] = new TextEncoder().encode(
+      `${JSON.stringify({
+        version: '1.0.0',
+        tools: [
+          {
+            name: 'fixture_tool',
+            description: 'Fixture tool',
+            input_schema: { type: 'object', properties: {}, required: [] },
+            read_only: true,
+            destructive: false,
+            idempotent: true
+          }
+        ]
+      })}\n`
     )
   }
   if (includeSettings) {
@@ -822,6 +851,13 @@ describe('PluginService', () => {
       fixture.pluginId
     )
     expect(servers['fixture-tools']).toBeUndefined()
+    expect(await presenter.getPlugin(fixture.pluginId)).toMatchObject({
+      enabled: false,
+      activationError: 'skill registration failed'
+    })
+
+    await expect(presenter.enablePlugin(fixture.pluginId)).resolves.toMatchObject({ ok: true })
+    expect((await presenter.getPlugin(fixture.pluginId))?.activationError).toBeUndefined()
   })
 
   it('loads and stages a validated on-demand catalog before exposing the server', async () => {
@@ -1399,6 +1435,65 @@ describe('PluginService', () => {
     expect(presenter.__mocks.mcpService.startServer).not.toHaveBeenCalled()
   })
 
+  it('routes runtime test and retry actions through the supervisor without changing intent', async () => {
+    const fixture = await createBundledFixture({ startMode: 'onDemand' })
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    const enabled = await presenter.enablePlugin(fixture.pluginId)
+    expect(enabled.ok, enabled.error).toBe(true)
+
+    const tested = await presenter.invokeAction(fixture.pluginId, 'runtime.test')
+    const retried = await presenter.invokeAction(fixture.pluginId, 'runtime.retry')
+
+    expect(tested.ok).toBe(true)
+    expect(retried.ok).toBe(true)
+    expect(presenter.__mocks.runtimeSupervisor.testRuntime).toHaveBeenCalledWith(
+      fixture.pluginId,
+      'fixture-runtime'
+    )
+    expect(presenter.__mocks.runtimeSupervisor.retryRuntime).toHaveBeenCalledWith(
+      fixture.pluginId,
+      'fixture-runtime'
+    )
+    expect((await presenter.getPlugin(fixture.pluginId))?.enabled).toBe(true)
+  })
+
+  it('reports integrity blocks independently from quarantine lifecycle state', async () => {
+    const fixture = await createBundledFixture({ startMode: 'onDemand' })
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    const enabled = await presenter.enablePlugin(fixture.pluginId)
+    expect(enabled.ok, enabled.error).toBe(true)
+    presenter.__mocks.runtimeSupervisor.getState.mockReturnValue({
+      state: 'quarantined',
+      integrityError: 'runtime integrity mismatch',
+      quarantine: {
+        schemaVersion: 1,
+        attemptId: '00000000-0000-4000-8000-000000000001',
+        pluginId: fixture.pluginId,
+        runtimeId: 'fixture-runtime',
+        serverName: 'fixture-runtime',
+        fingerprint: {
+          value: 'a'.repeat(64),
+          pluginId: fixture.pluginId,
+          runtimeId: 'fixture-runtime',
+          target: 'darwin/arm64',
+          binarySha256: 'b'.repeat(64)
+        },
+        recordedAt: 123
+      }
+    })
+
+    await expect(presenter.getPlugin(fixture.pluginId)).resolves.toMatchObject({
+      mcpServers: [
+        {
+          serverId: 'fixture-runtime',
+          lifecycleState: 'quarantined',
+          quarantinedAt: 123,
+          integrityError: 'runtime integrity mismatch'
+        }
+      ]
+    })
+  })
+
   it('keeps enabled intent when an eager runtime start fails', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', {
@@ -1454,6 +1549,33 @@ describe('PluginService', () => {
 
     expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledTimes(2)
     expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({ enabled: false })
+  })
+
+  it('persists runtime safety sentinels in the plugin settings store', async () => {
+    const presenter = await createPluginService('linux', { arch: 'x64' })
+    const safetyStore = presenter.__mocks.runtimeSupervisor.attachSafetyStore.mock.calls[0][0]
+    const sentinel = {
+      schemaVersion: 1,
+      attemptId: '00000000-0000-4000-8000-000000000001',
+      pluginId: 'com.deepchat.plugins.cua',
+      runtimeId: 'cua-driver',
+      serverName: 'cua-driver',
+      fingerprint: {
+        value: 'a'.repeat(64),
+        pluginId: 'com.deepchat.plugins.cua',
+        runtimeId: 'cua-driver',
+        target: 'linux/x64',
+        binarySha256: 'b'.repeat(64)
+      },
+      recordedAt: Date.now()
+    }
+
+    safetyStore.write('cua-key', sentinel)
+
+    expect(safetyStore.read('cua-key')).toEqual(sentinel)
+    expect(safetyStore.read('cua-key')).not.toBe(sentinel)
+    safetyStore.remove('cua-key')
+    expect(safetyStore.read('cua-key')).toBeUndefined()
   })
 
   it('rejects malformed and duplicate lifecycle declarations before registration', async () => {

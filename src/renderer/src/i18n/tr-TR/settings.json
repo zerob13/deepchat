@@ -2838,6 +2838,9 @@
     "enable": "Olanak vermek",
     "disable": "Devre dışı bırakmak",
     "openSettings": "Ayarlar",
+    "testRuntime": "Çalışma zamanını test et",
+    "retryRuntime": "Çalışma zamanını yeniden dene",
+    "quarantineDescription": "DeepChat, düzgün olmayan bir çıkıştan sonra bu çalışma zamanını durdurdu. Yalnızca masaüstünü denetlemek güvenliyken yeniden deneyin.",
     "runtime": "Çalışma zamanı",
     "runtimeState": "Durum",
     "version": "Sürüm",
@@ -2851,6 +2854,8 @@
       "missing": "Eksik",
       "installed": "Yüklendi",
       "running": "Koşma",
+      "readyOnDemand": "İstek üzerine hazır",
+      "quarantined": "Karantinada",
       "error": "Hata"
     }
   },
