@@ -58,6 +58,10 @@ describe('verify-cua-macos-helper', () => {
   })
 
   it('compares helper entitlements as an exact allowlist', () => {
+    expect(CUA_DARWIN_ALLOWED_ENTITLEMENTS).toEqual({
+      'com.apple.security.automation.apple-events': true,
+      'com.apple.security.device.screen-capture': true
+    })
     expect(() => assertCuaEntitlements({ ...CUA_DARWIN_ALLOWED_ENTITLEMENTS })).not.toThrow()
     expect(() =>
       assertCuaEntitlements({

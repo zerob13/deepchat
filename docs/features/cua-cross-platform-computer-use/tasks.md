@@ -1,5 +1,9 @@
 # CUA Cross-Platform Computer Use Tasks
 
+> The completed tasks below record the original 0.7.1 rollout. Follow-up work for issue #2039 and
+> driver 0.12.6 is tracked in
+> `docs/architecture/plugin-external-runtime-lifecycle/tasks.md`.
+
 ## Task List
 
 - [x] T01 - Update CUA upstream metadata

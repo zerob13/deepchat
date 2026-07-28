@@ -12,6 +12,11 @@ type ToolPolicySettings = {
   policies: StoredToolPolicy[]
 }
 
+export type PluginToolPolicyLookup = {
+  managed: boolean
+  decision: PluginToolPolicyDecision | null
+}
+
 const store = new ElectronStore<ToolPolicySettings>({
   name: 'plugin-tool-policies',
   defaults: {
@@ -39,15 +44,42 @@ export function getPluginToolPolicy(
   serverId: string,
   toolName: string
 ): PluginToolPolicyDecision | null {
+  return resolvePluginToolPolicy(serverId, toolName).decision
+}
+
+function getEnabledServerPolicies(serverId: string): StoredToolPolicy[] {
   const policies = store.get('policies') ?? []
-  for (const policy of policies) {
-    if (!policy.enabled || policy.serverId !== serverId) {
-      continue
-    }
-    const decision = policy.tools[toolName]
-    if (decision === 'allow' || decision === 'ask' || decision === 'deny') {
-      return decision
-    }
+  return policies.filter((policy) => policy.enabled && policy.serverId === serverId)
+}
+
+export function getExplicitlyDeniedPluginTools(serverId: string): string[] {
+  const matches = getEnabledServerPolicies(serverId)
+  if (matches.length !== 1) {
+    return []
   }
-  return null
+  return Object.entries(matches[0].tools)
+    .filter(([, decision]) => decision === 'deny')
+    .map(([toolName]) => toolName)
+}
+
+export function resolvePluginToolPolicy(
+  serverId: string,
+  toolName: string
+): PluginToolPolicyLookup {
+  const matches = getEnabledServerPolicies(serverId)
+  if (matches.length === 0) {
+    return { managed: false, decision: null }
+  }
+
+  // More than one enabled owner for a server is ambiguous. Treat it like an
+  // undeclared tool so stale policy records cannot accidentally widen access.
+  if (matches.length !== 1) {
+    return { managed: true, decision: null }
+  }
+
+  const decision = matches[0].tools[toolName]
+  return {
+    managed: true,
+    decision: decision === 'allow' || decision === 'ask' || decision === 'deny' ? decision : null
+  }
 }

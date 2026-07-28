@@ -1,6 +1,7 @@
 import type { JsonValue } from '../contracts/common'
 
 export const OFFICIAL_PLUGIN_SOURCE = 'deepchat-official'
+export const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 
 export type PluginCapability =
   | 'runtime.manage'
@@ -14,7 +15,19 @@ export type PluginCapability =
 export type PluginActivationEvent = 'onEnable'
 export type PluginResourceKind = 'runtime' | 'mcpServer' | 'skill' | 'settings' | 'toolPolicy'
 export type PluginRuntimeType = 'external-helper'
+export type PluginRuntimeAdapter = 'cua-embedded-v1'
+export type PluginMcpStartMode = 'eager' | 'onDemand'
+export type PluginMcpSurface = 'tools' | 'prompts' | 'resources'
+export type PluginProcessEnvInheritance = 'legacy' | 'minimal'
 export type PluginRuntimeState = 'missing' | 'installed' | 'running' | 'error'
+export type PluginRuntimeLifecycleState =
+  | 'registered'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'stopped'
+  | 'quarantined'
+  | 'error'
 export type PluginTrustState = 'trusted' | 'untrusted' | 'development'
 export type PluginToolPolicyDecision = 'allow' | 'ask' | 'deny'
 
@@ -42,6 +55,9 @@ export interface PluginRuntimeManifest {
   type: PluginRuntimeType
   displayName: string
   detect: string[]
+  adapter?: PluginRuntimeAdapter
+  adapterContract?: CuaEmbeddedRuntimeContract
+  integrityDescriptor?: string
   install?: {
     mode: 'user-confirmed'
     provider: string
@@ -49,6 +65,15 @@ export interface PluginRuntimeManifest {
     minVersion?: string
     guideUrl?: string
   }
+}
+
+export interface CuaEmbeddedRuntimeContract {
+  hostBundleId: string
+  driverVersion: string
+  contractVersion: string
+  toolsListSchemaVersion: string
+  capabilityVersion: string
+  mcpProtocolVersion: string
 }
 
 export interface PluginMcpServerManifest {
@@ -59,6 +84,10 @@ export interface PluginMcpServerManifest {
   args: string[]
   env?: Record<string, string>
   autoApprove: string[]
+  startMode?: PluginMcpStartMode
+  surfaces?: PluginMcpSurface[]
+  toolCatalog?: string
+  inheritEnv?: PluginProcessEnvInheritance
 }
 
 export interface PluginSkillManifest {
@@ -146,6 +175,9 @@ export interface PluginMcpRuntimeStatus {
   serverId: string
   enabled: boolean
   running: boolean
+  lifecycleState?: PluginRuntimeLifecycleState
+  quarantinedAt?: number
+  integrityError?: string
   lastError?: string
 }
 
@@ -169,6 +201,7 @@ export interface PluginListItem {
   trustState: PluginTrustState
   official: boolean
   capabilities: PluginCapability[]
+  activationError?: string
   runtime?: PluginRuntimeStatus
   mcpServers?: PluginMcpRuntimeStatus[]
   settings?: PluginSettingsContribution
@@ -192,6 +225,7 @@ export interface PluginSettingsApiStatus {
   platform: string
   arch: string
   enabled: boolean
+  activationError?: string
   runtime?: PluginRuntimeStatus
   mcpServers?: PluginMcpRuntimeStatus[]
 }

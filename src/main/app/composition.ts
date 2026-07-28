@@ -147,6 +147,7 @@ import { RemoteService } from '../remote'
 import type { RemoteServiceLike } from '../remote/ports'
 import { PluginService, type PluginServicePort } from '../plugin'
 import { createPluginRoutes } from '../plugin/routes'
+import { PluginRuntimeSupervisor } from '../plugin/runtimeSupervisor'
 import { AgentRepository } from '../agent/repository'
 import { AgentDatabase } from '@/agent/data/database'
 import { DeepChatDefaults } from '../agent/deepchat/defaults'
@@ -645,6 +646,7 @@ export async function createMainProcessControl(dependencies: {
         })
     }
   })
+  const pluginRuntimeSupervisor = new PluginRuntimeSupervisor()
   mcpService = new McpService(
     providerSettings,
     agentSettings,
@@ -666,6 +668,7 @@ export async function createMainProcessControl(dependencies: {
     () => deepChatAgentHarness.refreshToolRegistry(),
     publishDeepchatEvent,
     (data) => deviceService.cacheImage(data),
+    pluginRuntimeSupervisor,
     computerUsePreviewPresenter
   )
   const deeplinkActions = createDeeplinkActions({
@@ -903,7 +906,8 @@ export async function createMainProcessControl(dependencies: {
     mcpSettings: dependencies.mcpSettings,
     mcpService: mcpService,
     skillService: skillService,
-    settingsWindow: pluginSettingsWindow
+    settingsWindow: pluginSettingsWindow,
+    runtimeSupervisor: pluginRuntimeSupervisor
   })
 
   // Initialize Skill Sync service
@@ -975,7 +979,7 @@ export async function createMainProcessControl(dependencies: {
         serverName &&
         (permissionType === 'read' || permissionType === 'write' || permissionType === 'all')
       ) {
-        await mcpService.grantPermission(serverName, permissionType, false, sessionId)
+        await mcpService.grantPermission(serverName, permissionType, false, sessionId, toolName)
       }
     }
   }
@@ -1566,6 +1570,11 @@ export async function createMainProcessControl(dependencies: {
 
     try {
       await mcpService.initialize()
+      try {
+        await pluginRuntimeSupervisor.reconcileAll()
+      } catch (error) {
+        console.error('[PluginHost] Failed to reconcile eager plugin runtimes:', error)
+      }
       deepChatAgentHarness.refreshToolRegistry()
       deeplinkService.processPendingMcpInstall()
     } catch (error) {

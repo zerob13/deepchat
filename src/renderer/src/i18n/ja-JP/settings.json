@@ -2909,6 +2909,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "ランタイムをテスト",
+    "retryRuntime": "ランタイムを再試行",
+    "quarantineDescription": "DeepChat は異常終了後にこのランタイムを停止しました。デスクトップを安全に操作できる場合のみ再試行してください。",
     "runtime": "Runtime",
     "runtimeState": "状態",
     "version": "Version",
@@ -2922,6 +2925,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "オンデマンドで準備完了",
+      "quarantined": "隔離済み",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

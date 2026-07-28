@@ -30,6 +30,7 @@ import type { PromptSettings } from '@/agent/promptSettings'
 import type { DesktopSettings } from '@/desktop/settings'
 import type { PrivacySettingsPort } from '@/app/privacy'
 import type { AgentSettingsPort } from '@/agent/settings'
+import { PluginRuntimeSupervisor } from '@/plugin/runtimeSupervisor'
 import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { McpSettings } from './settings'
 
@@ -79,6 +80,7 @@ export class McpService implements McpServicePort {
   private cacheImage?: (data: string) => Promise<string>
   private readonly onRegistryChanged: () => void
   private shutdownPromise: Promise<void> | null = null
+  private readonly pluginRuntimeSupervisor: PluginRuntimeSupervisor
   private pendingSamplingRequests = new Map<
     string,
     { resolve: (decision: McpSamplingDecision) => void; reject: (error: Error) => void }
@@ -135,6 +137,7 @@ export class McpService implements McpServicePort {
     onRegistryChanged: () => void,
     private readonly publishEvent: DeepchatEventPublisher,
     cacheImage?: (data: string) => Promise<string>,
+    pluginRuntimeSupervisor?: PluginRuntimeSupervisor,
     computerUsePreviewObserver?: ComputerUsePreviewObserver
   ) {
     logger.info('Initializing MCP service')
@@ -146,6 +149,7 @@ export class McpService implements McpServicePort {
     this.privacy = privacy
     this.cacheImage = cacheImage
     this.onRegistryChanged = onRegistryChanged
+    this.pluginRuntimeSupervisor = pluginRuntimeSupervisor ?? new PluginRuntimeSupervisor()
     this.mcpOAuthManager = new McpOAuthManager(undefined, this.publishEvent, (serverName) =>
       this.restartServerAfterAuthentication(serverName)
     )
@@ -169,8 +173,29 @@ export class McpService implements McpServicePort {
       this.mcpSettings,
       this.serverManager,
       this.publishEvent,
+      {
+        ownsServer: (serverName) => this.pluginRuntimeSupervisor.ownsServer(serverName),
+        isServerAvailable: (serverName) =>
+          this.pluginRuntimeSupervisor.isServerAvailable(serverName),
+        getOwnerPluginId: (serverName) => this.pluginRuntimeSupervisor.getOwnerPluginId(serverName),
+        getAvailableToolCatalogs: () => this.pluginRuntimeSupervisor.getAvailableToolCatalogs(),
+        ensureRunning: (serverName, reason) =>
+          this.pluginRuntimeSupervisor.ensureRunning(serverName, reason)
+      },
       computerUsePreviewObserver
     )
+    this.pluginRuntimeSupervisor.attachProcessPort({
+      isReady: () => this.isReady(),
+      isRunning: (serverName) => this.serverManager.isServerRunning(serverName),
+      isActive: (serverName) => this.serverManager.isServerActive(serverName),
+      start: (serverName, configOverride) =>
+        this.startServerDirect(serverName, configOverride, true),
+      stop: (serverName, mode) =>
+        mode === 'shutdown'
+          ? this.stopPluginServerDuringShutdownDirect(serverName)
+          : this.stopServerDirect(serverName)
+    })
+    this.pluginRuntimeSupervisor.subscribeRegistryChanged(() => this.handleRegistryChanged())
     // init mcprouter manager
     try {
       this.mcprouter = new McpRouterManager(this.mcpSettings)
@@ -197,16 +222,15 @@ export class McpService implements McpServicePort {
   }
 
   private async isPluginOwnedServerName(serverName: string): Promise<boolean> {
+    if (this.pluginRuntimeSupervisor.ownsServer(serverName)) {
+      return true
+    }
     const servers = await this.mcpSettings.getMcpServers()
     return this.isPluginOwnedServerConfig(servers[serverName])
   }
 
-  private isServerAllowedByContext(
-    serverName: string,
-    serverConfig: MCPServerConfig | undefined,
-    context: McpToolAccessContext
-  ): boolean {
-    if (this.isPluginOwnedServerConfig(serverConfig)) {
+  private isServerAllowedByContext(serverName: string, context: McpToolAccessContext): boolean {
+    if (this.pluginRuntimeSupervisor.isServerAvailable(serverName)) {
       return true
     }
 
@@ -258,7 +282,9 @@ export class McpService implements McpServicePort {
           if (
             serverConfig &&
             !startingServers.has(serverName) &&
-            (mcpEnabled || this.isPluginOwnedServerConfig(serverConfig))
+            mcpEnabled &&
+            !this.isPluginOwnedServerConfig(serverConfig) &&
+            !this.pluginRuntimeSupervisor.ownsServer(serverName)
           ) {
             logger.info(`[MCP] Attempting to start enabled server: ${serverName}`)
             startingServers.add(serverName)
@@ -297,7 +323,15 @@ export class McpService implements McpServicePort {
   }
 
   private async shutdownRunningClients(): Promise<void> {
-    const activeClients = await this.serverManager.getActiveClients()
+    try {
+      await this.pluginRuntimeSupervisor.shutdown()
+    } catch (error) {
+      console.error('[MCP] Failed to stop plugin-owned runtimes during shutdown:', error)
+    }
+
+    const activeClients = (await this.serverManager.getActiveClients()).filter(
+      (client) => !this.pluginRuntimeSupervisor.ownsServer(client.serverName)
+    )
     let nextIndex = 0
 
     const stopNext = async (): Promise<void> => {
@@ -315,6 +349,10 @@ export class McpService implements McpServicePort {
   }
 
   async stopServerDuringShutdownByName(serverName: string): Promise<void> {
+    if (this.pluginRuntimeSupervisor.ownsServer(serverName)) {
+      await this.pluginRuntimeSupervisor.requestExternalStop(serverName)
+      return
+    }
     const client = this.serverManager.getClient(serverName)
     if (!client) {
       return
@@ -323,7 +361,18 @@ export class McpService implements McpServicePort {
     await this.stopServerDuringShutdown(client)
   }
 
-  private async stopServerDuringShutdown(client: RuntimeMcpClient): Promise<void> {
+  private async stopPluginServerDuringShutdownDirect(serverName: string): Promise<void> {
+    const client = this.serverManager.getClient(serverName)
+    if (!client) {
+      return
+    }
+    await this.stopServerDuringShutdown(client, true)
+  }
+
+  private async stopServerDuringShutdown(
+    client: RuntimeMcpClient,
+    failOnIncompleteStop = false
+  ): Promise<void> {
     const startedAt = performance.now()
     let timeoutId: NodeJS.Timeout | null = null
     let timedOut = false
@@ -336,7 +385,7 @@ export class McpService implements McpServicePort {
     })
 
     try {
-      await Promise.race([this.stopServer(client.serverName), timeoutPromise])
+      await Promise.race([this.stopServerDirect(client.serverName), timeoutPromise])
       console.info(
         `[MCP] Stopped server ${client.serverName} during shutdown durationMs=${(performance.now() - startedAt).toFixed(1)}`
       )
@@ -354,10 +403,18 @@ export class McpService implements McpServicePort {
             ? 'stdio process tree force termination was attempted; the underlying stop promise may still finish later'
             : 'no stdio process tree was available to force terminate; underlying stop may still be pending'
         })
+        if (failOnIncompleteStop && !forceTerminated) {
+          throw new Error(
+            `Plugin runtime server ${client.serverName} could not be terminated during shutdown`
+          )
+        }
         return
       }
 
       console.error(`[MCP] Failed to stop server ${client.serverName} during shutdown:`, error)
+      if (failOnIncompleteStop) {
+        throw error
+      }
     } finally {
       if (timeoutId) {
         clearTimeout(timeoutId)
@@ -366,13 +423,22 @@ export class McpService implements McpServicePort {
   }
 
   private async restartServerAfterAuthentication(serverName: string): Promise<void> {
-    const servers = await this.mcpSettings.getMcpServers()
-    const serverConfig = servers[serverName]
-    if (!serverConfig?.enabled) {
-      return
-    }
-
     try {
+      if (await this.pluginRuntimeSupervisor.restartIfRunning(serverName, 'authentication')) {
+        return
+      }
+      const servers = await this.mcpSettings.getMcpServers()
+      const serverConfig = servers[serverName]
+      if (this.isPluginOwnedServerConfig(serverConfig)) {
+        console.warn(
+          `[MCP] Refusing to restart unregistered plugin-owned server ${serverName} after authentication`
+        )
+        return
+      }
+      if (!serverConfig?.enabled) {
+        return
+      }
+
       const connectResult = await this.serverManager.startServer(serverName, {
         onBackgroundConnected: () => this.emitServerStarted(serverName)
       })
@@ -501,9 +567,8 @@ export class McpService implements McpServicePort {
   // Get all MCP servers
   async getMcpClients(): Promise<McpClient[]> {
     const enabled = await this.mcpSettings.getMcpEnabled()
-    const servers = await this.mcpSettings.getMcpServers()
     const clients = (await this.toolManager.getRunningClients()).filter(
-      (client) => enabled || this.isPluginOwnedServerConfig(servers[client.serverName])
+      (client) => enabled || this.pluginRuntimeSupervisor.isServerAvailable(client.serverName)
     )
     const clientsList: McpClient[] = []
     for (const client of clients) {
@@ -592,10 +657,20 @@ export class McpService implements McpServicePort {
   }
 
   async setMcpServerEnabled(serverName: string, enabled: boolean): Promise<void> {
-    await this.mcpSettings.setMcpServerEnabled(serverName, enabled)
-
     const servers = await this.mcpSettings.getMcpServers()
     const serverConfig = servers[serverName]
+    if (this.pluginRuntimeSupervisor.ownsServer(serverName)) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" is controlled by its plugin, not MCP settings`
+      )
+    }
+    if (this.isPluginOwnedServerConfig(serverConfig)) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" is not registered by an enabled plugin`
+      )
+    }
+
+    await this.mcpSettings.setMcpServerEnabled(serverName, enabled)
     if (
       !this.isPluginOwnedServerConfig(serverConfig) &&
       !(await this.mcpSettings.getMcpEnabled())
@@ -613,6 +688,9 @@ export class McpService implements McpServicePort {
 
   // Add MCP server
   async addMcpServer(serverName: string, config: MCPServerConfig): Promise<boolean> {
+    if (this.pluginRuntimeSupervisor.ownsServer(serverName)) {
+      throw new Error(`MCP server "${serverName}" is owned by an enabled plugin`)
+    }
     const existingServers = await this.getMcpServers()
     if (existingServers[serverName]) {
       console.error(`[MCP] Failed to add server: Server name "${serverName}" already exists.`)
@@ -635,6 +713,15 @@ export class McpService implements McpServicePort {
 
   // Update MCP server configuration
   async updateMcpServer(serverName: string, config: Partial<MCPServerConfig>): Promise<void> {
+    const servers = await this.mcpSettings.getMcpServers()
+    if (
+      this.pluginRuntimeSupervisor.ownsServer(serverName) ||
+      this.isPluginOwnedServerConfig(servers[serverName])
+    ) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" cannot be edited through MCP settings`
+      )
+    }
     const wasRunning = this.serverManager.isServerRunning(serverName)
     await this.mcpSettings.updateMcpServer(serverName, config)
 
@@ -655,6 +742,13 @@ export class McpService implements McpServicePort {
 
   // Remove MCP server
   async removeMcpServer(serverName: string): Promise<void> {
+    const currentServers = await this.mcpSettings.getMcpServers()
+    if (
+      this.pluginRuntimeSupervisor.ownsServer(serverName) ||
+      this.isPluginOwnedServerConfig(currentServers[serverName])
+    ) {
+      throw new Error(`Plugin-owned MCP server "${serverName}" must be removed by its plugin`)
+    }
     // If server is running, stop it first
     if (await this.isServerRunning(serverName)) {
       await this.stopServer(serverName)
@@ -673,15 +767,55 @@ export class McpService implements McpServicePort {
   }
 
   async startServer(serverName: string): Promise<void> {
+    if (this.pluginRuntimeSupervisor.ownsServer(serverName)) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" cannot be started through the generic MCP route`
+      )
+    }
+    if (await this.isPluginOwnedServerName(serverName)) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" is not registered by an enabled plugin`
+      )
+    }
+    await this.startServerDirect(serverName)
+  }
+
+  private async startServerDirect(
+    serverName: string,
+    configOverride?: Partial<MCPServerConfig>,
+    waitForConnection = false
+  ): Promise<void> {
     const connectResult = await this.serverManager.startServer(serverName, {
-      onBackgroundConnected: () => this.emitServerStarted(serverName)
+      onBackgroundConnected: waitForConnection
+        ? undefined
+        : () => this.emitServerStarted(serverName),
+      configOverride,
+      waitForConnection
     })
     if (connectResult === 'connected') {
       this.emitServerStarted(serverName)
+      return
+    }
+    if (connectResult === 'stopped' && waitForConnection) {
+      throw new Error(`Plugin runtime server "${serverName}" stopped during startup`)
     }
   }
 
   async stopServer(serverName: string): Promise<void> {
+    if (this.pluginRuntimeSupervisor.ownsServer(serverName)) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" cannot be stopped through the generic MCP route`
+      )
+    }
+    if (await this.isPluginOwnedServerName(serverName)) {
+      throw new Error(
+        `Plugin-owned MCP server "${serverName}" is not registered by an enabled plugin`
+      )
+    }
+    await this.stopServerDirect(serverName)
+  }
+
+  private async stopServerDirect(serverName: string): Promise<void> {
     await this.serverManager.stopServer(serverName)
     this.emitServerStopped(serverName)
   }
@@ -727,13 +861,11 @@ export class McpService implements McpServicePort {
     const context = normalizeToolAccessContext(enabledMcpTools)
     const enabled = await this.mcpSettings.getMcpEnabled()
     const tools = await this.toolManager.getAllToolDefinitions(context)
-    const servers = await this.mcpSettings.getMcpServers()
     return tools.filter((tool) => {
-      const serverConfig = servers[tool.server.name]
-      if (!enabled && !this.isPluginOwnedServerConfig(serverConfig)) {
+      if (!enabled && !this.pluginRuntimeSupervisor.isServerAvailable(tool.server.name)) {
         return false
       }
-      return this.isServerAllowedByContext(tool.server.name, serverConfig, context)
+      return this.isServerAllowedByContext(tool.server.name, context)
     })
   }
 
@@ -743,9 +875,8 @@ export class McpService implements McpServicePort {
    */
   async getAllPrompts(): Promise<Array<PromptListEntry>> {
     const enabled = await this.mcpSettings.getMcpEnabled()
-    const servers = await this.mcpSettings.getMcpServers()
     const clients = (await this.toolManager.getRunningClients()).filter(
-      (client) => enabled || this.isPluginOwnedServerConfig(servers[client.serverName])
+      (client) => enabled || this.pluginRuntimeSupervisor.isServerAvailable(client.serverName)
     )
     const promptsList: Array<Prompt & { client: { name: string; icon: string } }> = []
 
@@ -788,9 +919,8 @@ export class McpService implements McpServicePort {
     Array<ResourceListEntry & { client: { name: string; icon: string } }>
   > {
     const enabled = await this.mcpSettings.getMcpEnabled()
-    const servers = await this.mcpSettings.getMcpServers()
     const clients = (await this.toolManager.getRunningClients()).filter(
-      (client) => enabled || this.isPluginOwnedServerConfig(servers[client.serverName])
+      (client) => enabled || this.pluginRuntimeSupervisor.isServerAvailable(client.serverName)
     )
     const resourcesList: Array<ResourceListEntry & { client: { name: string; icon: string } }> = []
 
@@ -885,6 +1015,10 @@ export class McpService implements McpServicePort {
         ...(imagePreviews.length > 0 ? { imagePreviews } : {})
       }
     }
+  }
+
+  async checkPluginRuntimePermissions(serverName: string): Promise<unknown> {
+    return await this.toolManager.checkPluginRuntimePermissions(serverName)
   }
 
   /**
@@ -991,7 +1125,10 @@ export class McpService implements McpServicePort {
       const servers = await this.mcpSettings.getMcpServers()
       const enabledServers = await this.mcpSettings.getEnabledMcpServers()
       for (const serverName of enabledServers) {
-        if (this.isPluginOwnedServerConfig(servers[serverName])) {
+        if (
+          this.pluginRuntimeSupervisor.ownsServer(serverName) ||
+          this.isPluginOwnedServerConfig(servers[serverName])
+        ) {
           continue
         }
         try {
@@ -1006,11 +1143,15 @@ export class McpService implements McpServicePort {
     const activeClients = await this.serverManager.getActiveClients()
     const servers = await this.mcpSettings.getMcpServers()
     for (const client of activeClients) {
-      if (this.isPluginOwnedServerConfig(servers[client.serverName])) {
+      if (this.pluginRuntimeSupervisor.ownsServer(client.serverName)) {
         continue
       }
       try {
-        await this.stopServer(client.serverName)
+        if (this.isPluginOwnedServerConfig(servers[client.serverName])) {
+          await this.stopServerDirect(client.serverName)
+        } else {
+          await this.stopServer(client.serverName)
+        }
       } catch (error) {
         console.error(`[MCP] Failed to stop server ${client.serverName}:`, error)
       }
@@ -1078,13 +1219,20 @@ export class McpService implements McpServicePort {
     serverName: string,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean = false,
-    conversationId?: string
+    conversationId?: string,
+    toolName?: string
   ): Promise<void> {
     try {
       logger.info(
         `[MCP] Granting ${permissionType} permission for server: ${serverName}, remember: ${remember}, conversationId: ${conversationId}`
       )
-      await this.toolManager.grantPermission(serverName, permissionType, remember, conversationId)
+      await this.toolManager.grantPermission(
+        serverName,
+        permissionType,
+        remember,
+        conversationId,
+        toolName
+      )
       logger.info(
         `[MCP] Successfully granted ${permissionType} permission for server: ${serverName}`
       )

@@ -230,13 +230,9 @@ describe('useMcpStore toggleServer rollback', () => {
         },
         'cua-driver': {
           command: '/Applications/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
-          args: ['mcp', '--no-daemon-relaunch'],
+          args: ['mcp', '--embedded'],
           env: {
-            CUA_DRIVER_MCP_MODE: '1',
-            CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1',
-            DEEPCHAT_COMPUTER_USE_APP_PATH: '/Applications/DeepChat Computer Use.app',
-            DEEPCHAT_COMPUTER_USE_BINARY_PATH:
-              '/Applications/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver'
+            CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0'
           },
           descriptions: 'Computer Use',
           icons: 'plugin',
@@ -246,7 +242,8 @@ describe('useMcpStore toggleServer rollback', () => {
           enabled: true,
           source: 'plugin',
           sourceId: 'com.deepchat.plugins.cua',
-          ownerPluginId: 'com.deepchat.plugins.cua'
+          ownerPluginId: 'com.deepchat.plugins.cua',
+          inheritEnv: 'minimal'
         }
       },
       mcpEnabled: true,

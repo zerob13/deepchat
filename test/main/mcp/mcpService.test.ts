@@ -98,6 +98,26 @@ describe('McpService#setMcpServerEnabled', () => {
     expect(onRegistryChanged).toHaveBeenCalledOnce()
   })
 
+  it('delegates supervised startup waiting to ServerManager', async () => {
+    const presenter = createMcpService(createProviderSettings(true))
+    ;(presenter as any).serverManager = {
+      startServer: serverManagerMocks.startServer
+    }
+    serverManagerMocks.startServer.mockResolvedValueOnce('connected')
+
+    await (presenter as any).startServerDirect('plugin-runtime', { command: 'runtime-proxy' }, true)
+
+    expect(serverManagerMocks.startServer).toHaveBeenCalledWith('plugin-runtime', {
+      onBackgroundConnected: undefined,
+      configOverride: { command: 'runtime-proxy' },
+      waitForConnection: true
+    })
+    expect(publishDeepchatEventMock).toHaveBeenCalledWith(
+      'mcp.server.started',
+      expect.objectContaining({ serverName: 'plugin-runtime' })
+    )
+  })
+
   const createProviderSettings = (
     mcpEnabled: boolean,
     privacyModeEnabled = false,
@@ -167,7 +187,7 @@ describe('McpService#setMcpServerEnabled', () => {
     expect(stopSpy).not.toHaveBeenCalled()
   })
 
-  it('starts plugin-owned servers even when MCP is globally disabled', async () => {
+  it('does not start persisted plugin-owned servers without trusted registration', async () => {
     const providerSettings = createProviderSettings(
       false,
       false,
@@ -187,11 +207,7 @@ describe('McpService#setMcpServerEnabled', () => {
 
     await presenter.initialize()
 
-    expect(serverManagerMocks.startServer).toHaveBeenCalledTimes(1)
-    expect(serverManagerMocks.startServer).toHaveBeenCalledWith(
-      'plugin',
-      expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
-    )
+    expect(serverManagerMocks.startServer).not.toHaveBeenCalled()
   })
 
   it('does not wait for hanging enabled servers during initialization', async () => {
@@ -224,10 +240,7 @@ describe('McpService#setMcpServerEnabled', () => {
       'regular',
       expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
     )
-    expect(serverManagerMocks.startServer).toHaveBeenCalledWith(
-      'plugin',
-      expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
-    )
+    expect(serverManagerMocks.startServer).toHaveBeenCalledTimes(1)
   })
 
   it('does not start plugin-owned servers when enabling the global MCP switch', async () => {
@@ -250,18 +263,30 @@ describe('McpService#setMcpServerEnabled', () => {
     expect(startSpy).toHaveBeenCalledWith('regular')
   })
 
-  it('does not stop plugin-owned servers when disabling the global MCP switch', async () => {
+  it('keeps trusted plugin runtimes outside the global switch and stops stale source metadata', async () => {
     const providerSettings = createProviderSettings(false, false, {
       regular: { enabled: true },
-      plugin: { enabled: true, source: 'plugin', ownerPluginId: 'com.deepchat.fixture' }
+      plugin: { enabled: true, source: 'plugin', ownerPluginId: 'com.deepchat.fixture' },
+      trusted: { enabled: false, source: 'plugin', ownerPluginId: 'com.deepchat.trusted' }
     })
     serverManagerMocks.getActiveClients.mockResolvedValue([
       { serverName: 'regular' },
-      { serverName: 'plugin' }
+      { serverName: 'plugin' },
+      { serverName: 'trusted' }
     ])
     const presenter = createMcpService(providerSettings)
+    ;(presenter as any).toolManager = {
+      invalidateRegistry: toolManagerMocks.invalidateRegistry
+    }
+    ;(presenter as any).pluginRuntimeSupervisor.registerServer({
+      pluginId: 'com.deepchat.trusted',
+      serverName: 'trusted',
+      startMode: 'eager',
+      surfaces: ['tools']
+    })
     ;(presenter as any).serverManager = {
-      getActiveClients: serverManagerMocks.getActiveClients
+      getActiveClients: serverManagerMocks.getActiveClients,
+      stopServer: serverManagerMocks.stopServer
     }
     const stopSpy = vi.spyOn(presenter, 'stopServer').mockResolvedValue(undefined)
 
@@ -270,6 +295,8 @@ describe('McpService#setMcpServerEnabled', () => {
     expect(providerSettings.setMcpEnabled).toHaveBeenCalledWith(false)
     expect(stopSpy).toHaveBeenCalledTimes(1)
     expect(stopSpy).toHaveBeenCalledWith('regular')
+    expect(serverManagerMocks.stopServer).toHaveBeenCalledWith('plugin')
+    expect(serverManagerMocks.stopServer).not.toHaveBeenCalledWith('trusted')
   })
 
   it('stops connecting non-plugin servers when disabling the global MCP switch', async () => {
@@ -351,12 +378,48 @@ describe('McpService#setMcpServerEnabled', () => {
     const firstShutdown = presenter.shutdown()
     const secondShutdown = presenter.shutdown()
     await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
 
     expect(serverManagerMocks.getActiveClients).toHaveBeenCalledTimes(1)
     expect(serverManagerMocks.stopServer).toHaveBeenCalledTimes(1)
 
     resolveStop?.()
     await Promise.all([firstShutdown, secondShutdown])
+  })
+
+  it('rejects generic lifecycle controls for trusted plugin-owned servers', async () => {
+    const providerSettings = createProviderSettings(true, false, {
+      plugin: {
+        enabled: false,
+        source: 'plugin',
+        ownerPluginId: 'com.deepchat.plugins.fixture'
+      }
+    })
+    const presenter = createMcpService(providerSettings)
+    ;(presenter as any).toolManager = {
+      invalidateRegistry: toolManagerMocks.invalidateRegistry
+    }
+    ;(presenter as any).pluginRuntimeSupervisor.registerServer({
+      pluginId: 'com.deepchat.plugins.fixture',
+      serverName: 'plugin',
+      startMode: 'eager',
+      surfaces: ['tools']
+    })
+
+    await expect(presenter.setMcpServerEnabled('plugin', true)).rejects.toThrow(
+      'controlled by its plugin'
+    )
+    await expect(presenter.startServer('plugin')).rejects.toThrow(
+      'cannot be started through the generic MCP route'
+    )
+    await expect(presenter.stopServer('plugin')).rejects.toThrow(
+      'cannot be stopped through the generic MCP route'
+    )
+
+    expect(providerSettings.setMcpServerEnabled).not.toHaveBeenCalled()
+    expect(serverManagerMocks.startServer).not.toHaveBeenCalled()
+    expect(serverManagerMocks.stopServer).not.toHaveBeenCalled()
   })
 
   it('keeps plugin-owned tool definitions available when MCP is globally disabled', async () => {
@@ -386,15 +449,22 @@ describe('McpService#setMcpServerEnabled', () => {
     ])
     const presenter = createMcpService(providerSettings)
     ;(presenter as any).toolManager = {
-      getAllToolDefinitions: toolManagerMocks.getAllToolDefinitions
+      getAllToolDefinitions: toolManagerMocks.getAllToolDefinitions,
+      invalidateRegistry: toolManagerMocks.invalidateRegistry
     }
+    ;(presenter as any).pluginRuntimeSupervisor.registerServer({
+      pluginId: 'com.deepchat.plugins.fixture',
+      serverName: 'plugin',
+      startMode: 'eager',
+      surfaces: ['tools']
+    })
 
-    const tools = await presenter.getAllToolDefinitions()
+    const tools = await presenter.getAllToolDefinitions({ enabledServerIds: [] })
 
     expect(tools.map((tool) => tool.function.name)).toEqual(['plugin_tool'])
   })
 
-  it('keeps source plugin tools available outside normal server policy', async () => {
+  it('does not grant plugin access from writable source metadata alone', async () => {
     const providerSettings = createProviderSettings(true, false, {
       plugin: { enabled: true, source: 'plugin', sourceId: 'plugin-a' }
     })
@@ -416,7 +486,7 @@ describe('McpService#setMcpServerEnabled', () => {
 
     const tools = await presenter.getAllToolDefinitions({ enabledServerIds: [] })
 
-    expect(tools.map((tool) => tool.function.name)).toEqual(['plugin_tool'])
+    expect(tools).toEqual([])
   })
 
   it('rejects when the runtime transition fails after persisting config', async () => {

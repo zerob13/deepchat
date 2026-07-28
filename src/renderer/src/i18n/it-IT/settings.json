@@ -2850,6 +2850,9 @@
     "enable": "Attiva",
     "disable": "Disattiva",
     "openSettings": "Impostazioni",
+    "testRuntime": "Testa runtime",
+    "retryRuntime": "Riprova runtime",
+    "quarantineDescription": "DeepChat ha arrestato questo runtime dopo una chiusura anomala. Riprova solo quando è sicuro controllare il desktop.",
     "runtime": "Runtime",
     "runtimeState": "Stato",
     "version": "Versione",
@@ -2863,6 +2866,8 @@
       "missing": "Non installato",
       "installed": "Installato",
       "running": "In esecuzione",
+      "readyOnDemand": "Pronto su richiesta",
+      "quarantined": "In quarantena",
       "error": "Errore"
     }
   },

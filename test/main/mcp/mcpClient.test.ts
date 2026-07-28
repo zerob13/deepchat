@@ -402,6 +402,73 @@ describe('McpClient Runtime Command Processing Tests', () => {
       expect(pathEnv).toContain('/custom/bin')
     })
 
+    it('uses the minimal inherited environment only when explicitly requested', async () => {
+      const originalApiToken = process.env.API_TOKEN
+      const originalCuaLog = process.env.CUA_LOG
+      process.env.API_TOKEN = 'secret'
+      process.env.CUA_LOG = 'debug'
+
+      try {
+        const client = createMcpClient('test', {
+          type: 'stdio',
+          command: 'cua-driver',
+          args: ['mcp'],
+          inheritEnv: 'minimal',
+          env: {
+            PLUGIN_VALUE: 'declared'
+          }
+        })
+
+        await client.connect()
+
+        const transportCalls = vi.mocked(StdioClientTransport).mock.calls
+        const transportOptions = transportCalls[transportCalls.length - 1][0] as {
+          env: Record<string, string>
+        }
+        expect(transportOptions.env).not.toHaveProperty('API_TOKEN')
+        expect(transportOptions.env).not.toHaveProperty('CUA_LOG')
+        expect(transportOptions.env.PLUGIN_VALUE).toBe('declared')
+      } finally {
+        if (originalApiToken === undefined) {
+          delete process.env.API_TOKEN
+        } else {
+          process.env.API_TOKEN = originalApiToken
+        }
+        if (originalCuaLog === undefined) {
+          delete process.env.CUA_LOG
+        } else {
+          process.env.CUA_LOG = originalCuaLog
+        }
+      }
+    })
+
+    it('preserves legacy inheritance for existing native MCP configs', async () => {
+      const originalApiToken = process.env.API_TOKEN
+      process.env.API_TOKEN = 'legacy-secret'
+
+      try {
+        const client = createMcpClient('test', {
+          type: 'stdio',
+          command: 'native-helper',
+          args: []
+        })
+
+        await client.connect()
+
+        const transportCalls = vi.mocked(StdioClientTransport).mock.calls
+        const transportOptions = transportCalls[transportCalls.length - 1][0] as {
+          env: Record<string, string>
+        }
+        expect(transportOptions.env.API_TOKEN).toBe('legacy-secret')
+      } finally {
+        if (originalApiToken === undefined) {
+          delete process.env.API_TOKEN
+        } else {
+          process.env.API_TOKEN = originalApiToken
+        }
+      }
+    })
+
     it('awaits process-tree cleanup before closing stdio transport on disconnect', async () => {
       const order: string[] = []
       const child = { pid: 123, exitCode: null, signalCode: null }
@@ -508,6 +575,76 @@ describe('McpClient Runtime Command Processing Tests', () => {
       } finally {
         vi.useRealTimers()
       }
+    })
+
+    it('propagates cancellation into SDK tool discovery', async () => {
+      const sdkClient = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        callTool: vi.fn(),
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        listPrompts: vi.fn(),
+        getPrompt: vi.fn(),
+        listResources: vi.fn(),
+        readResource: vi.fn(),
+        setNotificationHandler: vi.fn(),
+        setRequestHandler: vi.fn()
+      }
+      vi.mocked(Client).mockImplementationOnce(() => sdkClient as any)
+      const client = createMcpClient('diagnostic-server', {
+        type: 'stdio',
+        command: 'diagnostic-server',
+        args: []
+      })
+      const controller = new AbortController()
+
+      await expect(client.listTools({ signal: controller.signal })).resolves.toEqual([])
+
+      expect(sdkClient.listTools).toHaveBeenCalledWith(undefined, {
+        signal: controller.signal
+      })
+
+      controller.abort()
+      await expect(client.listTools({ signal: controller.signal })).rejects.toThrow()
+      expect(sdkClient.listTools).toHaveBeenCalledOnce()
+    })
+
+    it('propagates cancellation that lands as listTools session recovery settles', async () => {
+      const unsupportedError = new McpError(ErrorCode.MethodNotFound, 'Unknown method: tools/list')
+      const sdkClient = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        callTool: vi.fn(),
+        listTools: vi.fn().mockRejectedValue(unsupportedError),
+        listPrompts: vi.fn(),
+        getPrompt: vi.fn(),
+        listResources: vi.fn(),
+        readResource: vi.fn(),
+        setNotificationHandler: vi.fn(),
+        setRequestHandler: vi.fn()
+      }
+      vi.mocked(Client).mockImplementationOnce(() => sdkClient as any)
+      const client = createMcpClient('diagnostic-server', {
+        type: 'stdio',
+        command: 'diagnostic-server',
+        args: []
+      })
+      await client.connect()
+
+      let resolveRecovery: () => void = () => undefined
+      const recovery = new Promise<void>((resolve) => {
+        resolveRecovery = resolve
+      })
+      const recoverySpy = vi
+        .spyOn(client as any, 'checkAndHandleSessionError')
+        .mockReturnValue(recovery)
+      const controller = new AbortController()
+      const toolsResult = client.listTools({ signal: controller.signal })
+      await vi.waitFor(() => expect(recoverySpy).toHaveBeenCalledWith(unsupportedError))
+
+      resolveRecovery()
+      queueMicrotask(() => controller.abort())
+
+      await expect(toolsResult).rejects.toMatchObject({ name: 'AbortError' })
+      expect((client as any).cachedTools).toBeNull()
     })
 
     it('treats unknown prompts/list as an empty prompt list', async () => {

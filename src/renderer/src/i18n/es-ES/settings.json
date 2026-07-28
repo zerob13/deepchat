@@ -2850,6 +2850,9 @@
     "enable": "Habilitar",
     "disable": "Desactivar",
     "openSettings": "Configuración",
+    "testRuntime": "Probar entorno de ejecución",
+    "retryRuntime": "Reintentar entorno de ejecución",
+    "quarantineDescription": "DeepChat detuvo este entorno de ejecución tras un cierre incorrecto. Reinténtalo solo cuando sea seguro controlar el escritorio.",
     "runtime": "Tiempo de ejecución",
     "runtimeState": "Estado",
     "version": "Versión",
@@ -2863,6 +2866,8 @@
       "missing": "desaparecido",
       "installed": "Instalado",
       "running": "corriendo",
+      "readyOnDemand": "Listo bajo demanda",
+      "quarantined": "En cuarentena",
       "error": "error"
     }
   },

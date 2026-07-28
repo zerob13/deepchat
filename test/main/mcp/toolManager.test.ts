@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CUA_PLUGIN_ID } from '@shared/types/plugin'
 import { ToolManager, type ComputerUsePreviewObserver } from '@/mcp/toolManager'
+import type { PluginRuntimeStartReason } from '@/plugin/runtimeSupervisor'
 import * as toolPolicyStore from '@/plugin/toolPolicyStore'
+
+const TOOL_POLICY_PLUGIN_ID = 'com.deepchat.plugins.permission-test'
+const { registerPluginToolPolicy, unregisterPluginToolPolicies } = toolPolicyStore
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -22,6 +27,7 @@ describe('ToolManager', () => {
   })
 
   afterEach(() => {
+    unregisterPluginToolPolicies(TOOL_POLICY_PLUGIN_ID)
     warnSpy.mockRestore()
   })
 
@@ -71,8 +77,15 @@ describe('ToolManager', () => {
   }
 
   function createServerManager(clients: unknown[]) {
+    const clientsByName = new Map(
+      clients.map((client) => {
+        const namedClient = client as { serverName: string }
+        return [namedClient.serverName, client]
+      })
+    )
     return {
       getRunningClients: vi.fn().mockResolvedValue(clients),
+      getClient: vi.fn((serverName: string) => clientsByName.get(serverName)),
       setServerLastError: vi.fn(),
       clearServerLastError: vi.fn()
     }
@@ -81,6 +94,24 @@ describe('ToolManager', () => {
   function createToolManager(
     providerSettings: unknown,
     serverManager: unknown,
+    pluginOwners: Record<string, string> = {},
+    runtime: {
+      catalogs?: Array<{
+        pluginId: string
+        serverName: string
+        displayName: string
+        toolCatalog: {
+          version: string
+          tools: Array<{
+            name: string
+            description: string
+            inputSchema: Record<string, unknown>
+          }>
+        }
+      }>
+      ensureRunning?: (serverName: string, reason: PluginRuntimeStartReason) => Promise<void>
+      unavailableServers?: Set<string>
+    } = {},
     computerUsePreviewObserver?: ComputerUsePreviewObserver
   ) {
     return new ToolManager(
@@ -89,6 +120,21 @@ describe('ToolManager', () => {
       providerSettings as never,
       serverManager as never,
       vi.fn(),
+      {
+        ownsServer: (serverName) => Object.hasOwn(pluginOwners, serverName),
+        isServerAvailable: (serverName) =>
+          Object.hasOwn(pluginOwners, serverName) && !runtime.unavailableServers?.has(serverName),
+        getOwnerPluginId: (serverName) => pluginOwners[serverName],
+        getAvailableToolCatalogs: () =>
+          (runtime.catalogs ?? []).filter(
+            (catalog) => !runtime.unavailableServers?.has(catalog.serverName)
+          ),
+        ensureRunning:
+          runtime.ensureRunning ??
+          (async (serverName) => {
+            throw new Error(`Unexpected runtime start for ${serverName}`)
+          })
+      },
       computerUsePreviewObserver
     )
   }
@@ -193,6 +239,570 @@ describe('ToolManager', () => {
     expect(definitions[0]).toMatchObject({
       execution: { effect: 'write', mode: 'sequential' }
     })
+    expect(client.listTools).toHaveBeenCalledOnce()
+  })
+
+  it('discovers an on-demand catalog without starting its runtime and starts on first dispatch', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const ensureRunning = vi.fn().mockResolvedValue(undefined)
+    const providerSettings = createProviderSettings(serverName)
+    const manager = createToolManager(
+      providerSettings,
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      {
+        ensureRunning,
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const definitions = await manager.getAllToolDefinitions()
+
+    expect(definitions).toEqual([
+      expect.objectContaining({
+        function: expect.objectContaining({
+          name: 'inspect_screen',
+          description: 'Static inspect screen'
+        }),
+        server: {
+          name: serverName,
+          icons: 'plugin',
+          description: 'Catalog Server'
+        }
+      })
+    ])
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(liveClient.listTools).not.toHaveBeenCalled()
+
+    const liveTools = deferred<Awaited<ReturnType<typeof liveClient.listTools>>>()
+    liveClient.listTools.mockReturnValue(liveTools.promise)
+    const firstCall = manager.callTool({
+      id: 'catalog-tool-1',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+    const secondCall = manager.callTool({
+      id: 'catalog-tool-2',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+    await vi.waitFor(() => expect(liveClient.listTools).toHaveBeenCalledOnce())
+    liveTools.resolve([
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const [first, second] = await Promise.all([firstCall, secondCall])
+
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+    expect(ensureRunning).toHaveBeenCalledTimes(2)
+    expect(ensureRunning).toHaveBeenNthCalledWith(1, serverName, 'tool')
+    expect(liveClient.listTools).toHaveBeenCalledOnce()
+    expect(liveClient.callTool).toHaveBeenCalledTimes(2)
+  })
+
+  it('hard-fails when a catalog tool is missing from the live runtime', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'different_tool',
+        description: 'Different tool',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-tool-missing',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Live MCP tool "inspect_screen" is missing')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+    expect(serverManager.setServerLastError).toHaveBeenCalledWith(
+      serverName,
+      expect.stringContaining('missing')
+    )
+  })
+
+  it('requires exact session approval for closed plugin ask policies', async () => {
+    const serverName = 'closed-policy-server'
+    const client = createClient(serverName, [
+      {
+        name: 'type_text',
+        description: 'Type text',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        name: 'press_key',
+        description: 'Press key',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([client]),
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) }
+    )
+    const conversationId = 'closed-policy-conversation'
+
+    // Simulate a coarse grant cached before the plugin policy was registered.
+    await manager.grantPermission(serverName, 'write', false, conversationId)
+    registerPluginToolPolicy({
+      pluginId: TOOL_POLICY_PLUGIN_ID,
+      serverId: serverName,
+      tools: {
+        type_text: 'ask',
+        press_key: 'ask'
+      },
+      enabled: true
+    })
+
+    const beforeExactGrant = await manager.callTool({
+      id: 'type-text-before-grant',
+      type: 'function',
+      function: { name: 'type_text', arguments: '{}' },
+      conversationId
+    })
+    expect(beforeExactGrant.requiresPermission).toBe(true)
+    expect(client.callTool).not.toHaveBeenCalled()
+
+    await manager.grantPermission(serverName, 'write', false, conversationId, 'type_text')
+    const approved = await manager.callTool({
+      id: 'type-text-approved',
+      type: 'function',
+      function: { name: 'type_text', arguments: '{}' },
+      conversationId
+    })
+    const differentTool = await manager.callTool({
+      id: 'press-key-not-approved',
+      type: 'function',
+      function: { name: 'press_key', arguments: '{}' },
+      conversationId
+    })
+
+    expect(approved.isError).toBe(false)
+    expect(client.callTool).toHaveBeenCalledOnce()
+    expect(client.callTool).toHaveBeenCalledWith('type_text', {})
+    expect(differentTool.requiresPermission).toBe(true)
+  })
+
+  it('fails closed for tools absent from an enabled plugin policy', async () => {
+    const serverName = 'closed-policy-server'
+    const client = createClient(serverName, [
+      {
+        name: 'known_tool',
+        description: 'Known tool',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        name: 'new_upstream_tool',
+        description: 'Unexpected upstream tool',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    registerPluginToolPolicy({
+      pluginId: TOOL_POLICY_PLUGIN_ID,
+      serverId: serverName,
+      tools: { known_tool: 'allow' },
+      enabled: true
+    })
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([client]),
+      { [serverName]: TOOL_POLICY_PLUGIN_ID }
+    )
+
+    const result = await manager.callTool({
+      id: 'unknown-policy-tool',
+      type: 'function',
+      function: { name: 'new_upstream_tool', arguments: '{}' },
+      conversationId: 'closed-policy-conversation'
+    })
+
+    expect(result).toMatchObject({
+      isError: true,
+      content: expect.stringContaining('not declared by its closed plugin policy')
+    })
+    expect(client.callTool).not.toHaveBeenCalled()
+  })
+
+  it('does not advertise explicitly denied plugin catalog tools', async () => {
+    const serverName = 'closed-policy-server'
+    registerPluginToolPolicy({
+      pluginId: TOOL_POLICY_PLUGIN_ID,
+      serverId: serverName,
+      tools: {
+        known_tool: 'allow',
+        internal_diagnostic: 'deny'
+      },
+      enabled: true
+    })
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([]),
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Closed Policy Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'known_tool',
+                  description: 'Known tool',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                },
+                {
+                  name: 'internal_diagnostic',
+                  description: 'Internal diagnostic',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const definitions = await manager.getAllToolDefinitions()
+
+    expect(definitions.map((definition) => definition.function.name)).toEqual(['known_tool'])
+  })
+
+  it('hard-fails when a live catalog tool schema drifts', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: {
+          type: 'object',
+          properties: { display_id: { type: 'integer' } },
+          required: ['display_id']
+        }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-schema-drift',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('schema differs from the packaged catalog')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+  })
+
+  it('records duplicate live catalog tools as a server error', async () => {
+    const serverName = 'catalog-server'
+    const duplicateTool = {
+      name: 'inspect_screen',
+      description: 'Inspect screen',
+      inputSchema: { type: 'object', properties: {}, required: [] }
+    }
+    const liveClient = createClient(serverName, [duplicateTool, duplicateTool])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [duplicateTool]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-duplicate-tool',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('returned duplicate tool "inspect_screen"')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+    expect(serverManager.setServerLastError).toHaveBeenCalledWith(
+      serverName,
+      expect.objectContaining({
+        message: expect.stringContaining('returned duplicate tool "inspect_screen"')
+      })
+    )
+  })
+
+  it('runs permission diagnostics only through the owned runtime gate', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'check_permissions',
+        description: 'Check permissions',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    liveClient.callTool.mockResolvedValue({
+      structuredContent: { accessibility: true, screen_recording: false },
+      content: [],
+      isError: false
+    })
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const ensureRunning = vi.fn().mockResolvedValue(undefined)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.cua' },
+      {
+        ensureRunning,
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.cua',
+            serverName,
+            displayName: 'CUA Driver',
+            toolCatalog: {
+              version: '0.12.6',
+              tools: [
+                {
+                  name: 'check_permissions',
+                  description: 'Check permissions',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    await expect(manager.checkPluginRuntimePermissions(serverName)).resolves.toMatchObject({
+      structuredContent: { accessibility: true, screen_recording: false }
+    })
+    expect(ensureRunning).toHaveBeenCalledWith(serverName, 'runtime-test')
+    expect(liveClient.listTools).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal)
+    })
+    expect(liveClient.callTool).toHaveBeenCalledWith(
+      'check_permissions',
+      { prompt: false },
+      { signal: expect.any(AbortSignal) }
+    )
+
+    const unowned = createToolManager(
+      createProviderSettings('manual-server'),
+      createServerManager([])
+    )
+    await expect(unowned.checkPluginRuntimePermissions('manual-server')).rejects.toThrow(
+      'is not owned by a plugin runtime'
+    )
+  })
+
+  it('uses the same conflict rename for static and live tool definitions', async () => {
+    const liveClient = createClient('live-server')
+    const manager = createToolManager(
+      createProviderSettings('live-server'),
+      createServerManager([liveClient]),
+      { 'catalog-server': 'com.deepchat.plugins.fixture' },
+      {
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName: 'catalog-server',
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'echo',
+                  description: 'Catalog echo',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const definitions = await manager.getAllToolDefinitions()
+
+    expect(definitions.map((definition) => definition.function.name)).toEqual([
+      'live-server_echo',
+      'catalog-server_echo'
+    ])
+    expect(liveClient.listTools).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when a catalog runtime becomes unavailable before dispatch', async () => {
+    const serverName = 'quarantined-catalog-server'
+    const unavailableServers = new Set<string>()
+    const liveClient = createClient(serverName, [
+      {
+        name: 'inspect_screen',
+        description: 'Inspect screen',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const ensureRunning = vi.fn().mockResolvedValue(undefined)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      {
+        unavailableServers,
+        ensureRunning,
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName,
+            displayName: 'Quarantined Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+    const [definition] = await manager.getAllToolDefinitions()
+    unavailableServers.add(serverName)
+
+    const response = await manager.callTool({
+      id: 'call-1',
+      conversationId: 'conversation-1',
+      type: 'function',
+      function: {
+        name: definition.function.name,
+        arguments: '{}'
+      }
+    })
+
+    expect(response).toMatchObject({
+      isError: true,
+      content: expect.stringContaining('is no longer available')
+    })
+    expect(ensureRunning).toHaveBeenCalledWith(serverName, 'tool')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+  })
+
+  it('does not advertise tools from an unavailable owned runtime client', async () => {
+    const serverName = 'quarantined-live-server'
+    const liveClient = createClient(serverName)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([liveClient]),
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      { unavailableServers: new Set([serverName]) }
+    )
+
+    await expect(manager.getAllToolDefinitions()).resolves.toEqual([])
+
+    expect(liveClient.listTools).not.toHaveBeenCalled()
   })
 
   it('uses explicit ACP agent context instead of global chat mode', async () => {
@@ -237,7 +847,8 @@ describe('ToolManager', () => {
     const providerSettings = createProviderSettings('server-a')
     const manager = createToolManager(
       providerSettings as never,
-      createServerManager([normalClient, blockedClient, pluginClient]) as never
+      createServerManager([normalClient, blockedClient, pluginClient]) as never,
+      { 'plugin-server': 'plugin-a' }
     )
 
     const definitions = await manager.getAllToolDefinitions({
@@ -251,7 +862,7 @@ describe('ToolManager', () => {
     ])
   })
 
-  it('keeps source plugin MCP servers available outside normal server policy', async () => {
+  it('does not trust source plugin metadata as lifecycle ownership', async () => {
     const pluginClient = createClient('plugin-source-server', undefined, {
       source: 'plugin',
       sourceId: 'plugin-b'
@@ -287,9 +898,10 @@ describe('ToolManager', () => {
       }
     )
 
-    expect(definitions.map((tool) => tool.server.name)).toEqual(['plugin-source-server'])
-    expect(result.isError).toBe(false)
-    expect(pluginClient.callTool).toHaveBeenCalledWith('echo', {})
+    expect(definitions).toEqual([])
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain("MCP server 'plugin-source-server' is not allowed")
+    expect(pluginClient.callTool).not.toHaveBeenCalled()
   })
 
   it('blocks DeepChat MCP tool calls outside enabled server policy', async () => {
@@ -330,7 +942,9 @@ describe('ToolManager', () => {
     client.listTools.mockRejectedValue(new Error('tool list failed'))
     const providerSettings = createProviderSettings('plugin-server')
     const serverManager = createServerManager([client])
-    const manager = createToolManager(providerSettings as never, serverManager as never)
+    const manager = createToolManager(providerSettings as never, serverManager as never, {
+      'plugin-server': 'com.deepchat.fixture'
+    })
 
     const definitions = await manager.getAllToolDefinitions()
 
@@ -694,6 +1308,121 @@ describe('ToolManager', () => {
     expect(providerSettings.getAgentMcpSelections).not.toHaveBeenCalled()
   })
 
+  it('normalizes empty CUA element tokens immediately before dispatch', async () => {
+    const client = createClient(
+      'cua-driver',
+      [
+        {
+          name: 'click',
+          description: 'Click',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              element_index: { type: 'integer' },
+              element_token: { type: 'string' },
+              x: { type: 'number' },
+              y: { type: 'number' }
+            }
+          }
+        }
+      ],
+      {
+        source: 'plugin',
+        ownerPluginId: CUA_PLUGIN_ID
+      }
+    )
+    const manager = createToolManager(
+      createProviderSettings('cua-driver'),
+      createServerManager([client]),
+      { 'cua-driver': CUA_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) }
+    )
+
+    const result = await manager.callTool({
+      id: 'cua-click',
+      type: 'function',
+      function: {
+        name: 'click',
+        arguments:
+          '{"element_index":2,"element_token":"","x":0,"y":0,"modifier":[],"from_zoom":false}'
+      }
+    })
+
+    expect(result.isError).toBe(false)
+    expect(client.callTool).toHaveBeenCalledWith('click', {
+      element_index: 2,
+      x: 0,
+      y: 0,
+      modifier: [],
+      from_zoom: false
+    })
+  })
+
+  it('preserves raw CUA structured content and appends compact element handles', async () => {
+    const client = createClient(
+      'cua-driver',
+      [
+        {
+          name: 'get_window_state',
+          description: 'Get window state',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pid: { type: 'integer' },
+              window_id: { type: 'integer' }
+            }
+          }
+        }
+      ],
+      {
+        source: 'plugin',
+        ownerPluginId: CUA_PLUGIN_ID
+      }
+    )
+    const structuredContent = {
+      snapshot_id: 's9',
+      tree_markdown: '- AXButton "Clear" [element_index 2]',
+      elements: [
+        {
+          element_index: 2,
+          element_token: 's9:2',
+          role: 'AXButton',
+          label: 'Clear'
+        }
+      ]
+    }
+    client.callTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'window tree' }],
+      structuredContent,
+      isError: false
+    })
+    const manager = createToolManager(
+      createProviderSettings('cua-driver'),
+      createServerManager([client]),
+      { 'cua-driver': CUA_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) }
+    )
+
+    const result = await manager.callTool({
+      id: 'cua-window-state',
+      type: 'function',
+      function: {
+        name: 'get_window_state',
+        arguments: '{"pid":10,"window_id":20}'
+      }
+    })
+
+    expect(result.structuredContent).toBe(structuredContent)
+    expect(result.ownerPluginId).toBe(CUA_PLUGIN_ID)
+    expect(result.content).toEqual([
+      { type: 'text', text: 'window tree' },
+      {
+        type: 'text',
+        text: expect.stringContaining('2="s9:2"')
+      }
+    ])
+  })
+
   it('observes trusted CUA snapshots with run metadata without changing tool arguments', async () => {
     const client = createClient(
       'cua-driver',
@@ -709,7 +1438,7 @@ describe('ToolManager', () => {
       ],
       {
         source: 'plugin',
-        ownerPluginId: 'com.deepchat.plugins.cua'
+        ownerPluginId: CUA_PLUGIN_ID
       }
     )
     client.callTool.mockResolvedValue({
@@ -730,6 +1459,8 @@ describe('ToolManager', () => {
     const manager = createToolManager(
       createProviderSettings('cua-driver'),
       createServerManager([client]),
+      { 'cua-driver': CUA_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) },
       observer
     )
     const toolCall = {
@@ -759,7 +1490,7 @@ describe('ToolManager', () => {
       },
       source: {
         serverName: 'cua-driver',
-        ownerPluginId: 'com.deepchat.plugins.cua'
+        ownerPluginId: CUA_PLUGIN_ID
       }
     })
     expect(observer.completed).toHaveBeenCalledWith(
@@ -772,34 +1503,34 @@ describe('ToolManager', () => {
 
   it('refreshes PiP after a trusted click without exposing or awaiting the private snapshot', async () => {
     let snapshotPolicy: 'allow' | 'ask' = 'allow'
-    vi.spyOn(toolPolicyStore, 'getPluginToolPolicy').mockImplementation((_serverId, toolName) =>
-      toolName === 'get_window_state' ? snapshotPolicy : null
+    vi.spyOn(toolPolicyStore, 'resolvePluginToolPolicy').mockImplementation(
+      (_serverId, toolName) => ({
+        managed: toolName === 'get_window_state',
+        decision: toolName === 'get_window_state' ? snapshotPolicy : null
+      })
     )
-    const client = createClient(
-      'cua-driver',
-      [
-        {
-          name: 'click',
-          description: 'Click the current window',
-          inputSchema: {
-            properties: {},
-            required: []
-          }
-        },
-        {
-          name: 'get_window_state',
-          description: 'Read the current window',
-          inputSchema: {
-            properties: {},
-            required: []
-          }
-        }
-      ],
+    const tools = [
       {
-        source: 'plugin',
-        ownerPluginId: 'com.deepchat.plugins.cua'
+        name: 'click',
+        description: 'Click the current window',
+        inputSchema: {
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'get_window_state',
+        description: 'Read the current window',
+        inputSchema: {
+          properties: {},
+          required: []
+        }
       }
-    )
+    ]
+    const client = createClient('cua-driver', tools, {
+      source: 'plugin',
+      ownerPluginId: CUA_PLUGIN_ID
+    })
     const privateSnapshots = [
       deferred<{
         content: Array<{ type: string; mimeType: string; data: string }>
@@ -834,6 +1565,23 @@ describe('ToolManager', () => {
       providerSettings as never,
       createServerManager([client]) as never,
       publishEvent,
+      {
+        ownsServer: (serverName) => serverName === 'cua-driver',
+        isServerAvailable: (serverName) => serverName === 'cua-driver',
+        getOwnerPluginId: (serverName) => (serverName === 'cua-driver' ? CUA_PLUGIN_ID : undefined),
+        getAvailableToolCatalogs: () => [
+          {
+            pluginId: CUA_PLUGIN_ID,
+            serverName: 'cua-driver',
+            displayName: 'CUA Driver',
+            toolCatalog: {
+              version: '1',
+              tools
+            }
+          }
+        ],
+        ensureRunning: vi.fn().mockResolvedValue(undefined)
+      },
       observer
     )
 
@@ -853,7 +1601,8 @@ describe('ToolManager', () => {
     expect(result).toEqual({
       toolCallId: 'cua-click-1',
       content: 'clicked',
-      isError: false
+      isError: false,
+      ownerPluginId: CUA_PLUGIN_ID
     })
     expect(client.callTool).toHaveBeenNthCalledWith(1, 'click', {
       pid: 12,
@@ -861,6 +1610,7 @@ describe('ToolManager', () => {
       x: 10,
       y: 20
     })
+    await vi.waitFor(() => expect(client.callTool).toHaveBeenCalledTimes(2))
     expect(client.callTool).toHaveBeenNthCalledWith(2, 'get_window_state', {
       pid: 12,
       window_id: 34
@@ -966,6 +1716,121 @@ describe('ToolManager', () => {
     expect(observer.started).toHaveBeenCalledTimes(2)
   })
 
+  it('blocks a private PiP snapshot when the live schema differs from the catalog', async () => {
+    vi.spyOn(toolPolicyStore, 'resolvePluginToolPolicy').mockImplementation(
+      (_serverId, toolName) => ({
+        managed: toolName === 'get_window_state',
+        decision: toolName === 'get_window_state' ? 'allow' : null
+      })
+    )
+    const liveTools = [
+      {
+        name: 'click',
+        description: 'Click the current window',
+        inputSchema: {
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: 'get_window_state',
+        description: 'Read the current window',
+        inputSchema: {
+          properties: {
+            pid: { type: 'integer' }
+          },
+          required: ['pid']
+        }
+      }
+    ]
+    const catalogTools = [
+      liveTools[0],
+      {
+        ...liveTools[1],
+        inputSchema: {
+          properties: {
+            pid: { type: 'integer' },
+            window_id: { type: 'integer' }
+          },
+          required: ['pid', 'window_id']
+        }
+      }
+    ]
+    const client = createClient('cua-driver', liveTools, {
+      source: 'plugin',
+      ownerPluginId: CUA_PLUGIN_ID
+    })
+    client.callTool.mockResolvedValue({
+      content: 'clicked',
+      isError: false
+    })
+    const serverManager = createServerManager([client])
+    const observer = {
+      shouldCaptureAfterClick: vi.fn(() => true),
+      started: vi.fn(),
+      completed: vi.fn(),
+      failed: vi.fn()
+    }
+    const manager = createToolManager(
+      createProviderSettings('cua-driver'),
+      serverManager,
+      { 'cua-driver': CUA_PLUGIN_ID },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: CUA_PLUGIN_ID,
+            serverName: 'cua-driver',
+            displayName: 'CUA Driver',
+            toolCatalog: {
+              version: '1',
+              tools: catalogTools
+            }
+          }
+        ]
+      },
+      observer
+    )
+
+    const result = await manager.callTool(
+      {
+        id: 'cua-click-schema-drift',
+        type: 'function',
+        function: {
+          name: 'click',
+          arguments: '{"pid":12,"window_id":34,"x":10,"y":20}'
+        },
+        conversationId: 'session-1'
+      },
+      { runId: 'run-1' }
+    )
+
+    expect(result.content).toBe('clicked')
+    await vi.waitFor(() => expect(observer.failed).toHaveBeenCalledOnce())
+    expect(client.callTool).toHaveBeenCalledOnce()
+    expect(client.callTool).toHaveBeenCalledWith('click', {
+      pid: 12,
+      window_id: 34,
+      x: 10,
+      y: 20
+    })
+    expect(observer.completed).not.toHaveBeenCalled()
+    expect(observer.failed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolCallId: 'cua-click-schema-drift:pip-snapshot',
+        toolName: 'get_window_state'
+      }),
+      expect.objectContaining({
+        message:
+          'Live MCP tool "get_window_state" schema differs from the packaged catalog for server "cua-driver"'
+      })
+    )
+    expect(serverManager.setServerLastError).toHaveBeenCalledWith(
+      'cua-driver',
+      'Live MCP tool "get_window_state" schema differs from the packaged catalog for server "cua-driver"'
+    )
+  })
+
   it('does not privately snapshot failed, invalid-target, or untrusted clicks', async () => {
     const trustedClient = createClient(
       'cua-driver',
@@ -981,7 +1846,7 @@ describe('ToolManager', () => {
       ],
       {
         source: 'plugin',
-        ownerPluginId: 'com.deepchat.plugins.cua'
+        ownerPluginId: CUA_PLUGIN_ID
       }
     )
     trustedClient.callTool
@@ -996,6 +1861,8 @@ describe('ToolManager', () => {
     const trustedManager = createToolManager(
       createProviderSettings('cua-driver'),
       createServerManager([trustedClient]),
+      { 'cua-driver': CUA_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) },
       trustedObserver
     )
 
@@ -1054,6 +1921,8 @@ describe('ToolManager', () => {
     const untrustedManager = createToolManager(
       createProviderSettings('manual-cua'),
       createServerManager([untrustedClient]),
+      {},
+      {},
       untrustedObserver
     )
 
@@ -1090,7 +1959,7 @@ describe('ToolManager', () => {
       ],
       {
         source: 'plugin',
-        ownerPluginId: 'com.deepchat.plugins.cua'
+        ownerPluginId: CUA_PLUGIN_ID
       }
     )
     const providerSettings = createProviderSettings('cua-driver')
@@ -1104,7 +1973,13 @@ describe('ToolManager', () => {
       completed: vi.fn(),
       failed: vi.fn()
     }
-    const manager = createToolManager(providerSettings, createServerManager([client]), observer)
+    const manager = createToolManager(
+      providerSettings,
+      createServerManager([client]),
+      { 'cua-driver': CUA_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) },
+      observer
+    )
 
     const result = await manager.callTool(
       {
@@ -1152,6 +2027,8 @@ describe('ToolManager', () => {
     const manager = createToolManager(
       createProviderSettings('spoofed-cua'),
       createServerManager([client]),
+      {},
+      {},
       observer
     )
 
@@ -1189,7 +2066,7 @@ describe('ToolManager', () => {
       ],
       {
         source: 'plugin',
-        ownerPluginId: 'com.deepchat.plugins.cua'
+        ownerPluginId: CUA_PLUGIN_ID
       }
     )
     const failure = new Error('driver failed')
@@ -1202,6 +2079,8 @@ describe('ToolManager', () => {
     const manager = createToolManager(
       createProviderSettings('cua-driver'),
       createServerManager([client]),
+      { 'cua-driver': CUA_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) },
       observer
     )
 

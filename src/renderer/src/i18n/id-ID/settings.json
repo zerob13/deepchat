@@ -2850,6 +2850,9 @@
     "enable": "aktifkan",
     "disable": "nonaktifkan",
     "openSettings": "pengaturan",
+    "testRuntime": "Uji runtime",
+    "retryRuntime": "Coba lagi runtime",
+    "quarantineDescription": "DeepChat menghentikan runtime ini setelah keluar secara tidak bersih. Coba lagi hanya saat desktop aman untuk dikendalikan.",
     "runtime": "waktu proses",
     "runtimeState": "Status",
     "version": "versi",
@@ -2863,6 +2866,8 @@
       "missing": "Tidak dipasang",
       "installed": "Dipasang",
       "running": "Berlari",
+      "readyOnDemand": "Siap saat diperlukan",
+      "quarantined": "Dikarantina",
       "error": "Kesalahan"
     }
   },

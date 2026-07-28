@@ -2,7 +2,8 @@ export const CUA_DARWIN_HELPER_APP_NAME = 'DeepChat Computer Use.app'
 export const CUA_DARWIN_HELPER_EXECUTABLE_NAME = 'deepchat-cua-driver'
 export const CUA_DARWIN_HELPER_BUNDLE_IDENTIFIER = 'com.deepchat.computeruse.helper'
 export const CUA_DARWIN_ALLOWED_ENTITLEMENTS = Object.freeze({
-  'com.apple.security.automation.apple-events': true
+  'com.apple.security.automation.apple-events': true,
+  'com.apple.security.device.screen-capture': true
 })
 
 const RELATIVE_LOAD_PATH_PREFIXES = Object.freeze([

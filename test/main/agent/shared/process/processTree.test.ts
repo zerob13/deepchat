@@ -6,7 +6,7 @@ vi.mock('child_process', () => ({
 }))
 
 import { spawn } from 'child_process'
-import { terminateProcessTree } from '@/agent/shared/process/processTree'
+import { terminateProcessTree, terminateProcessTreeByPid } from '@/agent/shared/process/processTree'
 
 class MockSpawnedProcess extends EventEmitter {
   stdout = new EventEmitter()
@@ -180,5 +180,38 @@ describe('terminateProcessTree', () => {
     expect(spawn).toHaveBeenNthCalledWith(10, 'kill', ['-KILL', '778'], {
       stdio: 'ignore'
     })
+  })
+
+  it('terminates an attested orphan process tree by pid', async () => {
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      value: 'linux'
+    })
+    let alive = true
+    process.kill = vi.fn(((pid: number, signal?: NodeJS.Signals | number) => {
+      if (pid === 888 && signal === 0) {
+        if (!alive) {
+          const error = new Error('missing') as NodeJS.ErrnoException
+          error.code = 'ESRCH'
+          throw error
+        }
+        return true
+      }
+      if (pid === -888 && signal === 'SIGTERM') {
+        alive = false
+        return true
+      }
+      throw new Error(`Unexpected signal ${pid}:${String(signal)}`)
+    }) as typeof process.kill)
+
+    await expect(terminateProcessTreeByPid(888, { graceMs: 10 })).resolves.toBe(true)
+    expect(process.kill).toHaveBeenNthCalledWith(1, 888, 0)
+    expect(process.kill).toHaveBeenNthCalledWith(2, -888, 'SIGTERM')
+    expect(process.kill).toHaveBeenNthCalledWith(3, 888, 0)
+  })
+
+  it('rejects invalid orphan process ids', async () => {
+    await expect(terminateProcessTreeByPid(0)).rejects.toThrow('invalid process id')
+    expect(spawn).not.toHaveBeenCalled()
   })
 })

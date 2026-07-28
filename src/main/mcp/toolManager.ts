@@ -2,28 +2,43 @@ import logger from '@shared/logger'
 import {
   TOOL_EXECUTION,
   type MCPContentItem,
-  type MCPServerConfig,
   type MCPTextContent,
   type MCPToolCall,
   type MCPToolDefinition,
   type MCPToolResponse,
-  type Resource
+  type Resource,
+  type Tool
 } from '@shared/types/mcp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import { ServerManager } from './serverManager'
 import { McpClient } from './mcpClient'
 import { jsonrepair } from 'jsonrepair'
+import { isDeepStrictEqual } from 'node:util'
 import { getErrorMessageLabels } from '@shared/i18n'
-import { getPluginToolPolicy } from '@/plugin/toolPolicyStore'
+import { getExplicitlyDeniedPluginTools, resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
 import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
 import type { DesktopSettings } from '@/desktop/settings'
-
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
+import { CUA_PLUGIN_ID } from '@shared/types/plugin'
+import {
+  appendCuaStructuredProjection,
+  buildCuaWindowStateProjection,
+  normalizeCuaToolArguments
+} from '@/plugin/cuaToolAdapter'
+import type {
+  PluginOwnedToolCatalogRegistration,
+  PluginRuntimeStartReason
+} from '@/plugin/runtimeSupervisor'
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const PLUGIN_RUNTIME_DIAGNOSTIC_TIMEOUT_MS = 30_000
+const TOOL_CATALOG_VALIDATION_TIMEOUT_MS = 30_000
 
 type McpToolAccessContext = {
   enabledTools?: string[]
@@ -41,7 +56,6 @@ export type ComputerUsePreviewCall = {
   source: {
     serverName: string
     ownerPluginId?: string
-    sourceId?: string
   }
 }
 
@@ -55,6 +69,41 @@ export type ComputerUsePreviewObserver = {
 type ActiveToolDefinitionsRefresh = {
   completion: Promise<void>
   settle: () => void
+}
+
+type PluginMcpOwnershipPort = {
+  ownsServer(serverName: string): boolean
+  isServerAvailable(serverName: string): boolean
+  getOwnerPluginId(serverName: string): string | undefined
+  getAvailableToolCatalogs(): PluginOwnedToolCatalogRegistration[]
+  ensureRunning(serverName: string, reason: PluginRuntimeStartReason): Promise<void>
+}
+
+const NO_PLUGIN_OWNERSHIP: PluginMcpOwnershipPort = {
+  ownsServer: () => false,
+  isServerAvailable: () => false,
+  getOwnerPluginId: () => undefined,
+  getAvailableToolCatalogs: () => [],
+  ensureRunning: async (serverName) => {
+    throw new Error(`Plugin runtime server "${serverName}" is not registered`)
+  }
+}
+
+type ToolSource = {
+  serverName: string
+  displayName: string
+  icon: string
+  tools: readonly Tool[]
+  client?: McpClient
+  catalogBacked: boolean
+}
+
+type ToolTarget = {
+  serverName: string
+  originalName: string
+  client?: McpClient
+  catalogBacked: boolean
+  catalogTool?: Tool
 }
 
 const normalizeStringList = (items?: string[]): string[] | undefined => {
@@ -84,11 +133,12 @@ export class ToolManager {
   private readonly locale: Pick<DesktopSettings, 'getLanguage'>
   private serverManager: ServerManager
   private cachedToolDefinitions: MCPToolDefinition[] | null = null
-  private toolNameToTargetMap: Map<string, { client: McpClient; originalName: string }> | null =
-    null
+  private toolNameToTargetMap: Map<string, ToolTarget> | null = null
+  private catalogValidationPromises = new WeakMap<McpClient, Promise<Map<string, Tool>>>()
   private toolDefinitionsCacheGeneration = 0
   private activeToolDefinitionsRefresh: ActiveToolDefinitionsRefresh | null = null
-  // Session-scoped permission cache: conversationId -> Set of "serverName:permissionType"
+  // Session-scoped permission cache. Ordinary MCP servers retain coarse
+  // server/type grants; closed plugin policies use exact server/tool grants.
   private sessionPermissions = new Map<string, Set<string>>()
 
   constructor(
@@ -97,6 +147,7 @@ export class ToolManager {
     mcpSettings: McpSettings,
     serverManager: ServerManager,
     private readonly publishEvent: DeepchatEventPublisher,
+    private readonly pluginOwnership: PluginMcpOwnershipPort = NO_PLUGIN_OWNERSHIP,
     private readonly computerUsePreviewObserver?: ComputerUsePreviewObserver
   ) {
     this.agentSettings = agentSettings
@@ -112,31 +163,54 @@ export class ToolManager {
     this.activeToolDefinitionsRefresh = null
     this.cachedToolDefinitions = null
     this.toolNameToTargetMap = null
+    this.catalogValidationPromises = new WeakMap()
   }
 
   private isPluginOwnedClient(client: McpClient): boolean {
-    const serverConfig = client.serverConfig as {
-      ownerPluginId?: unknown
-      source?: unknown
-    }
-    return Boolean(serverConfig.ownerPluginId || serverConfig.source === 'plugin')
+    return this.pluginOwnership.ownsServer(client.serverName)
   }
 
-  private isCuaComputerUseServer(client: McpClient, serverConfig?: MCPServerConfig): boolean {
-    const clientConfig = client.serverConfig as {
-      ownerPluginId?: unknown
-      source?: unknown
-      sourceId?: unknown
-    }
-    const ownerPluginId = serverConfig?.ownerPluginId ?? clientConfig.ownerPluginId
-    const source = serverConfig?.source ?? clientConfig.source
-    const sourceId = serverConfig?.sourceId ?? clientConfig.sourceId
-    return ownerPluginId === CUA_PLUGIN_ID || (source === 'plugin' && sourceId === CUA_PLUGIN_ID)
+  private isCuaComputerUseServer(client: McpClient): boolean {
+    return (
+      this.pluginOwnership.isServerAvailable(client.serverName) &&
+      this.pluginOwnership.getOwnerPluginId(client.serverName) === CUA_PLUGIN_ID
+    )
   }
 
   public async getRunningClients(): Promise<McpClient[]> {
     return this.serverManager.getRunningClients()
   }
+
+  public async checkPluginRuntimePermissions(serverName: string): Promise<unknown> {
+    if (!this.pluginOwnership.ownsServer(serverName)) {
+      throw new Error(`MCP server "${serverName}" is not owned by a plugin runtime`)
+    }
+    if (!this.pluginOwnership.isServerAvailable(serverName)) {
+      throw new Error(`Plugin runtime server "${serverName}" is not available`)
+    }
+
+    await this.pluginOwnership.ensureRunning(serverName, 'runtime-test')
+    if (!this.pluginOwnership.isServerAvailable(serverName)) {
+      throw new Error(`Plugin runtime server "${serverName}" is no longer available`)
+    }
+    const client = this.serverManager.getClient(serverName)
+    if (!client) {
+      throw new Error(`Plugin runtime server "${serverName}" has no running client`)
+    }
+    const signal = AbortSignal.timeout(PLUGIN_RUNTIME_DIAGNOSTIC_TIMEOUT_MS)
+    const catalogTool = this.getCatalogTool(serverName, 'check_permissions')
+    await this.verifyCatalogTool(client, catalogTool, signal)
+    const result = await client.callTool('check_permissions', { prompt: false }, { signal })
+    if (result.isError) {
+      const detail = result.content
+        ?.map((item) => item.text)
+        .filter(Boolean)
+        .join('; ')
+      throw new Error(detail || `Plugin runtime server "${serverName}" permission check failed`)
+    }
+    return result
+  }
+
   // Get all tool definitions
   public async getAllToolDefinitions(
     access?: string[] | McpToolAccessContext,
@@ -168,164 +242,96 @@ export class ToolManager {
       const refreshGeneration = this.toolDefinitionsCacheGeneration
       console.info('Fetching/refreshing tool definitions and target map...')
       const clients = await awaitWithAbort(this.serverManager.getRunningClients(), options?.signal)
+      const sources = await this.loadToolSources(clients ?? [], options?.signal)
       const results: MCPToolDefinition[] = []
-      const nextToolNameToTargetMap = new Map<string, { client: McpClient; originalName: string }>()
+      const nextToolNameToTargetMap = new Map<string, ToolTarget>()
 
-      if (!clients || clients.length === 0) {
-        console.warn('No running MCP clients found.')
-        options?.signal?.throwIfAborted()
-        if (refreshGeneration !== this.toolDefinitionsCacheGeneration) {
-          if (this.activeToolDefinitionsRefresh === refresh) {
-            this.activeToolDefinitionsRefresh = null
-          }
-          return await this.getAllToolDefinitions(access, options)
-        }
-        this.cachedToolDefinitions = []
-        this.toolNameToTargetMap = nextToolNameToTargetMap
-        return this.cachedToolDefinitions
+      if (sources.length === 0) {
+        console.warn('No live MCP tools or on-demand plugin tool catalogs found.')
       }
 
       const toolNameToServerMap: Map<string, string> = new Map()
       const toolsToRename: Map<string, Set<string>> = new Map()
 
-      // Pass 1: Detect conflicts
-      for (const client of clients) {
-        try {
-          const clientTools = await awaitWithAbort(client.listTools(), options?.signal)
-          this.serverManager.clearServerLastError(client.serverName)
-          if (!clientTools) continue
-
-          const currentServerRenames: Set<string> =
-            toolsToRename.get(client.serverName) || new Set()
-
-          for (const tool of clientTools) {
-            if (toolNameToServerMap.has(tool.name)) {
-              const originalServerName = toolNameToServerMap.get(tool.name)!
-              if (originalServerName !== client.serverName) {
-                console.warn(
-                  `Conflict detected for tool '${tool.name}' between server '${originalServerName}' and '${client.serverName}'. Marking for rename.`
-                )
-                // Mark original tool for rename
-                const originalServerRenames = toolsToRename.get(originalServerName) || new Set()
-                originalServerRenames.add(tool.name)
-                toolsToRename.set(originalServerName, originalServerRenames)
-                // Mark current tool for rename
-                currentServerRenames.add(tool.name)
-              }
-            } else {
-              toolNameToServerMap.set(tool.name, client.serverName)
-            }
+      for (const source of sources) {
+        const currentServerRenames = toolsToRename.get(source.serverName) ?? new Set<string>()
+        for (const tool of source.tools) {
+          const originalServerName = toolNameToServerMap.get(tool.name)
+          if (originalServerName && originalServerName !== source.serverName) {
+            console.warn(
+              `Conflict detected for tool '${tool.name}' between server '${originalServerName}' and '${source.serverName}'. Marking for rename.`
+            )
+            const originalServerRenames = toolsToRename.get(originalServerName) ?? new Set()
+            originalServerRenames.add(tool.name)
+            toolsToRename.set(originalServerName, originalServerRenames)
+            currentServerRenames.add(tool.name)
+          } else if (!originalServerName) {
+            toolNameToServerMap.set(tool.name, source.serverName)
           }
-          if (currentServerRenames.size > 0) {
-            toolsToRename.set(client.serverName, currentServerRenames)
-          }
-        } catch (error: unknown) {
-          if (options?.signal?.aborted) throw error
-          // Log error and notify, but continue conflict detection with other clients
-          const errorMessage = error instanceof Error ? error.message : String(error)
-          const serverName = client.serverName || 'Unknown server'
-          console.error(
-            `Pass 1 Error: Failed to get tool list from server '${serverName}':`,
-            errorMessage
-          )
-          this.serverManager.setServerLastError(serverName, errorMessage)
-          if (!this.isPluginOwnedClient(client)) {
-            // Send notification for normal MCP servers. Plugin-owned MCP errors are shown in
-            // plugin status surfaces instead of global toasts.
-            const locale = this.locale.getLanguage() || 'zh-CN'
-            const errorMessages = getErrorMessageLabels(locale)
-            const formattedMessage =
-              errorMessages.getMcpToolListErrorMessage
-                ?.replace('{serverName}', serverName)
-                .replace('{errorMessage}', errorMessage) ||
-              `Failed to get tool list from server '${serverName}': ${errorMessage}`
-            this.publishEvent('notification.error', {
-              title: errorMessages.getMcpToolListErrorTitle || 'Failed to get tool definitions',
-              message: formattedMessage,
-              id: `mcp-error-pass1-${serverName}-${Date.now()}`,
-              type: 'error'
-            })
-          }
-          continue // Continue to next client
+        }
+        if (currentServerRenames.size > 0) {
+          toolsToRename.set(source.serverName, currentServerRenames)
         }
       }
 
-      // Pass 2: Build results with renaming AND populate the target map
-      for (const client of clients) {
-        try {
-          const clientTools = await awaitWithAbort(client.listTools(), options?.signal)
-          this.serverManager.clearServerLastError(client.serverName)
-          if (!clientTools) continue
+      for (const source of sources) {
+        const renamesForThisServer = toolsToRename.get(source.serverName) ?? new Set()
+        for (const tool of source.tools) {
+          let finalName = tool.name
+          let finalDescription = tool.description
+          const originalName = tool.name
 
-          const renamesForThisServer = toolsToRename.get(client.serverName) || new Set()
-
-          for (const tool of clientTools) {
-            let finalName = tool.name
-            let finalDescription = tool.description
-            const originalName = tool.name
-
-            if (renamesForThisServer.has(originalName)) {
-              finalName = `${client.serverName}_${originalName}`
-              finalDescription = `[${client.serverName}] ${tool.description}`
-            }
-
-            // Validate the final name against the allowed pattern
-            const namePattern = /^[a-zA-Z0-9_-]+$/
-            if (!namePattern.test(finalName)) {
-              console.error(
-                `Generated tool name '${finalName}' is invalid. Skipping tool '${originalName}' from server '${client.serverName}'. Please ensure the tool name matches the allowed pattern: /^[a-zA-Z0-9_-]+$/`
-              )
-              continue // Skip adding this tool
-            }
-
-            const properties = tool.inputSchema.properties || {}
-            const toolProperties = { ...properties }
-            for (const key in toolProperties) {
-              if (!toolProperties[key].description) {
-                toolProperties[key].description = 'Params of ' + key
-              }
-            }
-
-            results.push({
-              execution: TOOL_EXECUTION.write,
-              type: 'function',
-              function: {
-                name: finalName,
-                description: finalDescription,
-                parameters: {
-                  type: 'object',
-                  properties: toolProperties,
-                  required: Array.isArray(tool.inputSchema.required)
-                    ? tool.inputSchema.required
-                    : []
-                }
-              },
-              server: {
-                name: client.serverName,
-                icons: client.serverConfig.icons as string,
-                description: client.serverConfig.descriptions as string
-              }
-            })
-
-            // Populate the target map
-            nextToolNameToTargetMap.set(finalName, {
-              client,
-              originalName
-            })
+          if (renamesForThisServer.has(originalName)) {
+            finalName = `${source.serverName}_${originalName}`
+            finalDescription = `[${source.serverName}] ${tool.description}`
           }
-        } catch (error: unknown) {
-          if (options?.signal?.aborted) throw error
-          // Log error but continue building results from other clients
-          const errorMessage = error instanceof Error ? error.message : String(error)
-          const serverName = client.serverName || 'Unknown server'
-          console.error(
-            `Pass 2 Error: Error processing tools from server '${serverName}':`,
-            errorMessage
+
+          const namePattern = /^[a-zA-Z0-9_-]+$/
+          if (!namePattern.test(finalName)) {
+            console.error(
+              `Generated tool name '${finalName}' is invalid. Skipping tool '${originalName}' from server '${source.serverName}'. Please ensure the tool name matches the allowed pattern: /^[a-zA-Z0-9_-]+$/`
+            )
+            continue
+          }
+
+          const properties = isRecord(tool.inputSchema.properties)
+            ? tool.inputSchema.properties
+            : {}
+          const toolProperties = Object.fromEntries(
+            Object.entries(properties).map(([key, value]) => [
+              key,
+              isRecord(value) && !value.description
+                ? { ...value, description: `Params of ${key}` }
+                : value
+            ])
           )
-          this.serverManager.setServerLastError(serverName, errorMessage)
-          // Maybe skip adding tools from this client if listTools fails here again,
-          // though it succeeded in Pass 1. Or rely on the notification from Pass 1.
-          continue // Continue to next client
+
+          results.push({
+            execution: TOOL_EXECUTION.write,
+            type: 'function',
+            function: {
+              name: finalName,
+              description: finalDescription,
+              parameters: {
+                type: 'object',
+                properties: toolProperties,
+                required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
+              }
+            },
+            server: {
+              name: source.serverName,
+              icons: source.icon,
+              description: source.displayName
+            }
+          })
+
+          nextToolNameToTargetMap.set(finalName, {
+            serverName: source.serverName,
+            originalName,
+            client: source.client,
+            catalogBacked: source.catalogBacked,
+            ...(source.catalogBacked ? { catalogTool: tool } : {})
+          })
         }
       }
 
@@ -348,6 +354,88 @@ export class ToolManager {
         this.activeToolDefinitionsRefresh = null
       }
     }
+  }
+
+  private async loadToolSources(clients: McpClient[], signal?: AbortSignal): Promise<ToolSource[]> {
+    const catalogRegistrations = this.pluginOwnership.getAvailableToolCatalogs()
+    const catalogServerNames = new Set(
+      catalogRegistrations.map((registration) => registration.serverName)
+    )
+    const sources: ToolSource[] = []
+
+    for (const client of clients) {
+      if (
+        (this.pluginOwnership.ownsServer(client.serverName) &&
+          !this.pluginOwnership.isServerAvailable(client.serverName)) ||
+        catalogServerNames.has(client.serverName)
+      ) {
+        continue
+      }
+
+      try {
+        const tools = await awaitWithAbort(client.listTools({ signal }), signal)
+        this.serverManager.clearServerLastError(client.serverName)
+        if (!tools) {
+          continue
+        }
+        sources.push({
+          serverName: client.serverName,
+          displayName: client.serverConfig.descriptions as string,
+          icon: client.serverConfig.icons as string,
+          tools: this.filterExplicitlyDeniedTools(client.serverName, tools),
+          client,
+          catalogBacked: false
+        })
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error
+        }
+        this.handleToolListError(client, error)
+      }
+    }
+
+    for (const registration of catalogRegistrations) {
+      sources.push({
+        serverName: registration.serverName,
+        displayName: registration.displayName,
+        icon: 'plugin',
+        tools: this.filterExplicitlyDeniedTools(
+          registration.serverName,
+          registration.toolCatalog.tools
+        ),
+        catalogBacked: true
+      })
+    }
+    return sources
+  }
+
+  private filterExplicitlyDeniedTools(serverName: string, tools: readonly Tool[]): readonly Tool[] {
+    const deniedTools = new Set(getExplicitlyDeniedPluginTools(serverName))
+    return deniedTools.size === 0 ? tools : tools.filter((tool) => !deniedTools.has(tool.name))
+  }
+
+  private handleToolListError(client: McpClient, error: unknown): void {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const serverName = client.serverName || 'Unknown server'
+    console.error(`Failed to get tool list from server '${serverName}':`, errorMessage)
+    this.serverManager.setServerLastError(serverName, errorMessage)
+    if (this.isPluginOwnedClient(client)) {
+      return
+    }
+
+    const locale = this.locale.getLanguage() || 'zh-CN'
+    const errorMessages = getErrorMessageLabels(locale)
+    const formattedMessage =
+      errorMessages.getMcpToolListErrorMessage
+        ?.replace('{serverName}', serverName)
+        .replace('{errorMessage}', errorMessage) ||
+      `Failed to get tool list from server '${serverName}': ${errorMessage}`
+    this.publishEvent('notification.error', {
+      title: errorMessages.getMcpToolListErrorTitle || 'Failed to get tool definitions',
+      message: formattedMessage,
+      id: `mcp-error-tools-${serverName}-${Date.now()}`,
+      type: 'error'
+    })
   }
 
   private filterToolDefinitionsByContext(
@@ -374,31 +462,12 @@ export class ToolManager {
   }
 
   private isServerAllowedByContext(serverName: string, context: McpToolAccessContext): boolean {
-    const serverConfig = this.getServerConfigFromTargetMap(serverName)
-    if (!serverConfig) {
-      return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
-    }
-    return this.isServerConfigAllowedByContext(serverName, serverConfig, context)
-  }
-
-  private isServerConfigAllowedByContext(
-    serverName: string,
-    serverConfig: MCPServerConfig,
-    context: McpToolAccessContext
-  ): boolean {
-    if (serverConfig.ownerPluginId?.trim() || serverConfig.source === 'plugin') {
+    // Official plugin runtimes are app-global capabilities; per-agent MCP selections only govern
+    // user-configured servers.
+    if (this.pluginOwnership.isServerAvailable(serverName)) {
       return true
     }
     return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
-  }
-
-  private getServerConfigFromTargetMap(serverName: string): MCPServerConfig | undefined {
-    for (const target of this.toolNameToTargetMap?.values() ?? []) {
-      if (target.client.serverName === serverName) {
-        return target.client.serverConfig as unknown as MCPServerConfig
-      }
-    }
-    return undefined
   }
 
   // 确定权限类型的新方法
@@ -461,10 +530,34 @@ export class ToolManager {
       `conversationId: ${conversationId}`
     )
 
+    const policy = resolvePluginToolPolicy(serverName, originalToolName)
+    if (policy.decision === 'allow') {
+      logger.info(
+        `[ToolManager] Permission granted by plugin tool policy: ${serverName}.${originalToolName}`
+      )
+      return true
+    }
+    if (policy.managed) {
+      if (
+        policy.decision === 'ask' &&
+        conversationId &&
+        this.checkSessionToolPermission(conversationId, serverName, originalToolName)
+      ) {
+        logger.info(
+          `[ToolManager] Permission granted by exact plugin session cache: ${serverName}.${originalToolName}`
+        )
+        return true
+      }
+      logger.info(
+        `[ToolManager] Permission blocked by closed plugin tool policy '${policy.decision ?? 'undeclared'}': ${serverName}.${originalToolName}`
+      )
+      return false
+    }
+
     const permissionType = this.determinePermissionType(originalToolName)
     logger.info(`[ToolManager] Tool '${originalToolName}' requires '${permissionType}' permission`)
 
-    // 1. 优先检查 session 级别的内存权限（当前会话自动执行）
+    // Existing servers without a closed plugin policy retain coarse session grants.
     if (conversationId && this.checkSessionPermission(conversationId, serverName, permissionType)) {
       logger.info(
         `[ToolManager] Permission granted via session cache: server '${serverName}' has '${permissionType}' permission`
@@ -472,28 +565,13 @@ export class ToolManager {
       return true
     }
 
-    // 2. Plugin-owned exact policies override persisted server auto-approve settings.
-    const pluginPolicy = getPluginToolPolicy(serverName, originalToolName)
-    if (pluginPolicy === 'allow') {
-      logger.info(
-        `[ToolManager] Permission granted by plugin tool policy: ${serverName}.${originalToolName}`
-      )
-      return true
-    }
-    if (pluginPolicy === 'ask' || pluginPolicy === 'deny') {
-      logger.info(
-        `[ToolManager] Permission blocked by plugin tool policy '${pluginPolicy}': ${serverName}.${originalToolName}`
-      )
-      return false
-    }
-
-    // 3. 检查持久化的 'all' 权限
+    // 检查持久化的 'all' 权限
     if (autoApprove.includes('all')) {
       logger.info(`[ToolManager] Permission granted: server '${serverName}' has 'all' permissions`)
       return true
     }
 
-    // 4. 检查持久化的特定权限类型
+    // 检查持久化的特定权限类型
     if (autoApprove.includes(permissionType)) {
       logger.info(
         `[ToolManager] Permission granted: server '${serverName}' has '${permissionType}' permission`
@@ -554,8 +632,7 @@ export class ToolManager {
       return null
     }
 
-    const { originalName } = targetInfo
-    const toolServerName = targetInfo.client.serverName
+    const { originalName, serverName: toolServerName } = targetInfo
 
     // Get server config to check auto-approve settings
     const servers = await awaitWithAbort(this.mcpSettings.getMcpServers(), access?.signal)
@@ -566,16 +643,17 @@ export class ToolManager {
       enabledServerIds: access?.enabledServerIds,
       conversationId: toolCall.conversationId
     })
-    if (
-      serverConfig &&
-      !this.isServerConfigAllowedByContext(toolServerName, serverConfig, accessContext)
-    ) {
+    if (serverConfig && !this.isServerAllowedByContext(toolServerName, accessContext)) {
       return null
     }
     const autoApprove = serverConfig?.autoApprove || []
-    const pluginPolicy = getPluginToolPolicy(toolServerName, originalName)
+    const pluginPolicy = resolvePluginToolPolicy(toolServerName, originalName)
 
-    if (pluginPolicy === 'deny') {
+    if (
+      pluginPolicy.managed &&
+      pluginPolicy.decision !== 'allow' &&
+      pluginPolicy.decision !== 'ask'
+    ) {
       return null
     }
 
@@ -649,8 +727,7 @@ export class ToolManager {
         }
       }
 
-      const { client: targetClient, originalName } = targetInfo
-      const toolServerName = targetClient.serverName
+      const { originalName, serverName: toolServerName } = targetInfo
       const accessContext = normalizeToolAccessContext({
         agentId: access?.agentId,
         enabledServerIds: access?.enabledServerIds,
@@ -731,7 +808,7 @@ export class ToolManager {
           isError: true
         }
       }
-      if (!this.isServerConfigAllowedByContext(toolServerName, serverConfig, accessContext)) {
+      if (!this.isServerAllowedByContext(toolServerName, accessContext)) {
         return {
           toolCallId: toolCall.id,
           content: `MCP server '${toolServerName}' is not allowed for DeepChat agent '${accessContext.agentId ?? 'unknown'}'. Configure MCP access in DeepChat agent settings.`,
@@ -739,11 +816,18 @@ export class ToolManager {
         }
       }
       const autoApprove = serverConfig?.autoApprove || []
-      const pluginPolicy = getPluginToolPolicy(toolServerName, originalName)
-      if (pluginPolicy === 'deny') {
+      const pluginPolicy = resolvePluginToolPolicy(toolServerName, originalName)
+      if (
+        pluginPolicy.managed &&
+        pluginPolicy.decision !== 'allow' &&
+        pluginPolicy.decision !== 'ask'
+      ) {
         return {
           toolCallId: toolCall.id,
-          content: `Tool '${originalName}' on server '${toolServerName}' is blocked by plugin policy.`,
+          content:
+            pluginPolicy.decision === 'deny'
+              ? `Tool '${originalName}' on server '${toolServerName}' is blocked by plugin policy.`
+              : `Tool '${originalName}' on server '${toolServerName}' is not declared by its closed plugin policy.`,
           isError: true
         }
       }
@@ -782,9 +866,10 @@ export class ToolManager {
         }
       }
 
+      const targetClient = await this.resolveToolClient(targetInfo, access?.signal)
+      access?.signal?.throwIfAborted()
       const preparedArgs = await this.prepareToolArguments(
         targetClient,
-        serverConfig,
         originalName,
         args || {},
         access?.signal
@@ -802,7 +887,6 @@ export class ToolManager {
         originalName === 'get_window_state'
           ? this.createComputerUsePreviewCall({
               client: targetClient,
-              serverConfig,
               toolCall,
               toolName: originalName,
               args: preparedArgs.args,
@@ -819,7 +903,21 @@ export class ToolManager {
         : await targetClient.callTool(originalName, preparedArgs.args)
       access?.signal?.throwIfAborted()
 
-      const response = this.formatToolResponse(toolCall.id, result)
+      const ownerPluginId = this.pluginOwnership.ownsServer(toolServerName)
+        ? this.pluginOwnership.getOwnerPluginId(toolServerName)
+        : undefined
+      const formattedResponse = this.formatToolResponse(toolCall.id, result)
+      const response: MCPToolResponse = {
+        ...formattedResponse,
+        content:
+          ownerPluginId === CUA_PLUGIN_ID
+            ? appendCuaStructuredProjection(
+                formattedResponse.content,
+                buildCuaWindowStateProjection(originalName, result.structuredContent)
+              )
+            : formattedResponse.content,
+        ...(ownerPluginId ? { ownerPluginId } : {})
+      }
 
       if (previewCall) {
         this.notifyComputerUsePreview('completed', previewCall, response)
@@ -834,7 +932,6 @@ export class ToolManager {
 
       this.scheduleComputerUsePreviewAfterClick({
         client: targetClient,
-        serverConfig,
         toolCall,
         toolName: originalName,
         args: preparedArgs.args,
@@ -862,9 +959,96 @@ export class ToolManager {
     }
   }
 
+  private async resolveToolClient(target: ToolTarget, signal?: AbortSignal): Promise<McpClient> {
+    let client = target.client
+    if (this.pluginOwnership.ownsServer(target.serverName)) {
+      await awaitWithAbort(this.pluginOwnership.ensureRunning(target.serverName, 'tool'), signal)
+      signal?.throwIfAborted()
+      if (!this.pluginOwnership.isServerAvailable(target.serverName)) {
+        throw new Error(`Plugin runtime server "${target.serverName}" is no longer available`)
+      }
+      client = this.serverManager.getClient(target.serverName)
+    }
+    if (!client) {
+      throw new Error(`MCP server "${target.serverName}" has no running client`)
+    }
+
+    if (target.catalogBacked) {
+      if (!target.catalogTool) {
+        throw new Error(
+          `Catalog-backed MCP tool "${target.originalName}" has no packaged definition`
+        )
+      }
+      await this.verifyCatalogTool(client, target.catalogTool, signal)
+    }
+    return client
+  }
+
+  private async verifyCatalogTool(
+    client: McpClient,
+    catalogTool: Tool,
+    signal?: AbortSignal
+  ): Promise<void> {
+    let validationPromise = this.catalogValidationPromises.get(client)
+    if (!validationPromise) {
+      const validationSignal = AbortSignal.timeout(TOOL_CATALOG_VALIDATION_TIMEOUT_MS)
+      validationPromise = client
+        .listTools({ signal: validationSignal })
+        .then((liveTools) => {
+          this.serverManager.clearServerLastError(client.serverName)
+          const tools = new Map<string, Tool>()
+          for (const liveTool of liveTools ?? []) {
+            if (tools.has(liveTool.name)) {
+              throw new Error(
+                `Live MCP server "${client.serverName}" returned duplicate tool "${liveTool.name}"`
+              )
+            }
+            tools.set(liveTool.name, liveTool)
+          }
+          return tools
+        })
+        .catch((error) => {
+          this.serverManager.setServerLastError(client.serverName, error)
+          throw error
+        })
+      this.catalogValidationPromises.set(client, validationPromise)
+      void validationPromise.catch(() => {
+        if (this.catalogValidationPromises.get(client) === validationPromise) {
+          this.catalogValidationPromises.delete(client)
+        }
+      })
+    }
+
+    const liveTools = await awaitWithAbort(validationPromise, signal)
+    signal?.throwIfAborted()
+    const liveTool = liveTools.get(catalogTool.name)
+    if (!liveTool) {
+      const errorMessage = `Live MCP tool "${catalogTool.name}" is missing from catalog-backed server "${client.serverName}"`
+      this.serverManager.setServerLastError(client.serverName, errorMessage)
+      throw new Error(errorMessage)
+    }
+    if (!isDeepStrictEqual(liveTool.inputSchema, catalogTool.inputSchema)) {
+      const errorMessage = `Live MCP tool "${catalogTool.name}" schema differs from the packaged catalog for server "${client.serverName}"`
+      this.serverManager.setServerLastError(client.serverName, errorMessage)
+      throw new Error(errorMessage)
+    }
+  }
+
+  private getCatalogTool(serverName: string, toolName: string): Tool {
+    const tool = this.pluginOwnership
+      .getAvailableToolCatalogs()
+      .find((registration) => registration.serverName === serverName)
+      ?.toolCatalog.tools.find((candidate) => candidate.name === toolName)
+    if (!tool) {
+      throw new Error(
+        `Plugin runtime server "${serverName}" has no packaged catalog entry for "${toolName}"`
+      )
+    }
+    return tool
+  }
+
   private createComputerUsePreviewCall(input: {
     client: McpClient
-    serverConfig: MCPServerConfig
     toolCall: MCPToolCall
     toolName: string
     args: Record<string, unknown>
@@ -872,20 +1056,11 @@ export class ToolManager {
   }): ComputerUsePreviewCall | null {
     const conversationId = input.toolCall.conversationId?.trim()
     const runId = input.runId?.trim()
-    if (
-      !conversationId ||
-      !runId ||
-      !this.isCuaComputerUseServer(input.client, input.serverConfig)
-    ) {
+    if (!conversationId || !runId || !this.isCuaComputerUseServer(input.client)) {
       return null
     }
 
-    const clientConfig = input.client.serverConfig as {
-      ownerPluginId?: unknown
-      sourceId?: unknown
-    }
-    const ownerPluginId = input.serverConfig.ownerPluginId ?? clientConfig.ownerPluginId
-    const sourceId = input.serverConfig.sourceId ?? clientConfig.sourceId
+    const ownerPluginId = this.pluginOwnership.getOwnerPluginId(input.client.serverName)
     return {
       conversationId,
       runId,
@@ -894,15 +1069,13 @@ export class ToolManager {
       args: { ...input.args },
       source: {
         serverName: input.client.serverName,
-        ...(typeof ownerPluginId === 'string' ? { ownerPluginId } : {}),
-        ...(typeof sourceId === 'string' ? { sourceId } : {})
+        ...(ownerPluginId ? { ownerPluginId } : {})
       }
     }
   }
 
   private scheduleComputerUsePreviewAfterClick(input: {
     client: McpClient
-    serverConfig: MCPServerConfig
     toolCall: MCPToolCall
     toolName: string
     args: Record<string, unknown>
@@ -913,7 +1086,7 @@ export class ToolManager {
     if (
       input.toolName !== 'click' ||
       input.response.isError === true ||
-      getPluginToolPolicy(input.client.serverName, 'get_window_state') !== 'allow' ||
+      resolvePluginToolPolicy(input.client.serverName, 'get_window_state').decision !== 'allow' ||
       !this.computerUsePreviewObserver?.shouldCaptureAfterClick
     ) {
       return
@@ -961,6 +1134,14 @@ export class ToolManager {
       signal?.throwIfAborted()
       this.notifyComputerUsePreview('started', call)
       started = true
+      if (!this.pluginOwnership.isServerAvailable(client.serverName)) {
+        throw new Error(`Plugin runtime server "${client.serverName}" is no longer available`)
+      }
+      await this.verifyCatalogTool(
+        client,
+        this.getCatalogTool(client.serverName, 'get_window_state'),
+        signal
+      )
       const result = signal
         ? await client.callTool('get_window_state', call.args, { signal })
         : await client.callTool('get_window_state', call.args)
@@ -979,7 +1160,7 @@ export class ToolManager {
 
   private formatToolResponse(
     toolCallId: string,
-    result: { content?: unknown; isError?: boolean }
+    result: { content?: unknown; isError?: boolean; structuredContent?: unknown }
   ): MCPToolResponse {
     let formattedContent: string | MCPContentItem[] = ''
     if (typeof result.content === 'string') {
@@ -1011,7 +1192,10 @@ export class ToolManager {
     return {
       toolCallId,
       content: formattedContent,
-      isError: result.isError
+      isError: result.isError,
+      ...(result.structuredContent !== undefined
+        ? { structuredContent: result.structuredContent }
+        : {})
     }
   }
 
@@ -1047,20 +1231,20 @@ export class ToolManager {
 
   private async prepareToolArguments(
     client: McpClient,
-    serverConfig: MCPServerConfig,
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<{ ok: true; args: Record<string, unknown> } | { ok: false; error: string }> {
-    if (
-      toolName !== 'launch_app' ||
-      process.platform !== 'win32' ||
-      !this.isCuaComputerUseServer(client, serverConfig)
-    ) {
+    if (!this.isCuaComputerUseServer(client)) {
       return { ok: true, args }
     }
 
-    return await this.prepareCuaWindowsLaunchArgs(client, args, signal)
+    const normalizedArgs = normalizeCuaToolArguments(toolName, args)
+    if (toolName !== 'launch_app' || process.platform !== 'win32') {
+      return { ok: true, args: normalizedArgs }
+    }
+
+    return await this.prepareCuaWindowsLaunchArgs(client, normalizedArgs, signal)
   }
 
   private async prepareCuaWindowsLaunchArgs(
@@ -1272,11 +1456,31 @@ export class ToolManager {
     serverName: string,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean = true,
-    conversationId?: string
+    conversationId?: string,
+    toolName?: string
   ): Promise<void> {
     logger.info(
       `[ToolManager] Granting permission: ${permissionType} for server: ${serverName}, remember: ${remember}, conversationId: ${conversationId}`
     )
+
+    const pluginPolicy = toolName
+      ? resolvePluginToolPolicy(serverName, toolName)
+      : resolvePluginToolPolicy(serverName, '')
+    if (pluginPolicy.managed) {
+      if (remember || !conversationId || !toolName || pluginPolicy.decision !== 'ask') {
+        throw new Error(
+          `Closed plugin policy permission for "${serverName}" requires an exact ask-policy tool and conversation`
+        )
+      }
+      const key = this.pluginToolPermissionKey(serverName, toolName)
+      const existing = this.sessionPermissions.get(conversationId) ?? new Set<string>()
+      existing.add(key)
+      this.sessionPermissions.set(conversationId, existing)
+      logger.info(
+        `[ToolManager] Exact plugin session permission stored: ${serverName}.${toolName} for conversation ${conversationId}`
+      )
+      return
+    }
 
     if (remember) {
       // Persist to configuration
@@ -1329,6 +1533,22 @@ export class ToolManager {
     }
 
     return false
+  }
+
+  private checkSessionToolPermission(
+    conversationId: string,
+    serverName: string,
+    toolName: string
+  ): boolean {
+    return (
+      this.sessionPermissions
+        .get(conversationId)
+        ?.has(this.pluginToolPermissionKey(serverName, toolName)) ?? false
+    )
+  }
+
+  private pluginToolPermissionKey(serverName: string, toolName: string): string {
+    return JSON.stringify(['plugin-tool', serverName, toolName])
   }
 
   // 清除会话的临时权限

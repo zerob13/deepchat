@@ -2909,6 +2909,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "Test runtime",
+    "retryRuntime": "Prøv runtime igen",
+    "quarantineDescription": "DeepChat stoppede denne runtime efter en ukorrekt afslutning. Prøv kun igen, når skrivebordet sikkert kan styres.",
     "runtime": "Runtime",
     "runtimeState": "Tilstand",
     "version": "Version",
@@ -2922,6 +2925,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "Klar efter behov",
+      "quarantined": "I karantæne",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

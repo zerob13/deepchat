@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
@@ -59,7 +59,10 @@ const createPluginService = async (
       mcpServers[serverName] = config
     }),
     updateMcpServer: vi.fn().mockImplementation(async (serverName: string, config: unknown) => {
-      mcpServers[serverName] = config
+      mcpServers[serverName] = {
+        ...(mcpServers[serverName] as Record<string, unknown> | undefined),
+        ...(config as Record<string, unknown>)
+      }
     }),
     removeMcpServer: vi.fn().mockImplementation(async (serverName: string) => {
       delete mcpServers[serverName]
@@ -73,7 +76,28 @@ const createPluginService = async (
     startServer: vi.fn().mockResolvedValue(undefined),
     stopServer: vi.fn().mockResolvedValue(undefined),
     stopServerDuringShutdownByName: vi.fn().mockResolvedValue(undefined),
-    getServerLastError: vi.fn().mockReturnValue(undefined)
+    getServerLastError: vi.fn().mockReturnValue(undefined),
+    checkPluginRuntimePermissions: vi.fn().mockResolvedValue(undefined)
+  }
+  const runtimeRegistrations = new Map<string, Record<string, unknown>>()
+  const runtimeSupervisor = {
+    attachSafetyStore: vi.fn(),
+    registerServer: vi.fn().mockImplementation((registration: Record<string, unknown>) => {
+      runtimeRegistrations.set(String(registration.serverName), registration)
+    }),
+    commitPluginRegistration: vi.fn(),
+    unregisterPlugin: vi.fn().mockImplementation(async (pluginId: string) => {
+      for (const [serverName, registration] of runtimeRegistrations) {
+        if (registration.pluginId === pluginId) {
+          runtimeRegistrations.delete(serverName)
+        }
+      }
+    }),
+    reconcilePlugin: vi.fn().mockResolvedValue(undefined),
+    testRuntime: vi.fn().mockResolvedValue(undefined),
+    retryRuntime: vi.fn().mockResolvedValue(undefined),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+    getState: vi.fn().mockReturnValue(undefined)
   }
   const skillService = {
     registerPluginSkill: vi.fn().mockResolvedValue(undefined),
@@ -87,13 +111,16 @@ const createPluginService = async (
     resourcesPath: options.resourcesPath,
     mcpSettings,
     mcpService,
+    runtimeSupervisor,
     skillService,
     settingsWindow: new PluginSettingsWindow()
   } as any)
   return Object.assign(presenter, {
     __mocks: {
+      mcpServers,
       mcpSettings,
       mcpService,
+      runtimeSupervisor,
       skillService
     }
   })
@@ -106,6 +133,7 @@ const createBundledFixture = async (
     pluginId?: string
     name?: string
     includeSettings?: boolean
+    startMode?: 'eager' | 'onDemand'
   } = {}
 ) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-plugin-test-'))
@@ -118,6 +146,7 @@ const createBundledFixture = async (
   const runtimeRelativePath = `runtime/darwin/${process.arch}/${runtimeFileName}`
   const pluginId = options.pluginId ?? 'com.deepchat.plugins.fixture'
   const includeSettings = options.includeSettings ?? false
+  const startMode = options.startMode ?? 'eager'
   const manifest = {
     id: pluginId,
     name: options.name ?? 'Fixture Runtime',
@@ -155,7 +184,14 @@ const createBundledFixture = async (
         transport: 'stdio',
         command: '${runtime.fixture-runtime.command}',
         args: ['mcp'],
-        autoApprove: []
+        autoApprove: [],
+        ...(startMode === 'onDemand'
+          ? {
+              startMode,
+              surfaces: ['tools'],
+              toolCatalog: 'mcp/tool-catalog.json'
+            }
+          : {})
       }
     ],
     ...(includeSettings
@@ -178,6 +214,23 @@ const createBundledFixture = async (
       process.platform === 'win32'
         ? '@echo off\r\necho fixture-runtime 1.0.0\r\n'
         : '#!/bin/sh\necho fixture-runtime 1.0.0\n'
+    )
+  }
+  if (startMode === 'onDemand') {
+    files['mcp/tool-catalog.json'] = new TextEncoder().encode(
+      `${JSON.stringify({
+        version: '1.0.0',
+        tools: [
+          {
+            name: 'fixture_tool',
+            description: 'Fixture tool',
+            input_schema: { type: 'object', properties: {}, required: [] },
+            read_only: true,
+            destructive: false,
+            idempotent: true
+          }
+        ]
+      })}\n`
     )
   }
   if (includeSettings) {
@@ -701,12 +754,25 @@ describe('PluginService', () => {
     expect(servers['fixture-tools']).toMatchObject({
       source: 'plugin',
       sourceId: fixture.pluginId,
-      enabled: true
+      enabled: false
     })
     expect(servers['fixture-tools'].args.map((arg: string) => path.normalize(arg))).toEqual([
       path.join(fixture.installedRoot, 'mcp', 'serve.mjs')
     ])
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-tools')
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginId: fixture.pluginId,
+        serverName: 'fixture-tools',
+        startMode: 'eager'
+      }),
+      { ready: false }
+    )
+    expect(presenter.__mocks.runtimeSupervisor.commitPluginRegistration).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
   })
 
   it('syncs dev directory installs even when only the plugin files changed', async () => {
@@ -745,7 +811,226 @@ describe('PluginService', () => {
 
     expect(serveScript).toBe('console.log("serve")\n')
     expect(configAfterRefresh).toMatchObject(config)
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-tools')
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+  })
+
+  it('does not commit a partially activated plugin when a later contribution fails', async () => {
+    const fixture = await createDirectoryFixture()
+    const manifestPath = path.join(fixture.pluginRoot, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.capabilities.push('skills.register')
+    manifest.skills = [
+      {
+        id: 'fixture-skill',
+        path: 'skills/fixture/SKILL.md',
+        scope: 'agent'
+      }
+    ]
+    await mkdir(path.join(fixture.pluginRoot, 'skills', 'fixture'), { recursive: true })
+    await writeFile(path.join(fixture.pluginRoot, 'skills', 'fixture', 'SKILL.md'), '# Fixture\n')
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    presenter.__mocks.skillService.registerPluginSkill.mockRejectedValueOnce(
+      new Error('skill registration failed')
+    )
+
+    const result = await presenter.enablePlugin(fixture.pluginId)
+    const servers = await presenter.__mocks.mcpSettings.getMcpServers()
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringContaining('skill registration failed')
+      })
+    )
+    expect(presenter.__mocks.runtimeSupervisor.commitPluginRegistration).not.toHaveBeenCalled()
+    expect(presenter.__mocks.runtimeSupervisor.unregisterPlugin).toHaveBeenLastCalledWith(
+      fixture.pluginId
+    )
+    expect(servers['fixture-tools']).toBeUndefined()
+    expect(await presenter.getPlugin(fixture.pluginId)).toMatchObject({
+      enabled: false,
+      activationError: 'skill registration failed'
+    })
+
+    await expect(presenter.disablePlugin(fixture.pluginId)).resolves.toMatchObject({ ok: true })
+    expect((await presenter.getPlugin(fixture.pluginId))?.activationError).toBeUndefined()
+
+    await expect(presenter.enablePlugin(fixture.pluginId)).resolves.toMatchObject({ ok: true })
+    expect((await presenter.getPlugin(fixture.pluginId))?.activationError).toBeUndefined()
+  })
+
+  it('loads and stages a validated on-demand catalog before exposing the server', async () => {
+    const fixture = await createDirectoryFixture()
+    const manifestPath = path.join(fixture.pluginRoot, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    Object.assign(manifest.mcpServers[0], {
+      startMode: 'onDemand',
+      surfaces: ['tools'],
+      toolCatalog: 'mcp/tool-catalog.json'
+    })
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeFile(
+      path.join(fixture.pluginRoot, 'mcp', 'tool-catalog.json'),
+      `${JSON.stringify({
+        version: '1.0.0',
+        tools: [
+          {
+            name: 'fixture_tool',
+            description: 'Fixture tool',
+            input_schema: { type: 'object', properties: {}, required: [] },
+            read_only: false,
+            destructive: true,
+            idempotent: false
+          }
+        ]
+      })}\n`
+    )
+
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    const result = await presenter.enablePlugin(fixture.pluginId)
+
+    expect(result.ok).toBe(true)
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'fixture-tools',
+        startMode: 'onDemand',
+        surfaces: ['tools'],
+        toolCatalog: {
+          version: '1.0.0',
+          tools: [
+            expect.objectContaining({
+              name: 'fixture_tool',
+              annotations: {
+                readOnlyHint: false,
+                destructiveHint: true,
+                idempotentHint: false
+              }
+            })
+          ]
+        }
+      }),
+      { ready: false }
+    )
+    expect(
+      presenter.__mocks.runtimeSupervisor.registerServer.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      presenter.__mocks.runtimeSupervisor.commitPluginRegistration.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('binds the CUA embedded adapter to its plugin-owned server registration', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-adapter-registration-'))
+    tempRoots.push(root)
+    const catalogRelativePath = 'runtime/darwin/arm64/tool-catalog.json'
+    const integrityRelativePath = 'runtime/darwin/arm64/integrity.json'
+    await mkdir(path.join(root, 'runtime', 'darwin', 'arm64'), { recursive: true })
+    const catalogContents = `${JSON.stringify({
+      version: '0.12.6',
+      tools: [
+        {
+          name: 'check_permissions',
+          description: 'Check native permissions.',
+          input_schema: { type: 'object', properties: {}, required: [] },
+          read_only: false,
+          destructive: false,
+          idempotent: true
+        }
+      ]
+    })}\n`
+    await writeFile(path.join(root, catalogRelativePath), catalogContents)
+    const presenter = await createPluginService('darwin', { arch: 'arm64' })
+    const { CuaEmbeddedRuntimeAdapter } = await import('@/plugin/cuaEmbeddedAdapter')
+    const { CuaRuntimeIntegrityVerifier } = await import('@/plugin/cuaRuntimeIntegrity')
+    const manifest = {
+      id: 'com.deepchat.plugins.cua',
+      runtime: {
+        id: 'cua-driver',
+        adapter: 'cua-embedded-v1',
+        integrityDescriptor: integrityRelativePath,
+        detect: [
+          'app-helper:DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
+          'plugin:runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver'
+        ],
+        adapterContract: {
+          hostBundleId: 'com.wefonk.deepchat',
+          driverVersion: '0.12.6',
+          contractVersion: '0.2.0',
+          toolsListSchemaVersion: '1',
+          capabilityVersion: '1',
+          mcpProtocolVersion: '2025-06-18'
+        }
+      },
+      mcpServers: [
+        {
+          id: 'cua-driver',
+          displayName: 'CUA Driver',
+          transport: 'stdio',
+          command: '${runtime.cua-driver.command}',
+          args: ['mcp', '--embedded'],
+          env: { CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0' },
+          autoApprove: [],
+          startMode: 'onDemand',
+          surfaces: ['tools'],
+          toolCatalog: catalogRelativePath,
+          inheritEnv: 'minimal'
+        }
+      ]
+    }
+
+    await (presenter as any).registerMcpServers(
+      {
+        manifest,
+        root,
+        sourcePath: root,
+        sourceType: 'directory',
+        integrityDescriptor: {
+          schemaVersion: 1,
+          pluginId: 'com.deepchat.plugins.cua',
+          runtimeId: 'cua-driver',
+          runtimeVersion: '0.12.6',
+          target: 'darwin/arm64',
+          runtimeRoot: 'runtime/darwin/arm64',
+          binaryPath: 'DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
+          catalogPath: 'tool-catalog.json',
+          files: {
+            'DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver': 'a'.repeat(64),
+            'tool-catalog.json': createHash('sha256').update(catalogContents).digest('hex')
+          },
+          executablePaths: ['DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver'],
+          macos: {
+            bundlePath: 'DeepChat Computer Use.app',
+            bundleIdentifier: 'com.deepchat.computeruse.helper',
+            signatureType: 'ad-hoc',
+            teamId: null,
+            hardenedRuntime: true,
+            entitlements: {
+              'com.apple.security.automation.apple-events': true,
+              'com.apple.security.device.screen-capture': true
+            }
+          }
+        }
+      },
+      {
+        runtimeId: 'cua-driver',
+        displayName: 'CUA Driver',
+        state: 'available',
+        command: '/plugin/cua-driver'
+      }
+    )
+
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginId: 'com.deepchat.plugins.cua',
+        serverName: 'cua-driver',
+        adapter: expect.any(CuaEmbeddedRuntimeAdapter),
+        launchGuard: expect.any(CuaRuntimeIntegrityVerifier)
+      }),
+      { ready: false }
+    )
   })
 
   it('removes persisted plugin state when discovery rejects an installed official plugin', async () => {
@@ -835,7 +1120,7 @@ describe('PluginService', () => {
     expect(windowSource).not.toContain('../preload/plugin-settings-preload.mjs')
   })
 
-  it('uses upstream-compatible CUA permission tool args for runtime checks', async () => {
+  it('keeps upstream-compatible permission args for direct legacy runtimes', async () => {
     const presenterSource = await readFile('src/main/plugin/index.ts', 'utf8')
     const presenter = await createPluginService('darwin')
 
@@ -847,7 +1132,137 @@ describe('PluginService', () => {
     expect(presenterSource).not.toContain('Runtime permission probe failed')
   })
 
-  it('opens the detected macOS helper app for runtime permission guidance', async () => {
+  it('discovers the embedded CUA runtime without executing it', async () => {
+    const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-discovery-'))
+    tempRoots.push(pluginRoot)
+    const markerPath = path.join(pluginRoot, 'executed.txt')
+    const commandName = process.platform === 'win32' ? 'cua-driver.cmd' : 'cua-driver'
+    const commandPath = path.join(pluginRoot, commandName)
+    const commandContents =
+      process.platform === 'win32'
+        ? `@echo off\r\n> "${markerPath}" echo executed\r\necho cua-driver 0.12.6\r\n`
+        : `#!/bin/sh\nprintf executed > '${markerPath}'\nprintf 'cua-driver 0.12.6\\n'\n`
+    await writeFile(commandPath, commandContents)
+    if (process.platform !== 'win32') {
+      await chmod(commandPath, 0o755)
+    }
+    const presenter = await createPluginService(process.platform)
+
+    const status = await (presenter as any).detectRuntime(
+      {
+        id: 'cua-driver',
+        displayName: 'CUA Driver',
+        type: 'external-helper',
+        detect: [`plugin:${commandName}`],
+        adapter: 'cua-embedded-v1',
+        adapterContract: {
+          hostBundleId: 'com.wefonk.deepchat',
+          driverVersion: '0.12.6',
+          contractVersion: '1',
+          toolsListSchemaVersion: '1',
+          capabilityVersion: '1',
+          mcpProtocolVersion: '2024-11-05'
+        }
+      },
+      pluginRoot
+    )
+
+    expect(status).toMatchObject({
+      state: 'installed',
+      command: commandPath,
+      version: '0.12.6'
+    })
+    expect(fs.existsSync(markerPath)).toBe(false)
+  })
+
+  it('fails closed when only a legacy CUA lifecycle is available', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-legacy-cua-'))
+    tempRoots.push(root)
+    const resourcesPath = path.join(root, 'resources')
+    await createBundledFixture({
+      appPath: path.join(root, 'app'),
+      packageRoot: path.join(resourcesPath, 'plugins'),
+      pluginId: 'com.deepchat.plugins.cua',
+      name: 'Legacy CUA'
+    })
+    const presenter = await createPluginService('darwin', {
+      appPath: path.join(root, 'app'),
+      isPackaged: true,
+      resourcesPath
+    })
+
+    const result = await presenter.enablePlugin('com.deepchat.plugins.cua')
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('unsupported legacy lifecycle')
+    })
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).not.toHaveBeenCalled()
+  })
+
+  it('checks CUA permissions through the supervised embedded runtime', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-permission-test-'))
+    tempRoots.push(root)
+    const userDataPath = path.join(root, 'userData')
+    await mkdir(userDataPath, { recursive: true })
+    vi.mocked(app.getPath).mockImplementation((name: string) =>
+      name === 'userData' ? userDataPath : path.join(root, name)
+    )
+    const presenter = await createPluginService('darwin')
+    await presenter.listPlugins()
+    const directCheck = vi.spyOn(presenter as any, 'runRuntimePermissionTool')
+    ;(presenter as any).refreshRuntime = vi.fn().mockResolvedValue({
+      runtimeId: 'cua-driver',
+      displayName: 'CUA Driver',
+      state: 'installed',
+      command: '/plugin/cua-driver',
+      version: 'cua-driver 0.12.6'
+    })
+    presenter.__mocks.mcpService.checkPluginRuntimePermissions.mockResolvedValue({
+      structuredContent: {
+        accessibility: true,
+        screen_recording: false,
+        source: {
+          attribution: 'host',
+          embedded: true
+        }
+      },
+      content: []
+    })
+
+    const action = await presenter.invokeAction(
+      'com.deepchat.plugins.cua',
+      'runtime.checkPermissions'
+    )
+
+    expect(action).toMatchObject({
+      ok: true,
+      data: {
+        platform: 'darwin',
+        accessibility: 'granted',
+        screenRecording: 'missing',
+        command: '/plugin/cua-driver'
+      }
+    })
+    expect(presenter.__mocks.mcpService.checkPluginRuntimePermissions).toHaveBeenCalledWith(
+      'cua-driver'
+    )
+    expect(directCheck).not.toHaveBeenCalled()
+
+    vi.mocked(shell.openExternal).mockResolvedValue(undefined)
+    vi.mocked(shell.openPath).mockResolvedValue('')
+    const guide = await presenter.invokeAction(
+      'com.deepchat.plugins.cua',
+      'runtime.openPermissionGuide'
+    )
+    expect(guide).toMatchObject({ ok: true })
+    expect(shell.openExternal).toHaveBeenCalledWith(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+    )
+    expect(shell.openPath).not.toHaveBeenCalled()
+  })
+
+  it('keeps helper-app permission guidance for non-adapter macOS runtimes', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', fixture.appPath)
     const helperAppPath = path.join(
@@ -951,18 +1366,6 @@ describe('PluginService', () => {
     expect(message).toContain('Fallback: Command failed.')
   })
 
-  it('resolves CUA helper paths, MCP env, and runtime auto-start hooks', async () => {
-    const presenterSource = await readFile('src/main/plugin/index.ts', 'utf8')
-
-    expect(presenterSource).toContain('helperAppPath')
-    expect(presenterSource).toContain('resolveHelperAppPath')
-    expect(presenterSource).toContain('resolveAppHelperRelativePath')
-    expect(presenterSource).toContain('resolvePluginTemplateRecord')
-    expect(presenterSource).toContain('startPluginMcpServersIfReady')
-    expect(presenterSource).toContain('this.mcpService.startServer(serverName)')
-    expect(presenterSource).not.toContain('if (!(await this.mcpSettings.getMcpEnabled()))')
-  })
-
   it('resolves packaged macOS CUA helpers from the managed app bundle', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-managed-helper-'))
     tempRoots.push(root)
@@ -1006,7 +1409,7 @@ describe('PluginService', () => {
     expect(command).toBeNull()
   })
 
-  it('starts plugin MCP servers even when the global MCP switch is off', async () => {
+  it('reconciles eager plugin servers independently of the global MCP switch', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', {
       appPath: fixture.appPath,
@@ -1016,37 +1419,325 @@ describe('PluginService', () => {
     const result = await presenter.enablePlugin(fixture.pluginId)
 
     expect(result.ok).toBe(true)
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-runtime')
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+    expect(presenter.__mocks.mcpService.startServer).not.toHaveBeenCalled()
   })
 
-  it('does not wait for plugin MCP auto-start to finish', async () => {
+  it('routes runtime test and retry actions through the supervisor without changing intent', async () => {
+    const fixture = await createBundledFixture({ startMode: 'onDemand' })
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    const enabled = await presenter.enablePlugin(fixture.pluginId)
+    expect(enabled.ok, enabled.error).toBe(true)
+
+    const tested = await presenter.invokeAction(fixture.pluginId, 'runtime.test')
+    const retried = await presenter.invokeAction(fixture.pluginId, 'runtime.retry')
+
+    expect(tested.ok).toBe(true)
+    expect(retried.ok).toBe(true)
+    expect(presenter.__mocks.runtimeSupervisor.testRuntime).toHaveBeenCalledWith(
+      fixture.pluginId,
+      'fixture-runtime'
+    )
+    expect(presenter.__mocks.runtimeSupervisor.retryRuntime).toHaveBeenCalledWith(
+      fixture.pluginId,
+      'fixture-runtime'
+    )
+    expect((await presenter.getPlugin(fixture.pluginId))?.enabled).toBe(true)
+  })
+
+  it('reports integrity blocks independently from quarantine lifecycle state', async () => {
+    const fixture = await createBundledFixture({ startMode: 'onDemand' })
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    const enabled = await presenter.enablePlugin(fixture.pluginId)
+    expect(enabled.ok, enabled.error).toBe(true)
+    presenter.__mocks.runtimeSupervisor.getState.mockReturnValue({
+      state: 'quarantined',
+      integrityError: 'runtime integrity mismatch',
+      quarantine: {
+        schemaVersion: 1,
+        attemptId: '00000000-0000-4000-8000-000000000001',
+        pluginId: fixture.pluginId,
+        runtimeId: 'fixture-runtime',
+        serverName: 'fixture-runtime',
+        fingerprint: {
+          value: 'a'.repeat(64),
+          pluginId: fixture.pluginId,
+          runtimeId: 'fixture-runtime',
+          target: 'darwin/arm64',
+          binarySha256: 'b'.repeat(64)
+        },
+        recordedAt: 123
+      }
+    })
+
+    await expect(presenter.getPlugin(fixture.pluginId)).resolves.toMatchObject({
+      mcpServers: [
+        {
+          serverId: 'fixture-runtime',
+          lifecycleState: 'quarantined',
+          quarantinedAt: 123,
+          integrityError: 'runtime integrity mismatch'
+        }
+      ]
+    })
+  })
+
+  it('keeps enabled intent when an eager runtime start fails', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', {
       appPath: fixture.appPath,
       mcpEnabled: false
     })
-    let resolveStartServer!: () => void
-    let startServerResolved = false
-    presenter.__mocks.mcpService.startServer.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveStartServer = () => {
-            startServerResolved = true
-            resolve()
-          }
-        })
+    presenter.__mocks.runtimeSupervisor.reconcilePlugin.mockRejectedValueOnce(
+      new Error('runtime failed')
     )
 
     const result = await presenter.enablePlugin(fixture.pluginId)
 
     expect(result).toEqual(expect.objectContaining({ ok: true }))
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-runtime')
-    expect(startServerResolved).toBe(false)
-
-    resolveStartServer()
+    expect((await presenter.getPlugin(fixture.pluginId))?.enabled).toBe(true)
   })
 
-  it('shuts down running plugin-owned MCP servers without removing saved config', async () => {
+  it('applies the legacy CUA ownership migration safely and only once', async () => {
+    const presenter = await createPluginService('darwin')
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--no-daemon-relaunch'],
+      env: {
+        CUA_DRIVER_MCP_MODE: '1',
+        CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1'
+      },
+      enabled: true,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+
+    await presenter.initialize()
+    await presenter.initialize()
+
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).toHaveBeenCalledOnce()
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).toHaveBeenCalledWith('cua-driver')
+    expect(presenter.__mocks.mcpServers).not.toHaveProperty('cua-driver')
+  })
+
+  it('preserves an explicit legacy CUA disable in installation intent before cleanup', async () => {
+    const presenter = await createPluginService('darwin')
+    const { getPluginToolPolicy, registerPluginToolPolicy } =
+      await import('@/plugin/toolPolicyStore')
+    const now = Date.now()
+    ;(presenter as any).store.set('installations', [
+      {
+        pluginId: 'com.deepchat.plugins.cua',
+        version: '1.0.4-beta.3',
+        path: '/fixture/legacy-cua',
+        enabled: true,
+        trusted: true,
+        source: 'deepchat-official',
+        installedAt: now,
+        updatedAt: now
+      }
+    ])
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--no-daemon-relaunch'],
+      env: { CUA_DRIVER_MCP_MODE: '1' },
+      enabled: false,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+    registerPluginToolPolicy({
+      pluginId: 'com.deepchat.plugins.cua',
+      serverId: 'cua-driver',
+      tools: { click: 'ask' },
+      enabled: true
+    })
+
+    await (presenter as any).applyRuntimeMigrations()
+
+    expect((presenter as any).store.get('installations')[0]).toMatchObject({
+      pluginId: 'com.deepchat.plugins.cua',
+      enabled: false
+    })
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).toHaveBeenCalledWith('cua-driver')
+    expect(getPluginToolPolicy('cua-driver', 'click')).toBeNull()
+  })
+
+  it('does not reinterpret the supervised CUA record as a legacy disable signal', async () => {
+    const presenter = await createPluginService('darwin')
+    const now = Date.now()
+    ;(presenter as any).store.set('installations', [
+      {
+        pluginId: 'com.deepchat.plugins.cua',
+        version: '1.1.0',
+        path: '/fixture/current-cua',
+        enabled: true,
+        trusted: true,
+        source: 'deepchat-official',
+        installedAt: now,
+        updatedAt: now
+      }
+    ])
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--embedded'],
+      env: { CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0' },
+      enabled: false,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+
+    await (presenter as any).applyRuntimeMigrations()
+
+    expect((presenter as any).store.get('installations')[0]).toMatchObject({ enabled: true })
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).not.toHaveBeenCalled()
+  })
+
+  it('retries a failed legacy migration without blocking unrelated plugins', async () => {
+    const fixture = await createBundledFixture()
+    const presenter = await createPluginService('darwin', {
+      appPath: fixture.appPath,
+      arch: 'x64'
+    })
+    expect((await presenter.enablePlugin(fixture.pluginId)).ok).toBe(true)
+    const now = Date.now()
+    ;(presenter as any).store.set('installations', [
+      ...(presenter as any).store.get('installations'),
+      {
+        pluginId: 'com.deepchat.plugins.cua',
+        version: '1.0.4-beta.3',
+        path: '/fixture/legacy-cua',
+        enabled: true,
+        trusted: true,
+        source: 'deepchat-official',
+        installedAt: now,
+        updatedAt: now
+      }
+    ])
+    vi.clearAllMocks()
+    const activatePluginImplementation = (presenter as any).activatePlugin.bind(presenter)
+    const activatePlugin = vi
+      .spyOn(presenter as any, 'activatePlugin')
+      .mockImplementation(async (pluginId: string) => {
+        if (pluginId === 'com.deepchat.plugins.cua') {
+          return
+        }
+        await activatePluginImplementation(pluginId)
+      })
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--no-daemon-relaunch'],
+      env: { CUA_DRIVER_MCP_MODE: '1' },
+      enabled: true,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+    presenter.__mocks.mcpSettings.removeMcpServer.mockRejectedValueOnce(
+      new Error('database unavailable')
+    )
+
+    await presenter.initialize()
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+    expect(activatePlugin).toHaveBeenCalledWith(fixture.pluginId)
+    expect(activatePlugin).not.toHaveBeenCalledWith('com.deepchat.plugins.cua')
+    await presenter.initialize()
+
+    expect(
+      presenter.__mocks.mcpSettings.removeMcpServer.mock.calls.filter(
+        ([serverName]) => serverName === 'cua-driver'
+      )
+    ).toHaveLength(2)
+    expect(activatePlugin).toHaveBeenCalledWith('com.deepchat.plugins.cua')
+    expect(presenter.__mocks.mcpServers['cua-driver']).toBeUndefined()
+    expect((presenter as any).store.get('migrations')).toMatchObject({
+      'cua-runtime-ownership': 2
+    })
+  })
+
+  it('persists runtime safety sentinels in the plugin settings store', async () => {
+    const presenter = await createPluginService('linux', { arch: 'x64' })
+    const safetyStore = presenter.__mocks.runtimeSupervisor.attachSafetyStore.mock.calls[0][0]
+    const sentinel = {
+      schemaVersion: 1,
+      attemptId: '00000000-0000-4000-8000-000000000001',
+      pluginId: 'com.deepchat.plugins.cua',
+      runtimeId: 'cua-driver',
+      serverName: 'cua-driver',
+      fingerprint: {
+        value: 'a'.repeat(64),
+        pluginId: 'com.deepchat.plugins.cua',
+        runtimeId: 'cua-driver',
+        target: 'linux/x64',
+        binarySha256: 'b'.repeat(64)
+      },
+      recordedAt: Date.now()
+    }
+
+    safetyStore.write('cua-key', sentinel)
+
+    expect(safetyStore.read('cua-key')).toEqual(sentinel)
+    expect(safetyStore.read('cua-key')).not.toBe(sentinel)
+    safetyStore.remove('cua-key')
+    expect(safetyStore.read('cua-key')).toBeUndefined()
+  })
+
+  it('rejects malformed and duplicate lifecycle declarations before registration', async () => {
+    const presenter = await createPluginService('darwin')
+    const baseManifest = {
+      id: 'com.deepchat.plugins.invalid',
+      mcpServers: [
+        {
+          id: 'duplicate',
+          startMode: 'eager',
+          surfaces: ['tools']
+        }
+      ]
+    }
+
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [{ ...baseManifest.mcpServers[0], surfaces: 'tools' }]
+      })
+    ).toThrow('invalid surfaces')
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [...baseManifest.mcpServers, { ...baseManifest.mcpServers[0] }]
+      })
+    ).toThrow('duplicate MCP server id')
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [
+          {
+            ...baseManifest.mcpServers[0],
+            startMode: 'onDemand',
+            surfaces: ['tools']
+          }
+        ]
+      })
+    ).toThrow('must declare surfaces ["tools"] and a toolCatalog')
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [{ ...baseManifest.mcpServers[0], id: ' duplicate ' }]
+      })
+    ).toThrow('invalid id')
+  })
+
+  it('leaves process shutdown to MCP service without removing saved config', async () => {
     const presenter = await createPluginService('darwin')
     await presenter.__mocks.mcpSettings.addMcpServer('regular-server', {
       source: 'manual'
@@ -1061,17 +1752,9 @@ describe('PluginService', () => {
       sourceId: 'com.deepchat.plugins.other',
       ownerPluginId: 'com.deepchat.plugins.other'
     })
-    presenter.__mocks.mcpService.isServerActive.mockImplementation(
-      async (serverName: string) => serverName !== 'plugin-stopped'
-    )
-
     await presenter.shutdown()
 
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledTimes(1)
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledWith(
-      'plugin-running'
-    )
-    expect(presenter.__mocks.mcpService.stopServer).not.toHaveBeenCalled()
+    expect(presenter.__mocks.runtimeSupervisor.shutdown).not.toHaveBeenCalled()
     expect(presenter.__mocks.mcpSettings.removeMcpServer).not.toHaveBeenCalled()
     expect(await presenter.__mocks.mcpSettings.getMcpServers()).toMatchObject({
       'regular-server': {
@@ -1088,43 +1771,6 @@ describe('PluginService', () => {
     })
   })
 
-  it('continues plugin shutdown when one plugin-owned MCP server fails to stop', async () => {
-    const presenter = await createPluginService('darwin')
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    await presenter.__mocks.mcpSettings.addMcpServer('plugin-first', {
-      source: 'plugin',
-      sourceId: 'com.deepchat.plugins.first'
-    })
-    await presenter.__mocks.mcpSettings.addMcpServer('plugin-second', {
-      source: 'plugin',
-      sourceId: 'com.deepchat.plugins.second'
-    })
-    presenter.__mocks.mcpService.isServerActive.mockResolvedValue(true)
-    presenter.__mocks.mcpService.stopServerDuringShutdownByName
-      .mockRejectedValueOnce(new Error('first failed'))
-      .mockResolvedValueOnce(undefined)
-
-    await presenter.shutdown()
-
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledTimes(2)
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledWith(
-      'plugin-first'
-    )
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledWith(
-      'plugin-second'
-    )
-    expect(presenter.__mocks.mcpSettings.removeMcpServer).not.toHaveBeenCalled()
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      '[PluginHost] Failed to stop plugin-owned MCP server during shutdown:',
-      expect.objectContaining({
-        pluginId: 'com.deepchat.plugins.first',
-        serverName: 'plugin-first',
-        error: expect.any(Error)
-      })
-    )
-    consoleWarnSpy.mockRestore()
-  })
-
   it('declares the CUA internal tool server with cross-platform helper context', async () => {
     const manifest = JSON.parse(await readFile('plugins/cua/plugin.json', 'utf8'))
     const mcpConfig = JSON.parse(await readFile('plugins/cua/mcp/cua-driver.json', 'utf8'))
@@ -1137,17 +1783,41 @@ describe('PluginService', () => {
       'plugin:runtime/linux/${arch}/cua-driver'
     ])
     expect(manifest.capabilities).toContain('shell.openPath')
-    expect(server.args).toEqual(['mcp', '--no-daemon-relaunch'])
-    expect(server.env).toEqual({
-      CUA_DRIVER_MCP_MODE: '1',
-      CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1',
-      DEEPCHAT_COMPUTER_USE_APP_PATH: '${runtime.cua-driver.helperAppPath}',
-      DEEPCHAT_COMPUTER_USE_BINARY_PATH: '${runtime.cua-driver.command}'
+    expect(manifest.runtime.adapter).toBe('cua-embedded-v1')
+    expect(manifest.runtime.integrityDescriptor).toBe(
+      'runtime/${target.platform}/${arch}/integrity.json'
+    )
+    expect(manifest.runtime.adapterContract).toEqual({
+      hostBundleId: 'com.wefonk.deepchat',
+      driverVersion: '0.12.6',
+      contractVersion: '0.2.0',
+      toolsListSchemaVersion: '1',
+      capabilityVersion: '1',
+      mcpProtocolVersion: '2025-06-18'
     })
-    expect(mcpConfig.env).toEqual(server.env)
+    expect(server.args).toEqual(['mcp', '--embedded'])
+    expect(server.env).toEqual({
+      CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0'
+    })
+    expect(server).toMatchObject({
+      startMode: 'onDemand',
+      surfaces: ['tools'],
+      toolCatalog: 'runtime/${target.platform}/${arch}/tool-catalog.json',
+      inheritEnv: 'minimal'
+    })
+    expect(mcpConfig).toEqual(
+      expect.objectContaining({
+        args: server.args,
+        env: server.env,
+        startMode: server.startMode,
+        surfaces: server.surfaces,
+        toolCatalog: server.toolCatalog,
+        inheritEnv: server.inheritEnv
+      })
+    )
   })
 
-  it('keeps CUA v0.7.1 tool policies explicit and conservative', async () => {
+  it('keeps CUA v0.12.6 tool policies explicit and conservative', async () => {
     const manifest = JSON.parse(await readFile('plugins/cua/plugin.json', 'utf8'))
     const policy = JSON.parse(await readFile('plugins/cua/policies/tool-policy.json', 'utf8'))
     const manifestTools = manifest.toolPolicies.find(
@@ -1167,6 +1837,8 @@ describe('PluginService', () => {
       'get_agent_cursor_state',
       'check_for_update',
       'health_report',
+      'get_browser_state',
+      'get_session_state',
       'start_session',
       'end_session'
     ]
@@ -1178,6 +1850,7 @@ describe('PluginService', () => {
       'right_click',
       'double_click',
       'drag',
+      'parallel_mouse_drag',
       'scroll',
       'move_cursor',
       'type_text',
@@ -1193,7 +1866,22 @@ describe('PluginService', () => {
       'set_agent_cursor_style',
       'replay_trajectory',
       'zoom',
-      'page'
+      'page',
+      'browser_prepare',
+      'browser_navigate',
+      'browser_click',
+      'browser_type',
+      'browser_dialog',
+      'browser_set_input_files',
+      'browser_download',
+      'browser_pointer',
+      'escalate_session'
+    ]
+    const EXPECTED_DENY = [
+      'debug_window_info',
+      'mouse_button_down',
+      'mouse_button_up',
+      'mouse_drag'
     ]
 
     for (const tool of EXPECTED_ALLOW) {
@@ -1204,22 +1892,16 @@ describe('PluginService', () => {
       expect(manifestTools[tool]).toBe('ask')
       expect(policy.tools[tool]).toBe('ask')
     }
+    for (const tool of EXPECTED_DENY) {
+      expect(manifestTools[tool]).toBe('deny')
+      expect(policy.tools[tool]).toBe('deny')
+    }
 
     expect(manifestTools.screenshot).toBeUndefined()
     expect(manifestTools.set_recording).toBeUndefined()
-    expect(manifestTools.debug_window_info).toBeUndefined()
-    expect(manifestTools.mouse_button_down).toBeUndefined()
-    expect(manifestTools.mouse_button_up).toBeUndefined()
-    expect(manifestTools.mouse_drag).toBeUndefined()
-    expect(manifestTools.parallel_mouse_drag).toBeUndefined()
     expect(manifestTools.type_text_chars).toBeUndefined()
     expect(policy.tools.screenshot).toBeUndefined()
     expect(policy.tools.set_recording).toBeUndefined()
-    expect(policy.tools.debug_window_info).toBeUndefined()
-    expect(policy.tools.mouse_button_down).toBeUndefined()
-    expect(policy.tools.mouse_button_up).toBeUndefined()
-    expect(policy.tools.mouse_drag).toBeUndefined()
-    expect(policy.tools.parallel_mouse_drag).toBeUndefined()
     expect(policy.tools.type_text_chars).toBeUndefined()
   })
 
@@ -1233,15 +1915,25 @@ describe('PluginService', () => {
       sourceKind: 'upstream-release',
       upstreamRepo: 'https://github.com/trycua/cua.git',
       upstreamSubdir: 'libs/cua-driver/rust',
-      tag: 'cua-driver-rs-v0.7.1',
-      commit: '7caf72bee2286f47a985c3121b56aaabdebd62b9',
-      version: '0.7.1',
+      tag: 'cua-driver-rs-v0.12.6',
+      commit: '9eb1f481b8a12cd6ffda2ad5af21653a9e5aa9e5',
+      version: '0.12.6',
+      checksumsSha256: '21486096e0c5901cafcaaf652144308abb3f088a2d9785941585a002c571233f',
       supportedTargets: ['darwin/arm64', 'darwin/x64', 'win32/x64', 'win32/arm64', 'linux/x64'],
       unsupportedTargets: ['linux/arm64']
     })
-    expect(metadata.assets['windows-x64'].name).toBe('cua-driver-rs-0.7.1-windows-x86_64.zip')
-    expect(metadata.assets['windows-arm64'].name).toBe('cua-driver-rs-0.7.1-windows-arm64.zip')
-    expect(metadata.assets['linux-x64'].name).toBe('cua-driver-rs-0.7.1-linux-x86_64-binary.tar.gz')
+    expect(metadata.assets['windows-x64'].name).toBe(
+      'cua-driver-rs-0.12.6-windows-x86_64-binary.zip'
+    )
+    expect(metadata.assets['windows-arm64'].name).toBe(
+      'cua-driver-rs-0.12.6-windows-arm64-binary.zip'
+    )
+    expect(metadata.assets['linux-x64'].name).toBe(
+      'cua-driver-rs-0.12.6-linux-x86_64-binary.tar.gz'
+    )
+    for (const asset of Object.values(metadata.assets) as Array<{ sha256: string }>) {
+      expect(asset.sha256).toMatch(/^[a-f0-9]{64}$/)
+    }
     expect(buildScript).toContain('verifyChecksum')
     expect(buildScript).toContain('downloadFile')
     expect(buildScript).toContain('isLinuxGlibcLoaderMismatch')
@@ -1358,6 +2050,7 @@ describe('PluginService', () => {
     const windowsPackageWorkflow = await readFile('.github/workflows/_package-windows.yml', 'utf8')
     const linuxPackageWorkflow = await readFile('.github/workflows/_package-linux.yml', 'utf8')
     const macosPackageWorkflow = await readFile('.github/workflows/_package-macos.yml', 'utf8')
+    const pluginScript = await readFile('scripts/plugin.mjs', 'utf8')
     const packageScript = await readFile('scripts/package-plugin.mjs', 'utf8')
     const guide = await readFile('docs/guides/plugin-packaging.md', 'utf8')
 
@@ -1438,6 +2131,7 @@ describe('PluginService', () => {
     expect(packageScript).toContain('parts[2] !== args.targetArch')
     expect(packageScript).toContain('CUA plugin does not support')
     expect(packageScript).toContain('CUA_DARWIN_MANAGED_HELPER_DETECT')
+    expect(pluginScript).toContain("pkgArgs.push('--purpose', args.purpose)")
     expect(guide).toContain('build/bundled-plugins/')
     expect(guide).toContain('build/managed-helpers/')
     expect(guide).toContain('Contents/Helpers/DeepChat Computer Use.app')

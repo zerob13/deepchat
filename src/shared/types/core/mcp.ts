@@ -135,6 +135,8 @@ export interface MCPToolResponse {
   content: string | MCPContentItem[]
   _meta?: Record<string, unknown>
   isError?: boolean
+  structuredContent?: unknown
+  ownerPluginId?: string
   toolResult?: unknown
   rtkApplied?: boolean
   rtkMode?: 'rewrite' | 'direct' | 'bypass'

@@ -19,19 +19,39 @@ import type {
   PluginSettingsContribution,
   RuntimeDependencyRecord
 } from '@shared/types/plugin'
-import { OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
+import { CUA_PLUGIN_ID, OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
 import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPolicyStore'
+import type {
+  PluginRuntimeSafetyStore,
+  PluginRuntimeSentinel,
+  PluginRuntimeSupervisor
+} from './runtimeSupervisor'
+import { loadPluginToolCatalog, parsePluginToolCatalogJson } from './toolCatalog'
 import type { McpSettings } from '@/mcp/settings'
+import { CuaEmbeddedRuntimeAdapter } from './cuaEmbeddedAdapter'
+import {
+  CuaRuntimeIntegrityVerifier,
+  parseCuaRuntimeIntegrityDescriptor,
+  type CuaRuntimeIntegrityDescriptor
+} from './cuaRuntimeIntegrity'
 
 const execFileAsync = promisify(execFile)
 
 const GITHUB_RELEASE_DOWNLOAD_PREFIX = 'https://github.com/ThinkInAIXYZ/deepchat/releases/download/'
 const PLUGIN_PACKAGE_EXTENSION = '.dcplugin'
+const CUA_RUNTIME_OWNERSHIP_MIGRATION = 'cua-runtime-ownership'
+const CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION = 2
+const MACOS_ACCESSIBILITY_SETTINGS =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+const MACOS_SCREEN_CAPTURE_SETTINGS =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
 
 type PluginStoreShape = {
   installations: PluginInstallationRecord[]
   resources: PluginResourceRecord[]
   runtimes: RuntimeDependencyRecord[]
+  migrations: Record<string, number>
+  runtimeSentinels: Record<string, unknown>
 }
 
 type SkillContributionPort = Pick<
@@ -47,15 +67,19 @@ export interface PluginSettingsWindowPort {
 
 type PluginServiceDeps = {
   mcpSettings: McpSettings
-  mcpService: Pick<
-    McpServicePort,
-    | 'stopServerDuringShutdownByName'
-    | 'isServerActive'
-    | 'stopServer'
-    | 'isReady'
-    | 'startServer'
-    | 'isServerRunning'
-    | 'getServerLastError'
+  mcpService: Pick<McpServicePort, 'isReady' | 'isServerRunning' | 'getServerLastError'> & {
+    checkPluginRuntimePermissions(serverName: string): Promise<unknown>
+  }
+  runtimeSupervisor: Pick<
+    PluginRuntimeSupervisor,
+    | 'registerServer'
+    | 'attachSafetyStore'
+    | 'commitPluginRegistration'
+    | 'unregisterPlugin'
+    | 'reconcilePlugin'
+    | 'getState'
+    | 'testRuntime'
+    | 'retryRuntime'
   >
   skillService: SkillContributionPort
   settingsWindow: PluginSettingsWindowPort
@@ -71,6 +95,8 @@ type ResolvedOfficialPlugin = {
   root: string
   sourcePath: string
   sourceType: 'directory' | 'package'
+  integrityDescriptor?: CuaRuntimeIntegrityDescriptor
+  integrityError?: string
 }
 
 type RuntimePermissionState = 'granted' | 'missing' | 'unknown'
@@ -103,6 +129,7 @@ export class PluginService implements PluginServicePort {
   private readonly mcpService: PluginServiceDeps['mcpService']
   private readonly skillService: SkillContributionPort
   private readonly settingsWindow: PluginSettingsWindowPort
+  private readonly runtimeSupervisor: PluginServiceDeps['runtimeSupervisor']
   private readonly platform: NodeJS.Platform
   private readonly arch: NodeJS.Architecture
   private readonly appPath: string
@@ -113,96 +140,125 @@ export class PluginService implements PluginServicePort {
     defaults: {
       installations: [],
       resources: [],
-      runtimes: []
+      runtimes: [],
+      migrations: {},
+      runtimeSentinels: {}
     }
   })
+  private readonly runtimeSafetyStore: PluginRuntimeSafetyStore = {
+    read: (key) => this.getRuntimeSentinelMap()[key],
+    write: (key, sentinel) => {
+      this.store.set('runtimeSentinels', {
+        ...this.getRuntimeSentinelMap(),
+        [key]: this.copyRuntimeSentinel(sentinel)
+      })
+    },
+    remove: (key) => {
+      const sentinels = this.getRuntimeSentinelMap()
+      if (!(key in sentinels)) {
+        return
+      }
+      const next = { ...sentinels }
+      delete next[key]
+      this.store.set('runtimeSentinels', next)
+    }
+  }
   private officialPlugins = new Map<string, ResolvedOfficialPlugin>()
+  private readonly activationErrors = new Map<string, string>()
 
   constructor(deps: PluginServiceDeps) {
     this.mcpSettings = deps.mcpSettings
     this.mcpService = deps.mcpService
     this.skillService = deps.skillService
     this.settingsWindow = deps.settingsWindow
+    this.runtimeSupervisor = deps.runtimeSupervisor
     this.platform = deps.platform ?? process.platform
     this.arch = deps.arch ?? process.arch
     this.appPath = deps.appPath ?? app.getAppPath()
     this.isPackaged = deps.isPackaged ?? app.isPackaged
     this.resourcesPath = deps.resourcesPath ?? process.resourcesPath ?? ''
+    this.runtimeSupervisor.attachSafetyStore(this.runtimeSafetyStore)
   }
 
   async initialize(): Promise<void> {
     await this.loadOfficialPlugins()
+    let cuaRuntimeMigrationFailed = false
+    try {
+      await this.applyRuntimeMigrations()
+    } catch (error) {
+      // Plugin-owned records are excluded from generic MCP autostart even when
+      // this retryable cleanup fails. Keep CUA inactive for this launch so a
+      // failed safe-side write cannot discard legacy disable intent, while
+      // allowing unrelated plugins to initialize normally.
+      cuaRuntimeMigrationFailed = true
+      console.warn('[PluginHost] Runtime migration failed and will be retried:', error)
+    }
     await this.repairMissingPluginResources()
 
     for (const installation of this.getInstallations()) {
+      if (cuaRuntimeMigrationFailed && installation.pluginId === CUA_PLUGIN_ID) {
+        console.warn('[PluginHost] Skipping CUA activation until its runtime migration succeeds')
+        continue
+      }
       if (installation.enabled) {
         try {
           await this.activatePlugin(installation.pluginId)
         } catch (error) {
+          let cleanupError: unknown
+          try {
+            await this.disableByOwner(installation.pluginId)
+          } catch (failedCleanup) {
+            cleanupError = failedCleanup
+          }
           console.warn('[PluginHost] Failed to activate installed plugin:', {
             pluginId: installation.pluginId,
-            error
+            error,
+            cleanupError
           })
         }
       }
     }
   }
 
-  async shutdown(): Promise<void> {
-    const pluginIds = new Set(this.getInstallations().map((installation) => installation.pluginId))
-    const servers = await this.mcpSettings.getMcpServers()
-    const pluginOwnedServers: Array<{ serverName: string; pluginId?: string }> = []
-
-    for (const [serverName, serverConfig] of Object.entries(servers)) {
-      if (!this.isPluginOwnedServerConfig(serverConfig)) {
-        continue
-      }
-
-      const ownerPluginId = this.getServerOwnerPluginId(serverConfig)
-      if (ownerPluginId) {
-        pluginIds.add(ownerPluginId)
-      }
-      pluginOwnedServers.push({ serverName, pluginId: ownerPluginId })
+  private async applyRuntimeMigrations(): Promise<void> {
+    const migrations = this.store.get('migrations') ?? {}
+    if (
+      (migrations[CUA_RUNTIME_OWNERSHIP_MIGRATION] ?? 0) >= CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION
+    ) {
+      return
     }
 
-    await this.stopPluginOwnedServers(pluginOwnedServers)
+    const servers = await this.mcpSettings.getMcpServers()
+    const legacyCuaServer = servers['cua-driver']
+    if (legacyCuaServer && this.isLegacyCuaServerConfig(legacyCuaServer)) {
+      const installation = this.getInstallation(CUA_PLUGIN_ID)
+      if (legacyCuaServer.enabled === false && installation?.enabled) {
+        this.upsertInstallation({
+          ...installation,
+          enabled: false,
+          updatedAt: Date.now()
+        })
+      }
+      // A forced quit can leave the separately persisted policy behind. Clear
+      // it before removing the legacy server; activation re-registers the
+      // current policy later when installation intent remains enabled.
+      unregisterPluginToolPolicies(CUA_PLUGIN_ID)
+      await this.mcpSettings.removeMcpServer('cua-driver')
+    }
 
+    this.store.set('migrations', {
+      ...migrations,
+      [CUA_RUNTIME_OWNERSHIP_MIGRATION]: CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION
+    })
+  }
+
+  async shutdown(): Promise<void> {
+    const pluginIds = new Set(this.getInstallations().map((installation) => installation.pluginId))
     for (const pluginId of pluginIds) {
       unregisterPluginToolPolicies(pluginId)
     }
 
     this.settingsWindow.closeAll()
-  }
-
-  private async stopPluginOwnedServers(
-    servers: Array<{ serverName: string; pluginId?: string }>
-  ): Promise<void> {
-    const concurrency = 4
-    let nextIndex = 0
-
-    const stopNext = async (): Promise<void> => {
-      while (nextIndex < servers.length) {
-        const { serverName, pluginId } = servers[nextIndex++]
-        try {
-          if (await this.isMcpServerActive(serverName)) {
-            await this.mcpService.stopServerDuringShutdownByName(serverName)
-          }
-        } catch (error) {
-          console.warn('[PluginHost] Failed to stop plugin-owned MCP server during shutdown:', {
-            pluginId,
-            serverName,
-            error
-          })
-        }
-      }
-    }
-
-    const workers = Array.from({ length: Math.min(concurrency, servers.length) }, () => stopNext())
-    await Promise.all(workers)
-  }
-
-  private async isMcpServerActive(serverName: string): Promise<boolean> {
-    return await this.mcpService.isServerActive(serverName)
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
@@ -235,13 +291,25 @@ export class PluginService implements PluginServicePort {
         enabled: true,
         updatedAt: Date.now()
       }
+      this.upsertInstallation(nextInstallation)
       try {
         await this.activatePlugin(pluginId)
       } catch (error) {
-        await this.disableByOwner(pluginId)
+        this.upsertInstallation({
+          ...nextInstallation,
+          enabled: false,
+          updatedAt: Date.now()
+        })
+        try {
+          await this.disableByOwner(pluginId)
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            `Plugin ${pluginId} activation failed and cleanup was incomplete`
+          )
+        }
         throw error
       }
-      this.upsertInstallation(nextInstallation)
       return { ok: true, status: await this.buildPluginListItem(pluginId) }
     } catch (error) {
       return this.errorResult(error)
@@ -255,12 +323,13 @@ export class PluginService implements PluginServicePort {
         return { ok: true, status: await this.buildPluginListItem(pluginId) }
       }
 
-      await this.disableByOwner(pluginId)
       this.upsertInstallation({
         ...installation,
         enabled: false,
         updatedAt: Date.now()
       })
+      this.activationErrors.delete(pluginId)
+      await this.disableByOwner(pluginId)
       return { ok: true, status: await this.buildPluginListItem(pluginId) }
     } catch (error) {
       return this.errorResult(error)
@@ -289,6 +358,24 @@ export class PluginService implements PluginServicePort {
             ok: true,
             data: (await this.checkRuntimePermissions(pluginId)) as PluginActionResult['data']
           }
+        case 'runtime.test': {
+          const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
+          if (!this.getInstallation(pluginId)?.enabled) {
+            throw new Error(`Plugin ${pluginId} must be enabled before testing its runtime`)
+          }
+          const serverName = this.getRuntimeActionServerName(plugin)
+          await this.runtimeSupervisor.testRuntime(pluginId, serverName)
+          return { ok: true, status: await this.buildPluginListItem(pluginId) }
+        }
+        case 'runtime.retry': {
+          const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
+          if (!this.getInstallation(pluginId)?.enabled) {
+            throw new Error(`Plugin ${pluginId} must be enabled before retrying its runtime`)
+          }
+          const serverName = this.getRuntimeActionServerName(plugin)
+          await this.runtimeSupervisor.retryRuntime(pluginId, serverName)
+          return { ok: true, status: await this.buildPluginListItem(pluginId) }
+        }
         case 'runtime.openPermissionGuide':
           await this.openRuntimeGuide(pluginId)
           return { ok: true }
@@ -331,6 +418,30 @@ export class PluginService implements PluginServicePort {
   }
 
   private async activatePlugin(pluginId: string): Promise<void> {
+    this.activationErrors.delete(pluginId)
+    try {
+      await this.activatePluginResources(pluginId)
+    } catch (error) {
+      this.activationErrors.set(pluginId, error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+
+  private getRuntimeActionServerName(plugin: ResolvedOfficialPlugin): string {
+    const runtimeId = plugin.manifest.runtime?.id
+    const server = runtimeId
+      ? plugin.manifest.mcpServers?.find((candidate) => candidate.id === runtimeId)
+      : undefined
+    if (!runtimeId || !server) {
+      throw new Error(`Plugin ${plugin.manifest.id} does not declare a matching runtime MCP server`)
+    }
+    if (server.startMode !== 'onDemand') {
+      throw new Error(`Plugin runtime server "${server.id}" is not an on-demand runtime`)
+    }
+    return server.id
+  }
+
+  private async activatePluginResources(pluginId: string): Promise<void> {
     const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
     this.assertTrustedOfficialPlugin(plugin.manifest)
     this.assertPlatformSupported(plugin.manifest)
@@ -359,24 +470,34 @@ export class PluginService implements PluginServicePort {
     const registeredServerNames = await this.registerMcpServers(plugin, runtime)
     await this.registerSkills(plugin)
     this.registerToolPolicies(plugin)
-    await this.startPluginMcpServersIfReady(pluginId, registeredServerNames)
+    this.runtimeSupervisor.commitPluginRegistration(plugin.manifest.id)
+    if (registeredServerNames.length > 0 && this.mcpService.isReady()) {
+      try {
+        await this.runtimeSupervisor.reconcilePlugin(pluginId)
+      } catch (error) {
+        console.warn('[PluginHost] Failed to start eager plugin runtime:', {
+          pluginId,
+          error
+        })
+      }
+    }
   }
 
   private async disableByOwner(pluginId: string): Promise<void> {
+    let runtimeStopError: unknown
+    try {
+      await this.runtimeSupervisor.unregisterPlugin(pluginId)
+    } catch (error) {
+      runtimeStopError = error
+      console.warn('[PluginHost] Failed to stop plugin-owned runtime during disable:', {
+        pluginId,
+        error
+      })
+    }
+
     const servers = await this.mcpSettings.getMcpServers()
     for (const [serverName, serverConfig] of Object.entries(servers)) {
       if (this.isServerOwnedByPlugin(serverConfig, pluginId)) {
-        try {
-          if (await this.isMcpServerActive(serverName)) {
-            await this.mcpService.stopServer(serverName)
-          }
-        } catch (error) {
-          console.warn('[PluginHost] Failed to stop plugin-owned MCP server:', {
-            pluginId,
-            serverName,
-            error
-          })
-        }
         await this.mcpSettings.removeMcpServer(serverName)
       }
     }
@@ -385,10 +506,9 @@ export class PluginService implements PluginServicePort {
     unregisterPluginToolPolicies(pluginId)
     this.settingsWindow.close(pluginId)
     this.removeResourceRecordsByOwner(pluginId)
-  }
-
-  private isPluginOwnedServerConfig(serverConfig: MCPServerConfig): boolean {
-    return Boolean(serverConfig.ownerPluginId || serverConfig.source === 'plugin')
+    if (runtimeStopError) {
+      throw runtimeStopError
+    }
   }
 
   private isServerOwnedByPlugin(serverConfig: MCPServerConfig, pluginId: string): boolean {
@@ -398,10 +518,13 @@ export class PluginService implements PluginServicePort {
     )
   }
 
-  private getServerOwnerPluginId(serverConfig: MCPServerConfig): string | undefined {
+  private isLegacyCuaServerConfig(serverConfig: MCPServerConfig): boolean {
+    const environment = serverConfig.env ?? {}
     return (
-      serverConfig.ownerPluginId ||
-      (serverConfig.source === 'plugin' ? serverConfig.sourceId : undefined)
+      this.isServerOwnedByPlugin(serverConfig, CUA_PLUGIN_ID) &&
+      (serverConfig.args?.includes('--no-daemon-relaunch') ||
+        Object.hasOwn(environment, 'CUA_DRIVER_MCP_MODE') ||
+        Object.hasOwn(environment, 'CUA_DRIVER_RS_MCP_NO_RELAUNCH'))
     )
   }
 
@@ -416,16 +539,37 @@ export class PluginService implements PluginServicePort {
     runtime?: PluginRuntimeStatus
   ): Promise<string[]> {
     const servers = plugin.manifest.mcpServers ?? []
+    const existingServers = await this.mcpSettings.getMcpServers()
     const registeredServerNames: string[] = []
     for (const server of servers) {
       const command = this.resolvePluginTemplate(server.command, plugin, runtime)
       const serverName = server.id
-      const existingServers = await this.mcpSettings.getMcpServers()
+      const startMode = server.startMode ?? 'eager'
+      const surfaces = server.surfaces ?? ['tools', 'prompts', 'resources']
+      const toolCatalogPath = server.toolCatalog
+        ? this.resolvePluginRelativePath(plugin.root, server.toolCatalog)
+        : undefined
+      if (toolCatalogPath && !fs.statSync(toolCatalogPath, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error(`Plugin MCP tool catalog is missing: ${server.toolCatalog}`)
+      }
       const existing = existingServers[serverName]
       if (existing && existing.ownerPluginId !== plugin.manifest.id) {
         throw new Error(`MCP server "${serverName}" already exists and is not owned by this plugin`)
       }
 
+      const cuaIntegrityVerifier =
+        plugin.manifest.runtime?.adapter === 'cua-embedded-v1'
+          ? this.createCuaRuntimeIntegrityVerifier(plugin, command)
+          : undefined
+      const verifiedToolCatalogJson =
+        toolCatalogPath && cuaIntegrityVerifier
+          ? await cuaIntegrityVerifier.verifyCatalog(toolCatalogPath)
+          : undefined
+      const toolCatalog = toolCatalogPath
+        ? verifiedToolCatalogJson !== undefined
+          ? parsePluginToolCatalogJson(verifiedToolCatalogJson, toolCatalogPath)
+          : loadPluginToolCatalog(toolCatalogPath)
+        : undefined
       const serverEnv = this.resolvePluginTemplateRecord(server.env ?? {}, plugin, runtime)
       const config: MCPServerConfig = {
         type: 'stdio',
@@ -438,12 +582,42 @@ export class PluginService implements PluginServicePort {
         descriptions: server.displayName,
         icons: 'plugin',
         autoApprove: server.autoApprove,
-        enabled: true,
+        enabled: false,
         disable: false,
         source: 'plugin',
         sourceId: plugin.manifest.id,
-        ownerPluginId: plugin.manifest.id
+        ownerPluginId: plugin.manifest.id,
+        inheritEnv: server.inheritEnv ?? 'legacy'
       }
+      const adapter =
+        plugin.manifest.runtime?.adapter === 'cua-embedded-v1'
+          ? new CuaEmbeddedRuntimeAdapter({
+              binaryPath: command,
+              platform: this.platform,
+              contract: plugin.manifest.runtime.adapterContract!,
+              environment: Object.fromEntries(
+                Object.entries(config.env).map(([key, value]) => [key, String(value)])
+              )
+            })
+          : undefined
+      const launchGuard =
+        plugin.manifest.runtime?.adapter === 'cua-embedded-v1' ? cuaIntegrityVerifier : undefined
+
+      this.runtimeSupervisor.registerServer(
+        {
+          pluginId: plugin.manifest.id,
+          serverName,
+          displayName: server.displayName,
+          runtimeId: runtime?.runtimeId,
+          startMode,
+          surfaces,
+          toolCatalogPath,
+          toolCatalog,
+          adapter,
+          launchGuard
+        },
+        { ready: false }
+      )
 
       if (existing) {
         await this.mcpSettings.updateMcpServer(serverName, config)
@@ -461,6 +635,46 @@ export class PluginService implements PluginServicePort {
       registeredServerNames.push(serverName)
     }
     return registeredServerNames
+  }
+
+  private createCuaRuntimeIntegrityVerifier(
+    plugin: ResolvedOfficialPlugin,
+    binaryPath: string
+  ): CuaRuntimeIntegrityVerifier {
+    if (plugin.integrityError) {
+      throw new Error(
+        `CUA runtime integrity descriptor is unavailable: ${plugin.integrityError}. Reinstall DeepChat or the CUA plugin.`
+      )
+    }
+    const descriptor = plugin.integrityDescriptor
+    const runtime = plugin.manifest.runtime
+    if (!descriptor || !runtime?.adapterContract) {
+      throw new Error(
+        'CUA runtime integrity descriptor is missing. Reinstall DeepChat or the CUA plugin.'
+      )
+    }
+    const descriptorPath = runtime.integrityDescriptor!
+    const expectedRuntimeRoot = path.posix.dirname(descriptorPath.replaceAll('\\', '/'))
+    if (descriptor.runtimeRoot !== expectedRuntimeRoot) {
+      throw new Error(
+        `CUA runtime integrity root mismatch: expected ${expectedRuntimeRoot}, received ${descriptor.runtimeRoot}`
+      )
+    }
+    const appHelperCandidate = runtime.detect.find((candidate) =>
+      candidate.startsWith('app-helper:')
+    )
+    const externalBinaryPath = appHelperCandidate
+      ? (this.resolveRuntimeCandidate(appHelperCandidate, plugin.root) ?? undefined)
+      : undefined
+    return new CuaRuntimeIntegrityVerifier({
+      pluginRoot: plugin.root,
+      binaryPath,
+      externalBinaryPath,
+      platform: this.platform,
+      arch: this.arch,
+      runtimeVersion: runtime.adapterContract.driverVersion,
+      descriptor
+    })
   }
 
   private async registerSkills(plugin: ResolvedOfficialPlugin): Promise<void> {
@@ -554,6 +768,11 @@ export class PluginService implements PluginServicePort {
     if (!runtimeManifest) {
       throw new Error(`Plugin ${pluginId} does not declare a runtime`)
     }
+    if (pluginId === CUA_PLUGIN_ID && runtimeManifest.adapter !== 'cua-embedded-v1') {
+      throw new Error(
+        'The installed CUA runtime uses an unsupported legacy lifecycle. Repair or reinstall DeepChat before enabling Computer Use.'
+      )
+    }
 
     const status = await this.detectRuntime(runtimeManifest, plugin.root)
     this.upsertRuntimeRecord({
@@ -584,6 +803,34 @@ export class PluginService implements PluginServicePort {
 
       if (path.isAbsolute(command) && !fs.existsSync(command)) {
         continue
+      }
+
+      if (runtime.adapter === 'cua-embedded-v1') {
+        if (!path.isAbsolute(command)) {
+          continue
+        }
+        const stat = fs.lstatSync(command, { throwIfNoEntry: false })
+        const helperAppPath = this.resolveHelperAppPath(command)
+        if (!stat || stat.isSymbolicLink() || !stat.isFile()) {
+          return {
+            runtimeId: runtime.id,
+            displayName: runtime.displayName,
+            state: 'error',
+            command,
+            helperAppPath,
+            lastError: `CUA runtime candidate must be a regular file: ${command}`,
+            checkedAt
+          }
+        }
+        return {
+          runtimeId: runtime.id,
+          displayName: runtime.displayName,
+          state: 'installed',
+          command,
+          helperAppPath,
+          version: runtime.adapterContract?.driverVersion,
+          checkedAt
+        }
       }
 
       try {
@@ -626,6 +873,7 @@ export class PluginService implements PluginServicePort {
   }
 
   private async checkRuntimePermissions(pluginId: string): Promise<RuntimePermissionCheckResult> {
+    const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
     const runtime = await this.refreshRuntime(pluginId)
     if (!runtime.command) {
       console.warn('[PluginHost] Runtime permission check skipped because runtime is missing:', {
@@ -642,7 +890,63 @@ export class PluginService implements PluginServicePort {
       }
     }
 
+    if (plugin.manifest.runtime?.adapter === 'cua-embedded-v1') {
+      try {
+        const response = await this.mcpService.checkPluginRuntimePermissions(
+          plugin.manifest.runtime.id
+        )
+        return this.parseRuntimePermissionMcpResult(runtime.command, response)
+      } catch (error) {
+        console.warn('[PluginHost] Supervised runtime permission check failed:', {
+          pluginId,
+          runtimeId: runtime.runtimeId,
+          error
+        })
+        return {
+          platform: this.platform,
+          accessibility: 'unknown',
+          screenRecording: 'unknown',
+          command: runtime.command,
+          error: `Permission check failed. ${this.describeError(error)}`
+        }
+      }
+    }
+
     return await this.runRuntimePermissionTool(pluginId, runtime.command)
+  }
+
+  private parseRuntimePermissionMcpResult(
+    command: string,
+    response: unknown
+  ): RuntimePermissionCheckResult {
+    const record =
+      response && typeof response === 'object' && !Array.isArray(response)
+        ? (response as Record<string, unknown>)
+        : {}
+    const structured =
+      record.structuredContent &&
+      typeof record.structuredContent === 'object' &&
+      !Array.isArray(record.structuredContent)
+        ? (record.structuredContent as Record<string, unknown>)
+        : undefined
+    if (structured) {
+      return this.parseRuntimePermissionToolResult(command, JSON.stringify(structured), '')
+    }
+
+    const content = Array.isArray(record.content)
+      ? record.content
+          .map((item) =>
+            item &&
+            typeof item === 'object' &&
+            'text' in item &&
+            typeof (item as { text?: unknown }).text === 'string'
+              ? String((item as { text: string }).text)
+              : ''
+          )
+          .filter(Boolean)
+          .join('\n')
+      : ''
+    return this.parseRuntimePermissionToolResult(command, content, '')
   }
 
   private async runRuntimePermissionTool(
@@ -703,6 +1007,15 @@ export class PluginService implements PluginServicePort {
     if (this.platform === 'win32' && parsed) {
       result.uia = this.toPermissionState(parsed.uia)
       result.postMessage = this.toPermissionState(parsed.post_message ?? parsed.postMessage)
+      result.diagnostics = this.toRuntimePermissionDiagnostics(parsed)
+      return result
+    }
+
+    if (this.platform === 'darwin' && parsed) {
+      result.accessibility = this.toPermissionState(parsed.accessibility)
+      result.screenRecording = this.toPermissionState(
+        parsed.screen_recording ?? parsed.screenRecording
+      )
       result.diagnostics = this.toRuntimePermissionDiagnostics(parsed)
       return result
     }
@@ -849,6 +1162,16 @@ export class PluginService implements PluginServicePort {
     const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
     let helperOpenError: string | undefined
 
+    if (this.platform === 'darwin' && plugin.manifest.runtime?.adapter === 'cua-embedded-v1') {
+      const permissions = await this.checkRuntimePermissions(pluginId)
+      const settingsUrl =
+        permissions.accessibility === 'granted'
+          ? MACOS_SCREEN_CAPTURE_SETTINGS
+          : MACOS_ACCESSIBILITY_SETTINGS
+      await shell.openExternal(settingsUrl)
+      return
+    }
+
     if (this.platform === 'darwin' && plugin.manifest.runtime) {
       try {
         const runtime = await this.refreshRuntime(pluginId)
@@ -961,12 +1284,17 @@ export class PluginService implements PluginServicePort {
       }
     }
 
-    return Array.from(pluginRoots).map((root) => ({
-      manifest: this.readManifest(path.join(root, 'plugin.json')),
-      root,
-      sourcePath: root,
-      sourceType: 'directory'
-    }))
+    return Array.from(pluginRoots).map((root) => {
+      const manifest = this.readManifest(path.join(root, 'plugin.json'))
+      const integrity = this.isPackaged ? {} : this.readDirectoryRuntimeIntegrity(manifest, root)
+      return {
+        manifest,
+        root,
+        sourcePath: root,
+        sourceType: 'directory',
+        ...integrity
+      }
+    })
   }
 
   private resolveOfficialPluginPackages(): ResolvedOfficialPlugin[] {
@@ -999,9 +1327,9 @@ export class PluginService implements PluginServicePort {
     }
 
     return Array.from(packagePaths).map((packagePath) => {
-      const manifest = this.readPackageManifest(packagePath)
+      const packageMetadata = this.readPackageMetadata(packagePath)
       return {
-        manifest,
+        ...packageMetadata,
         root: packagePath,
         sourcePath: packagePath,
         sourceType: 'package'
@@ -1016,10 +1344,13 @@ export class PluginService implements PluginServicePort {
     if (!parsed.id || !parsed.name || !parsed.version || !parsed.source) {
       throw new Error(`Invalid plugin manifest: ${manifestPath}`)
     }
+    this.assertManifestLifecycleContract(parsed)
     return parsed
   }
 
-  private readPackageManifest(packagePath: string): DeepChatPluginManifest {
+  private readPackageMetadata(
+    packagePath: string
+  ): Pick<ResolvedOfficialPlugin, 'manifest' | 'integrityDescriptor' | 'integrityError'> {
     const files = this.readPluginPackage(packagePath)
     const manifestFile = files['plugin.json']
     if (!manifestFile) {
@@ -1031,7 +1362,183 @@ export class PluginService implements PluginServicePort {
     if (!manifest.id || !manifest.name || !manifest.version || !manifest.source) {
       throw new Error(`Invalid plugin package manifest: ${packagePath}`)
     }
-    return manifest
+    this.assertManifestLifecycleContract(manifest)
+    const integrity = this.readPackagedRuntimeIntegrity(manifest, packagePath, files)
+    return { manifest, ...integrity }
+  }
+
+  private readPackagedRuntimeIntegrity(
+    manifest: DeepChatPluginManifest,
+    packagePath: string,
+    files: Record<string, Uint8Array>
+  ): Pick<ResolvedOfficialPlugin, 'integrityDescriptor' | 'integrityError'> {
+    const descriptorPath =
+      manifest.runtime?.adapter === 'cua-embedded-v1'
+        ? manifest.runtime.integrityDescriptor
+        : undefined
+    if (!descriptorPath) {
+      return {}
+    }
+    try {
+      const descriptorFile = files[descriptorPath]
+      if (!descriptorFile) {
+        throw new Error(`package is missing ${descriptorPath}`)
+      }
+      const descriptor = parseCuaRuntimeIntegrityDescriptor(
+        JSON.parse(Buffer.from(descriptorFile).toString('utf8')) as unknown,
+        `${packagePath}:${descriptorPath}`
+      )
+      return { integrityDescriptor: descriptor }
+    } catch (error) {
+      return {
+        integrityError: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
+  private readDirectoryRuntimeIntegrity(
+    manifest: DeepChatPluginManifest,
+    pluginRoot: string
+  ): Pick<ResolvedOfficialPlugin, 'integrityDescriptor' | 'integrityError'> {
+    const descriptorPath =
+      manifest.runtime?.adapter === 'cua-embedded-v1'
+        ? manifest.runtime.integrityDescriptor
+        : undefined
+    if (!descriptorPath) {
+      return {}
+    }
+    try {
+      const absolutePath = this.resolvePluginRelativePath(pluginRoot, descriptorPath)
+      const descriptor = parseCuaRuntimeIntegrityDescriptor(
+        JSON.parse(fs.readFileSync(absolutePath, 'utf8')) as unknown,
+        absolutePath
+      )
+      return { integrityDescriptor: descriptor }
+    } catch (error) {
+      return {
+        integrityError: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
+  private assertManifestLifecycleContract(manifest: DeepChatPluginManifest): void {
+    if (manifest.id !== manifest.id.trim()) {
+      throw new Error(`Plugin manifest id must not contain surrounding whitespace: ${manifest.id}`)
+    }
+    if (manifest.runtime?.adapter && manifest.runtime.adapter !== 'cua-embedded-v1') {
+      throw new Error(
+        `Plugin ${manifest.id} declares unsupported runtime adapter: ${manifest.runtime.adapter}`
+      )
+    }
+    if (manifest.runtime?.adapterContract && !manifest.runtime.adapter) {
+      throw new Error(
+        `Plugin ${manifest.id} declares an adapter contract without a runtime adapter`
+      )
+    }
+    if (manifest.runtime?.adapter === 'cua-embedded-v1') {
+      if (manifest.id !== CUA_PLUGIN_ID) {
+        throw new Error(`Runtime adapter cua-embedded-v1 is reserved for ${CUA_PLUGIN_ID}`)
+      }
+      const contract = manifest.runtime.adapterContract
+      const contractFields = [
+        'hostBundleId',
+        'driverVersion',
+        'contractVersion',
+        'toolsListSchemaVersion',
+        'capabilityVersion',
+        'mcpProtocolVersion'
+      ] as const
+      if (
+        !contract ||
+        contractFields.some(
+          (field) =>
+            typeof contract[field] !== 'string' ||
+            !contract[field].trim() ||
+            contract[field] !== contract[field].trim()
+        )
+      ) {
+        throw new Error(`Plugin ${manifest.id} has an invalid cua-embedded-v1 adapter contract`)
+      }
+      const adapterServers = manifest.mcpServers ?? []
+      if (
+        adapterServers.length !== 1 ||
+        adapterServers[0].id !== manifest.runtime.id ||
+        adapterServers[0].startMode !== 'onDemand' ||
+        adapterServers[0].inheritEnv !== 'minimal'
+      ) {
+        throw new Error(
+          `Plugin ${manifest.id} cua-embedded-v1 requires one matching on-demand MCP server with minimal environment inheritance`
+        )
+      }
+      if (
+        typeof manifest.runtime.integrityDescriptor !== 'string' ||
+        !manifest.runtime.integrityDescriptor
+      ) {
+        throw new Error(`Plugin ${manifest.id} cua-embedded-v1 requires an integrity descriptor`)
+      }
+      this.assertSafeRelativePath(
+        manifest.runtime.integrityDescriptor,
+        'plugin runtime integrity descriptor path'
+      )
+    }
+
+    if (manifest.mcpServers !== undefined && !Array.isArray(manifest.mcpServers)) {
+      throw new Error(`Plugin ${manifest.id} has invalid mcpServers`)
+    }
+
+    const validSurfaces = new Set(['tools', 'prompts', 'resources'])
+    const serverIds = new Set<string>()
+    for (const server of manifest.mcpServers ?? []) {
+      if (
+        !server ||
+        typeof server !== 'object' ||
+        typeof server.id !== 'string' ||
+        !server.id.trim() ||
+        server.id !== server.id.trim()
+      ) {
+        throw new Error(`Plugin ${manifest.id} has an MCP server with an invalid id`)
+      }
+      if (serverIds.has(server.id)) {
+        throw new Error(`Plugin ${manifest.id} declares duplicate MCP server id: ${server.id}`)
+      }
+      serverIds.add(server.id)
+
+      const startMode = server.startMode ?? 'eager'
+      if (startMode !== 'eager' && startMode !== 'onDemand') {
+        throw new Error(
+          `Plugin ${manifest.id} MCP server ${server.id} has invalid startMode: ${startMode}`
+        )
+      }
+      if (server.inheritEnv && server.inheritEnv !== 'legacy' && server.inheritEnv !== 'minimal') {
+        throw new Error(
+          `Plugin ${manifest.id} MCP server ${server.id} has invalid inheritEnv: ${server.inheritEnv}`
+        )
+      }
+
+      const surfaces = server.surfaces ?? ['tools', 'prompts', 'resources']
+      if (
+        !Array.isArray(surfaces) ||
+        surfaces.length === 0 ||
+        new Set(surfaces).size !== surfaces.length ||
+        surfaces.some((surface) => typeof surface !== 'string' || !validSurfaces.has(surface))
+      ) {
+        throw new Error(`Plugin ${manifest.id} MCP server ${server.id} has invalid surfaces`)
+      }
+      if (server.toolCatalog !== undefined && typeof server.toolCatalog !== 'string') {
+        throw new Error(`Plugin ${manifest.id} MCP server ${server.id} has invalid toolCatalog`)
+      }
+      if (server.toolCatalog) {
+        this.assertSafeRelativePath(server.toolCatalog, 'plugin MCP tool catalog path')
+      }
+      if (
+        startMode === 'onDemand' &&
+        (surfaces.length !== 1 || surfaces[0] !== 'tools' || !server.toolCatalog)
+      ) {
+        throw new Error(
+          `Plugin ${manifest.id} MCP server ${server.id} must declare surfaces ["tools"] and a toolCatalog for on-demand startup`
+        )
+      }
+    }
   }
 
   private readPluginPackage(packagePath: string): Record<string, Uint8Array> {
@@ -1135,7 +1642,9 @@ export class PluginService implements PluginServicePort {
       manifest: installedManifest,
       root: installRoot,
       sourcePath: installRoot,
-      sourceType: 'directory'
+      sourceType: 'directory',
+      integrityDescriptor: plugin.integrityDescriptor,
+      integrityError: plugin.integrityError
     })
     return next
   }
@@ -1309,6 +1818,7 @@ export class PluginService implements PluginServicePort {
       trustState: 'trusted',
       official: true,
       capabilities: plugin.manifest.capabilities,
+      activationError: this.activationErrors.get(pluginId),
       runtime,
       mcpServers: await this.getPluginMcpRuntimeStatuses(plugin.manifest),
       settings
@@ -1333,7 +1843,9 @@ export class PluginService implements PluginServicePort {
           manifest: this.readManifest(manifestPath),
           root: installation.path,
           sourcePath: installation.path,
-          sourceType: 'directory'
+          sourceType: 'directory',
+          integrityDescriptor: official.integrityDescriptor,
+          integrityError: official.integrityError
         }
       }
     }
@@ -1353,6 +1865,25 @@ export class PluginService implements PluginServicePort {
 
   private getInstallations(): PluginInstallationRecord[] {
     return this.store.get('installations') ?? []
+  }
+
+  private getRuntimeSentinelMap(): Record<string, unknown> {
+    const sentinels = this.store.get('runtimeSentinels')
+    if (sentinels === undefined) {
+      return {}
+    }
+    if (!sentinels || typeof sentinels !== 'object' || Array.isArray(sentinels)) {
+      throw new Error('Plugin runtime safety evidence store is corrupt; runtime start is blocked')
+    }
+    return sentinels
+  }
+
+  private copyRuntimeSentinel(sentinel: PluginRuntimeSentinel): PluginRuntimeSentinel {
+    return {
+      ...sentinel,
+      fingerprint: { ...sentinel.fingerprint },
+      ...(sentinel.launchContext ? { launchContext: { ...sentinel.launchContext } } : {})
+    }
   }
 
   private getInstallation(pluginId: string): PluginInstallationRecord | undefined {
@@ -1580,47 +2111,23 @@ export class PluginService implements PluginServicePort {
     return undefined
   }
 
-  private async startPluginMcpServersIfReady(
-    pluginId: string,
-    serverNames: string[]
-  ): Promise<void> {
-    if (serverNames.length === 0 || !this.mcpService.isReady()) {
-      return
-    }
-
-    for (const serverName of serverNames) {
-      try {
-        if (!(await this.isMcpServerActive(serverName))) {
-          void this.mcpService.startServer(serverName).catch((error) => {
-            console.warn('[PluginHost] Failed to auto-start plugin MCP server:', {
-              pluginId,
-              serverName,
-              error
-            })
-          })
-        }
-      } catch (error) {
-        console.warn('[PluginHost] Failed to auto-start plugin MCP server:', {
-          pluginId,
-          serverName,
-          error
-        })
-      }
-    }
-  }
-
   private async getPluginMcpRuntimeStatuses(
     manifest: DeepChatPluginManifest
   ): Promise<NonNullable<PluginListItem['mcpServers']>> {
-    const servers = await this.mcpSettings.getMcpServers()
+    const pluginEnabled = Boolean(this.getInstallation(manifest.id)?.enabled)
     const statuses: NonNullable<PluginListItem['mcpServers']> = []
     for (const server of manifest.mcpServers ?? []) {
-      const serverConfig = servers[server.id]
+      const supervisorState = this.runtimeSupervisor.getState(server.id)
       statuses.push({
         serverId: server.id,
-        enabled: Boolean(serverConfig?.enabled),
+        enabled: pluginEnabled,
         running: await this.mcpService.isServerRunning(server.id),
-        lastError: serverConfig?.enabled ? this.mcpService.getServerLastError(server.id) : undefined
+        lifecycleState: supervisorState?.state,
+        quarantinedAt: supervisorState?.quarantine?.recordedAt,
+        integrityError: supervisorState?.integrityError,
+        lastError: pluginEnabled
+          ? (supervisorState?.lastError ?? this.mcpService.getServerLastError(server.id))
+          : undefined
       })
     }
     return statuses

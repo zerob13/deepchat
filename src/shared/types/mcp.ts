@@ -47,6 +47,7 @@ export interface ToolCallResult {
     type: string
     text: string
   }>
+  structuredContent?: unknown
 }
 
 export interface Tool {
@@ -87,6 +88,7 @@ export interface MCPServerConfig {
   source?: string
   sourceId?: string
   ownerPluginId?: string
+  inheritEnv?: 'legacy' | 'minimal'
 }
 
 export interface MCPConfig {
@@ -135,6 +137,8 @@ export interface MCPToolResponse {
   content: string | MCPContentItem[]
   _meta?: Record<string, any>
   isError?: boolean
+  structuredContent?: unknown
+  ownerPluginId?: string
   toolResult?: unknown
   imagePreviews?: import('./core/mcp').ToolCallImagePreview[]
   requiresPermission?: boolean
@@ -269,7 +273,8 @@ export interface McpServicePort {
     serverName: string,
     permissionType: 'read' | 'write' | 'all',
     remember?: boolean,
-    conversationId?: string
+    conversationId?: string,
+    toolName?: string
   ): Promise<void>
   clearSessionPermissions(conversationId: string): void
   getNpmRegistryStatus(): Promise<{

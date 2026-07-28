@@ -1593,6 +1593,7 @@ async function runToolCall(params: {
         toolArgs: completedToolCall.arguments,
         content: toolRawData.content,
         isError: toolRawData.isError === true,
+        ownerPluginId: toolRawData.ownerPluginId,
         signal: io.abortSignal
       })
     }

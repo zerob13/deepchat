@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const DEFAULT_URL =
   'https://raw.githubusercontent.com/ThinkInAIXYZ/PublicProviderConf/refs/heads/dev/dist/all.json'
@@ -91,7 +92,16 @@ const sanitizeExtraReasoning = (value) => {
   return Object.keys(reasoning).length ? reasoning : undefined
 }
 
-function sanitizeAggregateJson(json) {
+const inferTtsModelTypeFromId = (modelId) => {
+  const normalized = modelId.trim().toLowerCase().split('/').at(-1) ?? ''
+  return /^(?:tts-1(?:-hd)?(?:-\d+)?|gpt-4o-mini-tts(?:-\d{4}-\d{2}-\d{2})?)$/.test(
+    normalized
+  )
+    ? 'tts'
+    : undefined
+}
+
+export function sanitizeAggregateJson(json) {
   if (!json || typeof json !== 'object') return null
   const providers = json.providers
   if (!providers || typeof providers !== 'object' || Array.isArray(providers)) return null
@@ -173,8 +183,7 @@ function sanitizeAggregateJson(json) {
         if (Object.keys(so).length) search = so
       }
 
-      // type (model type: chat, embedding, rerank, imageGeneration)
-      // Normalize type values to handle variants like image_generation, image-generation, etc.
+      // Normalize model type variants while preserving every type understood by the app.
       let modelType
       const t = m.type
       if (typeof t === 'string') {
@@ -188,8 +197,13 @@ function sanitizeAggregateJson(json) {
           modelType = 'rerank'
         } else if (normalized === 'imagegeneration' || normalized === 'imagegen') {
           modelType = 'imageGeneration'
+        } else if (normalized === 'videogeneration' || normalized === 'videogen') {
+          modelType = 'videoGeneration'
+        } else if (normalized === 'tts') {
+          modelType = 'tts'
         }
       }
+      modelType ??= inferTtsModelTypeFromId(mid)
 
       sanitizedModels.push({
         id: mid,
@@ -292,7 +306,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  error('Unexpected error:', e)
-  process.exit(1)
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((e) => {
+    error('Unexpected error:', e)
+    process.exit(1)
+  })
+}

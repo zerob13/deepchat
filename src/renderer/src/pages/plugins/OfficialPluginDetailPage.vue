@@ -181,8 +181,54 @@
           {{ errorMessage }}
         </div>
 
+        <Alert v-if="plugin.activationError" variant="destructive">
+          <Icon icon="lucide:shield-alert" />
+          <AlertTitle>{{ t('settings.plugins.runtimeStates.error') }}</AlertTitle>
+          <AlertDescription class="break-all">{{ plugin.activationError }}</AlertDescription>
+        </Alert>
+
+        <Alert v-else-if="cuaRuntimeIntegrityError" variant="destructive">
+          <Icon icon="lucide:shield-alert" />
+          <AlertTitle>{{ t('settings.plugins.runtimeStates.error') }}</AlertTitle>
+          <AlertDescription class="break-all">{{ cuaRuntimeIntegrityError }}</AlertDescription>
+        </Alert>
+
+        <Alert v-else-if="cuaRuntimeQuarantined" variant="destructive">
+          <Icon icon="lucide:shield-alert" />
+          <AlertTitle>{{ t('settings.plugins.runtimeStates.quarantined') }}</AlertTitle>
+          <AlertDescription>
+            {{ t('settings.plugins.quarantineDescription') }}
+          </AlertDescription>
+        </Alert>
+
         <section class="rounded-lg border border-border p-4">
-          <div class="mb-3 text-sm font-semibold">{{ t('settings.plugins.runtime') }}</div>
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div class="text-sm font-semibold">{{ t('settings.plugins.runtime') }}</div>
+            <div v-if="showCuaRuntimeActions" class="flex flex-wrap gap-2">
+              <Button
+                v-if="cuaRuntimeQuarantined && !cuaRuntimeIntegrityError"
+                data-testid="cua-runtime-retry"
+                size="sm"
+                variant="outline"
+                :disabled="pending"
+                @click="runCuaRuntimeAction('runtime.retry')"
+              >
+                <Icon icon="lucide:rotate-ccw" class="mr-2 size-4" />
+                {{ t('settings.plugins.retryRuntime') }}
+              </Button>
+              <Button
+                v-else
+                data-testid="cua-runtime-test"
+                size="sm"
+                variant="outline"
+                :disabled="pending"
+                @click="runCuaRuntimeAction('runtime.test')"
+              >
+                <Icon icon="lucide:play" class="mr-2 size-4" />
+                {{ t('settings.plugins.testRuntime') }}
+              </Button>
+            </div>
+          </div>
           <dl class="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
             <dt class="text-muted-foreground">{{ t('settings.plugins.runtimeState') }}</dt>
             <dd>{{ formatRuntimeState(plugin.runtime?.state) }}</dd>
@@ -211,11 +257,7 @@
                 </div>
               </div>
               <span class="shrink-0 text-xs text-muted-foreground">
-                {{
-                  server.running
-                    ? t('settings.plugins.runtimeStates.running')
-                    : t('common.disabled')
-                }}
+                {{ formatMcpRuntimeState(server) }}
               </span>
             </div>
           </div>
@@ -247,6 +289,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Icon } from '@iconify/vue'
+import { Alert, AlertDescription, AlertTitle } from '@shadcn/components/ui/alert'
 import { Button } from '@shadcn/components/ui/button'
 import { ScrollArea } from '@shadcn/components/ui/scroll-area'
 import { createPluginClient } from '@api/PluginClient'
@@ -254,7 +297,12 @@ import { createRemoteControlClient } from '@api/RemoteControlClient'
 import { usePluginCatalogStore } from '@/stores/pluginCatalog'
 import RemoteSettings from '../../../settings/components/RemoteSettings.vue'
 import type { ChannelSettingsMap, RemoteChannel } from '@shared/types/remote'
-import type { PluginActionResult, PluginRuntimeState } from '@shared/types/plugin'
+import {
+  CUA_PLUGIN_ID,
+  type PluginActionResult,
+  type PluginMcpRuntimeStatus,
+  type PluginRuntimeState
+} from '@shared/types/plugin'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -292,7 +340,6 @@ const remoteIconClassByChannel: Record<RemoteChannel, string> = {
   discord: 'text-indigo-500',
   'weixin-ilink': 'text-green-500'
 }
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_PLUGIN_ICON = 'lucide:laptop-minimal-check'
 
 const pluginId = computed(() => String(route.params.pluginId ?? ''))
@@ -352,12 +399,50 @@ const pluginDescription = computed(() => {
   }
   return plugin.value ? `${plugin.value.publisher} · ${plugin.value.id}` : ''
 })
+const cuaMcpRuntime = computed(() =>
+  plugin.value?.mcpServers?.find((server) => server.serverId === 'cua-driver')
+)
+const cuaRuntimeQuarantined = computed(() => cuaMcpRuntime.value?.lifecycleState === 'quarantined')
+const cuaRuntimeIntegrityError = computed(() => cuaMcpRuntime.value?.integrityError)
+const cuaRuntimeUnavailable = computed(
+  () => plugin.value?.runtime?.state === 'missing' || plugin.value?.runtime?.state === 'error'
+)
+const showCuaRuntimeActions = computed(
+  () =>
+    isCuaPlugin.value &&
+    plugin.value?.enabled === true &&
+    !plugin.value.activationError &&
+    !cuaRuntimeUnavailable.value &&
+    Boolean(cuaMcpRuntime.value)
+)
 
 function formatRuntimeState(state?: PluginRuntimeState): string {
   if (!state) {
     return '-'
   }
   return t(`settings.plugins.runtimeStates.${state}`)
+}
+
+function formatMcpRuntimeState(server: PluginMcpRuntimeStatus): string {
+  if (server.lifecycleState === 'quarantined') {
+    return t('settings.plugins.runtimeStates.quarantined')
+  }
+  if (server.running) {
+    return t('settings.plugins.runtimeStates.running')
+  }
+  if (!server.enabled) {
+    return t('common.disabled')
+  }
+  if (isCuaPlugin.value && cuaRuntimeUnavailable.value) {
+    return formatRuntimeState(plugin.value?.runtime?.state)
+  }
+  if (server.lifecycleState === 'error') {
+    return t('settings.plugins.runtimeStates.error')
+  }
+  if (isCuaPlugin.value && server.serverId === 'cua-driver') {
+    return t('settings.plugins.runtimeStates.readyOnDemand')
+  }
+  return t('settings.plugins.runtimeStates.installed')
 }
 
 async function loadPlugin(): Promise<void> {
@@ -442,6 +527,37 @@ async function runPluginAction(
       pluginCatalogStore.rollbackPluginMutation(previous)
     }
     errorMessage.value = error instanceof Error ? error.message : t('settings.plugins.actionFailed')
+  } finally {
+    pending.value = false
+  }
+}
+
+async function runCuaRuntimeAction(actionId: 'runtime.test' | 'runtime.retry'): Promise<void> {
+  const currentPlugin = plugin.value
+  if (!currentPlugin) {
+    return
+  }
+
+  pending.value = true
+  errorMessage.value = ''
+  lastActionData.value = ''
+  try {
+    const result = await pluginClient.invokeAction({
+      pluginId: currentPlugin.id,
+      actionId
+    })
+    if (!result.ok) {
+      throw new Error(result.error || t('settings.plugins.actionFailed'))
+    }
+    if (result.status) {
+      pluginCatalogStore.commitPluginMutation(result.status)
+    } else {
+      await loadPlugin()
+    }
+  } catch (error) {
+    const actionError = error instanceof Error ? error.message : t('settings.plugins.actionFailed')
+    await loadPlugin()
+    errorMessage.value = actionError
   } finally {
     pending.value = false
   }

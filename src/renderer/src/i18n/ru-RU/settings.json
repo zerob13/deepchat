@@ -2909,6 +2909,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "Проверить среду выполнения",
+    "retryRuntime": "Повторить запуск среды",
+    "quarantineDescription": "DeepChat остановил эту среду после некорректного завершения. Повторяйте запуск только тогда, когда рабочим столом можно безопасно управлять.",
     "runtime": "Runtime",
     "runtimeState": "Состояние",
     "version": "Version",
@@ -2922,6 +2925,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "Готово по запросу",
+      "quarantined": "В карантине",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",

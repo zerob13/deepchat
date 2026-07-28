@@ -2850,6 +2850,9 @@
     "enable": "Aktivieren",
     "disable": "Deaktivieren",
     "openSettings": "Einstellungen",
+    "testRuntime": "Laufzeit testen",
+    "retryRuntime": "Laufzeit erneut versuchen",
+    "quarantineDescription": "DeepChat hat diese Laufzeit nach einem unsauberen Beenden gestoppt. Versuchen Sie es nur erneut, wenn der Desktop sicher gesteuert werden kann.",
     "runtime": "Runtime",
     "runtimeState": "Status",
     "version": "Version",
@@ -2863,6 +2866,8 @@
       "missing": "Nicht installiert",
       "installed": "Installiert",
       "running": "Läuft",
+      "readyOnDemand": "Bei Bedarf bereit",
+      "quarantined": "Unter Quarantäne",
       "error": "Fehler"
     }
   },

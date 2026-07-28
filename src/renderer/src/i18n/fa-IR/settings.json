@@ -2909,6 +2909,9 @@
     "enable": "Enable",
     "disable": "Disable",
     "openSettings": "Settings",
+    "testRuntime": "آزمایش زمان اجرا",
+    "retryRuntime": "تلاش دوباره برای زمان اجرا",
+    "quarantineDescription": "DeepChat این زمان اجرا را پس از خروج نادرست متوقف کرد. فقط زمانی دوباره تلاش کنید که کنترل دسکتاپ ایمن باشد.",
     "runtime": "Runtime",
     "runtimeState": "وضعیت",
     "version": "Version",
@@ -2922,6 +2925,8 @@
       "missing": "Missing",
       "installed": "Installed",
       "running": "Running",
+      "readyOnDemand": "آماده در صورت نیاز",
+      "quarantined": "قرنطینه‌شده",
       "error": "Error"
     },
     "emptyTitle": "No built-in plugins available",
