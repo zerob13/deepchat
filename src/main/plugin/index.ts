@@ -21,17 +21,22 @@ import type {
 } from '@shared/types/plugin'
 import { OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
 import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPolicyStore'
+import type { PluginRuntimeSupervisor } from './runtimeSupervisor'
 import type { McpSettings } from '@/mcp/settings'
 
 const execFileAsync = promisify(execFile)
 
 const GITHUB_RELEASE_DOWNLOAD_PREFIX = 'https://github.com/ThinkInAIXYZ/deepchat/releases/download/'
 const PLUGIN_PACKAGE_EXTENSION = '.dcplugin'
+const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
+const CUA_RUNTIME_OWNERSHIP_MIGRATION = 'cua-runtime-ownership'
+const CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION = 1
 
 type PluginStoreShape = {
   installations: PluginInstallationRecord[]
   resources: PluginResourceRecord[]
   runtimes: RuntimeDependencyRecord[]
+  migrations: Record<string, number>
 }
 
 type SkillContributionPort = Pick<
@@ -47,15 +52,14 @@ export interface PluginSettingsWindowPort {
 
 type PluginServiceDeps = {
   mcpSettings: McpSettings
-  mcpService: Pick<
-    McpServicePort,
-    | 'stopServerDuringShutdownByName'
-    | 'isServerActive'
-    | 'stopServer'
-    | 'isReady'
-    | 'startServer'
-    | 'isServerRunning'
-    | 'getServerLastError'
+  mcpService: Pick<McpServicePort, 'isReady' | 'isServerRunning' | 'getServerLastError'>
+  runtimeSupervisor: Pick<
+    PluginRuntimeSupervisor,
+    | 'registerServer'
+    | 'commitPluginRegistration'
+    | 'unregisterPlugin'
+    | 'reconcilePlugin'
+    | 'getState'
   >
   skillService: SkillContributionPort
   settingsWindow: PluginSettingsWindowPort
@@ -103,6 +107,7 @@ export class PluginService implements PluginServicePort {
   private readonly mcpService: PluginServiceDeps['mcpService']
   private readonly skillService: SkillContributionPort
   private readonly settingsWindow: PluginSettingsWindowPort
+  private readonly runtimeSupervisor: PluginServiceDeps['runtimeSupervisor']
   private readonly platform: NodeJS.Platform
   private readonly arch: NodeJS.Architecture
   private readonly appPath: string
@@ -113,7 +118,8 @@ export class PluginService implements PluginServicePort {
     defaults: {
       installations: [],
       resources: [],
-      runtimes: []
+      runtimes: [],
+      migrations: {}
     }
   })
   private officialPlugins = new Map<string, ResolvedOfficialPlugin>()
@@ -123,6 +129,7 @@ export class PluginService implements PluginServicePort {
     this.mcpService = deps.mcpService
     this.skillService = deps.skillService
     this.settingsWindow = deps.settingsWindow
+    this.runtimeSupervisor = deps.runtimeSupervisor
     this.platform = deps.platform ?? process.platform
     this.arch = deps.arch ?? process.arch
     this.appPath = deps.appPath ?? app.getAppPath()
@@ -132,6 +139,7 @@ export class PluginService implements PluginServicePort {
 
   async initialize(): Promise<void> {
     await this.loadOfficialPlugins()
+    await this.applyRuntimeMigrations()
     await this.repairMissingPluginResources()
 
     for (const installation of this.getInstallations()) {
@@ -139,70 +147,53 @@ export class PluginService implements PluginServicePort {
         try {
           await this.activatePlugin(installation.pluginId)
         } catch (error) {
+          let cleanupError: unknown
+          try {
+            await this.disableByOwner(installation.pluginId)
+          } catch (failedCleanup) {
+            cleanupError = failedCleanup
+          }
           console.warn('[PluginHost] Failed to activate installed plugin:', {
             pluginId: installation.pluginId,
-            error
+            error,
+            cleanupError
           })
         }
       }
     }
   }
 
-  async shutdown(): Promise<void> {
-    const pluginIds = new Set(this.getInstallations().map((installation) => installation.pluginId))
-    const servers = await this.mcpSettings.getMcpServers()
-    const pluginOwnedServers: Array<{ serverName: string; pluginId?: string }> = []
-
-    for (const [serverName, serverConfig] of Object.entries(servers)) {
-      if (!this.isPluginOwnedServerConfig(serverConfig)) {
-        continue
-      }
-
-      const ownerPluginId = this.getServerOwnerPluginId(serverConfig)
-      if (ownerPluginId) {
-        pluginIds.add(ownerPluginId)
-      }
-      pluginOwnedServers.push({ serverName, pluginId: ownerPluginId })
+  private async applyRuntimeMigrations(): Promise<void> {
+    const migrations = this.store.get('migrations') ?? {}
+    if (
+      (migrations[CUA_RUNTIME_OWNERSHIP_MIGRATION] ?? 0) >= CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION
+    ) {
+      return
     }
 
-    await this.stopPluginOwnedServers(pluginOwnedServers)
+    const servers = await this.mcpSettings.getMcpServers()
+    const legacyCuaServer = servers['cua-driver']
+    if (
+      legacyCuaServer &&
+      this.isServerOwnedByPlugin(legacyCuaServer, CUA_PLUGIN_ID) &&
+      legacyCuaServer.enabled !== false
+    ) {
+      await this.mcpSettings.updateMcpServer('cua-driver', { enabled: false })
+    }
 
+    this.store.set('migrations', {
+      ...migrations,
+      [CUA_RUNTIME_OWNERSHIP_MIGRATION]: CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION
+    })
+  }
+
+  async shutdown(): Promise<void> {
+    const pluginIds = new Set(this.getInstallations().map((installation) => installation.pluginId))
     for (const pluginId of pluginIds) {
       unregisterPluginToolPolicies(pluginId)
     }
 
     this.settingsWindow.closeAll()
-  }
-
-  private async stopPluginOwnedServers(
-    servers: Array<{ serverName: string; pluginId?: string }>
-  ): Promise<void> {
-    const concurrency = 4
-    let nextIndex = 0
-
-    const stopNext = async (): Promise<void> => {
-      while (nextIndex < servers.length) {
-        const { serverName, pluginId } = servers[nextIndex++]
-        try {
-          if (await this.isMcpServerActive(serverName)) {
-            await this.mcpService.stopServerDuringShutdownByName(serverName)
-          }
-        } catch (error) {
-          console.warn('[PluginHost] Failed to stop plugin-owned MCP server during shutdown:', {
-            pluginId,
-            serverName,
-            error
-          })
-        }
-      }
-    }
-
-    const workers = Array.from({ length: Math.min(concurrency, servers.length) }, () => stopNext())
-    await Promise.all(workers)
-  }
-
-  private async isMcpServerActive(serverName: string): Promise<boolean> {
-    return await this.mcpService.isServerActive(serverName)
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
@@ -235,13 +226,25 @@ export class PluginService implements PluginServicePort {
         enabled: true,
         updatedAt: Date.now()
       }
+      this.upsertInstallation(nextInstallation)
       try {
         await this.activatePlugin(pluginId)
       } catch (error) {
-        await this.disableByOwner(pluginId)
+        this.upsertInstallation({
+          ...nextInstallation,
+          enabled: false,
+          updatedAt: Date.now()
+        })
+        try {
+          await this.disableByOwner(pluginId)
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            `Plugin ${pluginId} activation failed and cleanup was incomplete`
+          )
+        }
         throw error
       }
-      this.upsertInstallation(nextInstallation)
       return { ok: true, status: await this.buildPluginListItem(pluginId) }
     } catch (error) {
       return this.errorResult(error)
@@ -255,12 +258,12 @@ export class PluginService implements PluginServicePort {
         return { ok: true, status: await this.buildPluginListItem(pluginId) }
       }
 
-      await this.disableByOwner(pluginId)
       this.upsertInstallation({
         ...installation,
         enabled: false,
         updatedAt: Date.now()
       })
+      await this.disableByOwner(pluginId)
       return { ok: true, status: await this.buildPluginListItem(pluginId) }
     } catch (error) {
       return this.errorResult(error)
@@ -359,24 +362,33 @@ export class PluginService implements PluginServicePort {
     const registeredServerNames = await this.registerMcpServers(plugin, runtime)
     await this.registerSkills(plugin)
     this.registerToolPolicies(plugin)
-    await this.startPluginMcpServersIfReady(pluginId, registeredServerNames)
+    if (registeredServerNames.length > 0 && this.mcpService.isReady()) {
+      try {
+        await this.runtimeSupervisor.reconcilePlugin(pluginId)
+      } catch (error) {
+        console.warn('[PluginHost] Failed to start eager plugin runtime:', {
+          pluginId,
+          error
+        })
+      }
+    }
   }
 
   private async disableByOwner(pluginId: string): Promise<void> {
+    let runtimeStopError: unknown
+    try {
+      await this.runtimeSupervisor.unregisterPlugin(pluginId)
+    } catch (error) {
+      runtimeStopError = error
+      console.warn('[PluginHost] Failed to stop plugin-owned runtime during disable:', {
+        pluginId,
+        error
+      })
+    }
+
     const servers = await this.mcpSettings.getMcpServers()
     for (const [serverName, serverConfig] of Object.entries(servers)) {
       if (this.isServerOwnedByPlugin(serverConfig, pluginId)) {
-        try {
-          if (await this.isMcpServerActive(serverName)) {
-            await this.mcpService.stopServer(serverName)
-          }
-        } catch (error) {
-          console.warn('[PluginHost] Failed to stop plugin-owned MCP server:', {
-            pluginId,
-            serverName,
-            error
-          })
-        }
         await this.mcpSettings.removeMcpServer(serverName)
       }
     }
@@ -385,23 +397,15 @@ export class PluginService implements PluginServicePort {
     unregisterPluginToolPolicies(pluginId)
     this.settingsWindow.close(pluginId)
     this.removeResourceRecordsByOwner(pluginId)
-  }
-
-  private isPluginOwnedServerConfig(serverConfig: MCPServerConfig): boolean {
-    return Boolean(serverConfig.ownerPluginId || serverConfig.source === 'plugin')
+    if (runtimeStopError) {
+      throw runtimeStopError
+    }
   }
 
   private isServerOwnedByPlugin(serverConfig: MCPServerConfig, pluginId: string): boolean {
     return (
       serverConfig.ownerPluginId === pluginId ||
       (serverConfig.source === 'plugin' && serverConfig.sourceId === pluginId)
-    )
-  }
-
-  private getServerOwnerPluginId(serverConfig: MCPServerConfig): string | undefined {
-    return (
-      serverConfig.ownerPluginId ||
-      (serverConfig.source === 'plugin' ? serverConfig.sourceId : undefined)
     )
   }
 
@@ -416,11 +420,19 @@ export class PluginService implements PluginServicePort {
     runtime?: PluginRuntimeStatus
   ): Promise<string[]> {
     const servers = plugin.manifest.mcpServers ?? []
+    const existingServers = await this.mcpSettings.getMcpServers()
     const registeredServerNames: string[] = []
     for (const server of servers) {
       const command = this.resolvePluginTemplate(server.command, plugin, runtime)
       const serverName = server.id
-      const existingServers = await this.mcpSettings.getMcpServers()
+      const startMode = server.startMode ?? 'eager'
+      const surfaces = server.surfaces ?? ['tools', 'prompts', 'resources']
+      const toolCatalogPath = server.toolCatalog
+        ? this.resolvePluginRelativePath(plugin.root, server.toolCatalog)
+        : undefined
+      if (toolCatalogPath && !fs.statSync(toolCatalogPath, { throwIfNoEntry: false })?.isFile()) {
+        throw new Error(`Plugin MCP tool catalog is missing: ${server.toolCatalog}`)
+      }
       const existing = existingServers[serverName]
       if (existing && existing.ownerPluginId !== plugin.manifest.id) {
         throw new Error(`MCP server "${serverName}" already exists and is not owned by this plugin`)
@@ -438,12 +450,25 @@ export class PluginService implements PluginServicePort {
         descriptions: server.displayName,
         icons: 'plugin',
         autoApprove: server.autoApprove,
-        enabled: true,
+        enabled: false,
         disable: false,
         source: 'plugin',
         sourceId: plugin.manifest.id,
-        ownerPluginId: plugin.manifest.id
+        ownerPluginId: plugin.manifest.id,
+        inheritEnv: server.inheritEnv ?? 'legacy'
       }
+
+      this.runtimeSupervisor.registerServer(
+        {
+          pluginId: plugin.manifest.id,
+          serverName,
+          runtimeId: runtime?.runtimeId,
+          startMode,
+          surfaces,
+          toolCatalogPath
+        },
+        { ready: false }
+      )
 
       if (existing) {
         await this.mcpSettings.updateMcpServer(serverName, config)
@@ -460,6 +485,7 @@ export class PluginService implements PluginServicePort {
       })
       registeredServerNames.push(serverName)
     }
+    this.runtimeSupervisor.commitPluginRegistration(plugin.manifest.id)
     return registeredServerNames
   }
 
@@ -1016,6 +1042,7 @@ export class PluginService implements PluginServicePort {
     if (!parsed.id || !parsed.name || !parsed.version || !parsed.source) {
       throw new Error(`Invalid plugin manifest: ${manifestPath}`)
     }
+    this.assertManifestLifecycleContract(parsed)
     return parsed
   }
 
@@ -1031,7 +1058,77 @@ export class PluginService implements PluginServicePort {
     if (!manifest.id || !manifest.name || !manifest.version || !manifest.source) {
       throw new Error(`Invalid plugin package manifest: ${packagePath}`)
     }
+    this.assertManifestLifecycleContract(manifest)
     return manifest
+  }
+
+  private assertManifestLifecycleContract(manifest: DeepChatPluginManifest): void {
+    if (manifest.id !== manifest.id.trim()) {
+      throw new Error(`Plugin manifest id must not contain surrounding whitespace: ${manifest.id}`)
+    }
+    if (manifest.runtime?.adapter && manifest.runtime.adapter !== 'cua-embedded-v1') {
+      throw new Error(
+        `Plugin ${manifest.id} declares unsupported runtime adapter: ${manifest.runtime.adapter}`
+      )
+    }
+
+    if (manifest.mcpServers !== undefined && !Array.isArray(manifest.mcpServers)) {
+      throw new Error(`Plugin ${manifest.id} has invalid mcpServers`)
+    }
+
+    const validSurfaces = new Set(['tools', 'prompts', 'resources'])
+    const serverIds = new Set<string>()
+    for (const server of manifest.mcpServers ?? []) {
+      if (
+        !server ||
+        typeof server !== 'object' ||
+        typeof server.id !== 'string' ||
+        !server.id.trim() ||
+        server.id !== server.id.trim()
+      ) {
+        throw new Error(`Plugin ${manifest.id} has an MCP server with an invalid id`)
+      }
+      if (serverIds.has(server.id)) {
+        throw new Error(`Plugin ${manifest.id} declares duplicate MCP server id: ${server.id}`)
+      }
+      serverIds.add(server.id)
+
+      const startMode = server.startMode ?? 'eager'
+      if (startMode !== 'eager' && startMode !== 'onDemand') {
+        throw new Error(
+          `Plugin ${manifest.id} MCP server ${server.id} has invalid startMode: ${startMode}`
+        )
+      }
+      if (server.inheritEnv && server.inheritEnv !== 'legacy' && server.inheritEnv !== 'minimal') {
+        throw new Error(
+          `Plugin ${manifest.id} MCP server ${server.id} has invalid inheritEnv: ${server.inheritEnv}`
+        )
+      }
+
+      const surfaces = server.surfaces ?? ['tools', 'prompts', 'resources']
+      if (
+        !Array.isArray(surfaces) ||
+        surfaces.length === 0 ||
+        new Set(surfaces).size !== surfaces.length ||
+        surfaces.some((surface) => typeof surface !== 'string' || !validSurfaces.has(surface))
+      ) {
+        throw new Error(`Plugin ${manifest.id} MCP server ${server.id} has invalid surfaces`)
+      }
+      if (server.toolCatalog !== undefined && typeof server.toolCatalog !== 'string') {
+        throw new Error(`Plugin ${manifest.id} MCP server ${server.id} has invalid toolCatalog`)
+      }
+      if (server.toolCatalog) {
+        this.assertSafeRelativePath(server.toolCatalog, 'plugin MCP tool catalog path')
+      }
+      if (
+        startMode === 'onDemand' &&
+        (surfaces.length !== 1 || surfaces[0] !== 'tools' || !server.toolCatalog)
+      ) {
+        throw new Error(
+          `Plugin ${manifest.id} MCP server ${server.id} must declare surfaces ["tools"] and a toolCatalog for on-demand startup`
+        )
+      }
+    }
   }
 
   private readPluginPackage(packagePath: string): Record<string, Uint8Array> {
@@ -1580,47 +1677,20 @@ export class PluginService implements PluginServicePort {
     return undefined
   }
 
-  private async startPluginMcpServersIfReady(
-    pluginId: string,
-    serverNames: string[]
-  ): Promise<void> {
-    if (serverNames.length === 0 || !this.mcpService.isReady()) {
-      return
-    }
-
-    for (const serverName of serverNames) {
-      try {
-        if (!(await this.isMcpServerActive(serverName))) {
-          void this.mcpService.startServer(serverName).catch((error) => {
-            console.warn('[PluginHost] Failed to auto-start plugin MCP server:', {
-              pluginId,
-              serverName,
-              error
-            })
-          })
-        }
-      } catch (error) {
-        console.warn('[PluginHost] Failed to auto-start plugin MCP server:', {
-          pluginId,
-          serverName,
-          error
-        })
-      }
-    }
-  }
-
   private async getPluginMcpRuntimeStatuses(
     manifest: DeepChatPluginManifest
   ): Promise<NonNullable<PluginListItem['mcpServers']>> {
-    const servers = await this.mcpSettings.getMcpServers()
+    const pluginEnabled = Boolean(this.getInstallation(manifest.id)?.enabled)
     const statuses: NonNullable<PluginListItem['mcpServers']> = []
     for (const server of manifest.mcpServers ?? []) {
-      const serverConfig = servers[server.id]
+      const supervisorState = this.runtimeSupervisor.getState(server.id)
       statuses.push({
         serverId: server.id,
-        enabled: Boolean(serverConfig?.enabled),
+        enabled: pluginEnabled,
         running: await this.mcpService.isServerRunning(server.id),
-        lastError: serverConfig?.enabled ? this.mcpService.getServerLastError(server.id) : undefined
+        lastError: pluginEnabled
+          ? (supervisorState?.lastError ?? this.mcpService.getServerLastError(server.id))
+          : undefined
       })
     }
     return statuses

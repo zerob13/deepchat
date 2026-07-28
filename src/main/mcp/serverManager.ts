@@ -249,7 +249,10 @@ export class ServerManager {
 
   async startServer(
     name: string,
-    options: { onBackgroundConnected?: () => void } = {}
+    options: {
+      onBackgroundConnected?: () => void
+      configOverride?: Partial<MCPServerConfig>
+    } = {}
   ): Promise<McpConnectResult> {
     // If server is already running, no need to start again
     const existingClient = this.clients.get(name)
@@ -272,11 +275,17 @@ export class ServerManager {
     }
 
     const servers = await this.mcpSettings.getMcpServers()
-    const serverConfig = servers[name]
+    const persistedServerConfig = servers[name]
 
-    if (!serverConfig) {
+    if (!persistedServerConfig) {
       throw new Error(`MCP server ${name} not found`)
     }
+    const serverConfig: MCPServerConfig = options.configOverride
+      ? {
+          ...persistedServerConfig,
+          ...options.configOverride
+        }
+      : persistedServerConfig
 
     let client: McpClient | null = null
     try {

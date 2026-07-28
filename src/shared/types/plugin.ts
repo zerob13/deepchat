@@ -14,6 +14,10 @@ export type PluginCapability =
 export type PluginActivationEvent = 'onEnable'
 export type PluginResourceKind = 'runtime' | 'mcpServer' | 'skill' | 'settings' | 'toolPolicy'
 export type PluginRuntimeType = 'external-helper'
+export type PluginRuntimeAdapter = 'cua-embedded-v1'
+export type PluginMcpStartMode = 'eager' | 'onDemand'
+export type PluginMcpSurface = 'tools' | 'prompts' | 'resources'
+export type PluginProcessEnvInheritance = 'legacy' | 'minimal'
 export type PluginRuntimeState = 'missing' | 'installed' | 'running' | 'error'
 export type PluginTrustState = 'trusted' | 'untrusted' | 'development'
 export type PluginToolPolicyDecision = 'allow' | 'ask' | 'deny'
@@ -42,6 +46,7 @@ export interface PluginRuntimeManifest {
   type: PluginRuntimeType
   displayName: string
   detect: string[]
+  adapter?: PluginRuntimeAdapter
   install?: {
     mode: 'user-confirmed'
     provider: string
@@ -59,6 +64,10 @@ export interface PluginMcpServerManifest {
   args: string[]
   env?: Record<string, string>
   autoApprove: string[]
+  startMode?: PluginMcpStartMode
+  surfaces?: PluginMcpSurface[]
+  toolCatalog?: string
+  inheritEnv?: PluginProcessEnvInheritance
 }
 
 export interface PluginSkillManifest {

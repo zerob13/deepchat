@@ -59,7 +59,10 @@ const createPluginService = async (
       mcpServers[serverName] = config
     }),
     updateMcpServer: vi.fn().mockImplementation(async (serverName: string, config: unknown) => {
-      mcpServers[serverName] = config
+      mcpServers[serverName] = {
+        ...(mcpServers[serverName] as Record<string, unknown> | undefined),
+        ...(config as Record<string, unknown>)
+      }
     }),
     removeMcpServer: vi.fn().mockImplementation(async (serverName: string) => {
       delete mcpServers[serverName]
@@ -75,6 +78,23 @@ const createPluginService = async (
     stopServerDuringShutdownByName: vi.fn().mockResolvedValue(undefined),
     getServerLastError: vi.fn().mockReturnValue(undefined)
   }
+  const runtimeRegistrations = new Map<string, Record<string, unknown>>()
+  const runtimeSupervisor = {
+    registerServer: vi.fn().mockImplementation((registration: Record<string, unknown>) => {
+      runtimeRegistrations.set(String(registration.serverName), registration)
+    }),
+    commitPluginRegistration: vi.fn(),
+    unregisterPlugin: vi.fn().mockImplementation(async (pluginId: string) => {
+      for (const [serverName, registration] of runtimeRegistrations) {
+        if (registration.pluginId === pluginId) {
+          runtimeRegistrations.delete(serverName)
+        }
+      }
+    }),
+    reconcilePlugin: vi.fn().mockResolvedValue(undefined),
+    shutdown: vi.fn().mockResolvedValue(undefined),
+    getState: vi.fn().mockReturnValue(undefined)
+  }
   const skillService = {
     registerPluginSkill: vi.fn().mockResolvedValue(undefined),
     unregisterPluginSkillsByOwner: vi.fn().mockResolvedValue(undefined)
@@ -87,13 +107,16 @@ const createPluginService = async (
     resourcesPath: options.resourcesPath,
     mcpSettings,
     mcpService,
+    runtimeSupervisor,
     skillService,
     settingsWindow: new PluginSettingsWindow()
   } as any)
   return Object.assign(presenter, {
     __mocks: {
+      mcpServers,
       mcpSettings,
       mcpService,
+      runtimeSupervisor,
       skillService
     }
   })
@@ -701,12 +724,25 @@ describe('PluginService', () => {
     expect(servers['fixture-tools']).toMatchObject({
       source: 'plugin',
       sourceId: fixture.pluginId,
-      enabled: true
+      enabled: false
     })
     expect(servers['fixture-tools'].args.map((arg: string) => path.normalize(arg))).toEqual([
       path.join(fixture.installedRoot, 'mcp', 'serve.mjs')
     ])
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-tools')
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginId: fixture.pluginId,
+        serverName: 'fixture-tools',
+        startMode: 'eager'
+      }),
+      { ready: false }
+    )
+    expect(presenter.__mocks.runtimeSupervisor.commitPluginRegistration).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
   })
 
   it('syncs dev directory installs even when only the plugin files changed', async () => {
@@ -745,7 +781,9 @@ describe('PluginService', () => {
 
     expect(serveScript).toBe('console.log("serve")\n')
     expect(configAfterRefresh).toMatchObject(config)
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-tools')
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
   })
 
   it('removes persisted plugin state when discovery rejects an installed official plugin', async () => {
@@ -951,15 +989,16 @@ describe('PluginService', () => {
     expect(message).toContain('Fallback: Command failed.')
   })
 
-  it('resolves CUA helper paths, MCP env, and runtime auto-start hooks', async () => {
+  it('resolves CUA helper paths and registers plugin runtimes with the supervisor', async () => {
     const presenterSource = await readFile('src/main/plugin/index.ts', 'utf8')
 
     expect(presenterSource).toContain('helperAppPath')
     expect(presenterSource).toContain('resolveHelperAppPath')
     expect(presenterSource).toContain('resolveAppHelperRelativePath')
     expect(presenterSource).toContain('resolvePluginTemplateRecord')
-    expect(presenterSource).toContain('startPluginMcpServersIfReady')
-    expect(presenterSource).toContain('this.mcpService.startServer(serverName)')
+    expect(presenterSource).toContain('this.runtimeSupervisor.registerServer')
+    expect(presenterSource).toContain('this.runtimeSupervisor.reconcilePlugin')
+    expect(presenterSource).not.toContain('startPluginMcpServersIfReady')
     expect(presenterSource).not.toContain('if (!(await this.mcpSettings.getMcpEnabled()))')
   })
 
@@ -1006,7 +1045,7 @@ describe('PluginService', () => {
     expect(command).toBeNull()
   })
 
-  it('starts plugin MCP servers even when the global MCP switch is off', async () => {
+  it('reconciles eager plugin servers independently of the global MCP switch', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', {
       appPath: fixture.appPath,
@@ -1016,37 +1055,115 @@ describe('PluginService', () => {
     const result = await presenter.enablePlugin(fixture.pluginId)
 
     expect(result.ok).toBe(true)
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-runtime')
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+    expect(presenter.__mocks.mcpService.startServer).not.toHaveBeenCalled()
   })
 
-  it('does not wait for plugin MCP auto-start to finish', async () => {
+  it('keeps enabled intent when an eager runtime start fails', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', {
       appPath: fixture.appPath,
       mcpEnabled: false
     })
-    let resolveStartServer!: () => void
-    let startServerResolved = false
-    presenter.__mocks.mcpService.startServer.mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveStartServer = () => {
-            startServerResolved = true
-            resolve()
-          }
-        })
+    presenter.__mocks.runtimeSupervisor.reconcilePlugin.mockRejectedValueOnce(
+      new Error('runtime failed')
     )
 
     const result = await presenter.enablePlugin(fixture.pluginId)
 
     expect(result).toEqual(expect.objectContaining({ ok: true }))
-    expect(presenter.__mocks.mcpService.startServer).toHaveBeenCalledWith('fixture-runtime')
-    expect(startServerResolved).toBe(false)
-
-    resolveStartServer()
+    expect((await presenter.getPlugin(fixture.pluginId))?.enabled).toBe(true)
   })
 
-  it('shuts down running plugin-owned MCP servers without removing saved config', async () => {
+  it('applies the legacy CUA ownership migration safely and only once', async () => {
+    const presenter = await createPluginService('darwin')
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp'],
+      enabled: true,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+
+    await presenter.initialize()
+    await presenter.initialize()
+
+    expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledTimes(1)
+    expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledWith('cua-driver', {
+      enabled: false
+    })
+    expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({ enabled: false })
+  })
+
+  it('retries the legacy CUA migration when its safe-side write fails', async () => {
+    const presenter = await createPluginService('darwin')
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      enabled: true,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+    presenter.__mocks.mcpSettings.updateMcpServer.mockRejectedValueOnce(
+      new Error('database unavailable')
+    )
+
+    await expect(presenter.initialize()).rejects.toThrow('database unavailable')
+    await presenter.initialize()
+
+    expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledTimes(2)
+    expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({ enabled: false })
+  })
+
+  it('rejects malformed and duplicate lifecycle declarations before registration', async () => {
+    const presenter = await createPluginService('darwin')
+    const baseManifest = {
+      id: 'com.deepchat.plugins.invalid',
+      mcpServers: [
+        {
+          id: 'duplicate',
+          startMode: 'eager',
+          surfaces: ['tools']
+        }
+      ]
+    }
+
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [{ ...baseManifest.mcpServers[0], surfaces: 'tools' }]
+      })
+    ).toThrow('invalid surfaces')
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [...baseManifest.mcpServers, { ...baseManifest.mcpServers[0] }]
+      })
+    ).toThrow('duplicate MCP server id')
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [
+          {
+            ...baseManifest.mcpServers[0],
+            startMode: 'onDemand',
+            surfaces: ['tools']
+          }
+        ]
+      })
+    ).toThrow('must declare surfaces ["tools"] and a toolCatalog')
+    expect(() =>
+      (presenter as any).assertManifestLifecycleContract({
+        ...baseManifest,
+        mcpServers: [{ ...baseManifest.mcpServers[0], id: ' duplicate ' }]
+      })
+    ).toThrow('invalid id')
+  })
+
+  it('leaves process shutdown to MCP service without removing saved config', async () => {
     const presenter = await createPluginService('darwin')
     await presenter.__mocks.mcpSettings.addMcpServer('regular-server', {
       source: 'manual'
@@ -1061,17 +1178,9 @@ describe('PluginService', () => {
       sourceId: 'com.deepchat.plugins.other',
       ownerPluginId: 'com.deepchat.plugins.other'
     })
-    presenter.__mocks.mcpService.isServerActive.mockImplementation(
-      async (serverName: string) => serverName !== 'plugin-stopped'
-    )
-
     await presenter.shutdown()
 
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledTimes(1)
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledWith(
-      'plugin-running'
-    )
-    expect(presenter.__mocks.mcpService.stopServer).not.toHaveBeenCalled()
+    expect(presenter.__mocks.runtimeSupervisor.shutdown).not.toHaveBeenCalled()
     expect(presenter.__mocks.mcpSettings.removeMcpServer).not.toHaveBeenCalled()
     expect(await presenter.__mocks.mcpSettings.getMcpServers()).toMatchObject({
       'regular-server': {
@@ -1086,43 +1195,6 @@ describe('PluginService', () => {
         ownerPluginId: 'com.deepchat.plugins.other'
       }
     })
-  })
-
-  it('continues plugin shutdown when one plugin-owned MCP server fails to stop', async () => {
-    const presenter = await createPluginService('darwin')
-    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    await presenter.__mocks.mcpSettings.addMcpServer('plugin-first', {
-      source: 'plugin',
-      sourceId: 'com.deepchat.plugins.first'
-    })
-    await presenter.__mocks.mcpSettings.addMcpServer('plugin-second', {
-      source: 'plugin',
-      sourceId: 'com.deepchat.plugins.second'
-    })
-    presenter.__mocks.mcpService.isServerActive.mockResolvedValue(true)
-    presenter.__mocks.mcpService.stopServerDuringShutdownByName
-      .mockRejectedValueOnce(new Error('first failed'))
-      .mockResolvedValueOnce(undefined)
-
-    await presenter.shutdown()
-
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledTimes(2)
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledWith(
-      'plugin-first'
-    )
-    expect(presenter.__mocks.mcpService.stopServerDuringShutdownByName).toHaveBeenCalledWith(
-      'plugin-second'
-    )
-    expect(presenter.__mocks.mcpSettings.removeMcpServer).not.toHaveBeenCalled()
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      '[PluginHost] Failed to stop plugin-owned MCP server during shutdown:',
-      expect.objectContaining({
-        pluginId: 'com.deepchat.plugins.first',
-        serverName: 'plugin-first',
-        error: expect.any(Error)
-      })
-    )
-    consoleWarnSpy.mockRestore()
   })
 
   it('declares the CUA internal tool server with cross-platform helper context', async () => {

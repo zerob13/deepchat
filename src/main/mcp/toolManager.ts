@@ -37,6 +37,18 @@ type ActiveToolDefinitionsRefresh = {
   settle: () => void
 }
 
+type PluginMcpOwnershipPort = {
+  ownsServer(serverName: string): boolean
+  isServerAvailable(serverName: string): boolean
+  getOwnerPluginId(serverName: string): string | undefined
+}
+
+const NO_PLUGIN_OWNERSHIP: PluginMcpOwnershipPort = {
+  ownsServer: () => false,
+  isServerAvailable: () => false,
+  getOwnerPluginId: () => undefined
+}
+
 const normalizeStringList = (items?: string[]): string[] | undefined => {
   if (!Array.isArray(items)) {
     return undefined
@@ -76,7 +88,8 @@ export class ToolManager {
     locale: Pick<DesktopSettings, 'getLanguage'>,
     mcpSettings: McpSettings,
     serverManager: ServerManager,
-    private readonly publishEvent: DeepchatEventPublisher
+    private readonly publishEvent: DeepchatEventPublisher,
+    private readonly pluginOwnership: PluginMcpOwnershipPort = NO_PLUGIN_OWNERSHIP
   ) {
     this.agentSettings = agentSettings
     this.locale = locale
@@ -94,21 +107,14 @@ export class ToolManager {
   }
 
   private isPluginOwnedClient(client: McpClient): boolean {
-    const serverConfig = client.serverConfig as {
-      ownerPluginId?: unknown
-      source?: unknown
-    }
-    return Boolean(serverConfig.ownerPluginId || serverConfig.source === 'plugin')
+    return this.pluginOwnership.ownsServer(client.serverName)
   }
 
-  private isCuaComputerUseServer(client: McpClient, serverConfig?: MCPServerConfig): boolean {
-    const clientConfig = client.serverConfig as {
-      ownerPluginId?: unknown
-      sourceId?: unknown
-    }
-    const ownerPluginId = serverConfig?.ownerPluginId ?? clientConfig.ownerPluginId
-    const sourceId = serverConfig?.sourceId ?? clientConfig.sourceId
-    return ownerPluginId === CUA_PLUGIN_ID || sourceId === CUA_PLUGIN_ID
+  private isCuaComputerUseServer(client: McpClient): boolean {
+    return (
+      this.pluginOwnership.isServerAvailable(client.serverName) &&
+      this.pluginOwnership.getOwnerPluginId(client.serverName) === CUA_PLUGIN_ID
+    )
   }
 
   public async getRunningClients(): Promise<McpClient[]> {
@@ -360,10 +366,10 @@ export class ToolManager {
 
   private isServerConfigAllowedByContext(
     serverName: string,
-    serverConfig: MCPServerConfig,
+    _serverConfig: MCPServerConfig,
     context: McpToolAccessContext
   ): boolean {
-    if (serverConfig.ownerPluginId?.trim() || serverConfig.source === 'plugin') {
+    if (this.pluginOwnership.isServerAvailable(serverName)) {
       return true
     }
     return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
@@ -829,7 +835,7 @@ export class ToolManager {
 
   private async prepareToolArguments(
     client: McpClient,
-    serverConfig: MCPServerConfig,
+    _serverConfig: MCPServerConfig,
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal
@@ -837,7 +843,7 @@ export class ToolManager {
     if (
       toolName !== 'launch_app' ||
       process.platform !== 'win32' ||
-      !this.isCuaComputerUseServer(client, serverConfig)
+      !this.isCuaComputerUseServer(client)
     ) {
       return { ok: true, args }
     }

@@ -77,13 +77,22 @@ describe('ToolManager', () => {
     }
   }
 
-  function createToolManager(providerSettings: unknown, serverManager: unknown) {
+  function createToolManager(
+    providerSettings: unknown,
+    serverManager: unknown,
+    pluginOwners: Record<string, string> = {}
+  ) {
     return new ToolManager(
       providerSettings as never,
       { getLanguage: vi.fn().mockReturnValue('en-US') },
       providerSettings as never,
       serverManager as never,
-      vi.fn()
+      vi.fn(),
+      {
+        ownsServer: (serverName) => Object.hasOwn(pluginOwners, serverName),
+        isServerAvailable: (serverName) => Object.hasOwn(pluginOwners, serverName),
+        getOwnerPluginId: (serverName) => pluginOwners[serverName]
+      }
     )
   }
 
@@ -231,7 +240,8 @@ describe('ToolManager', () => {
     const providerSettings = createProviderSettings('server-a')
     const manager = createToolManager(
       providerSettings as never,
-      createServerManager([normalClient, blockedClient, pluginClient]) as never
+      createServerManager([normalClient, blockedClient, pluginClient]) as never,
+      { 'plugin-server': 'plugin-a' }
     )
 
     const definitions = await manager.getAllToolDefinitions({
@@ -245,7 +255,7 @@ describe('ToolManager', () => {
     ])
   })
 
-  it('keeps source plugin MCP servers available outside normal server policy', async () => {
+  it('does not trust source plugin metadata as lifecycle ownership', async () => {
     const pluginClient = createClient('plugin-source-server', undefined, {
       source: 'plugin',
       sourceId: 'plugin-b'
@@ -281,9 +291,10 @@ describe('ToolManager', () => {
       }
     )
 
-    expect(definitions.map((tool) => tool.server.name)).toEqual(['plugin-source-server'])
-    expect(result.isError).toBe(false)
-    expect(pluginClient.callTool).toHaveBeenCalledWith('echo', {})
+    expect(definitions).toEqual([])
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain("MCP server 'plugin-source-server' is not allowed")
+    expect(pluginClient.callTool).not.toHaveBeenCalled()
   })
 
   it('blocks DeepChat MCP tool calls outside enabled server policy', async () => {
@@ -324,7 +335,9 @@ describe('ToolManager', () => {
     client.listTools.mockRejectedValue(new Error('tool list failed'))
     const providerSettings = createProviderSettings('plugin-server')
     const serverManager = createServerManager([client])
-    const manager = createToolManager(providerSettings as never, serverManager as never)
+    const manager = createToolManager(providerSettings as never, serverManager as never, {
+      'plugin-server': 'com.deepchat.fixture'
+    })
 
     const definitions = await manager.getAllToolDefinitions()
 

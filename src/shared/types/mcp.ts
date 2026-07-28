@@ -87,6 +87,7 @@ export interface MCPServerConfig {
   source?: string
   sourceId?: string
   ownerPluginId?: string
+  inheritEnv?: 'legacy' | 'minimal'
 }
 
 export interface MCPConfig {
