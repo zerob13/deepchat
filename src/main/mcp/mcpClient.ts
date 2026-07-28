@@ -1262,20 +1262,25 @@ export class McpClient {
   }
 
   // 列出可用工具
-  async listTools(): Promise<Tool[]> {
+  async listTools(options?: { signal?: AbortSignal }): Promise<Tool[]> {
+    options?.signal?.throwIfAborted()
     // 检查缓存
     if (this.cachedTools !== null) {
       return this.cachedTools
     }
 
     try {
-      await this.ensureConnectedForRequest()
+      await this.ensureConnectedForRequest(options?.signal)
+      options?.signal?.throwIfAborted()
 
       if (!this.client) {
         throw new Error(`MCP client ${this.serverName} not initialized`)
       }
 
-      const response = await this.client.listTools()
+      const response = options?.signal
+        ? await this.client.listTools(undefined, { signal: options.signal })
+        : await this.client.listTools()
+      options?.signal?.throwIfAborted()
       // 成功调用后重置重启标志
       this.hasRestarted = false
 
@@ -1290,8 +1295,11 @@ export class McpClient {
       }
       throw new Error('Invalid tool response format')
     } catch (error) {
+      if (options?.signal?.aborted || isAbortError(error)) {
+        throw error
+      }
       // 检查并处理session错误
-      await this.checkAndHandleSessionError(error)
+      await awaitWithAbort(this.checkAndHandleSessionError(error), options?.signal)
 
       // 如果错误表明不支持，则缓存空数组
       if (isUnsupportedCapabilityError(error)) {

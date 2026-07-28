@@ -1,6 +1,7 @@
 import type { JsonValue } from '../contracts/common'
 
 export const OFFICIAL_PLUGIN_SOURCE = 'deepchat-official'
+export const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 
 export type PluginCapability =
   | 'runtime.manage'

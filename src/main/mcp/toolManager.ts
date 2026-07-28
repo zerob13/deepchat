@@ -2,7 +2,6 @@ import logger from '@shared/logger'
 import {
   TOOL_EXECUTION,
   type MCPContentItem,
-  type MCPServerConfig,
   type MCPTextContent,
   type MCPToolCall,
   type MCPToolDefinition,
@@ -21,10 +20,10 @@ import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
 import type { DesktopSettings } from '@/desktop/settings'
+import { CUA_PLUGIN_ID } from '@shared/types/plugin'
 import {
   appendCuaStructuredProjection,
   buildCuaWindowStateProjection,
-  CUA_PLUGIN_ID,
   normalizeCuaToolArguments
 } from '@/plugin/cuaToolAdapter'
 import type {
@@ -37,6 +36,9 @@ const isAbortError = (error: unknown): boolean =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const PLUGIN_RUNTIME_DIAGNOSTIC_TIMEOUT_MS = 30_000
+const TOOL_CATALOG_VALIDATION_TIMEOUT_MS = 30_000
 
 type McpToolAccessContext = {
   enabledTools?: string[]
@@ -175,9 +177,10 @@ export class ToolManager {
     if (!client) {
       throw new Error(`Plugin runtime server "${serverName}" has no running client`)
     }
+    const signal = AbortSignal.timeout(PLUGIN_RUNTIME_DIAGNOSTIC_TIMEOUT_MS)
     const catalogTool = this.getCatalogTool(serverName, 'check_permissions')
-    await this.verifyCatalogTool(client, catalogTool, undefined)
-    const result = await client.callTool('check_permissions', { prompt: false })
+    await this.verifyCatalogTool(client, catalogTool, signal)
+    const result = await client.callTool('check_permissions', { prompt: false }, { signal })
     if (result.isError) {
       const detail = result.content
         ?.map((item) => item.text)
@@ -350,7 +353,7 @@ export class ToolManager {
       }
 
       try {
-        const tools = await awaitWithAbort(client.listTools(), signal)
+        const tools = await awaitWithAbort(client.listTools({ signal }), signal)
         this.serverManager.clearServerLastError(client.serverName)
         if (!tools) {
           continue
@@ -439,17 +442,8 @@ export class ToolManager {
   }
 
   private isServerAllowedByContext(serverName: string, context: McpToolAccessContext): boolean {
-    if (this.pluginOwnership.isServerAvailable(serverName)) {
-      return true
-    }
-    return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
-  }
-
-  private isServerConfigAllowedByContext(
-    serverName: string,
-    _serverConfig: MCPServerConfig,
-    context: McpToolAccessContext
-  ): boolean {
+    // Official plugin runtimes are app-global capabilities; per-agent MCP selections only govern
+    // user-configured servers.
     if (this.pluginOwnership.isServerAvailable(serverName)) {
       return true
     }
@@ -629,10 +623,7 @@ export class ToolManager {
       enabledServerIds: access?.enabledServerIds,
       conversationId: toolCall.conversationId
     })
-    if (
-      serverConfig &&
-      !this.isServerConfigAllowedByContext(toolServerName, serverConfig, accessContext)
-    ) {
+    if (serverConfig && !this.isServerAllowedByContext(toolServerName, accessContext)) {
       return null
     }
     const autoApprove = serverConfig?.autoApprove || []
@@ -794,7 +785,7 @@ export class ToolManager {
           isError: true
         }
       }
-      if (!this.isServerConfigAllowedByContext(toolServerName, serverConfig, accessContext)) {
+      if (!this.isServerAllowedByContext(toolServerName, accessContext)) {
         return {
           toolCallId: toolCall.id,
           content: `MCP server '${toolServerName}' is not allowed for DeepChat agent '${accessContext.agentId ?? 'unknown'}'. Configure MCP access in DeepChat agent settings.`,
@@ -856,7 +847,6 @@ export class ToolManager {
       access?.signal?.throwIfAborted()
       const preparedArgs = await this.prepareToolArguments(
         targetClient,
-        serverConfig,
         originalName,
         args || {},
         access?.signal
@@ -971,8 +961,9 @@ export class ToolManager {
   ): Promise<void> {
     let validationPromise = this.catalogValidationPromises.get(client)
     if (!validationPromise) {
+      const validationSignal = AbortSignal.timeout(TOOL_CATALOG_VALIDATION_TIMEOUT_MS)
       validationPromise = client
-        .listTools()
+        .listTools({ signal: validationSignal })
         .then((liveTools) => {
           this.serverManager.clearServerLastError(client.serverName)
           const tools = new Map<string, Tool>()
@@ -1028,7 +1019,6 @@ export class ToolManager {
 
   private async prepareToolArguments(
     client: McpClient,
-    _serverConfig: MCPServerConfig,
     toolName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal

@@ -1,7 +1,5 @@
 import type { MCPContentItem } from '@shared/types/core/mcp'
 
-export const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
-
 const CUA_ELEMENT_TOKEN_TOOLS = new Set([
   'click',
   'double_click',

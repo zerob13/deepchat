@@ -856,6 +856,9 @@ describe('PluginService', () => {
       activationError: 'skill registration failed'
     })
 
+    await expect(presenter.disablePlugin(fixture.pluginId)).resolves.toMatchObject({ ok: true })
+    expect((await presenter.getPlugin(fixture.pluginId))?.activationError).toBeUndefined()
+
     await expect(presenter.enablePlugin(fixture.pluginId)).resolves.toMatchObject({ ok: true })
     expect((await presenter.getPlugin(fixture.pluginId))?.activationError).toBeUndefined()
   })
@@ -1361,19 +1364,6 @@ describe('PluginService', () => {
     })
     expect(message).not.toContain('PowerShell')
     expect(message).toContain('Fallback: Command failed.')
-  })
-
-  it('resolves CUA helper paths and registers plugin runtimes with the supervisor', async () => {
-    const presenterSource = await readFile('src/main/plugin/index.ts', 'utf8')
-
-    expect(presenterSource).toContain('helperAppPath')
-    expect(presenterSource).toContain('resolveHelperAppPath')
-    expect(presenterSource).toContain('resolveAppHelperRelativePath')
-    expect(presenterSource).toContain('resolvePluginTemplateRecord')
-    expect(presenterSource).toContain('this.runtimeSupervisor.registerServer')
-    expect(presenterSource).toContain('this.runtimeSupervisor.reconcilePlugin')
-    expect(presenterSource).not.toContain('startPluginMcpServersIfReady')
-    expect(presenterSource).not.toContain('if (!(await this.mcpSettings.getMcpEnabled()))')
   })
 
   it('resolves packaged macOS CUA helpers from the managed app bundle', async () => {

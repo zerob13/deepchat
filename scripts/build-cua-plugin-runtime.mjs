@@ -679,6 +679,11 @@ async function main() {
   const packagePurpose = args.get('purpose')
   const metadata = await readUpstreamMetadata()
   const target = getTarget(targetPlatform, targetArch, metadata)
+  if (!canRunTarget(targetPlatform, targetArch)) {
+    throw new Error(
+      `CUA MCP tool catalog must be generated on its native target; host is ${process.platform}/${process.arch}, target is ${targetPlatform}/${targetArch}`
+    )
+  }
   const cacheDir = process.env.DEEPCHAT_CUA_DOWNLOAD_CACHE
     ? path.resolve(process.env.DEEPCHAT_CUA_DOWNLOAD_CACHE)
     : path.join(os.tmpdir(), 'deepchat-cua-driver-cache', metadata.tag)
@@ -711,11 +716,6 @@ async function main() {
     }
     await signDarwinHelper(runtimeDir, targetPlatform, packagePurpose)
     smokeCheck(executable, targetPlatform, targetArch)
-    if (!canRunTarget(targetPlatform, targetArch)) {
-      throw new Error(
-        `CUA MCP tool catalog must be generated on its native target; host is ${process.platform}/${process.arch}, target is ${targetPlatform}/${targetArch}`
-      )
-    }
     await generateCuaToolCatalog(
       executable,
       path.join(runtimeDir, 'tool-catalog.json'),
@@ -724,7 +724,7 @@ async function main() {
 
     const relativeRuntimePath = path.relative(rootDir, runtimeDir)
     const stat = await fs.stat(executable)
-    if (!fsSync.existsSync(executable) || stat.size === 0) {
+    if (stat.size === 0) {
       throw new Error('Staged CUA runtime is invalid')
     }
     console.log(`CUA Driver ${metadata.tag} staged at ${relativeRuntimePath}`)

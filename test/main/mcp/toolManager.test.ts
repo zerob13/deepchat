@@ -108,6 +108,7 @@ describe('ToolManager', () => {
         }
       }>
       ensureRunning?: (serverName: string, reason: PluginRuntimeStartReason) => Promise<void>
+      unavailableServers?: Set<string>
     } = {}
   ) {
     return new ToolManager(
@@ -118,9 +119,13 @@ describe('ToolManager', () => {
       vi.fn(),
       {
         ownsServer: (serverName) => Object.hasOwn(pluginOwners, serverName),
-        isServerAvailable: (serverName) => Object.hasOwn(pluginOwners, serverName),
+        isServerAvailable: (serverName) =>
+          Object.hasOwn(pluginOwners, serverName) && !runtime.unavailableServers?.has(serverName),
         getOwnerPluginId: (serverName) => pluginOwners[serverName],
-        getAvailableToolCatalogs: () => runtime.catalogs ?? [],
+        getAvailableToolCatalogs: () =>
+          (runtime.catalogs ?? []).filter(
+            (catalog) => !runtime.unavailableServers?.has(catalog.serverName)
+          ),
         ensureRunning:
           runtime.ensureRunning ??
           (async (serverName) => {
@@ -667,8 +672,14 @@ describe('ToolManager', () => {
       structuredContent: { accessibility: true, screen_recording: false }
     })
     expect(ensureRunning).toHaveBeenCalledWith(serverName, 'runtime-test')
-    expect(liveClient.listTools).toHaveBeenCalledOnce()
-    expect(liveClient.callTool).toHaveBeenCalledWith('check_permissions', { prompt: false })
+    expect(liveClient.listTools).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal)
+    })
+    expect(liveClient.callTool).toHaveBeenCalledWith(
+      'check_permissions',
+      { prompt: false },
+      { signal: expect.any(AbortSignal) }
+    )
 
     const unowned = createToolManager(
       createProviderSettings('manual-server'),
@@ -713,6 +724,81 @@ describe('ToolManager', () => {
       'catalog-server_echo'
     ])
     expect(liveClient.listTools).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when a catalog runtime becomes unavailable before dispatch', async () => {
+    const serverName = 'quarantined-catalog-server'
+    const unavailableServers = new Set<string>()
+    const liveClient = createClient(serverName, [
+      {
+        name: 'inspect_screen',
+        description: 'Inspect screen',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const ensureRunning = vi.fn().mockResolvedValue(undefined)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      {
+        unavailableServers,
+        ensureRunning,
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName,
+            displayName: 'Quarantined Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+    const [definition] = await manager.getAllToolDefinitions()
+    unavailableServers.add(serverName)
+
+    const response = await manager.callTool({
+      id: 'call-1',
+      conversationId: 'conversation-1',
+      type: 'function',
+      function: {
+        name: definition.function.name,
+        arguments: '{}'
+      }
+    })
+
+    expect(response).toMatchObject({
+      isError: true,
+      content: expect.stringContaining('is no longer available')
+    })
+    expect(ensureRunning).toHaveBeenCalledWith(serverName, 'tool')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+  })
+
+  it('does not advertise tools from an unavailable owned runtime client', async () => {
+    const serverName = 'quarantined-live-server'
+    const liveClient = createClient(serverName)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([liveClient]),
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      { unavailableServers: new Set([serverName]) }
+    )
+
+    await expect(manager.getAllToolDefinitions()).resolves.toEqual([])
+
+    expect(liveClient.listTools).not.toHaveBeenCalled()
   })
 
   it('uses explicit ACP agent context instead of global chat mode', async () => {

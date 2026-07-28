@@ -19,7 +19,7 @@ import type {
   PluginSettingsContribution,
   RuntimeDependencyRecord
 } from '@shared/types/plugin'
-import { OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
+import { CUA_PLUGIN_ID, OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
 import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPolicyStore'
 import type {
   PluginRuntimeSafetyStore,
@@ -39,7 +39,6 @@ const execFileAsync = promisify(execFile)
 
 const GITHUB_RELEASE_DOWNLOAD_PREFIX = 'https://github.com/ThinkInAIXYZ/deepchat/releases/download/'
 const PLUGIN_PACKAGE_EXTENSION = '.dcplugin'
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_RUNTIME_OWNERSHIP_MIGRATION = 'cua-runtime-ownership'
 const CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION = 2
 const MACOS_ACCESSIBILITY_SETTINGS =
@@ -329,6 +328,7 @@ export class PluginService implements PluginServicePort {
         enabled: false,
         updatedAt: Date.now()
       })
+      this.activationErrors.delete(pluginId)
       await this.disableByOwner(pluginId)
       return { ok: true, status: await this.buildPluginListItem(pluginId) }
     } catch (error) {

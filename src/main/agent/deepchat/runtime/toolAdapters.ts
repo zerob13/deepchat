@@ -8,10 +8,10 @@ import type { ProviderExecutionPort } from '@shared/types/provider'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition, MCPToolResponse } from '@shared/types/core/mcp'
 import type { ToolServicePort, ToolDefinitionContext } from '@shared/types/tool'
+import { CUA_PLUGIN_ID } from '@shared/types/plugin'
 import { resolveSessionVisionTarget } from '@/agent/vision/sessionVisionResolver'
 import type { ToolOutputGuard } from './toolOutputGuard'
 import type { AgentSettingsPort } from '@/agent/settings'
-import { CUA_PLUGIN_ID } from '@/plugin/cuaToolAdapter'
 
 export interface ToolCatalogCacheEntry<TProfile extends string = string> {
   profile: TProfile

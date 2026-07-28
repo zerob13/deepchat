@@ -91,7 +91,7 @@ import { ScrollArea } from '@shadcn/components/ui/scroll-area'
 import { Spinner } from '@shadcn/components/ui/spinner'
 import { createPluginClient } from '@api/PluginClient'
 import { createRemoteControlClient } from '@api/RemoteControlClient'
-import type { PluginActionResult, PluginListItem } from '@shared/types/plugin'
+import { CUA_PLUGIN_ID, type PluginActionResult, type PluginListItem } from '@shared/types/plugin'
 import type { RemoteChannel } from '@shared/types/remote'
 import { usePluginCatalogStore } from '@/stores/pluginCatalog'
 
@@ -125,7 +125,6 @@ const remoteIconClassByChannel: Record<RemoteChannel, string> = {
   'weixin-ilink': 'text-green-500'
 }
 const FEISHU_PLUGIN_ID = 'com.deepchat.plugins.feishu'
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_PLUGIN_ICON = 'lucide:laptop-minimal-check'
 const remotePluginId = (channel: RemoteChannel): string => `remote:${channel}`
 const isFeishuOfficialPlugin = (plugin: PluginListItem): boolean => plugin.id === FEISHU_PLUGIN_ID

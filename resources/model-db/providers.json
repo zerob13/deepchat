@@ -14795,7 +14795,7 @@
           },
           "limit": {
             "context": 524288,
-            "output": 524288
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -14839,7 +14839,7 @@
           },
           "limit": {
             "context": 524288,
-            "output": 524288
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -15226,7 +15226,7 @@
           },
           "limit": {
             "context": 1048576,
-            "output": 1048576
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -132539,6 +132539,51 @@
           "type": "chat"
         },
         {
+          "id": "hf:moonshotai/Kimi-K3",
+          "name": "Kimi K3",
+          "display_name": "Kimi K3",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 524288,
+            "output": 65536
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "release_date": "2026-07-16",
+          "last_updated": "2026-07-27",
+          "cost": {
+            "input": 3,
+            "output": 15,
+            "cache_read": 0.45
+          },
+          "type": "chat"
+        },
+        {
           "id": "hf:openai/gpt-oss-120b",
           "name": "GPT OSS 120B",
           "display_name": "GPT OSS 120B",
@@ -228232,7 +228277,8 @@
           "cost": {
             "input": 0.48,
             "output": 0.96
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "openai/tts-1-hd",
@@ -228254,7 +228300,8 @@
           "attachment": false,
           "cost": {
             "input": 24
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "openai/gpt-4o-transcribe",
@@ -253375,7 +253422,8 @@
             "input": 0.6,
             "output": 12,
             "cache_read": 0.6
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "tngtech/DeepSeek-R1T-Chimera",
@@ -258611,7 +258659,8 @@
           "cost": {
             "input": 30,
             "output": 30
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "text-davinci-003",
@@ -258651,7 +258700,8 @@
           "cost": {
             "input": 30,
             "output": 30
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "tts-1-1106",
@@ -258673,7 +258723,8 @@
           "cost": {
             "input": 15,
             "output": 15
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "tts-1",
@@ -258695,7 +258746,8 @@
           "cost": {
             "input": 15,
             "output": 15
-          }
+          },
+          "type": "tts"
         },
         {
           "id": "text-babbage-001",
@@ -275684,6 +275736,58 @@
           "type": "chat"
         },
         {
+          "id": "gemini-3.1-flash-lite-image-as",
+          "name": "gemini-3.1-flash-lite-image-as",
+          "display_name": "gemini-3.1-flash-lite-image-as",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ],
+            "output": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "context": 65536,
+            "output": 65536
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "imageGeneration"
+        },
+        {
+          "id": "gemini-3.1-flash-image-as",
+          "name": "gemini-3.1-flash-image-as",
+          "display_name": "gemini-3.1-flash-image-as",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ],
+            "output": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "context": 65536,
+            "output": 65536
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "imageGeneration"
+        },
+        {
           "id": "gemini-3.6-flash",
           "name": "gemini-3.6-flash",
           "display_name": "gemini-3.6-flash",
@@ -279193,7 +279297,7 @@
           },
           "limit": {
             "context": 1048576,
-            "output": 1048576
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,

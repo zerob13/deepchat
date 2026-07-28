@@ -314,6 +314,11 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
 
   it('recovers only an identity-matched endpoint inside the managed namespace', async () => {
     const cleanupEndpoint = vi.fn()
+    const requestMetadata = vi.fn().mockRejectedValue(
+      new CuaDaemonHandshakeUnavailableError('endpoint missing', {
+        cause: Object.assign(new Error('endpoint missing'), { code: 'ENOENT' })
+      })
+    )
     const adapter = new CuaEmbeddedRuntimeAdapter(
       {
         binaryPath: '/plugin/cua-driver',
@@ -321,7 +326,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
         contract,
         environment: { ...cuaEnvironment }
       },
-      { cleanupEndpoint }
+      { cleanupEndpoint, requestMetadata }
     )
     const endpoint = '/tmp/deepchat-cua-123-aabbccddeeff.sock'
 
@@ -335,6 +340,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
       device: 7n,
       inode: 11n
     })
+    expect(requestMetadata).toHaveBeenCalledWith(endpoint, 500)
     await expect(
       adapter.recoverStaleLaunch({
         endpoint: '/tmp/unmanaged.sock',

@@ -252,62 +252,76 @@ export class ServerManager {
     options: {
       onBackgroundConnected?: () => void
       configOverride?: Partial<MCPServerConfig>
+      waitForConnection?: boolean
     } = {}
   ): Promise<McpConnectResult> {
-    // If server is already running, no need to start again
     const existingClient = this.clients.get(name)
-    if (existingClient) {
-      if (existingClient.isServerRunning()) {
-        console.info(`MCP server ${name} is already running`)
-        return 'connected'
-      } else {
-        console.info(`MCP server ${name} is starting...`)
-        const serverConfig = (existingClient.serverConfig ?? {}) as unknown as MCPServerConfig
-        this.handleStartupConnectResult(
-          name,
-          existingClient,
-          serverConfig,
-          'soft-timeout-released',
-          options
-        )
-        return 'soft-timeout-released'
+    if (existingClient?.isServerRunning()) {
+      console.info(`MCP server ${name} is already running`)
+      return 'connected'
+    }
+
+    let client = existingClient
+    let serverConfig: MCPServerConfig
+    if (existingClient?.isActive() && !options.configOverride) {
+      console.info(`MCP server ${name} is starting...`)
+      serverConfig = (existingClient.serverConfig ?? {}) as unknown as MCPServerConfig
+    } else {
+      const servers = await this.mcpSettings.getMcpServers()
+      const persistedServerConfig = servers[name]
+      if (!persistedServerConfig) {
+        throw new Error(`MCP server ${name} not found`)
       }
-    }
+      // Runtime adapters own every field they override. In particular, replacing env preserves the
+      // minimal child-process boundary instead of merging stale persisted variables back into it.
+      serverConfig = options.configOverride
+        ? {
+            ...persistedServerConfig,
+            ...options.configOverride
+          }
+        : persistedServerConfig
 
-    const servers = await this.mcpSettings.getMcpServers()
-    const persistedServerConfig = servers[name]
-
-    if (!persistedServerConfig) {
-      throw new Error(`MCP server ${name} not found`)
-    }
-    const serverConfig: MCPServerConfig = options.configOverride
-      ? {
-          ...persistedServerConfig,
-          ...options.configOverride
+      if (existingClient) {
+        await existingClient.disconnect()
+        if (this.clients.get(name) === existingClient) {
+          this.clients.delete(name)
         }
-      : persistedServerConfig
+      }
+      client = undefined
+    }
 
-    let client: McpClient | null = null
     try {
-      console.info(`Starting MCP server ${name}...`)
-      const npmRegistry = serverConfig.customNpmRegistry || this.npmRegistry
-      // Create and save client instance, passing npm registry
-      client = new McpClient(
-        name,
-        serverConfig as unknown as Record<string, unknown>,
-        npmRegistry,
-        this.uvRegistry,
-        this.mcpOAuthManager,
-        this.inMemoryServerFactory,
-        this.clientRuntime,
-        this.onRegistryChanged,
-        this.publishEvent
-      )
-      this.clients.set(name, client)
+      if (!client) {
+        console.info(`Starting MCP server ${name}...`)
+        const npmRegistry = serverConfig.customNpmRegistry || this.npmRegistry
+        client = new McpClient(
+          name,
+          serverConfig as unknown as Record<string, unknown>,
+          npmRegistry,
+          this.uvRegistry,
+          this.mcpOAuthManager,
+          this.inMemoryServerFactory,
+          this.clientRuntime,
+          this.onRegistryChanged,
+          this.publishEvent
+        )
+        this.clients.set(name, client)
+      }
 
-      // Connect to server, this will start the service
-      const connectResult = await client.connect({ phase: 'startup' })
-      this.handleStartupConnectResult(name, client, serverConfig, connectResult, options)
+      const connectTask = client.connect({
+        phase: 'startup',
+        waitForConnection: options.waitForConnection
+      })
+      const connectionCompletion = client.getConnectionCompletion()
+      const connectResult = await connectTask
+      this.handleStartupConnectResult(
+        name,
+        client,
+        serverConfig,
+        connectResult,
+        connectionCompletion,
+        options
+      )
       if (connectResult === 'connected') {
         this.clearServerLastError(name)
       }
@@ -315,14 +329,18 @@ export class ServerManager {
     } catch (error) {
       if (client?.getLifecycleStatus?.() === 'stopped' && !client.isActive()) {
         console.info(`MCP server ${name} startup was cancelled; ignoring stopped client`)
-        this.clients.delete(name)
+        if (this.clients.get(name) === client) {
+          this.clients.delete(name)
+        }
         return 'stopped'
       }
 
       console.error(`Failed to start MCP server ${name}:`, error)
 
       // Remove client reference
-      this.clients.delete(name)
+      if (client && this.clients.get(name) === client) {
+        this.clients.delete(name)
+      }
       this.setServerLastError(name, error)
       const authHandled =
         this.mcpOAuthManager?.handleConnectionError(name, serverConfig, error) ?? false
@@ -343,18 +361,18 @@ export class ServerManager {
     client: McpClient,
     serverConfig: MCPServerConfig,
     connectResult: McpConnectResult,
+    connectionCompletion: Promise<void> | null,
     options: { onBackgroundConnected?: () => void } = {}
   ): void {
     if (connectResult !== 'soft-timeout-released') {
       return
     }
 
-    const completion = client.getConnectionCompletion()
-    if (!completion) {
+    if (!connectionCompletion) {
       return
     }
 
-    completion
+    connectionCompletion
       .then(() => {
         this.clearServerLastError(name)
         options.onBackgroundConnected?.()

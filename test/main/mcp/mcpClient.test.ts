@@ -577,6 +577,37 @@ describe('McpClient Runtime Command Processing Tests', () => {
       }
     })
 
+    it('propagates cancellation into SDK tool discovery', async () => {
+      const sdkClient = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        callTool: vi.fn(),
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        listPrompts: vi.fn(),
+        getPrompt: vi.fn(),
+        listResources: vi.fn(),
+        readResource: vi.fn(),
+        setNotificationHandler: vi.fn(),
+        setRequestHandler: vi.fn()
+      }
+      vi.mocked(Client).mockImplementationOnce(() => sdkClient as any)
+      const client = createMcpClient('diagnostic-server', {
+        type: 'stdio',
+        command: 'diagnostic-server',
+        args: []
+      })
+      const controller = new AbortController()
+
+      await expect(client.listTools({ signal: controller.signal })).resolves.toEqual([])
+
+      expect(sdkClient.listTools).toHaveBeenCalledWith(undefined, {
+        signal: controller.signal
+      })
+
+      controller.abort()
+      await expect(client.listTools({ signal: controller.signal })).rejects.toThrow()
+      expect(sdkClient.listTools).toHaveBeenCalledOnce()
+    })
+
     it('treats unknown prompts/list as an empty prompt list', async () => {
       const sdkClient = {
         connect: vi.fn().mockResolvedValue(undefined),

@@ -98,6 +98,26 @@ describe('McpService#setMcpServerEnabled', () => {
     expect(onRegistryChanged).toHaveBeenCalledOnce()
   })
 
+  it('delegates supervised startup waiting to ServerManager', async () => {
+    const presenter = createMcpService(createProviderSettings(true))
+    ;(presenter as any).serverManager = {
+      startServer: serverManagerMocks.startServer
+    }
+    serverManagerMocks.startServer.mockResolvedValueOnce('connected')
+
+    await (presenter as any).startServerDirect('plugin-runtime', { command: 'runtime-proxy' }, true)
+
+    expect(serverManagerMocks.startServer).toHaveBeenCalledWith('plugin-runtime', {
+      onBackgroundConnected: undefined,
+      configOverride: { command: 'runtime-proxy' },
+      waitForConnection: true
+    })
+    expect(publishDeepchatEventMock).toHaveBeenCalledWith(
+      'mcp.server.started',
+      expect.objectContaining({ serverName: 'plugin-runtime' })
+    )
+  })
+
   const createProviderSettings = (
     mcpEnabled: boolean,
     privacyModeEnabled = false,

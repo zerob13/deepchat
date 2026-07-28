@@ -11,6 +11,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/
 const WINDOWS_EXECUTABLE_EXTENSIONS = new Set(['.bat', '.cmd', '.com', '.exe', '.ps1'])
 const COMMAND_OUTPUT_LIMIT = 4 * 1024 * 1024
+const COMMAND_TIMEOUT_MS = 15_000
 const INTEGRITY_DESCRIPTOR_NAME = 'integrity.json'
 const CUA_MACOS_ENTITLEMENTS = Object.freeze({
   'com.apple.security.automation.apple-events': true,
@@ -299,7 +300,8 @@ const hashFile = async (filePath: string): Promise<string> => {
 const runCommand = async (command: string, args: string[]): Promise<CommandResult> => {
   const result = await execFileAsync(command, args, {
     encoding: 'utf8',
-    maxBuffer: COMMAND_OUTPUT_LIMIT
+    maxBuffer: COMMAND_OUTPUT_LIMIT,
+    timeout: COMMAND_TIMEOUT_MS
   })
   return {
     stdout: String(result.stdout ?? ''),

@@ -787,18 +787,10 @@ export class McpService implements McpServicePort {
       onBackgroundConnected: waitForConnection
         ? undefined
         : () => this.emitServerStarted(serverName),
-      configOverride
+      configOverride,
+      waitForConnection
     })
     if (connectResult === 'connected') {
-      this.emitServerStarted(serverName)
-      return
-    }
-    if (connectResult === 'soft-timeout-released' && waitForConnection) {
-      const completion = this.serverManager.getClient(serverName)?.getConnectionCompletion()
-      if (!completion) {
-        throw new Error(`Plugin runtime server "${serverName}" has no connection completion`)
-      }
-      await completion
       this.emitServerStarted(serverName)
       return
     }

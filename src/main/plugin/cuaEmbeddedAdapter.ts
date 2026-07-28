@@ -1,7 +1,7 @@
 import { terminateProcessTree, terminateProcessTreeByPid } from '@/agent/shared/process/processTree'
 import { createMinimalProcessEnvironment } from '@/mcp/processEnvironment'
 import type { MCPServerConfig } from '@shared/types/mcp'
-import type { CuaEmbeddedRuntimeContract } from '@shared/types/plugin'
+import { CUA_PLUGIN_ID, type CuaEmbeddedRuntimeContract } from '@shared/types/plugin'
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -23,7 +23,6 @@ const MAX_HANDSHAKE_BYTES = 64 * 1024
 const UNIX_SOCKET_PATH_LIMIT = 104
 const CUA_ENDPOINT_NAME_PATTERN = /^deepchat-cua-\d+-[a-f0-9]{12}\.sock$/i
 const CUA_PIPE_NAME_PATTERN = /^\\\\\.\\pipe\\deepchat-cua-\d+-[a-f0-9]{12}$/i
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_UIA_WORKER_ENV = 'CUA_DRIVER_RS_SPAWN_UIA_WORKER'
 const CUA_LOG_ENV = 'CUA_LOG'
 const MAX_STDERR_BYTES = 16 * 1024
@@ -383,7 +382,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     const endpoint = this.dependencies.createEndpoint(this.options.platform)
     this.assertEndpointAvailable(endpoint)
     this.persistLaunchContext(safetyHooks, endpoint)
-    let endpointIdentity: EndpointIdentity | undefined
+    let capturedIdentity: EndpointIdentity | undefined
     let endpointIdentityCaptureAttempted = false
     const stderrChunks: Buffer[] = []
     let stderrLength = 0
@@ -436,21 +435,21 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
       this.persistLaunchContext(safetyHooks, endpoint, undefined, child.pid)
       const metadata = await this.waitForReady(child, endpoint, () => childError, stderr)
       endpointIdentityCaptureAttempted = true
-      endpointIdentity = this.dependencies.captureEndpointIdentity(endpoint, this.options.platform)
-      this.persistLaunchContext(safetyHooks, endpoint, endpointIdentity, child.pid)
+      capturedIdentity = this.dependencies.captureEndpointIdentity(endpoint, this.options.platform)
+      this.persistLaunchContext(safetyHooks, endpoint, capturedIdentity, child.pid)
       validateCuaDaemonMetadata(metadata, child.pid, this.options.contract)
       if (hasExited(child)) {
         throw new Error(
           `CUA daemon exited immediately after readiness${this.stderrSuffix(stderr())}`
         )
       }
-      this.running = { child, endpoint, endpointIdentity, stderr }
+      this.running = { child, endpoint, endpointIdentity: capturedIdentity, stderr }
       return this.proxyConfiguration(endpoint)
     } catch (error) {
       const cleanupErrors: unknown[] = []
       if (this.options.platform !== 'win32' && !endpointIdentityCaptureAttempted) {
         try {
-          endpointIdentity = this.dependencies.captureEndpointIdentity(
+          capturedIdentity = this.dependencies.captureEndpointIdentity(
             endpoint,
             this.options.platform
           )
@@ -469,9 +468,9 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
       } catch (terminationError) {
         cleanupErrors.push(terminationError)
       }
-      if (terminated && endpointIdentity) {
+      if (terminated && capturedIdentity) {
         try {
-          this.dependencies.cleanupEndpoint(endpoint, this.options.platform, endpointIdentity)
+          this.dependencies.cleanupEndpoint(endpoint, this.options.platform, capturedIdentity)
         } catch (cleanupError) {
           cleanupErrors.push(cleanupError)
         }

@@ -397,6 +397,23 @@ describe('package-plugin', () => {
     ).not.toThrow()
   })
 
+  it('rejects macOS distribution packaging without a valid Apple Team ID', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+
+    for (const teamId of ['', 'invalid-team']) {
+      const result = runPackagePlugin(fixture.pluginDir, outDir, 'darwin', 'arm64', {
+        purpose: 'distribution',
+        env: { DEEPCHAT_APPLE_NOTARY_TEAM_ID: teamId }
+      })
+
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain(
+        'CUA macOS distribution integrity descriptor requires a valid Apple Team ID'
+      )
+    }
+  })
+
   it('packages the DeepChat-owned macOS CUA helper identity for each macOS arch', async () => {
     const fixture = await createCuaPluginFixture()
     const outDir = path.join(fixture.root, 'out')

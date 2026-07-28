@@ -297,10 +297,11 @@ import { createRemoteControlClient } from '@api/RemoteControlClient'
 import { usePluginCatalogStore } from '@/stores/pluginCatalog'
 import RemoteSettings from '../../../settings/components/RemoteSettings.vue'
 import type { ChannelSettingsMap, RemoteChannel } from '@shared/types/remote'
-import type {
-  PluginActionResult,
-  PluginMcpRuntimeStatus,
-  PluginRuntimeState
+import {
+  CUA_PLUGIN_ID,
+  type PluginActionResult,
+  type PluginMcpRuntimeStatus,
+  type PluginRuntimeState
 } from '@shared/types/plugin'
 
 const { t } = useI18n()
@@ -339,7 +340,6 @@ const remoteIconClassByChannel: Record<RemoteChannel, string> = {
   discord: 'text-indigo-500',
   'weixin-ilink': 'text-green-500'
 }
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_PLUGIN_ICON = 'lucide:laptop-minimal-check'
 
 const pluginId = computed(() => String(route.params.pluginId ?? ''))
