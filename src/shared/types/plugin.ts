@@ -48,6 +48,7 @@ export interface PluginRuntimeManifest {
   detect: string[]
   adapter?: PluginRuntimeAdapter
   adapterContract?: CuaEmbeddedRuntimeContract
+  integrityDescriptor?: string
   install?: {
     mode: 'user-confirmed'
     provider: string

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { PluginRuntimeSupervisor, type PluginRuntimeProcessPort } from '@/plugin/runtimeSupervisor'
+import {
+  PluginRuntimeSupervisor,
+  type PluginRuntimeFingerprint,
+  type PluginRuntimeProcessPort
+} from '@/plugin/runtimeSupervisor'
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -35,7 +39,8 @@ function register(
   supervisor: PluginRuntimeSupervisor,
   serverName: string,
   startMode: 'eager' | 'onDemand' = 'eager',
-  adapter?: { start: () => Promise<void>; stop: () => Promise<void> }
+  adapter?: { start: () => Promise<void>; stop: () => Promise<void> },
+  launchGuard?: { verify: () => Promise<PluginRuntimeFingerprint> }
 ) {
   supervisor.registerServer({
     pluginId: 'com.deepchat.plugins.fixture',
@@ -57,7 +62,8 @@ function register(
             ]
           }
         : undefined,
-    adapter
+    adapter,
+    launchGuard
   })
 }
 
@@ -82,6 +88,97 @@ describe('PluginRuntimeSupervisor', () => {
     expect(port.start).toHaveBeenCalledTimes(1)
     expect(running.has('fixture')).toBe(true)
     expect(supervisor.getState('fixture')).toEqual({ state: 'running', lastError: undefined })
+  })
+
+  it('verifies both adapter and proxy spawns against one immutable fingerprint', async () => {
+    const supervisor = new PluginRuntimeSupervisor()
+    const { port } = createProcessPort()
+    const adapter = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined)
+    }
+    const fingerprint = {
+      value: 'same-runtime',
+      pluginId: 'com.deepchat.plugins.fixture',
+      runtimeId: 'fixture-runtime',
+      target: 'linux/x64',
+      binarySha256: 'a'.repeat(64)
+    }
+    const launchGuard = {
+      verify: vi.fn().mockResolvedValue(fingerprint)
+    }
+    supervisor.attachProcessPort(port)
+    register(supervisor, 'fixture', 'onDemand', adapter, launchGuard)
+
+    await supervisor.ensureRunning('fixture', 'tool')
+
+    expect(launchGuard.verify).toHaveBeenCalledTimes(2)
+    expect(adapter.start).toHaveBeenCalledTimes(1)
+    expect(port.start).toHaveBeenCalledTimes(1)
+    expect(launchGuard.verify.mock.invocationCallOrder[0]).toBeLessThan(
+      adapter.start.mock.invocationCallOrder[0]
+    )
+    expect(launchGuard.verify.mock.invocationCallOrder[1]).toBeLessThan(
+      vi.mocked(port.start).mock.invocationCallOrder[0]
+    )
+  })
+
+  it('runs one integrity check for a server with only one process spawn', async () => {
+    const supervisor = new PluginRuntimeSupervisor()
+    const { port } = createProcessPort()
+    const launchGuard = {
+      verify: vi.fn().mockResolvedValue({
+        value: 'single-runtime',
+        pluginId: 'com.deepchat.plugins.fixture',
+        runtimeId: 'fixture-runtime',
+        target: 'linux/x64',
+        binarySha256: 'a'.repeat(64)
+      })
+    }
+    supervisor.attachProcessPort(port)
+    register(supervisor, 'fixture', 'onDemand', undefined, launchGuard)
+
+    await supervisor.ensureRunning('fixture', 'tool')
+
+    expect(launchGuard.verify).toHaveBeenCalledOnce()
+    expect(port.start).toHaveBeenCalledOnce()
+  })
+
+  it('stops the adapter when launch artifacts change before the proxy spawn', async () => {
+    const supervisor = new PluginRuntimeSupervisor()
+    const { port } = createProcessPort()
+    const adapter = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined)
+    }
+    const launchGuard = {
+      verify: vi
+        .fn()
+        .mockResolvedValueOnce({
+          value: 'first',
+          pluginId: 'com.deepchat.plugins.fixture',
+          runtimeId: 'fixture-runtime',
+          target: 'linux/x64',
+          binarySha256: 'a'.repeat(64)
+        })
+        .mockResolvedValueOnce({
+          value: 'second',
+          pluginId: 'com.deepchat.plugins.fixture',
+          runtimeId: 'fixture-runtime',
+          target: 'linux/x64',
+          binarySha256: 'b'.repeat(64)
+        })
+    }
+    supervisor.attachProcessPort(port)
+    register(supervisor, 'fixture', 'onDemand', adapter, launchGuard)
+
+    await expect(supervisor.ensureRunning('fixture', 'tool')).rejects.toThrow(
+      'changed between launch checks'
+    )
+
+    expect(port.start).not.toHaveBeenCalled()
+    expect(adapter.stop).toHaveBeenCalledOnce()
+    expect(supervisor.getState('fixture')).toMatchObject({ state: 'error' })
   })
 
   it('rejects generic starts for on-demand servers without touching the process', async () => {

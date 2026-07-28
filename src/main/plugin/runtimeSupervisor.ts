@@ -26,6 +26,18 @@ export interface PluginRuntimeAdapterInstance {
   stop(): Promise<void>
 }
 
+export type PluginRuntimeFingerprint = {
+  value: string
+  pluginId: string
+  runtimeId: string
+  target: string
+  binarySha256: string
+}
+
+export interface PluginRuntimeLaunchGuard {
+  verify(): Promise<PluginRuntimeFingerprint>
+}
+
 export interface PluginOwnedServerRegistration {
   pluginId: string
   serverName: string
@@ -36,6 +48,7 @@ export interface PluginOwnedServerRegistration {
   toolCatalogPath?: string
   toolCatalog?: PluginToolCatalog
   adapter?: PluginRuntimeAdapterInstance
+  launchGuard?: PluginRuntimeLaunchGuard
 }
 
 export interface PluginOwnedToolCatalogRegistration {
@@ -366,6 +379,9 @@ export class PluginRuntimeSupervisor {
     entry.lastError = undefined
 
     try {
+      const initialFingerprint = registration.adapter
+        ? await registration.launchGuard?.verify()
+        : undefined
       if (registration.adapter) {
         entry.adapterCleanupRequired = true
       }
@@ -373,6 +389,16 @@ export class PluginRuntimeSupervisor {
       if (entry.retiring || this.shuttingDown) {
         throw new Error(
           `Plugin runtime server "${registration.serverName}" was stopped during startup`
+        )
+      }
+      const proxyFingerprint = await registration.launchGuard?.verify()
+      if (
+        initialFingerprint &&
+        proxyFingerprint &&
+        initialFingerprint.value !== proxyFingerprint.value
+      ) {
+        throw new Error(
+          `Plugin runtime server "${registration.serverName}" changed between launch checks`
         )
       }
       await processPort.start(registration.serverName, launch?.configOverride)

@@ -112,13 +112,19 @@ export const parsePluginToolCatalog = (
   return deepFreeze({ version, tools })
 }
 
-export const loadPluginToolCatalog = (catalogPath: string): PluginToolCatalog => {
+export const parsePluginToolCatalogJson = (
+  contents: string,
+  source = '<in-memory>'
+): PluginToolCatalog => {
   let parsed: unknown
   try {
-    parsed = JSON.parse(fs.readFileSync(catalogPath, 'utf8')) as unknown
+    parsed = JSON.parse(contents) as unknown
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    throw catalogError(catalogPath, `cannot read JSON: ${detail}`)
+    throw catalogError(source, `cannot read JSON: ${detail}`)
   }
-  return parsePluginToolCatalog(parsed, catalogPath)
+  return parsePluginToolCatalog(parsed, source)
 }
+
+export const loadPluginToolCatalog = (catalogPath: string): PluginToolCatalog =>
+  parsePluginToolCatalogJson(fs.readFileSync(catalogPath, 'utf8'), catalogPath)

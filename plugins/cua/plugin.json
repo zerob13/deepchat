@@ -28,6 +28,7 @@
     "type": "external-helper",
     "displayName": "Cua Driver",
     "adapter": "cua-embedded-v1",
+    "integrityDescriptor": "runtime/${target.platform}/${arch}/integrity.json",
     "adapterContract": {
       "hostBundleId": "com.wefonk.deepchat",
       "driverVersion": "0.12.6",

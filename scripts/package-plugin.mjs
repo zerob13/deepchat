@@ -3,12 +3,15 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { zipSync } from 'fflate'
 import { readCuaToolCatalog } from './cua-tool-catalog-contract.mjs'
+import { CUA_DARWIN_ALLOWED_ENTITLEMENTS } from './cua-macos-contract.mjs'
 
 const OFFICIAL_PLUGIN_SOURCE = 'deepchat-official'
 const CUA_DARWIN_HELPER_APP = 'DeepChat Computer Use.app'
 const CUA_DARWIN_HELPER_EXECUTABLE = 'deepchat-cua-driver'
 const CUA_DARWIN_HELPER_BUNDLE_ID = 'com.deepchat.computeruse.helper'
 const CUA_DARWIN_MANAGED_HELPER_DETECT = `app-helper:${CUA_DARWIN_HELPER_APP}/Contents/MacOS/${CUA_DARWIN_HELPER_EXECUTABLE}`
+const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
+const CUA_INTEGRITY_DESCRIPTOR_NAME = 'integrity.json'
 const CUA_EMBEDDED_ADAPTER_CONTRACT = Object.freeze({
   hostBundleId: 'com.wefonk.deepchat',
   driverVersion: '0.12.6',
@@ -38,6 +41,7 @@ function flatRecordEquals(actual, expected) {
 }
 
 function parseArgs(argv) {
+  const environmentPurpose = process.env.PACKAGE_PURPOSE || null
   const args = {
     validateOnly: false,
     outDir: path.resolve('dist', 'plugins'),
@@ -45,7 +49,8 @@ function parseArgs(argv) {
     releaseVersionFromRoot: false,
     version: null,
     targetPlatform: process.env.TARGET_PLATFORM ?? process.platform,
-    targetArch: process.env.TARGET_ARCH ?? process.arch
+    targetArch: process.env.TARGET_ARCH ?? process.arch,
+    purpose: environmentPurpose
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -78,6 +83,11 @@ function parseArgs(argv) {
       index += 1
       continue
     }
+    if (arg === '--purpose') {
+      args.purpose = argv[index + 1] || ''
+      index += 1
+      continue
+    }
     if (!args.pluginDir) {
       args.pluginDir = path.resolve(arg)
     }
@@ -88,6 +98,17 @@ function parseArgs(argv) {
   }
   args.targetPlatform = String(args.targetPlatform).toLowerCase()
   args.targetArch = String(args.targetArch).toLowerCase()
+  if (
+    args.purpose !== null &&
+    !['distribution', 'verification'].includes(args.purpose)
+  ) {
+    throw new Error(`Invalid package purpose: ${args.purpose || '<empty>'}`)
+  }
+  if (environmentPurpose && args.purpose !== environmentPurpose) {
+    throw new Error(
+      `Package purpose mismatch: argument=${args.purpose}, PACKAGE_PURPOSE=${environmentPurpose}`
+    )
+  }
   return args
 }
 
@@ -288,7 +309,7 @@ function isManifestTargetSupported(manifest, targetPlatform, targetArch) {
 }
 
 function validateCuaRuntime(pluginDir, manifest, args) {
-  if (manifest.id !== 'com.deepchat.plugins.cua') {
+  if (manifest.id !== CUA_PLUGIN_ID) {
     return
   }
   const targetPlatform = args.targetPlatform ?? process.platform
@@ -361,6 +382,10 @@ function validateCuaRuntime(pluginDir, manifest, args) {
   }
   if (manifest.runtime?.adapter !== 'cua-embedded-v1') {
     throw new Error('CUA runtime must use the cua-embedded-v1 adapter')
+  }
+  const expectedIntegrityDescriptor = `runtime/${targetPlatform}/${args.targetArch}/${CUA_INTEGRITY_DESCRIPTOR_NAME}`
+  if (manifest.runtime.integrityDescriptor !== expectedIntegrityDescriptor) {
+    throw new Error(`CUA runtime integrityDescriptor must be ${expectedIntegrityDescriptor}`)
   }
   if (!flatRecordEquals(manifest.runtime.adapterContract, CUA_EMBEDDED_ADAPTER_CONTRACT)) {
     throw new Error(
@@ -471,11 +496,107 @@ function createZipInput(files) {
   )
 }
 
+function createDarwinSigningContract(purpose) {
+  const distribution = purpose === 'distribution'
+  const teamId = distribution ? String(process.env.DEEPCHAT_APPLE_NOTARY_TEAM_ID ?? '') : null
+  if (distribution && !/^[A-Z0-9]{10}$/.test(teamId)) {
+    throw new Error('CUA macOS distribution integrity descriptor requires a valid Apple Team ID')
+  }
+  return {
+    bundlePath: CUA_DARWIN_HELPER_APP,
+    bundleIdentifier: CUA_DARWIN_HELPER_BUNDLE_ID,
+    signatureType: distribution ? 'developer-id' : 'ad-hoc',
+    teamId,
+    hardenedRuntime: true,
+    entitlements: { ...CUA_DARWIN_ALLOWED_ENTITLEMENTS }
+  }
+}
+
+function isPackagedExecutable(relativePath, file, targetPlatform) {
+  if (targetPlatform === 'win32') {
+    return ['.bat', '.cmd', '.com', '.exe', '.ps1'].includes(
+      path.posix.extname(relativePath).toLowerCase()
+    )
+  }
+  return (file.mode & 0o111) !== 0
+}
+
+export function createCuaRuntimeIntegrityDescriptor(files, manifest, args) {
+  const runtimeRoot = `runtime/${args.targetPlatform}/${args.targetArch}`
+  const runtimePrefix = `${runtimeRoot}/`
+  const targetFiles = Object.entries(files)
+    .filter(
+      ([filePath]) =>
+        filePath.startsWith(runtimePrefix) &&
+        filePath !== `${runtimeRoot}/${CUA_INTEGRITY_DESCRIPTOR_NAME}`
+    )
+    .map(([filePath, file]) => [filePath.slice(runtimePrefix.length), file])
+    .sort(([left], [right]) => left.localeCompare(right))
+  if (targetFiles.length === 0) {
+    throw new Error(`CUA runtime integrity cannot describe an empty target: ${runtimeRoot}`)
+  }
+
+  const binaryPath =
+    args.targetPlatform === 'darwin'
+      ? `${CUA_DARWIN_HELPER_APP}/Contents/MacOS/${CUA_DARWIN_HELPER_EXECUTABLE}`
+      : args.targetPlatform === 'win32'
+        ? 'cua-driver.exe'
+        : 'cua-driver'
+  const catalogPath = 'tool-catalog.json'
+  const fileHashes = Object.fromEntries(
+    targetFiles.map(([filePath, file]) => [
+      filePath,
+      createHash('sha256').update(Buffer.from(file.content)).digest('hex')
+    ])
+  )
+  for (const requiredPath of [binaryPath, catalogPath]) {
+    if (!fileHashes[requiredPath]) {
+      throw new Error(`CUA runtime integrity is missing required artifact: ${requiredPath}`)
+    }
+  }
+  const executablePaths = targetFiles
+    .filter(([filePath, file]) => isPackagedExecutable(filePath, file, args.targetPlatform))
+    .map(([filePath]) => filePath)
+  if (executablePaths.length !== 1 || executablePaths[0] !== binaryPath) {
+    throw new Error(
+      `CUA runtime integrity requires exactly one executable (${binaryPath}), received ${executablePaths.join(', ') || 'none'}`
+    )
+  }
+
+  return {
+    schemaVersion: 1,
+    pluginId: manifest.id,
+    runtimeId: manifest.runtime.id,
+    runtimeVersion: manifest.runtime.adapterContract.driverVersion,
+    target: `${args.targetPlatform}/${args.targetArch}`,
+    runtimeRoot,
+    binaryPath,
+    catalogPath,
+    files: fileHashes,
+    executablePaths,
+    ...(args.targetPlatform === 'darwin'
+      ? {
+          macos: createDarwinSigningContract(args.purpose)
+        }
+      : {})
+  }
+}
+
 function packagePlugin(pluginDir, outDir, manifest, args) {
   const files = collectFiles(pluginDir, pluginDir, {}, manifest, args)
   files['plugin.json'] = {
     content: new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`),
     mode: 0o644
+  }
+  if (manifest.id === CUA_PLUGIN_ID) {
+    const descriptor = createCuaRuntimeIntegrityDescriptor(files, manifest, {
+      ...args,
+      pluginDir
+    })
+    files[manifest.runtime.integrityDescriptor] = {
+      content: new TextEncoder().encode(`${JSON.stringify(descriptor, null, 2)}\n`),
+      mode: 0o644
+    }
   }
   files['checksums.json'] = {
     content: new TextEncoder().encode(`${JSON.stringify(buildChecksums(files), null, 2)}\n`),

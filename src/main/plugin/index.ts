@@ -22,9 +22,14 @@ import type {
 import { OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
 import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPolicyStore'
 import type { PluginRuntimeSupervisor } from './runtimeSupervisor'
-import { loadPluginToolCatalog } from './toolCatalog'
+import { loadPluginToolCatalog, parsePluginToolCatalogJson } from './toolCatalog'
 import type { McpSettings } from '@/mcp/settings'
 import { CuaEmbeddedRuntimeAdapter } from './cuaEmbeddedAdapter'
+import {
+  CuaRuntimeIntegrityVerifier,
+  parseCuaRuntimeIntegrityDescriptor,
+  type CuaRuntimeIntegrityDescriptor
+} from './cuaRuntimeIntegrity'
 
 const execFileAsync = promisify(execFile)
 
@@ -83,6 +88,8 @@ type ResolvedOfficialPlugin = {
   root: string
   sourcePath: string
   sourceType: 'directory' | 'package'
+  integrityDescriptor?: CuaRuntimeIntegrityDescriptor
+  integrityError?: string
 }
 
 type RuntimePermissionState = 'granted' | 'missing' | 'unknown'
@@ -442,12 +449,24 @@ export class PluginService implements PluginServicePort {
       if (toolCatalogPath && !fs.statSync(toolCatalogPath, { throwIfNoEntry: false })?.isFile()) {
         throw new Error(`Plugin MCP tool catalog is missing: ${server.toolCatalog}`)
       }
-      const toolCatalog = toolCatalogPath ? loadPluginToolCatalog(toolCatalogPath) : undefined
       const existing = existingServers[serverName]
       if (existing && existing.ownerPluginId !== plugin.manifest.id) {
         throw new Error(`MCP server "${serverName}" already exists and is not owned by this plugin`)
       }
 
+      const cuaIntegrityVerifier =
+        plugin.manifest.runtime?.adapter === 'cua-embedded-v1'
+          ? this.createCuaRuntimeIntegrityVerifier(plugin, command)
+          : undefined
+      const verifiedToolCatalogJson =
+        toolCatalogPath && cuaIntegrityVerifier
+          ? await cuaIntegrityVerifier.verifyCatalog(toolCatalogPath)
+          : undefined
+      const toolCatalog = toolCatalogPath
+        ? verifiedToolCatalogJson !== undefined
+          ? parsePluginToolCatalogJson(verifiedToolCatalogJson, toolCatalogPath)
+          : loadPluginToolCatalog(toolCatalogPath)
+        : undefined
       const serverEnv = this.resolvePluginTemplateRecord(server.env ?? {}, plugin, runtime)
       const config: MCPServerConfig = {
         type: 'stdio',
@@ -478,6 +497,8 @@ export class PluginService implements PluginServicePort {
               )
             })
           : undefined
+      const launchGuard =
+        plugin.manifest.runtime?.adapter === 'cua-embedded-v1' ? cuaIntegrityVerifier : undefined
 
       this.runtimeSupervisor.registerServer(
         {
@@ -489,7 +510,8 @@ export class PluginService implements PluginServicePort {
           surfaces,
           toolCatalogPath,
           toolCatalog,
-          adapter
+          adapter,
+          launchGuard
         },
         { ready: false }
       )
@@ -510,6 +532,46 @@ export class PluginService implements PluginServicePort {
       registeredServerNames.push(serverName)
     }
     return registeredServerNames
+  }
+
+  private createCuaRuntimeIntegrityVerifier(
+    plugin: ResolvedOfficialPlugin,
+    binaryPath: string
+  ): CuaRuntimeIntegrityVerifier {
+    if (plugin.integrityError) {
+      throw new Error(
+        `CUA runtime integrity descriptor is unavailable: ${plugin.integrityError}. Reinstall DeepChat or the CUA plugin.`
+      )
+    }
+    const descriptor = plugin.integrityDescriptor
+    const runtime = plugin.manifest.runtime
+    if (!descriptor || !runtime?.adapterContract) {
+      throw new Error(
+        'CUA runtime integrity descriptor is missing. Reinstall DeepChat or the CUA plugin.'
+      )
+    }
+    const descriptorPath = runtime.integrityDescriptor!
+    const expectedRuntimeRoot = path.posix.dirname(descriptorPath.replaceAll('\\', '/'))
+    if (descriptor.runtimeRoot !== expectedRuntimeRoot) {
+      throw new Error(
+        `CUA runtime integrity root mismatch: expected ${expectedRuntimeRoot}, received ${descriptor.runtimeRoot}`
+      )
+    }
+    const appHelperCandidate = runtime.detect.find((candidate) =>
+      candidate.startsWith('app-helper:')
+    )
+    const externalBinaryPath = appHelperCandidate
+      ? (this.resolveRuntimeCandidate(appHelperCandidate, plugin.root) ?? undefined)
+      : undefined
+    return new CuaRuntimeIntegrityVerifier({
+      pluginRoot: plugin.root,
+      binaryPath,
+      externalBinaryPath,
+      platform: this.platform,
+      arch: this.arch,
+      runtimeVersion: runtime.adapterContract.driverVersion,
+      descriptor
+    })
   }
 
   private async registerSkills(plugin: ResolvedOfficialPlugin): Promise<void> {
@@ -603,6 +665,11 @@ export class PluginService implements PluginServicePort {
     if (!runtimeManifest) {
       throw new Error(`Plugin ${pluginId} does not declare a runtime`)
     }
+    if (pluginId === CUA_PLUGIN_ID && runtimeManifest.adapter !== 'cua-embedded-v1') {
+      throw new Error(
+        'The installed CUA runtime uses an unsupported legacy lifecycle. Repair or reinstall DeepChat before enabling Computer Use.'
+      )
+    }
 
     const status = await this.detectRuntime(runtimeManifest, plugin.root)
     this.upsertRuntimeRecord({
@@ -633,6 +700,34 @@ export class PluginService implements PluginServicePort {
 
       if (path.isAbsolute(command) && !fs.existsSync(command)) {
         continue
+      }
+
+      if (runtime.adapter === 'cua-embedded-v1') {
+        if (!path.isAbsolute(command)) {
+          continue
+        }
+        const stat = fs.lstatSync(command, { throwIfNoEntry: false })
+        const helperAppPath = this.resolveHelperAppPath(command)
+        if (!stat || stat.isSymbolicLink() || !stat.isFile()) {
+          return {
+            runtimeId: runtime.id,
+            displayName: runtime.displayName,
+            state: 'error',
+            command,
+            helperAppPath,
+            lastError: `CUA runtime candidate must be a regular file: ${command}`,
+            checkedAt
+          }
+        }
+        return {
+          runtimeId: runtime.id,
+          displayName: runtime.displayName,
+          state: 'installed',
+          command,
+          helperAppPath,
+          version: runtime.adapterContract?.driverVersion,
+          checkedAt
+        }
       }
 
       try {
@@ -1086,12 +1181,17 @@ export class PluginService implements PluginServicePort {
       }
     }
 
-    return Array.from(pluginRoots).map((root) => ({
-      manifest: this.readManifest(path.join(root, 'plugin.json')),
-      root,
-      sourcePath: root,
-      sourceType: 'directory'
-    }))
+    return Array.from(pluginRoots).map((root) => {
+      const manifest = this.readManifest(path.join(root, 'plugin.json'))
+      const integrity = this.isPackaged ? {} : this.readDirectoryRuntimeIntegrity(manifest, root)
+      return {
+        manifest,
+        root,
+        sourcePath: root,
+        sourceType: 'directory',
+        ...integrity
+      }
+    })
   }
 
   private resolveOfficialPluginPackages(): ResolvedOfficialPlugin[] {
@@ -1124,9 +1224,9 @@ export class PluginService implements PluginServicePort {
     }
 
     return Array.from(packagePaths).map((packagePath) => {
-      const manifest = this.readPackageManifest(packagePath)
+      const packageMetadata = this.readPackageMetadata(packagePath)
       return {
-        manifest,
+        ...packageMetadata,
         root: packagePath,
         sourcePath: packagePath,
         sourceType: 'package'
@@ -1145,7 +1245,9 @@ export class PluginService implements PluginServicePort {
     return parsed
   }
 
-  private readPackageManifest(packagePath: string): DeepChatPluginManifest {
+  private readPackageMetadata(
+    packagePath: string
+  ): Pick<ResolvedOfficialPlugin, 'manifest' | 'integrityDescriptor' | 'integrityError'> {
     const files = this.readPluginPackage(packagePath)
     const manifestFile = files['plugin.json']
     if (!manifestFile) {
@@ -1158,7 +1260,62 @@ export class PluginService implements PluginServicePort {
       throw new Error(`Invalid plugin package manifest: ${packagePath}`)
     }
     this.assertManifestLifecycleContract(manifest)
-    return manifest
+    const integrity = this.readPackagedRuntimeIntegrity(manifest, packagePath, files)
+    return { manifest, ...integrity }
+  }
+
+  private readPackagedRuntimeIntegrity(
+    manifest: DeepChatPluginManifest,
+    packagePath: string,
+    files: Record<string, Uint8Array>
+  ): Pick<ResolvedOfficialPlugin, 'integrityDescriptor' | 'integrityError'> {
+    const descriptorPath =
+      manifest.runtime?.adapter === 'cua-embedded-v1'
+        ? manifest.runtime.integrityDescriptor
+        : undefined
+    if (!descriptorPath) {
+      return {}
+    }
+    try {
+      const descriptorFile = files[descriptorPath]
+      if (!descriptorFile) {
+        throw new Error(`package is missing ${descriptorPath}`)
+      }
+      const descriptor = parseCuaRuntimeIntegrityDescriptor(
+        JSON.parse(Buffer.from(descriptorFile).toString('utf8')) as unknown,
+        `${packagePath}:${descriptorPath}`
+      )
+      return { integrityDescriptor: descriptor }
+    } catch (error) {
+      return {
+        integrityError: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
+
+  private readDirectoryRuntimeIntegrity(
+    manifest: DeepChatPluginManifest,
+    pluginRoot: string
+  ): Pick<ResolvedOfficialPlugin, 'integrityDescriptor' | 'integrityError'> {
+    const descriptorPath =
+      manifest.runtime?.adapter === 'cua-embedded-v1'
+        ? manifest.runtime.integrityDescriptor
+        : undefined
+    if (!descriptorPath) {
+      return {}
+    }
+    try {
+      const absolutePath = this.resolvePluginRelativePath(pluginRoot, descriptorPath)
+      const descriptor = parseCuaRuntimeIntegrityDescriptor(
+        JSON.parse(fs.readFileSync(absolutePath, 'utf8')) as unknown,
+        absolutePath
+      )
+      return { integrityDescriptor: descriptor }
+    } catch (error) {
+      return {
+        integrityError: error instanceof Error ? error.message : String(error)
+      }
+    }
   }
 
   private assertManifestLifecycleContract(manifest: DeepChatPluginManifest): void {
@@ -1210,6 +1367,16 @@ export class PluginService implements PluginServicePort {
           `Plugin ${manifest.id} cua-embedded-v1 requires one matching on-demand MCP server with minimal environment inheritance`
         )
       }
+      if (
+        typeof manifest.runtime.integrityDescriptor !== 'string' ||
+        !manifest.runtime.integrityDescriptor
+      ) {
+        throw new Error(`Plugin ${manifest.id} cua-embedded-v1 requires an integrity descriptor`)
+      }
+      this.assertSafeRelativePath(
+        manifest.runtime.integrityDescriptor,
+        'plugin runtime integrity descriptor path'
+      )
     }
 
     if (manifest.mcpServers !== undefined && !Array.isArray(manifest.mcpServers)) {
@@ -1372,7 +1539,9 @@ export class PluginService implements PluginServicePort {
       manifest: installedManifest,
       root: installRoot,
       sourcePath: installRoot,
-      sourceType: 'directory'
+      sourceType: 'directory',
+      integrityDescriptor: plugin.integrityDescriptor,
+      integrityError: plugin.integrityError
     })
     return next
   }
@@ -1570,7 +1739,9 @@ export class PluginService implements PluginServicePort {
           manifest: this.readManifest(manifestPath),
           root: installation.path,
           sourcePath: installation.path,
-          sourceType: 'directory'
+          sourceType: 'directory',
+          integrityDescriptor: official.integrityDescriptor,
+          integrityError: official.integrityError
         }
       }
     }

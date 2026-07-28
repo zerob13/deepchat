@@ -194,6 +194,7 @@ try {
   pkgArgs.push('--release-version-from-root')
   if (args.platform) pkgArgs.push('--target-platform', args.platform)
   if (args.arch) pkgArgs.push('--target-arch', args.arch)
+  if (args.purpose) pkgArgs.push('--purpose', args.purpose)
   if (args.action === 'bundle') pkgArgs.push('--out', path.resolve('build/bundled-plugins'))
   pkgArgs.push(pluginDir)
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
@@ -887,30 +887,35 @@ describe('PluginService', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-adapter-registration-'))
     tempRoots.push(root)
     const catalogRelativePath = 'runtime/darwin/arm64/tool-catalog.json'
+    const integrityRelativePath = 'runtime/darwin/arm64/integrity.json'
     await mkdir(path.join(root, 'runtime', 'darwin', 'arm64'), { recursive: true })
-    await writeFile(
-      path.join(root, catalogRelativePath),
-      `${JSON.stringify({
-        version: '0.12.6',
-        tools: [
-          {
-            name: 'check_permissions',
-            description: 'Check native permissions.',
-            input_schema: { type: 'object', properties: {}, required: [] },
-            read_only: false,
-            destructive: false,
-            idempotent: true
-          }
-        ]
-      })}\n`
-    )
+    const catalogContents = `${JSON.stringify({
+      version: '0.12.6',
+      tools: [
+        {
+          name: 'check_permissions',
+          description: 'Check native permissions.',
+          input_schema: { type: 'object', properties: {}, required: [] },
+          read_only: false,
+          destructive: false,
+          idempotent: true
+        }
+      ]
+    })}\n`
+    await writeFile(path.join(root, catalogRelativePath), catalogContents)
     const presenter = await createPluginService('darwin', { arch: 'arm64' })
     const { CuaEmbeddedRuntimeAdapter } = await import('@/plugin/cuaEmbeddedAdapter')
+    const { CuaRuntimeIntegrityVerifier } = await import('@/plugin/cuaRuntimeIntegrity')
     const manifest = {
       id: 'com.deepchat.plugins.cua',
       runtime: {
         id: 'cua-driver',
         adapter: 'cua-embedded-v1',
+        integrityDescriptor: integrityRelativePath,
+        detect: [
+          'app-helper:DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
+          'plugin:runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver'
+        ],
         adapterContract: {
           hostBundleId: 'com.wefonk.deepchat',
           driverVersion: '0.12.6',
@@ -942,7 +947,33 @@ describe('PluginService', () => {
         manifest,
         root,
         sourcePath: root,
-        sourceType: 'directory'
+        sourceType: 'directory',
+        integrityDescriptor: {
+          schemaVersion: 1,
+          pluginId: 'com.deepchat.plugins.cua',
+          runtimeId: 'cua-driver',
+          runtimeVersion: '0.12.6',
+          target: 'darwin/arm64',
+          runtimeRoot: 'runtime/darwin/arm64',
+          binaryPath: 'DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
+          catalogPath: 'tool-catalog.json',
+          files: {
+            'DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver': 'a'.repeat(64),
+            'tool-catalog.json': createHash('sha256').update(catalogContents).digest('hex')
+          },
+          executablePaths: ['DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver'],
+          macos: {
+            bundlePath: 'DeepChat Computer Use.app',
+            bundleIdentifier: 'com.deepchat.computeruse.helper',
+            signatureType: 'ad-hoc',
+            teamId: null,
+            hardenedRuntime: true,
+            entitlements: {
+              'com.apple.security.automation.apple-events': true,
+              'com.apple.security.device.screen-capture': true
+            }
+          }
+        }
       },
       {
         runtimeId: 'cua-driver',
@@ -956,7 +987,8 @@ describe('PluginService', () => {
       expect.objectContaining({
         pluginId: 'com.deepchat.plugins.cua',
         serverName: 'cua-driver',
-        adapter: expect.any(CuaEmbeddedRuntimeAdapter)
+        adapter: expect.any(CuaEmbeddedRuntimeAdapter),
+        launchGuard: expect.any(CuaRuntimeIntegrityVerifier)
       }),
       { ready: false }
     )
@@ -1059,6 +1091,74 @@ describe('PluginService', () => {
     ])
     expect(presenterSource).not.toContain('deepchat-permission-probe')
     expect(presenterSource).not.toContain('Runtime permission probe failed')
+  })
+
+  it('discovers the embedded CUA runtime without executing it', async () => {
+    const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-discovery-'))
+    tempRoots.push(pluginRoot)
+    const markerPath = path.join(pluginRoot, 'executed.txt')
+    const commandName = process.platform === 'win32' ? 'cua-driver.cmd' : 'cua-driver'
+    const commandPath = path.join(pluginRoot, commandName)
+    const commandContents =
+      process.platform === 'win32'
+        ? `@echo off\r\n> "${markerPath}" echo executed\r\necho cua-driver 0.12.6\r\n`
+        : `#!/bin/sh\nprintf executed > '${markerPath}'\nprintf 'cua-driver 0.12.6\\n'\n`
+    await writeFile(commandPath, commandContents)
+    if (process.platform !== 'win32') {
+      await chmod(commandPath, 0o755)
+    }
+    const presenter = await createPluginService(process.platform)
+
+    const status = await (presenter as any).detectRuntime(
+      {
+        id: 'cua-driver',
+        displayName: 'CUA Driver',
+        type: 'external-helper',
+        detect: [`plugin:${commandName}`],
+        adapter: 'cua-embedded-v1',
+        adapterContract: {
+          hostBundleId: 'com.wefonk.deepchat',
+          driverVersion: '0.12.6',
+          contractVersion: '1',
+          toolsListSchemaVersion: '1',
+          capabilityVersion: '1',
+          mcpProtocolVersion: '2024-11-05'
+        }
+      },
+      pluginRoot
+    )
+
+    expect(status).toMatchObject({
+      state: 'installed',
+      command: commandPath,
+      version: '0.12.6'
+    })
+    expect(fs.existsSync(markerPath)).toBe(false)
+  })
+
+  it('fails closed when only a legacy CUA lifecycle is available', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-legacy-cua-'))
+    tempRoots.push(root)
+    const resourcesPath = path.join(root, 'resources')
+    await createBundledFixture({
+      appPath: path.join(root, 'app'),
+      packageRoot: path.join(resourcesPath, 'plugins'),
+      pluginId: 'com.deepchat.plugins.cua',
+      name: 'Legacy CUA'
+    })
+    const presenter = await createPluginService('darwin', {
+      appPath: path.join(root, 'app'),
+      isPackaged: true,
+      resourcesPath
+    })
+
+    const result = await presenter.enablePlugin('com.deepchat.plugins.cua')
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('unsupported legacy lifecycle')
+    })
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).not.toHaveBeenCalled()
   })
 
   it('checks CUA permissions through the supervised embedded runtime', async () => {
@@ -1448,6 +1548,9 @@ describe('PluginService', () => {
     ])
     expect(manifest.capabilities).toContain('shell.openPath')
     expect(manifest.runtime.adapter).toBe('cua-embedded-v1')
+    expect(manifest.runtime.integrityDescriptor).toBe(
+      'runtime/${target.platform}/${arch}/integrity.json'
+    )
     expect(manifest.runtime.adapterContract).toEqual({
       hostBundleId: 'com.wefonk.deepchat',
       driverVersion: '0.12.6',
@@ -1710,6 +1813,7 @@ describe('PluginService', () => {
     const windowsPackageWorkflow = await readFile('.github/workflows/_package-windows.yml', 'utf8')
     const linuxPackageWorkflow = await readFile('.github/workflows/_package-linux.yml', 'utf8')
     const macosPackageWorkflow = await readFile('.github/workflows/_package-macos.yml', 'utf8')
+    const pluginScript = await readFile('scripts/plugin.mjs', 'utf8')
     const packageScript = await readFile('scripts/package-plugin.mjs', 'utf8')
     const guide = await readFile('docs/guides/plugin-packaging.md', 'utf8')
 
@@ -1790,6 +1894,7 @@ describe('PluginService', () => {
     expect(packageScript).toContain('parts[2] !== args.targetArch')
     expect(packageScript).toContain('CUA plugin does not support')
     expect(packageScript).toContain('CUA_DARWIN_MANAGED_HELPER_DETECT')
+    expect(pluginScript).toContain("pkgArgs.push('--purpose', args.purpose)")
     expect(guide).toContain('build/bundled-plugins/')
     expect(guide).toContain('build/managed-helpers/')
     expect(guide).toContain('Contents/Helpers/DeepChat Computer Use.app')

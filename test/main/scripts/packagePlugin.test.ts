@@ -5,6 +5,8 @@ import path from 'node:path'
 import { unzipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { parseCuaRuntimeIntegrityDescriptor } from '@/plugin/cuaRuntimeIntegrity'
+
 const ROOT = process.cwd()
 const tempRoots: string[] = []
 const DARWIN_HELPER_APP = 'DeepChat Computer Use.app'
@@ -59,6 +61,7 @@ async function createCuaPluginFixture() {
       type: 'external-helper',
       displayName: 'CUA Driver',
       adapter: 'cua-embedded-v1',
+      integrityDescriptor: 'runtime/${target.platform}/${arch}/integrity.json',
       adapterContract: {
         hostBundleId: 'com.wefonk.deepchat',
         driverVersion: '0.12.6',
@@ -154,7 +157,14 @@ async function createCuaPluginFixture() {
   return { root, pluginDir }
 }
 
-function runPackagePlugin(pluginDir: string, outDir: string, platform: string, arch: string) {
+function runPackagePlugin(
+  pluginDir: string,
+  outDir: string,
+  platform: string,
+  arch: string,
+  options: { purpose?: string; env?: NodeJS.ProcessEnv } = {}
+) {
+  const purposeArgs = options.purpose ? ['--purpose', options.purpose] : []
   return spawnSync(
     process.execPath,
     [
@@ -165,11 +175,17 @@ function runPackagePlugin(pluginDir: string, outDir: string, platform: string, a
       platform,
       '--target-arch',
       arch,
+      ...purposeArgs,
       pluginDir
     ],
     {
       cwd: ROOT,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PACKAGE_PURPOSE: options.purpose ?? '',
+        ...options.env
+      }
     }
   )
 }
@@ -198,8 +214,25 @@ describe('package-plugin', () => {
     expect(manifest.mcpServers[0].env.CUA_DRIVER_RS_SPAWN_UIA_WORKER).toBe('0')
     expect(Object.keys(files).filter((file) => file.startsWith('runtime/')).sort()).toEqual([
       'runtime/win32/arm64/cua-driver.exe',
+      'runtime/win32/arm64/integrity.json',
       'runtime/win32/arm64/tool-catalog.json'
     ])
+    const integrity = JSON.parse(
+      Buffer.from(files['runtime/win32/arm64/integrity.json']).toString('utf8')
+    )
+    expect(integrity).toMatchObject({
+      schemaVersion: 1,
+      pluginId: 'com.deepchat.plugins.cua',
+      runtimeId: 'cua-driver',
+      runtimeVersion: '0.12.6',
+      target: 'win32/arm64',
+      runtimeRoot: 'runtime/win32/arm64',
+      binaryPath: 'cua-driver.exe',
+      catalogPath: 'tool-catalog.json',
+      executablePaths: ['cua-driver.exe']
+    })
+    expect(integrity.files['cua-driver.exe']).toMatch(/^[a-f0-9]{64}$/)
+    expect(integrity.files['tool-catalog.json']).toMatch(/^[a-f0-9]{64}$/)
   })
 
   it('rejects Windows CUA packages that include the unsigned UIA worker', async () => {
@@ -220,6 +253,50 @@ describe('package-plugin', () => {
     expect(result.stderr).toContain(
       'CUA Windows runtime win32/x64 must not bundle cua-driver-uia.exe'
     )
+  })
+
+  it('replaces a stale descriptor without creating a self-referential file set', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+    await writeFile(
+      path.join(fixture.pluginDir, 'runtime', 'win32', 'x64', 'integrity.json'),
+      '{"stale":true}\n'
+    )
+
+    const result = runPackagePlugin(fixture.pluginDir, outDir, 'win32', 'x64')
+
+    expect(result.status).toBe(0)
+    const artifactPath = path.join(outDir, 'deepchat-plugin-cua-0.0.0-win32-x64.dcplugin')
+    const files = unzipSync(new Uint8Array(await readFile(artifactPath)))
+    const integrity = JSON.parse(
+      Buffer.from(files['runtime/win32/x64/integrity.json']).toString('utf8')
+    )
+    expect(integrity.files).not.toHaveProperty('integrity.json')
+  })
+
+  it('records the explicit macOS distribution identity in the integrity descriptor', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+
+    const result = runPackagePlugin(fixture.pluginDir, outDir, 'darwin', 'arm64', {
+      purpose: 'distribution',
+      env: { DEEPCHAT_APPLE_NOTARY_TEAM_ID: 'Y7P5QLKLYG' }
+    })
+
+    expect(result.status).toBe(0)
+    const artifactPath = path.join(outDir, 'deepchat-plugin-cua-0.0.0-darwin-arm64.dcplugin')
+    const files = unzipSync(new Uint8Array(await readFile(artifactPath)))
+    const integrity = JSON.parse(
+      Buffer.from(files['runtime/darwin/arm64/integrity.json']).toString('utf8')
+    )
+    expect(integrity.macos).toMatchObject({
+      signatureType: 'developer-id',
+      teamId: 'Y7P5QLKLYG',
+      hardenedRuntime: true
+    })
+    expect(() =>
+      parseCuaRuntimeIntegrityDescriptor(integrity, 'packaged distribution fixture')
+    ).not.toThrow()
   })
 
   it('packages the DeepChat-owned macOS CUA helper identity for each macOS arch', async () => {
@@ -247,6 +324,7 @@ describe('package-plugin', () => {
       expect(runtimeFiles).toEqual([
         `runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/Info.plist`,
         `runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver`,
+        `runtime/darwin/${arch}/integrity.json`,
         `runtime/darwin/${arch}/tool-catalog.json`
       ])
       expect(Buffer.from(files[runtimeFiles[0]]).toString('utf8')).toContain(
@@ -269,6 +347,7 @@ describe('package-plugin', () => {
 
     expect(Object.keys(files).filter((file) => file.startsWith('runtime/')).sort()).toEqual([
       'runtime/linux/x64/cua-driver',
+      'runtime/linux/x64/integrity.json',
       'runtime/linux/x64/tool-catalog.json'
     ])
   })
