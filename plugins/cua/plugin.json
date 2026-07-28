@@ -27,6 +27,15 @@
     "id": "cua-driver",
     "type": "external-helper",
     "displayName": "Cua Driver",
+    "adapter": "cua-embedded-v1",
+    "adapterContract": {
+      "hostBundleId": "com.wefonk.deepchat",
+      "driverVersion": "0.12.6",
+      "contractVersion": "0.2.0",
+      "toolsListSchemaVersion": "1",
+      "capabilityVersion": "1",
+      "mcpProtocolVersion": "2025-06-18"
+    },
     "detect": [
       "app-helper:DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver",
       "plugin:runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver",
@@ -37,7 +46,7 @@
       "mode": "user-confirmed",
       "provider": "trycua",
       "strategy": "bundled-plugin-helper",
-      "minVersion": "0.7.1",
+      "minVersion": "0.12.6",
       "guideUrl": "https://cua.ai/docs/cua-driver/guide/getting-started/installation"
     }
   },
@@ -47,14 +56,15 @@
       "displayName": "CUA Driver",
       "transport": "stdio",
       "command": "${runtime.cua-driver.command}",
-      "args": ["mcp", "--no-daemon-relaunch"],
+      "args": ["mcp", "--embedded"],
       "env": {
-        "CUA_DRIVER_MCP_MODE": "1",
-        "CUA_DRIVER_RS_MCP_NO_RELAUNCH": "1",
-        "DEEPCHAT_COMPUTER_USE_APP_PATH": "${runtime.cua-driver.helperAppPath}",
-        "DEEPCHAT_COMPUTER_USE_BINARY_PATH": "${runtime.cua-driver.command}"
+        "CUA_DRIVER_RS_SPAWN_UIA_WORKER": "0"
       },
-      "autoApprove": []
+      "autoApprove": [],
+      "startMode": "onDemand",
+      "surfaces": ["tools"],
+      "toolCatalog": "runtime/${target.platform}/${arch}/tool-catalog.json",
+      "inheritEnv": "minimal"
     }
   ],
   "skills": [
@@ -90,6 +100,8 @@
         "get_agent_cursor_state": "allow",
         "check_for_update": "allow",
         "health_report": "allow",
+        "get_browser_state": "allow",
+        "get_session_state": "allow",
         "start_session": "allow",
         "end_session": "allow",
         "launch_app": "ask",
@@ -114,7 +126,16 @@
         "set_agent_cursor_style": "ask",
         "replay_trajectory": "ask",
         "zoom": "ask",
-        "page": "ask"
+        "page": "ask",
+        "browser_prepare": "ask",
+        "browser_navigate": "ask",
+        "browser_click": "ask",
+        "browser_type": "ask",
+        "browser_dialog": "ask",
+        "browser_set_input_files": "ask",
+        "browser_download": "ask",
+        "browser_pointer": "ask",
+        "escalate_session": "ask"
       }
     }
   ]

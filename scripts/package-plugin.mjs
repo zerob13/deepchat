@@ -2,16 +2,39 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { zipSync } from 'fflate'
+import { readCuaToolCatalog } from './cua-tool-catalog-contract.mjs'
 
 const OFFICIAL_PLUGIN_SOURCE = 'deepchat-official'
 const CUA_DARWIN_HELPER_APP = 'DeepChat Computer Use.app'
 const CUA_DARWIN_HELPER_EXECUTABLE = 'deepchat-cua-driver'
 const CUA_DARWIN_HELPER_BUNDLE_ID = 'com.deepchat.computeruse.helper'
 const CUA_DARWIN_MANAGED_HELPER_DETECT = `app-helper:${CUA_DARWIN_HELPER_APP}/Contents/MacOS/${CUA_DARWIN_HELPER_EXECUTABLE}`
+const CUA_EMBEDDED_ADAPTER_CONTRACT = Object.freeze({
+  hostBundleId: 'com.wefonk.deepchat',
+  driverVersion: '0.12.6',
+  contractVersion: '0.2.0',
+  toolsListSchemaVersion: '1',
+  capabilityVersion: '1',
+  mcpProtocolVersion: '2025-06-18'
+})
 
 function fail(message) {
   console.error(message)
   process.exitCode = 1
+}
+
+function flatRecordEquals(actual, expected) {
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
+    return false
+  }
+  const actualKeys = Object.keys(actual).sort()
+  const expectedKeys = Object.keys(expected).sort()
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every(
+      (key, index) => key === expectedKeys[index] && actual[key] === expected[key]
+    )
+  )
 }
 
 function parseArgs(argv) {
@@ -276,10 +299,17 @@ function validateCuaRuntime(pluginDir, manifest, args) {
 
   const requiredByTarget = {
     [`darwin/${args.targetArch}`]: [
-      `runtime/darwin/${args.targetArch}/${CUA_DARWIN_HELPER_APP}/Contents/MacOS/${CUA_DARWIN_HELPER_EXECUTABLE}`
+      `runtime/darwin/${args.targetArch}/${CUA_DARWIN_HELPER_APP}/Contents/MacOS/${CUA_DARWIN_HELPER_EXECUTABLE}`,
+      `runtime/darwin/${args.targetArch}/tool-catalog.json`
     ],
-    [`win32/${args.targetArch}`]: [`runtime/win32/${args.targetArch}/cua-driver.exe`],
-    [`linux/${args.targetArch}`]: [`runtime/linux/${args.targetArch}/cua-driver`]
+    [`win32/${args.targetArch}`]: [
+      `runtime/win32/${args.targetArch}/cua-driver.exe`,
+      `runtime/win32/${args.targetArch}/tool-catalog.json`
+    ],
+    [`linux/${args.targetArch}`]: [
+      `runtime/linux/${args.targetArch}/cua-driver`,
+      `runtime/linux/${args.targetArch}/tool-catalog.json`
+    ]
   }
   const requiredFiles = requiredByTarget[key]
   if (!requiredFiles) {
@@ -329,20 +359,65 @@ function validateCuaRuntime(pluginDir, manifest, args) {
   if (cuaServer.command !== '${runtime.cua-driver.command}') {
     throw new Error('CUA MCP server command must reference ${runtime.cua-driver.command}')
   }
-  const expectedArgs = ['mcp', '--no-daemon-relaunch']
+  if (manifest.runtime?.adapter !== 'cua-embedded-v1') {
+    throw new Error('CUA runtime must use the cua-embedded-v1 adapter')
+  }
+  if (!flatRecordEquals(manifest.runtime.adapterContract, CUA_EMBEDDED_ADAPTER_CONTRACT)) {
+    throw new Error(
+      `CUA runtime adapter contract must be ${JSON.stringify(CUA_EMBEDDED_ADAPTER_CONTRACT)}`
+    )
+  }
+  const expectedArgs = ['mcp', '--embedded']
   if (JSON.stringify(cuaServer.args ?? []) !== JSON.stringify(expectedArgs)) {
     throw new Error(`CUA MCP server args must be ${JSON.stringify(expectedArgs)}`)
   }
-  const env = cuaServer.env ?? {}
-  const requiredEnv = {
-    CUA_DRIVER_MCP_MODE: '1',
-    CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1',
-    DEEPCHAT_COMPUTER_USE_APP_PATH: '${runtime.cua-driver.helperAppPath}',
-    DEEPCHAT_COMPUTER_USE_BINARY_PATH: '${runtime.cua-driver.command}'
+  if (
+    cuaServer.startMode !== 'onDemand' ||
+    JSON.stringify(cuaServer.surfaces) !== JSON.stringify(['tools']) ||
+    cuaServer.inheritEnv !== 'minimal'
+  ) {
+    throw new Error(
+      'CUA MCP server must be on-demand, tools-only, and use minimal environment inheritance'
+    )
   }
-  for (const [key, expected] of Object.entries(requiredEnv)) {
-    if (env[key] !== expected) {
-      throw new Error(`CUA MCP server env ${key} must be ${expected}`)
+  const expectedCatalogPath = `runtime/${targetPlatform}/${args.targetArch}/tool-catalog.json`
+  if (cuaServer.toolCatalog !== expectedCatalogPath) {
+    throw new Error(`CUA MCP server toolCatalog must be ${expectedCatalogPath}`)
+  }
+  const env = cuaServer.env ?? {}
+  if (!flatRecordEquals(env, { CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0' })) {
+    throw new Error('CUA MCP server env must only disable CUA_DRIVER_RS_SPAWN_UIA_WORKER')
+  }
+
+  const catalogFile = assertFile(pluginDir, expectedCatalogPath, `CUA MCP tool catalog ${key}`)
+  const catalog = readCuaToolCatalog(catalogFile)
+  if (catalog.version !== CUA_EMBEDDED_ADAPTER_CONTRACT.driverVersion) {
+    throw new Error(
+      `CUA MCP tool catalog version must be ${CUA_EMBEDDED_ADAPTER_CONTRACT.driverVersion}`
+    )
+  }
+  validateCuaToolPolicies(manifest, catalog)
+}
+
+function validateCuaToolPolicies(manifest, catalog) {
+  const policies = (manifest.toolPolicies ?? []).filter(
+    (policy) => policy.serverId === 'cua-driver'
+  )
+  if (policies.length !== 1 || !policies[0].tools || typeof policies[0].tools !== 'object') {
+    throw new Error('CUA must declare exactly one cua-driver tool policy')
+  }
+  const catalogNames = catalog.tools.map((tool) => tool.name).sort()
+  const policyNames = Object.keys(policies[0].tools).sort()
+  if (JSON.stringify(policyNames) !== JSON.stringify(catalogNames)) {
+    const missing = catalogNames.filter((name) => !policyNames.includes(name))
+    const extra = policyNames.filter((name) => !catalogNames.includes(name))
+    throw new Error(
+      `CUA tool policy/catalog mismatch (missing: ${missing.join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`
+    )
+  }
+  for (const [toolName, decision] of Object.entries(policies[0].tools)) {
+    if (!['allow', 'ask', 'deny'].includes(decision)) {
+      throw new Error(`CUA tool policy ${toolName} has invalid decision: ${decision}`)
     }
   }
 }

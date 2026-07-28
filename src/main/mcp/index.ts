@@ -1022,6 +1022,10 @@ export class McpService implements McpServicePort {
     }
   }
 
+  async checkPluginRuntimePermissions(serverName: string): Promise<unknown> {
+    return await this.toolManager.checkPluginRuntimePermissions(serverName)
+  }
+
   /**
    * Pre-check tool permissions without executing the tool
    * Delegates to ToolManager for the actual permission check

@@ -76,7 +76,8 @@ const createPluginService = async (
     startServer: vi.fn().mockResolvedValue(undefined),
     stopServer: vi.fn().mockResolvedValue(undefined),
     stopServerDuringShutdownByName: vi.fn().mockResolvedValue(undefined),
-    getServerLastError: vi.fn().mockReturnValue(undefined)
+    getServerLastError: vi.fn().mockReturnValue(undefined),
+    checkPluginRuntimePermissions: vi.fn().mockResolvedValue(undefined)
   }
   const runtimeRegistrations = new Map<string, Record<string, unknown>>()
   const runtimeSupervisor = {
@@ -882,6 +883,85 @@ describe('PluginService', () => {
     )
   })
 
+  it('binds the CUA embedded adapter to its plugin-owned server registration', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-adapter-registration-'))
+    tempRoots.push(root)
+    const catalogRelativePath = 'runtime/darwin/arm64/tool-catalog.json'
+    await mkdir(path.join(root, 'runtime', 'darwin', 'arm64'), { recursive: true })
+    await writeFile(
+      path.join(root, catalogRelativePath),
+      `${JSON.stringify({
+        version: '0.12.6',
+        tools: [
+          {
+            name: 'check_permissions',
+            description: 'Check native permissions.',
+            input_schema: { type: 'object', properties: {}, required: [] },
+            read_only: false,
+            destructive: false,
+            idempotent: true
+          }
+        ]
+      })}\n`
+    )
+    const presenter = await createPluginService('darwin', { arch: 'arm64' })
+    const { CuaEmbeddedRuntimeAdapter } = await import('@/plugin/cuaEmbeddedAdapter')
+    const manifest = {
+      id: 'com.deepchat.plugins.cua',
+      runtime: {
+        id: 'cua-driver',
+        adapter: 'cua-embedded-v1',
+        adapterContract: {
+          hostBundleId: 'com.wefonk.deepchat',
+          driverVersion: '0.12.6',
+          contractVersion: '0.2.0',
+          toolsListSchemaVersion: '1',
+          capabilityVersion: '1',
+          mcpProtocolVersion: '2025-06-18'
+        }
+      },
+      mcpServers: [
+        {
+          id: 'cua-driver',
+          displayName: 'CUA Driver',
+          transport: 'stdio',
+          command: '${runtime.cua-driver.command}',
+          args: ['mcp', '--embedded'],
+          env: { CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0' },
+          autoApprove: [],
+          startMode: 'onDemand',
+          surfaces: ['tools'],
+          toolCatalog: catalogRelativePath,
+          inheritEnv: 'minimal'
+        }
+      ]
+    }
+
+    await (presenter as any).registerMcpServers(
+      {
+        manifest,
+        root,
+        sourcePath: root,
+        sourceType: 'directory'
+      },
+      {
+        runtimeId: 'cua-driver',
+        displayName: 'CUA Driver',
+        state: 'available',
+        command: '/plugin/cua-driver'
+      }
+    )
+
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginId: 'com.deepchat.plugins.cua',
+        serverName: 'cua-driver',
+        adapter: expect.any(CuaEmbeddedRuntimeAdapter)
+      }),
+      { ready: false }
+    )
+  })
+
   it('removes persisted plugin state when discovery rejects an installed official plugin', async () => {
     const fixture = await createDirectoryFixture()
     const workspaceManifestPath = path.join(fixture.pluginRoot, 'plugin.json')
@@ -969,7 +1049,7 @@ describe('PluginService', () => {
     expect(windowSource).not.toContain('../preload/plugin-settings-preload.mjs')
   })
 
-  it('uses upstream-compatible CUA permission tool args for runtime checks', async () => {
+  it('keeps upstream-compatible permission args for direct legacy runtimes', async () => {
     const presenterSource = await readFile('src/main/plugin/index.ts', 'utf8')
     const presenter = await createPluginService('darwin')
 
@@ -981,7 +1061,69 @@ describe('PluginService', () => {
     expect(presenterSource).not.toContain('Runtime permission probe failed')
   })
 
-  it('opens the detected macOS helper app for runtime permission guidance', async () => {
+  it('checks CUA permissions through the supervised embedded runtime', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cua-permission-test-'))
+    tempRoots.push(root)
+    const userDataPath = path.join(root, 'userData')
+    await mkdir(userDataPath, { recursive: true })
+    vi.mocked(app.getPath).mockImplementation((name: string) =>
+      name === 'userData' ? userDataPath : path.join(root, name)
+    )
+    const presenter = await createPluginService('darwin')
+    await presenter.listPlugins()
+    const directCheck = vi.spyOn(presenter as any, 'runRuntimePermissionTool')
+    ;(presenter as any).refreshRuntime = vi.fn().mockResolvedValue({
+      runtimeId: 'cua-driver',
+      displayName: 'CUA Driver',
+      state: 'installed',
+      command: '/plugin/cua-driver',
+      version: 'cua-driver 0.12.6'
+    })
+    presenter.__mocks.mcpService.checkPluginRuntimePermissions.mockResolvedValue({
+      structuredContent: {
+        accessibility: true,
+        screen_recording: false,
+        source: {
+          attribution: 'host',
+          embedded: true
+        }
+      },
+      content: []
+    })
+
+    const action = await presenter.invokeAction(
+      'com.deepchat.plugins.cua',
+      'runtime.checkPermissions'
+    )
+
+    expect(action).toMatchObject({
+      ok: true,
+      data: {
+        platform: 'darwin',
+        accessibility: 'granted',
+        screenRecording: 'missing',
+        command: '/plugin/cua-driver'
+      }
+    })
+    expect(presenter.__mocks.mcpService.checkPluginRuntimePermissions).toHaveBeenCalledWith(
+      'cua-driver'
+    )
+    expect(directCheck).not.toHaveBeenCalled()
+
+    vi.mocked(shell.openExternal).mockResolvedValue(undefined)
+    vi.mocked(shell.openPath).mockResolvedValue('')
+    const guide = await presenter.invokeAction(
+      'com.deepchat.plugins.cua',
+      'runtime.openPermissionGuide'
+    )
+    expect(guide).toMatchObject({ ok: true })
+    expect(shell.openExternal).toHaveBeenCalledWith(
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+    )
+    expect(shell.openPath).not.toHaveBeenCalled()
+  })
+
+  it('keeps helper-app permission guidance for non-adapter macOS runtimes', async () => {
     const fixture = await createBundledFixture()
     const presenter = await createPluginService('darwin', fixture.appPath)
     const helperAppPath = path.join(
@@ -1305,17 +1447,38 @@ describe('PluginService', () => {
       'plugin:runtime/linux/${arch}/cua-driver'
     ])
     expect(manifest.capabilities).toContain('shell.openPath')
-    expect(server.args).toEqual(['mcp', '--no-daemon-relaunch'])
-    expect(server.env).toEqual({
-      CUA_DRIVER_MCP_MODE: '1',
-      CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1',
-      DEEPCHAT_COMPUTER_USE_APP_PATH: '${runtime.cua-driver.helperAppPath}',
-      DEEPCHAT_COMPUTER_USE_BINARY_PATH: '${runtime.cua-driver.command}'
+    expect(manifest.runtime.adapter).toBe('cua-embedded-v1')
+    expect(manifest.runtime.adapterContract).toEqual({
+      hostBundleId: 'com.wefonk.deepchat',
+      driverVersion: '0.12.6',
+      contractVersion: '0.2.0',
+      toolsListSchemaVersion: '1',
+      capabilityVersion: '1',
+      mcpProtocolVersion: '2025-06-18'
     })
-    expect(mcpConfig.env).toEqual(server.env)
+    expect(server.args).toEqual(['mcp', '--embedded'])
+    expect(server.env).toEqual({
+      CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0'
+    })
+    expect(server).toMatchObject({
+      startMode: 'onDemand',
+      surfaces: ['tools'],
+      toolCatalog: 'runtime/${target.platform}/${arch}/tool-catalog.json',
+      inheritEnv: 'minimal'
+    })
+    expect(mcpConfig).toEqual(
+      expect.objectContaining({
+        args: server.args,
+        env: server.env,
+        startMode: server.startMode,
+        surfaces: server.surfaces,
+        toolCatalog: server.toolCatalog,
+        inheritEnv: server.inheritEnv
+      })
+    )
   })
 
-  it('keeps CUA v0.7.1 tool policies explicit and conservative', async () => {
+  it('keeps CUA v0.12.6 tool policies explicit and conservative', async () => {
     const manifest = JSON.parse(await readFile('plugins/cua/plugin.json', 'utf8'))
     const policy = JSON.parse(await readFile('plugins/cua/policies/tool-policy.json', 'utf8'))
     const manifestTools = manifest.toolPolicies.find(
@@ -1335,6 +1498,8 @@ describe('PluginService', () => {
       'get_agent_cursor_state',
       'check_for_update',
       'health_report',
+      'get_browser_state',
+      'get_session_state',
       'start_session',
       'end_session'
     ]
@@ -1361,7 +1526,16 @@ describe('PluginService', () => {
       'set_agent_cursor_style',
       'replay_trajectory',
       'zoom',
-      'page'
+      'page',
+      'browser_prepare',
+      'browser_navigate',
+      'browser_click',
+      'browser_type',
+      'browser_dialog',
+      'browser_set_input_files',
+      'browser_download',
+      'browser_pointer',
+      'escalate_session'
     ]
 
     for (const tool of EXPECTED_ALLOW) {
@@ -1401,15 +1575,25 @@ describe('PluginService', () => {
       sourceKind: 'upstream-release',
       upstreamRepo: 'https://github.com/trycua/cua.git',
       upstreamSubdir: 'libs/cua-driver/rust',
-      tag: 'cua-driver-rs-v0.7.1',
-      commit: '7caf72bee2286f47a985c3121b56aaabdebd62b9',
-      version: '0.7.1',
+      tag: 'cua-driver-rs-v0.12.6',
+      commit: '9eb1f481b8a12cd6ffda2ad5af21653a9e5aa9e5',
+      version: '0.12.6',
+      checksumsSha256: '21486096e0c5901cafcaaf652144308abb3f088a2d9785941585a002c571233f',
       supportedTargets: ['darwin/arm64', 'darwin/x64', 'win32/x64', 'win32/arm64', 'linux/x64'],
       unsupportedTargets: ['linux/arm64']
     })
-    expect(metadata.assets['windows-x64'].name).toBe('cua-driver-rs-0.7.1-windows-x86_64.zip')
-    expect(metadata.assets['windows-arm64'].name).toBe('cua-driver-rs-0.7.1-windows-arm64.zip')
-    expect(metadata.assets['linux-x64'].name).toBe('cua-driver-rs-0.7.1-linux-x86_64-binary.tar.gz')
+    expect(metadata.assets['windows-x64'].name).toBe(
+      'cua-driver-rs-0.12.6-windows-x86_64-binary.zip'
+    )
+    expect(metadata.assets['windows-arm64'].name).toBe(
+      'cua-driver-rs-0.12.6-windows-arm64-binary.zip'
+    )
+    expect(metadata.assets['linux-x64'].name).toBe(
+      'cua-driver-rs-0.12.6-linux-x86_64-binary.tar.gz'
+    )
+    for (const asset of Object.values(metadata.assets) as Array<{ sha256: string }>) {
+      expect(asset.sha256).toMatch(/^[a-f0-9]{64}$/)
+    }
     expect(buildScript).toContain('verifyChecksum')
     expect(buildScript).toContain('downloadFile')
     expect(buildScript).toContain('isLinuxGlibcLoaderMismatch')

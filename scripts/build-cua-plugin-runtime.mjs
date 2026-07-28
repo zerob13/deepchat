@@ -15,6 +15,7 @@ import {
   parseDarwinRpaths
 } from './cua-macos-contract.mjs'
 import { signMacHelper } from './sign-cua-helper.mjs'
+import { parseCuaToolCatalog } from './cua-tool-catalog-contract.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = process.env.DEEPCHAT_ROOT_DIR
@@ -119,7 +120,8 @@ async function readUpstreamMetadata() {
     'version',
     'updatedAt',
     'releaseUrl',
-    'checksumsAsset'
+    'checksumsAsset',
+    'checksumsSha256'
   ]
   for (const field of requiredFields) {
     if (typeof metadata[field] !== 'string' || metadata[field].length === 0) {
@@ -131,6 +133,14 @@ async function readUpstreamMetadata() {
   }
   if (!metadata.assets || typeof metadata.assets !== 'object') {
     throw new Error('CUA upstream metadata must declare release assets')
+  }
+  if (!/^[a-f0-9]{64}$/.test(metadata.checksumsSha256)) {
+    throw new Error('CUA upstream metadata has an invalid checksumsSha256')
+  }
+  for (const [assetKey, asset] of Object.entries(metadata.assets)) {
+    if (!asset || typeof asset !== 'object' || !/^[a-f0-9]{64}$/.test(asset.sha256 ?? '')) {
+      throw new Error(`CUA upstream metadata has an invalid sha256 for ${assetKey}`)
+    }
   }
   return metadata
 }
@@ -207,6 +217,14 @@ async function verifyChecksum(checksumsPath, assetPath, assetName) {
   if (actual !== expected) {
     await fs.rm(assetPath, { force: true })
     throw new Error(`Checksum mismatch for ${assetName}. Expected ${expected}, got ${actual}`)
+  }
+}
+
+async function verifyPinnedChecksum(filePath, expectedHash, label) {
+  const actual = await sha256File(filePath)
+  if (actual !== expectedHash) {
+    await fs.rm(filePath, { force: true })
+    throw new Error(`Checksum mismatch for ${label}. Expected ${expectedHash}, got ${actual}`)
   }
 }
 
@@ -430,6 +448,35 @@ function smokeCheck(executable, targetPlatform, targetArch) {
   console.log((result.stdout || result.stderr).trim())
 }
 
+export async function generateCuaToolCatalog(
+  executable,
+  outputPath,
+  expectedVersion,
+  { readCommand = read } = {}
+) {
+  let parsed
+  try {
+    parsed = JSON.parse(
+      readCommand(executable, ['dump-docs', '--type', 'mcp', '--pretty'], {
+        timeout: 30_000,
+        windowsHide: true
+      })
+    )
+  } catch (error) {
+    throw new Error(
+      `Unable to generate CUA MCP tool catalog: ${error instanceof Error ? error.message : error}`
+    )
+  }
+  const catalog = parseCuaToolCatalog(parsed, `${executable} dump-docs --type mcp`)
+  if (catalog.version !== expectedVersion) {
+    throw new Error(
+      `CUA MCP tool catalog version mismatch. Expected ${expectedVersion}, got ${catalog.version}`
+    )
+  }
+  await fs.writeFile(outputPath, `${JSON.stringify(catalog, null, 2)}\n`)
+  return catalog
+}
+
 function validateDarwinArchitecture(executable, targetPlatform, targetArch) {
   if (targetPlatform !== 'darwin' || process.platform !== 'darwin') {
     return
@@ -644,27 +691,61 @@ async function main() {
   const assetPath = path.join(cacheDir, target.assetName)
   const checksumsPath = path.join(cacheDir, metadata.checksumsAsset)
 
-  await downloadFile(downloadUrl(metadata, metadata.checksumsAsset), checksumsPath)
-  await downloadFile(downloadUrl(metadata, target.assetName), assetPath)
-  await verifyChecksum(checksumsPath, assetPath, target.assetName)
-  await extractArchive(assetPath, extractDir)
+  let buildError
+  try {
+    await downloadFile(downloadUrl(metadata, metadata.checksumsAsset), checksumsPath)
+    await verifyPinnedChecksum(
+      checksumsPath,
+      metadata.checksumsSha256,
+      metadata.checksumsAsset
+    )
+    await downloadFile(downloadUrl(metadata, target.assetName), assetPath)
+    await verifyPinnedChecksum(assetPath, metadata.assets[target.assetKey].sha256, target.assetName)
+    await verifyChecksum(checksumsPath, assetPath, target.assetName)
+    await extractArchive(assetPath, extractDir)
 
-  const { runtimeDir, executable } = await stageRuntime(targetPlatform, targetArch, extractDir)
-  validateDarwinArchitecture(executable, targetPlatform, targetArch)
-  if (targetPlatform === 'darwin' && process.platform === 'darwin') {
-    enforceDarwinLoadPathContract(executable)
+    const { runtimeDir, executable } = await stageRuntime(targetPlatform, targetArch, extractDir)
+    validateDarwinArchitecture(executable, targetPlatform, targetArch)
+    if (targetPlatform === 'darwin' && process.platform === 'darwin') {
+      enforceDarwinLoadPathContract(executable)
+    }
+    await signDarwinHelper(runtimeDir, targetPlatform, packagePurpose)
+    smokeCheck(executable, targetPlatform, targetArch)
+    if (!canRunTarget(targetPlatform, targetArch)) {
+      throw new Error(
+        `CUA MCP tool catalog must be generated on its native target; host is ${process.platform}/${process.arch}, target is ${targetPlatform}/${targetArch}`
+      )
+    }
+    await generateCuaToolCatalog(
+      executable,
+      path.join(runtimeDir, 'tool-catalog.json'),
+      metadata.version
+    )
+
+    const relativeRuntimePath = path.relative(rootDir, runtimeDir)
+    const stat = await fs.stat(executable)
+    if (!fsSync.existsSync(executable) || stat.size === 0) {
+      throw new Error('Staged CUA runtime is invalid')
+    }
+    console.log(`CUA Driver ${metadata.tag} staged at ${relativeRuntimePath}`)
+  } catch (error) {
+    buildError = error
   }
-  await signDarwinHelper(runtimeDir, targetPlatform, packagePurpose)
-  smokeCheck(executable, targetPlatform, targetArch)
 
-  const relativeRuntimePath = path.relative(rootDir, runtimeDir)
-  const stat = await fs.stat(executable)
-  if (!fsSync.existsSync(executable) || stat.size === 0) {
-    throw new Error('Staged CUA runtime is invalid')
+  try {
+    await fs.rm(workRoot, { recursive: true, force: true })
+  } catch (cleanupError) {
+    if (buildError) {
+      throw new AggregateError(
+        [buildError, cleanupError],
+        'CUA runtime build failed and temporary workspace cleanup was incomplete'
+      )
+    }
+    throw cleanupError
   }
-
-  await fs.rm(workRoot, { recursive: true, force: true })
-  console.log(`CUA Driver ${metadata.tag} staged at ${relativeRuntimePath}`)
+  if (buildError) {
+    throw buildError
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

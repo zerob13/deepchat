@@ -24,6 +24,7 @@ import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPo
 import type { PluginRuntimeSupervisor } from './runtimeSupervisor'
 import { loadPluginToolCatalog } from './toolCatalog'
 import type { McpSettings } from '@/mcp/settings'
+import { CuaEmbeddedRuntimeAdapter } from './cuaEmbeddedAdapter'
 
 const execFileAsync = promisify(execFile)
 
@@ -32,6 +33,10 @@ const PLUGIN_PACKAGE_EXTENSION = '.dcplugin'
 const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_RUNTIME_OWNERSHIP_MIGRATION = 'cua-runtime-ownership'
 const CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION = 1
+const MACOS_ACCESSIBILITY_SETTINGS =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
+const MACOS_SCREEN_CAPTURE_SETTINGS =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
 
 type PluginStoreShape = {
   installations: PluginInstallationRecord[]
@@ -53,7 +58,9 @@ export interface PluginSettingsWindowPort {
 
 type PluginServiceDeps = {
   mcpSettings: McpSettings
-  mcpService: Pick<McpServicePort, 'isReady' | 'isServerRunning' | 'getServerLastError'>
+  mcpService: Pick<McpServicePort, 'isReady' | 'isServerRunning' | 'getServerLastError'> & {
+    checkPluginRuntimePermissions(serverName: string): Promise<unknown>
+  }
   runtimeSupervisor: Pick<
     PluginRuntimeSupervisor,
     | 'registerServer'
@@ -460,6 +467,17 @@ export class PluginService implements PluginServicePort {
         ownerPluginId: plugin.manifest.id,
         inheritEnv: server.inheritEnv ?? 'legacy'
       }
+      const adapter =
+        plugin.manifest.runtime?.adapter === 'cua-embedded-v1'
+          ? new CuaEmbeddedRuntimeAdapter({
+              binaryPath: command,
+              platform: this.platform,
+              contract: plugin.manifest.runtime.adapterContract!,
+              environment: Object.fromEntries(
+                Object.entries(config.env).map(([key, value]) => [key, String(value)])
+              )
+            })
+          : undefined
 
       this.runtimeSupervisor.registerServer(
         {
@@ -470,7 +488,8 @@ export class PluginService implements PluginServicePort {
           startMode,
           surfaces,
           toolCatalogPath,
-          toolCatalog
+          toolCatalog,
+          adapter
         },
         { ready: false }
       )
@@ -656,6 +675,7 @@ export class PluginService implements PluginServicePort {
   }
 
   private async checkRuntimePermissions(pluginId: string): Promise<RuntimePermissionCheckResult> {
+    const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
     const runtime = await this.refreshRuntime(pluginId)
     if (!runtime.command) {
       console.warn('[PluginHost] Runtime permission check skipped because runtime is missing:', {
@@ -672,7 +692,63 @@ export class PluginService implements PluginServicePort {
       }
     }
 
+    if (plugin.manifest.runtime?.adapter === 'cua-embedded-v1') {
+      try {
+        const response = await this.mcpService.checkPluginRuntimePermissions(
+          plugin.manifest.runtime.id
+        )
+        return this.parseRuntimePermissionMcpResult(runtime.command, response)
+      } catch (error) {
+        console.warn('[PluginHost] Supervised runtime permission check failed:', {
+          pluginId,
+          runtimeId: runtime.runtimeId,
+          error
+        })
+        return {
+          platform: this.platform,
+          accessibility: 'unknown',
+          screenRecording: 'unknown',
+          command: runtime.command,
+          error: `Permission check failed. ${this.describeError(error)}`
+        }
+      }
+    }
+
     return await this.runRuntimePermissionTool(pluginId, runtime.command)
+  }
+
+  private parseRuntimePermissionMcpResult(
+    command: string,
+    response: unknown
+  ): RuntimePermissionCheckResult {
+    const record =
+      response && typeof response === 'object' && !Array.isArray(response)
+        ? (response as Record<string, unknown>)
+        : {}
+    const structured =
+      record.structuredContent &&
+      typeof record.structuredContent === 'object' &&
+      !Array.isArray(record.structuredContent)
+        ? (record.structuredContent as Record<string, unknown>)
+        : undefined
+    if (structured) {
+      return this.parseRuntimePermissionToolResult(command, JSON.stringify(structured), '')
+    }
+
+    const content = Array.isArray(record.content)
+      ? record.content
+          .map((item) =>
+            item &&
+            typeof item === 'object' &&
+            'text' in item &&
+            typeof (item as { text?: unknown }).text === 'string'
+              ? String((item as { text: string }).text)
+              : ''
+          )
+          .filter(Boolean)
+          .join('\n')
+      : ''
+    return this.parseRuntimePermissionToolResult(command, content, '')
   }
 
   private async runRuntimePermissionTool(
@@ -733,6 +809,15 @@ export class PluginService implements PluginServicePort {
     if (this.platform === 'win32' && parsed) {
       result.uia = this.toPermissionState(parsed.uia)
       result.postMessage = this.toPermissionState(parsed.post_message ?? parsed.postMessage)
+      result.diagnostics = this.toRuntimePermissionDiagnostics(parsed)
+      return result
+    }
+
+    if (this.platform === 'darwin' && parsed) {
+      result.accessibility = this.toPermissionState(parsed.accessibility)
+      result.screenRecording = this.toPermissionState(
+        parsed.screen_recording ?? parsed.screenRecording
+      )
       result.diagnostics = this.toRuntimePermissionDiagnostics(parsed)
       return result
     }
@@ -878,6 +963,16 @@ export class PluginService implements PluginServicePort {
   private async openRuntimeGuide(pluginId: string): Promise<void> {
     const plugin = this.getInstalledOrOfficialPluginOrThrow(pluginId)
     let helperOpenError: string | undefined
+
+    if (this.platform === 'darwin' && plugin.manifest.runtime?.adapter === 'cua-embedded-v1') {
+      const permissions = await this.checkRuntimePermissions(pluginId)
+      const settingsUrl =
+        permissions.accessibility === 'granted'
+          ? MACOS_SCREEN_CAPTURE_SETTINGS
+          : MACOS_ACCESSIBILITY_SETTINGS
+      await shell.openExternal(settingsUrl)
+      return
+    }
 
     if (this.platform === 'darwin' && plugin.manifest.runtime) {
       try {
@@ -1074,6 +1169,47 @@ export class PluginService implements PluginServicePort {
       throw new Error(
         `Plugin ${manifest.id} declares unsupported runtime adapter: ${manifest.runtime.adapter}`
       )
+    }
+    if (manifest.runtime?.adapterContract && !manifest.runtime.adapter) {
+      throw new Error(
+        `Plugin ${manifest.id} declares an adapter contract without a runtime adapter`
+      )
+    }
+    if (manifest.runtime?.adapter === 'cua-embedded-v1') {
+      if (manifest.id !== CUA_PLUGIN_ID) {
+        throw new Error(`Runtime adapter cua-embedded-v1 is reserved for ${CUA_PLUGIN_ID}`)
+      }
+      const contract = manifest.runtime.adapterContract
+      const contractFields = [
+        'hostBundleId',
+        'driverVersion',
+        'contractVersion',
+        'toolsListSchemaVersion',
+        'capabilityVersion',
+        'mcpProtocolVersion'
+      ] as const
+      if (
+        !contract ||
+        contractFields.some(
+          (field) =>
+            typeof contract[field] !== 'string' ||
+            !contract[field].trim() ||
+            contract[field] !== contract[field].trim()
+        )
+      ) {
+        throw new Error(`Plugin ${manifest.id} has an invalid cua-embedded-v1 adapter contract`)
+      }
+      const adapterServers = manifest.mcpServers ?? []
+      if (
+        adapterServers.length !== 1 ||
+        adapterServers[0].id !== manifest.runtime.id ||
+        adapterServers[0].startMode !== 'onDemand' ||
+        adapterServers[0].inheritEnv !== 'minimal'
+      ) {
+        throw new Error(
+          `Plugin ${manifest.id} cua-embedded-v1 requires one matching on-demand MCP server with minimal environment inheritance`
+        )
+      }
     }
 
     if (manifest.mcpServers !== undefined && !Array.isArray(manifest.mcpServers)) {

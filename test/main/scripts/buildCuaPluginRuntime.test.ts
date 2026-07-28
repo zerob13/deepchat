@@ -44,6 +44,21 @@ async function loadBuildRuntime() {
         removeTemporaryDirectory?: (targetPath: string) => void
       }
     ) => { removedRpaths: string[] }
+    generateCuaToolCatalog: (
+      executable: string,
+      outputPath: string,
+      expectedVersion: string,
+      options: {
+        readCommand: (
+          command: string,
+          args: string[],
+          options: Record<string, unknown>
+        ) => string
+      }
+    ) => Promise<{
+      version: string
+      tools: Array<{ name: string }>
+    }>
     stageDarwinRuntime: (extractDir: string, runtimeDir: string) => Promise<void>
     stageWindowsRuntime: (extractDir: string, runtimeDir: string) => Promise<void>
   }
@@ -149,6 +164,103 @@ describe('build-cua-plugin-runtime', () => {
     await expect(stageWindowsRuntime(extractDir, runtimeDir)).rejects.toThrow(
       /missing cua-driver\.exe/
     )
+  })
+
+  it('generates a strict target-local MCP tool catalog from the native binary', async () => {
+    const { generateCuaToolCatalog } = await loadBuildRuntime()
+    const outputPath = path.join(tempRoot, 'tool-catalog.json')
+    const readCommand = vi.fn(() =>
+      JSON.stringify({
+        version: '0.12.6',
+        tools: [
+          {
+            name: 'click',
+            description: 'Click a target.',
+            input_schema: {
+              type: 'object',
+              properties: {
+                x: { type: 'number' }
+              },
+              required: ['x']
+            },
+            read_only: false,
+            destructive: true,
+            idempotent: false
+          }
+        ]
+      })
+    )
+
+    await expect(
+      generateCuaToolCatalog('/runtime/cua-driver', outputPath, '0.12.6', {
+        readCommand
+      })
+    ).resolves.toMatchObject({
+      version: '0.12.6',
+      tools: [{ name: 'click' }]
+    })
+    expect(readCommand).toHaveBeenCalledWith(
+      '/runtime/cua-driver',
+      ['dump-docs', '--type', 'mcp', '--pretty'],
+      {
+        timeout: 30_000,
+        windowsHide: true
+      }
+    )
+    await expect(readFile(outputPath, 'utf8')).resolves.toContain('"version": "0.12.6"')
+  })
+
+  it('rejects a generated catalog with a different driver version', async () => {
+    const { generateCuaToolCatalog } = await loadBuildRuntime()
+
+    await expect(
+      generateCuaToolCatalog(
+        '/runtime/cua-driver',
+        path.join(tempRoot, 'tool-catalog.json'),
+        '0.12.6',
+        {
+          readCommand: () =>
+            JSON.stringify({
+              version: '0.12.5',
+              tools: [
+                {
+                  name: 'click',
+                  description: 'Click.',
+                  input_schema: { type: 'object', properties: {} },
+                  read_only: false,
+                  destructive: true,
+                  idempotent: false
+                }
+              ]
+            })
+        }
+      )
+    ).rejects.toThrow(/Expected 0\.12\.6, got 0\.12\.5/)
+  })
+
+  it('rejects malformed safety annotations instead of emitting a partial catalog', async () => {
+    const { generateCuaToolCatalog } = await loadBuildRuntime()
+    const outputPath = path.join(tempRoot, 'tool-catalog.json')
+
+    await expect(
+      generateCuaToolCatalog('/runtime/cua-driver', outputPath, '0.12.6', {
+        readCommand: () =>
+          JSON.stringify({
+            version: '0.12.6',
+            tools: [
+              {
+                name: 'click',
+                description: 'Click.',
+                input_schema: { type: 'object', properties: {} },
+                read_only: false,
+                destructive: 'yes',
+                idempotent: false
+              }
+            ]
+          })
+      })
+    ).rejects.toThrow(/destructive must be a boolean/)
+    await expect(readFile(outputPath, 'utf8')).rejects.toThrow()
   })
 
   it('removes duplicate build-machine RPATHs before signing', async () => {

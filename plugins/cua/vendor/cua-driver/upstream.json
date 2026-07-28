@@ -2,29 +2,35 @@
   "sourceKind": "upstream-release",
   "upstreamRepo": "https://github.com/trycua/cua.git",
   "upstreamSubdir": "libs/cua-driver/rust",
-  "tag": "cua-driver-rs-v0.7.1",
-  "commit": "7caf72bee2286f47a985c3121b56aaabdebd62b9",
-  "version": "0.7.1",
-  "updatedAt": "2026-07-07",
-  "releaseUrl": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.7.1",
+  "tag": "cua-driver-rs-v0.12.6",
+  "commit": "9eb1f481b8a12cd6ffda2ad5af21653a9e5aa9e5",
+  "version": "0.12.6",
+  "updatedAt": "2026-07-24",
+  "releaseUrl": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.12.6",
   "checksumsAsset": "checksums.txt",
+  "checksumsSha256": "21486096e0c5901cafcaaf652144308abb3f088a2d9785941585a002c571233f",
   "supportedTargets": ["darwin/arm64", "darwin/x64", "win32/x64", "win32/arm64", "linux/x64"],
   "unsupportedTargets": ["linux/arm64"],
   "assets": {
     "darwin-arm64": {
-      "name": "cua-driver-rs-0.7.1-darwin-arm64.tar.gz"
+      "name": "cua-driver-rs-0.12.6-darwin-arm64.tar.gz",
+      "sha256": "c64017d5878d022df34137082fb918ae0d4304e28890569ff14458f1a54fd361"
     },
     "darwin-x64": {
-      "name": "cua-driver-rs-0.7.1-darwin-x86_64.tar.gz"
+      "name": "cua-driver-rs-0.12.6-darwin-x86_64.tar.gz",
+      "sha256": "1b177b9a94ab98d7467c0d16d0513e9324a8e51c944cb0f9a694cc2e4844cc80"
     },
     "windows-x64": {
-      "name": "cua-driver-rs-0.7.1-windows-x86_64.zip"
+      "name": "cua-driver-rs-0.12.6-windows-x86_64-binary.zip",
+      "sha256": "d18a0ca02314c6dc7dfdfbb20aac8f52c7b1547308f182546a9252a991d4d0dd"
     },
     "windows-arm64": {
-      "name": "cua-driver-rs-0.7.1-windows-arm64.zip"
+      "name": "cua-driver-rs-0.12.6-windows-arm64-binary.zip",
+      "sha256": "f8df8f5394a85dea8bd3764030d89ef73c040398f14e4a19d2ce7fd0e7fb7db3"
     },
     "linux-x64": {
-      "name": "cua-driver-rs-0.7.1-linux-x86_64-binary.tar.gz"
+      "name": "cua-driver-rs-0.12.6-linux-x86_64-binary.tar.gz",
+      "sha256": "795b8464a25b036fe1a47d9cd1f560d6b4e2ab58e23630c0de3d9feff4757039"
     }
   },
   "releasePolicy": "Stage pinned upstream release assets at build time. Do not run upstream installers or require PATH-installed runtime binaries for the bundled DeepChat plugin."

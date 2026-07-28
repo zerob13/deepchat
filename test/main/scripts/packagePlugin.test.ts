@@ -58,6 +58,15 @@ async function createCuaPluginFixture() {
       id: 'cua-driver',
       type: 'external-helper',
       displayName: 'CUA Driver',
+      adapter: 'cua-embedded-v1',
+      adapterContract: {
+        hostBundleId: 'com.wefonk.deepchat',
+        driverVersion: '0.12.6',
+        contractVersion: '0.2.0',
+        toolsListSchemaVersion: '1',
+        capabilityVersion: '1',
+        mcpProtocolVersion: '2025-06-18'
+      },
       detect: [
         'app-helper:DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
         'plugin:runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver',
@@ -71,17 +80,47 @@ async function createCuaPluginFixture() {
         displayName: 'CUA Driver',
         transport: 'stdio',
         command: '${runtime.cua-driver.command}',
-        args: ['mcp', '--no-daemon-relaunch'],
+        args: ['mcp', '--embedded'],
         env: {
-          CUA_DRIVER_MCP_MODE: '1',
-          CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1',
-          DEEPCHAT_COMPUTER_USE_APP_PATH: '${runtime.cua-driver.helperAppPath}',
-          DEEPCHAT_COMPUTER_USE_BINARY_PATH: '${runtime.cua-driver.command}'
+          CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0'
         },
-        autoApprove: []
+        autoApprove: [],
+        startMode: 'onDemand',
+        surfaces: ['tools'],
+        toolCatalog: 'runtime/${target.platform}/${arch}/tool-catalog.json',
+        inheritEnv: 'minimal'
+      }
+    ],
+    toolPolicies: [
+      {
+        serverId: 'cua-driver',
+        tools: {
+          check_permissions: 'allow'
+        }
       }
     ]
   }
+  const toolCatalog = `${JSON.stringify(
+    {
+      version: '0.12.6',
+      tools: [
+        {
+          name: 'check_permissions',
+          description: 'Check native permissions.',
+          input_schema: {
+            type: 'object',
+            properties: {},
+            required: []
+          },
+          read_only: false,
+          destructive: false,
+          idempotent: true
+        }
+      ]
+    },
+    null,
+    2
+  )}\n`
 
   await mkdir(pluginDir, { recursive: true })
   await writeFile(path.join(pluginDir, 'plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`)
@@ -97,16 +136,19 @@ async function createCuaPluginFixture() {
     await mkdir(path.join(darwinAppDir, 'Contents'), { recursive: true })
     await writeFile(path.join(darwinAppDir, 'Contents', 'Info.plist'), darwinInfoPlist())
     await writeFile(darwinExecutable, 'driver')
+    await writeFile(path.join(pluginDir, 'runtime', 'darwin', arch, 'tool-catalog.json'), toolCatalog)
     await chmod(darwinExecutable, 0o755)
 
     const runtimeDir = path.join(pluginDir, 'runtime', 'win32', arch)
     await mkdir(runtimeDir, { recursive: true })
     await writeFile(path.join(runtimeDir, 'cua-driver.exe'), 'driver')
+    await writeFile(path.join(runtimeDir, 'tool-catalog.json'), toolCatalog)
   }
   const linuxRuntimeDir = path.join(pluginDir, 'runtime', 'linux', 'x64')
   const linuxExecutable = path.join(linuxRuntimeDir, 'cua-driver')
   await mkdir(linuxRuntimeDir, { recursive: true })
   await writeFile(linuxExecutable, 'driver')
+  await writeFile(path.join(linuxRuntimeDir, 'tool-catalog.json'), toolCatalog)
   await chmod(linuxExecutable, 0o755)
 
   return { root, pluginDir }
@@ -152,10 +194,11 @@ describe('package-plugin', () => {
 
     expect(manifest.engines.targets).toEqual(['win32/arm64'])
     expect(manifest.source.url).toContain('deepchat-plugin-cua-0.0.0-win32-arm64.dcplugin')
-    expect(manifest.mcpServers[0].args).toEqual(['mcp', '--no-daemon-relaunch'])
-    expect(manifest.mcpServers[0].env.CUA_DRIVER_RS_MCP_NO_RELAUNCH).toBe('1')
+    expect(manifest.mcpServers[0].args).toEqual(['mcp', '--embedded'])
+    expect(manifest.mcpServers[0].env.CUA_DRIVER_RS_SPAWN_UIA_WORKER).toBe('0')
     expect(Object.keys(files).filter((file) => file.startsWith('runtime/')).sort()).toEqual([
-      'runtime/win32/arm64/cua-driver.exe'
+      'runtime/win32/arm64/cua-driver.exe',
+      'runtime/win32/arm64/tool-catalog.json'
     ])
   })
 
@@ -203,7 +246,8 @@ describe('package-plugin', () => {
       ])
       expect(runtimeFiles).toEqual([
         `runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/Info.plist`,
-        `runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver`
+        `runtime/darwin/${arch}/DeepChat Computer Use.app/Contents/MacOS/deepchat-cua-driver`,
+        `runtime/darwin/${arch}/tool-catalog.json`
       ])
       expect(Buffer.from(files[runtimeFiles[0]]).toString('utf8')).toContain(
         '<string>com.deepchat.computeruse.helper</string>'
@@ -224,7 +268,8 @@ describe('package-plugin', () => {
     const files = unzipSync(new Uint8Array(await readFile(artifactPath)))
 
     expect(Object.keys(files).filter((file) => file.startsWith('runtime/')).sort()).toEqual([
-      'runtime/linux/x64/cua-driver'
+      'runtime/linux/x64/cua-driver',
+      'runtime/linux/x64/tool-catalog.json'
     ])
   })
 
@@ -238,33 +283,76 @@ describe('package-plugin', () => {
     expect(result.stderr).toContain('Plugin com.deepchat.plugins.cua does not support linux/arm64')
   })
 
-  it('rejects CUA manifests that allow daemon relaunch from MCP mode', async () => {
+  it('rejects CUA manifests that omit embedded proxy mode', async () => {
     const fixture = await createCuaPluginFixture()
     const outDir = path.join(fixture.root, 'out')
     const manifestPath = path.join(fixture.pluginDir, 'plugin.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     manifest.mcpServers[0].args = ['mcp']
-    delete manifest.mcpServers[0].env.CUA_DRIVER_RS_MCP_NO_RELAUNCH
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
     const result = runPackagePlugin(fixture.pluginDir, outDir, 'win32', 'x64')
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('CUA MCP server args must be ["mcp","--no-daemon-relaunch"]')
+    expect(result.stderr).toContain('CUA MCP server args must be ["mcp","--embedded"]')
   })
 
-  it('rejects CUA manifests that omit the no-relaunch environment guard', async () => {
+  it('accepts the exact embedded adapter contract regardless of JSON key order', async () => {
     const fixture = await createCuaPluginFixture()
     const outDir = path.join(fixture.root, 'out')
     const manifestPath = path.join(fixture.pluginDir, 'plugin.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-    delete manifest.mcpServers[0].env.CUA_DRIVER_RS_MCP_NO_RELAUNCH
+    manifest.runtime.adapterContract = Object.fromEntries(
+      Object.entries(manifest.runtime.adapterContract).reverse()
+    )
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const result = runPackagePlugin(fixture.pluginDir, outDir, 'win32', 'x64')
+
+    expect(result.status).toBe(0)
+  })
+
+  it('rejects CUA manifests that omit the UIA worker guard', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+    const manifestPath = path.join(fixture.pluginDir, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    delete manifest.mcpServers[0].env.CUA_DRIVER_RS_SPAWN_UIA_WORKER
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
     const result = runPackagePlugin(fixture.pluginDir, outDir, 'win32', 'x64')
 
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('CUA MCP server env CUA_DRIVER_RS_MCP_NO_RELAUNCH must be 1')
+    expect(result.stderr).toContain(
+      'CUA MCP server env must only disable CUA_DRIVER_RS_SPAWN_UIA_WORKER'
+    )
+  })
+
+  it('rejects a static catalog that is not covered by explicit tool policy', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+    const catalogPath = path.join(
+      fixture.pluginDir,
+      'runtime',
+      'linux',
+      'x64',
+      'tool-catalog.json'
+    )
+    const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
+    catalog.tools.push({
+      name: 'click',
+      description: 'Click.',
+      input_schema: { type: 'object', properties: {} },
+      read_only: false,
+      destructive: true,
+      idempotent: false
+    })
+    await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`)
+
+    const result = runPackagePlugin(fixture.pluginDir, outDir, 'linux', 'x64')
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('CUA tool policy/catalog mismatch (missing: click; extra: none)')
   })
 
   it('rejects macOS CUA manifests that still reference upstream helper paths', async () => {

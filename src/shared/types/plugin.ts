@@ -47,6 +47,7 @@ export interface PluginRuntimeManifest {
   displayName: string
   detect: string[]
   adapter?: PluginRuntimeAdapter
+  adapterContract?: CuaEmbeddedRuntimeContract
   install?: {
     mode: 'user-confirmed'
     provider: string
@@ -54,6 +55,15 @@ export interface PluginRuntimeManifest {
     minVersion?: string
     guideUrl?: string
   }
+}
+
+export interface CuaEmbeddedRuntimeContract {
+  hostBundleId: string
+  driverVersion: string
+  contractVersion: string
+  toolsListSchemaVersion: string
+  capabilityVersion: string
+  mcpProtocolVersion: string
 }
 
 export interface PluginMcpServerManifest {

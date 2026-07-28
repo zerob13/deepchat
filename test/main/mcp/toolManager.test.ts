@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToolManager } from '@/mcp/toolManager'
+import type { PluginRuntimeStartReason } from '@/plugin/runtimeSupervisor'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -102,7 +103,7 @@ describe('ToolManager', () => {
           }>
         }
       }>
-      ensureRunning?: (serverName: string, reason: 'tool') => Promise<void>
+      ensureRunning?: (serverName: string, reason: PluginRuntimeStartReason) => Promise<void>
     } = {}
   ) {
     return new ToolManager(
@@ -364,6 +365,65 @@ describe('ToolManager', () => {
     expect(serverManager.setServerLastError).toHaveBeenCalledWith(
       serverName,
       expect.stringContaining('missing')
+    )
+  })
+
+  it('runs permission diagnostics only through the owned runtime gate', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'check_permissions',
+        description: 'Check permissions',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    liveClient.callTool.mockResolvedValue({
+      structuredContent: { accessibility: true, screen_recording: false },
+      content: [],
+      isError: false
+    })
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const ensureRunning = vi.fn().mockResolvedValue(undefined)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.cua' },
+      {
+        ensureRunning,
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.cua',
+            serverName,
+            displayName: 'CUA Driver',
+            toolCatalog: {
+              version: '0.12.6',
+              tools: [
+                {
+                  name: 'check_permissions',
+                  description: 'Check permissions',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    await expect(manager.checkPluginRuntimePermissions(serverName)).resolves.toMatchObject({
+      structuredContent: { accessibility: true, screen_recording: false }
+    })
+    expect(ensureRunning).toHaveBeenCalledWith(serverName, 'runtime-test')
+    expect(liveClient.listTools).toHaveBeenCalledOnce()
+    expect(liveClient.callTool).toHaveBeenCalledWith('check_permissions', { prompt: false })
+
+    const unowned = createToolManager(
+      createProviderSettings('manual-server'),
+      createServerManager([])
+    )
+    await expect(unowned.checkPluginRuntimePermissions('manual-server')).rejects.toThrow(
+      'is not owned by a plugin runtime'
     )
   })
 

@@ -20,7 +20,10 @@ import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
 import type { DesktopSettings } from '@/desktop/settings'
-import type { PluginOwnedToolCatalogRegistration } from '@/plugin/runtimeSupervisor'
+import type {
+  PluginOwnedToolCatalogRegistration,
+  PluginRuntimeStartReason
+} from '@/plugin/runtimeSupervisor'
 
 const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 
@@ -47,7 +50,7 @@ type PluginMcpOwnershipPort = {
   isServerAvailable(serverName: string): boolean
   getOwnerPluginId(serverName: string): string | undefined
   getAvailableToolCatalogs(): PluginOwnedToolCatalogRegistration[]
-  ensureRunning(serverName: string, reason: 'tool'): Promise<void>
+  ensureRunning(serverName: string, reason: PluginRuntimeStartReason): Promise<void>
 }
 
 const NO_PLUGIN_OWNERSHIP: PluginMcpOwnershipPort = {
@@ -148,6 +151,35 @@ export class ToolManager {
   public async getRunningClients(): Promise<McpClient[]> {
     return this.serverManager.getRunningClients()
   }
+
+  public async checkPluginRuntimePermissions(serverName: string): Promise<unknown> {
+    if (!this.pluginOwnership.ownsServer(serverName)) {
+      throw new Error(`MCP server "${serverName}" is not owned by a plugin runtime`)
+    }
+    if (!this.pluginOwnership.isServerAvailable(serverName)) {
+      throw new Error(`Plugin runtime server "${serverName}" is not available`)
+    }
+
+    await this.pluginOwnership.ensureRunning(serverName, 'runtime-test')
+    if (!this.pluginOwnership.isServerAvailable(serverName)) {
+      throw new Error(`Plugin runtime server "${serverName}" is no longer available`)
+    }
+    const client = this.serverManager.getClient(serverName)
+    if (!client) {
+      throw new Error(`Plugin runtime server "${serverName}" has no running client`)
+    }
+    await this.verifyCatalogTool(client, 'check_permissions')
+    const result = await client.callTool('check_permissions', { prompt: false })
+    if (result.isError) {
+      const detail = result.content
+        ?.map((item) => item.text)
+        .filter(Boolean)
+        .join('; ')
+      throw new Error(detail || `Plugin runtime server "${serverName}" permission check failed`)
+    }
+    return result
+  }
+
   // Get all tool definitions
   public async getAllToolDefinitions(
     access?: string[] | McpToolAccessContext,

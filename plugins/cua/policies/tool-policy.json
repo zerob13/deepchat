@@ -14,6 +14,8 @@
     "get_agent_cursor_state": "allow",
     "check_for_update": "allow",
     "health_report": "allow",
+    "get_browser_state": "allow",
+    "get_session_state": "allow",
     "start_session": "allow",
     "end_session": "allow",
     "launch_app": "ask",
@@ -38,6 +40,15 @@
     "set_agent_cursor_style": "ask",
     "replay_trajectory": "ask",
     "zoom": "ask",
-    "page": "ask"
+    "page": "ask",
+    "browser_prepare": "ask",
+    "browser_navigate": "ask",
+    "browser_click": "ask",
+    "browser_type": "ask",
+    "browser_dialog": "ask",
+    "browser_set_input_files": "ask",
+    "browser_download": "ask",
+    "browser_pointer": "ask",
+    "escalate_session": "ask"
   }
 }
