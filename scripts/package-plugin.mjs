@@ -20,6 +20,13 @@ const CUA_EMBEDDED_ADAPTER_CONTRACT = Object.freeze({
   capabilityVersion: '1',
   mcpProtocolVersion: '2025-06-18'
 })
+const CUA_PLATFORM_SPECIFIC_TOOL_PLATFORMS = Object.freeze({
+  debug_window_info: Object.freeze(['win32']),
+  mouse_button_down: Object.freeze(['linux']),
+  mouse_button_up: Object.freeze(['linux']),
+  mouse_drag: Object.freeze(['linux']),
+  parallel_mouse_drag: Object.freeze(['linux'])
+})
 
 function fail(message) {
   console.error(message)
@@ -289,6 +296,71 @@ function createPackageManifest(manifest, args) {
     next.source.url = `https://github.com/ThinkInAIXYZ/deepchat/releases/download/${releaseTag(version)}/${assetName}`
   }
   return next
+}
+
+function scopeCuaToolPolicyToTarget(pluginDir, manifest, args) {
+  if (manifest.id !== CUA_PLUGIN_ID) {
+    return
+  }
+
+  const policies = (manifest.toolPolicies ?? []).filter(
+    (policy) => policy.serverId === 'cua-driver'
+  )
+  if (
+    policies.length !== 1 ||
+    !policies[0].tools ||
+    typeof policies[0].tools !== 'object' ||
+    Array.isArray(policies[0].tools)
+  ) {
+    throw new Error('CUA must declare exactly one cua-driver tool policy')
+  }
+  const policy = policies[0]
+  for (const [toolName, decision] of Object.entries(policy.tools)) {
+    if (!['allow', 'ask', 'deny'].includes(decision)) {
+      throw new Error(`CUA tool policy ${toolName} has invalid decision: ${decision}`)
+    }
+  }
+
+  const cuaServer = (manifest.mcpServers ?? []).find((server) => server.id === 'cua-driver')
+  if (!cuaServer?.toolCatalog) {
+    throw new Error('CUA plugin must declare a target-specific tool catalog')
+  }
+  const catalogFile = assertFile(
+    pluginDir,
+    cuaServer.toolCatalog,
+    `CUA MCP tool catalog ${targetKey(args.targetPlatform, args.targetArch)}`
+  )
+  const catalog = readCuaToolCatalog(catalogFile)
+  const catalogNames = catalog.tools.map((tool) => tool.name)
+  const catalogNameSet = new Set(catalogNames)
+  const policyNames = Object.keys(policy.tools)
+  const policyNameSet = new Set(policyNames)
+  const missing = catalogNames.filter((name) => !policyNameSet.has(name))
+  const invalidPlatformTools = catalogNames.filter((name) => {
+    const platforms = Object.hasOwn(CUA_PLATFORM_SPECIFIC_TOOL_PLATFORMS, name)
+      ? CUA_PLATFORM_SPECIFIC_TOOL_PLATFORMS[name]
+      : undefined
+    return platforms && !platforms.includes(args.targetPlatform)
+  })
+  const invalidExtra = policyNames.filter((name) => {
+    if (catalogNameSet.has(name)) {
+      return false
+    }
+    const platforms = Object.hasOwn(CUA_PLATFORM_SPECIFIC_TOOL_PLATFORMS, name)
+      ? CUA_PLATFORM_SPECIFIC_TOOL_PLATFORMS[name]
+      : undefined
+    return !platforms || platforms.includes(args.targetPlatform)
+  })
+  if (missing.length > 0 || invalidPlatformTools.length > 0 || invalidExtra.length > 0) {
+    const extra = [...new Set([...invalidPlatformTools, ...invalidExtra])].sort()
+    throw new Error(
+      `CUA tool policy/catalog mismatch (missing: ${missing.sort().join(', ') || 'none'}; extra: ${extra.join(', ') || 'none'})`
+    )
+  }
+
+  policy.tools = Object.fromEntries(
+    catalogNames.map((toolName) => [toolName, policy.tools[toolName]])
+  )
 }
 
 function isManifestTargetSupported(manifest, targetPlatform, targetArch) {
@@ -589,6 +661,11 @@ function packagePlugin(pluginDir, outDir, manifest, args) {
     mode: 0o644
   }
   if (manifest.id === CUA_PLUGIN_ID) {
+    const policy = manifest.toolPolicies.find((item) => item.serverId === 'cua-driver')
+    files['policies/tool-policy.json'] = {
+      content: new TextEncoder().encode(`${JSON.stringify(policy, null, 2)}\n`),
+      mode: files['policies/tool-policy.json']?.mode ?? 0o644
+    }
     const descriptor = createCuaRuntimeIntegrityDescriptor(files, manifest, {
       ...args,
       pluginDir
@@ -617,6 +694,7 @@ try {
   if (!isManifestTargetSupported(manifest, args.targetPlatform, args.targetArch)) {
     throw new Error(`Plugin ${manifest.id} does not support ${targetKey(args.targetPlatform, args.targetArch)}`)
   }
+  scopeCuaToolPolicyToTarget(args.pluginDir, manifest, args)
   validateCuaRuntime(args.pluginDir, manifest, args)
   if (args.validateOnly) {
     console.log(`Plugin ${manifest.id}@${manifest.version} is valid`)

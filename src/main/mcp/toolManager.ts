@@ -16,7 +16,7 @@ import { McpClient } from './mcpClient'
 import { jsonrepair } from 'jsonrepair'
 import { isDeepStrictEqual } from 'node:util'
 import { getErrorMessageLabels } from '@shared/i18n'
-import { resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
+import { getExplicitlyDeniedPluginTools, resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
 import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
@@ -359,7 +359,7 @@ export class ToolManager {
           serverName: client.serverName,
           displayName: client.serverConfig.descriptions as string,
           icon: client.serverConfig.icons as string,
-          tools,
+          tools: this.filterExplicitlyDeniedTools(client.serverName, tools),
           client,
           catalogBacked: false
         })
@@ -376,11 +376,19 @@ export class ToolManager {
         serverName: registration.serverName,
         displayName: registration.displayName,
         icon: 'plugin',
-        tools: registration.toolCatalog.tools,
+        tools: this.filterExplicitlyDeniedTools(
+          registration.serverName,
+          registration.toolCatalog.tools
+        ),
         catalogBacked: true
       })
     }
     return sources
+  }
+
+  private filterExplicitlyDeniedTools(serverName: string, tools: readonly Tool[]): readonly Tool[] {
+    const deniedTools = new Set(getExplicitlyDeniedPluginTools(serverName))
+    return deniedTools.size === 0 ? tools : tools.filter((tool) => !deniedTools.has(tool.name))
   }
 
   private handleToolListError(client: McpClient, error: unknown): void {

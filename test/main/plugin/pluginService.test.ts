@@ -1612,7 +1612,10 @@ describe('PluginService', () => {
 
   it('retries a failed legacy migration without blocking unrelated plugins', async () => {
     const fixture = await createBundledFixture()
-    const presenter = await createPluginService('darwin', fixture.appPath)
+    const presenter = await createPluginService('darwin', {
+      appPath: fixture.appPath,
+      arch: 'x64'
+    })
     expect((await presenter.enablePlugin(fixture.pluginId)).ok).toBe(true)
     const now = Date.now()
     ;(presenter as any).store.set('installations', [
@@ -1629,7 +1632,15 @@ describe('PluginService', () => {
       }
     ])
     vi.clearAllMocks()
-    const activatePlugin = vi.spyOn(presenter as any, 'activatePlugin')
+    const activatePluginImplementation = (presenter as any).activatePlugin.bind(presenter)
+    const activatePlugin = vi
+      .spyOn(presenter as any, 'activatePlugin')
+      .mockImplementation(async (pluginId: string) => {
+        if (pluginId === 'com.deepchat.plugins.cua') {
+          return
+        }
+        await activatePluginImplementation(pluginId)
+      })
     presenter.__mocks.mcpServers['cua-driver'] = {
       type: 'stdio',
       command: '/fixture/cua-driver',
@@ -1657,12 +1668,11 @@ describe('PluginService', () => {
         ([serverName]) => serverName === 'cua-driver'
       )
     ).toHaveLength(2)
-    expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({
-      args: ['mcp', '--embedded'],
-      enabled: false,
-      ownerPluginId: 'com.deepchat.plugins.cua'
+    expect(activatePlugin).toHaveBeenCalledWith('com.deepchat.plugins.cua')
+    expect(presenter.__mocks.mcpServers['cua-driver']).toBeUndefined()
+    expect((presenter as any).store.get('migrations')).toMatchObject({
+      'cua-runtime-ownership': 2
     })
-    expect(presenter.__mocks.mcpServers['cua-driver'].env).not.toHaveProperty('CUA_DRIVER_MCP_MODE')
   })
 
   it('persists runtime safety sentinels in the plugin settings store', async () => {
@@ -1850,6 +1860,7 @@ describe('PluginService', () => {
       'right_click',
       'double_click',
       'drag',
+      'parallel_mouse_drag',
       'scroll',
       'move_cursor',
       'type_text',
@@ -1876,6 +1887,12 @@ describe('PluginService', () => {
       'browser_pointer',
       'escalate_session'
     ]
+    const EXPECTED_DENY = [
+      'debug_window_info',
+      'mouse_button_down',
+      'mouse_button_up',
+      'mouse_drag'
+    ]
 
     for (const tool of EXPECTED_ALLOW) {
       expect(manifestTools[tool]).toBe('allow')
@@ -1885,22 +1902,16 @@ describe('PluginService', () => {
       expect(manifestTools[tool]).toBe('ask')
       expect(policy.tools[tool]).toBe('ask')
     }
+    for (const tool of EXPECTED_DENY) {
+      expect(manifestTools[tool]).toBe('deny')
+      expect(policy.tools[tool]).toBe('deny')
+    }
 
     expect(manifestTools.screenshot).toBeUndefined()
     expect(manifestTools.set_recording).toBeUndefined()
-    expect(manifestTools.debug_window_info).toBeUndefined()
-    expect(manifestTools.mouse_button_down).toBeUndefined()
-    expect(manifestTools.mouse_button_up).toBeUndefined()
-    expect(manifestTools.mouse_drag).toBeUndefined()
-    expect(manifestTools.parallel_mouse_drag).toBeUndefined()
     expect(manifestTools.type_text_chars).toBeUndefined()
     expect(policy.tools.screenshot).toBeUndefined()
     expect(policy.tools.set_recording).toBeUndefined()
-    expect(policy.tools.debug_window_info).toBeUndefined()
-    expect(policy.tools.mouse_button_down).toBeUndefined()
-    expect(policy.tools.mouse_button_up).toBeUndefined()
-    expect(policy.tools.mouse_drag).toBeUndefined()
-    expect(policy.tools.parallel_mouse_drag).toBeUndefined()
     expect(policy.tools.type_text_chars).toBeUndefined()
   })
 

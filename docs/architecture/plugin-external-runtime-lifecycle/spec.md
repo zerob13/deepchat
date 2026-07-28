@@ -139,6 +139,18 @@ contains invalid input schemas, disagrees with the pinned runtime's generated ca
 tool-policy coverage, declares a non-tool surface, or cannot be resolved from the packaged plugin.
 There is no eager-start or empty-catalog fallback.
 
+The source CUA manifest carries the reviewed union of platform-specific tool policies. Packaging
+must explicitly recognize every platform-only tool and scope that union to the native target
+catalog, so each final `.dcplugin` still has exact catalog/policy parity. An unknown platform
+addition, a missing policy decision, or a platform-only tool appearing on the wrong target fails
+packaging rather than broadening the policy implicitly.
+
+Explicitly denied tools are not advertised to the model. The Windows-only diagnostic tool is
+denied because it exposes executable paths and UI Automation internals. Linux's stateful
+`mouse_button_down` / `mouse_drag` / `mouse_button_up` sequence is also denied because exact
+per-tool approval cannot make its press-to-release interval atomic; the atomic
+`parallel_mouse_drag` operation remains available behind `ask`.
+
 ### Sentinel and quarantine
 
 A sentinel is evidence: it is persisted immediately before a risky runtime spawn and cleared only

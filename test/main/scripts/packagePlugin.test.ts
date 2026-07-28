@@ -235,6 +235,104 @@ describe('package-plugin', () => {
     expect(integrity.files['tool-catalog.json']).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('scopes reviewed platform-specific tool policies to each target catalog', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+    const manifestPath = path.join(fixture.pluginDir, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    Object.assign(manifest.toolPolicies[0].tools, {
+      debug_window_info: 'deny',
+      mouse_button_down: 'deny',
+      mouse_button_up: 'deny',
+      mouse_drag: 'deny',
+      parallel_mouse_drag: 'ask'
+    })
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const createTool = (name: string, destructive: boolean) => ({
+      name,
+      description: `${name} fixture.`,
+      input_schema: { type: 'object', properties: {}, required: [] },
+      read_only: !destructive,
+      destructive,
+      idempotent: true
+    })
+    const linuxCatalogPath = path.join(
+      fixture.pluginDir,
+      'runtime',
+      'linux',
+      'x64',
+      'tool-catalog.json'
+    )
+    const linuxCatalog = JSON.parse(await readFile(linuxCatalogPath, 'utf8'))
+    linuxCatalog.tools.push(
+      createTool('mouse_button_down', true),
+      createTool('mouse_button_up', true),
+      createTool('mouse_drag', true),
+      createTool('parallel_mouse_drag', true)
+    )
+    await writeFile(linuxCatalogPath, `${JSON.stringify(linuxCatalog, null, 2)}\n`)
+
+    const windowsCatalogPath = path.join(
+      fixture.pluginDir,
+      'runtime',
+      'win32',
+      'x64',
+      'tool-catalog.json'
+    )
+    const windowsCatalog = JSON.parse(await readFile(windowsCatalogPath, 'utf8'))
+    windowsCatalog.tools.push(createTool('debug_window_info', false))
+    await writeFile(windowsCatalogPath, `${JSON.stringify(windowsCatalog, null, 2)}\n`)
+
+    for (const [platform, expectedPolicy] of [
+      [
+        'linux',
+        {
+          check_permissions: 'allow',
+          mouse_button_down: 'deny',
+          mouse_button_up: 'deny',
+          mouse_drag: 'deny',
+          parallel_mouse_drag: 'ask'
+        }
+      ],
+      ['win32', { check_permissions: 'allow', debug_window_info: 'deny' }]
+    ] as const) {
+      const result = runPackagePlugin(fixture.pluginDir, outDir, platform, 'x64')
+      if (result.status !== 0) {
+        throw new Error(result.stderr || result.stdout)
+      }
+      const artifactPath = path.join(
+        outDir,
+        `deepchat-plugin-cua-0.0.0-${platform}-x64.dcplugin`
+      )
+      const files = unzipSync(new Uint8Array(await readFile(artifactPath)))
+      const packagedManifest = JSON.parse(Buffer.from(files['plugin.json']).toString('utf8'))
+      const packagedPolicy = packagedManifest.toolPolicies[0].tools
+      const packagedPolicyFile = JSON.parse(
+        Buffer.from(files['policies/tool-policy.json']).toString('utf8')
+      )
+
+      expect(packagedPolicy).toEqual(expectedPolicy)
+      expect(packagedPolicyFile).toEqual(packagedManifest.toolPolicies[0])
+    }
+  })
+
+  it('rejects unrecognized platform-specific policy entries', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+    const manifestPath = path.join(fixture.pluginDir, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.toolPolicies[0].tools.unknown_platform_tool = 'ask'
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const result = runPackagePlugin(fixture.pluginDir, outDir, 'darwin', 'arm64')
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain(
+      'CUA tool policy/catalog mismatch (missing: none; extra: unknown_platform_tool)'
+    )
+  })
+
   it('rejects Windows CUA packages that include the unsigned UIA worker', async () => {
     const fixture = await createCuaPluginFixture()
     const outDir = path.join(fixture.root, 'out')

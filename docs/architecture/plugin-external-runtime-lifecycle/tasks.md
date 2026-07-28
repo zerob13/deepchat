@@ -81,6 +81,7 @@
 - [x] Cover migration re-entry, stale sentinel, changed fingerprint, retry, and integrity failure.
 - [x] Cover environment allowlists and preservation of legacy MCP inheritance.
 - [x] Cover per-target package layout, exact runtime files, checksums, and unsupported targets.
+- [x] Scope the reviewed cross-platform CUA policy union to each native target catalog.
 - [x] Run `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and `pnpm run typecheck`.
 - [x] Run focused plugin, MCP, ToolManager, package, signing, and workflow tests.
 

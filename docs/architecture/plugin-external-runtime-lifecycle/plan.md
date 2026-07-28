@@ -42,6 +42,8 @@ The native Calculator retry and native release validation remain pending.
 ## 5. Add static tool discovery
 
 - Generate and package the pinned CUA catalog via upstream `dump-docs --type mcp --pretty`.
+- Keep the reviewed source policy as a cross-platform union, explicitly map native-only tools, and
+  scope each packaged manifest to its target catalog without weakening exact parity.
 - Merge catalog definitions into `ToolManager` before a live client exists.
 - Keep conflict renaming, access filtering, and exact plugin policies identical for catalog and
   live tools.

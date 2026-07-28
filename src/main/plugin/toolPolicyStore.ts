@@ -47,12 +47,26 @@ export function getPluginToolPolicy(
   return resolvePluginToolPolicy(serverId, toolName).decision
 }
 
+function getEnabledServerPolicies(serverId: string): StoredToolPolicy[] {
+  const policies = store.get('policies') ?? []
+  return policies.filter((policy) => policy.enabled && policy.serverId === serverId)
+}
+
+export function getExplicitlyDeniedPluginTools(serverId: string): string[] {
+  const matches = getEnabledServerPolicies(serverId)
+  if (matches.length !== 1) {
+    return []
+  }
+  return Object.entries(matches[0].tools)
+    .filter(([, decision]) => decision === 'deny')
+    .map(([toolName]) => toolName)
+}
+
 export function resolvePluginToolPolicy(
   serverId: string,
   toolName: string
 ): PluginToolPolicyLookup {
-  const policies = store.get('policies') ?? []
-  const matches = policies.filter((policy) => policy.enabled && policy.serverId === serverId)
+  const matches = getEnabledServerPolicies(serverId)
   if (matches.length === 0) {
     return { managed: false, decision: null }
   }

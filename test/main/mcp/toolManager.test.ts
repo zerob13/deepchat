@@ -475,6 +475,52 @@ describe('ToolManager', () => {
     expect(client.callTool).not.toHaveBeenCalled()
   })
 
+  it('does not advertise explicitly denied plugin catalog tools', async () => {
+    const serverName = 'closed-policy-server'
+    registerPluginToolPolicy({
+      pluginId: TOOL_POLICY_PLUGIN_ID,
+      serverId: serverName,
+      tools: {
+        known_tool: 'allow',
+        internal_diagnostic: 'deny'
+      },
+      enabled: true
+    })
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([]),
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Closed Policy Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'known_tool',
+                  description: 'Known tool',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                },
+                {
+                  name: 'internal_diagnostic',
+                  description: 'Internal diagnostic',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const definitions = await manager.getAllToolDefinitions()
+
+    expect(definitions.map((definition) => definition.function.name)).toEqual(['known_tool'])
+  })
+
   it('hard-fails when a live catalog tool schema drifts', async () => {
     const serverName = 'catalog-server'
     const liveClient = createClient(serverName, [
