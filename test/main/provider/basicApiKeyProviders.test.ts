@@ -69,6 +69,7 @@ const createProviderSettings = (): ProviderSettingsPort =>
   ({
     getProviderModels: vi.fn().mockReturnValue([]),
     getCustomModels: vi.fn().mockReturnValue([]),
+    getModelRouteConfig: vi.fn().mockReturnValue(undefined),
     getModelConfig: vi.fn().mockReturnValue(undefined),
     getSetting: vi.fn().mockReturnValue(undefined),
     setProviderModels: vi.fn(),
@@ -498,15 +499,17 @@ describe('basic API-key provider registrations', () => {
   })
 
   it('uses Anthropic behavior for OpenCode Go messages models', async () => {
+    const providerSettings = createProviderSettings()
     const provider = new AiSdkProvider(
       createProvider({
         id: 'opencode-go',
         name: 'OpenCode Go',
         baseUrl: 'https://opencode.ai/zen/go/v1'
       }),
-      createProviderSettings()
+      providerSettings
     )
     ;(provider as any).isInitialized = true
+    const resolveRouteDecision = vi.spyOn(provider as any, 'resolveRouteDecision')
 
     await provider.summaryTitles(
       [{ role: 'user', content: 'Explain provider routing' }],
@@ -523,6 +526,44 @@ describe('basic API-key provider registrations', () => {
       0.3,
       50
     )
+    expect(resolveRouteDecision).toHaveBeenCalledTimes(1)
+    expect(providerSettings.getModelConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps local request shortcuts independent from provider initialization', async () => {
+    const imageProviderSettings = createProviderSettings()
+    vi.mocked(imageProviderSettings.getModelRouteConfig).mockReturnValue({
+      endpointType: 'image-generation'
+    })
+    vi.mocked(imageProviderSettings.getModelConfig).mockReturnValue({
+      endpointType: 'image-generation'
+    })
+    const imageProvider = new AiSdkProvider(
+      createProvider({
+        id: 'new-api',
+        name: 'New API',
+        apiType: 'new-api',
+        baseUrl: 'https://new-api.example.com'
+      }),
+      imageProviderSettings
+    )
+    const compatibleProvider = new AiSdkProvider(createProvider({}), createProviderSettings())
+    ;(imageProvider as any).isInitialized = false
+    ;(compatibleProvider as any).isInitialized = false
+
+    await expect(
+      imageProvider.summaryTitles(
+        [{ role: 'user', content: 'Create a quiet mountain landscape' }],
+        'image-model'
+      )
+    ).resolves.toBe('Create a quiet mountain landscape')
+    await expect(
+      compatibleProvider.suggestions(
+        [{ role: 'assistant', content: 'There is no user turn.' }],
+        'microsoft/phi-4-mini-instruct'
+      )
+    ).resolves.toEqual([])
+    expect(mockRunAiSdkGenerateText).not.toHaveBeenCalled()
   })
 
   it('routes OpenCode Go messages models through Anthropic runtime', async () => {

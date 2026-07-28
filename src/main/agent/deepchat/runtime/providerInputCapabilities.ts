@@ -1,4 +1,10 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
+import {
+  assertProviderModelRuntimeFacts,
+  resolveProviderModelRuntimeFacts,
+  type ProviderModelRuntimeFacts,
+  type ProviderModelRuntimeFactsPort
+} from './providerModelRuntimeFacts'
 
 export interface ProviderInputCapabilities {
   supportsVision: boolean
@@ -28,12 +34,17 @@ export function supportsProviderAudioInput(
 }
 
 export function resolveProviderInputCapabilities(
-  providerSettings: VisionCapabilityPort & AudioInputCapabilityPort,
+  providerSettings: ProviderModelRuntimeFactsPort,
   providerId: string,
-  modelId: string
+  modelId: string,
+  providedFacts?: ProviderModelRuntimeFacts
 ): ProviderInputCapabilities {
+  const facts =
+    providedFacts ?? resolveProviderModelRuntimeFacts(providerSettings, providerId, modelId)
+  assertProviderModelRuntimeFacts(facts, providerId, modelId)
+
   return {
-    supportsVision: supportsProviderVision(providerSettings, providerId, modelId),
-    supportsAudioInput: supportsProviderAudioInput(providerSettings, providerId, modelId)
+    supportsVision: Boolean(facts.modelConfig.vision),
+    supportsAudioInput: facts.capabilitySnapshot.supportsAudioInput
   }
 }

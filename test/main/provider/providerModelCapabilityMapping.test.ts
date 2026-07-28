@@ -1,5 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const createCatalogSnapshot = (supportsReasoning: boolean) => ({
+  modelMatched: supportsReasoning,
+  reasoningPortrait: supportsReasoning ? { supported: true } : null,
+  supportsReasoning,
+  thinkingBudgetRange: {},
+  supportsSearch: false,
+  searchDefaults: {},
+  temperatureCapability: undefined,
+  supportsAudioInput: false,
+  supportsReasoningEffort: false,
+  reasoningEffortDefault: undefined,
+  supportsVerbosity: false,
+  verbosityDefault: undefined
+})
+
 describe('ProviderSettings provider model capability mapping', () => {
   const loadProviderSettings = async () => {
     const { ProviderSettings } = await import('../../../src/main/provider/settings')
@@ -18,12 +33,17 @@ describe('ProviderSettings provider model capability mapping', () => {
 
   it('resolves new-api reasoning capability from endpoint type instead of stored default state', async () => {
     const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
-    const supportsReasoning = vi
-      .spyOn(modelCapabilities, 'supportsReasoning')
-      .mockImplementation((providerId, modelId) => providerId === 'openai' && modelId === 'gpt-5.4')
+    const catalogSnapshot = vi
+      .spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot')
+      .mockImplementation((providerId, modelId) =>
+        createCatalogSnapshot(providerId === 'openai' && modelId === 'gpt-5.4')
+      )
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(true)
 
+    const getProviderModelRouteMetadata = vi.fn()
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
       providerModelHelper: {
+        getProviderModelRouteMetadata,
         getProviderModels: vi.fn().mockReturnValue([
           {
             id: 'gpt-5.4',
@@ -48,12 +68,16 @@ describe('ProviderSettings provider model capability mapping', () => {
         reasoning: true
       })
     ])
-    expect(supportsReasoning).toHaveBeenCalledWith('openai', 'gpt-5.4')
+    expect(catalogSnapshot).toHaveBeenCalledWith('openai', 'gpt-5.4')
+    expect(getProviderModelRouteMetadata).not.toHaveBeenCalled()
+    expect(presenter.getModelConfig).not.toHaveBeenCalled()
   })
 
   it('preserves explicit stored reasoning support when capability registry has no match', async () => {
     const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
-    vi.spyOn(modelCapabilities, 'supportsReasoning').mockReturnValue(false)
+    vi.spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot').mockReturnValue(
+      createCatalogSnapshot(false)
+    )
 
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
       providerModelHelper: {
@@ -85,11 +109,12 @@ describe('ProviderSettings provider model capability mapping', () => {
 
   it('maps routed reasoning capability for new-api-like fork providers from supported endpoints', async () => {
     const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
-    const supportsReasoning = vi
-      .spyOn(modelCapabilities, 'supportsReasoning')
-      .mockImplementation(
-        (providerId, modelId) => providerId === 'anthropic' && modelId === 'claude-opus-4-7'
+    const catalogSnapshot = vi
+      .spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot')
+      .mockImplementation((providerId, modelId) =>
+        createCatalogSnapshot(providerId === 'anthropic' && modelId === 'claude-opus-4-7')
       )
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(true)
 
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
       providerModelHelper: {
@@ -117,15 +142,16 @@ describe('ProviderSettings provider model capability mapping', () => {
         reasoning: true
       })
     ])
-    expect(supportsReasoning).toHaveBeenCalledWith('anthropic', 'claude-opus-4-7')
+    expect(catalogSnapshot).toHaveBeenCalledWith('anthropic', 'claude-opus-4-7')
   })
 
   it('keeps anthropic transport relays on provider-local capability semantics', async () => {
     const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
-    const supportsReasoning = vi
-      .spyOn(modelCapabilities, 'supportsReasoning')
-      .mockImplementation(
-        (providerId, modelId) => providerId === 'anthropic' && modelId === 'claude-opus-4-7'
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(false)
+    const catalogSnapshot = vi
+      .spyOn(modelCapabilities, 'getCatalogCapabilitySnapshot')
+      .mockImplementation((providerId, modelId) =>
+        createCatalogSnapshot(providerId === 'anthropic' && modelId === 'claude-opus-4-7')
       )
 
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
@@ -159,7 +185,31 @@ describe('ProviderSettings provider model capability mapping', () => {
         reasoning: false
       })
     ])
-    expect(supportsReasoning).not.toHaveBeenCalled()
+    expect(catalogSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('skips identity resolution for model lists without reasoning candidates', async () => {
+    const { ProviderSettings, modelCapabilities } = await loadProviderSettings()
+    vi.spyOn(modelCapabilities, 'hasReasoningCandidate').mockReturnValue(false)
+
+    const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
+      providerModelHelper: {
+        getProviderModels: vi.fn().mockReturnValue(
+          Array.from({ length: 500 }, (_, index) => ({
+            id: `plain-model-${index}`,
+            name: `Plain Model ${index}`,
+            group: 'default',
+            providerId: 'new-api',
+            isCustom: false,
+            reasoning: false
+          }))
+        )
+      }
+    }) as InstanceType<typeof ProviderSettings>
+    const resolveIdentity = vi.spyOn(presenter as any, 'resolveStoredModelCapabilityIdentity')
+
+    expect(presenter.getProviderModels('new-api')).toHaveLength(500)
+    expect(resolveIdentity).not.toHaveBeenCalled()
   })
 
   it('maps zenmux anthropic routes to anthropic capability semantics', async () => {
@@ -179,8 +229,46 @@ describe('ProviderSettings provider model capability mapping', () => {
       getCustomModels: vi.fn().mockReturnValue([])
     }) as InstanceType<typeof ProviderSettings>
 
-    expect(presenter.getCapabilityProviderId('zenmux', 'anthropic/claude-opus-4-7')).toBe(
-      'anthropic'
+    expect(
+      presenter.getCapabilitySnapshot({
+        providerId: 'zenmux',
+        modelId: 'anthropic/claude-opus-4-7'
+      }).identity.providerId
+    ).toBe('anthropic')
+  })
+
+  it('does not load the full model list when a targeted capability route is absent', async () => {
+    const { ProviderSettings } = await loadProviderSettings()
+    const getProviderModels = vi.fn().mockReturnValue([])
+    const getProviderModelRouteMetadata = vi.fn().mockReturnValue(undefined)
+    const modelConfig = { endpointType: undefined }
+    const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
+      providerHelper: {
+        getProviderById: vi.fn().mockReturnValue({
+          id: 'custom-relay',
+          apiType: 'openai'
+        })
+      },
+      providerModelHelper: {
+        getProviderModelRouteMetadata,
+        getProviderModels,
+        getCustomModels: vi.fn().mockReturnValue([])
+      },
+      getModelConfig: vi.fn().mockReturnValue(modelConfig)
+    }) as InstanceType<typeof ProviderSettings>
+
+    expect(
+      presenter.getCapabilitySnapshot({
+        providerId: 'custom-relay',
+        modelId: 'unknown-model'
+      }).identity.providerId
+    ).toBe('custom-relay')
+    expect(getProviderModelRouteMetadata).toHaveBeenCalledOnce()
+    expect(getProviderModelRouteMetadata).toHaveBeenCalledWith(
+      'custom-relay',
+      'unknown-model',
+      modelConfig
     )
+    expect(getProviderModels).not.toHaveBeenCalled()
   })
 })

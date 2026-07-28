@@ -896,6 +896,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "Dieses Modell legt die Temperatur auf {value} fest.",
+    "topPFixedByPolicy": "Dieses Modell legt Top P auf {value} fest.",
     "title": "Modelleinstellungen",
     "systemPrompt": {
       "label": "System-prompt",
@@ -959,8 +961,7 @@
       },
       "temperature": {
         "label": "Temperatur",
-        "description": "Steuert die Zufälligkeit der Ausgabe. Die meisten Modelle nutzen 0-1, manche unterstützen 0-2; je höher, desto zufälliger.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ist bei aktiviertem Denken fest auf {enabled} und bei deaktiviertem Denken fest auf {disabled} gesetzt."
+        "description": "Steuert die Zufälligkeit der Ausgabe. Die meisten Modelle nutzen 0-1, manche unterstützen 0-2; je höher, desto zufälliger."
       },
       "topP": {
         "label": "Top P",

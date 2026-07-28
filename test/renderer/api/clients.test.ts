@@ -863,11 +863,12 @@ describe('renderer api clients', () => {
             case 'models.getCapabilities':
               return {
                 capabilities: {
+                  supportsAudioInput: false,
                   supportsReasoning: true,
                   reasoningPortrait: null,
-                  thinkingBudgetRange: null,
-                  supportsSearch: null,
-                  searchDefaults: null,
+                  thinkingBudgetRange: {},
+                  supportsSearch: false,
+                  searchDefaults: {},
                   supportsTemperatureControl: true,
                   temperatureCapability: true
                 }
@@ -1729,7 +1730,7 @@ describe('renderer api clients', () => {
       reasoning: false,
       type: 'chat'
     })
-    await modelClient.getCapabilities('openai', 'gpt-5.4')
+    await modelClient.getCapabilities({ providerId: 'openai', modelId: 'gpt-5.4' })
     modelClient.onModelsChanged(vi.fn())
     modelClient.onModelStatusChanged(vi.fn())
     modelClient.onModelConfigChanged(vi.fn())

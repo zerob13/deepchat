@@ -299,11 +299,12 @@ const mountApp = async (options?: {
         case 'models.getCapabilities':
           return Promise.resolve({
             capabilities: {
-              supportsReasoning: null,
+              supportsAudioInput: false,
+              supportsReasoning: false,
               reasoningPortrait: null,
-              thinkingBudgetRange: null,
-              supportsSearch: null,
-              searchDefaults: null,
+              thinkingBudgetRange: {},
+              supportsSearch: false,
+              searchDefaults: {},
               supportsTemperatureControl: true,
               temperatureCapability: true
             }

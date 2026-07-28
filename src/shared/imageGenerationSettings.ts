@@ -103,7 +103,7 @@ const isOpenAICompatibleProvider = (target: OpenAIImageGenerationSettingsTarget)
     return true
   }
 
-  if (providerOptionsKey === 'openai' || providerOptionsKey === 'new-api') {
+  if (providerOptionsKey === 'openai') {
     return true
   }
 

@@ -2,6 +2,7 @@ import type { ProviderModelResolutionPort } from '@/provider/settings'
 import type { PromptSettings } from '@/agent/promptSettings'
 import type { PermissionMode, SessionGenerationSettings } from '@shared/types/agent-interface'
 import type { ReasoningPortrait } from '@shared/types/model-db'
+import type { ResolvedModelCapabilitySnapshot } from '@shared/types/model-capabilities'
 import {
   getReasoningEffectiveEnabledForProvider,
   hasAnthropicReasoningToggle,
@@ -17,7 +18,6 @@ import {
   toValidNonNegativeInteger,
   validateGenerationNumericField
 } from '@shared/utils/generationSettingsValidation'
-import { resolveMoonshotKimiTemperaturePolicy } from '@shared/moonshotKimiPolicy'
 import {
   DEFAULT_MODEL_TIMEOUT,
   MODEL_TIMEOUT_MAX_MS,
@@ -35,6 +35,11 @@ import { isDeepSeekSeriesModelId } from '@shared/model'
 import { providerDbLoader } from '@/provider/providerDbLoader'
 import { capAgentDefaultMaxTokens } from './contextBudget'
 import type { InterleavedReasoningConfig } from './types'
+import {
+  assertProviderModelRuntimeFacts,
+  resolveProviderModelRuntimeFacts,
+  type ProviderModelRuntimeFacts
+} from './providerModelRuntimeFacts'
 
 export type PersistedSessionGenerationRow = {
   provider_id: string
@@ -73,7 +78,8 @@ function parsePersistedJson<T>(value: string | null): T | undefined {
 
 export function mapPersistedGenerationPatch(
   providerSettings: ProviderModelResolutionPort,
-  sessionRow: PersistedSessionGenerationRow
+  sessionRow: PersistedSessionGenerationRow,
+  capabilitySnapshot?: ResolvedModelCapabilitySnapshot
 ): Partial<SessionGenerationSettings> {
   const patch: Partial<SessionGenerationSettings> = {}
 
@@ -102,10 +108,15 @@ export function mapPersistedGenerationPatch(
     patch.reasoningEffort = sessionRow.reasoning_effort
   }
   if (sessionRow.reasoning_visibility !== null) {
+    const snapshot =
+      capabilitySnapshot ??
+      providerSettings.getCapabilitySnapshot({
+        providerId: sessionRow.provider_id,
+        modelId: sessionRow.model_id
+      })
     const reasoningVisibility = normalizeReasoningVisibility(
-      providerSettings,
-      sessionRow.provider_id,
-      sessionRow.model_id,
+      snapshot.identity.providerId,
+      snapshot.reasoningPortrait,
       sessionRow.reasoning_visibility
     )
     if (reasoningVisibility) {
@@ -214,16 +225,16 @@ async function buildDefaultGenerationSettings(
   providerSettings: ProviderModelResolutionPort,
   promptSettings: Pick<PromptSettings, 'getDefaultSystemPrompt'>,
   providerId: string,
-  modelId: string
-): Promise<SessionGenerationSettings> {
-  const modelConfig = providerSettings.getModelConfig(modelId, providerId)
-  const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
+  modelId: string,
+  context: ProviderModelRuntimeFacts = resolveProviderModelRuntimeFacts(
+    providerSettings,
     providerId,
-    modelId,
-    modelConfig.reasoning
+    modelId
   )
-  const portrait = getReasoningPortrait(providerSettings, providerId, modelId)
-  const capabilityProviderId = resolveCapabilityProviderId(providerSettings, providerId, modelId)
+): Promise<SessionGenerationSettings> {
+  const { modelConfig, capabilitySnapshot: snapshot } = context
+  const portrait = snapshot.reasoningPortrait
+  const capabilityProviderId = snapshot.identity.providerId
   const anthropicReasoningToggle = hasAnthropicReasoningToggle(capabilityProviderId, portrait)
   const anthropicReasoningEnabled = anthropicReasoningToggle
     ? getReasoningEffectiveEnabledForProvider(capabilityProviderId, portrait, {
@@ -244,7 +255,11 @@ async function buildDefaultGenerationSettings(
   const defaults: SessionGenerationSettings = {
     systemPrompt: defaultSystemPrompt ?? '',
     temperature:
-      fixedTemperatureKimi?.temperature ?? parseFiniteNumericValue(modelConfig.temperature) ?? 0.7,
+      (snapshot.requestPolicy.temperature.mode === 'fixed'
+        ? snapshot.requestPolicy.temperature.value
+        : undefined) ??
+      parseFiniteNumericValue(modelConfig.temperature) ??
+      0.7,
     topP: normalizeTopP(modelConfig.topP),
     contextLength: contextLengthDefault,
     timeout:
@@ -299,25 +314,22 @@ async function buildDefaultGenerationSettings(
     }
   }
 
-  const supportsReasoning = providerSettings.supportsReasoningCapability(providerId, modelId)
-  if (supportsReasoning) {
+  if (snapshot.supportsReasoning) {
     const defaultBudget = normalizeLegacyThinkingBudgetValue(
-      modelConfig.thinkingBudget ??
-        providerSettings.getThinkingBudgetRange(providerId, modelId)?.default
+      modelConfig.thinkingBudget ?? snapshot.thinkingBudgetRange.default
     )
     if (defaultBudget !== undefined) {
       defaults.thinkingBudget = defaultBudget
     }
   }
 
-  const supportsEffort = providerSettings.supportsReasoningEffortCapability(providerId, modelId)
-  if (supportsEffort && (!anthropicReasoningToggle || anthropicReasoningEnabled)) {
-    const rawEffort =
-      modelConfig.reasoningEffort ?? providerSettings.getReasoningEffortDefault(providerId, modelId)
+  if (
+    snapshot.supportsReasoningEffort &&
+    (!anthropicReasoningToggle || anthropicReasoningEnabled)
+  ) {
+    const rawEffort = modelConfig.reasoningEffort ?? snapshot.reasoningEffortDefault
     const normalizedEffort = normalizeReasoningEffort(
-      providerSettings,
-      providerId,
-      modelId,
+      portrait,
       rawEffort
     )
     if (normalizedEffort) {
@@ -328,9 +340,8 @@ async function buildDefaultGenerationSettings(
   if (anthropicReasoningToggle && anthropicReasoningEnabled) {
     const rawVisibility = modelConfig.reasoningVisibility ?? portrait?.visibility
     const normalizedVisibility = normalizeReasoningVisibility(
-      providerSettings,
-      providerId,
-      modelId,
+      capabilityProviderId,
+      portrait,
       rawVisibility
     )
     if (normalizedVisibility) {
@@ -338,16 +349,9 @@ async function buildDefaultGenerationSettings(
     }
   }
 
-  const supportsVerbosity = providerSettings.supportsVerbosityCapability(providerId, modelId)
-  if (supportsVerbosity) {
-    const rawVerbosity =
-      modelConfig.verbosity ?? providerSettings.getVerbosityDefault(providerId, modelId)
-    const normalizedVerbosity = normalizeVerbosity(
-      providerSettings,
-      providerId,
-      modelId,
-      rawVerbosity
-    )
+  if (snapshot.supportsVerbosity) {
+    const rawVerbosity = modelConfig.verbosity ?? snapshot.verbosityDefault
+    const normalizedVerbosity = normalizeVerbosity(portrait, rawVerbosity)
     if (normalizedVerbosity) {
       defaults.verbosity = normalizedVerbosity
     }
@@ -362,16 +366,17 @@ export async function sanitizeGenerationSettings(
   providerId: string,
   modelId: string,
   patch: Partial<SessionGenerationSettings>,
-  baseSettings?: SessionGenerationSettings
-): Promise<SessionGenerationSettings> {
-  const modelConfig = providerSettings.getModelConfig(modelId, providerId)
-  const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
+  baseSettings?: SessionGenerationSettings,
+  capabilityContext: ProviderModelRuntimeFacts = resolveProviderModelRuntimeFacts(
+    providerSettings,
     providerId,
-    modelId,
-    modelConfig.reasoning
+    modelId
   )
-  const portrait = getReasoningPortrait(providerSettings, providerId, modelId)
-  const capabilityProviderId = resolveCapabilityProviderId(providerSettings, providerId, modelId)
+): Promise<SessionGenerationSettings> {
+  assertProviderModelRuntimeFacts(capabilityContext, providerId, modelId)
+  const { modelConfig, capabilitySnapshot: snapshot } = capabilityContext
+  const portrait = snapshot.reasoningPortrait
+  const capabilityProviderId = snapshot.identity.providerId
   const anthropicReasoningToggle = hasAnthropicReasoningToggle(capabilityProviderId, portrait)
   const anthropicReasoningEnabled = anthropicReasoningToggle
     ? getReasoningEffectiveEnabledForProvider(capabilityProviderId, portrait, {
@@ -381,7 +386,13 @@ export async function sanitizeGenerationSettings(
     : true
   const base = baseSettings
     ? { ...baseSettings }
-    : await buildDefaultGenerationSettings(providerSettings, promptSettings, providerId, modelId)
+    : await buildDefaultGenerationSettings(
+        providerSettings,
+        promptSettings,
+        providerId,
+        modelId,
+        capabilityContext
+      )
   const next: SessionGenerationSettings = { ...base }
 
   if (Object.prototype.hasOwnProperty.call(patch, 'systemPrompt')) {
@@ -446,8 +457,7 @@ export async function sanitizeGenerationSettings(
     }
   }
 
-  const supportsReasoning = providerSettings.supportsReasoningCapability(providerId, modelId)
-  if (supportsReasoning) {
+  if (snapshot.supportsReasoning) {
     if (Object.prototype.hasOwnProperty.call(patch, 'thinkingBudget')) {
       const raw = patch.thinkingBudget
       if (raw === undefined) {
@@ -463,15 +473,17 @@ export async function sanitizeGenerationSettings(
     delete next.thinkingBudget
   }
 
-  const supportsEffort = providerSettings.supportsReasoningEffortCapability(providerId, modelId)
-  if (supportsEffort && (!anthropicReasoningToggle || anthropicReasoningEnabled)) {
+  if (
+    snapshot.supportsReasoningEffort &&
+    (!anthropicReasoningToggle || anthropicReasoningEnabled)
+  ) {
     const fromPatch = Object.prototype.hasOwnProperty.call(patch, 'reasoningEffort')
       ? patch.reasoningEffort
       : next.reasoningEffort
-    const defaultEffort = providerSettings.getReasoningEffortDefault(providerId, modelId)
+    const defaultEffort = snapshot.reasoningEffortDefault
     const normalizedEffort =
-      normalizeReasoningEffort(providerSettings, providerId, modelId, fromPatch) ??
-      normalizeReasoningEffort(providerSettings, providerId, modelId, defaultEffort)
+      normalizeReasoningEffort(portrait, fromPatch) ??
+      normalizeReasoningEffort(portrait, defaultEffort)
     if (normalizedEffort) {
       next.reasoningEffort = normalizedEffort
     } else {
@@ -486,13 +498,12 @@ export async function sanitizeGenerationSettings(
       ? patch.reasoningVisibility
       : next.reasoningVisibility
     const defaultVisibility = normalizeReasoningVisibility(
-      providerSettings,
-      providerId,
-      modelId,
+      capabilityProviderId,
+      portrait,
       modelConfig.reasoningVisibility ?? portrait?.visibility
     )
     const normalizedVisibility =
-      normalizeReasoningVisibility(providerSettings, providerId, modelId, fromPatch) ??
+      normalizeReasoningVisibility(capabilityProviderId, portrait, fromPatch) ??
       defaultVisibility
     if (normalizedVisibility) {
       next.reasoningVisibility = normalizedVisibility
@@ -503,15 +514,13 @@ export async function sanitizeGenerationSettings(
     delete next.reasoningVisibility
   }
 
-  const supportsVerbosity = providerSettings.supportsVerbosityCapability(providerId, modelId)
-  if (supportsVerbosity) {
+  if (snapshot.supportsVerbosity) {
     const fromPatch = Object.prototype.hasOwnProperty.call(patch, 'verbosity')
       ? patch.verbosity
       : next.verbosity
-    const defaultVerbosity = providerSettings.getVerbosityDefault(providerId, modelId)
+    const defaultVerbosity = snapshot.verbosityDefault
     const normalizedVerbosity =
-      normalizeVerbosity(providerSettings, providerId, modelId, fromPatch) ??
-      normalizeVerbosity(providerSettings, providerId, modelId, defaultVerbosity)
+      normalizeVerbosity(portrait, fromPatch) ?? normalizeVerbosity(portrait, defaultVerbosity)
     if (normalizedVerbosity) {
       next.verbosity = normalizedVerbosity
     } else {
@@ -589,8 +598,8 @@ export async function sanitizeGenerationSettings(
     delete next.videoGeneration
   }
 
-  if (fixedTemperatureKimi) {
-    next.temperature = fixedTemperatureKimi.temperature
+  if (snapshot.requestPolicy.temperature.mode === 'fixed') {
+    next.temperature = snapshot.requestPolicy.temperature.value
   }
 
   return next
@@ -600,9 +609,13 @@ export function resolveInterleavedReasoningConfig(
   providerSettings: ProviderModelResolutionPort,
   providerId: string,
   modelId: string,
-  generationSettings: SessionGenerationSettings
+  generationSettings: SessionGenerationSettings,
+  capabilitySnapshot: ResolvedModelCapabilitySnapshot = providerSettings.getCapabilitySnapshot({
+    providerId,
+    modelId
+  })
 ): InterleavedReasoningConfig {
-  const portrait = getReasoningPortrait(providerSettings, providerId, modelId)
+  const portrait = capabilitySnapshot.reasoningPortrait
   const isDeepSeekSeries = isDeepSeekSeriesModelId(modelId)
   const explicitSessionSetting =
     typeof generationSettings.forceInterleavedThinkingCompat === 'boolean'
@@ -610,7 +623,7 @@ export function resolveInterleavedReasoningConfig(
       : undefined
   const forcedBySessionSetting = explicitSessionSetting === true
   const portraitInterleaved = portrait?.interleaved === true
-  const reasoningSupported = providerSettings.supportsReasoningCapability(providerId, modelId)
+  const reasoningSupported = capabilitySnapshot.supportsReasoning
   const preserveReasoningContent =
     isDeepSeekSeries ||
     (explicitSessionSetting !== undefined ? explicitSessionSetting : portraitInterleaved)
@@ -626,38 +639,20 @@ export function resolveInterleavedReasoningConfig(
 }
 
 function normalizeReasoningEffort(
-  providerSettings: ProviderModelResolutionPort,
-  providerId: string,
-  modelId: string | undefined,
+  portrait: ReasoningPortrait | null,
   value: unknown
 ): SessionGenerationSettings['reasoningEffort'] | undefined {
   if (!isReasoningEffort(value)) {
     return undefined
   }
-  const normalizedValue = value
-
-  if (!modelId) {
-    return normalizedValue
-  }
-
-  const portrait = getReasoningPortrait(providerSettings, providerId, modelId)
-  return normalizeReasoningEffortValue(portrait, normalizedValue)
+  return normalizeReasoningEffortValue(portrait, value)
 }
 
 function normalizeReasoningVisibility(
-  providerSettings: ProviderModelResolutionPort,
-  providerId: string,
-  modelId: string | undefined,
+  capabilityProviderId: string,
+  portrait: ReasoningPortrait | null,
   value: unknown
 ): SessionGenerationSettings['reasoningVisibility'] | undefined {
-  if (!modelId) {
-    return (
-      normalizeAnthropicReasoningVisibilityValue(value) ?? normalizeReasoningVisibilityValue(value)
-    )
-  }
-
-  const portrait = getReasoningPortrait(providerSettings, providerId, modelId)
-  const capabilityProviderId = resolveCapabilityProviderId(providerSettings, providerId, modelId)
   if (hasAnthropicReasoningToggle(capabilityProviderId, portrait)) {
     return normalizeAnthropicReasoningVisibilityValue(value) ?? 'omitted'
   }
@@ -666,9 +661,7 @@ function normalizeReasoningVisibility(
 }
 
 function normalizeVerbosity(
-  providerSettings: ProviderModelResolutionPort,
-  providerId: string,
-  modelId: string,
+  portrait: ReasoningPortrait | null,
   value: unknown
 ): SessionGenerationSettings['verbosity'] | undefined {
   if (!isVerbosity(value)) {
@@ -676,7 +669,6 @@ function normalizeVerbosity(
   }
   const normalizedValue = value
 
-  const portrait = getReasoningPortrait(providerSettings, providerId, modelId)
   const options = portrait?.verbosityOptions?.filter(isVerbosity)
   if (!options || options.length === 0) {
     return normalizedValue
@@ -692,24 +684,4 @@ function normalizeVerbosity(
   }
 
   return undefined
-}
-
-export function getReasoningPortrait(
-  providerSettings: ProviderModelResolutionPort,
-  providerId: string,
-  modelId: string
-): ReasoningPortrait | null {
-  return providerSettings.getReasoningPortrait(providerId, modelId)
-}
-
-export function resolveCapabilityProviderId(
-  providerSettings: ProviderModelResolutionPort,
-  providerId: string,
-  modelId: string | undefined
-): string {
-  if (!modelId) {
-    return providerId
-  }
-
-  return providerSettings.getCapabilityProviderId(providerId, modelId)
 }

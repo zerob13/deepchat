@@ -38,11 +38,7 @@ import {
 } from '@/agent/deepchat/runtime/contextBudget'
 import type { ContextBuildMetadata } from '@/agent/deepchat/runtime/contextBuilder'
 import type { CompactionService } from '@/agent/deepchat/runtime/compactionService'
-import {
-  getReasoningPortrait,
-  resolveCapabilityProviderId,
-  resolveInterleavedReasoningConfig
-} from '@/agent/deepchat/runtime/generationSettings'
+import { resolveInterleavedReasoningConfig } from '@/agent/deepchat/runtime/generationSettings'
 import { isContextWindowErrorLike } from '@/agent/deepchat/runtime/contextWindowError'
 import { cloneBlocksForRenderer } from '@/agent/deepchat/runtime/echo'
 import { buildPersistableMessageTracePayload } from '@/agent/deepchat/runtime/messageTracePayload'
@@ -91,6 +87,11 @@ import {
   shouldBypassDeepChatContextBudget
 } from './contextBudgetPolicy'
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
+import {
+  assertProviderModelRuntimeFacts,
+  resolveProviderModelRuntimeFacts,
+  type ProviderModelRuntimeFacts
+} from './providerModelRuntimeFacts'
 import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
@@ -132,6 +133,7 @@ export type DeepChatLoopRunInput = {
   messages: ChatMessage[]
   projectDir: string | null
   resourceInstance?: DeepChatAgentInstance
+  providerModelFacts?: ProviderModelRuntimeFacts
   tools?: MCPToolDefinition[]
   baseSystemPrompt?: string
   contextContributions?: ContextRuntimeContributions
@@ -270,6 +272,7 @@ export class DeepChatLoopRunner {
       messages,
       projectDir,
       resourceInstance: providedResourceInstance,
+      providerModelFacts: providedProviderModelFacts,
       tools: providedTools,
       baseSystemPrompt,
       contextContributions,
@@ -304,21 +307,32 @@ export class DeepChatLoopRunner {
       throw new Error('Request was not sent because the prompt is empty.')
     }
 
+    const providerModelFacts =
+      providedProviderModelFacts ??
+      resolveProviderModelRuntimeFacts(
+        this.ports.providerSettings,
+        state.providerId,
+        state.modelId
+      )
+    assertProviderModelRuntimeFacts(providerModelFacts, state.providerId, state.modelId)
     const generationSettings = await awaitWithAbort(
-      this.ports.sessionSettings.getEffectiveGenerationSettings(sessionId, resourceInstance),
+      this.ports.sessionSettings.getEffectiveGenerationSettings(
+        sessionId,
+        resourceInstance,
+        providerModelFacts
+      ),
       abortSignal
     )
-    const baseModelConfig = this.ports.providerSettings.getModelConfig(
-      state.modelId,
-      state.providerId
-    )
+    const baseModelConfig = providerModelFacts.modelConfig
+    const capabilitySnapshot = providerModelFacts.capabilitySnapshot
     const interleavedReasoning =
       providedInterleavedReasoning ??
       resolveInterleavedReasoningConfig(
         this.ports.providerSettings,
         state.providerId,
         state.modelId,
-        generationSettings
+        generationSettings,
+        capabilitySnapshot
       )
     const contextBudgetLength = resolveDeepChatContextBudgetLength(
       state.providerId,
@@ -326,16 +340,8 @@ export class DeepChatLoopRunner {
       baseModelConfig,
       state.modelId
     )
-    const capabilityProviderId = resolveCapabilityProviderId(
-      this.ports.providerSettings,
-      state.providerId,
-      state.modelId
-    )
-    const reasoningPortrait = getReasoningPortrait(
-      this.ports.providerSettings,
-      state.providerId,
-      state.modelId
-    )
+    const capabilityProviderId = capabilitySnapshot.identity.providerId
+    const reasoningPortrait = capabilitySnapshot.reasoningPortrait
     const modelConfig: ModelConfig = {
       ...baseModelConfig,
       temperature: generationSettings.temperature,
@@ -393,7 +399,8 @@ export class DeepChatLoopRunner {
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
       this.ports.providerSettings,
       state.providerId,
-      state.modelId
+      state.modelId,
+      providerModelFacts
     )
 
     abortController.signal.throwIfAborted()

@@ -523,27 +523,65 @@ export const ReasoningPortraitSchema = z.looseObject({
   notes: z.array(z.string()).optional()
 })
 
+const NumberRequestParameterPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('passthrough') }),
+  z.object({ mode: z.literal('fixed'), value: z.number() }),
+  z.object({ mode: z.literal('omit') })
+])
+
+const BooleanRequestParameterPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('passthrough') }),
+  z.object({ mode: z.literal('fixed'), value: z.boolean() }),
+  z.object({ mode: z.literal('omit') })
+])
+
+const LegacyThinkingRequestParameterPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('passthrough') }),
+  z.object({ mode: z.literal('fixed'), value: z.enum(['enabled', 'disabled']) }),
+  z.object({ mode: z.literal('omit') })
+])
+
 export const ModelCapabilitiesSchema = z.object({
-  supportsAudioInput: z.boolean().nullable(),
-  supportsReasoning: z.boolean().nullable(),
+  identity: z.discriminatedUnion('catalogMatched', [
+    z.object({
+      providerId: z.string().min(1),
+      requestModelId: z.string().min(1),
+      catalogMatched: z.literal(true),
+      catalogModelId: z.string().min(1)
+    }),
+    z.object({
+      providerId: z.string().min(1),
+      requestModelId: z.string().min(1),
+      catalogMatched: z.literal(false),
+      catalogModelId: z.null()
+    })
+  ]),
+  requestPolicy: z.object({
+    temperature: NumberRequestParameterPolicySchema,
+    topP: NumberRequestParameterPolicySchema,
+    reasoning: BooleanRequestParameterPolicySchema,
+    legacyThinking: LegacyThinkingRequestParameterPolicySchema
+  }),
+  supportsAudioInput: z.boolean(),
+  supportsReasoning: z.boolean(),
   reasoningPortrait: ReasoningPortraitSchema.nullable(),
-  thinkingBudgetRange: z
-    .object({
-      min: z.number().int().optional(),
-      max: z.number().int().optional(),
-      default: z.number().int().optional()
-    })
-    .nullable(),
-  supportsSearch: z.boolean().nullable(),
-  searchDefaults: z
-    .object({
-      default: z.boolean().optional(),
-      forced: z.boolean().optional(),
-      strategy: z.enum(['turbo', 'max']).optional()
-    })
-    .nullable(),
-  supportsTemperatureControl: z.boolean().nullable(),
-  temperatureCapability: z.boolean().nullable()
+  thinkingBudgetRange: z.object({
+    min: z.number().int().optional(),
+    max: z.number().int().optional(),
+    default: z.number().int().optional()
+  }),
+  supportsSearch: z.boolean(),
+  searchDefaults: z.object({
+    default: z.boolean().optional(),
+    forced: z.boolean().optional(),
+    strategy: z.enum(['turbo', 'max']).optional()
+  }),
+  supportsTemperatureControl: z.boolean(),
+  temperatureCapability: z.boolean().nullable(),
+  supportsReasoningEffort: z.boolean(),
+  reasoningEffortDefault: ReasoningEffortSchema.optional(),
+  supportsVerbosity: z.boolean(),
+  verbosityDefault: VerbositySchema.optional()
 })
 
 export const ModelConfigSchema = z.looseObject({

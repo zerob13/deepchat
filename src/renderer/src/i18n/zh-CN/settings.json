@@ -896,6 +896,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "此模型将温度固定为 {value}。",
+    "topPFixedByPolicy": "此模型将 Top P 固定为 {value}。",
     "title": "模型设置",
     "systemPrompt": {
       "label": "系统提示词",
@@ -959,8 +961,7 @@
       },
       "temperature": {
         "label": "温度",
-        "description": "控制输出的随机性，大部分模型0-1，部分支持0-2之间，越高越随机",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 在开启思考时固定为 {enabled}，关闭思考时固定为 {disabled}。"
+        "description": "控制输出的随机性，大部分模型0-1，部分支持0-2之间，越高越随机"
       },
       "topP": {
         "label": "Top P（核采样）",

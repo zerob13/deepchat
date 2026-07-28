@@ -246,6 +246,20 @@ export class ProviderSettingsTable extends BaseTable {
     return rows.map((row) => this.toProviderModel(row))
   }
 
+  getProviderModel(
+    providerId: string,
+    modelId: string,
+    source: 'provider' | 'custom'
+  ): MODEL_META | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM provider_models
+         WHERE provider_id = ? AND model_id = ? AND source = ?`
+      )
+      .get(providerId, modelId, source) as ProviderModelRow | undefined
+    return row ? this.toProviderModel(row) : undefined
+  }
+
   replaceProviderModels(
     providerId: string,
     source: 'provider' | 'custom',

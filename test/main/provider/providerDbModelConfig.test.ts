@@ -53,7 +53,7 @@ vi.mock('../../../src/main/provider/providerDbLoader', () => {
 
 import { ModelConfigHelper } from '../../../src/main/provider/modelConfig'
 import { modelCapabilities } from '../../../src/main/provider/modelCapabilities'
-import { ModelType } from '../../../src/shared/model'
+import { ApiEndpointType, ModelType } from '../../../src/shared/model'
 
 describe('Provider DB strict matching and user overrides', () => {
   beforeEach(() => {
@@ -141,10 +141,38 @@ describe('Provider DB strict matching and user overrides', () => {
             }
           ]
         },
+        aihubmix: {
+          id: 'aihubmix',
+          name: 'AIHubMix',
+          models: [
+            {
+              id: 'kimi-k3',
+              limit: { context: 8192, output: 1024 },
+              reasoning: { supported: true, default: true }
+            }
+          ]
+        },
         moonshot: {
           id: 'moonshot',
           name: 'Moonshot',
           models: [
+            {
+              id: 'kimi-k3',
+              limit: { context: 1048576, output: 131072 },
+              modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+              tool_call: true,
+              temperature: false,
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  interleaved: true,
+                  summaries: true,
+                  visibility: 'summary',
+                  continuation: ['thinking_blocks']
+                }
+              }
+            },
             {
               id: 'moonshotai/kimi-k2.6',
               reasoning: {
@@ -176,6 +204,17 @@ describe('Provider DB strict matching and user overrides', () => {
               }
             }
           ]
+        },
+        alpha: {
+          id: 'alpha',
+          models: [
+            { id: 'shared-model', limit: { context: 11111, output: 1111 } },
+            { id: 'foreign-only', limit: { context: 55555, output: 5555 } }
+          ]
+        },
+        beta: {
+          id: 'beta',
+          models: [{ id: 'shared-model', limit: { context: 22222, output: 2222 } }]
         },
         minimax: {
           id: 'minimax',
@@ -277,6 +316,101 @@ describe('Provider DB strict matching and user overrides', () => {
     expect(cfg.maxTokens).toBe(4096)
     expect(cfg.functionCall).toBe(true)
     expect(cfg.temperature).toBe(0.6)
+  })
+
+  it('uses capability identity instead of provider iteration order for proxy defaults', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const proxyConfig = helper.getModelConfig('kimi-k3', 'new-api')
+    const directConfig = helper.getModelConfig('kimi-k3', 'moonshot')
+
+    expect(proxyConfig).toMatchObject({
+      contextLength: directConfig.contextLength,
+      maxTokens: directConfig.maxTokens,
+      vision: directConfig.vision,
+      functionCall: directConfig.functionCall,
+      reasoning: directConfig.reasoning,
+      reasoningEffort: directConfig.reasoningEffort
+    })
+    expect(proxyConfig.contextLength).toBe(1048576)
+    expect(proxyConfig.maxTokens).toBe(32000)
+    expect(proxyConfig.vision).toBe(true)
+    expect(proxyConfig.functionCall).toBe(true)
+    expect(proxyConfig.reasoning).toBe(true)
+    expect(proxyConfig.reasoningEffort).toBe('max')
+  })
+
+  it('does not inherit globally unique defaults for custom models under a known provider', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const knownProviderConfig = helper.getModelConfig('foreign-only', 'test-provider')
+    const proxyConfig = helper.getModelConfig('foreign-only', 'new-api')
+
+    expect(knownProviderConfig).toMatchObject({
+      contextLength: 16000,
+      maxTokens: 4096,
+      reasoning: false
+    })
+    expect(proxyConfig).toMatchObject({
+      contextLength: 55555,
+      maxTokens: 5555
+    })
+  })
+
+  it('preserves user ownership when reading route-only configuration', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+    const helperInternals = helper as any
+    const cacheKey = helperInternals.generateCacheKey('new-api', 'custom-route-model')
+
+    helper.importConfigs(
+      {
+        [cacheKey]: {
+          id: 'custom-route-model',
+          providerId: 'new-api',
+          source: 'user',
+          config: {
+            maxTokens: 4096,
+            contextLength: 16000,
+            temperature: 0.6,
+            vision: false,
+            functionCall: true,
+            reasoning: false,
+            type: ModelType.ImageGeneration,
+            apiEndpoint: ApiEndpointType.Video,
+            endpointType: 'image-generation',
+            isUserDefined: false
+          }
+        }
+      },
+      false
+    )
+
+    expect(helper.getModelRouteConfig('custom-route-model', 'new-api')).toMatchObject({
+      type: ModelType.ImageGeneration,
+      apiEndpoint: ApiEndpointType.Video,
+      endpointType: 'image-generation',
+      isUserDefined: true
+    })
+  })
+
+  it('keeps an explicit capability provider override authoritative for proxy defaults', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const config = helper.getModelConfig('kimi-k3', 'new-api', 'capability-team')
+
+    expect(config.contextLength).toBe(16000)
+    expect(config.maxTokens).toBe(4096)
+    expect(config.reasoning).toBe(false)
+    expect(config.reasoningEffort).toBeUndefined()
+  })
+
+  it('uses safe defaults instead of selecting an ambiguous global model match', () => {
+    const helper = new ModelConfigHelper('1.0.0')
+
+    const cfg = helper.getModelConfig('shared-model', 'new-api')
+
+    expect(cfg.contextLength).toBe(16000)
+    expect(cfg.maxTokens).toBe(4096)
   })
 
   it('prefers user config over provider DB and persists across restart', () => {

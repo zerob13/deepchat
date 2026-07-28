@@ -178,7 +178,6 @@
     "systemPrompt": "system prompt",
     "systemPromptPlaceholder": "Pilih preset",
     "temperature": "suhu",
-    "temperatureFixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ditetapkan ke {enabled} saat pemikiran diaktifkan, dan ditetapkan ke {disabled} saat pemikiran dimatikan.",
     "topP": "Top P",
     "topPDescription": "Nucleus sampling; leave blank to use provider default",
     "contextLength": "panjang konteks",

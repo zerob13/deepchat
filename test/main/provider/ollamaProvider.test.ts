@@ -130,7 +130,7 @@ describe('OllamaProvider.fetchModels', () => {
       },
       providerSettings
     )
-    const runtimeContext = (ollamaProvider as any).getAiSdkRuntimeContext()
+    const runtimeContext = (ollamaProvider as any).getAiSdkRuntimeContext('local-custom-model')
 
     expect(mockOllamaConstructorOptions.at(-1)).toEqual({
       host: 'http://localhost:11434',
@@ -138,6 +138,12 @@ describe('OllamaProvider.fetchModels', () => {
     })
     expect(runtimeContext.providerKind).toBe('openai-compatible')
     expect(runtimeContext.provider.baseUrl).toBe('http://localhost:11434/v1')
+    expect(runtimeContext.capabilitySnapshot.identity).toMatchObject({
+      providerId: 'ollama',
+      requestModelId: 'local-custom-model',
+      catalogMatched: false,
+      catalogModelId: null
+    })
   })
 
   it('merges local and running models, keeps running-only models, and preserves capabilities', async () => {

@@ -191,6 +191,10 @@ export class ProviderModelDbStore implements StoreLike<IModelStore & Record<stri
     return defaultValue
   }
 
+  getProviderModel(source: 'provider' | 'custom', modelId: string): MODEL_META | undefined {
+    return this.settingsTable.getProviderModel(this.providerId, modelId, source)
+  }
+
   set(keyOrValues: string | Record<string, unknown>, value?: unknown): void {
     if (typeof keyOrValues !== 'string') {
       for (const [key, nextValue] of Object.entries(keyOrValues)) this.set(key, nextValue)

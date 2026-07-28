@@ -896,6 +896,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "Mô hình này cố định nhiệt độ ở {value}.",
+    "topPFixedByPolicy": "Mô hình này cố định Top P ở {value}.",
     "title": "Cài đặt mẫu",
     "systemPrompt": {
       "label": "System Prompt",
@@ -1023,7 +1025,6 @@
       "currentUsingModelDefault": "Hiện đang sử dụng cấu hình mặc định của mô hình",
       "temperature": {
         "description": "Kiểm soát tính ngẫu nhiên của đầu ra. Hầu hết các mô hình là 0-1 và một số hỗ trợ trong khoảng 0-2. Giá trị cao hơn làm tăng tính ngẫu nhiên.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 sửa nhiệt độ thành {enabled} khi tính năng suy nghĩ được bật và {disabled} khi tính năng này bị tắt.",
         "label": "Nhiệt độ"
       },
       "topP": {

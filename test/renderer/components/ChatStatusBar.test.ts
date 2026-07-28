@@ -5,12 +5,14 @@ import type { ReasoningEffort, ReasoningPortrait } from '../../../src/shared/typ
 import type { AcpConfigState } from '@shared/types/acp'
 import type { ImageGenerationOptions } from '../../../src/shared/imageGenerationSettings'
 import type { PermissionMode } from '../../../src/shared/types/agent-interface'
+import type { ModelRequestPolicy } from '../../../src/shared/modelRequestPolicy'
 
 const TEST_TIMEOUT_MS = 20000
 
 type TestGenerationSettings = {
   systemPrompt: string
   temperature: number
+  topP?: number
   contextLength: number
   maxTokens: number
   apiEndpoint?: 'chat' | 'image'
@@ -57,6 +59,8 @@ type SetupOptions = {
   reasoningPortrait?: ReasoningPortrait | null
   capabilityProviderId?: string
   temperatureCapability?: boolean | undefined
+  requestPolicy?: ModelRequestPolicy
+  capabilityRequestError?: Error
   projectPath?: string | null
   acpDraftSessionId?: string | null
   acpProcessConfig?: AcpConfigState | null
@@ -243,6 +247,8 @@ const setup = async (options: SetupOptions = {}) => {
       verbosity: 'medium',
       verbosityOptions: ['low', 'medium', 'high'] as Array<'low' | 'medium' | 'high'>
     } satisfies ReasoningPortrait)
+  const temperatureCapability =
+    'temperatureCapability' in options ? options.temperatureCapability : true
   const baseModelGroups = [
     {
       providerId: 'openai',
@@ -475,15 +481,45 @@ const setup = async (options: SetupOptions = {}) => {
       verbosity: 'medium',
       ...options.modelConfig
     }),
-    getCapabilities: vi.fn().mockResolvedValue({
-      supportsReasoning: reasoningPortrait?.supported ?? true,
-      reasoningPortrait,
-      thinkingBudgetRange: reasoningPortrait?.budget ?? null,
-      supportsSearch: null,
-      searchDefaults: null,
-      supportsTemperatureControl: options.temperatureCapability ?? true,
-      temperatureCapability: options.temperatureCapability ?? true
-    })
+    getCapabilities: vi
+      .fn()
+      .mockImplementation(({ providerId, modelId }: { providerId: string; modelId: string }) => {
+        if (options.capabilityRequestError) {
+          return Promise.reject(options.capabilityRequestError)
+        }
+
+        return Promise.resolve({
+          identity: {
+            providerId: options.capabilityProviderId ?? providerId,
+            requestModelId: modelId,
+            catalogMatched: false,
+            catalogModelId: null
+          },
+          requestPolicy: options.requestPolicy ?? {
+            temperature:
+              options.temperatureCapability === false ? { mode: 'omit' } : { mode: 'passthrough' },
+            topP:
+              (options.capabilityProviderId ?? providerId) === 'anthropic' &&
+              options.temperatureCapability === false
+                ? { mode: 'omit' }
+                : { mode: 'passthrough' },
+            reasoning: { mode: 'passthrough' },
+            legacyThinking: { mode: 'passthrough' }
+          },
+          supportsAudioInput: false,
+          supportsReasoning: reasoningPortrait?.supported ?? true,
+          reasoningPortrait,
+          thinkingBudgetRange: reasoningPortrait?.budget ?? {},
+          supportsSearch: false,
+          searchDefaults: {},
+          supportsTemperatureControl: temperatureCapability !== false,
+          temperatureCapability,
+          supportsReasoningEffort: options.supportsEffort !== false,
+          reasoningEffortDefault,
+          supportsVerbosity: true,
+          verbosityDefault: 'medium'
+        })
+      })
   }
 
   const baseSessionSettings: TestGenerationSettings = {
@@ -1194,6 +1230,7 @@ describe('ChatStatusBar model and session panels', () => {
       hasActiveSession: false,
       preferredModel: { providerId: 'zenmux', modelId: 'anthropic/claude-opus-4-7' },
       defaultModel: { providerId: 'zenmux', modelId: 'anthropic/claude-opus-4-7' },
+      capabilityProviderId: 'anthropic',
       extraModelGroups: [
         {
           providerId: 'zenmux',
@@ -1607,6 +1644,7 @@ describe('ChatStatusBar model and session panels', () => {
       hasActiveSession: false,
       preferredModel: { providerId: 'new-api', modelId: 'claude-opus-4-8' },
       defaultModel: { providerId: 'new-api', modelId: 'claude-opus-4-8' },
+      capabilityProviderId: 'anthropic',
       extraModelGroups: [
         {
           providerId: 'new-api',
@@ -1667,7 +1705,7 @@ describe('ChatStatusBar model and session panels', () => {
     expect(findInterleavedThinkingToggle(wrapper).attributes('data-model-value')).toBe('true')
   })
 
-  it('locks Moonshot Kimi temperatures in chat advanced settings and keeps the fixed value', async () => {
+  it('locks fixed sampling policy in chat advanced settings and keeps policy values', async () => {
     const { wrapper } = await setup({
       agentId: 'deepchat',
       hasActiveSession: false,
@@ -1680,7 +1718,14 @@ describe('ChatStatusBar model and session panels', () => {
       ],
       modelConfig: {
         temperature: 0.6,
+        topP: 0.4,
         reasoning: true
+      },
+      requestPolicy: {
+        temperature: { mode: 'fixed', value: 1 },
+        topP: { mode: 'fixed', value: 0.8 },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'fixed', value: 'enabled' }
       },
       reasoningPortrait: {
         supported: true,
@@ -1694,13 +1739,130 @@ describe('ChatStatusBar model and session panels', () => {
     await flushPromises()
 
     expect((wrapper.vm as any).localSettings.temperature).toBe(1)
-    expect((wrapper.vm as any).isMoonshotKimiTemperatureLocked).toBe(true)
-    expect(wrapper.text()).toContain('chat.advancedSettings.temperatureFixedMoonshotKimi')
+    expect((wrapper.vm as any).localSettings.topP).toBe(0.8)
+    expect((wrapper.vm as any).isTemperatureFixed).toBe(true)
+    expect((wrapper.vm as any).isTopPFixed).toBe(true)
+    expect(wrapper.text()).toContain('settings.model.temperatureFixedByPolicy')
     expect(findNumericButton(wrapper, 'temperature', 'increment').attributes('disabled')).toBe('')
     expect(findNumericInput(wrapper, 'temperature').attributes('disabled')).toBe('')
+    expect(findNumericInput(wrapper, 'topP').attributes('disabled')).toBe('')
 
     await findNumericButton(wrapper, 'temperature', 'increment').trigger('click')
     expect((wrapper.vm as any).localSettings.temperature).toBe(1)
+  })
+
+  it('hides K3 sampling controls and uses the catalog effort default', async () => {
+    const { wrapper, modelClient } = await setup({
+      agentId: 'deepchat',
+      hasActiveSession: false,
+      preferredModel: { providerId: 'new-api', modelId: 'kimi-k3' },
+      defaultModel: { providerId: 'new-api', modelId: 'kimi-k3' },
+      capabilityProviderId: 'moonshot',
+      temperatureCapability: false,
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      },
+      extraModelGroups: [
+        {
+          providerId: 'new-api',
+          providerName: 'New API',
+          apiType: 'new-api',
+          models: [{ id: 'kimi-k3', name: 'Kimi K3' }]
+        }
+      ],
+      modelConfig: {
+        reasoning: false,
+        reasoningEffort: undefined,
+        temperature: 0.6
+      },
+      reasoningEffortDefault: 'max',
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max']
+      }
+    })
+
+    await (wrapper.vm as any).openModelSettings('new-api', 'kimi-k3')
+    await flushPromises()
+
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).showTopPControl).toBe(false)
+    expect((wrapper.vm as any).localSettings.temperature).toBe(0.6)
+    expect((wrapper.vm as any).localSettings.reasoningEffort).toBe('max')
+    const localSettings = (wrapper.vm as any).localSettings
+    localSettings.reasoningEffort = 'medium'
+    await flushPromises()
+    expect((wrapper.vm as any).effectiveReasoningEffortValue).toBe('max')
+    expect((wrapper.vm as any).localSettings.reasoningEffort).toBe('medium')
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.topP')
+    expect(wrapper.text()).not.toContain(
+      'settings.model.modelConfig.reasoningEffort.options.medium'
+    )
+    expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides direct Aihubmix K3 controls when temperature capability is unknown', async () => {
+    const { wrapper } = await setup({
+      agentId: 'deepchat',
+      hasActiveSession: false,
+      preferredModel: { providerId: 'aihubmix', modelId: 'kimi-k3' },
+      defaultModel: { providerId: 'aihubmix', modelId: 'kimi-k3' },
+      capabilityProviderId: 'aihubmix',
+      temperatureCapability: undefined,
+      requestPolicy: {
+        temperature: { mode: 'omit' },
+        topP: { mode: 'omit' },
+        reasoning: { mode: 'fixed', value: true },
+        legacyThinking: { mode: 'omit' }
+      },
+      extraModelGroups: [
+        {
+          providerId: 'aihubmix',
+          providerName: 'Aihubmix',
+          models: [{ id: 'kimi-k3', name: 'Kimi K3' }]
+        }
+      ],
+      modelConfig: {
+        reasoning: false,
+        temperature: 0.6
+      }
+    })
+
+    await (wrapper.vm as any).openModelSettings('aihubmix', 'kimi-k3')
+    await flushPromises()
+
+    expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).localSettings.temperature).toBe(0.6)
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
+  })
+
+  it('silently hides generation controls when capability loading fails', async () => {
+    const { wrapper } = await setup({
+      agentId: 'deepchat',
+      hasActiveSession: false,
+      preferredModel: { providerId: 'openai', modelId: 'gpt-4' },
+      defaultModel: { providerId: 'openai', modelId: 'gpt-4' },
+      capabilityRequestError: new Error('ipc unavailable')
+    })
+
+    await (wrapper.vm as any).openModelSettings('openai', 'gpt-4')
+    await flushPromises()
+
+    expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).topPControl).toEqual({ mode: 'hidden' })
+    expect((wrapper.vm as any).showTemperatureControl).toBe(false)
+    expect((wrapper.vm as any).showTopPControl).toBe(false)
+    expect(wrapper.find('[data-testid="generation-parameter-loading"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.temperature')
+    expect(wrapper.text()).not.toContain('chat.advancedSettings.topP')
   })
 
   it('ignores existing draft generation overrides when loading draft model defaults', async () => {

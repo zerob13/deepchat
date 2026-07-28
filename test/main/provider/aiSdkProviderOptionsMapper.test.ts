@@ -1,15 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const {
-  mockGetThinkingBudgetRange,
-  mockGetModel,
-  mockGetReasoningPortrait,
-  mockSupportsReasoning
-} = vi.hoisted(() => ({
-  mockGetThinkingBudgetRange: vi.fn().mockReturnValue({}),
+const { mockGetModel, mockGetReasoningPortrait } = vi.hoisted(() => ({
   mockGetModel: vi.fn().mockReturnValue(undefined),
-  mockGetReasoningPortrait: vi.fn().mockReturnValue(null),
-  mockSupportsReasoning: vi.fn().mockReturnValue(false)
+  mockGetReasoningPortrait: vi.fn().mockReturnValue(null)
 }))
 
 vi.mock('@/provider/providerDbLoader', () => ({
@@ -19,16 +12,30 @@ vi.mock('@/provider/providerDbLoader', () => ({
   }
 }))
 
-vi.mock('@/provider/modelCapabilities', () => ({
-  modelCapabilities: {
-    getThinkingBudgetRange: mockGetThinkingBudgetRange,
-    getReasoningPortrait: mockGetReasoningPortrait,
-    supportsReasoning: mockSupportsReasoning
-  }
-}))
-
-import { buildProviderOptions } from '@/provider/aiSdk/providerOptionsMapper'
+import {
+  buildProviderOptions as buildProviderOptionsImpl,
+  type BuildProviderOptionsParams
+} from '@/provider/aiSdk/providerOptionsMapper'
 import { OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER } from '@/provider/promptCacheStrategy'
+import { resolveModelRequestPolicy } from '@shared/modelRequestPolicy'
+
+type ProviderOptionsTestParams = Omit<
+  BuildProviderOptionsParams,
+  'requestPolicy' | 'reasoningPortrait'
+> &
+  Partial<Pick<BuildProviderOptionsParams, 'requestPolicy' | 'reasoningPortrait'>>
+
+const buildProviderOptions = (params: ProviderOptionsTestParams) =>
+  buildProviderOptionsImpl({
+    ...params,
+    requestPolicy:
+      params.requestPolicy ??
+      resolveModelRequestPolicy(params.providerId, params.modelId, params.modelConfig.reasoning),
+    reasoningPortrait:
+      params.reasoningPortrait !== undefined
+        ? params.reasoningPortrait
+        : mockGetReasoningPortrait(params.capabilityProviderId, params.modelId)
+  })
 
 describe('AI SDK provider options', () => {
   const baseModelConfig = {
@@ -39,10 +46,8 @@ describe('AI SDK provider options', () => {
   }
 
   beforeEach(() => {
-    mockGetThinkingBudgetRange.mockReturnValue({})
     mockGetModel.mockReturnValue(undefined)
     mockGetReasoningPortrait.mockReturnValue(null)
-    mockSupportsReasoning.mockReturnValue(false)
   })
 
   it('limits OpenAI prompt cache keys to conversation requests', () => {
@@ -363,6 +368,36 @@ describe('AI SDK provider options', () => {
         type: 'enabled'
       }
     })
+  })
+
+  it('uses standard reasoning effort and omits legacy thinking for K3', () => {
+    const result = buildProviderOptions({
+      providerId: 'new-api',
+      capabilityProviderId: 'moonshot',
+      providerOptionsKey: 'newApi',
+      apiType: 'openai_chat',
+      modelId: 'kimi-k3',
+      modelConfig: {
+        reasoning: false,
+        reasoningEffort: 'max',
+        temperature: 0.6,
+        topP: 0.8
+      } as any,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max']
+      },
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions?.newApi).toMatchObject({
+      reasoningEffort: 'max'
+    })
+    expect(result.providerOptions?.newApi).not.toHaveProperty('thinking')
   })
 
   it('routes Ollama reasoning effort through OpenAI-compatible provider options', () => {
@@ -688,7 +723,79 @@ describe('AI SDK provider options', () => {
     })
   })
 
-  it('maps grok reasoning effort to the vendor-specific body field', () => {
+  it('keeps an explicit DashScope thinking budget when the portrait is unresolved', () => {
+    const result = buildProviderOptions({
+      providerId: 'dashscope',
+      capabilityProviderId: 'dashscope',
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      modelId: 'custom-qwen-reasoning',
+      modelConfig: {
+        reasoning: true,
+        thinkingBudget: 4096
+      },
+      reasoningPortrait: null,
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions).toEqual({
+      openai: {
+        thinking_budget: 4096
+      }
+    })
+  })
+
+  it('uses supported DashScope portrait defaults for automatic thinking', () => {
+    const result = buildProviderOptions({
+      providerId: 'dashscope',
+      capabilityProviderId: 'dashscope',
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      modelId: 'qwen-plus',
+      modelConfig: {
+        reasoning: true
+      },
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'budget',
+        budget: { default: 2048 }
+      },
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions).toEqual({
+      openai: {
+        enable_thinking: true,
+        thinking_budget: 2048
+      }
+    })
+  })
+
+  it('does not send DashScope thinking options for an explicitly unsupported portrait', () => {
+    const result = buildProviderOptions({
+      providerId: 'dashscope',
+      capabilityProviderId: 'dashscope',
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      modelId: 'qwen-non-reasoning',
+      modelConfig: {
+        reasoning: true,
+        thinkingBudget: 4096
+      },
+      reasoningPortrait: {
+        supported: false
+      },
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions).toBeUndefined()
+  })
+
+  it('maps Grok Mini reasoning effort through the standard adapter option', () => {
     const result = buildProviderOptions({
       providerId: 'grok',
       capabilityProviderId: 'grok',
@@ -704,10 +811,30 @@ describe('AI SDK provider options', () => {
 
     expect(result.providerOptions).toEqual({
       openai: {
-        reasoning_effort: 'medium'
+        reasoningEffort: 'medium'
       }
     })
   })
+
+  it.each(['grok-4', 'not-grok-3-mini'])(
+    'does not add reasoning effort to unsupported Grok model %s',
+    (modelId) => {
+      const result = buildProviderOptions({
+        providerId: 'grok',
+        capabilityProviderId: 'grok',
+        providerOptionsKey: 'openai',
+        apiType: 'openai_chat',
+        modelId,
+        modelConfig: {
+          reasoningEffort: 'high'
+        },
+        tools: [],
+        messages: []
+      })
+
+      expect(result.providerOptions).toBeUndefined()
+    }
+  )
 
   it('passes through extended OpenAI reasoning effort values', () => {
     mockGetReasoningPortrait.mockReturnValue({

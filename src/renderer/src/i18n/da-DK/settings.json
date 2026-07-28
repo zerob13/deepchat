@@ -498,6 +498,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "Denne model fastlåser temperaturen til {value}.",
+    "topPFixedByPolicy": "Denne model fastlåser Top P til {value}.",
     "title": "Modelindstillinger",
     "systemPrompt": {
       "label": "Systemprompt",
@@ -625,7 +627,6 @@
       "currentUsingModelDefault": "Bruger i øjeblikket modellens standardkonfiguration",
       "temperature": {
         "description": "Styrer tilfældigheden i output. De fleste modeller bruger 0-1, nogle understøtter 0-2. Højere værdi øger tilfældigheden.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 låser temperaturen til {enabled}, når tænkning er aktiveret, og til {disabled}, når den er deaktiveret.",
         "label": "Temperatur"
       },
       "topP": {

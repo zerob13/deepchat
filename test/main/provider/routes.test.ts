@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createProviderRoutes } from '@/provider/routes'
 import {
+  modelsGetCapabilitiesRoute,
   modelsGetProviderCatalogRoute,
   providersImportApplyRoute,
   providersImportScanRoute,
@@ -29,6 +30,75 @@ function createRoutes(deps: {
 }
 
 describe('Provider routes', () => {
+  it('returns one authoritative capability snapshot and forwards draft route metadata', async () => {
+    const snapshot = {
+      identity: {
+        providerId: 'anthropic',
+        requestModelId: 'claude-opus-4-8',
+        catalogMatched: true,
+        catalogModelId: 'claude-opus-4-8'
+      },
+      requestPolicy: {
+        temperature: { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      },
+      supportsAudioInput: false,
+      supportsReasoning: true,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: false,
+        mode: 'effort'
+      },
+      thinkingBudgetRange: {},
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability: false,
+      supportsTemperatureControl: false,
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'high',
+      supportsVerbosity: false,
+      verbosityDefault: undefined
+    } as const
+    const getCapabilitySnapshot = vi.fn(() => snapshot)
+    const routes = createRoutes({
+      providerSettings: {
+        getCapabilitySnapshot
+      }
+    })
+    const routeOverride = {
+      endpointType: 'anthropic' as const,
+      supportedEndpointTypes: ['openai-response', 'anthropic'] as const,
+      type: ModelType.Chat,
+      ownedBy: 'anthropic'
+    }
+
+    const result = await routes.get(modelsGetCapabilitiesRoute.name)?.(
+      {
+        providerId: 'new-api',
+        modelId: 'claude-opus-4-8',
+        routeOverride,
+        reasoningEnabled: false
+      },
+      context
+    )
+
+    expect(getCapabilitySnapshot).toHaveBeenCalledTimes(1)
+    expect(getCapabilitySnapshot).toHaveBeenCalledWith({
+      providerId: 'new-api',
+      modelId: 'claude-opus-4-8',
+      routeOverride,
+      reasoningEnabled: false
+    })
+    expect(result).toEqual({
+      capabilities: {
+        ...snapshot,
+        temperatureCapability: false
+      }
+    })
+  })
+
   it('applies provider updates through the runtime owner', async () => {
     const provider = {
       id: 'openai',

@@ -896,6 +896,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "Model ini menetapkan suhu kepada {value}.",
+    "topPFixedByPolicy": "Model ini menetapkan Top P kepada {value}.",
     "title": "Tetapan model",
     "systemPrompt": {
       "label": "Kata gesaan sistem",
@@ -959,8 +961,7 @@
       },
       "temperature": {
         "label": "suhu",
-        "description": "Kawal rawak keluaran. Kebanyakan model menyokong 0-1, dan beberapa menyokong 0-2. Semakin tinggi nilai, semakin rawak.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ditetapkan pada {enabled} apabila pemikiran dihidupkan dan {disabled} apabila pemikiran dimatikan."
+        "description": "Kawal rawak keluaran. Kebanyakan model menyokong 0-1, dan beberapa menyokong 0-2. Semakin tinggi nilai, semakin rawak."
       },
       "topP": {
         "label": "Top P",
