@@ -43,7 +43,7 @@
               :placeholder="t('settings.model.modelConfig.id.placeholder')"
               :disabled="!canEditModelIdentity"
               :class="{ 'border-destructive': errors.modelId }"
-              @blur="queueCapabilityRefresh"
+              @blur="queueCapabilityRefreshForIdentityChange"
             />
             <p class="text-xs text-muted-foreground">
               {{
@@ -966,6 +966,10 @@ const isThinkingBudgetSentinel = (
   return sentinelValues.has(roundedValue)
 }
 
+const currentModelLookupId = computed(() =>
+  (canEditModelIdentity.value ? modelIdField.value : props.modelId || modelIdField.value).trim()
+)
+
 const fetchCapabilities = async () => {
   const targetModelId = currentModelLookupId.value
 
@@ -1002,6 +1006,23 @@ const queueCapabilityRefresh = () => {
   })
 }
 
+const queueCapabilityRefreshForIdentityChange = () => {
+  const targetModelId = currentModelLookupId.value
+  if (!targetModelId) {
+    modelCapabilities.clear()
+    return
+  }
+  const queryIdentity = modelCapabilities.queryIdentity.value
+  if (
+    (modelCapabilities.status.value === 'ready' || modelCapabilities.status.value === 'loading') &&
+    queryIdentity?.providerId === props.providerId.trim() &&
+    queryIdentity.modelId === targetModelId
+  ) {
+    return
+  }
+  queueCapabilityRefresh()
+}
+
 const providerCustomModelList = computed(() => {
   if (!props.providerId) return []
   return customModels.value.find((entry) => entry.providerId === props.providerId)?.models ?? []
@@ -1013,10 +1034,6 @@ const providerStandardModelList = computed(() => {
     allProviderModels.value.find((entry) => entry.providerId === props.providerId)?.models ?? []
   )
 })
-
-const currentModelLookupId = computed(() =>
-  (canEditModelIdentity.value ? modelIdField.value : props.modelId || modelIdField.value).trim()
-)
 
 const capabilitySnapshotMatchesCurrentModel = computed(
   () =>
@@ -1612,17 +1629,12 @@ watch(
 )
 
 watch(currentModelLookupId, (nextModelId, previousModelId) => {
-  if (
-    !props.open ||
-    isLoadingModelConfig.value ||
-    nextModelId === previousModelId ||
-    modelCapabilities.identity.value?.requestModelId === nextModelId
-  ) {
+  if (!props.open || isLoadingModelConfig.value || nextModelId === previousModelId) {
     return
   }
 
   if (nextModelId) {
-    modelCapabilities.beginLoading()
+    queueCapabilityRefreshForIdentityChange()
   } else {
     modelCapabilities.clear()
   }

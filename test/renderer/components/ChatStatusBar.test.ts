@@ -12,6 +12,7 @@ const TEST_TIMEOUT_MS = 20000
 type TestGenerationSettings = {
   systemPrompt: string
   temperature: number
+  topP?: number
   contextLength: number
   maxTokens: number
   apiEndpoint?: 'chat' | 'image'
@@ -246,6 +247,8 @@ const setup = async (options: SetupOptions = {}) => {
       verbosity: 'medium',
       verbosityOptions: ['low', 'medium', 'high'] as Array<'low' | 'medium' | 'high'>
     } satisfies ReasoningPortrait)
+  const temperatureCapability =
+    'temperatureCapability' in options ? options.temperatureCapability : true
   const baseModelGroups = [
     {
       providerId: 'openai',
@@ -506,8 +509,8 @@ const setup = async (options: SetupOptions = {}) => {
         thinkingBudgetRange: reasoningPortrait?.budget ?? null,
         supportsSearch: null,
         searchDefaults: null,
-        supportsTemperatureControl: options.temperatureCapability ?? true,
-        temperatureCapability: options.temperatureCapability ?? true,
+        supportsTemperatureControl: temperatureCapability !== false,
+        temperatureCapability,
         supportsReasoningEffort: options.supportsEffort !== false,
         reasoningEffortDefault,
         supportsVerbosity: true,
@@ -1699,7 +1702,7 @@ describe('ChatStatusBar model and session panels', () => {
     expect(findInterleavedThinkingToggle(wrapper).attributes('data-model-value')).toBe('true')
   })
 
-  it('locks Moonshot Kimi temperatures in chat advanced settings and keeps the fixed value', async () => {
+  it('locks fixed sampling policy in chat advanced settings and keeps policy values', async () => {
     const { wrapper } = await setup({
       agentId: 'deepchat',
       hasActiveSession: false,
@@ -1712,11 +1715,12 @@ describe('ChatStatusBar model and session panels', () => {
       ],
       modelConfig: {
         temperature: 0.6,
+        topP: 0.4,
         reasoning: true
       },
       requestPolicy: {
         temperature: { mode: 'fixed', value: 1 },
-        topP: { mode: 'passthrough' },
+        topP: { mode: 'fixed', value: 0.8 },
         reasoning: { mode: 'fixed', value: true },
         legacyThinking: { mode: 'fixed', value: 'enabled' }
       },
@@ -1732,10 +1736,13 @@ describe('ChatStatusBar model and session panels', () => {
     await flushPromises()
 
     expect((wrapper.vm as any).localSettings.temperature).toBe(1)
+    expect((wrapper.vm as any).localSettings.topP).toBe(0.8)
     expect((wrapper.vm as any).isTemperatureFixed).toBe(true)
+    expect((wrapper.vm as any).isTopPFixed).toBe(true)
     expect(wrapper.text()).toContain('settings.model.temperatureFixedByPolicy')
     expect(findNumericButton(wrapper, 'temperature', 'increment').attributes('disabled')).toBe('')
     expect(findNumericInput(wrapper, 'temperature').attributes('disabled')).toBe('')
+    expect(findNumericInput(wrapper, 'topP').attributes('disabled')).toBe('')
 
     await findNumericButton(wrapper, 'temperature', 'increment').trigger('click')
     expect((wrapper.vm as any).localSettings.temperature).toBe(1)

@@ -723,6 +723,78 @@ describe('AI SDK provider options', () => {
     })
   })
 
+  it('keeps an explicit DashScope thinking budget when the portrait is unresolved', () => {
+    const result = buildProviderOptions({
+      providerId: 'dashscope',
+      capabilityProviderId: 'dashscope',
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      modelId: 'custom-qwen-reasoning',
+      modelConfig: {
+        reasoning: true,
+        thinkingBudget: 4096
+      },
+      reasoningPortrait: null,
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions).toEqual({
+      openai: {
+        thinking_budget: 4096
+      }
+    })
+  })
+
+  it('uses supported DashScope portrait defaults for automatic thinking', () => {
+    const result = buildProviderOptions({
+      providerId: 'dashscope',
+      capabilityProviderId: 'dashscope',
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      modelId: 'qwen-plus',
+      modelConfig: {
+        reasoning: true
+      },
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'budget',
+        budget: { default: 2048 }
+      },
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions).toEqual({
+      openai: {
+        enable_thinking: true,
+        thinking_budget: 2048
+      }
+    })
+  })
+
+  it('does not send DashScope thinking options for an explicitly unsupported portrait', () => {
+    const result = buildProviderOptions({
+      providerId: 'dashscope',
+      capabilityProviderId: 'dashscope',
+      providerOptionsKey: 'openai',
+      apiType: 'openai_chat',
+      modelId: 'qwen-non-reasoning',
+      modelConfig: {
+        reasoning: true,
+        thinkingBudget: 4096
+      },
+      reasoningPortrait: {
+        supported: false
+      },
+      tools: [],
+      messages: []
+    })
+
+    expect(result.providerOptions).toBeUndefined()
+  })
+
   it('maps Grok Mini reasoning effort through the standard adapter option', () => {
     const result = buildProviderOptions({
       providerId: 'grok',

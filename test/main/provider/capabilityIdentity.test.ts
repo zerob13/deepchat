@@ -188,8 +188,16 @@ const state = vi.hoisted(() => ({
                 effort_options: ['low', 'medium', 'high']
               }
             }
+          },
+          {
+            id: 'owner-routed-model',
+            temperature: false
           }
         ]
+      },
+      xai: {
+        id: 'xai',
+        models: [{ id: 'owner-routed-model', temperature: true }]
       },
       'sole-provider': {
         id: 'sole-provider',
@@ -333,6 +341,36 @@ describe('capability identity resolution', () => {
       requestModelId: 'unknown-model',
       catalogMatched: false,
       catalogModelId: null
+    })
+  })
+
+  it('resolves separator-normalized xAI owner metadata', () => {
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'new-api',
+        modelId: 'owner-routed-model',
+        ownedBy: 'x-ai',
+        endpointType: 'openai'
+      })
+    ).toEqual({
+      providerId: 'xai',
+      requestModelId: 'owner-routed-model',
+      catalogMatched: true,
+      catalogModelId: 'owner-routed-model'
+    })
+
+    expect(
+      resolveCapabilityIdentity({
+        providerId: 'new-api',
+        modelId: 'owner-routed-model',
+        ownedBy: 'flux-ai',
+        endpointType: 'openai'
+      })
+    ).toEqual({
+      providerId: 'openai',
+      requestModelId: 'owner-routed-model',
+      catalogMatched: true,
+      catalogModelId: 'owner-routed-model'
     })
   })
 

@@ -143,3 +143,26 @@
 - The severity-ordered review found and closed one low-severity consumer coverage gap. No remaining
   correctness, compatibility, security, performance, naming, or maintenance findings were
   identified.
+
+## External review hardening
+
+- [x] Preserve xAI owner and recognized dotted-provider identities through normalization.
+- [x] Align non-New API route model-type precedence with resolved provider models.
+- [x] Preserve explicit DashScope budgets without speculative thinking enablement.
+- [x] Guarantee and deduplicate model-ID-driven renderer capability refreshes.
+- [x] Apply fixed top-P policy to ChatStatusBar defaults.
+- [x] Reuse provider-model facts during manual compaction.
+- [x] Extract the shared private embedding runtime context.
+- [x] Correct capability, reasoning, and fixed-control test fixtures.
+- [x] Run focused and required repository validation.
+- [x] Complete a severity-ordered pre-commit review.
+
+Validation:
+
+- Focused regression suite: 12 files and 290 tests passed.
+- Full Vitest suite: 639 files and 6,705 tests passed; 19 files and 241 tests remained skipped.
+- Formatting, i18n validation, lint, Node and renderer type checks, production build, JSON parsing,
+  and diff whitespace checks passed.
+- The compatibility review retained legacy video detection and New API precedence, rejected
+  speculative request fallback and cache changes, and found no remaining correctness, security,
+  performance, naming, or maintenance issue in the final patch.

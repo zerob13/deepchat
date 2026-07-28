@@ -13,9 +13,13 @@ const providerSettings = {
 } as any
 
 async function captureRequestBody(run: () => Promise<unknown>): Promise<Record<string, any>> {
-  const fetchMock = vi.fn(async () => {
-    throw new Error('request captured')
-  })
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(JSON.stringify({ error: { message: 'request captured' } }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' }
+      })
+  )
   vi.stubGlobal('fetch', fetchMock)
 
   await expect(run()).rejects.toThrow()

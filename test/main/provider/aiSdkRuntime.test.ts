@@ -2146,7 +2146,9 @@ describe('AI SDK runtime', () => {
           mode: 'effort',
           effort: 'max',
           effortOptions: ['low', 'high', 'max']
-        }
+        },
+        supportsReasoningEffort: true,
+        reasoningEffortDefault: 'max'
       }),
       providerSettings: createProviderSettings(),
       defaultHeaders: {},

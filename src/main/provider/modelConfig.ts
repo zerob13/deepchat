@@ -442,6 +442,7 @@ export class ModelConfigHelper {
     }
 
     return {
+      apiEndpoint: config.apiEndpoint,
       endpointType: config.endpointType,
       ownedBy: config.ownedBy,
       type: config.type,

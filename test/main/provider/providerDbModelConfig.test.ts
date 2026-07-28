@@ -53,7 +53,7 @@ vi.mock('../../../src/main/provider/providerDbLoader', () => {
 
 import { ModelConfigHelper } from '../../../src/main/provider/modelConfig'
 import { modelCapabilities } from '../../../src/main/provider/modelCapabilities'
-import { ModelType } from '../../../src/shared/model'
+import { ApiEndpointType, ModelType } from '../../../src/shared/model'
 
 describe('Provider DB strict matching and user overrides', () => {
   beforeEach(() => {
@@ -376,6 +376,7 @@ describe('Provider DB strict matching and user overrides', () => {
             functionCall: true,
             reasoning: false,
             type: ModelType.ImageGeneration,
+            apiEndpoint: ApiEndpointType.Video,
             endpointType: 'image-generation',
             isUserDefined: false
           }
@@ -386,6 +387,7 @@ describe('Provider DB strict matching and user overrides', () => {
 
     expect(helper.getModelRouteConfig('custom-route-model', 'new-api')).toMatchObject({
       type: ModelType.ImageGeneration,
+      apiEndpoint: ApiEndpointType.Video,
       endpointType: 'image-generation',
       isUserDefined: true
     })

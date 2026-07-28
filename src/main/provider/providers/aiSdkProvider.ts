@@ -1271,12 +1271,10 @@ export class AiSdkProvider extends BaseLLMProvider {
     return runAiSdkEmbeddings(context, modelId, texts, signal)
   }
 
-  private async runEmbeddingsWithDecision(
+  private buildEmbeddingRuntimeContext(
     modelId: string,
-    texts: string[],
-    decision: RouteDecision,
-    signal?: AbortSignal
-  ): Promise<number[][]> {
+    decision: RouteDecision
+  ): AiSdkRuntimeContext {
     const runtimeProvider = this.getRuntimeProvider(decision)
     const capabilityIdentity =
       decision.capabilityIdentity ??
@@ -1285,7 +1283,8 @@ export class AiSdkProvider extends BaseLLMProvider {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
     }
-    const context: AiSdkRuntimeContext = {
+
+    return {
       providerKind: decision.providerKind,
       provider: runtimeProvider,
       capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity),
@@ -1304,7 +1303,15 @@ export class AiSdkProvider extends BaseLLMProvider {
       shouldUseImageGeneration: (_runtimeModelId, runtimeModelConfig) =>
         runtimeModelConfig.apiEndpoint === ApiEndpointType.Image
     }
+  }
 
+  private async runEmbeddingsWithDecision(
+    modelId: string,
+    texts: string[],
+    decision: RouteDecision,
+    signal?: AbortSignal
+  ): Promise<number[][]> {
+    const context = this.buildEmbeddingRuntimeContext(modelId, decision)
     return runAiSdkEmbeddings(context, modelId, texts, signal)
   }
 
@@ -1363,33 +1370,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         throw error
       }
       console.error(`[AiSdkProvider] Failed to get dimensions for model ${modelId}:`, error)
-      const runtimeProvider = this.getRuntimeProvider(decision)
-      const capabilityIdentity =
-        decision.capabilityIdentity ??
-        this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
-      const defaultHeaders = {
-        ...this.defaultHeaders,
-        ...this.definition.defaultHeadersPatch
-      }
-      const context: AiSdkRuntimeContext = {
-        providerKind: decision.providerKind,
-        provider: runtimeProvider,
-        capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity),
-        supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
-        providerSettings: this.providerSettings,
-        defaultHeaders,
-        buildLegacyFunctionCallPrompt: (tools) => this.getFunctionCallWrapPrompt(tools),
-        emitRequestTrace: (runtimeModelConfig, payload) =>
-          this.emitRequestTrace(runtimeModelConfig, payload),
-        buildTraceHeaders: () => this.buildTraceHeaders(decision, runtimeProvider, defaultHeaders),
-        cleanHeaders: this.isAzureOpenAI(decision, runtimeProvider)
-          ? false
-          : !this.isOfficialOpenAIService(decision, runtimeProvider),
-        supportsNativeTools: (_runtimeModelId, runtimeModelConfig) =>
-          runtimeModelConfig.functionCall === true,
-        shouldUseImageGeneration: (_runtimeModelId, runtimeModelConfig) =>
-          runtimeModelConfig.apiEndpoint === ApiEndpointType.Image
-      }
+      const context = this.buildEmbeddingRuntimeContext(modelId, decision)
       return runAiSdkDimensions(context, modelId, signal)
     }
   }

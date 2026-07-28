@@ -253,6 +253,33 @@ The existing provider-db indexes remain the catalog lookup mechanism. No revisio
 new persistent cache, or benchmark gate is introduced. No request-path disk or network access is
 added.
 
+### External review hardening
+
+Owner and namespace normalization must preserve provider identity across common separator forms.
+In particular, `x-ai` owner metadata resolves to xAI after separator normalization, and recognized
+dotted provider namespaces such as `meta-llama.llama-3` strip the provider prefix without treating
+the hyphenated provider name as the model segment. Token-boundary matching must not classify an
+unrelated owner such as `flux-ai` as xAI. Versioned model IDs such as `gpt-4.1-mini` remain intact.
+
+Stored non-New API model metadata remains authoritative for model type after the existing video
+compatibility rules are applied. Route-only metadata and the fully resolved provider model
+therefore use the same video-detection and model-first fallback sequence. New API retains its
+explicit user-selection and media-route precedence.
+
+Explicit DashScope thinking budgets remain request intent even when a custom model has no resolved
+reasoning portrait. Portrait support is still required before enabling thinking automatically or
+using a portrait-provided default budget.
+
+An editable model identity owns its capability-query lifecycle. Programmatic model-ID changes,
+input changes, reset flows, and autofill cannot leave a snapshot in loading without scheduling a
+query. Repeated blur for an already resolved or in-flight identity does not refetch, while route,
+model-type, and reasoning changes continue to force policy refreshes for the same model ID.
+
+Fixed generation policy also owns initial renderer values. Both fixed temperature and fixed top P
+override stored model defaults in ChatStatusBar without overwriting the stored intent. Manual
+compaction passes its already resolved provider-model facts to every downstream capability
+consumer instead of resolving the same model configuration and snapshot twice.
+
 ## Acceptance Criteria
 
 1. New API `kimi-k3` resolves capability identity to `moonshot/kimi-k3`, not
@@ -305,6 +332,16 @@ added.
     boundary remains compatible.
 25. A cross-layer policy matrix proves that renderer hidden, fixed, and editable states correspond
     to the same omit, fixed, and passthrough policies used by final request serialization.
+26. `ownedBy: x-ai` resolves through the xAI owner path, and recognized hyphenated dotted provider
+    namespaces normalize to their model ID without changing versioned unqualified IDs.
+27. Non-New API route metadata applies the same video compatibility and stored-model-first fallback
+    as the resolved provider model, while New API type precedence remains unchanged.
+28. An explicit DashScope thinking budget is serialized for an unresolved custom-model portrait;
+    automatic thinking enablement and portrait budget defaults still require supported metadata.
+29. Model-ID changes schedule exactly one capability refresh without requiring blur, and blur of
+    an already resolved identity performs no redundant query.
+30. ChatStatusBar initializes fixed top P from policy, and manual compaction reuses one resolved
+    provider-model fact set for input capabilities.
 
 ## Constraints
 

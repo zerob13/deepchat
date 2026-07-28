@@ -282,7 +282,15 @@ export class ProviderModelHelper {
     const type =
       providerId === 'new-api'
         ? this.resolveNewApiEffectiveModelType(modelWithRoute, config)
-        : (config?.type ?? model.type)
+        : (resolveVideoGenerationCompatType({
+            modelId: model.id,
+            type: config?.type ?? model.type,
+            apiEndpoint: config?.apiEndpoint,
+            endpointType,
+            supportedEndpointTypes: model.supportedEndpointTypes
+          }) ??
+          model.type ??
+          config?.type)
 
     return {
       endpointType,

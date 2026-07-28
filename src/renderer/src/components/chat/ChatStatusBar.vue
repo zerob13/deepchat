@@ -1937,6 +1937,7 @@ const resolveDefaultGenerationSettings = async (
   ])
   const resolvedCapabilityProviderId = capabilities?.identity.providerId ?? providerId
   const temperaturePolicy = capabilities?.requestPolicy.temperature
+  const topPPolicy = capabilities?.requestPolicy.topP
   const portrait = capabilities?.reasoningPortrait ?? null
   const contextLengthDefault = toValidNonNegativeInteger(modelConfig.contextLength) ?? 32000
   const maxTokensDefault =
@@ -1949,7 +1950,7 @@ const resolveDefaultGenerationSettings = async (
       (temperaturePolicy?.mode === 'fixed' ? temperaturePolicy.value : undefined) ??
       parseFiniteNumericValue(modelConfig.temperature) ??
       0.7,
-    topP: normalizeTopP(modelConfig.topP),
+    topP: topPPolicy?.mode === 'fixed' ? topPPolicy.value : normalizeTopP(modelConfig.topP),
     contextLength: contextLengthDefault,
     timeout:
       timeoutDefault >= TIMEOUT_MIN && timeoutDefault <= TIMEOUT_MAX

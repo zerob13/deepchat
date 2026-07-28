@@ -124,7 +124,7 @@ describe('useModelCapabilities', () => {
     modelClient.getCapabilities.mockResolvedValue(
       createCapabilities({
         supportsTemperatureControl: true,
-        temperatureCapability: null
+        temperatureCapability: undefined
       })
     )
 
@@ -163,7 +163,7 @@ describe('useModelCapabilities', () => {
             catalogModelId: 'kimi-k3'
           },
           supportsTemperatureControl: true,
-          temperatureCapability: null
+          temperatureCapability: undefined
         },
         {
           temperature: { mode: 'omit' },

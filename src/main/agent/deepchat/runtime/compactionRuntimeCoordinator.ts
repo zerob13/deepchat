@@ -226,7 +226,8 @@ export class CompactionRuntimeCoordinator {
       const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
         this.deps.providerSettings,
         state.providerId,
-        state.modelId
+        state.modelId,
+        providerModelFacts
       )
 
       const intent = await this.deps.compactionService.prepareForManualCompaction({

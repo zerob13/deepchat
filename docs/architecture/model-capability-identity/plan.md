@@ -162,6 +162,30 @@ runtime serialization, covering passthrough, fixed, capability-derived omit, and
 Add direct Aihubmix K3, initial loading, silent error, rapid model switch, K2 fixed value, and
 effort-plus-temperature renderer regressions.
 
+## External review hardening
+
+Harden Phase 2 input normalization for separator-normalized xAI owners and known dotted provider
+namespaces. Keep canonical versioned model IDs unchanged, and add direct unit coverage for both the
+recognized namespace and preservation paths.
+
+Align non-New API route-only video detection and fallback type precedence with resolved provider
+models. Preserve New API's special type rules. Serialize explicit DashScope thinking budgets when
+portrait support is unknown while retaining portrait gates for automatic enablement, default
+budgets, and explicit unsupported metadata.
+
+Make ModelConfigDialog schedule identity-driven capability refreshes directly and deduplicate an
+unchanged ready or in-flight query without suppressing same-model refreshes caused by route, type,
+or reasoning changes. Apply fixed top-P policy when initializing ChatStatusBar defaults.
+
+Thread the existing provider-model facts through manual compaction input-capability resolution and
+extract the duplicated private embedding runtime context. Do not introduce capability getter
+memoization: catalog refresh, route changes, model configuration, and custom-model mutation would
+otherwise require a new invalidation contract for no demonstrated hot-path benefit.
+
+Correct renderer and runtime test fixtures so unknown temperature is represented as `undefined`,
+served policy remains the authority, effort portraits are internally consistent, fixed controls
+cannot emit updates, and wire interception uses a deterministic terminal response.
+
 ## Review and commit slices
 
 1. Write and review the architecture SDD and maintained provider runtime contract.

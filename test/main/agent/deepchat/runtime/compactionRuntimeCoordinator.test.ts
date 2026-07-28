@@ -238,11 +238,12 @@ function createHarness(options?: {
     runtime.getHydrated(toAppSessionId(sessionId))
   )
   const getSessionListState = vi.fn(async () => initialInstance?.getRuntimeState() ?? null)
+  const providerSettings = createProviderSettings()
   const deps: CompactionRuntimeCoordinatorDependencies = {
     compactionService,
     sessionStore,
     messageStore,
-    providerSettings: createProviderSettings(),
+    providerSettings,
     toolResolver,
     runLifecycle,
     sessionSettings,
@@ -279,6 +280,7 @@ function createHarness(options?: {
     initialInstance,
     messageStore,
     prepareForManualCompaction,
+    providerSettings,
     publishedEvents,
     runtime,
     sessionSettings,
@@ -345,7 +347,8 @@ describe('CompactionRuntimeCoordinator', () => {
       prepareForManualCompaction,
       sessionSettings,
       toolResolver,
-      transitionStatus
+      transitionStatus,
+      providerSettings
     } = createHarness()
 
     await expect(coordinator.compact(SESSION_ID)).resolves.toEqual({
@@ -388,6 +391,8 @@ describe('CompactionRuntimeCoordinator', () => {
         signal: expect.any(AbortSignal)
       })
     )
+    expect(providerSettings.getModelConfig).toHaveBeenCalledOnce()
+    expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledOnce()
   })
 
   it('applies a prepared manual intent and returns the owned projection', async () => {

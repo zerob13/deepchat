@@ -139,7 +139,7 @@ const getOwnerProviderIds = (ownedBy: string | undefined): string[] => {
   if (owner.includes('deepseek')) {
     addUniqueProviderId(providerIds, 'deepseek')
   }
-  if (owner.includes('xai') || owner.includes('grok')) {
+  if (owner.includes('xai') || /(?:^| )x ai(?: |$)/.test(owner) || owner.includes('grok')) {
     addUniqueProviderId(providerIds, 'xai')
   }
   if (

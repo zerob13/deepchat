@@ -398,7 +398,7 @@ export interface ModelConfig {
 }
 
 export type ModelRouteConfig = Partial<
-  Pick<ModelConfig, 'endpointType' | 'ownedBy' | 'type' | 'isUserDefined'>
+  Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'ownedBy' | 'type' | 'isUserDefined'>
 >
 
 export interface IModelConfig {

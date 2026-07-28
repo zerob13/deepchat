@@ -16,23 +16,27 @@ function createFields(
     budgetRange?: ThinkingBudgetRange | null
   } = {}
 ) {
-  return useChatConfigFields({
-    temperature: ref(0.7),
-    contextLength: ref(4096),
-    maxTokens: ref(1024),
-    contextLengthLimit: ref(undefined),
-    maxTokensLimit: ref(undefined),
-    thinkingBudget: ref(options.thinkingBudget),
-    reasoningEffort: ref(undefined),
-    verbosity: ref(undefined),
-    providerId: ref('openai'),
-    temperatureControl: computed(() => temperatureControl),
-    showThinkingBudget: computed(() => options.showThinkingBudget ?? false),
-    thinkingBudgetError: computed(() => ''),
-    budgetRange: ref(options.budgetRange ?? null),
-    formatSize: (size: number) => String(size),
-    emit: vi.fn()
-  })
+  const emit = vi.fn()
+  return {
+    ...useChatConfigFields({
+      temperature: ref(0.7),
+      contextLength: ref(4096),
+      maxTokens: ref(1024),
+      contextLengthLimit: ref(undefined),
+      maxTokensLimit: ref(undefined),
+      thinkingBudget: ref(options.thinkingBudget),
+      reasoningEffort: ref(undefined),
+      verbosity: ref(undefined),
+      providerId: ref('openai'),
+      temperatureControl: computed(() => temperatureControl),
+      showThinkingBudget: computed(() => options.showThinkingBudget ?? false),
+      thinkingBudgetError: computed(() => ''),
+      budgetRange: ref(options.budgetRange ?? null),
+      formatSize: (size: number) => String(size),
+      emit
+    }),
+    emit
+  }
 }
 
 describe('useChatConfigFields', () => {
@@ -49,7 +53,7 @@ describe('useChatConfigFields', () => {
   })
 
   it('shows fixed temperature as a disabled policy value', () => {
-    const { sliderFields } = createFields({ mode: 'fixed', value: 1 })
+    const { emit, sliderFields } = createFields({ mode: 'fixed', value: 1 })
     const temperature = sliderFields.value.find((field) => field.key === 'temperature')
 
     expect(temperature).toMatchObject({
@@ -57,6 +61,8 @@ describe('useChatConfigFields', () => {
       hint: 'settings.model.temperatureFixedByPolicy'
     })
     expect(temperature?.getValue()).toBe(1)
+    temperature?.setValue(0.4)
+    expect(emit).not.toHaveBeenCalled()
   })
 
   it('expands thinking budget input bounds to include sentinels', () => {

@@ -39,38 +39,43 @@ const createDeferred = <T>() => {
   return { promise, resolve, reject }
 }
 
-const createCapabilityResult = (options: SetupOptions, modelId = options.modelId) => ({
-  identity: {
-    providerId: options.capabilityProviderId ?? options.providerId,
-    requestModelId: modelId,
-    catalogMatched: false as const,
-    catalogModelId: null
-  },
-  requestPolicy: options.requestPolicy ?? {
-    temperature:
-      options.temperatureCapability === false
-        ? ({ mode: 'omit' } as const)
-        : ({ mode: 'passthrough' } as const),
-    topP:
-      (options.capabilityProviderId ?? options.providerId) === 'anthropic' &&
-      options.temperatureCapability === false
-        ? ({ mode: 'omit' } as const)
-        : ({ mode: 'passthrough' } as const),
-    reasoning: { mode: 'passthrough' as const },
-    legacyThinking: { mode: 'passthrough' as const }
-  },
-  supportsReasoning: options.reasoningPortrait?.supported ?? true,
-  reasoningPortrait: options.reasoningPortrait ?? null,
-  thinkingBudgetRange: options.reasoningPortrait?.budget ?? null,
-  supportsSearch: null,
-  searchDefaults: null,
-  supportsTemperatureControl: options.temperatureCapability ?? true,
-  temperatureCapability: options.temperatureCapability ?? true,
-  supportsReasoningEffort: Boolean(options.reasoningPortrait?.effort),
-  reasoningEffortDefault: options.reasoningPortrait?.effort,
-  supportsVerbosity: Boolean(options.reasoningPortrait?.verbosity),
-  verbosityDefault: options.reasoningPortrait?.verbosity
-})
+const createCapabilityResult = (options: SetupOptions, modelId = options.modelId) => {
+  const temperatureCapability =
+    'temperatureCapability' in options ? options.temperatureCapability : true
+
+  return {
+    identity: {
+      providerId: options.capabilityProviderId ?? options.providerId,
+      requestModelId: modelId,
+      catalogMatched: false as const,
+      catalogModelId: null
+    },
+    requestPolicy: options.requestPolicy ?? {
+      temperature:
+        temperatureCapability === false
+          ? ({ mode: 'omit' } as const)
+          : ({ mode: 'passthrough' } as const),
+      topP:
+        (options.capabilityProviderId ?? options.providerId) === 'anthropic' &&
+        temperatureCapability === false
+          ? ({ mode: 'omit' } as const)
+          : ({ mode: 'passthrough' } as const),
+      reasoning: { mode: 'passthrough' as const },
+      legacyThinking: { mode: 'passthrough' as const }
+    },
+    supportsReasoning: options.reasoningPortrait?.supported ?? true,
+    reasoningPortrait: options.reasoningPortrait ?? null,
+    thinkingBudgetRange: options.reasoningPortrait?.budget ?? null,
+    supportsSearch: null,
+    searchDefaults: null,
+    supportsTemperatureControl: temperatureCapability !== false,
+    temperatureCapability,
+    supportsReasoningEffort: Boolean(options.reasoningPortrait?.effort),
+    reasoningEffortDefault: options.reasoningPortrait?.effort,
+    supportsVerbosity: Boolean(options.reasoningPortrait?.verbosity),
+    verbosityDefault: options.reasoningPortrait?.verbosity
+  }
+}
 
 const setup = async (options: SetupOptions) => {
   vi.resetModules()
@@ -1112,26 +1117,40 @@ describe('ModelConfigDialog new-api endpoint normalization', () => {
   })
 
   it('refreshes capability policy after a create-mode model ID is entered', async () => {
-    const { wrapper, modelClient } = await setup({
+    const capabilityRequest = createDeferred<Record<string, unknown>>()
+    const options: SetupOptions = {
       providerId: 'new-api',
       modelId: '',
       modelName: '',
       providerApiType: 'new-api',
-      mode: 'create'
-    })
+      mode: 'create',
+      getCapabilities: () => capabilityRequest.promise
+    }
+    const { wrapper, modelClient } = await setup(options)
 
     ;(wrapper.vm as any).modelIdField = 'kimi-k3'
-    ;(wrapper.vm as any).queueCapabilityRefresh()
+    await vi.waitFor(() =>
+      expect(modelClient.getCapabilities).toHaveBeenCalledWith(
+        'new-api',
+        'kimi-k3',
+        expect.objectContaining({
+          reasoning: expect.any(Boolean)
+        })
+      )
+    )
+    expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
+
+    ;(wrapper.vm as any).queueCapabilityRefreshForIdentityChange()
     await nextTick()
+    expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
+
+    capabilityRequest.resolve(createCapabilityResult(options, 'kimi-k3'))
     await flushPromises()
 
-    expect(modelClient.getCapabilities).toHaveBeenCalledWith(
-      'new-api',
-      'kimi-k3',
-      expect.objectContaining({
-        reasoning: expect.any(Boolean)
-      })
-    )
+    ;(wrapper.vm as any).queueCapabilityRefreshForIdentityChange()
+    await nextTick()
+    await flushPromises()
+    expect(modelClient.getCapabilities).toHaveBeenCalledTimes(1)
   })
 
   it('resolves capabilities for the edited identity when a custom model is renamed', async () => {
@@ -1149,8 +1168,7 @@ describe('ModelConfigDialog new-api endpoint normalization', () => {
     expect((wrapper.vm as any).temperatureControl).toEqual({ mode: 'loading' })
     expect((wrapper.vm as any).isValid).toBe(false)
 
-    ;(wrapper.vm as any).queueCapabilityRefresh()
-    await flushPromises()
+    await vi.waitFor(() => expect(modelClient.getCapabilities).toHaveBeenCalledTimes(2))
 
     expect(modelClient.getCapabilities).toHaveBeenLastCalledWith(
       'new-api',

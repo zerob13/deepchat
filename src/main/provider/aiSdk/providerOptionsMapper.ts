@@ -261,14 +261,17 @@ export function buildProviderOptions(
       ) {
         config.enable_thinking = true
       }
-      if (
-        params.providerId === 'dashscope' &&
-        reasoningPortrait?.supported === true &&
-        reasoningEnabled
-      ) {
-        config.enable_thinking = true
-        const dbBudget = reasoningPortrait.budget?.default
-        const budget = modelConfig.thinkingBudget ?? dbBudget
+      if (params.providerId === 'dashscope' && reasoningEnabled) {
+        const supportsThinking = reasoningPortrait?.supported === true
+        if (supportsThinking) {
+          config.enable_thinking = true
+        }
+        const budget =
+          typeof modelConfig.thinkingBudget === 'number' && reasoningPortrait?.supported !== false
+            ? modelConfig.thinkingBudget
+            : supportsThinking
+              ? reasoningPortrait.budget?.default
+              : undefined
         if (typeof budget === 'number') {
           config.thinking_budget = budget
         }

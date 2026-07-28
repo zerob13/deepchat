@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ModelConfig } from '@shared/types/provider'
-import { ModelType } from '../../../src/shared/model'
+import { ApiEndpointType, ModelType } from '../../../src/shared/model'
 
 const storeStates = vi.hoisted(
   () =>
@@ -549,6 +549,47 @@ describe('ProviderModelHelper cache', () => {
       ownedBy: 'moonshot'
     })
     expect(getModelConfig).not.toHaveBeenCalled()
+  })
+
+  it('keeps stored non-New API model type authoritative in route metadata', async () => {
+    const { ProviderModelHelper } = await import('../../../src/main/provider/providerModelHelper')
+    const helper = new ProviderModelHelper({
+      userDataPath: 'C:/mock-user-data',
+      getModelConfig: () => createModelConfig({ type: ModelType.Chat }),
+      setModelStatus: vi.fn(),
+      deleteModelStatus: vi.fn(),
+      publishEvent: publishDeepchatEventMock
+    })
+    const model = {
+      ...createBaseModel('openai', 'image-model'),
+      type: ModelType.ImageGeneration
+    }
+    const store = helper.getProviderModelStore('openai')
+    store.set('models', [model])
+
+    expect(helper.getProviderModels('openai')[0]?.type).toBe(ModelType.ImageGeneration)
+    expect(
+      helper.getProviderModelRouteMetadata(
+        'openai',
+        model.id,
+        createModelConfig({ type: ModelType.Chat })
+      )
+    ).toMatchObject({
+      type: ModelType.ImageGeneration
+    })
+
+    expect(
+      helper.getProviderModelRouteMetadata(
+        'openai',
+        model.id,
+        createModelConfig({
+          type: ModelType.Chat,
+          apiEndpoint: ApiEndpointType.Video
+        })
+      )
+    ).toMatchObject({
+      type: ModelType.VideoGeneration
+    })
   })
 
   it('keeps cached route metadata independent from derived model defaults', async () => {
