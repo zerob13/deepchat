@@ -23,20 +23,29 @@
           type="password"
           autocomplete="current-password"
           autofocus
-          :disabled="unlockSubmitting"
+          :disabled="unlockSubmitting || isDebugPreview"
         />
         <div v-if="unlockMessage" class="unlock-message">{{ unlockMessage }}</div>
         <div class="unlock-actions">
           <button
             class="unlock-button unlock-button--primary"
             type="submit"
-            :disabled="!password || unlockSubmitting"
+            :disabled="!password || unlockSubmitting || isDebugPreview"
           >
             {{ unlockSubmitting ? 'Opening...' : 'Unlock' }}
           </button>
-          <button class="unlock-button" type="button" @click="cancelUnlock">Quit</button>
+          <button
+            class="unlock-button"
+            type="button"
+            :disabled="isDebugPreview"
+            @click="cancelUnlock"
+          >
+            Quit
+          </button>
         </div>
-        <p class="unlock-hint">{{ unlockHint }}</p>
+        <p class="unlock-hint">
+          {{ isDebugPreview ? t('settings.debug.splash.previewHint') : unlockHint }}
+        </p>
       </form>
     </div>
 
@@ -90,12 +99,16 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import {
   type DatabaseUnlockProgressPayload,
   type DatabaseUnlockRequestPayload
 } from '@shared/contracts/databaseSecurity'
 import darkLogo from '@/assets/splash/logo-v3-dark.svg?raw'
 import lightLogo from '@/assets/splash/logo-v3-light.svg?raw'
+import type { SplashDebugMode } from '@shared/contracts/splash'
+
+const { t } = useI18n()
 
 const mode = ref<'loading' | 'system-unlock' | 'unlock'>('loading')
 const requestId = ref('')
@@ -105,6 +118,7 @@ const safeStorageAvailable = ref(false)
 const unlockSubmitting = ref(false)
 const passwordInput = ref<HTMLInputElement | null>(null)
 const animationStarted = ref(true)
+const isDebugPreview = ref(false)
 
 const unlockMessage = computed(() => {
   if (unlockReason.value === 'invalid') {
@@ -129,7 +143,16 @@ const focusPasswordInput = () => {
   })
 }
 
+const handleDebugMode = (debugMode: SplashDebugMode) => {
+  isDebugPreview.value = debugMode === 'unlock'
+  requestId.value = ''
+  password.value = ''
+  unlockSubmitting.value = false
+  mode.value = debugMode
+}
+
 const handleUnlockRequest = (payload: DatabaseUnlockRequestPayload) => {
+  isDebugPreview.value = false
   requestId.value = payload.requestId
   unlockReason.value = payload.reason
   safeStorageAvailable.value = payload.safeStorageAvailable
@@ -140,6 +163,7 @@ const handleUnlockRequest = (payload: DatabaseUnlockRequestPayload) => {
 }
 
 const handleUnlockProgress = (payload: DatabaseUnlockProgressPayload) => {
+  isDebugPreview.value = false
   unlockSubmitting.value = false
   if (payload.active) {
     safeStorageAvailable.value = payload.safeStorageAvailable
@@ -152,7 +176,7 @@ const handleUnlockProgress = (payload: DatabaseUnlockProgressPayload) => {
 }
 
 const submitUnlock = () => {
-  if (!requestId.value || !password.value || unlockSubmitting.value) {
+  if (isDebugPreview.value || !requestId.value || !password.value || unlockSubmitting.value) {
     return
   }
   unlockSubmitting.value = true
@@ -164,7 +188,7 @@ const submitUnlock = () => {
 }
 
 const cancelUnlock = () => {
-  if (!requestId.value) {
+  if (isDebugPreview.value || !requestId.value) {
     return
   }
   const canceledRequestId = requestId.value
@@ -184,7 +208,8 @@ const cleanupListeners: Array<() => void> = []
 onMounted(() => {
   cleanupListeners.push(
     window.deepchatSplash.onUnlockRequest(handleUnlockRequest),
-    window.deepchatSplash.onUnlockProgress(handleUnlockProgress)
+    window.deepchatSplash.onUnlockProgress(handleUnlockProgress),
+    window.deepchatSplash.onDebugMode(handleDebugMode)
   )
 })
 

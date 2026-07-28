@@ -1,6 +1,9 @@
+import path from 'node:path'
+import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const createdWindows = vi.hoisted(() => [] as MockBrowserWindow[])
+const browserWindowOptions = vi.hoisted(() => [] as Record<string, unknown>[])
 const mockIpcMain = vi.hoisted(() => ({
   on: vi.fn()
 }))
@@ -45,7 +48,8 @@ class MockBrowserWindow {
   private readonly handlers = new Map<string, Array<(...args: unknown[]) => void>>()
   private readonly webContentsHandlers = new Map<string, Array<(...args: unknown[]) => void>>()
 
-  constructor() {
+  constructor(options: Record<string, unknown>) {
+    browserWindowOptions.push(options)
     createdWindows.push(this)
   }
 
@@ -132,6 +136,17 @@ const flushPromises = async () => {
 }
 
 describe('SplashWindow display gating', () => {
+  it('keeps the splash document root transparent', async () => {
+    const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const documentSource = readFileSync(
+      path.resolve(process.cwd(), 'src/renderer/splash/index.html'),
+      'utf8'
+    )
+
+    expect(documentSource).toContain('background: transparent;')
+    expect(documentSource).not.toContain('background: #020817;')
+  })
+
   let manager: InstanceType<
     typeof import('../../../src/main/app/splashWindow').SplashWindow
   > | null = null
@@ -139,6 +154,7 @@ describe('SplashWindow display gating', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     createdWindows.length = 0
+    browserWindowOptions.length = 0
     mockIpcMain.on.mockClear()
     splashLoadMocks.loadURL = undefined
     splashLoadMocks.loadFile = undefined
@@ -154,6 +170,18 @@ describe('SplashWindow display gating', () => {
     }
     vi.useRealTimers()
     createdWindows.length = 0
+  })
+
+  it('creates a transparent splash window canvas', async () => {
+    const { SplashWindow } = await import('../../../src/main/app/splashWindow')
+
+    manager = new SplashWindow()
+    await manager.create()
+
+    expect(browserWindowOptions[0]).toMatchObject({
+      transparent: true,
+      backgroundColor: '#00000000'
+    })
   })
 
   it('waits 200ms before showing the splash window', async () => {
@@ -292,6 +320,53 @@ describe('SplashWindow display gating', () => {
     expect(splashWindow.show).not.toHaveBeenCalled()
   })
 
+  it('delivers debug mode after the splash document has loaded and replays it after reload', async () => {
+    const { SPLASH_DEBUG_MODE_CHANNEL } = await import('../../../src/shared/contracts/splash')
+    const { SplashWindow } = await import('../../../src/main/app/splashWindow')
+
+    manager = new SplashWindow()
+    await manager.showDebugScenario('system-unlock')
+
+    const splashWindow = createdWindows[0]
+    expect(splashWindow.webContents.send).toHaveBeenCalledWith(
+      SPLASH_DEBUG_MODE_CHANNEL,
+      'system-unlock'
+    )
+
+    splashWindow.webContents.send.mockClear()
+    splashWindow.emitWebContents('did-finish-load')
+
+    expect(splashWindow.webContents.send).toHaveBeenCalledWith(
+      SPLASH_DEBUG_MODE_CHANNEL,
+      'system-unlock'
+    )
+  })
+
+  it('does not resolve an active unlock request when closing a debug preview', async () => {
+    const { SplashWindow } = await import('../../../src/main/app/splashWindow')
+
+    manager = new SplashWindow()
+    await manager.create()
+    const unlockPromise = manager.requestDatabaseUnlock({
+      reason: 'manual-required',
+      safeStorageAvailable: true
+    })
+    let unlockSettled = false
+    void unlockPromise.then(() => {
+      unlockSettled = true
+    })
+
+    await manager.showDebugScenario('unlock')
+    await expect(manager.closeDebugScenario()).resolves.toBe(true)
+    await Promise.resolve()
+
+    expect(unlockSettled).toBe(false)
+
+    await manager.close()
+    await expect(unlockPromise).resolves.toBeNull()
+    manager = null
+  })
+
   it('falls back to an inline splash renderer when the dev page is unavailable', async () => {
     process.env.ELECTRON_RENDERER_URL = 'http://localhost:5173'
     splashLoadMocks.loadURL = vi.fn(async (url: string) => {
@@ -318,7 +393,103 @@ describe('SplashWindow display gating', () => {
     )
     expect(splashWindow.loadURL).toHaveBeenNthCalledWith(2, 'http://localhost:5173/splash/')
     expect(splashWindow.loadFile).toHaveBeenCalledTimes(1)
-    expect(splashWindow.loadURL).toHaveBeenLastCalledWith(expect.stringMatching(/^data:text\/html/))
+    const fallbackUrl = splashWindow.loadURL.mock.calls.at(-1)?.[0]
+    expect(fallbackUrl).toMatch(/^data:text\/html/)
+    const fallbackHtml = decodeURIComponent(fallbackUrl!.split(',', 2)[1])
+    expect(fallbackHtml).toContain(
+      'html, body { width: 100%; height: 100%; margin: 0; background: transparent;'
+    )
+    expect(fallbackHtml).toContain('.shell--manual-unlock { background: #020817; }')
+    let debugModeListener: ((mode: 'loading' | 'system-unlock' | 'unlock') => void) | undefined
+    let unlockRequestListener:
+      | ((payload: {
+          requestId: string
+          reason: 'invalid' | 'manual-required' | 'system-key-missing'
+          safeStorageAvailable: boolean
+        }) => void)
+      | undefined
+    const splash = {
+      onDebugMode: vi.fn((listener) => {
+        debugModeListener = listener
+      }),
+      onUnlockRequest: vi.fn((listener) => {
+        unlockRequestListener = listener
+      }),
+      onUnlockProgress: vi.fn(),
+      submitUnlock: vi.fn(),
+      cancelUnlock: vi.fn()
+    }
+    const dom = new JSDOM(fallbackHtml, {
+      runScripts: 'dangerously',
+      beforeParse(window) {
+        Object.defineProperty(window, 'deepchatSplash', { value: splash })
+      }
+    })
+
+    try {
+      const { document } = dom.window
+      const subtitle = document.getElementById('subtitle')!
+      const password = document.getElementById('password') as HTMLInputElement
+      const actions = document.getElementById('actions')!
+      const submit = document.getElementById('submit') as HTMLButtonElement
+      const quit = document.getElementById('quit') as HTMLButtonElement
+      const hint = document.getElementById('hint')!
+
+      expect(debugModeListener).toBeTypeOf('function')
+      expect(unlockRequestListener).toBeTypeOf('function')
+
+      debugModeListener?.('loading')
+      expect(subtitle.textContent).toBe('Unlocking local database')
+      expect(hint.textContent).toBe('DeepChat is starting.')
+      expect(password.hidden).toBe(true)
+      expect(actions.hidden).toBe(true)
+
+      debugModeListener?.('system-unlock')
+      expect(subtitle.textContent).toBe('Unlocking local database')
+      expect(hint.textContent).toBe(
+        'DeepChat is reading the saved password from the system credential store.'
+      )
+      expect(password.hidden).toBe(true)
+      expect(actions.hidden).toBe(true)
+
+      debugModeListener?.('unlock')
+      expect(subtitle.textContent).toBe('Local database is encrypted')
+      expect(hint.textContent).toBe('Development preview — password submission is disabled.')
+      expect(password.disabled).toBe(true)
+      expect(submit.disabled).toBe(true)
+      expect(quit.disabled).toBe(true)
+      password.value = 'preview-password'
+      password.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+      document
+        .getElementById('panel')!
+        .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+      quit.click()
+      expect(splash.submitUnlock).not.toHaveBeenCalled()
+      expect(splash.cancelUnlock).not.toHaveBeenCalled()
+
+      unlockRequestListener?.({
+        requestId: 'request-1',
+        reason: 'manual-required',
+        safeStorageAvailable: true
+      })
+      expect(password.disabled).toBe(false)
+      expect(quit.disabled).toBe(false)
+      expect(submit.disabled).toBe(true)
+      password.value = 'real-password'
+      password.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+      expect(submit.disabled).toBe(false)
+      document
+        .getElementById('panel')!
+        .dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }))
+      quit.click()
+      expect(splash.submitUnlock).toHaveBeenCalledWith({
+        requestId: 'request-1',
+        password: 'real-password'
+      })
+      expect(splash.cancelUnlock).toHaveBeenCalledWith({ requestId: 'request-1' })
+    } finally {
+      dom.window.close()
+    }
   })
 
   it('stops splash renderer fallback quietly after the hidden splash is suppressed', async () => {

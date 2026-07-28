@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { performanceRecordRendererRoute } from '@shared/contracts/routes'
+import { app } from 'electron'
+import {
+  debugCloseSplashScenarioRoute,
+  debugShowSplashScenarioRoute,
+  performanceRecordRendererRoute
+} from '@shared/contracts/routes'
 import { createAppRoutes } from '@/app/routes'
 
 const validRecord = {
@@ -37,9 +42,58 @@ function createRoutes(overrides: Partial<Parameters<typeof createAppRoutes>[0]> 
     disableDatabaseEncryption: vi.fn(),
     recordActivity: vi.fn(),
     publishSessionsUpdated: vi.fn(),
+    splash: {
+      showDebugScenario: vi.fn(),
+      closeDebugScenario: vi.fn()
+    },
     ...overrides
   })
 }
+
+describe('app debug splash routes', () => {
+  it('denies Splash previews for packaged app builds', async () => {
+    const splash = {
+      showDebugScenario: vi.fn(),
+      closeDebugScenario: vi.fn()
+    }
+    const isPackaged = vi.spyOn(app, 'isPackaged', 'get').mockReturnValue(true)
+
+    try {
+      const routes = createRoutes({ splash })
+      const show = routes.get(debugShowSplashScenarioRoute.name)
+      const close = routes.get(debugCloseSplashScenarioRoute.name)
+
+      await expect(show?.({ mode: 'unlock' }, { webContentsId: 1, windowId: 1 })).resolves.toEqual({
+        shown: false
+      })
+      await expect(close?.({}, { webContentsId: 1, windowId: 1 })).resolves.toEqual({
+        closed: false
+      })
+      expect(splash.showDebugScenario).not.toHaveBeenCalled()
+      expect(splash.closeDebugScenario).not.toHaveBeenCalled()
+    } finally {
+      isPackaged.mockRestore()
+    }
+  })
+
+  it('validates mode input and delegates allowed Splash previews', async () => {
+    const splash = {
+      showDebugScenario: vi.fn(),
+      closeDebugScenario: vi.fn().mockResolvedValue(true)
+    }
+    const routes = createRoutes({ splash })
+    const show = routes.get(debugShowSplashScenarioRoute.name)
+    const close = routes.get(debugCloseSplashScenarioRoute.name)
+
+    await expect(show?.({ mode: 'unlock' }, { webContentsId: 1, windowId: 1 })).resolves.toEqual({
+      shown: true
+    })
+    expect(splash.showDebugScenario).toHaveBeenCalledWith('unlock')
+    await expect(close?.({}, { webContentsId: 1, windowId: 1 })).resolves.toEqual({ closed: true })
+    expect(splash.closeDebugScenario).toHaveBeenCalledTimes(1)
+    await expect(show?.({ mode: 'invalid' }, { webContentsId: 1, windowId: 1 })).rejects.toThrow()
+  })
+})
 
 describe('app performance diagnostics route', () => {
   it('records an allowlisted main-renderer performance record', async () => {
