@@ -608,6 +608,45 @@ describe('McpClient Runtime Command Processing Tests', () => {
       expect(sdkClient.listTools).toHaveBeenCalledOnce()
     })
 
+    it('propagates cancellation that lands as listTools session recovery settles', async () => {
+      const unsupportedError = new McpError(ErrorCode.MethodNotFound, 'Unknown method: tools/list')
+      const sdkClient = {
+        connect: vi.fn().mockResolvedValue(undefined),
+        callTool: vi.fn(),
+        listTools: vi.fn().mockRejectedValue(unsupportedError),
+        listPrompts: vi.fn(),
+        getPrompt: vi.fn(),
+        listResources: vi.fn(),
+        readResource: vi.fn(),
+        setNotificationHandler: vi.fn(),
+        setRequestHandler: vi.fn()
+      }
+      vi.mocked(Client).mockImplementationOnce(() => sdkClient as any)
+      const client = createMcpClient('diagnostic-server', {
+        type: 'stdio',
+        command: 'diagnostic-server',
+        args: []
+      })
+      await client.connect()
+
+      let resolveRecovery: () => void = () => undefined
+      const recovery = new Promise<void>((resolve) => {
+        resolveRecovery = resolve
+      })
+      const recoverySpy = vi
+        .spyOn(client as any, 'checkAndHandleSessionError')
+        .mockReturnValue(recovery)
+      const controller = new AbortController()
+      const toolsResult = client.listTools({ signal: controller.signal })
+      await vi.waitFor(() => expect(recoverySpy).toHaveBeenCalledWith(unsupportedError))
+
+      resolveRecovery()
+      queueMicrotask(() => controller.abort())
+
+      await expect(toolsResult).rejects.toMatchObject({ name: 'AbortError' })
+      expect((client as any).cachedTools).toBeNull()
+    })
+
     it('treats unknown prompts/list as an empty prompt list', async () => {
       const sdkClient = {
         connect: vi.fn().mockResolvedValue(undefined),

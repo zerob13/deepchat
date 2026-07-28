@@ -1300,6 +1300,7 @@ export class McpClient {
       }
       // 检查并处理session错误
       await awaitWithAbort(this.checkAndHandleSessionError(error), options?.signal)
+      options?.signal?.throwIfAborted()
 
       // 如果错误表明不支持，则缓存空数组
       if (isUnsupportedCapabilityError(error)) {

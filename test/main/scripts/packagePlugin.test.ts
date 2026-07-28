@@ -295,6 +295,7 @@ describe('package-plugin', () => {
           parallel_mouse_drag: 'ask'
         }
       ],
+      ['darwin', { check_permissions: 'allow' }],
       ['win32', { check_permissions: 'allow', debug_window_info: 'deny' }]
     ] as const) {
       const result = runPackagePlugin(fixture.pluginDir, outDir, platform, 'x64')
