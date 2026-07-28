@@ -80,7 +80,7 @@ const setup = async (options?: {
   deferStartupTasks?: boolean
   modelStoreInitialized?: boolean
   initializeModels?: () => Promise<void>
-  modelCapabilities?: Record<string, { supportsAudioInput: boolean | null }>
+  modelCapabilities?: Record<string, { supportsAudioInput: boolean }>
 }) => {
   vi.resetModules()
   chatInputTriggerAttachMock.mockReset()
@@ -236,7 +236,7 @@ const setup = async (options?: {
     cancelSubmission: vi.fn().mockResolvedValue({ cancelled: true })
   }
   const modelClient = {
-    getCapabilities: vi.fn((providerId: string, modelId: string) => {
+    getCapabilities: vi.fn(({ providerId, modelId }: { providerId: string; modelId: string }) => {
       const capabilities = options?.modelCapabilities?.[`${providerId}:${modelId}`]
       return Promise.resolve(capabilities ?? { supportsAudioInput: true })
     }),
@@ -750,7 +750,10 @@ describe('NewThreadPage ACP draft session bootstrap', () => {
     await (wrapper.vm as any).onSubmit()
     await flushPromises()
 
-    expect(modelClient.getCapabilities).toHaveBeenCalledWith('acp', 'runtime-agent')
+    expect(modelClient.getCapabilities).toHaveBeenCalledWith({
+      providerId: 'acp',
+      modelId: 'runtime-agent'
+    })
     expect(sessionStore.sendMessage).toHaveBeenCalledWith('draft-1', {
       text: 'hello from draft',
       files: [textFile]

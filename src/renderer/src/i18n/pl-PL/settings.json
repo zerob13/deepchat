@@ -896,6 +896,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "Ten model ustala temperaturę na {value}.",
+    "topPFixedByPolicy": "Ten model ustala Top P na {value}.",
     "title": "Ustawienia modelu",
     "systemPrompt": {
       "label": "System Prompt",
@@ -1023,7 +1025,6 @@
       "currentUsingModelDefault": "Obecnie korzystam z domyślnej konfiguracji modelu",
       "temperature": {
         "description": "Kontroluj losowość wyjścia. Większość modeli ma wartość 0-1, a niektóre obsługują wartości w zakresie 0-2. Wyższe wartości zwiększają losowość.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 ustala temperaturę na {enabled}, gdy myślenie jest włączone, i {disabled}, gdy jest wyłączone.",
         "label": "Temperatura"
       },
       "topP": {
@@ -2228,7 +2229,10 @@
       "sourceError": "Failed to load Agent sources",
       "emptySources": "No import sources",
       "emptySourcesDescription": "No other Agent with available Skills was found.",
-      "sourceKind": { "internal": "DeepChat", "external": "External" },
+      "sourceKind": {
+        "internal": "DeepChat",
+        "external": "External"
+      },
       "skillCount": "{count} Skills",
       "previewTitle": "Skills to import",
       "selectedCount": "{count} selected",
@@ -2238,8 +2242,16 @@
       "previewError": "Failed to preview Skills",
       "emptyPreview": "No Skills available",
       "emptyPreviewDescription": "This Agent has no Skills that can be imported.",
-      "status": { "ready": "Ready", "conflict": "Conflict", "unavailable": "Unavailable" },
-      "strategy": { "skip": "Skip", "rename": "Rename", "overwrite": "Overwrite" },
+      "status": {
+        "ready": "Ready",
+        "conflict": "Conflict",
+        "unavailable": "Unavailable"
+      },
+      "strategy": {
+        "skip": "Skip",
+        "rename": "Rename",
+        "overwrite": "Overwrite"
+      },
       "renameTarget": "Will be imported as {name}",
       "executeError": "Failed to import Skills",
       "importing": "Importing...",
@@ -3168,5 +3180,23 @@
     "scopeGlobalPlugins": "Ta strona jest globalna dla aplikacji: instalacja, włączanie i stan procesów oficjalnych wtyczek są wspólne dla wszystkich agentów DeepChat.",
     "scopeCurrentAgent": "Ta strona to polityka agenta: zmiany dotyczą tylko dostępności Skills/MCP dla „{agent}”, a nie globalnych instalacji.",
     "currentAgentFallback": "bieżący agent"
+  },
+  "debug": {
+    "description": "Narzędzia dostępne wyłącznie w środowisku programistycznym do podglądu stanów symulowanych i procesów z przewodnikiem.",
+    "unavailableTitle": "Narzędzia debugowania są niedostępne",
+    "unavailableDescription": "Ta czynność jest dostępna tylko w trybie programistycznym.",
+    "splash": {
+      "title": "Okno startowe",
+      "description": "Wyświetl podgląd stanów okna startowego bez uruchamiania rzeczywistego procesu odblokowywania bazy danych.",
+      "loading": "Podgląd ładowania",
+      "systemUnlock": "Podgląd odblokowania systemowego",
+      "unlock": "Podgląd odblokowania ręcznego",
+      "failed": "Nie można wyświetlić scenariusza okna startowego."
+    },
+    "guidance": {
+      "title": "Wskazówki i dane",
+      "description": "Twórz dostępne tylko w środowisku programistycznym symulacje wdrażania, rozmów i aktualizacji.",
+      "failed": "Nie można uruchomić debugowego procesu z przewodnikiem."
+    }
   }
 }

@@ -36,15 +36,33 @@ function createProviderSettings(): ProviderModelResolutionPort {
       reasoning: true,
       type: ModelType.Chat
     }),
-    getCapabilityProviderId: vi.fn((providerId: string) => providerId),
-    supportsReasoningCapability: vi.fn().mockReturnValue(true),
-    getReasoningPortrait: vi.fn().mockReturnValue(null),
-    getThinkingBudgetRange: vi.fn().mockReturnValue({}),
+    getCapabilitySnapshot: vi.fn(({ providerId, modelId }) => ({
+      identity: {
+        providerId,
+        requestModelId: modelId,
+        catalogMatched: false,
+        catalogModelId: null
+      },
+      requestPolicy: {
+        temperature: { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      },
+      supportsAudioInput: false,
+      supportsReasoning: true,
+      reasoningPortrait: null,
+      thinkingBudgetRange: {},
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability: undefined,
+      supportsTemperatureControl: true,
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      supportsVerbosity: false,
+      verbosityDefault: undefined
+    })),
     supportsAudioInputCapability: vi.fn().mockReturnValue(false),
-    supportsReasoningEffortCapability: vi.fn().mockReturnValue(false),
-    getReasoningEffortDefault: vi.fn().mockReturnValue(undefined),
-    supportsVerbosityCapability: vi.fn().mockReturnValue(false),
-    getVerbosityDefault: vi.fn().mockReturnValue(undefined)
   }
 }
 

@@ -7,6 +7,7 @@ import {
   ProviderModelCatalogSchema,
   ProviderModelConfigEntrySchema
 } from '../domainSchemas'
+import { CapabilitySnapshotQuerySchema } from '../../types/model-capabilities'
 
 export const modelsGetProviderCatalogRoute = defineRouteContract({
   name: 'models.getProviderCatalog',
@@ -180,10 +181,7 @@ export const modelsSetBatchStatusRoute = defineRouteContract({
 
 export const modelsGetCapabilitiesRoute = defineRouteContract({
   name: 'models.getCapabilities',
-  input: z.object({
-    providerId: EntityIdSchema,
-    modelId: z.string().min(1)
-  }),
+  input: CapabilitySnapshotQuerySchema,
   output: z.object({
     capabilities: ModelCapabilitiesSchema
   })

@@ -397,6 +397,10 @@ export interface ModelConfig {
   tts?: TtsSettings
 }
 
+export type ModelRouteConfig = Partial<
+  Pick<ModelConfig, 'apiEndpoint' | 'endpointType' | 'ownedBy' | 'type' | 'isUserDefined'>
+>
+
 export interface IModelConfig {
   id: string
   providerId: string

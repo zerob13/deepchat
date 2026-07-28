@@ -18,6 +18,36 @@ async function collectEvents(parts: any[], options: Parameters<typeof adaptAiSdk
 }
 
 describe('AI SDK stream adapter', () => {
+  it('preserves canonical OpenAI-compatible metadata namespaces as opaque options', async () => {
+    const events = await collectEvents(
+      [
+        {
+          type: 'text-delta',
+          id: 'text-1',
+          text: 'hello',
+          providerMetadata: {
+            newApi: {
+              acceptedPredictionTokens: 1
+            }
+          }
+        }
+      ],
+      { supportsNativeTools: true }
+    )
+
+    expect(events).toEqual([
+      {
+        type: 'text',
+        content: 'hello',
+        provider_options: {
+          newApi: {
+            acceptedPredictionTokens: 1
+          }
+        }
+      }
+    ])
+  })
+
   it('maps native tool streaming events to DeepChat core events', async () => {
     const events = await collectEvents(
       [

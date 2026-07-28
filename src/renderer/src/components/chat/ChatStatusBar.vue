@@ -259,6 +259,10 @@
 
                   <div v-else-if="localSettings" class="space-y-4">
                     <TooltipProvider :delay-duration="200">
+                      <GenerationParameterLoadingSkeleton
+                        v-if="temperatureControl.mode === 'loading'"
+                      />
+
                       <div
                         v-if="!showOpenAIMediaGenerationSettings && showTemperatureControl"
                         class="space-y-1.5"
@@ -278,9 +282,7 @@
                                 label: t('chat.advancedSettings.temperature')
                               })
                             "
-                            :disabled="
-                              isMoonshotKimiTemperatureLocked || hasNumericInputError('temperature')
-                            "
+                            :disabled="isTemperatureFixed || hasNumericInputError('temperature')"
                             @click="stepTemperature(-1)"
                           >
                             <Icon icon="lucide:minus" class="h-3 w-3" />
@@ -293,7 +295,7 @@
                             data-setting-control="temperature"
                             type="number"
                             :step="TEMPERATURE_STEP"
-                            :disabled="isMoonshotKimiTemperatureLocked"
+                            :disabled="isTemperatureFixed"
                             :aria-invalid="hasNumericInputError('temperature')"
                             :model-value="temperatureInputValue"
                             @focus="startNumericInputEdit('temperature')"
@@ -312,19 +314,14 @@
                                 label: t('chat.advancedSettings.temperature')
                               })
                             "
-                            :disabled="
-                              isMoonshotKimiTemperatureLocked || hasNumericInputError('temperature')
-                            "
+                            :disabled="isTemperatureFixed || hasNumericInputError('temperature')"
                             @click="stepTemperature(1)"
                           >
                             <Icon icon="lucide:plus" class="h-3 w-3" />
                           </Button>
                         </div>
-                        <p
-                          v-if="moonshotKimiTemperatureHint"
-                          class="text-[11px] text-muted-foreground"
-                        >
-                          {{ moonshotKimiTemperatureHint }}
+                        <p v-if="temperaturePolicyHint" class="text-[11px] text-muted-foreground">
+                          {{ temperaturePolicyHint }}
                         </p>
                         <p
                           v-if="getNumericInputErrorMessage('temperature')"
@@ -370,7 +367,9 @@
                                 label: t('chat.advancedSettings.topP')
                               })
                             "
-                            :disabled="hasNumericInputError('topP') || topPDecreaseDisabled"
+                            :disabled="
+                              isTopPFixed || hasNumericInputError('topP') || topPDecreaseDisabled
+                            "
                             @click="stepTopP(-1)"
                           >
                             <Icon icon="lucide:minus" class="h-3 w-3" />
@@ -385,6 +384,7 @@
                             :step="TOP_P_STEP"
                             :min="TOP_P_MIN"
                             :max="TOP_P_MAX"
+                            :disabled="isTopPFixed"
                             :aria-invalid="hasNumericInputError('topP')"
                             :placeholder="t('chat.advancedSettings.useDefault')"
                             :model-value="topPInputValue"
@@ -404,12 +404,17 @@
                                 label: t('chat.advancedSettings.topP')
                               })
                             "
-                            :disabled="hasNumericInputError('topP') || topPIncreaseDisabled"
+                            :disabled="
+                              isTopPFixed || hasNumericInputError('topP') || topPIncreaseDisabled
+                            "
                             @click="stepTopP(1)"
                           >
                             <Icon icon="lucide:plus" class="h-3 w-3" />
                           </Button>
                         </div>
+                        <p v-if="topPPolicyHint" class="text-[11px] text-muted-foreground">
+                          {{ topPPolicyHint }}
+                        </p>
                         <p
                           v-if="getNumericInputErrorMessage('topP')"
                           class="text-[11px] text-destructive"
@@ -636,7 +641,7 @@
                           t('settings.model.modelConfig.reasoningEffort.label')
                         }}</label>
                         <Select
-                          :model-value="localSettings.reasoningEffort ?? effortOptions[0]?.value"
+                          :model-value="effectiveReasoningEffortValue"
                           @update:model-value="onReasoningEffortSelect($event as string)"
                         >
                           <SelectTrigger class="h-8 text-xs">
@@ -1008,13 +1013,6 @@ import type {
   SessionGenerationSettings
 } from '@shared/types/agent-interface'
 import { normalizeDeepChatSubagentConfig } from '@shared/lib/deepchatSubagents'
-import { isNewApiEndpointType, resolveProviderCapabilityProviderId } from '@shared/model'
-import {
-  MOONSHOT_KIMI_THINKING_DISABLED_TEMPERATURE,
-  MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE,
-  getMoonshotKimiTemperaturePolicy,
-  resolveMoonshotKimiTemperaturePolicy
-} from '@shared/moonshotKimiPolicy'
 import {
   getReasoningEffectiveEnabledForProvider,
   hasAnthropicReasoningToggle,
@@ -1072,6 +1070,11 @@ import { useProjectStore } from '@/stores/ui/project'
 import { useSessionStore } from '@/stores/ui/session'
 import { scheduleStartupDeferredTask } from '@/lib/startupDeferred'
 import { useChatStatusBarAcpConfig } from './composables/useChatStatusBarAcpConfig'
+import GenerationParameterLoadingSkeleton from '@/components/GenerationParameterLoadingSkeleton.vue'
+import {
+  useModelCapabilities,
+  type RendererModelCapabilities
+} from '@/composables/useModelCapabilities'
 
 const props = withDefaults(
   defineProps<{
@@ -1146,10 +1149,15 @@ const modelSettingsTargetConfig = ref<ModelConfig | null>(null)
 const modelSettingsTargetConfigSelection = ref<ModelSelection | null>(null)
 let modelSettingsTargetConfigToken = 0
 
-const capabilitySupportsReasoning = ref<boolean | null>(null)
-const capabilityReasoningPortrait = ref<ReasoningPortrait | null>(null)
-const capabilitySupportsTemperature = ref<boolean | null>(null)
-const capabilityProviderId = ref('')
+const modelCapabilities = useModelCapabilities()
+const capabilityReasoningPortrait = computed(
+  () => modelCapabilities.reasoningPortrait.value as ReasoningPortrait | null
+)
+const capabilitySupportsReasoning = computed(() => modelCapabilities.supportsReasoning.value)
+const capabilityProviderId = computed(
+  () =>
+    modelCapabilities.identity.value?.providerId ?? effectiveModelSelection.value?.providerId ?? ''
+)
 
 let draftModelSyncToken = 0
 let permissionSyncToken = 0
@@ -1293,20 +1301,21 @@ const effectiveModelSelection = computed<ModelSelection | null>(() => {
   return draftModelSelection.value
 })
 
-const moonshotKimiTemperaturePolicy = computed(() =>
-  getMoonshotKimiTemperaturePolicy(
-    effectiveModelSelection.value?.providerId,
-    effectiveModelSelection.value?.modelId
-  )
+const temperatureControl = modelCapabilities.temperatureControl
+const topPControl = modelCapabilities.topPControl
+const isTemperatureFixed = computed(() => temperatureControl.value.mode === 'fixed')
+const isTopPFixed = computed(() => topPControl.value.mode === 'fixed')
+const temperaturePolicyHint = computed(() =>
+  temperatureControl.value.mode === 'fixed'
+    ? t('settings.model.temperatureFixedByPolicy', {
+        value: temperatureControl.value.value
+      })
+    : ''
 )
-const isMoonshotKimiTemperatureLocked = computed(
-  () => moonshotKimiTemperaturePolicy.value?.lockTemperatureControl === true
-)
-const moonshotKimiTemperatureHint = computed(() =>
-  isMoonshotKimiTemperatureLocked.value
-    ? t('chat.advancedSettings.temperatureFixedMoonshotKimi', {
-        enabled: MOONSHOT_KIMI_THINKING_ENABLED_TEMPERATURE.toFixed(1),
-        disabled: MOONSHOT_KIMI_THINKING_DISABLED_TEMPERATURE.toFixed(1)
+const topPPolicyHint = computed(() =>
+  topPControl.value.mode === 'fixed'
+    ? t('settings.model.topPFixedByPolicy', {
+        value: topPControl.value.value
       })
     : ''
 )
@@ -1505,24 +1514,6 @@ const findEnabledModelMeta = (providerId: string, modelId: string): RENDERER_MOD
   return modelStore.findChatSelectableModel(providerId, modelId)?.model ?? null
 }
 
-const resolveCapabilityProviderIdForSelection = (
-  providerId: string,
-  modelId: string,
-  endpointType?: unknown
-): string => {
-  const modelMeta = findEnabledModelMeta(providerId, modelId)
-  return resolveProviderCapabilityProviderId(
-    providerId,
-    {
-      endpointType: isNewApiEndpointType(endpointType) ? endpointType : modelMeta?.endpointType,
-      supportedEndpointTypes: modelMeta?.supportedEndpointTypes,
-      type: modelMeta?.type,
-      providerApiType: resolveProviderApiType(providerId)
-    },
-    modelId
-  )
-}
-
 const resolveModelName = (providerId?: string | null, modelId?: string | null): string => {
   if (!modelId) {
     return ''
@@ -1587,8 +1578,14 @@ const invalidateGenerationPersistResponses = () => {
   generationPersistRequestToken += 1
 }
 
-const temperatureInputValue = computed(() => getNumericInputValue('temperature'))
-const topPInputValue = computed(() => getNumericInputValue('topP'))
+const temperatureInputValue = computed(() =>
+  temperatureControl.value.mode === 'fixed'
+    ? temperatureControl.value.value
+    : getNumericInputValue('temperature')
+)
+const topPInputValue = computed(() =>
+  topPControl.value.mode === 'fixed' ? topPControl.value.value : getNumericInputValue('topP')
+)
 const topPCommittedValue = computed(() => localSettings.value?.topP ?? TOP_P_MAX)
 const topPDecreaseDisabled = computed(
   () => localSettings.value?.topP === undefined || topPCommittedValue.value <= TOP_P_MIN
@@ -1624,16 +1621,13 @@ const showThinkingBudget = computed(() => {
 
 const showTemperatureControl = computed(
   () =>
-    (capabilitySupportsTemperature.value !== false || isMoonshotKimiTemperatureLocked.value) &&
+    (temperatureControl.value.mode === 'editable' || temperatureControl.value.mode === 'fixed') &&
     Boolean(localSettings.value)
-)
-const supportsTopPControl = computed(
-  () => capabilityProviderId.value !== 'anthropic' || capabilitySupportsTemperature.value !== false
 )
 const showTopPControl = computed(
   () =>
     !showOpenAIMediaGenerationSettings.value &&
-    supportsTopPControl.value &&
+    (topPControl.value.mode === 'editable' || topPControl.value.mode === 'fixed') &&
     Boolean(localSettings.value)
 )
 
@@ -1686,6 +1680,18 @@ const effortOptions = computed(() => {
     label: t(`settings.model.modelConfig.reasoningEffort.options.${value}`)
   }))
 })
+const effectiveReasoningEffortValue = computed(
+  () =>
+    normalizeReasoningEffort(
+      capabilityReasoningPortrait.value,
+      localSettings.value?.reasoningEffort
+    ) ??
+    normalizeReasoningEffort(
+      capabilityReasoningPortrait.value,
+      capabilityReasoningPortrait.value?.effort
+    ) ??
+    effortOptions.value[0]?.value
+)
 
 const verbosityOptions = computed(() => {
   return getVerbosityOptions(capabilityReasoningPortrait.value).map((value) => ({
@@ -1919,22 +1925,17 @@ const syncDraftModelSelection = async () => {
 const resolveDefaultGenerationSettings = async (
   providerId: string,
   modelId: string,
-  agentId: string = 'deepchat'
+  agentId: string = 'deepchat',
+  capabilities: RendererModelCapabilities | null = null
 ): Promise<SessionGenerationSettings> => {
-  const agentConfig = await resolveDeepChatAgentConfig(agentId)
-  const modelConfig = await modelClient.getModelConfig(modelId, providerId)
-  const capabilities = await modelClient.getCapabilities(providerId, modelId)
-  const resolvedCapabilityProviderId = resolveCapabilityProviderIdForSelection(
-    providerId,
-    modelId,
-    modelConfig.endpointType
-  )
-  const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
-    providerId,
-    modelId,
-    modelConfig.reasoning
-  )
-  const portrait = capabilities.reasoningPortrait ?? null
+  const [agentConfig, modelConfig] = await Promise.all([
+    resolveDeepChatAgentConfig(agentId),
+    modelClient.getModelConfig(modelId, providerId)
+  ])
+  const resolvedCapabilityProviderId = capabilities?.identity.providerId ?? providerId
+  const temperaturePolicy = capabilities?.requestPolicy.temperature
+  const topPPolicy = capabilities?.requestPolicy.topP
+  const portrait = capabilities?.reasoningPortrait ?? null
   const contextLengthDefault = toValidNonNegativeInteger(modelConfig.contextLength) ?? 32000
   const maxTokensDefault =
     toValidNonNegativeInteger(modelConfig.maxTokens) ?? Math.min(4096, contextLengthDefault)
@@ -1943,8 +1944,10 @@ const resolveDefaultGenerationSettings = async (
   const defaults: SessionGenerationSettings = {
     systemPrompt: agentConfig.systemPrompt ?? '',
     temperature:
-      fixedTemperatureKimi?.temperature ?? parseFiniteNumericValue(modelConfig.temperature) ?? 0.7,
-    topP: normalizeTopP(modelConfig.topP),
+      (temperaturePolicy?.mode === 'fixed' ? temperaturePolicy.value : undefined) ??
+      parseFiniteNumericValue(modelConfig.temperature) ??
+      0.7,
+    topP: topPPolicy?.mode === 'fixed' ? topPPolicy.value : normalizeTopP(modelConfig.topP),
     contextLength: contextLengthDefault,
     timeout:
       timeoutDefault >= TIMEOUT_MIN && timeoutDefault <= TIMEOUT_MAX
@@ -2050,33 +2053,6 @@ const resolveDefaultGenerationSettings = async (
   return defaults
 }
 
-const fetchCapabilities = async (providerId: string, modelId: string): Promise<void> => {
-  try {
-    const modelConfig = await modelClient.getModelConfig(modelId, providerId)
-    const capabilities = await modelClient.getCapabilities(providerId, modelId)
-    capabilityProviderId.value = resolveCapabilityProviderIdForSelection(
-      providerId,
-      modelId,
-      modelConfig.endpointType
-    )
-    const portrait = capabilities.reasoningPortrait ?? null
-
-    capabilityReasoningPortrait.value = portrait
-    capabilitySupportsReasoning.value =
-      typeof portrait?.supported === 'boolean' ? portrait.supported : null
-    capabilitySupportsTemperature.value =
-      typeof capabilities.supportsTemperatureControl === 'boolean'
-        ? capabilities.supportsTemperatureControl
-        : capabilities.temperatureCapability
-  } catch (error) {
-    console.warn('[ChatStatusBar] Failed to fetch model capabilities:', error)
-    capabilityProviderId.value = providerId
-    capabilitySupportsReasoning.value = null
-    capabilityReasoningPortrait.value = null
-    capabilitySupportsTemperature.value = null
-  }
-}
-
 const flushGenerationPatch = async () => {
   const patch = pendingGenerationPatch
   pendingGenerationPatch = {}
@@ -2133,8 +2109,11 @@ const updateLocalGenerationSettings = (patch: Partial<SessionGenerationSettings>
   generationLocalRevision += 1
 
   const nextPatch = { ...patch }
-  if (isMoonshotKimiTemperatureLocked.value) {
+  if (isTemperatureFixed.value) {
     delete nextPatch.temperature
+  }
+  if (isTopPFixed.value) {
+    delete nextPatch.topP
   }
 
   const next: SessionGenerationSettings = {
@@ -2201,9 +2180,7 @@ const runSyncGenerationSettings = async () => {
   if (isAcpAgent.value) {
     localSettings.value = null
     loadedSettingsSelection.value = null
-    capabilityProviderId.value = ''
-    capabilitySupportsReasoning.value = null
-    capabilityReasoningPortrait.value = null
+    modelCapabilities.clear()
     return
   }
 
@@ -2211,13 +2188,11 @@ const runSyncGenerationSettings = async () => {
   if (!selection) {
     localSettings.value = null
     loadedSettingsSelection.value = null
-    capabilityProviderId.value = ''
-    capabilityReasoningPortrait.value = null
-    capabilitySupportsReasoning.value = null
+    modelCapabilities.clear()
     return
   }
 
-  await fetchCapabilities(selection.providerId, selection.modelId)
+  const capabilities = await modelCapabilities.load(selection)
   if (token !== generationSyncToken) {
     return
   }
@@ -2236,7 +2211,8 @@ const runSyncGenerationSettings = async () => {
         const defaults = await resolveDefaultGenerationSettings(
           selection.providerId,
           selection.modelId,
-          sessionStore.activeSession?.agentId ?? 'deepchat'
+          sessionStore.activeSession?.agentId ?? 'deepchat',
+          capabilities
         )
         if (token !== generationSyncToken) {
           return
@@ -2253,7 +2229,8 @@ const runSyncGenerationSettings = async () => {
   const defaults = await resolveDefaultGenerationSettings(
     selection.providerId,
     selection.modelId,
-    selectedDeepChatAgentId.value ?? 'deepchat'
+    selectedDeepChatAgentId.value ?? 'deepchat',
+    capabilities
   )
   if (token !== generationSyncToken) {
     return
@@ -2652,7 +2629,7 @@ function stepTemperature(direction: -1 | 1) {
   if (!localSettings.value) {
     return
   }
-  if (isMoonshotKimiTemperatureLocked.value) {
+  if (isTemperatureFixed.value) {
     return
   }
   if (hasNumericInputError('temperature')) {
@@ -2676,6 +2653,9 @@ function stepTopP(direction: -1 | 1) {
   if (!localSettings.value) {
     return
   }
+  if (isTopPFixed.value) {
+    return
+  }
   if (hasNumericInputError('topP')) {
     return
   }
@@ -2689,10 +2669,17 @@ function stepTopP(direction: -1 | 1) {
 }
 
 function onTopPInput(value: string | number) {
+  if (isTopPFixed.value) {
+    return
+  }
   setNumericInputDraft('topP', value)
 }
 
 function commitTopPInput() {
+  if (isTopPFixed.value) {
+    resetNumericInputFieldState('topP')
+    return
+  }
   if (numericInputDrafts.value.topP.trim() === '') {
     stopNumericInputEdit('topP')
     clearNumericInputError('topP')
@@ -2719,14 +2706,14 @@ function commitTopPInput() {
 }
 
 function onTemperatureInput(value: string | number) {
-  if (isMoonshotKimiTemperatureLocked.value) {
+  if (isTemperatureFixed.value) {
     return
   }
   setNumericInputDraft('temperature', value)
 }
 
 function commitTemperatureInput() {
-  if (isMoonshotKimiTemperatureLocked.value) {
+  if (isTemperatureFixed.value) {
     resetNumericInputFieldState('temperature')
     return
   }

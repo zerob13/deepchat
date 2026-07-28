@@ -49,15 +49,33 @@ function createProviderSettings(): ProviderModelResolutionPort {
       reasoning: true,
       type: ModelType.Chat
     }),
-    getCapabilityProviderId: vi.fn((providerId: string) => providerId),
-    supportsReasoningCapability: vi.fn().mockReturnValue(true),
-    getReasoningPortrait: vi.fn().mockReturnValue(null),
-    getThinkingBudgetRange: vi.fn().mockReturnValue({}),
+    getCapabilitySnapshot: vi.fn(({ providerId, modelId }) => ({
+      identity: {
+        providerId,
+        requestModelId: modelId,
+        catalogMatched: false,
+        catalogModelId: null
+      },
+      requestPolicy: {
+        temperature: { mode: 'passthrough' },
+        topP: { mode: 'passthrough' },
+        reasoning: { mode: 'passthrough' },
+        legacyThinking: { mode: 'passthrough' }
+      },
+      supportsAudioInput: false,
+      supportsReasoning: true,
+      reasoningPortrait: null,
+      thinkingBudgetRange: {},
+      supportsSearch: false,
+      searchDefaults: {},
+      temperatureCapability: undefined,
+      supportsTemperatureControl: true,
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      supportsVerbosity: false,
+      verbosityDefault: undefined
+    })),
     supportsAudioInputCapability: vi.fn().mockReturnValue(false),
-    supportsReasoningEffortCapability: vi.fn().mockReturnValue(false),
-    getReasoningEffortDefault: vi.fn().mockReturnValue(undefined),
-    supportsVerbosityCapability: vi.fn().mockReturnValue(false),
-    getVerbosityDefault: vi.fn().mockReturnValue(undefined)
   }
 }
 
@@ -212,11 +230,12 @@ function createHarness(options?: {
     runtime.getHydrated(toAppSessionId(sessionId))
   )
   const getSessionListState = vi.fn(async () => initialInstance?.getRuntimeState() ?? null)
+  const providerSettings = createProviderSettings()
   const deps: CompactionRuntimeCoordinatorDependencies = {
     compactionService,
     sessionStore,
     messageStore,
-    providerSettings: createProviderSettings(),
+    providerSettings,
     toolResolver,
     runLifecycle,
     sessionSettings,
@@ -253,6 +272,7 @@ function createHarness(options?: {
     initialInstance,
     messageStore,
     prepareForManualCompaction,
+    providerSettings,
     publishedEvents,
     runtime,
     sessionSettings,
@@ -319,7 +339,8 @@ describe('CompactionRuntimeCoordinator', () => {
       prepareForManualCompaction,
       sessionSettings,
       toolResolver,
-      transitionStatus
+      transitionStatus,
+      providerSettings
     } = createHarness()
 
     await expect(coordinator.compact(SESSION_ID)).resolves.toEqual({
@@ -334,7 +355,16 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(initialInstance?.getAbortController()).toBeUndefined()
     expect(sessionSettings.getEffectiveGenerationSettings).toHaveBeenCalledWith(
       SESSION_ID,
-      initialInstance
+      initialInstance,
+      expect.objectContaining({
+        modelConfig: expect.objectContaining({ contextLength: 128_000 }),
+        capabilitySnapshot: expect.objectContaining({
+          identity: expect.objectContaining({
+            providerId: 'openai',
+            requestModelId: 'gpt-5'
+          })
+        })
+      })
     )
     expect(toolResolver.loadToolDefinitionsForSession).toHaveBeenCalledWith(
       SESSION_ID,
@@ -353,6 +383,8 @@ describe('CompactionRuntimeCoordinator', () => {
         signal: expect.any(AbortSignal)
       })
     )
+    expect(providerSettings.getModelConfig).toHaveBeenCalledOnce()
+    expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledOnce()
   })
 
   it('applies a prepared manual intent and returns the owned projection', async () => {

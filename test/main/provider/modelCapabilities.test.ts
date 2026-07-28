@@ -21,7 +21,9 @@ describe('ModelCapabilities reasoning portraits', () => {
           id: 'openai',
           models: [
             { id: 'gpt-5', reasoning: { supported: true, default: true } },
-            { id: 'o3', reasoning: { supported: true, default: true } }
+            { id: 'o3', reasoning: { supported: true, default: true } },
+            { id: 'legacy-reasoning-only', reasoning: { supported: true, default: false } },
+            { id: 'plain-model' }
           ]
         },
         google: {
@@ -167,6 +169,57 @@ describe('ModelCapabilities reasoning portraits', () => {
             { id: 'grok-3-mini-fast-beta', reasoning: { supported: true, default: true } }
           ]
         },
+        moonshot: {
+          id: 'moonshot',
+          models: [
+            {
+              id: 'kimi-k3',
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  interleaved: true,
+                  summaries: true,
+                  visibility: 'summary',
+                  continuation: ['thinking_blocks']
+                }
+              }
+            }
+          ]
+        },
+        'moonshot-ai': {
+          id: 'moonshot-ai',
+          models: [
+            {
+              id: 'kimi-k3',
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  mode: 'effort',
+                  effort: 'high',
+                  effort_options: ['low', 'high']
+                }
+              }
+            }
+          ]
+        },
+        'moonshot-budget': {
+          id: 'moonshot-budget',
+          models: [
+            {
+              id: 'kimi-k3',
+              reasoning: { supported: true, default: true },
+              extra_capabilities: {
+                reasoning: {
+                  supported: true,
+                  mode: 'budget',
+                  budget: { min: 1024, default: 4096 }
+                }
+              }
+            }
+          ]
+        },
         '302ai': {
           id: '302ai',
           models: [{ id: 'gpt-5-thinking', reasoning: { supported: true, default: true } }]
@@ -261,6 +314,55 @@ describe('ModelCapabilities reasoning portraits', () => {
     })
   })
 
+  it('fills missing K3 effort metadata without overriding explicit catalog values', () => {
+    const capabilities = new ModelCapabilities()
+
+    expect(capabilities.getCatalogCapabilitySnapshot('moonshot', 'kimi-k3')).toMatchObject({
+      supportsReasoning: true,
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'max',
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: ['low', 'high', 'max'],
+        interleaved: true,
+        summaries: true,
+        visibility: 'summary',
+        continuation: ['thinking_blocks']
+      }
+    })
+    expect(
+      capabilities.getCatalogCapabilitySnapshot('moonshot', 'coding-kimi_k3-free')
+    ).toMatchObject({
+      modelMatched: true,
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'max',
+      reasoningPortrait: {
+        interleaved: true,
+        visibility: 'summary'
+      }
+    })
+    expect(capabilities.getCatalogCapabilitySnapshot('moonshot-ai', 'kimi-k3')).toMatchObject({
+      supportsReasoningEffort: true,
+      reasoningEffortDefault: 'high',
+      reasoningPortrait: {
+        mode: 'effort',
+        effort: 'high',
+        effortOptions: ['low', 'high']
+      }
+    })
+    expect(capabilities.getCatalogCapabilitySnapshot('moonshot-budget', 'kimi-k3')).toMatchObject({
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      reasoningPortrait: {
+        mode: 'budget',
+        budget: { min: 1024, default: 4096 }
+      }
+    })
+  })
+
   it('does not synthesize OpenAI-only defaults for non-OpenAI providers', () => {
     const capabilities = new ModelCapabilities()
 
@@ -269,6 +371,29 @@ describe('ModelCapabilities reasoning portraits', () => {
     expect(capabilities.getReasoningEffortDefault('302ai', 'gpt-5-thinking')).toBeUndefined()
     expect(capabilities.supportsVerbosity('302ai', 'gpt-5-thinking')).toBe(false)
     expect(capabilities.getVerbosityDefault('302ai', 'gpt-5-thinking')).toBeUndefined()
+  })
+
+  it('keeps GPT-OSS reasoning without inventing sampling or effort capabilities', () => {
+    const capabilities = new ModelCapabilities()
+
+    expect(capabilities.getCatalogCapabilitySnapshot('openai', 'gpt-oss-120b')).toMatchObject({
+      modelMatched: false,
+      supportsReasoning: true,
+      supportsReasoningEffort: false,
+      reasoningEffortDefault: undefined,
+      temperatureCapability: undefined,
+      reasoningPortrait: {
+        supported: true,
+        defaultEnabled: true
+      }
+    })
+  })
+
+  it('prefilters both legacy and extended reasoning metadata without false positives', () => {
+    const capabilities = new ModelCapabilities()
+
+    expect(capabilities.hasReasoningCandidate('legacy-reasoning-only')).toBe(true)
+    expect(capabilities.hasReasoningCandidate('plain-model')).toBe(false)
   })
 
   it('preserves official anthropic adaptive reasoning portraits', () => {

@@ -73,6 +73,10 @@ import {
   type PreStreamStepInput
 } from './preStreamWatchdog'
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
+import {
+  resolveProviderModelRuntimeFacts,
+  type ProviderModelRuntimeFacts
+} from './providerModelRuntimeFacts'
 import { isAbortError, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookSink } from './runtimeHookSink'
@@ -159,9 +163,10 @@ export class TurnCoordinator {
     instance: DeepChatAgentInstance
     signal: AbortSignal
     projectDir: string | null
+    providerModelFacts: ProviderModelRuntimeFacts
     runtimeActivatedSkillNames?: string[]
   }) {
-    const { sessionId, messageId, instance, signal, projectDir } = input
+    const { sessionId, messageId, instance, signal, projectDir, providerModelFacts } = input
     const state = instance.getRuntimeState()
     if (!state) throw new Error(`Session ${sessionId} not found`)
 
@@ -170,11 +175,15 @@ export class TurnCoordinator {
       { sessionId, messageId, step: 'generation-settings', signal },
       () =>
         awaitWithAbort(
-          this.ports.sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
+          this.ports.sessionSettings.getEffectiveGenerationSettings(
+            sessionId,
+            instance,
+            providerModelFacts
+          ),
           signal
         )
     )
-    const modelConfig = this.ports.providerSettings.getModelConfig(state.modelId, state.providerId)
+    const modelConfig = providerModelFacts.modelConfig
     const useContextBudget = shouldUseDeepChatContextBudget(
       state.providerId,
       modelConfig,
@@ -185,7 +194,8 @@ export class TurnCoordinator {
       this.ports.providerSettings,
       state.providerId,
       state.modelId,
-      generationSettings
+      generationSettings,
+      providerModelFacts.capabilitySnapshot
     )
     const contextBudgetLength = resolveDeepChatContextBudgetLength(
       state.providerId,
@@ -289,10 +299,16 @@ export class TurnCoordinator {
         throw new Error('Message cannot be empty.')
       }
 
-      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+      const providerModelFacts = resolveProviderModelRuntimeFacts(
         this.ports.providerSettings,
         state.providerId,
         state.modelId
+      )
+      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+        this.ports.providerSettings,
+        state.providerId,
+        state.modelId,
+        providerModelFacts
       )
       const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, context?.projectDir, instance)
       logger.info(
@@ -308,6 +324,7 @@ export class TurnCoordinator {
         scope,
         instance,
         state,
+        providerModelFacts,
         supportsVision,
         supportsAudioInput,
         projectDir,
@@ -354,6 +371,7 @@ export class TurnCoordinator {
       scope,
       instance,
       state,
+      providerModelFacts,
       supportsVision,
       supportsAudioInput,
       projectDir,
@@ -414,6 +432,7 @@ export class TurnCoordinator {
         instance,
         signal: preStreamAbortSignal,
         projectDir,
+        providerModelFacts,
         runtimeActivatedSkillNames: content.activeSkills ?? []
       })
       // Retry truncation is destructive. Keep it after all independent resource I/O, but before
@@ -658,6 +677,7 @@ export class TurnCoordinator {
           baseSystemPrompt,
           contextContributions,
           resourceInstance: instance,
+          providerModelFacts,
           abortController: preStreamAbortController,
           maxProviderRounds: context?.maxProviderRounds,
           refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
@@ -914,10 +934,16 @@ export class TurnCoordinator {
       preStreamAbortController = this.ports.runLifecycle.ensureOperationController(scope)
       preStreamAbortSignal = preStreamAbortController.signal
       const preStreamStartedAt = Date.now()
-      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+      const providerModelFacts = resolveProviderModelRuntimeFacts(
         this.ports.providerSettings,
         state.providerId,
         state.modelId
+      )
+      const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
+        this.ports.providerSettings,
+        state.providerId,
+        state.modelId,
+        providerModelFacts
       )
       const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, undefined, instance)
       const {
@@ -936,7 +962,8 @@ export class TurnCoordinator {
         messageId,
         instance,
         signal: preStreamAbortSignal,
-        projectDir
+        projectDir,
+        providerModelFacts
       })
       let baseSystemPrompt = unguardedBaseSystemPrompt
       let shouldGuardAttachmentText = false
@@ -1159,6 +1186,7 @@ export class TurnCoordinator {
           messages: resumeContext,
           projectDir,
           resourceInstance: instance,
+          providerModelFacts,
           abortController: preStreamAbortController,
           tools,
           baseSystemPrompt,

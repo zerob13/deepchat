@@ -1,12 +1,13 @@
 import type { MCPToolDefinition } from '@shared/types/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import type { ModelMessage } from 'ai'
-import { resolveMoonshotKimiTemperaturePolicy } from '@shared/moonshotKimiPolicy'
+import { applyRequestParameterPolicy, type ModelRequestPolicy } from '@shared/modelRequestPolicy'
 import {
   getReasoningEffectiveEnabledForProvider,
   hasAnthropicReasoningToggle,
   normalizeAnthropicReasoningVisibilityValue,
-  normalizeReasoningEffortValue
+  normalizeReasoningEffortValue,
+  type ReasoningPortrait
 } from '@shared/types/model-db'
 import {
   OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER,
@@ -14,7 +15,6 @@ import {
   type PromptCacheIntent,
   resolvePromptCachePlan
 } from '../promptCacheStrategy'
-import { modelCapabilities } from '../modelCapabilities'
 import { providerDbLoader } from '../../provider/providerDbLoader'
 
 type ProviderOptionsRecord = Record<string, Record<string, unknown>>
@@ -113,6 +113,8 @@ export interface BuildProviderOptionsParams {
     | 'bedrock'
   modelId: string
   modelConfig: ModelConfig
+  requestPolicy: ModelRequestPolicy
+  reasoningPortrait: ReasoningPortrait | null
   tools: MCPToolDefinition[]
   messages: ModelMessage[]
   cacheIntent?: PromptCacheIntent
@@ -149,9 +151,11 @@ function supportsSiliconcloudThinking(modelId: string): boolean {
 }
 
 function supportsGrokReasoningEffort(modelId: string): boolean {
-  return ['grok-3-mini', 'grok-3-mini-fast'].some((model) =>
-    modelId.toLowerCase().includes(model.toLowerCase())
-  )
+  const normalizedModelId = modelId.trim().toLowerCase()
+  const unqualifiedModelId = normalizedModelId.includes('/')
+    ? normalizedModelId.slice(normalizedModelId.lastIndexOf('/') + 1)
+    : normalizedModelId
+  return unqualifiedModelId === 'grok-3-mini' || unqualifiedModelId.startsWith('grok-3-mini-')
 }
 
 function normalizeMiniMaxModelId(modelId: string): string {
@@ -176,23 +180,19 @@ export function buildProviderOptions(
 ): ProviderOptionsMappingResult {
   const providerOptions: ProviderOptionsRecord = {}
   let messages = params.messages
-  const reasoningPortrait = modelCapabilities.getReasoningPortrait?.(
+  const requestPolicy = params.requestPolicy
+  const modelConfig = params.modelConfig
+  const reasoningPortrait = params.reasoningPortrait
+  const reasoningEnabled = getReasoningEffectiveEnabledForProvider(
     params.capabilityProviderId,
-    params.modelId
+    reasoningPortrait,
+    {
+      reasoning: applyRequestParameterPolicy(requestPolicy.reasoning, modelConfig.reasoning),
+      reasoningEffort: modelConfig.reasoningEffort
+    }
   )
-  const fixedTemperatureKimi = resolveMoonshotKimiTemperaturePolicy(
-    params.providerId,
-    params.modelId,
-    params.modelConfig.reasoning
-  )
-  const reasoningEnabled =
-    fixedTemperatureKimi?.reasoningEnabled ??
-    getReasoningEffectiveEnabledForProvider(params.capabilityProviderId, reasoningPortrait, {
-      reasoning: params.modelConfig.reasoning,
-      reasoningEffort: params.modelConfig.reasoningEffort
-    })
   const hasThinkingConfig =
-    params.modelConfig.thinkingBudget !== undefined || Boolean(params.modelConfig.reasoningEffort)
+    modelConfig.thinkingBudget !== undefined || Boolean(modelConfig.reasoningEffort)
   const shouldSendThinkingConfig =
     hasThinkingConfig && (reasoningPortrait ? reasoningEnabled : true)
 
@@ -208,21 +208,24 @@ export function buildProviderOptions(
     modelId: params.modelId,
     messages: params.messages as unknown[],
     tools: params.tools,
-    conversationId: params.modelConfig.conversationId
+    conversationId: modelConfig.conversationId
   })
 
   switch (params.apiType) {
     case 'openai_chat':
     case 'openai_responses': {
       const config: Record<string, unknown> = {}
-      if (params.modelConfig.reasoningEffort && params.providerId !== 'grok') {
-        config.reasoningEffort = params.modelConfig.reasoningEffort
+      if (
+        modelConfig.reasoningEffort &&
+        (params.providerId !== 'grok' || supportsGrokReasoningEffort(params.modelId))
+      ) {
+        config.reasoningEffort = modelConfig.reasoningEffort
       }
-      if (params.modelConfig.verbosity) {
-        config.textVerbosity = params.modelConfig.verbosity
+      if (modelConfig.verbosity) {
+        config.textVerbosity = modelConfig.verbosity
       }
-      if (params.modelConfig.maxCompletionTokens) {
-        config.maxCompletionTokens = params.modelConfig.maxCompletionTokens
+      if (modelConfig.maxCompletionTokens) {
+        config.maxCompletionTokens = modelConfig.maxCompletionTokens
       }
       if (promptCachePlan.mode === 'openai_implicit' && promptCachePlan.cacheKey) {
         config.promptCacheKey = promptCachePlan.cacheKey
@@ -236,9 +239,9 @@ export function buildProviderOptions(
         }
         config[OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER] = marker
       }
-      if (fixedTemperatureKimi) {
+      if (requestPolicy.legacyThinking.mode === 'fixed') {
         config.thinking = {
-          type: fixedTemperatureKimi.thinkingType
+          type: requestPolicy.legacyThinking.value
         }
       }
       if (params.providerId === 'openai-codex' && params.apiType === 'openai_responses') {
@@ -258,27 +261,20 @@ export function buildProviderOptions(
       ) {
         config.enable_thinking = true
       }
-      if (
-        params.providerId === 'dashscope' &&
-        modelCapabilities.supportsReasoning(params.providerId, params.modelId) &&
-        reasoningEnabled
-      ) {
-        config.enable_thinking = true
-        const dbBudget = modelCapabilities.getThinkingBudgetRange(
-          params.providerId,
-          params.modelId
-        ).default
-        const budget = params.modelConfig.thinkingBudget ?? dbBudget
+      if (params.providerId === 'dashscope' && reasoningEnabled) {
+        const supportsThinking = reasoningPortrait?.supported === true
+        if (supportsThinking) {
+          config.enable_thinking = true
+        }
+        const budget =
+          typeof modelConfig.thinkingBudget === 'number' && reasoningPortrait?.supported !== false
+            ? modelConfig.thinkingBudget
+            : supportsThinking
+              ? reasoningPortrait.budget?.default
+              : undefined
         if (typeof budget === 'number') {
           config.thinking_budget = budget
         }
-      }
-      if (
-        params.providerId === 'grok' &&
-        params.modelConfig.reasoningEffort &&
-        supportsGrokReasoningEffort(params.modelId)
-      ) {
-        config.reasoning_effort = params.modelConfig.reasoningEffort
       }
       if (Object.keys(config).length > 0) {
         providerOptions[params.providerOptionsKey] = config
@@ -288,14 +284,14 @@ export function buildProviderOptions(
 
     case 'azure_responses': {
       const config: Record<string, unknown> = {}
-      if (params.modelConfig.reasoningEffort) {
-        config.reasoningEffort = params.modelConfig.reasoningEffort
+      if (modelConfig.reasoningEffort) {
+        config.reasoningEffort = modelConfig.reasoningEffort
       }
-      if (params.modelConfig.verbosity) {
-        config.textVerbosity = params.modelConfig.verbosity
+      if (modelConfig.verbosity) {
+        config.textVerbosity = modelConfig.verbosity
       }
-      if (params.modelConfig.maxCompletionTokens) {
-        config.maxCompletionTokens = params.modelConfig.maxCompletionTokens
+      if (modelConfig.maxCompletionTokens) {
+        config.maxCompletionTokens = modelConfig.maxCompletionTokens
       }
       if (Object.keys(config).length > 0) {
         providerOptions[params.providerOptionsKey] = config
@@ -317,10 +313,10 @@ export function buildProviderOptions(
       }
       if (officialAnthropicReasoningProvider && anthropicReasoningToggle && reasoningEnabled) {
         const resolvedEffort =
-          normalizeReasoningEffortValue(reasoningPortrait, params.modelConfig.reasoningEffort) ??
+          normalizeReasoningEffortValue(reasoningPortrait, modelConfig.reasoningEffort) ??
           normalizeReasoningEffortValue(reasoningPortrait, reasoningPortrait?.effort)
         const resolvedVisibility =
-          normalizeAnthropicReasoningVisibilityValue(params.modelConfig.reasoningVisibility) ??
+          normalizeAnthropicReasoningVisibilityValue(modelConfig.reasoningVisibility) ??
           normalizeAnthropicReasoningVisibilityValue(reasoningPortrait?.visibility) ??
           'omitted'
         if (resolvedEffort) {
@@ -341,10 +337,10 @@ export function buildProviderOptions(
         config.thinking = {
           type: 'adaptive'
         }
-      } else if (reasoningEnabled && params.modelConfig.thinkingBudget !== undefined) {
+      } else if (reasoningEnabled && modelConfig.thinkingBudget !== undefined) {
         config.thinking = {
           type: 'enabled',
-          budgetTokens: params.modelConfig.thinkingBudget
+          budgetTokens: modelConfig.thinkingBudget
         }
       }
       if (promptCachePlan.mode === 'anthropic_auto') {
@@ -360,10 +356,10 @@ export function buildProviderOptions(
 
     case 'bedrock': {
       const config: Record<string, unknown> = {}
-      if (reasoningEnabled && params.modelConfig.thinkingBudget !== undefined) {
+      if (reasoningEnabled && modelConfig.thinkingBudget !== undefined) {
         config.reasoningConfig = {
           type: 'enabled',
-          budgetTokens: params.modelConfig.thinkingBudget
+          budgetTokens: modelConfig.thinkingBudget
         }
       }
       if (Object.keys(config).length > 0) {
@@ -379,12 +375,10 @@ export function buildProviderOptions(
       const config: Record<string, unknown> = {}
       if (shouldSendThinkingConfig) {
         config.thinkingConfig = {
-          ...(params.modelConfig.thinkingBudget !== undefined
-            ? { thinkingBudget: params.modelConfig.thinkingBudget }
+          ...(modelConfig.thinkingBudget !== undefined
+            ? { thinkingBudget: modelConfig.thinkingBudget }
             : {}),
-          ...(params.modelConfig.reasoningEffort
-            ? { thinkingLevel: params.modelConfig.reasoningEffort }
-            : {}),
+          ...(modelConfig.reasoningEffort ? { thinkingLevel: modelConfig.reasoningEffort } : {}),
           includeThoughts: true
         }
       }
@@ -400,12 +394,10 @@ export function buildProviderOptions(
       }
       if (shouldSendThinkingConfig) {
         config.thinkingConfig = {
-          ...(params.modelConfig.thinkingBudget !== undefined
-            ? { thinkingBudget: params.modelConfig.thinkingBudget }
+          ...(modelConfig.thinkingBudget !== undefined
+            ? { thinkingBudget: modelConfig.thinkingBudget }
             : {}),
-          ...(params.modelConfig.reasoningEffort
-            ? { thinkingLevel: params.modelConfig.reasoningEffort }
-            : {}),
+          ...(modelConfig.reasoningEffort ? { thinkingLevel: modelConfig.reasoningEffort } : {}),
           includeThoughts: true
         }
       }

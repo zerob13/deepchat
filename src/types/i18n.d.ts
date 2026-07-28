@@ -308,7 +308,6 @@ declare module 'vue-i18n' {
       systemPrompt: string
       systemPromptPlaceholder: string
       temperature: string
-      temperatureFixedMoonshotKimi: string
       topP: string
       topPDescription: string
       contextLength: string
@@ -1961,6 +1960,7 @@ declare module 'vue-i18n' {
     'settings-deepchat-agents': string
     'settings-database': string
     'settings-about': string
+    'settings-debug': string
     'settings-shortcut': string
     'settings-display': string
     'settings-knowledge-base': string

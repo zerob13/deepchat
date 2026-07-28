@@ -647,35 +647,11 @@ export function createProviderRoutes(deps: {
       modelsGetCapabilitiesRoute.name,
       async (rawInput) => {
         const input = modelsGetCapabilitiesRoute.input.parse(rawInput)
+        const snapshot = providerSettings.getCapabilitySnapshot(input)
         return modelsGetCapabilitiesRoute.output.parse({
           capabilities: {
-            supportsAudioInput: providerSettings.supportsAudioInputCapability(
-              input.providerId,
-              input.modelId
-            ),
-            supportsReasoning: providerSettings.supportsReasoningCapability(
-              input.providerId,
-              input.modelId
-            ),
-            reasoningPortrait: providerSettings.getReasoningPortrait(
-              input.providerId,
-              input.modelId
-            ),
-            thinkingBudgetRange: providerSettings.getThinkingBudgetRange(
-              input.providerId,
-              input.modelId
-            ),
-            supportsSearch: providerSettings.supportsSearchCapability(
-              input.providerId,
-              input.modelId
-            ),
-            searchDefaults: providerSettings.getSearchDefaults(input.providerId, input.modelId),
-            supportsTemperatureControl: providerSettings.supportsTemperatureControl(
-              input.providerId,
-              input.modelId
-            ),
-            temperatureCapability:
-              providerSettings.getTemperatureCapability(input.providerId, input.modelId) ?? null
+            ...snapshot,
+            temperatureCapability: snapshot.temperatureCapability ?? null
           }
         })
       }

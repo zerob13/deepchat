@@ -7,6 +7,13 @@ import {
 } from '@shared/types/model-db'
 import { providerDbLoader } from './providerDbLoader'
 import { resolveProviderId as resolveProviderIdAlias } from './providerId'
+import {
+  getDottedProviderUnqualifiedModelId,
+  getUnqualifiedModelId,
+  normalizeCanonicalModelId,
+  normalizeModelIdText
+} from '@shared/modelId'
+import { isKimiK3ModelId } from '@shared/modelRequestPolicy'
 
 export type ThinkingBudgetRange = {
   min?: number
@@ -40,54 +47,59 @@ export type CapabilityModelMatch = {
   model: ProviderModel
 }
 
+export type CatalogCapabilitySnapshot = {
+  modelMatched: boolean
+  reasoningPortrait: ReasoningPortrait | null
+  supportsReasoning: boolean
+  thinkingBudgetRange: ThinkingBudgetRange
+  supportsSearch: boolean
+  searchDefaults: SearchDefaults
+  temperatureCapability: boolean | undefined
+  supportsAudioInput: boolean
+  supportsReasoningEffort: boolean
+  reasoningEffortDefault: ReasoningEffort | undefined
+  supportsVerbosity: boolean
+  verbosityDefault: Verbosity | undefined
+}
+
 const OPENAI_REASONING_EFFORT_MODEL_FAMILIES = ['o1', 'o3', 'o4-mini', 'gpt-5']
+const OPENAI_REASONING_ONLY_MODEL_FAMILIES = ['gpt-oss']
 const OPENAI_VERBOSITY_MODEL_FAMILIES = ['gpt-5']
 const OPENAI_REASONING_FALLBACK_PROVIDERS = new Set(['openai', 'azure'])
 const GROK_REASONING_EFFORT_MODEL_FAMILIES = ['grok-3-mini']
 const DEFAULT_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['minimal', 'low', 'medium', 'high']
 const BINARY_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'high']
+const KIMI_K3_REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['low', 'high', 'max']
 const DEFAULT_VERBOSITY_OPTIONS: Verbosity[] = ['low', 'medium', 'high']
 
 const normalizeCapabilityProviderId = (providerId: string): string => {
   return resolveProviderIdAlias(providerId.toLowerCase())?.toLowerCase() ?? providerId.toLowerCase()
 }
 
-const normalizeModelId = (value: string | undefined): string => value?.trim().toLowerCase() ?? ''
-
-const normalizeSlashUnprefixedModelId = (value: string | undefined): string => {
-  const normalizedModelId = normalizeModelId(value)
-  return normalizedModelId.includes('/')
-    ? normalizedModelId.slice(normalizedModelId.lastIndexOf('/') + 1)
-    : normalizedModelId
-}
-
-const normalizeDottedProviderUnprefixedModelId = (value: string | undefined): string => {
-  const normalizedModelId = normalizeSlashUnprefixedModelId(value)
-  const segments = normalizedModelId.split('.')
-  const modelSegmentIndex = segments.findIndex((segment) => segment.includes('-'))
-
-  return modelSegmentIndex > 0 ? segments.slice(modelSegmentIndex).join('.') : normalizedModelId
-}
-
 export const normalizeCapabilityModelId = (value: string | undefined): string =>
-  normalizeDottedProviderUnprefixedModelId(value)
-    .replace(/[_:\s]+/g, '-')
-    .replace(/(\d)\.(?=\d)/g, '$1-')
-    .replace(/-+/g, '-')
+  normalizeCanonicalModelId(value)
+
+const getCapabilityModelLookupKeys = (value: string | undefined): string[] => {
+  const lookupKeys: string[] = []
+  for (const key of [
+    normalizeModelIdText(value),
+    getUnqualifiedModelId(value),
+    getDottedProviderUnqualifiedModelId(value),
+    normalizeCapabilityModelId(value)
+  ]) {
+    if (key && !lookupKeys.includes(key)) {
+      lookupKeys.push(key)
+    }
+  }
+  return lookupKeys
+}
 
 const getProviderCapabilityModelLookupKeys = (value: string | undefined): string[] => {
-  const exactModelId = normalizeModelId(value)
-  const slashUnprefixedModelId = normalizeSlashUnprefixedModelId(value)
-  const dottedUnprefixedModelId = normalizeDottedProviderUnprefixedModelId(value)
-  const canonicalModelId = normalizeCapabilityModelId(value)
-
-  return Array.from(
-    new Set(
-      [exactModelId, slashUnprefixedModelId, dottedUnprefixedModelId, canonicalModelId].filter(
-        (key) => key.length > 0
-      )
-    )
-  )
+  const lookupKeys = getCapabilityModelLookupKeys(value)
+  if (isKimiK3ModelId(value) && !lookupKeys.includes('kimi-k3')) {
+    lookupKeys.push('kimi-k3')
+  }
+  return lookupKeys
 }
 
 const matchesModelFamily = (modelId: string, families: string[]): boolean =>
@@ -211,6 +223,47 @@ const mergeReasoningPortraits = (
   return hasReasoningPortrait(merged) ? merged : undefined
 }
 
+const removeInheritedIncompatibleModeFields = (
+  resolved: ReasoningPortrait,
+  explicit: ReasoningPortrait | undefined
+): void => {
+  if (!explicit?.mode || explicit.mode === 'mixed') {
+    return
+  }
+
+  const removeInherited = (key: keyof ReasoningPortrait): void => {
+    if (explicit[key] === undefined) {
+      delete resolved[key]
+    }
+  }
+
+  switch (explicit.mode) {
+    case 'budget':
+      removeInherited('effort')
+      removeInherited('effortOptions')
+      removeInherited('level')
+      removeInherited('levelOptions')
+      break
+    case 'effort':
+      removeInherited('budget')
+      removeInherited('level')
+      removeInherited('levelOptions')
+      break
+    case 'level':
+      removeInherited('budget')
+      removeInherited('effort')
+      removeInherited('effortOptions')
+      break
+    case 'fixed':
+      removeInherited('budget')
+      removeInherited('effort')
+      removeInherited('effortOptions')
+      removeInherited('level')
+      removeInherited('levelOptions')
+      break
+  }
+}
+
 const portraitFromExtraCapabilities = (
   reasoning: NonNullable<NonNullable<ProviderModel['extra_capabilities']>['reasoning']> | undefined
 ): ReasoningPortrait | undefined => {
@@ -312,7 +365,9 @@ const portraitFromLegacyReasoning = (
 export class ModelCapabilities {
   private index: Map<string, Map<string, ProviderModel>> = new Map()
   private modelLookupIndex: Map<string, Map<string, IndexedProviderModel[]>> = new Map()
+  private globalModelLookupIndex: Map<string, IndexedProviderModel[]> = new Map()
   private portraitRegistry: Map<string, IndexedPortrait[]> = new Map()
+  private reasoningCandidateModelIds: Set<string> = new Set()
 
   constructor() {
     this.rebuildIndexFromDb()
@@ -323,7 +378,9 @@ export class ModelCapabilities {
     const db = providerDbLoader.getDb()
     this.index.clear()
     this.modelLookupIndex.clear()
+    this.globalModelLookupIndex.clear()
     this.portraitRegistry.clear()
+    this.reasoningCandidateModelIds.clear()
     if (!db) return
     this.buildIndex(db)
   }
@@ -340,15 +397,27 @@ export class ModelCapabilities {
         if (!mid) continue
 
         modelMap.set(mid, model)
-        for (const lookupKey of getProviderCapabilityModelLookupKeys(model.id)) {
+        const indexedModel = {
+          providerId: pkey,
+          modelId: mid,
+          model,
+          isUnprefixed: !mid.includes('/')
+        }
+        for (const lookupKey of getCapabilityModelLookupKeys(model.id)) {
           const entries = lookupMap.get(lookupKey) ?? []
-          entries.push({
-            providerId: pkey,
-            modelId: mid,
-            model,
-            isUnprefixed: !mid.includes('/')
-          })
+          entries.push(indexedModel)
           lookupMap.set(lookupKey, entries)
+
+          const globalEntries = this.globalModelLookupIndex.get(lookupKey) ?? []
+          globalEntries.push(indexedModel)
+          this.globalModelLookupIndex.set(lookupKey, globalEntries)
+        }
+
+        if (
+          model.reasoning?.supported === true ||
+          model.extra_capabilities?.reasoning?.supported === true
+        ) {
+          this.reasoningCandidateModelIds.add(normalizeCapabilityModelId(model.id))
         }
 
         const portrait = portraitFromExtraCapabilities(model.extra_capabilities?.reasoning)
@@ -377,15 +446,19 @@ export class ModelCapabilities {
       return undefined
     }
 
-    const selected = [...entries].sort((left, right) => {
-      const leftPrefixedRank = left.isUnprefixed ? 0 : 1
-      const rightPrefixedRank = right.isUnprefixed ? 0 : 1
-      if (leftPrefixedRank !== rightPrefixedRank) {
-        return leftPrefixedRank - rightPrefixedRank
+    let selected = entries[0]
+    for (let index = 1; index < entries.length; index += 1) {
+      const candidate = entries[index]
+      const candidatePrefixedRank = candidate.isUnprefixed ? 0 : 1
+      const selectedPrefixedRank = selected.isUnprefixed ? 0 : 1
+      if (
+        candidatePrefixedRank < selectedPrefixedRank ||
+        (candidatePrefixedRank === selectedPrefixedRank &&
+          candidate.modelId.localeCompare(selected.modelId) < 0)
+      ) {
+        selected = candidate
       }
-
-      return left.modelId.localeCompare(right.modelId)
-    })[0]
+    }
 
     return selected
       ? {
@@ -544,6 +617,23 @@ export class ModelCapabilities {
     return resolved
   }
 
+  hasProvider(providerId: string | undefined): boolean {
+    const resolvedProviderId = this.resolveProviderId(providerId?.trim().toLowerCase())
+    return Boolean(resolvedProviderId && this.index.has(resolvedProviderId))
+  }
+
+  hasReasoningCandidate(modelId: string): boolean {
+    const normalizedModelId = normalizeCapabilityModelId(modelId)
+
+    return Boolean(
+      this.reasoningCandidateModelIds.has(normalizedModelId) ||
+      isKimiK3ModelId(modelId) ||
+      matchesModelFamily(normalizedModelId, OPENAI_REASONING_EFFORT_MODEL_FAMILIES) ||
+      matchesModelFamily(normalizedModelId, OPENAI_REASONING_ONLY_MODEL_FAMILIES) ||
+      matchesModelFamily(normalizedModelId, GROK_REASONING_EFFORT_MODEL_FAMILIES)
+    )
+  }
+
   private getFallbackReasoningPortrait(
     providerId: string,
     modelId: string
@@ -574,6 +664,26 @@ export class ModelCapabilities {
       }
     }
 
+    if (
+      allowsOpenAIFallback &&
+      matchesModelFamily(normalizedModelId, OPENAI_REASONING_ONLY_MODEL_FAMILIES)
+    ) {
+      return {
+        supported: true,
+        defaultEnabled: true
+      }
+    }
+
+    if (isKimiK3ModelId(modelId)) {
+      return {
+        supported: true,
+        defaultEnabled: true,
+        mode: 'effort',
+        effort: 'max',
+        effortOptions: [...KIMI_K3_REASONING_EFFORT_OPTIONS]
+      }
+    }
+
     if (matchesModelFamily(normalizedModelId, GROK_REASONING_EFFORT_MODEL_FAMILIES)) {
       return {
         supported: true,
@@ -597,6 +707,39 @@ export class ModelCapabilities {
     )
   }
 
+  getProviderCapabilityModelMatch(
+    providerId: string,
+    modelId: string
+  ): CapabilityModelMatch | undefined {
+    return this.getProviderModelMatch(providerId, modelId)
+  }
+
+  findUniqueCapabilityModelMatch(modelId: string): CapabilityModelMatch | undefined {
+    for (const lookupKey of getProviderCapabilityModelLookupKeys(modelId)) {
+      const entries = this.globalModelLookupIndex.get(lookupKey)
+      if (!entries || entries.length === 0) {
+        continue
+      }
+
+      let match = entries[0]
+      for (let index = 1; index < entries.length; index += 1) {
+        const candidate = entries[index]
+        if (candidate.providerId !== match.providerId || candidate.modelId !== match.modelId) {
+          return undefined
+        }
+        match = candidate
+      }
+
+      return {
+        providerId: match.providerId,
+        modelId: match.modelId,
+        model: match.model
+      }
+    }
+
+    return undefined
+  }
+
   findCapabilityModelMatch(
     modelId: string,
     preferredProviderIds: string[] = []
@@ -618,7 +761,60 @@ export class ModelCapabilities {
       }
     }
 
-    return this.findModelAcrossProvidersMatch(normalizeModelId(modelId))
+    return this.findModelAcrossProvidersMatch(normalizeModelIdText(modelId))
+  }
+
+  getCatalogCapabilitySnapshot(providerId: string, modelId: string): CatalogCapabilitySnapshot {
+    const match = this.getProviderModelMatch(providerId, modelId)
+    const resolvedProviderId = match?.providerId ?? normalizeCapabilityProviderId(providerId)
+    const resolvedModelId = match?.modelId ?? modelId
+    const model = match?.model
+    const explicitReasoningPortrait = mergeReasoningPortraits(
+      portraitFromLegacyReasoning(model?.reasoning),
+      portraitFromExtraCapabilities(model?.extra_capabilities?.reasoning)
+    )
+    const reasoningPortrait =
+      mergeReasoningPortraits(
+        this.getFallbackReasoningPortrait(resolvedProviderId, resolvedModelId),
+        explicitReasoningPortrait
+      ) ?? null
+    if (reasoningPortrait) {
+      removeInheritedIncompatibleModeFields(reasoningPortrait, explicitReasoningPortrait)
+    }
+    const search = model?.search
+    const searchDefaults: SearchDefaults = {}
+    if (typeof search?.default === 'boolean') searchDefaults.default = search.default
+    if (typeof search?.forced_search === 'boolean') searchDefaults.forced = search.forced_search
+    if (search?.search_strategy === 'turbo' || search?.search_strategy === 'max') {
+      searchDefaults.strategy = search.search_strategy
+    }
+
+    const thinkingBudgetRange: ThinkingBudgetRange = {}
+    if (typeof reasoningPortrait?.budget?.default === 'number') {
+      thinkingBudgetRange.default = reasoningPortrait.budget.default
+    }
+    if (typeof reasoningPortrait?.budget?.min === 'number') {
+      thinkingBudgetRange.min = reasoningPortrait.budget.min
+    }
+    if (typeof reasoningPortrait?.budget?.max === 'number') {
+      thinkingBudgetRange.max = reasoningPortrait.budget.max
+    }
+
+    return {
+      modelMatched: Boolean(model),
+      reasoningPortrait: reasoningPortrait ? clonePortrait(reasoningPortrait) : null,
+      supportsReasoning: reasoningPortrait?.supported === true,
+      thinkingBudgetRange,
+      supportsSearch: search?.supported === true,
+      searchDefaults,
+      temperatureCapability:
+        typeof model?.temperature === 'boolean' ? model.temperature : undefined,
+      supportsAudioInput: model?.modalities?.input?.includes('audio') === true,
+      supportsReasoningEffort: supportsEffortControls(reasoningPortrait),
+      reasoningEffortDefault: reasoningPortrait?.effort,
+      supportsVerbosity: supportsVerbosityControls(reasoningPortrait),
+      verbosityDefault: reasoningPortrait?.verbosity
+    }
   }
 
   getReasoningPortrait(providerId: string, modelId: string): ReasoningPortrait | null {
@@ -647,6 +843,7 @@ export class ModelCapabilities {
       registryPortrait,
       extraCapabilitiesPortrait
     )
+    removeInheritedIncompatibleModeFields(resolvedPortrait, explicitPortrait)
 
     if (usesExtendedEffortDefaultWithoutOptions(explicitPortrait)) {
       delete resolvedPortrait.effortOptions

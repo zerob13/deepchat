@@ -3,14 +3,10 @@ import { EMBEDDING_TEST_KEY, isNormalized } from '@/utils/vector'
 import {
   ApiEndpointType,
   ModelType,
-  isClaudeFamilyModelId,
-  isDeepSeekSeriesModelId,
-  isGeminiFamilyModelId,
   isNewApiEndpointType,
   resolveNewApiModelTypeFromMetadata,
   resolveNewApiSelectableEndpointTypes,
   resolveNewApiEndpointTypeFromRoute,
-  resolveProviderCapabilityProviderId,
   type NewApiEndpointType
 } from '@shared/model'
 import { isTtsModelConfig, isTtsModelId } from '@shared/ttsSettings'
@@ -33,6 +29,7 @@ import type {
   LLM_PROVIDER,
   MODEL_META,
   ModelConfig,
+  ModelRouteConfig,
   ProviderStreamOptions,
   VERTEX_PROVIDER
 } from '@shared/types/provider'
@@ -69,8 +66,16 @@ import {
   resolveAiSdkProviderDefinition
 } from '../providerRegistry'
 import { providerDbLoader } from '../../provider/providerDbLoader'
-import { modelCapabilities, type CapabilityModelMatch } from '../modelCapabilities'
+import { modelCapabilities } from '../modelCapabilities'
 import { isImageInputSupported } from '@shared/types/model-db'
+import {
+  buildResolvedCapabilitySnapshot,
+  isOpenCodeGoAnthropicRoute,
+  isZenmuxAnthropicRoute,
+  resolveCapabilityFamilyHint,
+  resolveCapabilityIdentity as resolveModelCapabilityIdentity
+} from '../capabilityIdentity'
+import type { ResolvedCapabilityIdentity } from '@shared/types/model-capabilities'
 
 const OPENAI_IMAGE_GENERATION_MODELS = ['gpt-4o-all', 'gpt-4o-image']
 const OPENAI_IMAGE_GENERATION_MODEL_PREFIXES = ['dall-e-', 'gpt-image-']
@@ -90,29 +95,27 @@ const GREENPT_RECOMMENDED_MODEL_IDS = [
   'green-rerank'
 ]
 const GREENPT_NON_OPENAI_MODEL_IDS = new Set(['green-s', 'green-s-pro'])
-// Keep this aligned with the OpenCode Go docs table for models served by /messages.
-const OPENCODE_GO_ANTHROPIC_MODEL_IDS = new Set([
-  'minimax-m3',
-  'minimax-m2.7',
-  'minimax-m2.5',
-  'qwen3.7-max',
-  'qwen3.7-plus',
-  'qwen3.6-plus'
-])
 const DEFAULT_NEW_API_BASE_URL = 'https://www.newapi.ai'
 
 type RouteDecision = {
   providerKind: AiSdkProviderKind
   providerPatch?: Partial<LLM_PROVIDER>
   modelConfigPatch?: Partial<ModelConfig>
+  resolvedModelConfig?: ModelConfig
   endpointType?: NewApiEndpointType | 'grok-image'
   supportsOfficialAnthropicReasoning?: boolean
+  capabilityIdentity?: ResolvedCapabilityIdentity
 }
 
 type ProviderRequestOptions = {
   timeout?: number
   signal?: AbortSignal
 }
+
+type StoredModelRouteMetadata = Pick<
+  MODEL_META,
+  'endpointType' | 'supportedEndpointTypes' | 'type' | 'ownedBy'
+>
 
 export interface AiSdkGenerateTextOptions extends ProviderGenerateTextOptions {
   systemPrompt?: string
@@ -149,106 +152,6 @@ const shouldUseOpenAITtsRoute = (modelId: string, modelConfig: ModelConfig): boo
   isTtsModelConfig(modelConfig) ||
   modelConfig.apiEndpoint === ApiEndpointType.AudioSpeech ||
   isTtsModelId(modelId)
-
-const normalizeNewApiHintValue = (value: string | undefined): string =>
-  value
-    ?.trim()
-    .toLowerCase()
-    .replace(/[./_-]+/g, ' ') ?? ''
-
-const addUniqueProviderId = (providerIds: string[], providerId: string): void => {
-  if (!providerIds.includes(providerId)) {
-    providerIds.push(providerId)
-  }
-}
-
-const addNewApiCapabilityProviderHints = (
-  providerIds: string[],
-  modelId: string,
-  ownedBy?: string,
-  endpointType?: NewApiEndpointType
-): void => {
-  const normalizedModelId = normalizeNewApiHintValue(modelId)
-  const normalizedOwner = normalizeNewApiHintValue(ownedBy)
-
-  if (endpointType === 'anthropic') {
-    addUniqueProviderId(providerIds, 'anthropic')
-  }
-  if (endpointType === 'gemini') {
-    addUniqueProviderId(providerIds, 'gemini')
-  }
-  if (endpointType === 'openai' || endpointType === 'openai-response') {
-    addUniqueProviderId(providerIds, 'openai')
-  }
-
-  if (isClaudeFamilyModelId(modelId)) {
-    addUniqueProviderId(providerIds, 'anthropic')
-  }
-  if (isGeminiFamilyModelId(modelId)) {
-    addUniqueProviderId(providerIds, 'gemini')
-  }
-  if (normalizedModelId.includes('qwen') || normalizedModelId.includes('qwq')) {
-    addUniqueProviderId(providerIds, 'alibaba-cn')
-    addUniqueProviderId(providerIds, 'alibaba')
-  }
-  if (isDeepSeekSeriesModelId(modelId)) {
-    addUniqueProviderId(providerIds, 'deepseek')
-  }
-  if (normalizedModelId.includes('kimi') || normalizedModelId.includes('moonshot')) {
-    addUniqueProviderId(providerIds, 'moonshot')
-  }
-  if (normalizedModelId.includes('doubao')) {
-    addUniqueProviderId(providerIds, 'doubao')
-  }
-  if (normalizedModelId.includes('grok') || normalizedModelId.includes('xai')) {
-    addUniqueProviderId(providerIds, 'xai')
-  }
-
-  if (normalizedOwner.includes('claude') || normalizedOwner.includes('anthropic')) {
-    addUniqueProviderId(providerIds, 'anthropic')
-  }
-  if (normalizedOwner.includes('gemini') || normalizedOwner.includes('google')) {
-    addUniqueProviderId(providerIds, 'gemini')
-  }
-  if (
-    normalizedOwner === 'ali' ||
-    normalizedOwner.includes('alibaba') ||
-    normalizedOwner.includes('qwen') ||
-    normalizedOwner.includes('dashscope')
-  ) {
-    addUniqueProviderId(providerIds, 'alibaba-cn')
-    addUniqueProviderId(providerIds, 'alibaba')
-  }
-  if (
-    normalizedOwner.includes('volcengine') ||
-    normalizedOwner.includes('doubao') ||
-    normalizedOwner.includes('bytedance')
-  ) {
-    addUniqueProviderId(providerIds, 'doubao')
-  }
-  if (normalizedOwner.includes('deepseek')) {
-    addUniqueProviderId(providerIds, 'deepseek')
-  }
-  if (normalizedOwner.includes('moonshot') || normalizedOwner.includes('kimi')) {
-    addUniqueProviderId(providerIds, 'moonshot')
-  }
-  if (normalizedOwner.includes('xai') || normalizedOwner.includes('grok')) {
-    addUniqueProviderId(providerIds, 'xai')
-  }
-  if (normalizedOwner.includes('openai')) {
-    addUniqueProviderId(providerIds, 'openai')
-  }
-}
-
-const getNewApiPreferredCapabilityProviderIds = (
-  modelId: string,
-  ownedBy?: string,
-  endpointType?: NewApiEndpointType
-): string[] => {
-  const providerIds: string[] = []
-  addNewApiCapabilityProviderHints(providerIds, modelId, ownedBy, endpointType)
-  return providerIds
-}
 
 export function normalizeExtractedImageText(content: string): string {
   const normalized = content
@@ -362,90 +265,86 @@ export class AiSdkProvider extends BaseLLMProvider {
   }
 
   private getStoredModel(modelId: string): MODEL_META | undefined {
-    return [...this.models, ...this.customModels].find((model) => model.id === modelId)
-  }
-
-  private resolveNewApiSpecialCapabilityProviderId(
-    modelId: string,
-    ownedBy?: string
-  ): string | undefined {
-    const preferredProviderIds = getNewApiPreferredCapabilityProviderIds(modelId, ownedBy)
-    const specialProviderId = preferredProviderIds.find(
-      (providerId) => providerId === 'anthropic' || providerId === 'gemini'
-    )
-    if (specialProviderId) {
-      return specialProviderId
-    }
-
     return (
-      modelCapabilities.getCapabilityModelMatch('anthropic', modelId)?.providerId ??
-      modelCapabilities.getCapabilityModelMatch('gemini', modelId)?.providerId
+      this.models.find((model) => model.id === modelId) ??
+      this.customModels.find((model) => model.id === modelId)
     )
   }
 
-  private resolveNewApiCapabilityMatch(
+  private getStoredModelRouteMetadata(
     modelId: string,
-    endpointType: NewApiEndpointType,
-    ownedBy?: string
-  ): CapabilityModelMatch | undefined {
-    return modelCapabilities.findCapabilityModelMatch(
+    routeConfig: ModelRouteConfig
+  ): StoredModelRouteMetadata | undefined {
+    return (
+      this.providerSettings.getProviderModelRouteMetadata?.(
+        this.provider.id,
+        modelId,
+        routeConfig
+      ) ?? this.getStoredModel(modelId)
+    )
+  }
+
+  private resolveCapabilityIdentity(
+    modelId: string,
+    endpointType: RouteDecision['endpointType'] | undefined,
+    modelConfig: ModelRouteConfig,
+    storedModel: StoredModelRouteMetadata | undefined
+  ): ResolvedCapabilityIdentity {
+    const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
+    return resolveModelCapabilityIdentity({
+      providerId: this.provider.id,
       modelId,
-      getNewApiPreferredCapabilityProviderIds(modelId, ownedBy, endpointType)
+      ownedBy,
+      endpointType: endpointType === 'grok-image' ? undefined : endpointType,
+      explicitProviderId: this.provider.capabilityProviderId
+    })
+  }
+
+  private resolveCapabilityIdentityFromProviderState(
+    modelId: string,
+    endpointType?: RouteDecision['endpointType']
+  ): ResolvedCapabilityIdentity {
+    const routeModelConfig = this.getRouteModelConfig(modelId)
+    return this.resolveCapabilityIdentity(
+      modelId,
+      endpointType,
+      routeModelConfig,
+      this.getStoredModelRouteMetadata(modelId, routeModelConfig)
     )
   }
 
-  private resolveNewApiRuntimeCapabilityProviderId(
-    modelId: string,
-    endpointType: NewApiEndpointType
+  private getRuntimeCapabilityProviderId(
+    identity: ResolvedCapabilityIdentity,
+    endpointType?: NewApiEndpointType
   ): string {
     if (endpointType === 'anthropic') {
       return 'anthropic'
     }
     if (endpointType === 'gemini') {
-      return 'gemini'
+      return 'google'
     }
-
-    const storedModel = this.getStoredModel(modelId)
-    const modelConfig = this.getProviderModelConfig(modelId)
-    const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
-    const capabilityMatch = this.resolveNewApiCapabilityMatch(modelId, endpointType, ownedBy)
-    if (
-      capabilityMatch &&
-      (endpointType === 'openai' || endpointType === 'openai-response') &&
-      capabilityMatch.providerId !== 'openai'
-    ) {
-      return capabilityMatch.providerId
-    }
-
-    return resolveProviderCapabilityProviderId(
-      this.provider.id,
-      {
-        endpointType,
-        supportedEndpointTypes: storedModel?.supportedEndpointTypes,
-        type: storedModel?.type,
-        ownedBy,
-        capabilityProviderId: capabilityMatch?.providerId
-      },
-      modelId
-    )
+    return identity.providerId
   }
 
   private usesOfficialAnthropicReasoning(): boolean {
     return this.provider.id.trim().toLowerCase() === 'anthropic'
   }
 
-  private resolveNewApiEndpointType(modelId: string): NewApiEndpointType {
-    const modelConfig = this.getProviderModelConfig(modelId)
+  private resolveNewApiEndpointType(
+    modelId: string,
+    modelConfig: ModelRouteConfig,
+    storedModel: StoredModelRouteMetadata | undefined
+  ): NewApiEndpointType {
     if (isNewApiEndpointType(modelConfig.endpointType)) {
       return modelConfig.endpointType
     }
 
-    const storedModel = this.getStoredModel(modelId)
     if (storedModel && isNewApiEndpointType(storedModel.endpointType)) {
       return storedModel.endpointType
     }
 
     const ownedBy = storedModel?.ownedBy ?? modelConfig.ownedBy
+    const capabilityFamilyHint = resolveCapabilityFamilyHint(modelId, ownedBy)
     return resolveNewApiEndpointTypeFromRoute(
       storedModel
         ? {
@@ -453,54 +352,81 @@ export class AiSdkProvider extends BaseLLMProvider {
             supportedEndpointTypes: storedModel.supportedEndpointTypes,
             type: storedModel.type,
             ownedBy,
-            capabilityProviderId: this.resolveNewApiSpecialCapabilityProviderId(modelId, ownedBy)
+            capabilityFamilyHint
           }
         : {
             ownedBy,
-            capabilityProviderId: this.resolveNewApiSpecialCapabilityProviderId(modelId, ownedBy)
+            capabilityFamilyHint
           },
       modelId
     )
   }
 
-  private resolveRouteDecision(modelId: string, _modelConfig?: ModelConfig): RouteDecision {
+  private buildRouteDecision(modelId: string, modelConfig: ModelRouteConfig): RouteDecision {
     const strategy = this.getRouteStrategy()
+    const storedModel = this.getStoredModelRouteMetadata(modelId, modelConfig)
 
     if (strategy === 'grok' && modelId.startsWith('grok-2-image')) {
       return {
         providerKind: this.definition.runtimeKind,
         endpointType: 'grok-image',
+        capabilityIdentity: this.resolveCapabilityIdentity(
+          modelId,
+          undefined,
+          modelConfig,
+          storedModel
+        ),
         modelConfigPatch: {
           apiEndpoint: ApiEndpointType.Image
         }
       }
     }
 
-    if (strategy === 'zenmux' && modelId.trim().toLowerCase().startsWith('anthropic/')) {
+    if (strategy === 'zenmux' && isZenmuxAnthropicRoute(this.provider.id, modelId)) {
+      const capabilityIdentity = this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      )
       return {
         providerKind: 'openai-compatible',
+        capabilityIdentity,
         providerPatch: {
           apiType: 'openai-completions',
-          capabilityProviderId: 'anthropic'
+          capabilityProviderId: capabilityIdentity.providerId
         }
       }
     }
 
-    if (strategy === 'opencode-go' && OPENCODE_GO_ANTHROPIC_MODEL_IDS.has(modelId)) {
+    if (strategy === 'opencode-go' && isOpenCodeGoAnthropicRoute(this.provider.id, modelId)) {
+      const capabilityIdentity = this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      )
       return {
         providerKind: 'anthropic',
+        capabilityIdentity,
         providerPatch: {
           apiType: 'anthropic',
           baseUrl: this.provider.baseUrl,
-          capabilityProviderId: 'anthropic'
+          capabilityProviderId: capabilityIdentity.providerId
         }
       }
     }
 
     if (strategy === 'new-api') {
-      const endpointType = this.resolveNewApiEndpointType(modelId)
-      const capabilityProviderId = this.resolveNewApiRuntimeCapabilityProviderId(
+      const endpointType = this.resolveNewApiEndpointType(modelId, modelConfig, storedModel)
+      const capabilityIdentity = this.resolveCapabilityIdentity(
         modelId,
+        endpointType,
+        modelConfig,
+        storedModel
+      )
+      const capabilityProviderId = this.getRuntimeCapabilityProviderId(
+        capabilityIdentity,
         endpointType
       )
       const host = this.getNormalizedNewApiHost()
@@ -510,6 +436,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'anthropic',
             endpointType,
+            capabilityIdentity,
             supportsOfficialAnthropicReasoning: true,
             providerPatch: {
               apiType: 'anthropic',
@@ -521,6 +448,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'gemini',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'gemini',
               baseUrl: this.getNormalizedNewApiGeminiBaseUrl(),
@@ -531,6 +459,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-responses',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-responses',
               baseUrl: `${host}/v1`,
@@ -541,6 +470,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-compatible',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${host}/v1`,
@@ -556,6 +486,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-compatible',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${host}/v1`,
@@ -572,6 +503,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           return {
             providerKind: 'openai-compatible',
             endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${host}/v1`,
@@ -585,7 +517,30 @@ export class AiSdkProvider extends BaseLLMProvider {
 
     return {
       providerKind: this.definition.runtimeKind,
+      capabilityIdentity: this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      ),
       ...(supportsOfficialAnthropicReasoning ? { supportsOfficialAnthropicReasoning } : {})
+    }
+  }
+
+  private resolveRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
+    const routeModelConfig = this.getRouteModelConfig(modelId, modelConfig)
+    const decision = this.buildRouteDecision(modelId, routeModelConfig)
+    const resolvedModelConfig = {
+      ...this.providerSettings.getModelConfig(
+        modelId,
+        this.provider.id,
+        decision.capabilityIdentity
+      ),
+      ...modelConfig
+    }
+    return {
+      ...decision,
+      resolvedModelConfig
     }
   }
 
@@ -608,17 +563,29 @@ export class AiSdkProvider extends BaseLLMProvider {
     return base
   }
 
-  private getResolvedModelConfig(modelId: string, modelConfig?: ModelConfig): ModelConfig {
+  private getRouteModelConfig(modelId: string, modelConfig?: ModelConfig): ModelRouteConfig {
+    const routeConfig = this.providerSettings.getModelRouteConfig
+      ? this.providerSettings.getModelRouteConfig(modelId, this.provider.id)
+      : this.providerSettings.getModelConfig(modelId, this.provider.id)
     return {
-      ...this.providerSettings.getModelConfig(modelId, this.provider.id),
+      ...routeConfig,
       ...modelConfig
     }
   }
 
-  private getModelConfigForDecision(modelId: string, modelConfig?: ModelConfig): ModelConfig {
-    const decision = this.resolveRouteDecision(modelId, modelConfig)
+  private getModelConfigForDecision(
+    modelId: string,
+    decision: RouteDecision,
+    modelConfig?: ModelConfig
+  ): ModelConfig {
     return {
-      ...this.getResolvedModelConfig(modelId, modelConfig),
+      ...(decision.resolvedModelConfig ??
+        this.providerSettings.getModelConfig(
+          modelId,
+          this.provider.id,
+          decision.capabilityIdentity
+        )),
+      ...modelConfig,
       ...decision.modelConfigPatch
     }
   }
@@ -766,15 +733,21 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private buildRuntimeContext(
     modelId: string,
+    decision: RouteDecision,
     modelConfig?: ModelConfig
   ): { context: AiSdkRuntimeContext; decision: RouteDecision; resolvedModelConfig: ModelConfig } {
-    const decision = this.resolveRouteDecision(modelId, modelConfig)
     const runtimeProvider = this.getRuntimeProvider(decision)
     const defaultHeaders = {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
     }
-    const resolvedModelConfig = this.getModelConfigForDecision(modelId, modelConfig)
+    const resolvedModelConfig = this.getModelConfigForDecision(modelId, decision, modelConfig)
+    const capabilityIdentity =
+      decision.capabilityIdentity ??
+      this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
+    const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity, {
+      reasoningEnabled: resolvedModelConfig.reasoning
+    })
 
     const cleanHeaders =
       this.isAzureOpenAI(decision, runtimeProvider) || runtimeProvider.id === 'kimi-for-coding'
@@ -827,6 +800,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       context: {
         providerKind: decision.providerKind,
         provider: runtimeProvider,
+        capabilitySnapshot,
         supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
         providerSettings: this.providerSettings,
         defaultHeaders,
@@ -1009,7 +983,9 @@ export class AiSdkProvider extends BaseLLMProvider {
           body: formData
         },
         {
-          timeout: this.resolveModelRequestTimeout(this.getModelConfigForDecision(modelId)),
+          timeout: this.resolveModelRequestTimeout(
+            this.getModelConfigForDecision(modelId, decision)
+          ),
           signal: options?.signal
         },
         decision
@@ -1079,22 +1055,35 @@ export class AiSdkProvider extends BaseLLMProvider {
     return models
   }
 
-  public async runText(
-    messages: ChatMessage[],
-    modelId: string,
-    temperature?: number,
-    maxTokens?: number,
-    modelConfig?: ModelConfig,
-    signal?: AbortSignal
-  ): Promise<LLMResponse> {
+  private assertModelRequestReady(modelId: string): void {
     if (!this.isInitialized) {
       throw new Error('Provider not initialized')
     }
     if (!modelId) {
       throw new Error('Model ID is required')
     }
+  }
 
-    const { context, resolvedModelConfig } = this.buildRuntimeContext(modelId, modelConfig)
+  private resolveRequestRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
+    this.assertModelRequestReady(modelId)
+    return this.resolveRouteDecision(modelId, modelConfig)
+  }
+
+  private async runTextWithDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    decision: RouteDecision,
+    temperature?: number,
+    maxTokens?: number,
+    modelConfig?: ModelConfig,
+    signal?: AbortSignal
+  ): Promise<LLMResponse> {
+    this.assertModelRequestReady(modelId)
+    const { context, resolvedModelConfig } = this.buildRuntimeContext(
+      modelId,
+      decision,
+      modelConfig
+    )
     if (signal) {
       return runAiSdkGenerateText(
         context,
@@ -1116,23 +1105,42 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  public async *streamText(
+  public async runText(
     messages: ChatMessage[],
     modelId: string,
+    temperature?: number,
+    maxTokens?: number,
+    modelConfig?: ModelConfig,
+    signal?: AbortSignal
+  ): Promise<LLMResponse> {
+    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    return this.runTextWithDecision(
+      messages,
+      modelId,
+      decision,
+      temperature,
+      maxTokens,
+      modelConfig,
+      signal
+    )
+  }
+
+  private async *streamTextWithDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    decision: RouteDecision,
     modelConfig: ModelConfig,
     temperature: number,
     maxTokens: number,
     tools: MCPToolDefinition[],
     signal?: AbortSignal
   ): AsyncGenerator<LLMCoreStreamEvent> {
-    if (!this.isInitialized) {
-      throw new Error('Provider not initialized')
-    }
-    if (!modelId) {
-      throw new Error('Model ID is required')
-    }
-
-    const { context, resolvedModelConfig } = this.buildRuntimeContext(modelId, modelConfig)
+    this.assertModelRequestReady(modelId)
+    const { context, resolvedModelConfig } = this.buildRuntimeContext(
+      modelId,
+      decision,
+      modelConfig
+    )
     if (signal) {
       yield* runAiSdkCoreStream(
         context,
@@ -1157,9 +1165,32 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  public async collectStreamResponse(
+  public async *streamText(
     messages: ChatMessage[],
     modelId: string,
+    modelConfig: ModelConfig,
+    temperature: number,
+    maxTokens: number,
+    tools: MCPToolDefinition[],
+    signal?: AbortSignal
+  ): AsyncGenerator<LLMCoreStreamEvent> {
+    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    yield* this.streamTextWithDecision(
+      messages,
+      modelId,
+      decision,
+      modelConfig,
+      temperature,
+      maxTokens,
+      tools,
+      signal
+    )
+  }
+
+  private async collectStreamResponseWithDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    decision: RouteDecision,
     temperature?: number,
     maxTokens?: number,
     tools: MCPToolDefinition[] = [],
@@ -1169,16 +1200,16 @@ export class AiSdkProvider extends BaseLLMProvider {
     const response: LLMResponse = {
       content: ''
     }
-    const resolvedModelConfig =
-      modelConfig ??
-      ({
-        ...this.getProviderModelConfig(modelId),
-        apiEndpoint: ApiEndpointType.Image
-      } as ModelConfig)
+    const resolvedModelConfig = this.getModelConfigForDecision(
+      modelId,
+      decision,
+      modelConfig ?? ({ apiEndpoint: ApiEndpointType.Image } as ModelConfig)
+    )
 
-    for await (const event of this.streamText(
+    for await (const event of this.streamTextWithDecision(
       messages,
       modelId,
+      decision,
       resolvedModelConfig,
       temperature ?? resolvedModelConfig.temperature ?? 0.7,
       maxTokens ?? resolvedModelConfig.maxTokens ?? 1024,
@@ -1208,29 +1239,55 @@ export class AiSdkProvider extends BaseLLMProvider {
     return response
   }
 
+  public async collectStreamResponse(
+    messages: ChatMessage[],
+    modelId: string,
+    temperature?: number,
+    maxTokens?: number,
+    tools: MCPToolDefinition[] = [],
+    modelConfig?: ModelConfig,
+    signal?: AbortSignal
+  ): Promise<LLMResponse> {
+    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    return this.collectStreamResponseWithDecision(
+      messages,
+      modelId,
+      decision,
+      temperature,
+      maxTokens,
+      tools,
+      modelConfig,
+      signal
+    )
+  }
+
   public async runEmbeddings(
     modelId: string,
     texts: string[],
     signal?: AbortSignal
   ): Promise<number[][]> {
-    const { context } = this.buildRuntimeContext(modelId)
+    const decision = this.resolveRouteDecision(modelId)
+    const { context } = this.buildRuntimeContext(modelId, decision)
     return runAiSdkEmbeddings(context, modelId, texts, signal)
   }
 
-  private async runEmbeddingsWithDecision(
+  private buildEmbeddingRuntimeContext(
     modelId: string,
-    texts: string[],
-    decision: RouteDecision,
-    signal?: AbortSignal
-  ): Promise<number[][]> {
+    decision: RouteDecision
+  ): AiSdkRuntimeContext {
     const runtimeProvider = this.getRuntimeProvider(decision)
+    const capabilityIdentity =
+      decision.capabilityIdentity ??
+      this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
     const defaultHeaders = {
       ...this.defaultHeaders,
       ...this.definition.defaultHeadersPatch
     }
-    const context: AiSdkRuntimeContext = {
+
+    return {
       providerKind: decision.providerKind,
       provider: runtimeProvider,
+      capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity),
       supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
       providerSettings: this.providerSettings,
       defaultHeaders,
@@ -1246,7 +1303,15 @@ export class AiSdkProvider extends BaseLLMProvider {
       shouldUseImageGeneration: (_runtimeModelId, runtimeModelConfig) =>
         runtimeModelConfig.apiEndpoint === ApiEndpointType.Image
     }
+  }
 
+  private async runEmbeddingsWithDecision(
+    modelId: string,
+    texts: string[],
+    decision: RouteDecision,
+    signal?: AbortSignal
+  ): Promise<number[][]> {
+    const context = this.buildEmbeddingRuntimeContext(modelId, decision)
     return runAiSdkEmbeddings(context, modelId, texts, signal)
   }
 
@@ -1278,7 +1343,8 @@ export class AiSdkProvider extends BaseLLMProvider {
         throw error
       }
       console.error(`[AiSdkProvider] Failed to get dimensions for model ${modelId}:`, error)
-      const { context } = this.buildRuntimeContext(modelId)
+      const decision = this.resolveRouteDecision(modelId)
+      const { context } = this.buildRuntimeContext(modelId, decision)
       return runAiSdkDimensions(context, modelId, signal)
     }
   }
@@ -1304,29 +1370,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         throw error
       }
       console.error(`[AiSdkProvider] Failed to get dimensions for model ${modelId}:`, error)
-      const runtimeProvider = this.getRuntimeProvider(decision)
-      const defaultHeaders = {
-        ...this.defaultHeaders,
-        ...this.definition.defaultHeadersPatch
-      }
-      const context: AiSdkRuntimeContext = {
-        providerKind: decision.providerKind,
-        provider: runtimeProvider,
-        supportsOfficialAnthropicReasoning: decision.supportsOfficialAnthropicReasoning,
-        providerSettings: this.providerSettings,
-        defaultHeaders,
-        buildLegacyFunctionCallPrompt: (tools) => this.getFunctionCallWrapPrompt(tools),
-        emitRequestTrace: (runtimeModelConfig, payload) =>
-          this.emitRequestTrace(runtimeModelConfig, payload),
-        buildTraceHeaders: () => this.buildTraceHeaders(decision, runtimeProvider, defaultHeaders),
-        cleanHeaders: this.isAzureOpenAI(decision, runtimeProvider)
-          ? false
-          : !this.isOfficialOpenAIService(decision, runtimeProvider),
-        supportsNativeTools: (_runtimeModelId, runtimeModelConfig) =>
-          runtimeModelConfig.functionCall === true,
-        shouldUseImageGeneration: (_runtimeModelId, runtimeModelConfig) =>
-          runtimeModelConfig.apiEndpoint === ApiEndpointType.Image
-      }
+      const context = this.buildEmbeddingRuntimeContext(modelId, decision)
       return runAiSdkDimensions(context, modelId, signal)
     }
   }
@@ -2000,7 +2044,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       })
       .map((model) => {
         const modelId = model.id.trim()
-        const isAnthropicModel = OPENCODE_GO_ANTHROPIC_MODEL_IDS.has(modelId)
+        const isAnthropicModel = isOpenCodeGoAnthropicRoute(this.provider.id, modelId)
         const existingConfig = this.getProviderModelConfig(modelId)
         const endpointType = isAnthropicModel ? 'anthropic' : 'openai'
 
@@ -2108,42 +2152,32 @@ export class AiSdkProvider extends BaseLLMProvider {
             typeof candidate === 'number' && Number.isFinite(candidate)
         )
 
-        const endpointCapabilityProviderId = this.resolveNewApiSpecialCapabilityProviderId(
-          rawModel.id,
-          ownedBy
-        )
+        const capabilityFamilyHint = resolveCapabilityFamilyHint(rawModel.id, ownedBy)
         const defaultEndpointType = resolveNewApiEndpointTypeFromRoute(
           {
             supportedEndpointTypes,
             type,
             ownedBy,
-            capabilityProviderId: endpointCapabilityProviderId
+            capabilityFamilyHint
           },
           rawModel.id
         )
-        const capabilityMatch = this.resolveNewApiCapabilityMatch(
-          rawModel.id,
-          defaultEndpointType,
-          ownedBy
+        const capabilityIdentity = resolveModelCapabilityIdentity({
+          providerId: this.provider.id,
+          modelId: rawModel.id,
+          ownedBy,
+          endpointType: defaultEndpointType,
+          explicitProviderId: this.provider.capabilityProviderId
+        })
+        const capabilityModel = modelCapabilities.getProviderCapabilityModelMatch(
+          capabilityIdentity.providerId,
+          capabilityIdentity.catalogModelId ?? capabilityIdentity.requestModelId
+        )?.model
+        const catalogCapabilities = modelCapabilities.getCatalogCapabilitySnapshot(
+          capabilityIdentity.providerId,
+          capabilityIdentity.catalogModelId ?? capabilityIdentity.requestModelId
         )
-        const capabilityProviderId = resolveProviderCapabilityProviderId(
-          this.provider.id,
-          {
-            endpointType: defaultEndpointType,
-            supportedEndpointTypes,
-            type,
-            ownedBy,
-            capabilityProviderId: capabilityMatch?.providerId
-          },
-          rawModel.id
-        )
-        const capabilityModel =
-          capabilityMatch?.model ??
-          modelCapabilities.getCapabilityModel(capabilityProviderId, rawModel.id)
-        const capabilityReasoning = modelCapabilities.supportsReasoning(
-          capabilityMatch?.providerId ?? capabilityProviderId,
-          rawModel.id
-        )
+        const capabilityReasoning = catalogCapabilities.supportsReasoning
         const capabilityVision = capabilityModel
           ? isImageInputSupported(capabilityModel)
           : undefined
@@ -2510,10 +2544,11 @@ export class AiSdkProvider extends BaseLLMProvider {
   private async runSummaryTitlePrompt(
     messages: ChatMessage[],
     modelId: string,
+    decision: RouteDecision,
     temperature: number,
     maxTokens?: number
   ): Promise<string> {
-    const response = await this.runText(
+    const response = await this.runTextWithDecision(
       [
         {
           role: 'user',
@@ -2521,6 +2556,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         }
       ],
       modelId,
+      decision,
       temperature,
       maxTokens
     )
@@ -2530,17 +2566,19 @@ export class AiSdkProvider extends BaseLLMProvider {
   private async runPromptCompletion(
     prompt: string,
     modelId: string,
+    decision: RouteDecision,
     temperature?: number,
     maxTokens?: number,
     systemPrompt?: string,
     signal?: AbortSignal
   ): Promise<LLMResponse> {
-    return this.runText(
+    return this.runTextWithDecision(
       [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'user', content: prompt }
       ],
       modelId,
+      decision,
       temperature,
       maxTokens,
       undefined,
@@ -2550,6 +2588,7 @@ export class AiSdkProvider extends BaseLLMProvider {
 
   private async getSuggestionsByPreset(
     preset: AiSdkBehaviorPreset,
+    decision: RouteDecision,
     context: string | ChatMessage[],
     modelId: string,
     temperature?: number,
@@ -2562,6 +2601,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       const response = await this.runPromptCompletion(
         `根据下面的上下文，给出3个可能的回复建议，每个建议一行，不要有编号或者额外的解释：\n\n${promptContext}`,
         modelId,
+        decision,
         temperature ?? 0.7,
         maxTokens ?? 128,
         systemPrompt
@@ -2577,6 +2617,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       const response = await this.runPromptCompletion(
         `Based on the following context, please provide up to 5 reasonable suggestion options, each on a new line without numbering:\n\n${promptContext}`,
         modelId,
+        decision,
         temperature ?? 0.7,
         maxTokens ?? 128,
         systemPrompt
@@ -2596,7 +2637,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       return []
     }
 
-    const response = await this.runText(
+    const response = await this.runTextWithDecision(
       [
         {
           role: 'system',
@@ -2606,6 +2647,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         ...messages.slice(-5)
       ],
       modelId,
+      decision,
       temperature ?? 0.7,
       maxTokens ?? 60
     )
@@ -2626,9 +2668,9 @@ export class AiSdkProvider extends BaseLLMProvider {
 
     switch (preset) {
       case 'anthropic':
-        return this.runSummaryTitlePrompt(messages, modelId, 0.3, 50)
+        return this.runSummaryTitlePrompt(messages, modelId, decision, 0.3, 50)
       case 'google': {
-        const title = await this.runSummaryTitlePrompt(messages, modelId, 0.4)
+        const title = await this.runSummaryTitlePrompt(messages, modelId, decision, 0.4)
         return title || 'New Conversation'
       }
       case 'openai':
@@ -2636,7 +2678,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       case 'english-summary':
       case 'chinese-summary':
       default: {
-        const title = await this.runSummaryTitlePrompt(messages, modelId, 0.5)
+        const title = await this.runSummaryTitlePrompt(messages, modelId, decision, 0.5)
         return title.replace(/["']/g, '').trim()
       }
     }
@@ -2650,10 +2692,16 @@ export class AiSdkProvider extends BaseLLMProvider {
   ): Promise<LLMResponse> {
     const decision = this.resolveRouteDecision(modelId)
     if (decision.endpointType === 'grok-image' || decision.endpointType === 'image-generation') {
-      return this.collectStreamResponse(messages, modelId, temperature, maxTokens)
+      return this.collectStreamResponseWithDecision(
+        messages,
+        modelId,
+        decision,
+        temperature,
+        maxTokens
+      )
     }
 
-    return this.runText(messages, modelId, temperature, maxTokens)
+    return this.runTextWithDecision(messages, modelId, decision, temperature, maxTokens)
   }
 
   public async summaries(
@@ -2665,9 +2713,10 @@ export class AiSdkProvider extends BaseLLMProvider {
   ): Promise<LLMResponse> {
     const decision = this.resolveRouteDecision(modelId)
     if (decision.endpointType === 'grok-image' || decision.endpointType === 'image-generation') {
-      return this.collectStreamResponse(
+      return this.collectStreamResponseWithDecision(
         [{ role: 'user', content: text }],
         modelId,
+        decision,
         temperature,
         maxTokens
       )
@@ -2679,6 +2728,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `请对以下内容进行摘要:\n\n${text}\n\n请提供一个简洁明了的摘要。`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2687,6 +2737,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `Please generate a concise summary for the following content:\n\n${text}`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2696,6 +2747,7 @@ export class AiSdkProvider extends BaseLLMProvider {
           "You need to summarize the user's conversation into a title of no more than 10 words, with the title language matching the user's primary language, without using punctuation or other special symbols：\n" +
             text,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2704,6 +2756,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `Please summarize the following content using concise language and highlighting key points:\n${text}`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2712,6 +2765,7 @@ export class AiSdkProvider extends BaseLLMProvider {
         return this.runPromptCompletion(
           `请总结以下内容，使用简洁的语言，突出重点：\n${text}`,
           modelId,
+          decision,
           temperature,
           maxTokens,
           systemPrompt
@@ -2722,17 +2776,19 @@ export class AiSdkProvider extends BaseLLMProvider {
           return this.runPromptCompletion(
             `${SUMMARY_TITLES_PROMPT}\n\n${text}`,
             modelId,
+            decision,
             temperature,
             maxTokens,
             systemPrompt
           )
         }
-        return this.runText(
+        return this.runTextWithDecision(
           [
             { role: 'system', content: 'Summarize the following text concisely:' },
             { role: 'user', content: text }
           ],
           modelId,
+          decision,
           temperature,
           maxTokens
         )
@@ -2767,9 +2823,10 @@ export class AiSdkProvider extends BaseLLMProvider {
         : (optionsOrSystemPrompt ?? {})
     const decision = this.resolveRouteDecision(modelId)
     if (decision.endpointType === 'grok-image' || decision.endpointType === 'image-generation') {
-      return this.collectStreamResponse(
+      return this.collectStreamResponseWithDecision(
         [{ role: 'user', content: prompt }],
         modelId,
+        decision,
         temperature,
         maxTokens,
         [],
@@ -2781,6 +2838,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     return this.runPromptCompletion(
       prompt,
       modelId,
+      decision,
       temperature,
       maxTokens,
       options?.systemPrompt,
@@ -2798,6 +2856,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     const decision = this.resolveRouteDecision(modelId)
     return this.getSuggestionsByPreset(
       this.getBehaviorPreset(decision),
+      decision,
       context,
       modelId,
       temperature,
@@ -2840,15 +2899,25 @@ export class AiSdkProvider extends BaseLLMProvider {
       case 'google':
         return this.runEmbeddings(modelId, texts, signal)
       case 'new-api': {
+        const endpointType = 'openai' as const
+        const capabilityIdentity = this.resolveCapabilityIdentityFromProviderState(
+          modelId,
+          endpointType
+        )
         return this.runEmbeddingsWithDecision(
           modelId,
           texts,
           {
             providerKind: 'openai-compatible',
+            endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${this.getNormalizedNewApiHost()}/v1`,
-              capabilityProviderId: this.resolveNewApiRuntimeCapabilityProviderId(modelId, 'openai')
+              capabilityProviderId: this.getRuntimeCapabilityProviderId(
+                capabilityIdentity,
+                endpointType
+              )
             }
           },
           signal
@@ -2871,14 +2940,24 @@ export class AiSdkProvider extends BaseLLMProvider {
       case 'google':
         return this.runDimensions(modelId, signal)
       case 'new-api': {
+        const endpointType = 'openai' as const
+        const capabilityIdentity = this.resolveCapabilityIdentityFromProviderState(
+          modelId,
+          endpointType
+        )
         return this.runDimensionsWithDecision(
           modelId,
           {
             providerKind: 'openai-compatible',
+            endpointType,
+            capabilityIdentity,
             providerPatch: {
               apiType: 'openai-completions',
               baseUrl: `${this.getNormalizedNewApiHost()}/v1`,
-              capabilityProviderId: this.resolveNewApiRuntimeCapabilityProviderId(modelId, 'openai')
+              capabilityProviderId: this.getRuntimeCapabilityProviderId(
+                capabilityIdentity,
+                endpointType
+              )
             }
           },
           signal

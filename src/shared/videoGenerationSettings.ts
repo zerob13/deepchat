@@ -242,7 +242,6 @@ export function supportsOpenAICompatibleVideoGeneration(
     providerKind === 'openai-compatible' ||
     providerKind === 'openai-responses' ||
     providerOptionsKey === 'openai' ||
-    providerOptionsKey === 'new-api' ||
     providerId === 'openai' ||
     providerId === 'openai-responses' ||
     providerId === 'new-api' ||

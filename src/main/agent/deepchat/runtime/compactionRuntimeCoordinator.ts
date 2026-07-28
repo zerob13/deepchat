@@ -23,6 +23,7 @@ import {
 } from './contextBudgetPolicy'
 import { resolveInterleavedReasoningConfig } from './generationSettings'
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
+import { resolveProviderModelRuntimeFacts } from './providerModelRuntimeFacts'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 
 type ManualCompactionLifecycle = Pick<
@@ -151,20 +152,32 @@ export class CompactionRuntimeCoordinator {
       throw new Error('Pending tool interactions must be resolved before compacting.')
     }
 
+    const providerModelFacts = resolveProviderModelRuntimeFacts(
+      this.deps.providerSettings,
+      state.providerId,
+      state.modelId,
+      modelConfig
+    )
+    const { capabilitySnapshot } = providerModelFacts
     this.deps.runLifecycle.transitionStatus(scope, 'generating')
     const compactionAbortController = this.deps.runLifecycle.ensureOperationController(scope)
     const compactionAbortSignal = compactionAbortController.signal
     try {
       throwIfAbortRequested(compactionAbortSignal)
       const generationSettings = await awaitWithAbort(
-        this.deps.sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
+        this.deps.sessionSettings.getEffectiveGenerationSettings(
+          sessionId,
+          instance,
+          providerModelFacts
+        ),
         compactionAbortSignal
       )
       const interleavedReasoning = resolveInterleavedReasoningConfig(
         this.deps.providerSettings,
         state.providerId,
         state.modelId,
-        generationSettings
+        generationSettings,
+        capabilitySnapshot
       )
       const contextBudgetLength = resolveDeepChatContextBudgetLength(
         state.providerId,
@@ -213,7 +226,8 @@ export class CompactionRuntimeCoordinator {
       const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
         this.deps.providerSettings,
         state.providerId,
-        state.modelId
+        state.modelId,
+        providerModelFacts
       )
 
       const intent = await this.deps.compactionService.prepareForManualCompaction({

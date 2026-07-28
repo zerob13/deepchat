@@ -13,6 +13,7 @@ import { createSessionQueryFixture } from './queryFixture'
 import { createSessionFixture } from './sessionFixture'
 import { createSessionData, createSessionDataFromDatabase } from '@/session/data'
 import { SessionTranscriptMutations } from '@/session/transcriptMutations'
+import { createPassthroughModelRequestPolicy } from '@shared/modelRequestPolicy'
 
 vi.mock('nanoid', () => {
   let counter = 0
@@ -680,7 +681,7 @@ function createMockProviderRuntime() {
 }
 
 function createMockProviderSettings() {
-  return {
+  const settings = {
     getDefaultModel: vi.fn().mockReturnValue({ providerId: 'openai', modelId: 'gpt-4' }),
     getModelConfig: vi
       .fn()
@@ -689,18 +690,10 @@ function createMockProviderSettings() {
     getAutoCompactionEnabled: vi.fn().mockReturnValue(true),
     getAutoCompactionTriggerThreshold: vi.fn().mockReturnValue(80),
     getAutoCompactionRetainRecentPairs: vi.fn().mockReturnValue(2),
-    getReasoningPortrait: vi.fn().mockReturnValue(null),
-    getCapabilityProviderId: vi.fn().mockImplementation((providerId: string) => providerId),
     getProviderById: vi.fn().mockImplementation((providerId: string) => ({
       id: providerId,
       apiType: 'openai'
     })),
-    supportsReasoningCapability: vi.fn().mockReturnValue(false),
-    getThinkingBudgetRange: vi.fn().mockReturnValue({}),
-    supportsReasoningEffortCapability: vi.fn().mockReturnValue(false),
-    getReasoningEffortDefault: vi.fn().mockReturnValue(undefined),
-    supportsVerbosityCapability: vi.fn().mockReturnValue(false),
-    getVerbosityDefault: vi.fn().mockReturnValue(undefined),
     supportsAudioInputCapability: vi.fn().mockReturnValue(false),
     getSetting: vi.fn().mockReturnValue(undefined),
     getAgentType: vi.fn().mockResolvedValue('deepchat'),
@@ -717,6 +710,34 @@ function createMockProviderSettings() {
       ]
     })
   } as any
+
+  settings.getCapabilitySnapshot = vi.fn(
+    ({ providerId, modelId }: { providerId: string; modelId: string }) => {
+      return {
+        identity: {
+          providerId,
+          requestModelId: modelId,
+          catalogMatched: true,
+          catalogModelId: modelId
+        },
+        requestPolicy: createPassthroughModelRequestPolicy(),
+        supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
+        supportsReasoning: false,
+        reasoningPortrait: null,
+        thinkingBudgetRange: {},
+        supportsSearch: false,
+        searchDefaults: {},
+        temperatureCapability: undefined,
+        supportsTemperatureControl: true,
+        supportsReasoningEffort: false,
+        reasoningEffortDefault: undefined,
+        supportsVerbosity: false,
+        verbosityDefault: undefined
+      }
+    }
+  )
+
+  return settings
 }
 
 function createMockToolService() {

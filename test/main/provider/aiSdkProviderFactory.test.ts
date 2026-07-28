@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { streamText } from 'ai'
+import { generateText, streamText } from 'ai'
 
 vi.mock('../../../src/main/platform/proxy', () => ({
   proxyConfig: {
@@ -265,6 +265,99 @@ describe('AI SDK provider factory', () => {
   })
 
   it.each([
+    ['new-api', 'newApi'],
+    ['new-API', 'new-API'],
+    ['a-4-b', 'a-4B']
+  ])(
+    'uses the adapter-compatible provider options namespace for %s',
+    async (providerId, expectedProviderOptionsKey) => {
+      const warningLogger = vi.fn()
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 'chatcmpl-provider-options-key',
+            object: 'chat.completion',
+            created: 1,
+            model: 'test-model',
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: 'ok'
+                },
+                finish_reason: 'stop'
+              }
+            ],
+            usage: {
+              prompt_tokens: 1,
+              completion_tokens: 1,
+              total_tokens: 2
+            }
+          }),
+          {
+            status: 200,
+            headers: {
+              'content-type': 'application/json'
+            }
+          }
+        )
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      vi.stubGlobal('AI_SDK_LOG_WARNINGS', warningLogger)
+
+      const context = createAiSdkProviderContext({
+        providerKind: 'openai-compatible',
+        provider: {
+          id: providerId,
+          name: providerId,
+          apiType: 'openai-completions',
+          apiKey: 'test-key',
+          baseUrl: 'https://provider.example.com/v1',
+          enable: true
+        } as any,
+        providerSettings: {
+          getAzureApiVersion: () => undefined
+        } as any,
+        defaultHeaders: {},
+        modelId: 'test-model',
+        wrapThinkReasoning: false
+      })
+
+      const result = await generateText({
+        model: context.model,
+        messages: [{ role: 'user', content: 'Hello' }],
+        providerOptions: {
+          [context.providerOptionsKey]: {
+            reasoningEffort: 'high'
+          }
+        }
+      })
+
+      expect(context.providerOptionsKey).toBe(expectedProviderOptionsKey)
+      expect(context.model.provider).toBe(`${providerId}.chat`)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+      expect(init?.body).toBeTypeOf('string')
+      expect(JSON.parse(init?.body as string)).toMatchObject({
+        reasoning_effort: 'high'
+      })
+      expect(Object.keys(result.providerMetadata ?? {})).toContain(expectedProviderOptionsKey)
+
+      const providerOptionsDeprecations = warningLogger.mock.calls
+        .flatMap(([entry]) => entry.warnings)
+        .filter(
+          (warning) =>
+            warning.type === 'deprecated' &&
+            typeof warning.setting === 'string' &&
+            warning.setting.startsWith('providerOptions key')
+        )
+      expect(providerOptionsDeprecations).toEqual([])
+    }
+  )
+
+  it.each([
     [
       'OpenAI',
       'openai-compatible',
@@ -291,7 +384,7 @@ describe('AI SDK provider factory', () => {
         baseUrl: 'https://api.githubcopilot.com',
         enable: true
       },
-      'github-copilot',
+      'githubCopilot',
       'openai_chat',
       'https://api.githubcopilot.com/chat/completions'
     ],
@@ -307,7 +400,7 @@ describe('AI SDK provider factory', () => {
         enable: true,
         custom: true
       },
-      'custom-provider',
+      'customProvider',
       'openai_chat',
       'https://proxy.example.com/v1/chat/completions'
     ],

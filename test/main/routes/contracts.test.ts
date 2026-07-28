@@ -1528,26 +1528,58 @@ describe('main kernel contracts', () => {
     expect(
       DEEPCHAT_ROUTE_CATALOG['models.getCapabilities'].output.parse({
         capabilities: {
+          identity: {
+            providerId: 'openai',
+            requestModelId: 'gpt-5.4',
+            catalogMatched: true,
+            catalogModelId: 'gpt-5.4'
+          },
+          requestPolicy: {
+            temperature: { mode: 'passthrough' },
+            topP: { mode: 'passthrough' },
+            reasoning: { mode: 'passthrough' },
+            legacyThinking: { mode: 'passthrough' }
+          },
           supportsReasoning: true,
           reasoningPortrait: null,
-          thinkingBudgetRange: null,
+          thinkingBudgetRange: {},
           supportsSearch: true,
           searchDefaults: { default: true, forced: false, strategy: 'turbo' },
           supportsAudioInput: false,
           supportsTemperatureControl: true,
-          temperatureCapability: true
+          temperatureCapability: true,
+          supportsReasoningEffort: true,
+          reasoningEffortDefault: 'medium',
+          supportsVerbosity: true,
+          verbosityDefault: 'medium'
         }
       })
     ).toEqual({
       capabilities: {
+        identity: {
+          providerId: 'openai',
+          requestModelId: 'gpt-5.4',
+          catalogMatched: true,
+          catalogModelId: 'gpt-5.4'
+        },
+        requestPolicy: {
+          temperature: { mode: 'passthrough' },
+          topP: { mode: 'passthrough' },
+          reasoning: { mode: 'passthrough' },
+          legacyThinking: { mode: 'passthrough' }
+        },
         supportsReasoning: true,
         reasoningPortrait: null,
-        thinkingBudgetRange: null,
+        thinkingBudgetRange: {},
         supportsSearch: true,
         searchDefaults: { default: true, forced: false, strategy: 'turbo' },
         supportsAudioInput: false,
         supportsTemperatureControl: true,
-        temperatureCapability: true
+        temperatureCapability: true,
+        supportsReasoningEffort: true,
+        reasoningEffortDefault: 'medium',
+        supportsVerbosity: true,
+        verbosityDefault: 'medium'
       }
     })
 

@@ -565,6 +565,8 @@
     }
   },
   "model": {
+    "temperatureFixedByPolicy": "המודל הזה מקבע את הטמפרטורה ל-{value}.",
+    "topPFixedByPolicy": "המודל הזה מקבע את Top P ל-{value}.",
     "title": "הגדרות מודל",
     "systemPrompt": {
       "label": "הנחיית מערכת",
@@ -692,7 +694,6 @@
       "currentUsingModelDefault": "משתמש כעת בתצורת ברירת המחדל של המודל",
       "temperature": {
         "description": "שלוט באקראיות הפלט. רוב המודלים הם 0-1, וחלקם תומכים בין 0-2. ערכים גבוהים יותר מגבירים את האקראיות.",
-        "fixedMoonshotKimi": "Moonshot Kimi K2.5/K2.6 מקבע את הטמפרטורה ל-{enabled} כשהחשיבה מופעלת ול-{disabled} כשהיא כבויה.",
         "label": "טמפרטורה"
       },
       "topP": {
@@ -1927,7 +1928,10 @@
       "sourceError": "טעינת מקורות ה-Agent נכשלה",
       "emptySources": "אין מקורות לייבוא",
       "emptySourcesDescription": "לא נמצא Agent אחר עם Skills זמינים.",
-      "sourceKind": { "internal": "DeepChat", "external": "חיצוני" },
+      "sourceKind": {
+        "internal": "DeepChat",
+        "external": "חיצוני"
+      },
       "skillCount": "{count} Skills",
       "previewTitle": "Skills לייבוא",
       "selectedCount": "{count} נבחרו",
@@ -1937,8 +1941,16 @@
       "previewError": "תצוגה מקדימה של Skills נכשלה",
       "emptyPreview": "אין Skills זמינים",
       "emptyPreviewDescription": "ל-Agent הזה אין Skills שניתן לייבא.",
-      "status": { "ready": "מוכן", "conflict": "התנגשות", "unavailable": "לא זמין" },
-      "strategy": { "skip": "דלג", "rename": "שנה שם", "overwrite": "החלף" },
+      "status": {
+        "ready": "מוכן",
+        "conflict": "התנגשות",
+        "unavailable": "לא זמין"
+      },
+      "strategy": {
+        "skip": "דלג",
+        "rename": "שנה שם",
+        "overwrite": "החלף"
+      },
       "renameTarget": "ייובא בשם {name}",
       "executeError": "ייבוא Skills נכשל",
       "importing": "מייבא...",
@@ -3177,5 +3189,23 @@
     "scopeGlobalPlugins": "עמוד זה הוא גלובלי לאפליקציה: התקנה, הפעלה ומצב תהליך של תוספים רשמיים משותפים לכל סוכני DeepChat.",
     "scopeCurrentAgent": "עמוד זה הוא מדיניות סוכן: השינויים משפיעים רק על זמינות Skills/MCP של „{agent}”, לא על התקנות גלובליות.",
     "currentAgentFallback": "הסוכן הנוכחי"
+  },
+  "debug": {
+    "description": "כלים לפיתוח בלבד להצגת תצוגה מקדימה של מצבי דמה ותהליכים מודרכים.",
+    "unavailableTitle": "כלי ניפוי השגיאות אינם זמינים",
+    "unavailableDescription": "פעולה זו זמינה רק במצב פיתוח.",
+    "splash": {
+      "title": "חלון פתיחה",
+      "description": "הצג תצוגה מקדימה של מצבי חלון הפתיחה בלי להתחיל תהליך אמיתי של ביטול נעילת מסד הנתונים.",
+      "loading": "תצוגה מקדימה של טעינה",
+      "systemUnlock": "תצוגה מקדימה של ביטול נעילת המערכת",
+      "unlock": "תצוגה מקדימה של ביטול נעילה ידני",
+      "failed": "לא ניתן להציג את תרחיש חלון הפתיחה."
+    },
+    "guidance": {
+      "title": "הדרכה ונתונים",
+      "description": "צור נתוני דמה לפיתוח בלבד עבור תהליך ההיכרות, שיחות ועדכונים.",
+      "failed": "לא ניתן להפעיל את התהליך המודרך לניפוי שגיאות."
+    }
   }
 }

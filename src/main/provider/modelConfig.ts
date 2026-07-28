@@ -1,10 +1,10 @@
-import {
-  ApiEndpointType,
-  ModelType,
-  isNewApiEndpointType,
-  resolveProviderCapabilityProviderId
-} from '@shared/model'
-import type { IModelConfig, ModelConfig, ModelConfigSource } from '@shared/types/provider'
+import { ApiEndpointType, ModelType, isNewApiEndpointType } from '@shared/model'
+import type {
+  IModelConfig,
+  ModelConfig,
+  ModelConfigSource,
+  ModelRouteConfig
+} from '@shared/types/provider'
 import {
   DEFAULT_MODEL_TIMEOUT,
   DEFAULT_MODEL_CAPABILITY_FALLBACKS,
@@ -12,10 +12,9 @@ import {
   resolveModelContextLength,
   resolveModelFunctionCall
 } from '@shared/modelConfigDefaults'
-import { applyMoonshotKimiReasoningTemperaturePolicy } from '@shared/moonshotKimiPolicy'
+import { applyMoonshotKimiReasoningTemperaturePolicy } from '@shared/modelRequestPolicy'
 import { resolveVideoGenerationCompatType } from '@shared/videoGenerationSettings'
 import ElectronStore from 'electron-store'
-import { providerDbLoader } from './providerDbLoader'
 import {
   hasAnthropicReasoningToggle,
   isImageInputSupported,
@@ -27,19 +26,15 @@ import {
   isVerbosity,
   type Verbosity
 } from '@shared/types/model-db'
-import { resolveProviderId } from './providerId'
-import { modelCapabilities } from './modelCapabilities'
+import { modelCapabilities, type CapabilityModelMatch } from './modelCapabilities'
 import type { StoreLike } from '@/config/storeLike'
+import { resolveCapabilityIdentity } from './capabilityIdentity'
+import type { ResolvedCapabilityIdentity } from '@shared/types/model-capabilities'
 
 const SPECIAL_CONCAT_CHAR = '-_-'
 
 const MODEL_CONFIG_META_KEY = '__meta__'
 const MINIMAX_M3_CONTEXT_LENGTH = 1_000_000
-
-const normalizeProviderDbModelId = (modelId: string | undefined): string | undefined => {
-  const normalized = modelId ? modelId.toLowerCase() : modelId
-  return normalized ? normalized.replace(/^models\//, '') : normalized
-}
 
 const isMiniMaxProviderId = (providerId: string | undefined): boolean => {
   const normalized = providerId?.trim().toLowerCase()
@@ -105,10 +100,6 @@ export class ModelConfigHelper {
     if (meta.lastRefreshVersion !== this.currentVersion) {
       this.refreshDerivedConfigs(meta)
     }
-  }
-
-  private resolveProviderId(providerId: string | undefined): string | undefined {
-    return resolveProviderId(providerId)
   }
 
   /**
@@ -177,10 +168,13 @@ export class ModelConfigHelper {
     }
   }
 
-  private buildConfigFromProviderModel(model: ProviderModel, providerId: string): ModelConfig {
+  private buildConfigFromProviderModel(match: CapabilityModelMatch): ModelConfig {
+    const { model, modelId, providerId } = match
     const modelType = this.inferModelType(model)
-    const portrait = modelCapabilities.getReasoningPortrait(providerId, model.id)
-    const capabilityProviderId = resolveProviderCapabilityProviderId(providerId, null, model.id)
+    const portrait = modelCapabilities.getCatalogCapabilitySnapshot(
+      providerId,
+      modelId
+    ).reasoningPortrait
     const reasoningEnabled =
       portrait?.defaultEnabled ?? model.reasoning?.default ?? portrait?.supported ?? false
     const thinkingBudget =
@@ -190,7 +184,7 @@ export class ModelConfigHelper {
       portrait,
       portrait?.effort ?? model.reasoning?.effort
     )
-    const reasoningVisibility = hasAnthropicReasoningToggle(capabilityProviderId, portrait)
+    const reasoningVisibility = hasAnthropicReasoningToggle(providerId, portrait)
       ? (normalizeAnthropicReasoningVisibilityValue(portrait?.visibility) ??
         normalizeReasoningVisibilityValue(portrait?.visibility))
       : normalizeReasoningVisibilityValue(portrait?.visibility)
@@ -415,11 +409,57 @@ export class ModelConfigHelper {
     this.cacheInitialized = true
   }
 
+  private getStoredConfigEntry(modelId: string, providerId?: string): IModelConfig | undefined {
+    if (!providerId) {
+      return undefined
+    }
+
+    const normalizedModelId = modelId.toLowerCase().replace(/^models\//, '')
+    const normalizedProviderId = providerId.toLowerCase()
+    const originalCacheKey = this.generateCacheKey(providerId, modelId)
+    const originalEntry = this.memoryCache.get(originalCacheKey)
+    if (originalEntry?.config) {
+      return originalEntry
+    }
+
+    const normalizedCacheKey = this.generateCacheKey(normalizedProviderId, normalizedModelId)
+    if (normalizedCacheKey !== originalCacheKey) {
+      const normalizedEntry = this.memoryCache.get(normalizedCacheKey)
+      if (normalizedEntry?.config) {
+        return normalizedEntry
+      }
+    }
+
+    return undefined
+  }
+
+  getModelRouteConfig(modelId: string, providerId?: string): ModelRouteConfig {
+    this.initializeCache()
+    const entry = this.getStoredConfigEntry(modelId, providerId)
+    const config = entry?.config
+    if (!config) {
+      return {}
+    }
+
+    return {
+      apiEndpoint: config.apiEndpoint,
+      endpointType: config.endpointType,
+      ownedBy: config.ownedBy,
+      type: config.type,
+      isUserDefined: entry.source === 'user' || config.isUserDefined === true
+    }
+  }
+
   /**
-   * 获取模型配置（优先级：用户自定义 > 远端缓存/本地内置 Provider DB 严格匹配 > 默认兜底）
-   * 严格匹配要求 providerId 与 modelId 全等；不再做模糊匹配。
+   * Resolve model configuration from user intent, the authoritative capability identity,
+   * provider-managed cache, or safe defaults in that order.
    */
-  getModelConfig(modelId: string, providerId?: string): ModelConfig {
+  getModelConfig(
+    modelId: string,
+    providerId?: string,
+    capabilityProviderId?: string,
+    resolvedIdentity?: ResolvedCapabilityIdentity
+  ): ModelConfig {
     this.initializeCache()
 
     let storedConfig: ModelConfig | null = null
@@ -431,26 +471,10 @@ export class ModelConfigHelper {
     const normModelId = normModelIdRaw ? normModelIdRaw.replace(/^models\//, '') : normModelIdRaw
     const normProviderId = providerId ? providerId.toLowerCase() : providerId
 
-    if (providerId) {
-      const cacheKey = this.generateCacheKey(providerId, modelId)
-      const cachedEntry = this.memoryCache.has(cacheKey)
-        ? (this.memoryCache.get(cacheKey) as IModelConfig | undefined)
-        : undefined
-
-      if (cachedEntry?.config) {
-        storedConfig = cachedEntry.config
-        storedSource = cachedEntry.source ?? (cachedEntry.config.isUserDefined ? 'user' : undefined)
-      } else if (normProviderId && normModelId) {
-        // 二次尝试：小写键（兼容历史大小写不一致的存储键）
-        const normKey = this.generateCacheKey(normProviderId, normModelId)
-        const normCached = this.memoryCache.has(normKey)
-          ? (this.memoryCache.get(normKey) as IModelConfig | undefined)
-          : undefined
-        if (normCached?.config) {
-          storedConfig = normCached.config
-          storedSource = normCached.source ?? (normCached.config.isUserDefined ? 'user' : undefined)
-        }
-      }
+    const cachedEntry = this.getStoredConfigEntry(modelId, providerId)
+    if (cachedEntry?.config) {
+      storedConfig = cachedEntry.config
+      storedSource = cachedEntry.source ?? (cachedEntry.config.isUserDefined ? 'user' : undefined)
     }
 
     const isUserConfig = storedSource === 'user'
@@ -465,47 +489,32 @@ export class ModelConfigHelper {
 
     let finalConfig: ModelConfig | null = null
 
-    // 严格匹配：仅当提供 providerId 时从 Provider DB 查找
-    const db = providerDbLoader.getDb()
-    const providers = db?.providers
-    const resolvedProviderId = normProviderId ? this.resolveProviderId(normProviderId) : undefined
-    const providerEntry = resolvedProviderId ? providers?.[resolvedProviderId] : undefined
-    const providerFound = Boolean(providerEntry)
-
-    if (
-      normProviderId &&
-      resolvedProviderId &&
-      providerEntry &&
-      Array.isArray(providerEntry.models)
-    ) {
-      for (let i = 0; i < providerEntry.models.length; i += 1) {
-        const candidate = providerEntry.models[i]
-        if (candidate && normalizeProviderDbModelId(candidate.id) === normModelId) {
-          finalConfig = this.buildConfigFromProviderModel(candidate, resolvedProviderId)
-          break
-        }
-      }
-    }
-
-    if (!finalConfig && normProviderId && !providerFound && providers && normModelId) {
-      for (const key in providers) {
-        if (!Object.prototype.hasOwnProperty.call(providers, key)) continue
-        const candidateProvider = providers[key]
-        if (!candidateProvider || !Array.isArray(candidateProvider.models)) {
-          continue
-        }
-
-        for (let j = 0; j < candidateProvider.models.length; j += 1) {
-          const candidateModel = candidateProvider.models[j]
-          if (candidateModel && normalizeProviderDbModelId(candidateModel.id) === normModelId) {
-            finalConfig = this.buildConfigFromProviderModel(candidateModel, candidateProvider.id)
-            break
+    if (normProviderId && normModelId) {
+      let match: CapabilityModelMatch | undefined
+      if (resolvedIdentity?.catalogMatched) {
+        match = modelCapabilities.getProviderCapabilityModelMatch(
+          resolvedIdentity.providerId,
+          resolvedIdentity.catalogModelId
+        )
+      } else if (!resolvedIdentity) {
+        if (!capabilityProviderId && modelCapabilities.hasProvider(normProviderId)) {
+          match = modelCapabilities.getProviderCapabilityModelMatch(normProviderId, modelId)
+        } else {
+          const identity = resolveCapabilityIdentity({
+            providerId: normProviderId,
+            modelId,
+            explicitProviderId: capabilityProviderId
+          })
+          if (identity.catalogMatched) {
+            match = modelCapabilities.getProviderCapabilityModelMatch(
+              identity.providerId,
+              identity.catalogModelId
+            )
           }
         }
-
-        if (finalConfig) {
-          break
-        }
+      }
+      if (match) {
+        finalConfig = this.buildConfigFromProviderModel(match)
       }
     }
 
