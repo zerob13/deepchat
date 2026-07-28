@@ -70,8 +70,15 @@ describe('ToolManager', () => {
   }
 
   function createServerManager(clients: unknown[]) {
+    const clientsByName = new Map(
+      clients.map((client) => {
+        const namedClient = client as { serverName: string }
+        return [namedClient.serverName, client]
+      })
+    )
     return {
       getRunningClients: vi.fn().mockResolvedValue(clients),
+      getClient: vi.fn((serverName: string) => clientsByName.get(serverName)),
       setServerLastError: vi.fn(),
       clearServerLastError: vi.fn()
     }
@@ -80,7 +87,23 @@ describe('ToolManager', () => {
   function createToolManager(
     providerSettings: unknown,
     serverManager: unknown,
-    pluginOwners: Record<string, string> = {}
+    pluginOwners: Record<string, string> = {},
+    runtime: {
+      catalogs?: Array<{
+        pluginId: string
+        serverName: string
+        displayName: string
+        toolCatalog: {
+          version: string
+          tools: Array<{
+            name: string
+            description: string
+            inputSchema: Record<string, unknown>
+          }>
+        }
+      }>
+      ensureRunning?: (serverName: string, reason: 'tool') => Promise<void>
+    } = {}
   ) {
     return new ToolManager(
       providerSettings as never,
@@ -91,7 +114,13 @@ describe('ToolManager', () => {
       {
         ownsServer: (serverName) => Object.hasOwn(pluginOwners, serverName),
         isServerAvailable: (serverName) => Object.hasOwn(pluginOwners, serverName),
-        getOwnerPluginId: (serverName) => pluginOwners[serverName]
+        getOwnerPluginId: (serverName) => pluginOwners[serverName],
+        getAvailableToolCatalogs: () => runtime.catalogs ?? [],
+        ensureRunning:
+          runtime.ensureRunning ??
+          (async (serverName) => {
+            throw new Error(`Unexpected runtime start for ${serverName}`)
+          })
       }
     )
   }
@@ -196,6 +225,182 @@ describe('ToolManager', () => {
     expect(definitions[0]).toMatchObject({
       execution: { effect: 'write', mode: 'sequential' }
     })
+    expect(client.listTools).toHaveBeenCalledOnce()
+  })
+
+  it('discovers an on-demand catalog without starting its runtime and starts on first dispatch', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const ensureRunning = vi.fn().mockResolvedValue(undefined)
+    const providerSettings = createProviderSettings(serverName)
+    const manager = createToolManager(
+      providerSettings,
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      {
+        ensureRunning,
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const definitions = await manager.getAllToolDefinitions()
+
+    expect(definitions).toEqual([
+      expect.objectContaining({
+        function: expect.objectContaining({
+          name: 'inspect_screen',
+          description: 'Static inspect screen'
+        }),
+        server: {
+          name: serverName,
+          icons: 'plugin',
+          description: 'Catalog Server'
+        }
+      })
+    ])
+    expect(ensureRunning).not.toHaveBeenCalled()
+    expect(liveClient.listTools).not.toHaveBeenCalled()
+
+    const liveTools = deferred<Awaited<ReturnType<typeof liveClient.listTools>>>()
+    liveClient.listTools.mockReturnValue(liveTools.promise)
+    const firstCall = manager.callTool({
+      id: 'catalog-tool-1',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+    const secondCall = manager.callTool({
+      id: 'catalog-tool-2',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+    await vi.waitFor(() => expect(liveClient.listTools).toHaveBeenCalledOnce())
+    liveTools.resolve([
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const [first, second] = await Promise.all([firstCall, secondCall])
+
+    expect(first.isError).toBe(false)
+    expect(second.isError).toBe(false)
+    expect(ensureRunning).toHaveBeenCalledTimes(2)
+    expect(ensureRunning).toHaveBeenNthCalledWith(1, serverName, 'tool')
+    expect(liveClient.listTools).toHaveBeenCalledOnce()
+    expect(liveClient.callTool).toHaveBeenCalledTimes(2)
+  })
+
+  it('hard-fails when a catalog tool is missing from the live runtime', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'different_tool',
+        description: 'Different tool',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: 'com.deepchat.plugins.fixture' },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-tool-missing',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Live MCP tool "inspect_screen" is missing')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+    expect(serverManager.setServerLastError).toHaveBeenCalledWith(
+      serverName,
+      expect.stringContaining('missing')
+    )
+  })
+
+  it('uses the same conflict rename for static and live tool definitions', async () => {
+    const liveClient = createClient('live-server')
+    const manager = createToolManager(
+      createProviderSettings('live-server'),
+      createServerManager([liveClient]),
+      { 'catalog-server': 'com.deepchat.plugins.fixture' },
+      {
+        catalogs: [
+          {
+            pluginId: 'com.deepchat.plugins.fixture',
+            serverName: 'catalog-server',
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'echo',
+                  description: 'Catalog echo',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const definitions = await manager.getAllToolDefinitions()
+
+    expect(definitions.map((definition) => definition.function.name)).toEqual([
+      'live-server_echo',
+      'catalog-server_echo'
+    ])
+    expect(liveClient.listTools).toHaveBeenCalledOnce()
   })
 
   it('uses explicit ACP agent context instead of global chat mode', async () => {

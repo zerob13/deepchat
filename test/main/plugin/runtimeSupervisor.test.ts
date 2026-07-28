@@ -44,6 +44,19 @@ function register(
     startMode,
     surfaces: startMode === 'onDemand' ? ['tools'] : ['tools', 'prompts', 'resources'],
     toolCatalogPath: startMode === 'onDemand' ? '/fixture/tools.json' : undefined,
+    toolCatalog:
+      startMode === 'onDemand'
+        ? {
+            version: '1.0.0',
+            tools: [
+              {
+                name: 'fixture_tool',
+                description: 'Fixture tool',
+                inputSchema: { type: 'object', properties: {} }
+              }
+            ]
+          }
+        : undefined,
     adapter
   })
 }
@@ -81,6 +94,50 @@ describe('PluginRuntimeSupervisor', () => {
       'use a plugin runtime test or invoke one of its tools'
     )
     expect(port.start).not.toHaveBeenCalled()
+  })
+
+  it('exposes only committed on-demand catalogs and rejects missing discovery contracts', () => {
+    const supervisor = new PluginRuntimeSupervisor()
+
+    expect(() =>
+      supervisor.registerServer({
+        pluginId: 'com.deepchat.plugins.fixture',
+        serverName: 'missing-catalog',
+        startMode: 'onDemand',
+        surfaces: ['tools']
+      })
+    ).toThrow('requires a tools-only static catalog')
+
+    supervisor.registerServer(
+      {
+        pluginId: 'com.deepchat.plugins.fixture',
+        serverName: 'catalog-server',
+        displayName: 'Catalog Server',
+        startMode: 'onDemand',
+        surfaces: ['tools'],
+        toolCatalogPath: '/fixture/tools.json',
+        toolCatalog: {
+          version: '1.0.0',
+          tools: [
+            {
+              name: 'fixture_tool',
+              description: 'Fixture tool',
+              inputSchema: { type: 'object', properties: {} }
+            }
+          ]
+        }
+      },
+      { ready: false }
+    )
+
+    expect(supervisor.getAvailableToolCatalogs()).toEqual([])
+    supervisor.commitPluginRegistration('com.deepchat.plugins.fixture')
+    expect(supervisor.getAvailableToolCatalogs()).toEqual([
+      expect.objectContaining({
+        serverName: 'catalog-server',
+        displayName: 'Catalog Server'
+      })
+    ])
   })
 
   it('gates staged registrations without exposing them before commit', async () => {

@@ -176,7 +176,10 @@ export class McpService implements McpServicePort {
         ownsServer: (serverName) => this.pluginRuntimeSupervisor.ownsServer(serverName),
         isServerAvailable: (serverName) =>
           this.pluginRuntimeSupervisor.isServerAvailable(serverName),
-        getOwnerPluginId: (serverName) => this.pluginRuntimeSupervisor.getOwnerPluginId(serverName)
+        getOwnerPluginId: (serverName) => this.pluginRuntimeSupervisor.getOwnerPluginId(serverName),
+        getAvailableToolCatalogs: () => this.pluginRuntimeSupervisor.getAvailableToolCatalogs(),
+        ensureRunning: (serverName, reason) =>
+          this.pluginRuntimeSupervisor.ensureRunning(serverName, reason)
       }
     )
     this.pluginRuntimeSupervisor.attachProcessPort({

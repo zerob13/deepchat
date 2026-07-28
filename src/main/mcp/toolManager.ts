@@ -7,7 +7,8 @@ import {
   type MCPToolCall,
   type MCPToolDefinition,
   type MCPToolResponse,
-  type Resource
+  type Resource,
+  type Tool
 } from '@shared/types/mcp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import { ServerManager } from './serverManager'
@@ -19,11 +20,15 @@ import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
 import type { DesktopSettings } from '@/desktop/settings'
+import type { PluginOwnedToolCatalogRegistration } from '@/plugin/runtimeSupervisor'
 
 const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 type McpToolAccessContext = {
   enabledTools?: string[]
@@ -41,12 +46,34 @@ type PluginMcpOwnershipPort = {
   ownsServer(serverName: string): boolean
   isServerAvailable(serverName: string): boolean
   getOwnerPluginId(serverName: string): string | undefined
+  getAvailableToolCatalogs(): PluginOwnedToolCatalogRegistration[]
+  ensureRunning(serverName: string, reason: 'tool'): Promise<void>
 }
 
 const NO_PLUGIN_OWNERSHIP: PluginMcpOwnershipPort = {
   ownsServer: () => false,
   isServerAvailable: () => false,
-  getOwnerPluginId: () => undefined
+  getOwnerPluginId: () => undefined,
+  getAvailableToolCatalogs: () => [],
+  ensureRunning: async (serverName) => {
+    throw new Error(`Plugin runtime server "${serverName}" is not registered`)
+  }
+}
+
+type ToolSource = {
+  serverName: string
+  displayName: string
+  icon: string
+  tools: readonly Tool[]
+  client?: McpClient
+  catalogBacked: boolean
+}
+
+type ToolTarget = {
+  serverName: string
+  originalName: string
+  client?: McpClient
+  catalogBacked: boolean
 }
 
 const normalizeStringList = (items?: string[]): string[] | undefined => {
@@ -76,8 +103,8 @@ export class ToolManager {
   private readonly locale: Pick<DesktopSettings, 'getLanguage'>
   private serverManager: ServerManager
   private cachedToolDefinitions: MCPToolDefinition[] | null = null
-  private toolNameToTargetMap: Map<string, { client: McpClient; originalName: string }> | null =
-    null
+  private toolNameToTargetMap: Map<string, ToolTarget> | null = null
+  private catalogValidationPromises = new WeakMap<McpClient, Promise<Set<string>>>()
   private toolDefinitionsCacheGeneration = 0
   private activeToolDefinitionsRefresh: ActiveToolDefinitionsRefresh | null = null
   // Session-scoped permission cache: conversationId -> Set of "serverName:permissionType"
@@ -104,6 +131,7 @@ export class ToolManager {
     this.activeToolDefinitionsRefresh = null
     this.cachedToolDefinitions = null
     this.toolNameToTargetMap = null
+    this.catalogValidationPromises = new WeakMap()
   }
 
   private isPluginOwnedClient(client: McpClient): boolean {
@@ -151,164 +179,95 @@ export class ToolManager {
       const refreshGeneration = this.toolDefinitionsCacheGeneration
       console.info('Fetching/refreshing tool definitions and target map...')
       const clients = await awaitWithAbort(this.serverManager.getRunningClients(), options?.signal)
+      const sources = await this.loadToolSources(clients ?? [], options?.signal)
       const results: MCPToolDefinition[] = []
-      const nextToolNameToTargetMap = new Map<string, { client: McpClient; originalName: string }>()
+      const nextToolNameToTargetMap = new Map<string, ToolTarget>()
 
-      if (!clients || clients.length === 0) {
-        console.warn('No running MCP clients found.')
-        options?.signal?.throwIfAborted()
-        if (refreshGeneration !== this.toolDefinitionsCacheGeneration) {
-          if (this.activeToolDefinitionsRefresh === refresh) {
-            this.activeToolDefinitionsRefresh = null
-          }
-          return await this.getAllToolDefinitions(access, options)
-        }
-        this.cachedToolDefinitions = []
-        this.toolNameToTargetMap = nextToolNameToTargetMap
-        return this.cachedToolDefinitions
+      if (sources.length === 0) {
+        console.warn('No live MCP tools or on-demand plugin tool catalogs found.')
       }
 
       const toolNameToServerMap: Map<string, string> = new Map()
       const toolsToRename: Map<string, Set<string>> = new Map()
 
-      // Pass 1: Detect conflicts
-      for (const client of clients) {
-        try {
-          const clientTools = await awaitWithAbort(client.listTools(), options?.signal)
-          this.serverManager.clearServerLastError(client.serverName)
-          if (!clientTools) continue
-
-          const currentServerRenames: Set<string> =
-            toolsToRename.get(client.serverName) || new Set()
-
-          for (const tool of clientTools) {
-            if (toolNameToServerMap.has(tool.name)) {
-              const originalServerName = toolNameToServerMap.get(tool.name)!
-              if (originalServerName !== client.serverName) {
-                console.warn(
-                  `Conflict detected for tool '${tool.name}' between server '${originalServerName}' and '${client.serverName}'. Marking for rename.`
-                )
-                // Mark original tool for rename
-                const originalServerRenames = toolsToRename.get(originalServerName) || new Set()
-                originalServerRenames.add(tool.name)
-                toolsToRename.set(originalServerName, originalServerRenames)
-                // Mark current tool for rename
-                currentServerRenames.add(tool.name)
-              }
-            } else {
-              toolNameToServerMap.set(tool.name, client.serverName)
-            }
+      for (const source of sources) {
+        const currentServerRenames = toolsToRename.get(source.serverName) ?? new Set<string>()
+        for (const tool of source.tools) {
+          const originalServerName = toolNameToServerMap.get(tool.name)
+          if (originalServerName && originalServerName !== source.serverName) {
+            console.warn(
+              `Conflict detected for tool '${tool.name}' between server '${originalServerName}' and '${source.serverName}'. Marking for rename.`
+            )
+            const originalServerRenames = toolsToRename.get(originalServerName) ?? new Set()
+            originalServerRenames.add(tool.name)
+            toolsToRename.set(originalServerName, originalServerRenames)
+            currentServerRenames.add(tool.name)
+          } else if (!originalServerName) {
+            toolNameToServerMap.set(tool.name, source.serverName)
           }
-          if (currentServerRenames.size > 0) {
-            toolsToRename.set(client.serverName, currentServerRenames)
-          }
-        } catch (error: unknown) {
-          if (options?.signal?.aborted) throw error
-          // Log error and notify, but continue conflict detection with other clients
-          const errorMessage = error instanceof Error ? error.message : String(error)
-          const serverName = client.serverName || 'Unknown server'
-          console.error(
-            `Pass 1 Error: Failed to get tool list from server '${serverName}':`,
-            errorMessage
-          )
-          this.serverManager.setServerLastError(serverName, errorMessage)
-          if (!this.isPluginOwnedClient(client)) {
-            // Send notification for normal MCP servers. Plugin-owned MCP errors are shown in
-            // plugin status surfaces instead of global toasts.
-            const locale = this.locale.getLanguage() || 'zh-CN'
-            const errorMessages = getErrorMessageLabels(locale)
-            const formattedMessage =
-              errorMessages.getMcpToolListErrorMessage
-                ?.replace('{serverName}', serverName)
-                .replace('{errorMessage}', errorMessage) ||
-              `Failed to get tool list from server '${serverName}': ${errorMessage}`
-            this.publishEvent('notification.error', {
-              title: errorMessages.getMcpToolListErrorTitle || 'Failed to get tool definitions',
-              message: formattedMessage,
-              id: `mcp-error-pass1-${serverName}-${Date.now()}`,
-              type: 'error'
-            })
-          }
-          continue // Continue to next client
+        }
+        if (currentServerRenames.size > 0) {
+          toolsToRename.set(source.serverName, currentServerRenames)
         }
       }
 
-      // Pass 2: Build results with renaming AND populate the target map
-      for (const client of clients) {
-        try {
-          const clientTools = await awaitWithAbort(client.listTools(), options?.signal)
-          this.serverManager.clearServerLastError(client.serverName)
-          if (!clientTools) continue
+      for (const source of sources) {
+        const renamesForThisServer = toolsToRename.get(source.serverName) ?? new Set()
+        for (const tool of source.tools) {
+          let finalName = tool.name
+          let finalDescription = tool.description
+          const originalName = tool.name
 
-          const renamesForThisServer = toolsToRename.get(client.serverName) || new Set()
-
-          for (const tool of clientTools) {
-            let finalName = tool.name
-            let finalDescription = tool.description
-            const originalName = tool.name
-
-            if (renamesForThisServer.has(originalName)) {
-              finalName = `${client.serverName}_${originalName}`
-              finalDescription = `[${client.serverName}] ${tool.description}`
-            }
-
-            // Validate the final name against the allowed pattern
-            const namePattern = /^[a-zA-Z0-9_-]+$/
-            if (!namePattern.test(finalName)) {
-              console.error(
-                `Generated tool name '${finalName}' is invalid. Skipping tool '${originalName}' from server '${client.serverName}'. Please ensure the tool name matches the allowed pattern: /^[a-zA-Z0-9_-]+$/`
-              )
-              continue // Skip adding this tool
-            }
-
-            const properties = tool.inputSchema.properties || {}
-            const toolProperties = { ...properties }
-            for (const key in toolProperties) {
-              if (!toolProperties[key].description) {
-                toolProperties[key].description = 'Params of ' + key
-              }
-            }
-
-            results.push({
-              execution: TOOL_EXECUTION.write,
-              type: 'function',
-              function: {
-                name: finalName,
-                description: finalDescription,
-                parameters: {
-                  type: 'object',
-                  properties: toolProperties,
-                  required: Array.isArray(tool.inputSchema.required)
-                    ? tool.inputSchema.required
-                    : []
-                }
-              },
-              server: {
-                name: client.serverName,
-                icons: client.serverConfig.icons as string,
-                description: client.serverConfig.descriptions as string
-              }
-            })
-
-            // Populate the target map
-            nextToolNameToTargetMap.set(finalName, {
-              client,
-              originalName
-            })
+          if (renamesForThisServer.has(originalName)) {
+            finalName = `${source.serverName}_${originalName}`
+            finalDescription = `[${source.serverName}] ${tool.description}`
           }
-        } catch (error: unknown) {
-          if (options?.signal?.aborted) throw error
-          // Log error but continue building results from other clients
-          const errorMessage = error instanceof Error ? error.message : String(error)
-          const serverName = client.serverName || 'Unknown server'
-          console.error(
-            `Pass 2 Error: Error processing tools from server '${serverName}':`,
-            errorMessage
+
+          const namePattern = /^[a-zA-Z0-9_-]+$/
+          if (!namePattern.test(finalName)) {
+            console.error(
+              `Generated tool name '${finalName}' is invalid. Skipping tool '${originalName}' from server '${source.serverName}'. Please ensure the tool name matches the allowed pattern: /^[a-zA-Z0-9_-]+$/`
+            )
+            continue
+          }
+
+          const properties = isRecord(tool.inputSchema.properties)
+            ? tool.inputSchema.properties
+            : {}
+          const toolProperties = Object.fromEntries(
+            Object.entries(properties).map(([key, value]) => [
+              key,
+              isRecord(value) && !value.description
+                ? { ...value, description: `Params of ${key}` }
+                : value
+            ])
           )
-          this.serverManager.setServerLastError(serverName, errorMessage)
-          // Maybe skip adding tools from this client if listTools fails here again,
-          // though it succeeded in Pass 1. Or rely on the notification from Pass 1.
-          continue // Continue to next client
+
+          results.push({
+            execution: TOOL_EXECUTION.write,
+            type: 'function',
+            function: {
+              name: finalName,
+              description: finalDescription,
+              parameters: {
+                type: 'object',
+                properties: toolProperties,
+                required: Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : []
+              }
+            },
+            server: {
+              name: source.serverName,
+              icons: source.icon,
+              description: source.displayName
+            }
+          })
+
+          nextToolNameToTargetMap.set(finalName, {
+            serverName: source.serverName,
+            originalName,
+            client: source.client,
+            catalogBacked: source.catalogBacked
+          })
         }
       }
 
@@ -331,6 +290,80 @@ export class ToolManager {
         this.activeToolDefinitionsRefresh = null
       }
     }
+  }
+
+  private async loadToolSources(clients: McpClient[], signal?: AbortSignal): Promise<ToolSource[]> {
+    const catalogRegistrations = this.pluginOwnership.getAvailableToolCatalogs()
+    const catalogServerNames = new Set(
+      catalogRegistrations.map((registration) => registration.serverName)
+    )
+    const sources: ToolSource[] = []
+
+    for (const client of clients) {
+      if (
+        (this.pluginOwnership.ownsServer(client.serverName) &&
+          !this.pluginOwnership.isServerAvailable(client.serverName)) ||
+        catalogServerNames.has(client.serverName)
+      ) {
+        continue
+      }
+
+      try {
+        const tools = await awaitWithAbort(client.listTools(), signal)
+        this.serverManager.clearServerLastError(client.serverName)
+        if (!tools) {
+          continue
+        }
+        sources.push({
+          serverName: client.serverName,
+          displayName: client.serverConfig.descriptions as string,
+          icon: client.serverConfig.icons as string,
+          tools,
+          client,
+          catalogBacked: false
+        })
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error
+        }
+        this.handleToolListError(client, error)
+      }
+    }
+
+    for (const registration of catalogRegistrations) {
+      sources.push({
+        serverName: registration.serverName,
+        displayName: registration.displayName,
+        icon: 'plugin',
+        tools: registration.toolCatalog.tools,
+        catalogBacked: true
+      })
+    }
+    return sources
+  }
+
+  private handleToolListError(client: McpClient, error: unknown): void {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const serverName = client.serverName || 'Unknown server'
+    console.error(`Failed to get tool list from server '${serverName}':`, errorMessage)
+    this.serverManager.setServerLastError(serverName, errorMessage)
+    if (this.isPluginOwnedClient(client)) {
+      return
+    }
+
+    const locale = this.locale.getLanguage() || 'zh-CN'
+    const errorMessages = getErrorMessageLabels(locale)
+    const formattedMessage =
+      errorMessages.getMcpToolListErrorMessage
+        ?.replace('{serverName}', serverName)
+        .replace('{errorMessage}', errorMessage) ||
+      `Failed to get tool list from server '${serverName}': ${errorMessage}`
+    this.publishEvent('notification.error', {
+      title: errorMessages.getMcpToolListErrorTitle || 'Failed to get tool definitions',
+      message: formattedMessage,
+      id: `mcp-error-tools-${serverName}-${Date.now()}`,
+      type: 'error'
+    })
   }
 
   private filterToolDefinitionsByContext(
@@ -357,11 +390,10 @@ export class ToolManager {
   }
 
   private isServerAllowedByContext(serverName: string, context: McpToolAccessContext): boolean {
-    const serverConfig = this.getServerConfigFromTargetMap(serverName)
-    if (!serverConfig) {
-      return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
+    if (this.pluginOwnership.isServerAvailable(serverName)) {
+      return true
     }
-    return this.isServerConfigAllowedByContext(serverName, serverConfig, context)
+    return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
   }
 
   private isServerConfigAllowedByContext(
@@ -373,15 +405,6 @@ export class ToolManager {
       return true
     }
     return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
-  }
-
-  private getServerConfigFromTargetMap(serverName: string): MCPServerConfig | undefined {
-    for (const target of this.toolNameToTargetMap?.values() ?? []) {
-      if (target.client.serverName === serverName) {
-        return target.client.serverConfig as unknown as MCPServerConfig
-      }
-    }
-    return undefined
   }
 
   // 确定权限类型的新方法
@@ -537,8 +560,7 @@ export class ToolManager {
       return null
     }
 
-    const { originalName } = targetInfo
-    const toolServerName = targetInfo.client.serverName
+    const { originalName, serverName: toolServerName } = targetInfo
 
     // Get server config to check auto-approve settings
     const servers = await awaitWithAbort(this.mcpSettings.getMcpServers(), access?.signal)
@@ -629,8 +651,7 @@ export class ToolManager {
         }
       }
 
-      const { client: targetClient, originalName } = targetInfo
-      const toolServerName = targetClient.serverName
+      const { originalName, serverName: toolServerName } = targetInfo
       const accessContext = normalizeToolAccessContext({
         agentId: access?.agentId,
         enabledServerIds: access?.enabledServerIds,
@@ -762,6 +783,8 @@ export class ToolManager {
         }
       }
 
+      const targetClient = await this.resolveToolClient(targetInfo, access?.signal)
+      access?.signal?.throwIfAborted()
       const preparedArgs = await this.prepareToolArguments(
         targetClient,
         serverConfig,
@@ -830,6 +853,60 @@ export class ToolManager {
         content: `Error: Failed to execute tool '${toolCall.function.name}': ${errorMessage}`,
         isError: true
       }
+    }
+  }
+
+  private async resolveToolClient(target: ToolTarget, signal?: AbortSignal): Promise<McpClient> {
+    let client = target.client
+    if (this.pluginOwnership.ownsServer(target.serverName)) {
+      await awaitWithAbort(this.pluginOwnership.ensureRunning(target.serverName, 'tool'), signal)
+      signal?.throwIfAborted()
+      if (!this.pluginOwnership.isServerAvailable(target.serverName)) {
+        throw new Error(`Plugin runtime server "${target.serverName}" is no longer available`)
+      }
+      client = this.serverManager.getClient(target.serverName)
+    }
+    if (!client) {
+      throw new Error(`MCP server "${target.serverName}" has no running client`)
+    }
+
+    if (target.catalogBacked) {
+      await this.verifyCatalogTool(client, target.originalName, signal)
+    }
+    return client
+  }
+
+  private async verifyCatalogTool(
+    client: McpClient,
+    toolName: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    let validationPromise = this.catalogValidationPromises.get(client)
+    if (!validationPromise) {
+      validationPromise = client.listTools().then(
+        (liveTools) => {
+          this.serverManager.clearServerLastError(client.serverName)
+          return new Set((liveTools ?? []).map((tool) => tool.name))
+        },
+        (error) => {
+          this.serverManager.setServerLastError(client.serverName, error)
+          throw error
+        }
+      )
+      this.catalogValidationPromises.set(client, validationPromise)
+      void validationPromise.catch(() => {
+        if (this.catalogValidationPromises.get(client) === validationPromise) {
+          this.catalogValidationPromises.delete(client)
+        }
+      })
+    }
+
+    const liveToolNames = await awaitWithAbort(validationPromise, signal)
+    signal?.throwIfAborted()
+    if (!liveToolNames.has(toolName)) {
+      const errorMessage = `Live MCP tool "${toolName}" is missing from catalog-backed server "${client.serverName}"`
+      this.serverManager.setServerLastError(client.serverName, errorMessage)
+      throw new Error(errorMessage)
     }
   }
 

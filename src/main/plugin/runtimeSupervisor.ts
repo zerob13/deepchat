@@ -1,5 +1,6 @@
 import type { MCPServerConfig } from '@shared/types/mcp'
 import type { PluginMcpStartMode, PluginMcpSurface } from '@shared/types/plugin'
+import type { PluginToolCatalog } from './toolCatalog'
 
 export type PluginRuntimeStartReason =
   | 'reconcile'
@@ -28,11 +29,20 @@ export interface PluginRuntimeAdapterInstance {
 export interface PluginOwnedServerRegistration {
   pluginId: string
   serverName: string
+  displayName?: string
   runtimeId?: string
   startMode: PluginMcpStartMode
   surfaces: PluginMcpSurface[]
   toolCatalogPath?: string
+  toolCatalog?: PluginToolCatalog
   adapter?: PluginRuntimeAdapterInstance
+}
+
+export interface PluginOwnedToolCatalogRegistration {
+  readonly pluginId: string
+  readonly serverName: string
+  readonly displayName: string
+  readonly toolCatalog: PluginToolCatalog
 }
 
 export interface PluginRuntimeProcessPort {
@@ -85,6 +95,16 @@ export class PluginRuntimeSupervisor {
     if (!serverName || !pluginId) {
       throw new Error('Plugin runtime registration requires pluginId and serverName')
     }
+    if (
+      registration.startMode === 'onDemand' &&
+      (registration.surfaces.length !== 1 ||
+        registration.surfaces[0] !== 'tools' ||
+        !registration.toolCatalog)
+    ) {
+      throw new Error(
+        `On-demand plugin runtime server "${serverName}" requires a tools-only static catalog`
+      )
+    }
 
     const existing = this.entries.get(serverName)
     if (existing) {
@@ -131,6 +151,31 @@ export class PluginRuntimeSupervisor {
 
   getOwnerPluginId(serverName: string): string | undefined {
     return this.entries.get(serverName)?.registration.pluginId
+  }
+
+  getAvailableToolCatalogs(): PluginOwnedToolCatalogRegistration[] {
+    if (this.shuttingDown) {
+      return []
+    }
+    return Array.from(this.entries.values()).flatMap((entry) => {
+      const { registration } = entry
+      if (
+        !entry.ready ||
+        entry.retiring ||
+        registration.startMode !== 'onDemand' ||
+        !registration.toolCatalog
+      ) {
+        return []
+      }
+      return [
+        {
+          pluginId: registration.pluginId,
+          serverName: registration.serverName,
+          displayName: registration.displayName ?? registration.serverName,
+          toolCatalog: registration.toolCatalog
+        }
+      ]
+    })
   }
 
   commitPluginRegistration(pluginId: string): void {

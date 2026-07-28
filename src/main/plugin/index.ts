@@ -22,6 +22,7 @@ import type {
 import { OFFICIAL_PLUGIN_SOURCE } from '@shared/types/plugin'
 import { registerPluginToolPolicy, unregisterPluginToolPolicies } from './toolPolicyStore'
 import type { PluginRuntimeSupervisor } from './runtimeSupervisor'
+import { loadPluginToolCatalog } from './toolCatalog'
 import type { McpSettings } from '@/mcp/settings'
 
 const execFileAsync = promisify(execFile)
@@ -362,6 +363,7 @@ export class PluginService implements PluginServicePort {
     const registeredServerNames = await this.registerMcpServers(plugin, runtime)
     await this.registerSkills(plugin)
     this.registerToolPolicies(plugin)
+    this.runtimeSupervisor.commitPluginRegistration(plugin.manifest.id)
     if (registeredServerNames.length > 0 && this.mcpService.isReady()) {
       try {
         await this.runtimeSupervisor.reconcilePlugin(pluginId)
@@ -433,6 +435,7 @@ export class PluginService implements PluginServicePort {
       if (toolCatalogPath && !fs.statSync(toolCatalogPath, { throwIfNoEntry: false })?.isFile()) {
         throw new Error(`Plugin MCP tool catalog is missing: ${server.toolCatalog}`)
       }
+      const toolCatalog = toolCatalogPath ? loadPluginToolCatalog(toolCatalogPath) : undefined
       const existing = existingServers[serverName]
       if (existing && existing.ownerPluginId !== plugin.manifest.id) {
         throw new Error(`MCP server "${serverName}" already exists and is not owned by this plugin`)
@@ -462,10 +465,12 @@ export class PluginService implements PluginServicePort {
         {
           pluginId: plugin.manifest.id,
           serverName,
+          displayName: server.displayName,
           runtimeId: runtime?.runtimeId,
           startMode,
           surfaces,
-          toolCatalogPath
+          toolCatalogPath,
+          toolCatalog
         },
         { ready: false }
       )
@@ -485,7 +490,6 @@ export class PluginService implements PluginServicePort {
       })
       registeredServerNames.push(serverName)
     }
-    this.runtimeSupervisor.commitPluginRegistration(plugin.manifest.id)
     return registeredServerNames
   }
 

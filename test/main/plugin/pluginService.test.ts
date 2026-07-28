@@ -786,6 +786,102 @@ describe('PluginService', () => {
     )
   })
 
+  it('does not commit a partially activated plugin when a later contribution fails', async () => {
+    const fixture = await createDirectoryFixture()
+    const manifestPath = path.join(fixture.pluginRoot, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    manifest.capabilities.push('skills.register')
+    manifest.skills = [
+      {
+        id: 'fixture-skill',
+        path: 'skills/fixture/SKILL.md',
+        scope: 'agent'
+      }
+    ]
+    await mkdir(path.join(fixture.pluginRoot, 'skills', 'fixture'), { recursive: true })
+    await writeFile(path.join(fixture.pluginRoot, 'skills', 'fixture', 'SKILL.md'), '# Fixture\n')
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    presenter.__mocks.skillService.registerPluginSkill.mockRejectedValueOnce(
+      new Error('skill registration failed')
+    )
+
+    const result = await presenter.enablePlugin(fixture.pluginId)
+    const servers = await presenter.__mocks.mcpSettings.getMcpServers()
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.stringContaining('skill registration failed')
+      })
+    )
+    expect(presenter.__mocks.runtimeSupervisor.commitPluginRegistration).not.toHaveBeenCalled()
+    expect(presenter.__mocks.runtimeSupervisor.unregisterPlugin).toHaveBeenLastCalledWith(
+      fixture.pluginId
+    )
+    expect(servers['fixture-tools']).toBeUndefined()
+  })
+
+  it('loads and stages a validated on-demand catalog before exposing the server', async () => {
+    const fixture = await createDirectoryFixture()
+    const manifestPath = path.join(fixture.pluginRoot, 'plugin.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+    Object.assign(manifest.mcpServers[0], {
+      startMode: 'onDemand',
+      surfaces: ['tools'],
+      toolCatalog: 'mcp/tool-catalog.json'
+    })
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeFile(
+      path.join(fixture.pluginRoot, 'mcp', 'tool-catalog.json'),
+      `${JSON.stringify({
+        version: '1.0.0',
+        tools: [
+          {
+            name: 'fixture_tool',
+            description: 'Fixture tool',
+            input_schema: { type: 'object', properties: {}, required: [] },
+            read_only: false,
+            destructive: true,
+            idempotent: false
+          }
+        ]
+      })}\n`
+    )
+
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    const result = await presenter.enablePlugin(fixture.pluginId)
+
+    expect(result.ok).toBe(true)
+    expect(presenter.__mocks.runtimeSupervisor.registerServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'fixture-tools',
+        startMode: 'onDemand',
+        surfaces: ['tools'],
+        toolCatalog: {
+          version: '1.0.0',
+          tools: [
+            expect.objectContaining({
+              name: 'fixture_tool',
+              annotations: {
+                readOnlyHint: false,
+                destructiveHint: true,
+                idempotentHint: false
+              }
+            })
+          ]
+        }
+      }),
+      { ready: false }
+    )
+    expect(
+      presenter.__mocks.runtimeSupervisor.registerServer.mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      presenter.__mocks.runtimeSupervisor.commitPluginRegistration.mock.invocationCallOrder[0]
+    )
+  })
+
   it('removes persisted plugin state when discovery rejects an installed official plugin', async () => {
     const fixture = await createDirectoryFixture()
     const workspaceManifestPath = path.join(fixture.pluginRoot, 'plugin.json')
