@@ -146,6 +146,7 @@ export interface ToolResultPort {
     toolArgs: string
     content: MCPToolResponse['content']
     isError: boolean
+    ownerPluginId?: string
     signal?: AbortSignal
   }): Promise<MCPToolResponse['content']>
   prepare(input: {

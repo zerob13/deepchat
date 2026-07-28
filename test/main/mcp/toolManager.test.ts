@@ -1172,6 +1172,121 @@ describe('ToolManager', () => {
     expect(providerSettings.getAgentMcpSelections).not.toHaveBeenCalled()
   })
 
+  it('normalizes empty CUA element tokens immediately before dispatch', async () => {
+    const client = createClient(
+      'cua-driver',
+      [
+        {
+          name: 'click',
+          description: 'Click',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              element_index: { type: 'integer' },
+              element_token: { type: 'string' },
+              x: { type: 'number' },
+              y: { type: 'number' }
+            }
+          }
+        }
+      ],
+      {
+        source: 'plugin',
+        ownerPluginId: 'com.deepchat.plugins.cua'
+      }
+    )
+    const manager = createToolManager(
+      createProviderSettings('cua-driver'),
+      createServerManager([client]),
+      { 'cua-driver': 'com.deepchat.plugins.cua' },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) }
+    )
+
+    const result = await manager.callTool({
+      id: 'cua-click',
+      type: 'function',
+      function: {
+        name: 'click',
+        arguments:
+          '{"element_index":2,"element_token":"","x":0,"y":0,"modifier":[],"from_zoom":false}'
+      }
+    })
+
+    expect(result.isError).toBe(false)
+    expect(client.callTool).toHaveBeenCalledWith('click', {
+      element_index: 2,
+      x: 0,
+      y: 0,
+      modifier: [],
+      from_zoom: false
+    })
+  })
+
+  it('preserves raw CUA structured content and appends compact element handles', async () => {
+    const client = createClient(
+      'cua-driver',
+      [
+        {
+          name: 'get_window_state',
+          description: 'Get window state',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pid: { type: 'integer' },
+              window_id: { type: 'integer' }
+            }
+          }
+        }
+      ],
+      {
+        source: 'plugin',
+        ownerPluginId: 'com.deepchat.plugins.cua'
+      }
+    )
+    const structuredContent = {
+      snapshot_id: 's9',
+      tree_markdown: '- AXButton "Clear" [element_index 2]',
+      elements: [
+        {
+          element_index: 2,
+          element_token: 's9:2',
+          role: 'AXButton',
+          label: 'Clear'
+        }
+      ]
+    }
+    client.callTool.mockResolvedValue({
+      content: [{ type: 'text', text: 'window tree' }],
+      structuredContent,
+      isError: false
+    })
+    const manager = createToolManager(
+      createProviderSettings('cua-driver'),
+      createServerManager([client]),
+      { 'cua-driver': 'com.deepchat.plugins.cua' },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) }
+    )
+
+    const result = await manager.callTool({
+      id: 'cua-window-state',
+      type: 'function',
+      function: {
+        name: 'get_window_state',
+        arguments: '{"pid":10,"window_id":20}'
+      }
+    })
+
+    expect(result.structuredContent).toBe(structuredContent)
+    expect(result.ownerPluginId).toBe('com.deepchat.plugins.cua')
+    expect(result.content).toEqual([
+      { type: 'text', text: 'window tree' },
+      {
+        type: 'text',
+        text: expect.stringContaining('2="s9:2"')
+      }
+    ])
+  })
+
   it('normalizes CUA Windows launch bundle paths before dispatch', async () => {
     const client = createClient('cua-driver', [], {
       source: 'plugin',

@@ -40,6 +40,20 @@
 - [x] Remove obsolete 0.7.1 launch flags and environment variables.
 - [x] Keep the daemon warm after first use and stop it on disable/shutdown.
 
+## Model-facing CUA compatibility
+
+- [x] Normalize empty `element_token` for the seven affected CUA action tools without removing
+      valid zero coordinates or unrelated falsy values.
+- [x] Preserve raw MCP `structuredContent` and expose a compact latest-snapshot token projection to
+      the model.
+- [x] Pass stale-token errors through unchanged and document fresh-snapshot retry behavior in the
+      packaged CUA skill.
+- [x] Analyze CUA screenshots only for explicit `include_screenshot: true` calls and append bounded
+      visual grounding or a clear unavailable result.
+- [x] Cover empty/index/token/pixel arguments, structured token projection, screenshot gating, and
+      stale-token guidance with automated tests.
+- [ ] Re-run the native Calculator action-and-verification scenario.
+
 ## Environment and integrity
 
 - [x] Add legacy-compatible `inheritEnv` and the explicit cross-platform minimal baseline.
@@ -79,6 +93,8 @@
 - [ ] Windows arm64: clean consumer install with Defender enabled and protection status/history
       recorded.
 - [ ] Linux x64 X11: reproduce the #2039 activation path with no desktop/session loss.
+- [ ] Linux x64 X11: record warm-daemon idle CPU, handle/file-descriptor count, and residual
+      windows with and without a compositor.
 - [ ] Linux x64 Wayland: validate discovery, input, capture, restart, and known limitations.
 - [x] Confirm statically that DeepChat Linux application releases remain independent from optional
       CUA artifacts.
@@ -98,6 +114,18 @@ Completed on 2026-07-28:
 
 The development artifact does not satisfy the macOS native release gate. No Windows or Linux
 desktop-session native gate was run in this environment.
+
+Native macOS development testing later passed on-demand startup, exact per-tool approval, app
+launch, and window discovery, then failed the first Calculator `click` because the provider emitted
+`element_token: ""` beside a valid `element_index`. The model-facing compatibility checklist above
+is implemented and automation-verified; the unchecked Calculator task is the remaining native
+acceptance step.
+
+Model-facing compatibility validation completed on 2026-07-28:
+
+- focused CUA adapter/ToolManager/result-normalizer tests: 62 passed;
+- `pnpm run test:main`: 5416 passed, 277 skipped by environment gates;
+- full Node/Web type checks, formatting, lint, i18n, and CUA plugin manifest validation passed.
 
 ## Review hardening
 

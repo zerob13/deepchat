@@ -2,7 +2,8 @@
 
 ## Status
 
-Implementation and automated validation are complete. Native release validation remains pending.
+Lifecycle and model-facing CUA compatibility implementation are complete with automated validation.
+The native Calculator retry and native release validation remain pending.
 
 ## 1. Freeze the contracts
 
@@ -68,6 +69,14 @@ Implementation and automated validation are complete. Native release validation 
 - Implement the embedded daemon/proxy adapter, private endpoint generation, metadata handshake,
   parent-liveness stdin, timeout/cleanup, and protocol validation.
 - Keep the daemon warm after first tool use until shutdown or disable.
+- Normalize empty optional `element_token` only for the seven affected CUA action tools while
+  preserving zero coordinates and every unrelated falsy value.
+- Preserve raw MCP `structuredContent` and append a compact CUA snapshot/token projection without
+  duplicating the full accessibility tree.
+- Send a returned CUA screenshot through the resolved vision model only when
+  `include_screenshot: true`; append bounded grounding text and keep the raw image out of the main
+  tool transcript.
+- Document stale-token re-snapshot/retry behavior in the packaged CUA skill.
 
 ## 8. Harden launch
 
@@ -96,6 +105,8 @@ Implementation and automated validation are complete. Native release validation 
 - Run formatting, i18n, lint, node/web type checks, and the appropriate broader suites.
 - Build and verify target-specific official plugin artifacts.
 - Complete native macOS arm64/x64, Windows x64/arm64, and Linux x64/X11 release gates.
+- Measure warm-daemon idle CPU, handle/file-descriptor count, and residual windows on Linux X11
+  with and without a compositor.
 - Do not enable Linux arm64 CUA solely because upstream now publishes an artifact.
 
 ## Compatibility and rollback

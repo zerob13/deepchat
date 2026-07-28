@@ -2,7 +2,8 @@
 
 ## Status
 
-Implementation complete. Automated validation is complete; native release gates remain pending.
+Lifecycle and model-facing CUA 0.12.6 compatibility implementation are complete with automated
+validation. The native Calculator retry and native release gates remain pending.
 
 ## Context
 
@@ -58,6 +59,9 @@ plugin-owned external processes.
 - This change does not idle-reap a healthy CUA daemon. On-demand controls the first start; keeping
   the verified daemon warm until plugin disable or application shutdown is an explicit latency
   tradeoff, not a session-lease contract.
+- This change does not retain raw screenshot base64 in the main agent conversation. Explicit CUA
+  visual-grounding requests use the resolved session or agent vision model and return bounded text
+  to the tool transcript.
 
 ## Invariants
 
@@ -237,6 +241,51 @@ If identity was never observed, recovery leaves the path untouched and uses a ne
 Windows named pipes disappear with their owning process and require no filesystem unlink. Start
 requests are coalesced and stop is idempotent.
 
+### Model-facing CUA tool adapter
+
+DeepChat preserves the MCP protocol's raw `structuredContent` separately from display `content`.
+For CUA `get_window_state`, the model-facing text receives a compact projection of the latest
+snapshot id, `element_index` to non-empty `element_token` mapping, and degraded/escalation metadata.
+It does not duplicate `tree_markdown` or the complete structured element array in the prompt.
+
+CUA 0.12.6 declares `element_token` as an optional unconstrained string but rejects an empty string
+at runtime and gives any present token precedence over a valid index. Immediately before dispatch,
+the closed CUA adapter therefore removes only an empty or whitespace-only `element_token` from these
+seven tools:
+
+- `click`;
+- `double_click`;
+- `right_click`;
+- `type_text`;
+- `press_key`;
+- `set_value`;
+- `scroll`.
+
+The adapter preserves every other value, including `x: 0`, `y: 0`, empty arrays, booleans, and a
+non-empty opaque token. The normalization naturally becomes a no-op after upstream schemas and
+model/provider argument generation stop producing empty optional tokens.
+
+A non-empty token is preferred when it came from the latest `get_window_state`. The upstream stale
+token error is passed through unchanged. The packaged skill requires one fresh
+`get_window_state` call and a retry with the new token; it must not reuse a stale token or silently
+fall back to an older index.
+
+Screenshot delivery is opt-in at the tool-call boundary:
+
+- `include_screenshot: true` permits the returned MCP image to be sent to the resolved current
+  session vision model or configured agent vision model for bounded visual grounding;
+- omitted or false does not trigger model-side image analysis;
+- the original image remains available as a DeepChat tool preview;
+- successful analysis, unavailability, cancellation, and failure are appended as bounded text
+  without replacing the accessibility tree or structured token projection;
+- screen text and derived visual grounding are labeled as untrusted observations, never as
+  authoritative instructions.
+
+This policy avoids accumulating a full-window image in every provider round while still giving a
+vision-capable model actual pixels when the caller explicitly requests them. The packaged skill
+uses screenshots for initial, ambiguous, sparse, or visually verified states and uses
+`include_screenshot: false` for routine AX re-indexing.
+
 ## Controlled process environment
 
 `inheritEnv: "minimal"` starts from an empty environment, copies only the platform baseline, and
@@ -331,6 +380,9 @@ Automated gates:
 - controlled-environment tests;
 - integrity descriptor and platform package tests;
 - exact CUA tool catalog/policy parity tests;
+- seven-tool empty-token normalization and zero-coordinate preservation tests;
+- raw MCP `structuredContent`, compact CUA token projection, and stale-token guidance tests;
+- explicit CUA screenshot visual-grounding and no-vision fallback tests;
 - macOS signing and entitlement contract tests.
 
 Native release gates:
@@ -341,6 +393,8 @@ Native release gates:
   protection history;
 - Linux x64 X11 regression test that reproduces the #2039 activation path without desktop/session
   loss, plus Wayland validation where supported;
+- Linux X11 validation with and without a compositor records warm-daemon idle CPU, handle/file
+  descriptor count, and residual windows before accepting the no-idle-reap tradeoff;
 - disable, crash, stale-sentinel quarantine, retry, and upgrade recovery on every target.
 
 CI runner success is not a substitute for Windows Defender or Linux desktop-session validation.
@@ -363,3 +417,20 @@ Automated verification completed on 2026-07-28:
 The macOS development artifact was not notarized and did not exercise TCC, screen capture, or input.
 Windows, Linux desktop-session, macOS x64, and release-signed/notarized native gates remain release
 blockers and are tracked in `tasks.md`.
+
+Native macOS development testing subsequently confirmed on-demand startup, exact per-tool
+permissions, app launch, and window discovery, but exposed a deterministic first-action failure:
+the provider emitted both a valid `element_index` and `element_token: ""`, and upstream 0.12.6 gave
+the invalid empty token precedence.
+
+Model-facing compatibility verification completed on 2026-07-28:
+
+- `pnpm exec vitest run test/main/plugin/cuaToolAdapter.test.ts test/main/mcp/toolManager.test.ts
+  test/main/agent/deepchat/runtime/toolAdapters.test.ts
+  test/main/agent/deepchat/runtime/toolRuntimeBindings.test.ts`: 62 tests passed;
+- `pnpm run test:main`: 5416 tests passed and 277 environment-gated tests skipped;
+- `pnpm run typecheck`, `pnpm run lint`, `pnpm run i18n`, and `pnpm run
+  plugin:validate -- --name cua`: passed.
+
+The native Calculator flow must be rerun after restarting the development app before the
+model-facing native behavior is accepted.

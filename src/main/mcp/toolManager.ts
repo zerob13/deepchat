@@ -21,12 +21,16 @@ import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
 import type { DesktopSettings } from '@/desktop/settings'
+import {
+  appendCuaStructuredProjection,
+  buildCuaWindowStateProjection,
+  CUA_PLUGIN_ID,
+  normalizeCuaToolArguments
+} from '@/plugin/cuaToolAdapter'
 import type {
   PluginOwnedToolCatalogRegistration,
   PluginRuntimeStartReason
 } from '@/plugin/runtimeSupervisor'
-
-const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
@@ -885,10 +889,24 @@ export class ToolManager {
         formattedContent = JSON.stringify(result.content)
       }
 
+      const ownerPluginId = this.pluginOwnership.ownsServer(toolServerName)
+        ? this.pluginOwnership.getOwnerPluginId(toolServerName)
+        : undefined
+      if (ownerPluginId === CUA_PLUGIN_ID) {
+        formattedContent = appendCuaStructuredProjection(
+          formattedContent,
+          buildCuaWindowStateProjection(originalName, result.structuredContent)
+        )
+      }
+
       const response: MCPToolResponse = {
         toolCallId: toolCall.id,
         content: formattedContent,
-        isError: result.isError
+        isError: result.isError,
+        ...(result.structuredContent !== undefined
+          ? { structuredContent: result.structuredContent }
+          : {}),
+        ...(ownerPluginId ? { ownerPluginId } : {})
       }
 
       this.publishEvent('mcp.toolCall.result', {
@@ -1007,15 +1025,16 @@ export class ToolManager {
     args: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<{ ok: true; args: Record<string, unknown> } | { ok: false; error: string }> {
-    if (
-      toolName !== 'launch_app' ||
-      process.platform !== 'win32' ||
-      !this.isCuaComputerUseServer(client)
-    ) {
+    if (!this.isCuaComputerUseServer(client)) {
       return { ok: true, args }
     }
 
-    return await this.prepareCuaWindowsLaunchArgs(client, args, signal)
+    const normalizedArgs = normalizeCuaToolArguments(toolName, args)
+    if (toolName !== 'launch_app' || process.platform !== 'win32') {
+      return { ok: true, args: normalizedArgs }
+    }
+
+    return await this.prepareCuaWindowsLaunchArgs(client, normalizedArgs, signal)
   }
 
   private async prepareCuaWindowsLaunchArgs(

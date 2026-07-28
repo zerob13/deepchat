@@ -219,6 +219,7 @@ export class DeferredToolExecutor {
         toolArgs: toolCall.params || '{}',
         content: rawData.content,
         isError: rawData.isError === true,
+        ownerPluginId: rawData.ownerPluginId,
         signal: deferredAbortSignal
       })
       throwIfAbortRequested(deferredAbortSignal)

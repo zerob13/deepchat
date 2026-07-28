@@ -47,6 +47,7 @@ export interface ToolCallResult {
     type: string
     text: string
   }>
+  structuredContent?: unknown
 }
 
 export interface Tool {
@@ -136,6 +137,8 @@ export interface MCPToolResponse {
   content: string | MCPContentItem[]
   _meta?: Record<string, any>
   isError?: boolean
+  structuredContent?: unknown
+  ownerPluginId?: string
   toolResult?: unknown
   imagePreviews?: import('./core/mcp').ToolCallImagePreview[]
   requiresPermission?: boolean

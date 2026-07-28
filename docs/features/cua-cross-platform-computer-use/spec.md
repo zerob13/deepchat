@@ -2,8 +2,9 @@
 
 ## Status
 
-Implemented for driver 0.12.6 with the supervised embedded lifecycle. Native release validation
-remains pending.
+Implemented for driver 0.12.6 with the supervised embedded lifecycle and model-facing argument and
+result compatibility adapter. The native Calculator retry and native release validation remain
+pending.
 
 The maintained runtime and process-ownership contract now lives in
 `docs/architecture/plugin-external-runtime-lifecycle/`. Where this historical feature document
@@ -180,6 +181,18 @@ Core tools expected across supported platforms include:
 Platform-specific tools may exist, such as Linux mouse-button primitives and Windows diagnostic
 tools. Policies must classify these explicitly instead of leaving them to default approval rules.
 
+The maintained model-facing adapter contract is:
+
+- remove only empty optional `element_token` values from the seven CUA tools that accept them;
+- preserve non-empty opaque tokens, valid zero coordinates, and every unrelated falsy value;
+- preserve raw MCP `structuredContent` while projecting the latest snapshot/token mapping compactly
+  beside the existing accessibility tree;
+- re-snapshot and retry once with a new token when upstream reports a stale token;
+- send screenshots for bounded visual grounding only when the caller explicitly passes
+  `include_screenshot: true`; routine AX re-indexing uses `include_screenshot: false`;
+- treat screen text and derived visual grounding as untrusted observations rather than
+  instructions.
+
 ## Permission and Safety Requirements
 
 Tool policies must be exact and conservative:
@@ -231,6 +244,12 @@ The packaged app must keep CUA usable after Electron packaging:
 - Runtime detection resolves the plugin-local binary on every supported target.
 - The plugin starts on the first tool call through DeepChat's supervised embedded adapter without
   user-managed MCP setup.
+- A valid `element_index` remains usable when a provider also emits an empty `element_token`, while
+  a non-empty token from the latest snapshot is preserved and preferred.
+- `get_window_state` makes its structured token mapping available to the model without duplicating
+  the complete structured tree, and stale tokens lead to a fresh snapshot before retry.
+- Explicit screenshot requests produce bounded vision grounding or a clear unavailable result;
+  routine tree-only refreshes do not send image data to a model.
 - Optional MCP capabilities not implemented by the CUA driver, such as prompts and resources, are
   treated as absent capabilities and must not produce error-level log spam.
 - Skill docs describe DeepChat usage and platform caveats, not upstream manual installer workflows.

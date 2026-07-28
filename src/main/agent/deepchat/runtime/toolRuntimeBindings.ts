@@ -65,6 +65,7 @@ export function createToolResultNormalizer(
         toolArgs: tool.toolArgs,
         content: tool.content,
         isError: tool.isError,
+        ownerPluginId: tool.ownerPluginId,
         abortSignal: tool.signal
       }
     )
