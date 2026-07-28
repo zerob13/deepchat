@@ -269,7 +269,8 @@ export interface McpServicePort {
     serverName: string,
     permissionType: 'read' | 'write' | 'all',
     remember?: boolean,
-    conversationId?: string
+    conversationId?: string,
+    toolName?: string
   ): Promise<void>
   clearSessionPermissions(conversationId: string): void
   getNpmRegistryStatus(): Promise<{

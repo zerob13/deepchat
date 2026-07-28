@@ -41,7 +41,7 @@ const GITHUB_RELEASE_DOWNLOAD_PREFIX = 'https://github.com/ThinkInAIXYZ/deepchat
 const PLUGIN_PACKAGE_EXTENSION = '.dcplugin'
 const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_RUNTIME_OWNERSHIP_MIGRATION = 'cua-runtime-ownership'
-const CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION = 1
+const CUA_RUNTIME_OWNERSHIP_MIGRATION_VERSION = 2
 const MACOS_ACCESSIBILITY_SETTINGS =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
 const MACOS_SCREEN_CAPTURE_SETTINGS =
@@ -183,10 +183,24 @@ export class PluginService implements PluginServicePort {
 
   async initialize(): Promise<void> {
     await this.loadOfficialPlugins()
-    await this.applyRuntimeMigrations()
+    let cuaRuntimeMigrationFailed = false
+    try {
+      await this.applyRuntimeMigrations()
+    } catch (error) {
+      // Plugin-owned records are excluded from generic MCP autostart even when
+      // this retryable cleanup fails. Keep CUA inactive for this launch so a
+      // failed safe-side write cannot discard legacy disable intent, while
+      // allowing unrelated plugins to initialize normally.
+      cuaRuntimeMigrationFailed = true
+      console.warn('[PluginHost] Runtime migration failed and will be retried:', error)
+    }
     await this.repairMissingPluginResources()
 
     for (const installation of this.getInstallations()) {
+      if (cuaRuntimeMigrationFailed && installation.pluginId === CUA_PLUGIN_ID) {
+        console.warn('[PluginHost] Skipping CUA activation until its runtime migration succeeds')
+        continue
+      }
       if (installation.enabled) {
         try {
           await this.activatePlugin(installation.pluginId)
@@ -217,12 +231,20 @@ export class PluginService implements PluginServicePort {
 
     const servers = await this.mcpSettings.getMcpServers()
     const legacyCuaServer = servers['cua-driver']
-    if (
-      legacyCuaServer &&
-      this.isServerOwnedByPlugin(legacyCuaServer, CUA_PLUGIN_ID) &&
-      legacyCuaServer.enabled !== false
-    ) {
-      await this.mcpSettings.updateMcpServer('cua-driver', { enabled: false })
+    if (legacyCuaServer && this.isLegacyCuaServerConfig(legacyCuaServer)) {
+      const installation = this.getInstallation(CUA_PLUGIN_ID)
+      if (legacyCuaServer.enabled === false && installation?.enabled) {
+        this.upsertInstallation({
+          ...installation,
+          enabled: false,
+          updatedAt: Date.now()
+        })
+      }
+      // A forced quit can leave the separately persisted policy behind. Clear
+      // it before removing the legacy server; activation re-registers the
+      // current policy later when installation intent remains enabled.
+      unregisterPluginToolPolicies(CUA_PLUGIN_ID)
+      await this.mcpSettings.removeMcpServer('cua-driver')
     }
 
     this.store.set('migrations', {
@@ -493,6 +515,16 @@ export class PluginService implements PluginServicePort {
     return (
       serverConfig.ownerPluginId === pluginId ||
       (serverConfig.source === 'plugin' && serverConfig.sourceId === pluginId)
+    )
+  }
+
+  private isLegacyCuaServerConfig(serverConfig: MCPServerConfig): boolean {
+    const environment = serverConfig.env ?? {}
+    return (
+      this.isServerOwnedByPlugin(serverConfig, CUA_PLUGIN_ID) &&
+      (serverConfig.args?.includes('--no-daemon-relaunch') ||
+        Object.hasOwn(environment, 'CUA_DRIVER_MCP_MODE') ||
+        Object.hasOwn(environment, 'CUA_DRIVER_RS_MCP_NO_RELAUNCH'))
     )
   }
 

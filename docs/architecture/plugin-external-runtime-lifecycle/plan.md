@@ -44,8 +44,10 @@ Implementation and automated validation are complete. Native release validation 
 - Merge catalog definitions into `ToolManager` before a live client exists.
 - Keep conflict renaming, access filtering, and exact plugin policies identical for catalog and
   live tools.
+- Evaluate exact plugin policy before coarse session grants, remember `ask` only for the approved
+  server/tool pair, and deny tools absent from an enabled closed policy.
 - On invocation, ensure the runtime, resolve the live client, verify the requested live tool, and
-  dispatch.
+  compare its input schema with the packaged catalog before dispatch.
 - Fail packaging when catalog, runtime dump, and policies diverge.
 
 ## 6. Implement safety state and migration
@@ -53,8 +55,10 @@ Implementation and automated validation are complete. Native release validation 
 - Persist versioned runtime sentinels/quarantines separately from installation intent.
 - Write the sentinel before spawn; clear it only on verified clean stop.
 - Bind recovery policy to the verified runtime fingerprint.
-- Add an idempotent CUA migration that first prevents legacy MCP autostart, then registers the new
-  contract.
+- Persist daemon PID immediately after spawn, add endpoint identity after readiness, and reap a
+  stale process only after endpoint metadata attests the same PID, embedded mode, and host identity.
+- Add an idempotent CUA migration that preserves an explicit legacy disabled signal in installation
+  intent, removes the obsolete server record, and cannot block unrelated plugin activation.
 - Add explicit `runtime.test` and `runtime.retry` plugin actions; do not overload plugin enable.
 
 ## 7. Upgrade and adapt CUA
@@ -68,6 +72,8 @@ Implementation and automated validation are complete. Native release validation 
 ## 8. Harden launch
 
 - Add `inheritEnv: "minimal"` and platform baselines for the CUA daemon and proxy.
+- Keep CUA-only diagnostics out of the generic baseline and reject environment overrides outside
+  the adapter's exact host-owned contract.
 - Generate a release integrity descriptor during official plugin packaging.
 - Verify the CUA runtime file set and identity immediately before spawn.
 - On macOS, update the exact entitlement contract and preserve helper-before-parent signing and
@@ -99,7 +105,9 @@ Implementation and automated validation are complete. Native release validation 
 - Feishu remains eager and lifecycle-managed, with its current `npx` closure explicitly outside CUA
   integrity attestation.
 - Existing user-managed MCP servers retain their public start/stop and global MCP behavior.
+- Existing user-managed MCP servers and plugins without a tool policy retain coarse permission
+  caching; closed plugin policies use exact server/tool grants.
 - The database migration is forward-idempotent and never converts one server's boolean into plugin
-  installation intent.
+  installation intent except for the explicitly versioned one-to-one legacy CUA rule.
 - Code rollback may restore the old host, but a release rollback must not redistribute CUA 0.7.1 on
   Linux. The optional CUA artifact can be withheld independently from the DeepChat application.

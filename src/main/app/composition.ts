@@ -964,7 +964,7 @@ export async function createMainProcessControl(dependencies: {
         serverName &&
         (permissionType === 'read' || permissionType === 'write' || permissionType === 'all')
       ) {
-        await mcpService.grantPermission(serverName, permissionType, false, sessionId)
+        await mcpService.grantPermission(serverName, permissionType, false, sessionId, toolName)
       }
     }
   }

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CuaDaemonCompatibilityError,
+  CuaDaemonHandshakeUnavailableError,
   CuaEmbeddedRuntimeAdapter,
   createCuaEmbeddedEndpoint,
   requestCuaDaemonMetadata,
@@ -32,6 +33,11 @@ const contract: CuaEmbeddedRuntimeContract = {
   toolsListSchemaVersion: '1',
   capabilityVersion: '1',
   mcpProtocolVersion: '2025-06-18'
+}
+
+const cuaEnvironment = {
+  CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0',
+  DEEPCHAT_PLUGIN_ID: 'com.deepchat.plugins.cua'
 }
 
 const metadata = (pid: number): CuaDaemonMetadata => ({
@@ -135,14 +141,16 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
     const cleanupEndpoint = vi.fn()
     const endpoint = '/tmp/deepchat-cua-123-aabbccddeeff.sock'
     const updateLaunchContext = vi.fn((context: Record<string, string>) => {
-      if (context.endpointDevice === undefined) {
+      if (context.daemonPid === undefined) {
         expect(spawnProcess).not.toHaveBeenCalled()
       }
     })
     const originalSecret = process.env.DEEPCHAT_TEST_SECRET
     const originalDisplay = process.env.DISPLAY
+    const originalCuaLog = process.env.CUA_LOG
     process.env.DEEPCHAT_TEST_SECRET = 'do-not-inherit'
     process.env.DISPLAY = ':0'
+    process.env.CUA_LOG = 'debug'
 
     try {
       const adapter = new CuaEmbeddedRuntimeAdapter(
@@ -150,10 +158,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
           binaryPath: '/plugin/cua-driver',
           platform: 'linux',
           contract,
-          environment: {
-            CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0',
-            DEEPCHAT_PLUGIN_ID: 'com.deepchat.plugins.cua'
-          }
+          environment: { ...cuaEnvironment }
         },
         {
           spawnProcess,
@@ -177,6 +182,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
             'com.wefonk.deepchat'
           ],
           env: {
+            CUA_LOG: 'debug',
             CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0',
             DEEPCHAT_PLUGIN_ID: 'com.deepchat.plugins.cua'
           },
@@ -198,6 +204,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
       ])
       expect(options.env).toMatchObject({
         DISPLAY: ':0',
+        CUA_LOG: 'debug',
         CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0',
         DEEPCHAT_PLUGIN_ID: 'com.deepchat.plugins.cua'
       })
@@ -205,6 +212,11 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
       expect(updateLaunchContext.mock.calls[0][0]).toEqual({ endpoint })
       expect(updateLaunchContext.mock.calls[1][0]).toEqual({
         endpoint,
+        daemonPid: '4242'
+      })
+      expect(updateLaunchContext.mock.calls[2][0]).toEqual({
+        endpoint,
+        daemonPid: '4242',
         endpointDevice: '7',
         endpointInode: '11'
       })
@@ -240,7 +252,39 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
       } else {
         process.env.DISPLAY = originalDisplay
       }
+      if (originalCuaLog === undefined) {
+        delete process.env.CUA_LOG
+      } else {
+        process.env.CUA_LOG = originalCuaLog
+      }
     }
+  })
+
+  it('rejects manifest-controlled CUA authorization environment', () => {
+    expect(
+      () =>
+        new CuaEmbeddedRuntimeAdapter({
+          binaryPath: '/plugin/cua-driver',
+          platform: 'linux',
+          contract,
+          environment: {
+            ...cuaEnvironment,
+            CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: '1'
+          }
+        })
+    ).toThrow(/must contain exactly/)
+    expect(
+      () =>
+        new CuaEmbeddedRuntimeAdapter({
+          binaryPath: '/plugin/cua-driver',
+          platform: 'win32',
+          contract,
+          environment: {
+            ...cuaEnvironment,
+            CUA_DRIVER_RS_SPAWN_UIA_WORKER: '1'
+          }
+        })
+    ).toThrow(/invalid value/)
   })
 
   it('closes parent-liveness stdin when metadata validation fails', async () => {
@@ -250,7 +294,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
         binaryPath: '/plugin/cua-driver',
         platform: 'linux',
         contract,
-        environment: {},
+        environment: { ...cuaEnvironment },
         startupTimeoutMs: 100
       },
       {
@@ -275,7 +319,7 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
         binaryPath: '/plugin/cua-driver',
         platform: 'linux',
         contract,
-        environment: {}
+        environment: { ...cuaEnvironment }
       },
       { cleanupEndpoint }
     )
@@ -307,16 +351,184 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
     expect(cleanupEndpoint).toHaveBeenCalledTimes(1)
   })
 
-  it('does not unlink a stale Unix endpoint without its recorded identity', async () => {
+  it('reaps a stale daemon only after endpoint metadata attests its identity', async () => {
     const cleanupEndpoint = vi.fn()
+    const terminateStaleProcess = vi.fn().mockResolvedValue(true)
+    const requestMetadata = vi.fn().mockResolvedValue(metadata(4242))
     const adapter = new CuaEmbeddedRuntimeAdapter(
       {
         binaryPath: '/plugin/cua-driver',
         platform: 'linux',
         contract,
-        environment: {}
+        environment: { ...cuaEnvironment }
       },
-      { cleanupEndpoint }
+      { cleanupEndpoint, requestMetadata, terminateStaleProcess }
+    )
+    const endpoint = '/tmp/deepchat-cua-123-aabbccddeeff.sock'
+
+    await adapter.recoverStaleLaunch({
+      endpoint,
+      daemonPid: '4242',
+      endpointDevice: '7',
+      endpointInode: '11'
+    })
+
+    expect(requestMetadata).toHaveBeenCalledWith(endpoint, 500)
+    expect(terminateStaleProcess).toHaveBeenCalledWith(4242, { graceMs: 2000 })
+    expect(cleanupEndpoint).toHaveBeenCalledWith(endpoint, 'linux', {
+      device: 7n,
+      inode: 11n
+    })
+  })
+
+  it('does not trust an unattested stale daemon PID for termination', async () => {
+    const cleanupEndpoint = vi.fn()
+    const terminateStaleProcess = vi.fn()
+    const endpoint = '/tmp/deepchat-cua-123-aabbccddeeff.sock'
+    const pidless = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: { ...cuaEnvironment }
+      },
+      {
+        cleanupEndpoint,
+        requestMetadata: vi.fn().mockResolvedValue(metadata(4242)),
+        terminateStaleProcess
+      }
+    )
+    await expect(
+      pidless.recoverStaleLaunch({
+        endpoint,
+        endpointDevice: '7',
+        endpointInode: '11'
+      })
+    ).rejects.toThrow(/has no daemon PID/)
+    expect(terminateStaleProcess).not.toHaveBeenCalled()
+    expect(cleanupEndpoint).not.toHaveBeenCalled()
+
+    const mismatched = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: { ...cuaEnvironment }
+      },
+      {
+        cleanupEndpoint,
+        requestMetadata: vi.fn().mockResolvedValue(metadata(9000)),
+        terminateStaleProcess
+      }
+    )
+
+    await expect(
+      mismatched.recoverStaleLaunch({
+        endpoint,
+        daemonPid: '4242',
+        endpointDevice: '7',
+        endpointInode: '11'
+      })
+    ).rejects.toThrow(/does not attest/)
+    expect(terminateStaleProcess).not.toHaveBeenCalled()
+    expect(cleanupEndpoint).not.toHaveBeenCalled()
+
+    const unavailable = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: { ...cuaEnvironment }
+      },
+      {
+        cleanupEndpoint,
+        requestMetadata: vi.fn().mockRejectedValue(
+          new CuaDaemonHandshakeUnavailableError('not listening', {
+            cause: Object.assign(new Error('missing'), { code: 'ENOENT' })
+          })
+        ),
+        terminateStaleProcess
+      }
+    )
+
+    await unavailable.recoverStaleLaunch({
+      endpoint,
+      daemonPid: '4242',
+      endpointDevice: '7',
+      endpointInode: '11'
+    })
+    expect(terminateStaleProcess).not.toHaveBeenCalled()
+    expect(cleanupEndpoint).toHaveBeenCalledWith(endpoint, 'linux', {
+      device: 7n,
+      inode: 11n
+    })
+
+    const unresponsive = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: { ...cuaEnvironment }
+      },
+      {
+        cleanupEndpoint,
+        requestMetadata: vi
+          .fn()
+          .mockRejectedValue(new CuaDaemonHandshakeUnavailableError('timed out')),
+        terminateStaleProcess
+      }
+    )
+    await expect(
+      unresponsive.recoverStaleLaunch({
+        endpoint,
+        daemonPid: '4242',
+        endpointDevice: '7',
+        endpointInode: '11'
+      })
+    ).rejects.toThrow(/refusing PID-based termination/)
+
+    const brokenPipe = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: { ...cuaEnvironment }
+      },
+      {
+        cleanupEndpoint,
+        requestMetadata: vi.fn().mockRejectedValue(
+          new CuaDaemonHandshakeUnavailableError('peer closed', {
+            cause: Object.assign(new Error('broken pipe'), { code: 'EPIPE' })
+          })
+        ),
+        terminateStaleProcess
+      }
+    )
+    await expect(
+      brokenPipe.recoverStaleLaunch({
+        endpoint,
+        daemonPid: '4242',
+        endpointDevice: '7',
+        endpointInode: '11'
+      })
+    ).rejects.toThrow(/refusing PID-based termination/)
+  })
+
+  it('does not unlink a stale Unix endpoint without its recorded identity', async () => {
+    const cleanupEndpoint = vi.fn()
+    const requestMetadata = vi.fn().mockRejectedValue(
+      new CuaDaemonHandshakeUnavailableError('not listening', {
+        cause: Object.assign(new Error('missing'), { code: 'ENOENT' })
+      })
+    )
+    const adapter = new CuaEmbeddedRuntimeAdapter(
+      {
+        binaryPath: '/plugin/cua-driver',
+        platform: 'linux',
+        contract,
+        environment: { ...cuaEnvironment }
+      },
+      { cleanupEndpoint, requestMetadata }
     )
 
     await adapter.recoverStaleLaunch({
@@ -328,14 +540,19 @@ describe('CuaEmbeddedRuntimeAdapter', () => {
 
   it('accepts only managed Windows pipe names during stale recovery', async () => {
     const cleanupEndpoint = vi.fn()
+    const requestMetadata = vi.fn().mockRejectedValue(
+      new CuaDaemonHandshakeUnavailableError('not listening', {
+        cause: Object.assign(new Error('missing'), { code: 'ENOENT' })
+      })
+    )
     const adapter = new CuaEmbeddedRuntimeAdapter(
       {
         binaryPath: 'C:\\plugin\\cua-driver.exe',
         platform: 'win32',
         contract,
-        environment: {}
+        environment: { ...cuaEnvironment }
       },
-      { cleanupEndpoint }
+      { cleanupEndpoint, requestMetadata }
     )
 
     await expect(

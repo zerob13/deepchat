@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ToolManager } from '@/mcp/toolManager'
 import type { PluginRuntimeStartReason } from '@/plugin/runtimeSupervisor'
+import { registerPluginToolPolicy, unregisterPluginToolPolicies } from '@/plugin/toolPolicyStore'
+
+const TOOL_POLICY_PLUGIN_ID = 'com.deepchat.plugins.permission-test'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -22,6 +25,7 @@ describe('ToolManager', () => {
   })
 
   afterEach(() => {
+    unregisterPluginToolPolicies(TOOL_POLICY_PLUGIN_ID)
     warnSpy.mockRestore()
   })
 
@@ -365,6 +369,208 @@ describe('ToolManager', () => {
     expect(serverManager.setServerLastError).toHaveBeenCalledWith(
       serverName,
       expect.stringContaining('missing')
+    )
+  })
+
+  it('requires exact session approval for closed plugin ask policies', async () => {
+    const serverName = 'closed-policy-server'
+    const client = createClient(serverName, [
+      {
+        name: 'type_text',
+        description: 'Type text',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        name: 'press_key',
+        description: 'Press key',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([client]),
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      { ensureRunning: vi.fn().mockResolvedValue(undefined) }
+    )
+    const conversationId = 'closed-policy-conversation'
+
+    // Simulate a coarse grant cached before the plugin policy was registered.
+    await manager.grantPermission(serverName, 'write', false, conversationId)
+    registerPluginToolPolicy({
+      pluginId: TOOL_POLICY_PLUGIN_ID,
+      serverId: serverName,
+      tools: {
+        type_text: 'ask',
+        press_key: 'ask'
+      },
+      enabled: true
+    })
+
+    const beforeExactGrant = await manager.callTool({
+      id: 'type-text-before-grant',
+      type: 'function',
+      function: { name: 'type_text', arguments: '{}' },
+      conversationId
+    })
+    expect(beforeExactGrant.requiresPermission).toBe(true)
+    expect(client.callTool).not.toHaveBeenCalled()
+
+    await manager.grantPermission(serverName, 'write', false, conversationId, 'type_text')
+    const approved = await manager.callTool({
+      id: 'type-text-approved',
+      type: 'function',
+      function: { name: 'type_text', arguments: '{}' },
+      conversationId
+    })
+    const differentTool = await manager.callTool({
+      id: 'press-key-not-approved',
+      type: 'function',
+      function: { name: 'press_key', arguments: '{}' },
+      conversationId
+    })
+
+    expect(approved.isError).toBe(false)
+    expect(client.callTool).toHaveBeenCalledOnce()
+    expect(client.callTool).toHaveBeenCalledWith('type_text', {})
+    expect(differentTool.requiresPermission).toBe(true)
+  })
+
+  it('fails closed for tools absent from an enabled plugin policy', async () => {
+    const serverName = 'closed-policy-server'
+    const client = createClient(serverName, [
+      {
+        name: 'known_tool',
+        description: 'Known tool',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      },
+      {
+        name: 'new_upstream_tool',
+        description: 'Unexpected upstream tool',
+        inputSchema: { type: 'object', properties: {}, required: [] }
+      }
+    ])
+    registerPluginToolPolicy({
+      pluginId: TOOL_POLICY_PLUGIN_ID,
+      serverId: serverName,
+      tools: { known_tool: 'allow' },
+      enabled: true
+    })
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([client]),
+      { [serverName]: TOOL_POLICY_PLUGIN_ID }
+    )
+
+    const result = await manager.callTool({
+      id: 'unknown-policy-tool',
+      type: 'function',
+      function: { name: 'new_upstream_tool', arguments: '{}' },
+      conversationId: 'closed-policy-conversation'
+    })
+
+    expect(result).toMatchObject({
+      isError: true,
+      content: expect.stringContaining('not declared by its closed plugin policy')
+    })
+    expect(client.callTool).not.toHaveBeenCalled()
+  })
+
+  it('hard-fails when a live catalog tool schema drifts', async () => {
+    const serverName = 'catalog-server'
+    const liveClient = createClient(serverName, [
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: {
+          type: 'object',
+          properties: { display_id: { type: 'integer' } },
+          required: ['display_id']
+        }
+      }
+    ])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: { type: 'object', properties: {}, required: [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-schema-drift',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('schema differs from the packaged catalog')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+  })
+
+  it('records duplicate live catalog tools as a server error', async () => {
+    const serverName = 'catalog-server'
+    const duplicateTool = {
+      name: 'inspect_screen',
+      description: 'Inspect screen',
+      inputSchema: { type: 'object', properties: {}, required: [] }
+    }
+    const liveClient = createClient(serverName, [duplicateTool, duplicateTool])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [duplicateTool]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-duplicate-tool',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{}' }
+    })
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('returned duplicate tool "inspect_screen"')
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+    expect(serverManager.setServerLastError).toHaveBeenCalledWith(
+      serverName,
+      expect.objectContaining({
+        message: expect.stringContaining('returned duplicate tool "inspect_screen"')
+      })
     )
   })
 

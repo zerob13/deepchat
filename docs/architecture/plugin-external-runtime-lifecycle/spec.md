@@ -49,11 +49,15 @@ plugin-owned external processes.
 - This change does not make on-demand startup a general MCP feature for prompts or resources.
 - This change does not vendor the Feishu `npx` dependency closure.
 - This change does not claim protection against an actively malicious process running as the same
-  OS user or close the hash-to-spawn TOCTOU window with native APIs.
+  OS user or close hash-to-spawn and endpoint-attestation-to-signal TOCTOU windows with native
+  process handles.
 - This change does not add Windows Authenticode signing; DeepChat currently has no Windows signing
   certificate.
 - This change does not add CUA to Linux arm64 until that target passes DeepChat native validation.
 - This change does not add a temporary 0.7.1 command-line workaround.
+- This change does not idle-reap a healthy CUA daemon. On-demand controls the first start; keeping
+  the verified daemon warm until plugin disable or application shutdown is an explicit latency
+  tradeoff, not a session-lease contract.
 
 ## Invariants
 
@@ -122,6 +126,10 @@ supervisor:
 The CUA daemon remains running after a successful first call until plugin disable or application
 shutdown. Do not describe this tools-only mechanism as general MCP lazy activation.
 
+Live revalidation compares both the tool name and its complete input schema with the packaged
+catalog. A protocol or capability version match is not a substitute for schema equality because an
+upstream release can change a schema without correctly bumping those versions.
+
 Package verification fails if the catalog is missing, malformed, contains duplicate/empty names,
 contains invalid input schemas, disagrees with the pinned runtime's generated catalog, lacks exact
 tool-policy coverage, declares a non-tool surface, or cannot be resolved from the packaged plugin.
@@ -147,19 +155,47 @@ plugin.” Integrity failure is tracked separately from quarantine, remains visi
 evidence exists, and cannot be bypassed with retry; repair or reinstall followed by an integrity
 recheck is required before `runtime.retry` becomes available.
 
+Immediately after daemon spawn, launch context records the child PID as diagnostics and as part of
+attested orphan recovery; POSIX endpoint identity is added after readiness. A later process may
+terminate that PID only after the persisted endpoint returns metadata with the same PID, embedded
+mode, and host bundle identity. A bare persisted PID is never sufficient because PID reuse could
+otherwise terminate an unrelated process. A reachable or ambiguously broken endpoint without
+attestable PID evidence remains quarantined rather than being unlinked as if it were absent.
+
 ### Migration
 
 Plugin installation records are stored in ElectronStore while MCP configs are stored in SQLite, so
 the migration cannot be transactional across both stores. It must be versioned, idempotent, and
 safe-side first:
 
-1. write the legacy CUA MCP record to a non-autostart state;
-2. register the new ownership/start-mode contract;
-3. clean obsolete runtime state only after the safe write succeeds.
+1. recognize only the one-to-one legacy CUA launch contract;
+2. when that record is explicitly disabled, persist `installation.enabled: false` before any
+   cleanup;
+3. clear stale CUA tool-policy state and remove the obsolete MCP record;
+4. write the migration marker only after cleanup succeeds so partial failures retry.
 
 The migration is explicitly for the one-to-one CUA server. It must not generalize “any disabled
 plugin-owned server disables the whole plugin,” which would corrupt intent for multi-server
 plugins.
+
+For legacy CUA specifically, `enabled: false` on its owned MCP record is treated as an explicit
+disable signal and is migrated to `installation.enabled: false` before removing the obsolete MCP
+record. An enabled legacy record does not disable an enabled installation. Migration failure must
+remain retryable without preventing unrelated plugins from activating; CUA itself stays inactive
+for that launch so a failed safe-side write cannot expose it under stale intent.
+
+### Exact plugin tool policy
+
+An enabled plugin tool-policy record is a closed per-tool allowlist:
+
+- `allow` always permits that exact tool;
+- `ask` may be remembered only for that exact server/tool pair in the current conversation;
+- `deny` always blocks;
+- a tool absent from the closed policy is denied.
+
+Plugin policy is evaluated before coarse server-level session or persisted `read`/`write`/`all`
+permissions. Coarse grants remain compatible for servers without a plugin tool-policy record but
+cannot override an exact plugin decision.
 
 ## Manifest contract
 
@@ -216,14 +252,20 @@ Linux/session additions:
 
 - `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`;
 - `XDG_RUNTIME_DIR`, `XDG_SESSION_TYPE`;
-- `DBUS_SESSION_BUS_ADDRESS`.
+- `DBUS_SESSION_BUS_ADDRESS`, `AT_SPI_BUS`, `SWAYSOCK`;
+- `XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, `DESKTOP_SESSION`;
+- `XDG_DATA_HOME`, `XDG_DATA_DIRS`.
 
 Windows additions:
 
 - `SystemRoot` / `SYSTEMROOT`, `windir` / `WINDIR`, `COMSPEC`, `PATHEXT`;
-- `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA`, `PROCESSOR_ARCHITECTURE`.
+- `USERPROFILE`, `USERNAME`, `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA`,
+  `PROCESSOR_ARCHITECTURE`.
 
-`CUA_LOG` may pass through for diagnostics. Existing user-managed MCP configs and plugin manifests
+`CUA_LOG` is a CUA-adapter-only diagnostic pass-through and is not part of the generic minimal
+environment. The CUA adapter accepts only its exact host-owned environment contract and rejects
+manifest attempts to supply authorization controls such as `CUA_DRIVER_PERMISSION_MODE` or
+`CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS`. Existing user-managed MCP configs and plugin manifests
 without `inheritEnv` retain legacy behavior for compatibility.
 
 ## Runtime integrity contract
@@ -273,6 +315,10 @@ The upstream UIA worker is opt-in, requires a separate UIAccess signing/deployme
 not necessary for the standard CUA path. Omitting `cua-driver-uia.exe` is the primary defense; the
 strictly-false environment flag is defense in depth.
 
+`--no-permissions-gate` skips only the upstream macOS TCC first-launch UI. It does not disable
+DeepChat's per-tool approval or the driver's `--permission-mode standard` authorization. DeepChat
+owns the permission diagnostics and System Settings guidance exposed by the plugin UI.
+
 ## Acceptance and release gates
 
 Automated gates:
@@ -307,7 +353,7 @@ not a reason to stop building the Linux application.
 
 Automated verification completed on 2026-07-28:
 
-- `pnpm test`: 657 files and 6994 tests passed; 20 files and 277 tests were conditionally skipped.
+- `pnpm test`: 657 files and 7005 tests passed; 20 files and 277 tests were conditionally skipped.
 - `pnpm run build`, `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and
   `pnpm run typecheck` passed.
 - CUA manifest validation and a real `darwin/arm64` plugin bundle/verification passed with the

@@ -1224,13 +1224,20 @@ export class McpService implements McpServicePort {
     serverName: string,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean = false,
-    conversationId?: string
+    conversationId?: string,
+    toolName?: string
   ): Promise<void> {
     try {
       logger.info(
         `[MCP] Granting ${permissionType} permission for server: ${serverName}, remember: ${remember}, conversationId: ${conversationId}`
       )
-      await this.toolManager.grantPermission(serverName, permissionType, remember, conversationId)
+      await this.toolManager.grantPermission(
+        serverName,
+        permissionType,
+        remember,
+        conversationId,
+        toolName
+      )
       logger.info(
         `[MCP] Successfully granted ${permissionType} permission for server: ${serverName}`
       )

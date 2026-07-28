@@ -87,7 +87,7 @@
 
 Completed on 2026-07-28:
 
-- `pnpm test`: 657 files and 6994 tests passed; 20 files and 277 tests were conditionally skipped.
+- `pnpm test`: 657 files and 7005 tests passed; 20 files and 277 tests were conditionally skipped.
 - `pnpm run build`, `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and
   `pnpm run typecheck` passed.
 - `pnpm run plugin:validate -- --name cua` passed.
@@ -98,3 +98,16 @@ Completed on 2026-07-28:
 
 The development artifact does not satisfy the macOS native release gate. No Windows or Linux
 desktop-session native gate was run in this environment.
+
+## Review hardening
+
+- [x] Evaluate closed plugin tool policy before coarse grants and cache approvals per exact tool.
+- [x] Fail closed when a tool is absent from an enabled plugin policy.
+- [x] Compare live tool input schemas with the packaged catalog.
+- [x] Preserve legacy CUA disabled intent, remove its obsolete MCP record, and isolate retryable
+      migration failures from unrelated plugins.
+- [x] Complete Linux/Windows session environment baselines and keep `CUA_LOG` adapter-local.
+- [x] Reject CUA environment overrides outside the exact host-owned contract.
+- [x] Persist daemon PID and reap only endpoint-attested stale CUA processes.
+- [x] Clarify permission-gate, double-verification, and warm-runtime design intent in code/docs.
+- [x] Cover the review regressions with focused tests and rerun the required validation suite.

@@ -14,8 +14,9 @@ import type { AgentSettingsPort } from '@/agent/settings'
 import { ServerManager } from './serverManager'
 import { McpClient } from './mcpClient'
 import { jsonrepair } from 'jsonrepair'
+import { isDeepStrictEqual } from 'node:util'
 import { getErrorMessageLabels } from '@shared/i18n'
-import { getPluginToolPolicy } from '@/plugin/toolPolicyStore'
+import { resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
 import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
@@ -77,6 +78,7 @@ type ToolTarget = {
   originalName: string
   client?: McpClient
   catalogBacked: boolean
+  catalogTool?: Tool
 }
 
 const normalizeStringList = (items?: string[]): string[] | undefined => {
@@ -107,10 +109,11 @@ export class ToolManager {
   private serverManager: ServerManager
   private cachedToolDefinitions: MCPToolDefinition[] | null = null
   private toolNameToTargetMap: Map<string, ToolTarget> | null = null
-  private catalogValidationPromises = new WeakMap<McpClient, Promise<Set<string>>>()
+  private catalogValidationPromises = new WeakMap<McpClient, Promise<Map<string, Tool>>>()
   private toolDefinitionsCacheGeneration = 0
   private activeToolDefinitionsRefresh: ActiveToolDefinitionsRefresh | null = null
-  // Session-scoped permission cache: conversationId -> Set of "serverName:permissionType"
+  // Session-scoped permission cache. Ordinary MCP servers retain coarse
+  // server/type grants; closed plugin policies use exact server/tool grants.
   private sessionPermissions = new Map<string, Set<string>>()
 
   constructor(
@@ -168,7 +171,8 @@ export class ToolManager {
     if (!client) {
       throw new Error(`Plugin runtime server "${serverName}" has no running client`)
     }
-    await this.verifyCatalogTool(client, 'check_permissions')
+    const catalogTool = this.getCatalogTool(serverName, 'check_permissions')
+    await this.verifyCatalogTool(client, catalogTool, undefined)
     const result = await client.callTool('check_permissions', { prompt: false })
     if (result.isError) {
       const detail = result.content
@@ -298,7 +302,8 @@ export class ToolManager {
             serverName: source.serverName,
             originalName,
             client: source.client,
-            catalogBacked: source.catalogBacked
+            catalogBacked: source.catalogBacked,
+            ...(source.catalogBacked ? { catalogTool: tool } : {})
           })
         }
       }
@@ -499,10 +504,34 @@ export class ToolManager {
       `conversationId: ${conversationId}`
     )
 
+    const policy = resolvePluginToolPolicy(serverName, originalToolName)
+    if (policy.decision === 'allow') {
+      logger.info(
+        `[ToolManager] Permission granted by plugin tool policy: ${serverName}.${originalToolName}`
+      )
+      return true
+    }
+    if (policy.managed) {
+      if (
+        policy.decision === 'ask' &&
+        conversationId &&
+        this.checkSessionToolPermission(conversationId, serverName, originalToolName)
+      ) {
+        logger.info(
+          `[ToolManager] Permission granted by exact plugin session cache: ${serverName}.${originalToolName}`
+        )
+        return true
+      }
+      logger.info(
+        `[ToolManager] Permission blocked by closed plugin tool policy '${policy.decision ?? 'undeclared'}': ${serverName}.${originalToolName}`
+      )
+      return false
+    }
+
     const permissionType = this.determinePermissionType(originalToolName)
     logger.info(`[ToolManager] Tool '${originalToolName}' requires '${permissionType}' permission`)
 
-    // 1. 优先检查 session 级别的内存权限（当前会话自动执行）
+    // Existing servers without a closed plugin policy retain coarse session grants.
     if (conversationId && this.checkSessionPermission(conversationId, serverName, permissionType)) {
       logger.info(
         `[ToolManager] Permission granted via session cache: server '${serverName}' has '${permissionType}' permission`
@@ -510,28 +539,13 @@ export class ToolManager {
       return true
     }
 
-    // 2. Plugin-owned exact policies override persisted server auto-approve settings.
-    const pluginPolicy = getPluginToolPolicy(serverName, originalToolName)
-    if (pluginPolicy === 'allow') {
-      logger.info(
-        `[ToolManager] Permission granted by plugin tool policy: ${serverName}.${originalToolName}`
-      )
-      return true
-    }
-    if (pluginPolicy === 'ask' || pluginPolicy === 'deny') {
-      logger.info(
-        `[ToolManager] Permission blocked by plugin tool policy '${pluginPolicy}': ${serverName}.${originalToolName}`
-      )
-      return false
-    }
-
-    // 3. 检查持久化的 'all' 权限
+    // 检查持久化的 'all' 权限
     if (autoApprove.includes('all')) {
       logger.info(`[ToolManager] Permission granted: server '${serverName}' has 'all' permissions`)
       return true
     }
 
-    // 4. 检查持久化的特定权限类型
+    // 检查持久化的特定权限类型
     if (autoApprove.includes(permissionType)) {
       logger.info(
         `[ToolManager] Permission granted: server '${serverName}' has '${permissionType}' permission`
@@ -610,9 +624,13 @@ export class ToolManager {
       return null
     }
     const autoApprove = serverConfig?.autoApprove || []
-    const pluginPolicy = getPluginToolPolicy(toolServerName, originalName)
+    const pluginPolicy = resolvePluginToolPolicy(toolServerName, originalName)
 
-    if (pluginPolicy === 'deny') {
+    if (
+      pluginPolicy.managed &&
+      pluginPolicy.decision !== 'allow' &&
+      pluginPolicy.decision !== 'ask'
+    ) {
       return null
     }
 
@@ -772,11 +790,18 @@ export class ToolManager {
         }
       }
       const autoApprove = serverConfig?.autoApprove || []
-      const pluginPolicy = getPluginToolPolicy(toolServerName, originalName)
-      if (pluginPolicy === 'deny') {
+      const pluginPolicy = resolvePluginToolPolicy(toolServerName, originalName)
+      if (
+        pluginPolicy.managed &&
+        pluginPolicy.decision !== 'allow' &&
+        pluginPolicy.decision !== 'ask'
+      ) {
         return {
           toolCallId: toolCall.id,
-          content: `Tool '${originalName}' on server '${toolServerName}' is blocked by plugin policy.`,
+          content:
+            pluginPolicy.decision === 'deny'
+              ? `Tool '${originalName}' on server '${toolServerName}' is blocked by plugin policy.`
+              : `Tool '${originalName}' on server '${toolServerName}' is not declared by its closed plugin policy.`,
           isError: true
         }
       }
@@ -903,28 +928,42 @@ export class ToolManager {
     }
 
     if (target.catalogBacked) {
-      await this.verifyCatalogTool(client, target.originalName, signal)
+      if (!target.catalogTool) {
+        throw new Error(
+          `Catalog-backed MCP tool "${target.originalName}" has no packaged definition`
+        )
+      }
+      await this.verifyCatalogTool(client, target.catalogTool, signal)
     }
     return client
   }
 
   private async verifyCatalogTool(
     client: McpClient,
-    toolName: string,
+    catalogTool: Tool,
     signal?: AbortSignal
   ): Promise<void> {
     let validationPromise = this.catalogValidationPromises.get(client)
     if (!validationPromise) {
-      validationPromise = client.listTools().then(
-        (liveTools) => {
+      validationPromise = client
+        .listTools()
+        .then((liveTools) => {
           this.serverManager.clearServerLastError(client.serverName)
-          return new Set((liveTools ?? []).map((tool) => tool.name))
-        },
-        (error) => {
+          const tools = new Map<string, Tool>()
+          for (const liveTool of liveTools ?? []) {
+            if (tools.has(liveTool.name)) {
+              throw new Error(
+                `Live MCP server "${client.serverName}" returned duplicate tool "${liveTool.name}"`
+              )
+            }
+            tools.set(liveTool.name, liveTool)
+          }
+          return tools
+        })
+        .catch((error) => {
           this.serverManager.setServerLastError(client.serverName, error)
           throw error
-        }
-      )
+        })
       this.catalogValidationPromises.set(client, validationPromise)
       void validationPromise.catch(() => {
         if (this.catalogValidationPromises.get(client) === validationPromise) {
@@ -933,13 +972,32 @@ export class ToolManager {
       })
     }
 
-    const liveToolNames = await awaitWithAbort(validationPromise, signal)
+    const liveTools = await awaitWithAbort(validationPromise, signal)
     signal?.throwIfAborted()
-    if (!liveToolNames.has(toolName)) {
-      const errorMessage = `Live MCP tool "${toolName}" is missing from catalog-backed server "${client.serverName}"`
+    const liveTool = liveTools.get(catalogTool.name)
+    if (!liveTool) {
+      const errorMessage = `Live MCP tool "${catalogTool.name}" is missing from catalog-backed server "${client.serverName}"`
       this.serverManager.setServerLastError(client.serverName, errorMessage)
       throw new Error(errorMessage)
     }
+    if (!isDeepStrictEqual(liveTool.inputSchema, catalogTool.inputSchema)) {
+      const errorMessage = `Live MCP tool "${catalogTool.name}" schema differs from the packaged catalog for server "${client.serverName}"`
+      this.serverManager.setServerLastError(client.serverName, errorMessage)
+      throw new Error(errorMessage)
+    }
+  }
+
+  private getCatalogTool(serverName: string, toolName: string): Tool {
+    const tool = this.pluginOwnership
+      .getAvailableToolCatalogs()
+      .find((registration) => registration.serverName === serverName)
+      ?.toolCatalog.tools.find((candidate) => candidate.name === toolName)
+    if (!tool) {
+      throw new Error(
+        `Plugin runtime server "${serverName}" has no packaged catalog entry for "${toolName}"`
+      )
+    }
+    return tool
   }
 
   private async prepareToolArguments(
@@ -1169,11 +1227,31 @@ export class ToolManager {
     serverName: string,
     permissionType: 'read' | 'write' | 'all',
     remember: boolean = true,
-    conversationId?: string
+    conversationId?: string,
+    toolName?: string
   ): Promise<void> {
     logger.info(
       `[ToolManager] Granting permission: ${permissionType} for server: ${serverName}, remember: ${remember}, conversationId: ${conversationId}`
     )
+
+    const pluginPolicy = toolName
+      ? resolvePluginToolPolicy(serverName, toolName)
+      : resolvePluginToolPolicy(serverName, '')
+    if (pluginPolicy.managed) {
+      if (remember || !conversationId || !toolName || pluginPolicy.decision !== 'ask') {
+        throw new Error(
+          `Closed plugin policy permission for "${serverName}" requires an exact ask-policy tool and conversation`
+        )
+      }
+      const key = this.pluginToolPermissionKey(serverName, toolName)
+      const existing = this.sessionPermissions.get(conversationId) ?? new Set<string>()
+      existing.add(key)
+      this.sessionPermissions.set(conversationId, existing)
+      logger.info(
+        `[ToolManager] Exact plugin session permission stored: ${serverName}.${toolName} for conversation ${conversationId}`
+      )
+      return
+    }
 
     if (remember) {
       // Persist to configuration
@@ -1226,6 +1304,22 @@ export class ToolManager {
     }
 
     return false
+  }
+
+  private checkSessionToolPermission(
+    conversationId: string,
+    serverName: string,
+    toolName: string
+  ): boolean {
+    return (
+      this.sessionPermissions
+        .get(conversationId)
+        ?.has(this.pluginToolPermissionKey(serverName, toolName)) ?? false
+    )
+  }
+
+  private pluginToolPermissionKey(serverName: string, toolName: string): string {
+    return JSON.stringify(['plugin-tool', serverName, toolName])
   }
 
   // 清除会话的临时权限

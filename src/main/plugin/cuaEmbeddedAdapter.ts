@@ -1,4 +1,4 @@
-import { terminateProcessTree } from '@/agent/shared/process/processTree'
+import { terminateProcessTree, terminateProcessTreeByPid } from '@/agent/shared/process/processTree'
 import { createMinimalProcessEnvironment } from '@/mcp/processEnvironment'
 import type { MCPServerConfig } from '@shared/types/mcp'
 import type { CuaEmbeddedRuntimeContract } from '@shared/types/plugin'
@@ -23,6 +23,14 @@ const MAX_HANDSHAKE_BYTES = 64 * 1024
 const UNIX_SOCKET_PATH_LIMIT = 104
 const CUA_ENDPOINT_NAME_PATTERN = /^deepchat-cua-\d+-[a-f0-9]{12}\.sock$/i
 const CUA_PIPE_NAME_PATTERN = /^\\\\\.\\pipe\\deepchat-cua-\d+-[a-f0-9]{12}$/i
+const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
+const CUA_UIA_WORKER_ENV = 'CUA_DRIVER_RS_SPAWN_UIA_WORKER'
+const CUA_LOG_ENV = 'CUA_LOG'
+const MAX_STDERR_BYTES = 16 * 1024
+const EXPECTED_CUA_ENVIRONMENT = Object.freeze({
+  [CUA_UIA_WORKER_ENV]: '0',
+  DEEPCHAT_PLUGIN_ID: CUA_PLUGIN_ID
+})
 
 export interface CuaDaemonMetadata {
   driver_version: string
@@ -63,6 +71,7 @@ type AdapterDependencies = {
     identity?: EndpointIdentity
   ) => void
   terminateProcess: typeof terminateProcessTree
+  terminateStaleProcess: typeof terminateProcessTreeByPid
   delay: (milliseconds: number) => Promise<unknown>
 }
 
@@ -116,6 +125,57 @@ const cleanupEndpoint = (
       throw error
     }
   }
+}
+
+const decodeUtf8Tail = (chunks: Buffer[], byteLength: number): string => {
+  const bytes = Buffer.concat(chunks, byteLength)
+  let start = Math.max(0, bytes.length - MAX_STDERR_BYTES)
+  while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) {
+    start += 1
+  }
+  return bytes.subarray(start).toString('utf8').trim()
+}
+
+const validateCuaEnvironment = (
+  environment: Record<string, string>
+): Readonly<Record<string, string>> => {
+  const expectedKeys = Object.keys(EXPECTED_CUA_ENVIRONMENT).sort()
+  const actualKeys = Object.keys(environment).sort()
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error(
+      `CUA embedded adapter environment must contain exactly: ${expectedKeys.join(', ')}`
+    )
+  }
+  for (const [key, expectedValue] of Object.entries(EXPECTED_CUA_ENVIRONMENT)) {
+    if (environment[key] !== expectedValue) {
+      throw new Error(`CUA embedded adapter environment has an invalid value for ${key}`)
+    }
+  }
+  return Object.freeze({ ...environment })
+}
+
+const validateStaleDaemonIdentity = (
+  metadata: CuaDaemonMetadata,
+  expectedPid: number,
+  contract: CuaEmbeddedRuntimeContract
+): void => {
+  if (
+    metadata.pid !== expectedPid ||
+    metadata.embedded !== true ||
+    metadata.host_bundle_id !== contract.hostBundleId ||
+    typeof metadata.driver_version !== 'string' ||
+    !metadata.driver_version
+  ) {
+    throw new Error('CUA stale endpoint metadata does not attest the recorded daemon process')
+  }
+}
+
+const isMissingStaleEndpoint = (error: CuaDaemonHandshakeUnavailableError): boolean => {
+  const code = (error.cause as NodeJS.ErrnoException | undefined)?.code
+  return code === 'ENOENT' || code === 'ECONNREFUSED'
 }
 
 export class CuaDaemonHandshakeUnavailableError extends Error {
@@ -269,6 +329,7 @@ const defaultDependencies: AdapterDependencies = {
   captureEndpointIdentity,
   cleanupEndpoint,
   terminateProcess: terminateProcessTree,
+  terminateStaleProcess: terminateProcessTreeByPid,
   delay: async (milliseconds) => await delay(milliseconds)
 }
 
@@ -276,6 +337,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
   private readonly dependencies: AdapterDependencies
   private readonly startupTimeoutMs: number
   private readonly shutdownTimeoutMs: number
+  private readonly environment: Readonly<Record<string, string>>
   private running?: RunningDaemon
   private stopPromise?: Promise<void>
 
@@ -286,6 +348,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     this.dependencies = { ...defaultDependencies, ...dependencies }
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
+    this.environment = validateCuaEnvironment(options.environment)
   }
 
   async start(
@@ -298,7 +361,12 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     if (this.running && !hasExited(this.running.child)) {
       try {
         await this.verifyRunningDaemon(this.running)
-        this.persistLaunchContext(safetyHooks, this.running.endpoint, this.running.endpointIdentity)
+        this.persistLaunchContext(
+          safetyHooks,
+          this.running.endpoint,
+          this.running.endpointIdentity,
+          this.running.child.pid
+        )
         return this.proxyConfiguration(this.running.endpoint)
       } catch {
         await this.stop()
@@ -326,6 +394,8 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
         'serve',
         '--embedded',
         '--parent-liveness-stdio',
+        // This skips only upstream's macOS TCC onboarding UI. Agent/tool
+        // authorization remains fixed by --permission-mode standard.
         '--no-permissions-gate',
         '--socket',
         endpoint,
@@ -335,10 +405,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
         'standard'
       ],
       {
-        env: {
-          ...createMinimalProcessEnvironment(process.env, this.options.platform),
-          ...this.options.environment
-        },
+        env: this.createDaemonEnvironment(),
         stdio: ['pipe', 'ignore', 'pipe'],
         windowsHide: true
       }
@@ -351,27 +418,26 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     })
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      stderrChunks.push(bytes)
-      stderrLength += bytes.length
-      while (stderrLength > 16 * 1024 && stderrChunks.length > 1) {
+      const retained =
+        bytes.length > MAX_STDERR_BYTES + 4 ? bytes.subarray(-(MAX_STDERR_BYTES + 4)) : bytes
+      stderrChunks.push(retained)
+      stderrLength += retained.length
+      while (stderrLength > MAX_STDERR_BYTES && stderrChunks.length > 1) {
         stderrLength -= stderrChunks.shift()?.length ?? 0
       }
     })
-    const stderr = () =>
-      Buffer.concat(stderrChunks)
-        .subarray(-16 * 1024)
-        .toString('utf8')
-        .trim()
+    const stderr = () => decodeUtf8Tail(stderrChunks, stderrLength)
 
     try {
       await this.waitForSpawn(child)
       if (!child.pid) {
         throw childError ?? new Error('CUA daemon process did not report a pid')
       }
+      this.persistLaunchContext(safetyHooks, endpoint, undefined, child.pid)
       const metadata = await this.waitForReady(child, endpoint, () => childError, stderr)
       endpointIdentityCaptureAttempted = true
       endpointIdentity = this.dependencies.captureEndpointIdentity(endpoint, this.options.platform)
-      this.persistLaunchContext(safetyHooks, endpoint, endpointIdentity)
+      this.persistLaunchContext(safetyHooks, endpoint, endpointIdentity, child.pid)
       validateCuaDaemonMetadata(metadata, child.pid, this.options.contract)
       if (hasExited(child)) {
         throw new Error(
@@ -458,6 +524,40 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
   async recoverStaleLaunch(context: PluginRuntimeLaunchContext): Promise<void> {
     const endpoint = context.endpoint
     this.assertManagedEndpoint(endpoint)
+    const daemonPid = this.parseDaemonPid(context.daemonPid)
+    try {
+      const metadata = await this.dependencies.requestMetadata(
+        endpoint,
+        HANDSHAKE_ATTEMPT_TIMEOUT_MS
+      )
+      if (daemonPid === undefined) {
+        throw new Error(
+          'CUA stale endpoint is still reachable but launch evidence has no daemon PID; refusing unattested cleanup'
+        )
+      }
+      validateStaleDaemonIdentity(metadata, daemonPid, this.options.contract)
+      const terminated = await this.dependencies.terminateStaleProcess(daemonPid, {
+        graceMs: this.shutdownTimeoutMs
+      })
+      if (!terminated) {
+        throw new Error(`CUA stale daemon ${daemonPid} could not be terminated`)
+      }
+    } catch (error) {
+      if (!(error instanceof CuaDaemonHandshakeUnavailableError)) {
+        throw error
+      }
+      if (!isMissingStaleEndpoint(error)) {
+        throw new Error(
+          daemonPid === undefined
+            ? 'CUA stale endpoint is still reachable or unresponsive but launch evidence has no daemon PID; refusing unattested cleanup'
+            : `CUA stale daemon ${daemonPid} is still reachable or unresponsive but its identity cannot be attested; refusing PID-based termination`,
+          { cause: error }
+        )
+      }
+      // A missing/refused endpoint does not attest any process. Never trust
+      // the persisted PID for termination; POSIX identity cleanup is safe.
+    }
+
     if (this.options.platform === 'win32') {
       return
     }
@@ -541,7 +641,7 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
           '--host-bundle-id',
           this.options.contract.hostBundleId
         ],
-        env: { ...this.options.environment },
+        env: this.createProxyEnvironment(),
         inheritEnv: 'minimal'
       }
     }
@@ -554,12 +654,13 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
     }
     try {
       fs.lstatSync(endpoint)
-      throw new Error(`CUA embedded endpoint already exists: ${endpoint}`)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return
       }
+      throw error
     }
+    throw new Error(`CUA embedded endpoint already exists: ${endpoint}`)
   }
 
   private assertManagedEndpoint(endpoint: string | undefined): asserts endpoint is string {
@@ -589,13 +690,15 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
   private persistLaunchContext(
     safetyHooks: PluginRuntimeSafetyHooks | undefined,
     endpoint: string,
-    identity?: EndpointIdentity
+    identity?: EndpointIdentity,
+    daemonPid?: number
   ): void {
     if (!safetyHooks) {
       return
     }
     safetyHooks.updateLaunchContext({
       endpoint,
+      ...(daemonPid ? { daemonPid: daemonPid.toString() } : {}),
       ...(identity
         ? {
             endpointDevice: identity.device.toString(),
@@ -603,6 +706,37 @@ export class CuaEmbeddedRuntimeAdapter implements PluginRuntimeAdapterInstance {
           }
         : {})
     })
+  }
+
+  private parseDaemonPid(value: string | undefined): number | undefined {
+    if (value === undefined) {
+      return undefined
+    }
+    if (!/^[1-9]\d*$/.test(value)) {
+      throw new Error('CUA stale daemon PID is invalid')
+    }
+    const pid = Number(value)
+    if (!Number.isSafeInteger(pid)) {
+      throw new Error('CUA stale daemon PID is invalid')
+    }
+    return pid
+  }
+
+  private createDaemonEnvironment(): Record<string, string> {
+    const cuaLog = process.env[CUA_LOG_ENV]
+    return {
+      ...createMinimalProcessEnvironment(process.env, this.options.platform),
+      ...(cuaLog !== undefined ? { [CUA_LOG_ENV]: cuaLog } : {}),
+      ...this.environment
+    }
+  }
+
+  private createProxyEnvironment(): Record<string, string> {
+    const cuaLog = process.env[CUA_LOG_ENV]
+    return {
+      ...(cuaLog !== undefined ? { [CUA_LOG_ENV]: cuaLog } : {}),
+      ...this.environment
+    }
   }
 
   private async waitForSpawn(child: ChildProcess): Promise<void> {

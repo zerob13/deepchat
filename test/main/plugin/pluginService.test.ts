@@ -1515,7 +1515,11 @@ describe('PluginService', () => {
     presenter.__mocks.mcpServers['cua-driver'] = {
       type: 'stdio',
       command: '/fixture/cua-driver',
-      args: ['mcp'],
+      args: ['mcp', '--no-daemon-relaunch'],
+      env: {
+        CUA_DRIVER_MCP_MODE: '1',
+        CUA_DRIVER_RS_MCP_NO_RELAUNCH: '1'
+      },
       enabled: true,
       source: 'plugin',
       sourceId: 'com.deepchat.plugins.cua',
@@ -1525,30 +1529,140 @@ describe('PluginService', () => {
     await presenter.initialize()
     await presenter.initialize()
 
-    expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledTimes(1)
-    expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledWith('cua-driver', {
-      enabled: false
-    })
-    expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({ enabled: false })
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).toHaveBeenCalledOnce()
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).toHaveBeenCalledWith('cua-driver')
+    expect(presenter.__mocks.mcpServers).not.toHaveProperty('cua-driver')
   })
 
-  it('retries the legacy CUA migration when its safe-side write fails', async () => {
+  it('preserves an explicit legacy CUA disable in installation intent before cleanup', async () => {
     const presenter = await createPluginService('darwin')
+    const { getPluginToolPolicy, registerPluginToolPolicy } =
+      await import('@/plugin/toolPolicyStore')
+    const now = Date.now()
+    ;(presenter as any).store.set('installations', [
+      {
+        pluginId: 'com.deepchat.plugins.cua',
+        version: '1.0.4-beta.3',
+        path: '/fixture/legacy-cua',
+        enabled: true,
+        trusted: true,
+        source: 'deepchat-official',
+        installedAt: now,
+        updatedAt: now
+      }
+    ])
     presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--no-daemon-relaunch'],
+      env: { CUA_DRIVER_MCP_MODE: '1' },
+      enabled: false,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+    registerPluginToolPolicy({
+      pluginId: 'com.deepchat.plugins.cua',
+      serverId: 'cua-driver',
+      tools: { click: 'ask' },
+      enabled: true
+    })
+
+    await (presenter as any).applyRuntimeMigrations()
+
+    expect((presenter as any).store.get('installations')[0]).toMatchObject({
+      pluginId: 'com.deepchat.plugins.cua',
+      enabled: false
+    })
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).toHaveBeenCalledWith('cua-driver')
+    expect(getPluginToolPolicy('cua-driver', 'click')).toBeNull()
+  })
+
+  it('does not reinterpret the supervised CUA record as a legacy disable signal', async () => {
+    const presenter = await createPluginService('darwin')
+    const now = Date.now()
+    ;(presenter as any).store.set('installations', [
+      {
+        pluginId: 'com.deepchat.plugins.cua',
+        version: '1.1.0',
+        path: '/fixture/current-cua',
+        enabled: true,
+        trusted: true,
+        source: 'deepchat-official',
+        installedAt: now,
+        updatedAt: now
+      }
+    ])
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--embedded'],
+      env: { CUA_DRIVER_RS_SPAWN_UIA_WORKER: '0' },
+      enabled: false,
+      source: 'plugin',
+      sourceId: 'com.deepchat.plugins.cua',
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    }
+
+    await (presenter as any).applyRuntimeMigrations()
+
+    expect((presenter as any).store.get('installations')[0]).toMatchObject({ enabled: true })
+    expect(presenter.__mocks.mcpSettings.removeMcpServer).not.toHaveBeenCalled()
+  })
+
+  it('retries a failed legacy migration without blocking unrelated plugins', async () => {
+    const fixture = await createBundledFixture()
+    const presenter = await createPluginService('darwin', fixture.appPath)
+    expect((await presenter.enablePlugin(fixture.pluginId)).ok).toBe(true)
+    const now = Date.now()
+    ;(presenter as any).store.set('installations', [
+      ...(presenter as any).store.get('installations'),
+      {
+        pluginId: 'com.deepchat.plugins.cua',
+        version: '1.0.4-beta.3',
+        path: '/fixture/legacy-cua',
+        enabled: true,
+        trusted: true,
+        source: 'deepchat-official',
+        installedAt: now,
+        updatedAt: now
+      }
+    ])
+    vi.clearAllMocks()
+    const activatePlugin = vi.spyOn(presenter as any, 'activatePlugin')
+    presenter.__mocks.mcpServers['cua-driver'] = {
+      type: 'stdio',
+      command: '/fixture/cua-driver',
+      args: ['mcp', '--no-daemon-relaunch'],
+      env: { CUA_DRIVER_MCP_MODE: '1' },
       enabled: true,
       source: 'plugin',
       sourceId: 'com.deepchat.plugins.cua',
       ownerPluginId: 'com.deepchat.plugins.cua'
     }
-    presenter.__mocks.mcpSettings.updateMcpServer.mockRejectedValueOnce(
+    presenter.__mocks.mcpSettings.removeMcpServer.mockRejectedValueOnce(
       new Error('database unavailable')
     )
 
-    await expect(presenter.initialize()).rejects.toThrow('database unavailable')
+    await presenter.initialize()
+    expect(presenter.__mocks.runtimeSupervisor.reconcilePlugin).toHaveBeenCalledWith(
+      fixture.pluginId
+    )
+    expect(activatePlugin).toHaveBeenCalledWith(fixture.pluginId)
+    expect(activatePlugin).not.toHaveBeenCalledWith('com.deepchat.plugins.cua')
     await presenter.initialize()
 
-    expect(presenter.__mocks.mcpSettings.updateMcpServer).toHaveBeenCalledTimes(2)
-    expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({ enabled: false })
+    expect(
+      presenter.__mocks.mcpSettings.removeMcpServer.mock.calls.filter(
+        ([serverName]) => serverName === 'cua-driver'
+      )
+    ).toHaveLength(2)
+    expect(presenter.__mocks.mcpServers['cua-driver']).toMatchObject({
+      args: ['mcp', '--embedded'],
+      enabled: false,
+      ownerPluginId: 'com.deepchat.plugins.cua'
+    })
+    expect(presenter.__mocks.mcpServers['cua-driver'].env).not.toHaveProperty('CUA_DRIVER_MCP_MODE')
   })
 
   it('persists runtime safety sentinels in the plugin settings store', async () => {

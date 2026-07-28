@@ -426,7 +426,7 @@ describe('McpClient Runtime Command Processing Tests', () => {
           env: Record<string, string>
         }
         expect(transportOptions.env).not.toHaveProperty('API_TOKEN')
-        expect(transportOptions.env.CUA_LOG).toBe('debug')
+        expect(transportOptions.env).not.toHaveProperty('CUA_LOG')
         expect(transportOptions.env.PLUGIN_VALUE).toBe('declared')
       } finally {
         if (originalApiToken === undefined) {

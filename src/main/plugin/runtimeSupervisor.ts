@@ -636,6 +636,9 @@ export class PluginRuntimeSupervisor {
           `Plugin runtime server "${registration.serverName}" was stopped during startup`
         )
       }
+      // The adapter spawn and the stdio proxy spawn are separate execution
+      // boundaries. Re-verify the complete launch artifact contract here so a
+      // replacement during daemon startup cannot become the proxy executable.
       const proxyFingerprint = await this.verifyLaunchArtifacts(entry)
       if (proxyFingerprint && !initialFingerprint) {
         await this.authorizeGuardedSpawn(entry, proxyFingerprint, allowQuarantinedFingerprint)

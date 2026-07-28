@@ -30,6 +30,13 @@ describe('createMinimalProcessEnvironment', () => {
           XDG_RUNTIME_DIR: '/run/user/1000',
           XDG_SESSION_TYPE: 'x11',
           DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+          AT_SPI_BUS: 'unix:path=/run/user/1000/at-spi/bus',
+          SWAYSOCK: '/run/user/1000/sway-ipc.sock',
+          XDG_CURRENT_DESKTOP: 'sway',
+          XDG_SESSION_DESKTOP: 'sway',
+          DESKTOP_SESSION: 'sway',
+          XDG_DATA_HOME: '/home/user/.local/share',
+          XDG_DATA_DIRS: '/usr/local/share:/usr/share',
           SSH_AUTH_SOCK: '/run/user/1000/ssh-agent'
         },
         'linux'
@@ -45,13 +52,19 @@ describe('createMinimalProcessEnvironment', () => {
       TEMP: '/tmp',
       LANG: 'en_US.UTF-8',
       LC_ALL: 'en_US.UTF-8',
-      CUA_LOG: 'debug',
       DISPLAY: ':0',
       WAYLAND_DISPLAY: 'wayland-0',
       XAUTHORITY: '/run/user/1000/xauth',
       XDG_RUNTIME_DIR: '/run/user/1000',
       XDG_SESSION_TYPE: 'x11',
-      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus'
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+      AT_SPI_BUS: 'unix:path=/run/user/1000/at-spi/bus',
+      SWAYSOCK: '/run/user/1000/sway-ipc.sock',
+      XDG_CURRENT_DESKTOP: 'sway',
+      XDG_SESSION_DESKTOP: 'sway',
+      DESKTOP_SESSION: 'sway',
+      XDG_DATA_HOME: '/home/user/.local/share',
+      XDG_DATA_DIRS: '/usr/local/share:/usr/share'
     })
   })
 
@@ -65,6 +78,7 @@ describe('createMinimalProcessEnvironment', () => {
           ComSpec: 'C:\\Windows\\System32\\cmd.exe',
           PATHEXT: '.EXE;.CMD',
           USERPROFILE: 'C:\\Users\\user',
+          USERNAME: 'user',
           APPDATA: 'C:\\Users\\user\\AppData\\Roaming',
           LOCALAPPDATA: 'C:\\Users\\user\\AppData\\Local',
           PROGRAMDATA: 'C:\\ProgramData',
@@ -81,6 +95,7 @@ describe('createMinimalProcessEnvironment', () => {
       ComSpec: 'C:\\Windows\\System32\\cmd.exe',
       PATHEXT: '.EXE;.CMD',
       USERPROFILE: 'C:\\Users\\user',
+      USERNAME: 'user',
       APPDATA: 'C:\\Users\\user\\AppData\\Roaming',
       LOCALAPPDATA: 'C:\\Users\\user\\AppData\\Local',
       PROGRAMDATA: 'C:\\ProgramData',
@@ -102,6 +117,7 @@ describe('createMinimalProcessEnvironment', () => {
     ).not.toMatchObject({
       DISPLAY: expect.anything(),
       XDG_RUNTIME_DIR: expect.anything(),
+      CUA_LOG: expect.anything(),
       API_TOKEN: expect.anything()
     })
   })
