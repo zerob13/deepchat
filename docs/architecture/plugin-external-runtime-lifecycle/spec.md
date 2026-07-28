@@ -212,7 +212,7 @@ Linux/session additions:
 Windows additions:
 
 - `SystemRoot` / `SYSTEMROOT`, `windir` / `WINDIR`, `COMSPEC`, `PATHEXT`;
-- `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA`, `PROCESSOR_ARCHITECTURE`.
+- `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `PROGRAMDATA`, `PROCESSOR_ARCHITECTURE`.
 
 `CUA_LOG` may pass through for diagnostics. Existing user-managed MCP configs and plugin manifests
 without `inheritEnv` retain legacy behavior for compatibility.

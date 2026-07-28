@@ -402,6 +402,73 @@ describe('McpClient Runtime Command Processing Tests', () => {
       expect(pathEnv).toContain('/custom/bin')
     })
 
+    it('uses the minimal inherited environment only when explicitly requested', async () => {
+      const originalApiToken = process.env.API_TOKEN
+      const originalCuaLog = process.env.CUA_LOG
+      process.env.API_TOKEN = 'secret'
+      process.env.CUA_LOG = 'debug'
+
+      try {
+        const client = createMcpClient('test', {
+          type: 'stdio',
+          command: 'cua-driver',
+          args: ['mcp'],
+          inheritEnv: 'minimal',
+          env: {
+            PLUGIN_VALUE: 'declared'
+          }
+        })
+
+        await client.connect()
+
+        const transportCalls = vi.mocked(StdioClientTransport).mock.calls
+        const transportOptions = transportCalls[transportCalls.length - 1][0] as {
+          env: Record<string, string>
+        }
+        expect(transportOptions.env).not.toHaveProperty('API_TOKEN')
+        expect(transportOptions.env.CUA_LOG).toBe('debug')
+        expect(transportOptions.env.PLUGIN_VALUE).toBe('declared')
+      } finally {
+        if (originalApiToken === undefined) {
+          delete process.env.API_TOKEN
+        } else {
+          process.env.API_TOKEN = originalApiToken
+        }
+        if (originalCuaLog === undefined) {
+          delete process.env.CUA_LOG
+        } else {
+          process.env.CUA_LOG = originalCuaLog
+        }
+      }
+    })
+
+    it('preserves legacy inheritance for existing native MCP configs', async () => {
+      const originalApiToken = process.env.API_TOKEN
+      process.env.API_TOKEN = 'legacy-secret'
+
+      try {
+        const client = createMcpClient('test', {
+          type: 'stdio',
+          command: 'native-helper',
+          args: []
+        })
+
+        await client.connect()
+
+        const transportCalls = vi.mocked(StdioClientTransport).mock.calls
+        const transportOptions = transportCalls[transportCalls.length - 1][0] as {
+          env: Record<string, string>
+        }
+        expect(transportOptions.env.API_TOKEN).toBe('legacy-secret')
+      } finally {
+        if (originalApiToken === undefined) {
+          delete process.env.API_TOKEN
+        } else {
+          process.env.API_TOKEN = originalApiToken
+        }
+      }
+    })
+
     it('awaits process-tree cleanup before closing stdio transport on disconnect', async () => {
       const order: string[] = []
       const child = { pid: 123, exitCode: null, signalCode: null }

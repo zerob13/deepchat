@@ -46,6 +46,7 @@ import type {
   McpServerStatusPhase,
   McpServerStatusReason
 } from '@shared/types/core/mcp'
+import { createMinimalProcessEnvironment } from './processEnvironment'
 
 const ALLOWED_SAMPLING_IMAGE_MIME_TYPES = new Set([
   'image/png',
@@ -290,6 +291,35 @@ export class McpClient {
     this.runtimeHelper.setUvRuntimePath(value)
   }
 
+  private addRuntimePathsToEnvironment(
+    env: Record<string, string>,
+    homeDir: string,
+    inheritedPaths = [env.PATH, env.Path, env.path].filter((value): value is string =>
+      Boolean(value)
+    )
+  ): void {
+    const allPaths = [...inheritedPaths, ...this.runtimeHelper.getDefaultPaths(homeDir)]
+    const uvRuntimePath = this.runtimeHelper.getUvRuntimePath()
+    const nodeRuntimePath = this.runtimeHelper.getNodeRuntimePath()
+    if (process.platform === 'win32') {
+      if (uvRuntimePath) {
+        allPaths.unshift(uvRuntimePath)
+      }
+      if (nodeRuntimePath) {
+        allPaths.unshift(nodeRuntimePath)
+      }
+    } else {
+      if (uvRuntimePath) {
+        allPaths.unshift(uvRuntimePath)
+      }
+      if (nodeRuntimePath) {
+        allPaths.unshift(path.join(nodeRuntimePath, 'bin'))
+      }
+    }
+    const { key, value } = this.runtimeHelper.normalizePathEnv(allPaths)
+    env[key] = value
+  }
+
   // Connect to MCP server
   async connect(options: McpConnectOptions = {}): Promise<McpConnectResult> {
     if (this.isConnected && this.client) {
@@ -461,7 +491,10 @@ export class McpClient {
           (cmd) => command.includes(cmd) || args.some((arg) => arg.includes(cmd))
         )
 
-        if (isNodeCommand) {
+        if (this.serverConfig.inheritEnv === 'minimal') {
+          Object.assign(env, createMinimalProcessEnvironment(process.env, process.platform))
+          this.addRuntimePathsToEnvironment(env, HOME_DIR)
+        } else if (isNodeCommand) {
           // Node.js/UV commands use whitelist processing
           if (process.env) {
             const existingPaths: string[] = []
@@ -480,35 +513,7 @@ export class McpClient {
               }
             })
 
-            // Get default paths
-            const defaultPaths = this.runtimeHelper.getDefaultPaths(HOME_DIR)
-
-            // 合并所有路径
-            const allPaths = [...existingPaths, ...defaultPaths]
-            // 添加运行时路径
-            const uvRuntimePath = this.runtimeHelper.getUvRuntimePath()
-            const nodeRuntimePath = this.runtimeHelper.getNodeRuntimePath()
-            if (process.platform === 'win32') {
-              // Windows平台只添加 node 和 uv 路径
-              if (uvRuntimePath) {
-                allPaths.unshift(uvRuntimePath)
-              }
-              if (nodeRuntimePath) {
-                allPaths.unshift(nodeRuntimePath)
-              }
-            } else {
-              // 其他平台优先级：node > uv
-              if (uvRuntimePath) {
-                allPaths.unshift(uvRuntimePath)
-              }
-              if (nodeRuntimePath) {
-                allPaths.unshift(path.join(nodeRuntimePath, 'bin'))
-              }
-            }
-
-            // 规范化并设置PATH
-            const { key, value } = this.runtimeHelper.normalizePathEnv(allPaths)
-            env[key] = value
+            this.addRuntimePathsToEnvironment(env, HOME_DIR, existingPaths)
           }
         } else {
           // 非 Node.js/UV 命令，保留所有系统环境变量，只补充 PATH
@@ -527,35 +532,7 @@ export class McpClient {
             existingPaths.push(env.Path)
           }
 
-          // 获取默认路径
-          const defaultPaths = this.runtimeHelper.getDefaultPaths(HOME_DIR)
-
-          // 合并所有路径
-          const allPaths = [...existingPaths, ...defaultPaths]
-          // 添加运行时路径
-          const uvRuntimePath = this.runtimeHelper.getUvRuntimePath()
-          const nodeRuntimePath = this.runtimeHelper.getNodeRuntimePath()
-          if (process.platform === 'win32') {
-            // Windows平台只添加 node 和 uv 路径
-            if (uvRuntimePath) {
-              allPaths.unshift(uvRuntimePath)
-            }
-            if (nodeRuntimePath) {
-              allPaths.unshift(nodeRuntimePath)
-            }
-          } else {
-            // 其他平台优先级：node > uv
-            if (uvRuntimePath) {
-              allPaths.unshift(uvRuntimePath)
-            }
-            if (nodeRuntimePath) {
-              allPaths.unshift(path.join(nodeRuntimePath, 'bin'))
-            }
-          }
-
-          // 规范化并设置PATH
-          const { key, value } = this.runtimeHelper.normalizePathEnv(allPaths)
-          env[key] = value
+          this.addRuntimePathsToEnvironment(env, HOME_DIR, existingPaths)
         }
 
         // 添加自定义环境变量
