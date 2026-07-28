@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryService } from '@/memory'
 import {
   createFakeRepository,
+  enabledConfig,
   FakeVectorStore,
+  makePresenter,
   textToVector
 } from '../../memory/support/memoryFakes'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
@@ -25,6 +27,40 @@ afterEach(() => {
 })
 
 describe('Agent Memory #28 bounded workloads', () => {
+  it('yields between every bounded batch while clearing 10k claims', async () => {
+    const repo = createFakeRepository()
+    for (let index = 0; index < 10_000; index += 1) {
+      repo.insert({
+        id: `clear-${index}`,
+        agentId: 'clear-agent',
+        kind: 'semantic',
+        content: `bounded clear claim ${index}`,
+        provenanceKey: `bounded-clear-source-${index}`
+      })
+    }
+    const processBatch = vi.spyOn(repo, 'processMemoryClearBatch')
+    const { presenter } = makePresenter(enabledConfig, repo)
+    let heartbeatActive = true
+    let heartbeatCount = 0
+    const heartbeat = () => {
+      if (!heartbeatActive) return
+      heartbeatCount += 1
+      setImmediate(heartbeat)
+    }
+    setImmediate(heartbeat)
+
+    try {
+      await expect(presenter.clearMemories('clear-agent')).resolves.toBe(10_000)
+
+      expect(processBatch).toHaveBeenCalledTimes(Math.ceil(10_000 / 256))
+      expect(heartbeatCount).toBeGreaterThan(2)
+      expect(repo.countByAgent('clear-agent')).toBe(0)
+    } finally {
+      heartbeatActive = false
+      await presenter.dispose()
+    }
+  })
+
   it('drains 101 embeddings in fixed 50-row provider and persistence batches', async () => {
     const repo = createFakeRepository()
     const store = new FakeVectorStore()
@@ -119,7 +155,7 @@ describe('Agent Memory #28 bounded workloads', () => {
       return ''
     })
     const search = vi.spyOn(repo, 'search')
-    const listByIds = vi.spyOn(repo, 'listByIds')
+    const listApplicableByIds = vi.spyOn(repo, 'listApplicableByIds')
     const presenter = new MemoryService({
       executeWithRateLimit: async () => undefined,
       repository: repo,
@@ -142,7 +178,7 @@ describe('Agent Memory #28 bounded workloads', () => {
       if (!result.ok) throw new Error('expected extraction to succeed')
       expect(result.createdIds).toHaveLength(8)
       expect(search).toHaveBeenCalledTimes(8)
-      expect(listByIds).toHaveBeenCalledTimes(1)
+      expect(listApplicableByIds).toHaveBeenCalledTimes(1)
       expect(decisionPrompts).toHaveLength(2)
       expect(
         decisionPrompts.map((prompt) => [...prompt.matchAll(/^Candidate (\d+) \(/gmu)].length)

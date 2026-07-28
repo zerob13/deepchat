@@ -4,7 +4,10 @@ import type {
   UserMessageMentionBlock,
   UserMessageTextBlock
 } from '@shared/chat'
-import { normalizeAttachmentResolvedRepresentation } from '@shared/utils/attachmentRepresentation'
+import {
+  isPdfAttachment,
+  normalizeAttachmentResolvedRepresentation
+} from '@shared/utils/attachmentRepresentation'
 
 type UserMessageRichBlock = UserMessageTextBlock | UserMessageMentionBlock | UserMessageCodeBlock
 
@@ -91,11 +94,16 @@ export function getExportedUserMessageText(content: UserMessageContent | undefin
   const messageText = getNormalizedUserMessageText(content)
   if (!content || !Array.isArray(content.files)) return messageText
 
-  const ocrSections = content.files.flatMap((file, index) => {
+  const attachmentSections = content.files.flatMap((file, index) => {
     const resolved = normalizeAttachmentResolvedRepresentation(file.resolvedRepresentation)
-    if (resolved?.kind !== 'ocr_text') return []
     const fileName = file.name?.replace(/\s+/g, ' ').trim() || `attachment-${index + 1}`
-    return [`[OCR attachment text sent to the model: ${fileName}]\n${resolved.text}`]
+    if (resolved?.kind === 'ocr_text') {
+      return [`[OCR attachment text sent to the model: ${fileName}]\n${resolved.text}`]
+    }
+    if (resolved?.kind === 'embedded_text' && isPdfAttachment(file) && file.content?.trim()) {
+      return [`[Embedded PDF text sent to the model: ${fileName}]\n${file.content}`]
+    }
+    return []
   })
-  return [messageText, ...ocrSections].filter((value) => value.trim()).join('\n\n')
+  return [messageText, ...attachmentSections].filter((value) => value.trim()).join('\n\n')
 }

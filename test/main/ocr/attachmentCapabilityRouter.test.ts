@@ -2,12 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   AttachmentCapabilityRouter,
+  applyTurnOcrTextBudget,
   type AttachmentOcrRuntimePort
 } from '@/ocr/attachmentCapabilityRouter'
 import { ImagePreprocessingError } from '@/ocr/imagePreprocessor'
 import { ImageTextExtractionError } from '@/ocr/imageTextExtractionService'
 import { LightOcrProcessHostError } from '@/ocr/lightOcrProcessHost'
+import {
+  DocumentTextExtractionError,
+  type DocumentTextExtractionResult
+} from '@/ocr/documentTextExtractionService'
 import type { MessageFile, SendMessageInput } from '@shared/types/agent-interface'
+import type { PdfEmbeddedTextCoverage } from '@shared/types/attachment'
 
 const AVAILABLE = {
   status: 'available' as const,
@@ -15,11 +21,12 @@ const AVAILABLE = {
     nodeExecutable: '/runtime/node',
     helperEntryPath: '/runtime/helper.js',
     facadeDir: '/runtime/facade',
+    runtimeDir: '/runtime/runtime',
     bundlePath: '/runtime/bundle',
     nativePackageDir: '/runtime/native',
     nativePayloadEncoding: 'gzip-base64-v1' as const,
     nativePackage: '@arcships/light-ocr-native-test',
-    lightOcrVersion: '0.3.4',
+    lightOcrVersion: '0.5.5',
     bundleId: 'bundle-v1'
   }
 }
@@ -51,12 +58,79 @@ const extractionResult = (text = 'recognized text') => ({
   timingMs: { snapshot: 1, preprocessing: 2, recognition: 3, total: 6 }
 })
 
+const documentExtractionResult = (
+  overrides: Partial<DocumentTextExtractionResult> = {}
+): DocumentTextExtractionResult => {
+  const text = overrides.text ?? '## Page 1\n\nrecognized PDF text'
+  return {
+    text,
+    tokenCount: overrides.tokenCount ?? 7,
+    pageSpans: overrides.pageSpans ?? [
+      { pageNumber: 1, start: 0, end: text.length, complete: true }
+    ],
+    artifactTermination: 'request_complete',
+    generationOutputLimitReached: false,
+    generationTokenLimit: 16_000,
+    emittedPages: 1,
+    sourcePageCountHint: 1,
+    engine: {
+      modelBundleId: 'bundle-v1',
+      requestedProvider: 'auto',
+      strategy: 'bounded-960',
+      detection: {
+        actualProviderChain: ['coreml'],
+        precision: 'fp16',
+        qualificationId: 'detection-v1'
+      },
+      recognition: {
+        actualProviderChain: ['cpu'],
+        precision: 'fp32',
+        qualificationId: 'recognition-v1'
+      }
+    },
+    cacheHit: false,
+    timingMs: { snapshot: 1, recognition: 4, total: 5 },
+    ...overrides
+  }
+}
+
 function image(index = 1, overrides: Partial<MessageFile> = {}): MessageFile {
   return {
     name: `image-${index}.png`,
     path: `/tmp/image-${index}.png`,
     mimeType: 'image/png',
     content: 'data:image/png;base64,AA==',
+    ...overrides
+  }
+}
+
+function pdfCoverage(
+  pageCount: number,
+  substantivePageCount: number,
+  overrides: Partial<PdfEmbeddedTextCoverage> = {}
+): PdfEmbeddedTextCoverage {
+  const lowTextPageCount = pageCount - substantivePageCount
+  return {
+    routingRevision: 'pdf-text-coverage-v1',
+    pageCount,
+    substantivePageCount,
+    lowTextPageCount,
+    lowTextPageSamples: Array.from(
+      { length: Math.min(20, lowTextPageCount) },
+      (_, index) => substantivePageCount + index + 1
+    ),
+    hasEmbeddedText: substantivePageCount > 0,
+    ...overrides
+  }
+}
+
+function pdf(index = 1, overrides: Partial<MessageFile> = {}): MessageFile {
+  return {
+    name: `document-${index}.pdf`,
+    path: `/tmp/document-${index}.pdf`,
+    mimeType: 'application/pdf',
+    content: '# PDF content\n\nembedded text',
+    pdfTextCoverage: pdfCoverage(10, 9),
     ...overrides
   }
 }
@@ -70,6 +144,7 @@ function createExtraction(
     extractBatch: vi.fn(async (inputs) =>
       inputs.map(() => ({ status: 'fulfilled' as const, value: extractionResult() }))
     ),
+    extractDocument: vi.fn(async () => documentExtractionResult()),
     ...overrides
   }
 }
@@ -96,13 +171,13 @@ async function prepare(
   router: AttachmentCapabilityRouter,
   content: SendMessageInput,
   supportsVision = false,
-  reusePreparedOcrText = false,
+  reusePreparedAttachmentRepresentations = false,
   preserveResolvedRepresentations = false
 ) {
   return await router.prepare({
     content,
     supportsVision,
-    reusePreparedOcrText,
+    reusePreparedAttachmentRepresentations,
     preserveResolvedRepresentations
   })
 }
@@ -302,7 +377,7 @@ describe('AttachmentCapabilityRouter', () => {
       getAvailability: vi.fn(async () => ({
         status: 'unavailable',
         reason: 'unsupported_platform',
-        lightOcrVersion: '0.3.4',
+        lightOcrVersion: '0.5.5',
         bundleId: 'bundle-v1'
       }))
     })
@@ -423,6 +498,437 @@ describe('AttachmentCapabilityRouter', () => {
       text: 'recognized text'
     })
     expect(extraction.extractBatch).toHaveBeenCalledOnce()
+  })
+
+  it('uses embedded PDF text at the 90 percent Auto coverage boundary', async () => {
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(router, { text: '', files: [pdf()] })
+
+    expect(result.summary).toEqual({ status: 'ready', issues: [], suggestedActions: [] })
+    expect(result.content.files?.[0].resolvedRepresentation).toEqual({
+      kind: 'embedded_text'
+    })
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+    expect(extraction.extractDocument).not.toHaveBeenCalled()
+  })
+
+  it('normalizes image-only and PDF-only representation choices back to Auto', async () => {
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(
+      router,
+      {
+        text: '',
+        files: [
+          image(1, { requestedRepresentation: 'embedded_text' }),
+          pdf(1, { requestedRepresentation: 'image' })
+        ]
+      },
+      true
+    )
+
+    expect(result.content.files?.[0]).toMatchObject({
+      requestedRepresentation: 'auto',
+      resolvedRepresentation: { kind: 'image' }
+    })
+    expect(result.content.files?.[1]).toMatchObject({
+      requestedRepresentation: 'auto',
+      resolvedRepresentation: { kind: 'embedded_text' }
+    })
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+  })
+
+  it('uses PDF OCR below the 90 percent Auto coverage boundary', async () => {
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { pdfTextCoverage: pdfCoverage(100, 89) })]
+    })
+
+    expect(result.content.files?.[0].resolvedRepresentation).toMatchObject({
+      kind: 'ocr_text',
+      text: '## Page 1\n\nrecognized PDF text',
+      document: {
+        sourcePageCountHint: 1,
+        includedThroughPage: 1,
+        artifactTermination: 'request_complete'
+      }
+    })
+    expect(extraction.extractDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: '/tmp/document-1.pdf',
+        sourcePageCountHint: 100,
+        generationTokenLimit: 16_000
+      })
+    )
+  })
+
+  it('treats missing or stale PDF coverage as requiring Auto OCR', async () => {
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(router, {
+      text: '',
+      files: [
+        pdf(1, { pdfTextCoverage: undefined }),
+        pdf(2, {
+          pdfTextCoverage: pdfCoverage(10, 10, { routingRevision: 'stale-routing-rule' })
+        })
+      ]
+    })
+
+    expect(extraction.extractDocument).toHaveBeenCalledOnce()
+    expect(result.content.files?.[0].resolvedRepresentation?.kind).toBe('ocr_text')
+    expect(result.content.files?.[1].resolvedRepresentation).toEqual({
+      kind: 'unavailable',
+      reason: 'document_limit_exceeded'
+    })
+  })
+
+  it('allows explicit embedded text for a short PDF but rejects an empty body', async () => {
+    const { router, extraction } = createRouter()
+    const shortCoverage = pdfCoverage(1, 0, {
+      lowTextPageSamples: [1],
+      hasEmbeddedText: true
+    })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [
+        pdf(1, {
+          content: 'Short note',
+          pdfTextCoverage: shortCoverage,
+          requestedRepresentation: 'embedded_text'
+        }),
+        pdf(2, {
+          content: '',
+          pdfTextCoverage: shortCoverage,
+          requestedRepresentation: 'embedded_text'
+        })
+      ]
+    })
+
+    expect(result.content.files?.[0].resolvedRepresentation).toEqual({
+      kind: 'embedded_text'
+    })
+    expect(result.content.files?.[1].resolvedRepresentation).toEqual({
+      kind: 'unavailable',
+      reason: 'pdf_text_unavailable'
+    })
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+  })
+
+  it('honors explicit PDF OCR when automatic OCR is disabled', async () => {
+    const { router, extraction } = createRouter({ automaticOcrEnabled: false })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { requestedRepresentation: 'ocr_text' })]
+    })
+
+    expect(result.summary.status).toBe('ready')
+    expect(result.content.files?.[0].resolvedRepresentation?.kind).toBe('ocr_text')
+    expect(extraction.extractDocument).toHaveBeenCalledOnce()
+  })
+
+  it('blocks Auto PDF OCR when automatic OCR is disabled', async () => {
+    const { router, extraction } = createRouter({ automaticOcrEnabled: false })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) })]
+    })
+
+    expect(result.summary).toEqual({
+      status: 'needs_user_action',
+      issues: [{ attachmentIndex: 0, reason: 'automatic_ocr_disabled' }],
+      suggestedActions: ['send_without_image_content']
+    })
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+  })
+
+  it('keeps the legacy fallback action but records a document-neutral skipped reason', async () => {
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf()],
+      attachmentFallbackPolicy: 'send_without_image_content'
+    })
+
+    expect(result.content.files?.[0].resolvedRepresentation).toEqual({
+      kind: 'unavailable',
+      reason: 'user_skipped_attachment_content'
+    })
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+  })
+
+  it('limits PDF OCR independently from the eight-image allowance', async () => {
+    const { router, extraction } = createRouter()
+    const files = [
+      ...Array.from({ length: 8 }, (_, index) =>
+        image(index + 1, { requestedRepresentation: 'ocr_text' })
+      ),
+      pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) }),
+      pdf(2, { pdfTextCoverage: pdfCoverage(10, 0) })
+    ]
+
+    const result = await prepare(router, { text: '', files })
+
+    expect(vi.mocked(extraction.extractBatch).mock.calls[0][0]).toHaveLength(8)
+    expect(extraction.extractDocument).toHaveBeenCalledOnce()
+    expect(extraction.getAvailability).toHaveBeenCalledOnce()
+    expect(result.content.files?.[8].resolvedRepresentation?.kind).toBe('ocr_text')
+    expect(result.content.files?.[9].resolvedRepresentation).toEqual({
+      kind: 'unavailable',
+      reason: 'document_limit_exceeded'
+    })
+  })
+
+  it('keeps useful resource-limited PDF text as a non-retryable degraded result', async () => {
+    const extraction = createExtraction({
+      extractDocument: vi.fn(async () =>
+        documentExtractionResult({
+          artifactTermination: 'resource_limited',
+          resourceLimit: {
+            code: 'resource_limit_exceeded',
+            message: 'Rendered pixel budget exceeded'
+          }
+        })
+      )
+    })
+    const { router } = createRouter({ extraction })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) })]
+    })
+
+    expect(result.summary).toEqual({
+      status: 'degraded',
+      issues: [{ attachmentIndex: 0, reason: 'ocr_resource_limited' }],
+      suggestedActions: []
+    })
+    expect(result.content.files?.[0].resolvedRepresentation).toMatchObject({
+      kind: 'ocr_text',
+      truncated: true,
+      document: {
+        artifactTermination: 'resource_limited',
+        generationOutputLimitReached: false,
+        includedThroughPage: 1
+      }
+    })
+  })
+
+  it('maps a zero-page PDF resource limit without offering a deterministic retry', async () => {
+    const extraction = createExtraction({
+      extractDocument: vi.fn(async () => {
+        throw new LightOcrProcessHostError('helper_error', 'page too large', {
+          helperCode: 'resource_limit_exceeded'
+        })
+      })
+    })
+    const { router } = createRouter({ extraction })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) })]
+    })
+
+    expect(result.summary).toEqual({
+      status: 'needs_user_action',
+      issues: [{ attachmentIndex: 0, reason: 'ocr_resource_limited' }],
+      suggestedActions: ['send_without_image_content']
+    })
+  })
+
+  it('keeps a cached resource-limited empty prefix distinct from a completed empty OCR', async () => {
+    const extraction = createExtraction({
+      extractDocument: vi.fn(async () =>
+        documentExtractionResult({
+          text: '',
+          tokenCount: 0,
+          pageSpans: [{ pageNumber: 1, start: 0, end: 0, complete: true }],
+          artifactTermination: 'resource_limited',
+          resourceLimit: {
+            code: 'resource_limit_exceeded',
+            message: 'Rendered pixel budget exceeded'
+          }
+        })
+      )
+    })
+    const { router } = createRouter({ extraction })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) })]
+    })
+
+    expect(result.summary).toEqual({
+      status: 'needs_user_action',
+      issues: [{ attachmentIndex: 0, reason: 'ocr_resource_limited' }],
+      suggestedActions: ['send_without_image_content']
+    })
+  })
+
+  it('does not offer retry for a cached empty PDF OCR result', async () => {
+    const extraction = createExtraction({
+      extractDocument: vi.fn(async () =>
+        documentExtractionResult({
+          text: '',
+          tokenCount: 0,
+          pageSpans: [],
+          emittedPages: 0
+        })
+      )
+    })
+    const { router } = createRouter({ extraction })
+
+    const result = await prepare(router, {
+      text: '',
+      files: [pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) })]
+    })
+
+    expect(result.summary).toEqual({
+      status: 'needs_user_action',
+      issues: [{ attachmentIndex: 0, reason: 'ocr_empty' }],
+      suggestedActions: ['send_without_image_content']
+    })
+  })
+
+  it('does not offer a no-op retry for empty image OCR either', async () => {
+    const extraction = createExtraction({
+      extractBatch: vi.fn(async () => [
+        { status: 'fulfilled' as const, value: extractionResult('') }
+      ])
+    })
+    const { router } = createRouter({ extraction })
+
+    const result = await prepare(router, { text: '', files: [image()] })
+
+    expect(result.summary).toEqual({
+      status: 'needs_user_action',
+      issues: [{ attachmentIndex: 0, reason: 'ocr_empty' }],
+      suggestedActions: ['switch_to_vision_model', 'send_without_image_content']
+    })
+  })
+
+  it('reuses a legacy PDF body on retry without opening the source', async () => {
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(
+      router,
+      {
+        text: '',
+        files: [pdf(1, { pdfTextCoverage: undefined, resolvedRepresentation: undefined })]
+      },
+      false,
+      false,
+      true
+    )
+
+    expect(result.content.files?.[0].resolvedRepresentation).toEqual({
+      kind: 'embedded_text'
+    })
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+    expect(extraction.extractDocument).not.toHaveBeenCalled()
+  })
+
+  it('uses page-aware prefix truncation when packing persisted PDF OCR snapshots', async () => {
+    const firstPage = `## Page 1\n\n${'alpha '.repeat(7_500)}`
+    const secondPage = `\n\n## Page 2\n\n${'omega '.repeat(7_500)}TAIL_SECRET`
+    const text = firstPage + secondPage
+    const resolvedRepresentation = {
+      kind: 'ocr_text' as const,
+      text,
+      tokenCount: 16_000,
+      truncated: false,
+      document: {
+        pageSpans: [
+          { pageNumber: 1, start: 0, end: firstPage.length, complete: true },
+          {
+            pageNumber: 2,
+            start: firstPage.length,
+            end: text.length,
+            complete: true
+          }
+        ],
+        sourcePageCountHint: 2,
+        includedThroughPage: 2,
+        includedThroughPageComplete: true,
+        artifactTermination: 'request_complete' as const,
+        generationOutputLimitReached: false
+      }
+    }
+    const { router, extraction } = createRouter()
+
+    const result = await prepare(
+      router,
+      {
+        text: '',
+        files: [pdf(1, { resolvedRepresentation }), pdf(2, { resolvedRepresentation })]
+      },
+      false,
+      false,
+      true
+    )
+
+    const representations = result.content.files?.map((file) => file.resolvedRepresentation)
+    expect(
+      representations?.reduce(
+        (total, value) => total + (value?.kind === 'ocr_text' ? value.tokenCount : 0),
+        0
+      )
+    ).toBeLessThanOrEqual(16_000)
+    for (const representation of representations ?? []) {
+      expect(representation).toMatchObject({
+        kind: 'ocr_text',
+        truncated: true,
+        document: {
+          generationOutputLimitReached: true,
+          includedThroughPageComplete: false
+        }
+      })
+      if (representation?.kind === 'ocr_text') {
+        expect(representation.text).toContain('[… PDF OCR truncated …]')
+        expect(representation.text).not.toContain('TAIL_SECRET')
+      }
+    }
+    expect(resolvedRepresentation.document.generationOutputLimitReached).toBe(false)
+    expect(resolvedRepresentation.text).toContain('TAIL_SECRET')
+    expect(extraction.getAvailability).not.toHaveBeenCalled()
+  })
+
+  it('reports turn budget exhaustion without misclassifying recognized PDF text as empty', () => {
+    const text = '## Page 1\n\nrecognized PDF text'
+    const files = [
+      pdf(1, {
+        resolvedRepresentation: {
+          kind: 'ocr_text',
+          text,
+          tokenCount: 7,
+          truncated: false,
+          document: {
+            pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: true }],
+            sourcePageCountHint: 1,
+            includedThroughPage: 1,
+            includedThroughPageComplete: true,
+            artifactTermination: 'request_complete',
+            generationOutputLimitReached: false
+          }
+        }
+      })
+    ]
+    const issues = [{ attachmentIndex: 0, reason: 'ocr_resource_limited' as const }]
+
+    applyTurnOcrTextBudget(files, issues, 1)
+
+    expect(files[0].resolvedRepresentation).toEqual({
+      kind: 'unavailable',
+      reason: 'turn_ocr_budget_exhausted'
+    })
+    expect(issues).toEqual([{ attachmentIndex: 0, reason: 'turn_ocr_budget_exhausted' }])
   })
 
   it('bounds OCR work to eight images and degrades when some images are skipped', async () => {
@@ -608,6 +1114,28 @@ describe('AttachmentCapabilityRouter', () => {
     await expect(
       router.prepare({
         content: { text: '', files: [image()] },
+        supportsVision: false,
+        signal: controller.signal
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('propagates PDF cancellation without creating an unavailable snapshot', async () => {
+    const controller = new AbortController()
+    const extraction = createExtraction({
+      extractDocument: vi.fn(async () => {
+        controller.abort()
+        throw new DocumentTextExtractionError('cancelled', 'cancelled')
+      })
+    })
+    const { router } = createRouter({ extraction })
+
+    await expect(
+      router.prepare({
+        content: {
+          text: '',
+          files: [pdf(1, { pdfTextCoverage: pdfCoverage(10, 0) })]
+        },
         supportsVision: false,
         signal: controller.signal
       })

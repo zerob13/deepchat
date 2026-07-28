@@ -106679,9 +106679,9 @@
           "release_date": "2026-07-16",
           "last_updated": "2026-07-17",
           "cost": {
-            "input": 3.75,
-            "output": 18.75,
-            "cache_read": 0.375
+            "input": 4.6875,
+            "output": 23.4375,
+            "cache_read": 0.46875
           },
           "type": "chat"
         },
@@ -226230,6 +226230,40 @@
           "release_date": "2026-06-12",
           "last_updated": "2026-06-12",
           "type": "chat"
+        },
+        {
+          "id": "kimi-k3",
+          "name": "kimi-k3",
+          "display_name": "kimi-k3",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 131072
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "release_date": "2026-07-16",
+          "last_updated": "2026-07-27",
+          "type": "chat"
         }
       ]
     },
@@ -264302,8 +264336,8 @@
             ]
           },
           "limit": {
-            "context": 262144,
-            "output": 16384
+            "context": 512288,
+            "output": 512288
           },
           "temperature": true,
           "tool_call": true,
@@ -268462,6 +268496,31 @@
                 "thinking_blocks"
               ]
             }
+          },
+          "type": "imageGeneration"
+        },
+        {
+          "id": "qwen/qwen3.7-flash",
+          "name": "Qwen: Qwen3.7 Flash",
+          "display_name": "Qwen: Qwen3.7 Flash",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "type": "imageGeneration"
         },

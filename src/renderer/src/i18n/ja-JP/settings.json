@@ -2702,9 +2702,9 @@
       "tabMemories": "メモリ",
       "tabPersona": "ペルソナのタイムライン",
       "memoriesCount": "{count} 件のメモリ",
-      "clearAll": "すべて消去",
-      "clearConfirmTitle": "すべてのメモリを消去しますか？",
-      "clearConfirmBody": "このエージェントのすべてのメモリを完全に削除します。元に戻せません。",
+      "clearAll": "メモリを消去",
+      "clearConfirmTitle": "事実メモリとペルソナを消去しますか？",
+      "clearConfirmBody": "このエージェントの事実メモリとペルソナを完全に削除します。常設ディレクティブは保持され、個別に管理できます。元に戻せません。",
       "cleanupPendingRestart": "ロックされたベクトルファイルは再起動後に削除されます",
       "emptyMemories": "まだメモリはありません。このエージェントと対話するにつれて蓄積されます。",
       "emptyPersona": "自己モデルのバージョンはまだありません。",
@@ -3067,7 +3067,7 @@
       "archivedMatches": "アーカイブ内の一致",
       "refresh": "更新",
       "inboxTitle": "要対応",
-      "inboxDescription": "メモリの競合とペルソナ下書きが見えなくなる前に解決してください。",
+      "inboxDescription": "メモリの競合、ペルソナ下書き、提案されたディレクティブが見えなくなる前に確認してください。",
       "conflictBadge": "{count} 件の競合",
       "personaDraftBadge": "{count} 件のペルソナ下書き",
       "conflictSectionTitle": "メモリの競合 ({count})",
@@ -3114,7 +3114,48 @@
         "memory-persona-rollback": "ペルソナをロールバックしました",
         "memory-persona-anchor": "ペルソナのアンカーを更新しました",
         "memory-reindex": "メモリを再インデックスしました"
-      }
+      },
+      "tabDirectives": "ディレクティブ",
+      "directiveDraftBadge": "{count} 件のディレクティブ下書き",
+      "directiveDraftSectionTitle": "提案されたディレクティブ（{count}）",
+      "directiveCreateTitle": "常設ディレクティブを作成",
+      "directiveCreateDescription": "手動のディレクティブはすぐに有効になります。モデルの提案は承認するまで下書きのままです。",
+      "directiveRuntimeEnabled": "実行時に適用",
+      "directiveRuntimeDisabled": "メモリがオフの間は無効",
+      "directiveKindLabel": "ディレクティブの種類",
+      "directiveKind": {
+        "instruction": "常設指示",
+        "suppress_topic": "トピックを抑制"
+      },
+      "directiveTopicLabel": "一致するトピック",
+      "directiveTopicPlaceholder": "呼び出したメモリから抑制する正確なトピックまたはフレーズ",
+      "directiveTopicTooBroad": "CJK文字を含むトピックには、無関係なメモリの抑制を避けるため、{min}文字以上の表示可能な文字が必要です。",
+      "directiveContentLabel": "指示",
+      "directiveInstructionPlaceholder": "このエージェントへの常設指示を入力してください。",
+      "directiveSuppressPlaceholder": "このトピックをエージェントがどう扱うべきか説明してください。",
+      "directiveInstructionHint": "これはユーザーレベルの指示であり、システムまたは安全性のルールを上書きできません。",
+      "directiveSuppressHint": "トピックは呼び出すメモリを絞り込み、指示は応答を導きます。出力フィルターではありません。",
+      "directiveLength": "指示 {content}/{contentMax} · トピック {topic}/{topicMax}",
+      "directiveCreateAction": "ディレクティブを有効化",
+      "directiveCapacityTitle": "有効なディレクティブの上限に達しました",
+      "directiveCapacityDescription": "各エージェントで有効にできるディレクティブは最大 {max} 件です。追加または承認する前に、有効なディレクティブを削除してください。",
+      "directiveListTitle": "保存済みディレクティブ",
+      "directiveListDescription": "{active} 件が有効 · {draft} 件が承認待ち",
+      "directiveEmptyTitle": "ディレクティブはまだありません",
+      "directiveEmptyDescription": "ここで常設指示を作成するか、受信トレイの提案を承認してください。",
+      "directiveStatus": {
+        "active": "有効",
+        "draft": "下書き",
+        "rejected": "却下"
+      },
+      "directiveSource": {
+        "explicit_user": "ユーザーによる明示的な操作",
+        "manual": "設定",
+        "derived_suggestion": "会話からの提案"
+      },
+      "directiveTopicValue": "トピック：{topic}",
+      "directiveDeleteTitle": "このディレクティブを削除しますか？",
+      "directiveDeleteDescription": "ディレクティブはすぐに適用されなくなります。後から再作成できます。"
     }
   },
   "pluginsHub": {

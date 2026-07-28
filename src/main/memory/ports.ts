@@ -9,7 +9,16 @@ import type {
   MemoryAuditListOptions
 } from './domain/audit'
 import type {
+  AgentMemoryDirectiveRow,
+  MemoryDirectiveCounts,
+  MemoryDirectiveInsertResult,
+  MemoryDirectiveTransitionResult,
+  MemoryDirectiveWriteInput,
+  MemoryDirectiveWriteResult
+} from './domain/directives'
+import type {
   AgentMemoryHealthStats,
+  AgentMemoryDerivationRow,
   AgentMemoryEmbeddingState,
   AgentMemoryInsertInput,
   AgentMemoryKind,
@@ -20,7 +29,6 @@ import type {
   CanonicalAgentMemoryRow as AgentMemoryRow,
   AgentMemoryStatus,
   AgentMemoryWorkingCandidateCursor,
-  ConsolidationScanCursor,
   ContentUpdateResult,
   EmbeddedMemoryUpdate,
   FailedEmbeddingUpdate,
@@ -28,8 +36,17 @@ import type {
   ManualEditFieldFlags,
   MemoryCognitiveMaintenanceInput,
   MemoryManagementPageCursor,
+  MemoryClearBatchResult,
+  MemoryClearJob,
+  MemoryDerivationInsertInput,
+  MemoryDirtySeed,
   MemoryModelRef,
+  MemoryClaimContentUpdateResult,
+  MemoryClaimInsertResult,
+  MemoryExplicitRelearnResult,
   MemoryTransitionTarget,
+  MemoryTemporalMetadata,
+  MemoryTombstoneDeleteInput,
   ResolveChallengerTransition,
   ReviveSupersededTransition,
   ArchiveChallengerTransition,
@@ -37,7 +54,9 @@ import type {
   UserContentTransition,
   UserMetadataTransition,
   InternalContentTransition,
+  InternalMemoryInsertInput,
   MemoryRecallItem,
+  MemoryScope,
   MemoryVectorMatch,
   MemoryVectorQueryOptions,
   MemoryVectorRecord,
@@ -58,6 +77,11 @@ export interface MemoryReadRepositoryPort {
   ): AgentMemoryRow[]
   listManagementVisibleByIds(agentId: string, ids: string[]): AgentMemoryRow[]
   listByIds(agentId: string, ids: string[]): AgentMemoryRow[]
+  listApplicableByIds(
+    agentId: string,
+    ids: string[],
+    scopeFilter?: readonly MemoryScope[]
+  ): AgentMemoryRow[]
   getActivePersona(agentId: string): AgentMemoryRow | undefined
   getDraftPersona(agentId: string): AgentMemoryRow | undefined
   listPersonaVersions(agentId: string): AgentMemoryRow[]
@@ -65,13 +89,13 @@ export interface MemoryReadRepositoryPort {
     agentId: string,
     query: string,
     limit?: number,
-    options?: { matchMode?: 'all' | 'any' }
+    options?: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] }
   ): AgentMemoryRow[]
   searchWithStrategy(
     agentId: string,
     query: string,
     limit?: number,
-    options?: { matchMode?: 'all' | 'any' }
+    options?: { matchMode?: 'all' | 'any'; scopeFilter?: readonly MemoryScope[] }
   ): { rows: AgentMemoryRow[]; strategy: 'fts-only' | 'like-fallback' }
   listWorkingCandidates(
     agentId: string,
@@ -81,14 +105,20 @@ export interface MemoryReadRepositoryPort {
   listAgentIdsWithMemories(): string[]
   listRecentlyActiveAgentIds(candidateAgentIds: readonly string[], limit: number): string[]
   hasActiveMemory(agentId: string): boolean
+  listPendingMemoryClearJobs(): MemoryClearJob[]
 }
 
 export interface MemoryMutationRepositoryPort {
-  insert(input: AgentMemoryInsertInput): AgentMemoryRow
+  insertInternalMemory(input: InternalMemoryInsertInput): AgentMemoryRow
+  insertClaimUnlessTombstoned(input: AgentMemoryInsertInput): AgentMemoryRow | null
+  insertExplicitlyReauthorizedClaim(input: AgentMemoryInsertInput): AgentMemoryRow | null
   rekeyProvenance(agentId: string, id: string, expectedKey: string, nextKey: string): boolean
   updateInternalContent(input: InternalContentTransition): boolean
-  updateUserContentAndInvalidateEmbedding(input: UserContentTransition): boolean
+  updateUserContentAndInvalidateEmbedding(
+    input: UserContentTransition
+  ): MemoryClaimContentUpdateResult
   updateUserMetadataIfRevision(input: UserMetadataTransition): boolean
+  // Confidence-only bookkeeping is suppressed while the row's Agent clear is pending.
   setConfidence(id: string, confidence: number): void
   setPersonaState(id: string, state: AgentMemoryPersonaState, supersededBy?: string | null): void
   setAnchor(id: string, anchored: boolean): void
@@ -104,11 +134,16 @@ export interface MemoryMutationRepositoryPort {
     expectedRevision: number,
     state: AgentMemoryConflictState
   ): boolean
-  delete(id: string): void
-  clearByAgent(agentId: string): number
+  deleteInternalMemory(agentId: string, id: string): boolean
+  tombstoneAndDelete(input: MemoryTombstoneDeleteInput): AgentMemoryRow | null
+  beginMemoryClear(agentId: string, createdAt: number): MemoryClearJob
+  processMemoryClearBatch(agentId: string): MemoryClearBatchResult | null
+  completeMemoryClear(agentId: string): boolean
+  retireAgentMemoryNamespace(agentId: string): number
 }
 
 export interface MemoryAccessRepositoryPort {
+  // Bookkeeping writes atomically no-op when the owning Agent has a pending durable clear job.
   recordAccess(id: string, accessedAt?: number): void
   recordAccessBatch(ids: string[], accessedAt?: number): void
 }
@@ -167,6 +202,7 @@ export interface MemoryLifecycleRepositoryPort {
     agentId: string,
     options: { kinds: AgentMemoryKind[]; watermark: number; limit: number }
   ): MemoryCognitiveMaintenanceInput
+  // Row-only maintenance bookkeeping follows the same pending-clear no-op contract as access.
   updateDecayScore(id: string, decayScore: number | null, consolidatedAt?: number | null): void
   setLastConsolidatedAt(id: string, at?: number): void
   getLastConsolidatedAt(agentId: string): number | null
@@ -220,15 +256,6 @@ export interface MemoryLifecycleRepositoryPort {
     clearedTargets: number
     clearedLinks: number
   }
-  listConsolidationScanRows(
-    agentId: string,
-    options: {
-      embeddingDim: number
-      embeddingModel: string
-      after?: ConsolidationScanCursor
-      limit: number
-    }
-  ): AgentMemoryRow[]
   repairInternalKindStatuses(agentId: string): number
 }
 
@@ -250,6 +277,43 @@ export interface MemoryTransactionPort {
   runInTransaction<T>(fn: () => T): T
 }
 
+export interface MemoryLineageRepositoryPort {
+  insertDerivations(inputs: readonly MemoryDerivationInsertInput[]): number
+  listDerivationsByChild(agentId: string, childMemoryId: string): AgentMemoryDerivationRow[]
+  listDerivationsByParent(agentId: string, parentMemoryId: string): AgentMemoryDerivationRow[]
+}
+
+export interface MemoryDirtyRepositoryPort {
+  listDirtySeeds(agentId: string, limit: number): MemoryDirtySeed[]
+  settleDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[]): number
+  deferDirtySeeds(agentId: string, seeds: readonly MemoryDirtySeed[], deferredAt: number): number
+  countDirtySeeds(agentId: string): number
+}
+
+export interface MemoryDirectiveRepositoryPort {
+  getDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | undefined
+  listDirectives(
+    agentId: string,
+    options?: {
+      statuses?: readonly AgentMemoryDirectiveRow['status'][]
+      limit?: number
+    }
+  ): AgentMemoryDirectiveRow[]
+  listActiveDirectives(agentId: string, limit: number): AgentMemoryDirectiveRow[]
+  upsertExplicitDirective(input: MemoryDirectiveWriteInput): MemoryDirectiveWriteResult
+  insertDerivedDirectiveDraft(input: MemoryDirectiveWriteInput): MemoryDirectiveInsertResult
+  transitionDirective(
+    agentId: string,
+    directiveId: string,
+    fromStatus: AgentMemoryDirectiveRow['status'],
+    toStatus: AgentMemoryDirectiveRow['status'],
+    updatedAt: number
+  ): MemoryDirectiveTransitionResult
+  deleteDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
+  countDirectivesByStatus(agentId: string): MemoryDirectiveCounts
+  retireDirectiveNamespace(agentId: string): number
+}
+
 export interface MemoryRepositoryPort
   extends
     MemoryReadRepositoryPort,
@@ -258,6 +322,8 @@ export interface MemoryRepositoryPort
     MemoryEmbeddingRepositoryPort,
     MemoryLifecycleRepositoryPort,
     MemoryHealthRepositoryPort,
+    MemoryLineageRepositoryPort,
+    MemoryDirtyRepositoryPort,
     MemoryTransactionPort {}
 
 export interface MemoryAuditReadPort {
@@ -392,7 +458,12 @@ export interface MemoryChangeSinkPort {
 }
 
 export interface MemoryProvenanceResolverPort {
-  resolveProvenance(agentId: string, kind: string, content: string): AgentMemoryRow | undefined
+  resolveProvenance(
+    agentId: string,
+    kind: string,
+    content: string,
+    scope: MemoryScope
+  ): AgentMemoryRow | undefined
 }
 
 export interface MemoryPendingEmbeddableRowPort {
@@ -400,22 +471,34 @@ export interface MemoryPendingEmbeddableRowPort {
 }
 
 export interface MemoryWriteMutationPort extends MemoryProvenanceResolverPort {
+  reauthorizeForgottenMemory(
+    agentId: string,
+    candidate: NormalizedMemoryCandidate,
+    content: string,
+    options: WriteMemoriesOptions,
+    createdAt: number
+  ): MemoryExplicitRelearnResult
   insertMemory(
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
-    options: WriteMemoriesOptions
-  ): string | null
+    options: WriteMemoriesOptions,
+    createdAt: number
+  ): MemoryClaimInsertResult
   insertConflictedMemory(
     agentId: string,
     candidate: NormalizedMemoryCandidate,
     content: string,
-    provenanceKey: string,
     targetId: string,
-    options: WriteMemoriesOptions
-  ): string | null
+    options: WriteMemoriesOptions,
+    createdAt: number
+  ): MemoryClaimInsertResult
   bumpConfidence(id: string): void
+  enrichEquivalentClaimTemporalMetadata(
+    agentId: string,
+    existing: AgentMemoryRow,
+    incoming: MemoryTemporalMetadata
+  ): boolean
   supersedeHead(agentId: string, row: AgentMemoryRow): AgentMemoryRow
   handleProvenanceHit(
     agentId: string,

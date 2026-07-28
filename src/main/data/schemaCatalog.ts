@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3-multiple-ciphers'
+import { AGENT_MEMORY_SCOPE_ID_MAX_CHARS } from '@shared/types/agent-memory'
 import { ConversationsTable } from '@/session/data/tables/conversations'
 import { MessagesTable } from '@/session/data/tables/messages'
 import { MessageAttachmentsTable } from '@/session/data/tables/messageAttachments'
@@ -27,6 +28,7 @@ import { LegacyImportStatusTable } from '@/app/data/tables/legacyImportStatus'
 import { AgentsTable } from '@/agent/data/tables/agents'
 import { AgentMemoryTable } from '@/memory/data/tables/agentMemory'
 import { AgentMemoryAuditTable } from '@/memory/data/tables/agentMemoryAudit'
+import { AgentMemoryDirectiveTable } from '@/memory/data/tables/agentMemoryDirective'
 import { AppSettingsTable } from '@/settings/data/tables/appSettingsTable'
 import { ProviderSettingsTable } from '@/provider/data/settingsTable'
 import { McpSettingsTable } from '@/mcp/data/settingsTable'
@@ -268,8 +270,12 @@ const CATALOG_DEFINITIONS: CatalogDefinition[] = [
       lifecycle_state:
         "ALTER TABLE agent_memory ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_state IN ('active', 'archived', 'conflicted'));",
       embedding_state:
-        "ALTER TABLE agent_memory ADD COLUMN embedding_state TEXT NOT NULL DEFAULT 'pending' CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'));"
+        "ALTER TABLE agent_memory ADD COLUMN embedding_state TEXT NOT NULL DEFAULT 'pending' CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'));",
+      scope_type:
+        "ALTER TABLE agent_memory ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'agent' CHECK (scope_type IN ('agent', 'user', 'project', 'session'));",
+      scope_id: `ALTER TABLE agent_memory ADD COLUMN scope_id TEXT CHECK (scope_id IS NULL OR (length(scope_id) BETWEEN 1 AND ${AGENT_MEMORY_SCOPE_ID_MAX_CHARS} AND scope_id = trim(scope_id)));`
     },
+    typeCheckedColumns: ['scope_type'],
     afterRepair: (db, addedColumns) => {
       new AgentMemoryTable(db).repairCanonicalStateAfterSchemaRepair(addedColumns)
     }
@@ -283,6 +289,11 @@ const CATALOG_DEFINITIONS: CatalogDefinition[] = [
     afterRepair: (db) => {
       new AgentMemoryAuditTable(db).backfillMemoryRefIds()
     }
+  },
+  {
+    name: 'agent_memory_directive',
+    createTable: (db) => new AgentMemoryDirectiveTable(db),
+    typeCheckedColumns: ['kind', 'status', 'source', 'created_at', 'updated_at']
   },
   {
     name: 'new_session_active_skills',
@@ -403,6 +414,7 @@ export function createMainSchemaCatalog(db: Database.Database): MainSchemaCatalo
   const agents = new AgentsTable(db)
   const memory = new AgentMemoryTable(db)
   const memoryAudit = new AgentMemoryAuditTable(db)
+  const memoryDirectives = new AgentMemoryDirectiveTable(db)
   const providerSettings = new ProviderSettingsTable(db)
   const mcpSettings = new McpSettingsTable(db)
   const agentCatalogSettings = new AgentCatalogSettingsTable(db)
@@ -440,6 +452,7 @@ export function createMainSchemaCatalog(db: Database.Database): MainSchemaCatalo
     agents,
     memory,
     memoryAudit,
+    memoryDirectives,
     providerSettings,
     mcpSettings,
     agentCatalogSettings,
@@ -461,6 +474,7 @@ export function createMainSchemaCatalog(db: Database.Database): MainSchemaCatalo
       memory.assertCurrentSchema({
         backupBeforeLegacyBridgeRecovery: backupBeforeMemoryRecovery
       })
+      memoryDirectives.assertCurrentSchema()
     }
   }
 }

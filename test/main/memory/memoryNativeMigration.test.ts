@@ -2,7 +2,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { expect, it, vi } from 'vitest'
-import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
+import { Database, dropV48DerivedArtifacts, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
 
 const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
 
@@ -53,6 +53,7 @@ function dropV42CanonicalArtifacts(db: InstanceType<typeof DatabaseCtor>): void 
     DROP INDEX IF EXISTS idx_agent_memory_active_recall;
     DROP INDEX IF EXISTS idx_agent_memory_management_page_v3;
     DROP INDEX IF EXISTS idx_agent_memory_recall_importance_v5;
+    DROP INDEX IF EXISTS idx_agent_memory_recall_scope_v6;
     DROP INDEX IF EXISTS idx_agent_memory_archive_eligible_v3;
     DROP INDEX IF EXISTS idx_agent_memory_cognitive_top_v3;
     DROP INDEX IF EXISTS idx_agent_memory_conflict_fairness_v3;
@@ -61,6 +62,65 @@ function dropV42CanonicalArtifacts(db: InstanceType<typeof DatabaseCtor>): void 
     DROP INDEX IF EXISTS idx_agent_memory_embedding_pending_global_v2;
     DROP INDEX IF EXISTS idx_agent_memory_conflict_target_v2;
     DROP INDEX IF EXISTS idx_agent_memory_conflict_link_anomaly_v2;
+  `)
+}
+
+function replaceAgentMemoryWithV45Schema(db: InstanceType<typeof DatabaseCtor>): void {
+  db.exec(`
+    DROP TABLE IF EXISTS agent_memory_fts;
+    DROP TABLE IF EXISTS agent_memory_fts_meta;
+    DROP TABLE IF EXISTS agent_memory_dirty;
+    DROP TABLE IF EXISTS agent_memory_derivation;
+    DROP TABLE IF EXISTS agent_memory_tombstone;
+    DROP TABLE IF EXISTS agent_memory_directive;
+    DROP TABLE agent_memory;
+
+    CREATE TABLE agent_memory (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      user_scope TEXT,
+      kind TEXT NOT NULL,
+      category TEXT,
+      content TEXT NOT NULL,
+      importance REAL NOT NULL DEFAULT 0.5,
+      status TEXT NOT NULL DEFAULT 'pending_embedding',
+      embedding_id TEXT,
+      embedding_dim INTEGER,
+      embedding_model TEXT,
+      source_session TEXT,
+      provenance_key TEXT,
+      is_anchor INTEGER NOT NULL DEFAULT 0,
+      superseded_by TEXT,
+      created_at INTEGER NOT NULL,
+      last_accessed INTEGER,
+      access_count INTEGER NOT NULL DEFAULT 0,
+      decay_score REAL,
+      source_entry_ids TEXT,
+      confidence REAL,
+      last_consolidated_at INTEGER,
+      conflict_state TEXT,
+      conflict_with TEXT,
+      persona_state TEXT,
+      decision_revision INTEGER NOT NULL DEFAULT 1,
+      lifecycle_state TEXT NOT NULL DEFAULT 'active'
+        CHECK (lifecycle_state IN ('active', 'archived', 'conflicted')),
+      embedding_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (embedding_state IN ('pending', 'ready', 'error', 'fts_only', 'not_applicable'))
+    );
+
+    INSERT INTO agent_memory (
+      id, agent_id, user_scope, kind, category, content, importance, status,
+      provenance_key, created_at, confidence, decision_revision,
+      lifecycle_state, embedding_state
+    )
+    VALUES (
+      'v45-claim', 'a', 'legacy-user-tag', 'semantic', 'project_fact',
+      'A claim created by the v45 runtime.', 0.8, 'pending_embedding',
+      'v45-provenance', 1000, 0.7, 3, 'active', 'pending'
+    );
+
+    DELETE FROM schema_versions;
+    INSERT INTO schema_versions (version, applied_at) VALUES (45, 1);
   `)
 }
 
@@ -80,7 +140,85 @@ function seedReadyEmbedding(
 }
 
 describeIfNative('Memory native SQLite migration', () => {
-  it('creates the fresh v42 schema with canonical memory state and reopens idempotently', () => {
+  it('migrates a genuine v45 memory table through every evolution schema exactly once', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      replaceAgentMemoryWithV45Schema(legacy)
+      const legacyColumns = legacy.prepare('PRAGMA table_info(agent_memory)').all() as Array<{
+        name: string
+      }>
+      expect(legacyColumns.some((column) => column.name === 'temporal_kind')).toBe(false)
+      expect(legacyColumns.some((column) => column.name === 'scope_type')).toBe(false)
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const db = migrated.getDatabase()
+      expect(db.prepare('SELECT MAX(version) AS version FROM schema_versions').get()).toEqual({
+        version: migrated.getLatestSchemaVersion()
+      })
+      expect(
+        db.prepare('SELECT version FROM schema_versions WHERE version >= 46 ORDER BY version').all()
+      ).toEqual([46, 47, 48, 49, 50, 51, 52].map((version) => ({ version })))
+      expect(
+        db
+          .prepare(
+            `SELECT user_scope, temporal_kind, valid_from, valid_until,
+                    temporal_confidence, temporal_precision, temporal_timezone,
+                    scope_type, scope_id, decision_revision
+             FROM agent_memory WHERE id = 'v45-claim'`
+          )
+          .get()
+      ).toEqual({
+        user_scope: 'legacy-user-tag',
+        temporal_kind: 'atemporal',
+        valid_from: null,
+        valid_until: null,
+        temporal_confidence: null,
+        temporal_precision: null,
+        temporal_timezone: null,
+        scope_type: 'agent',
+        scope_id: null,
+        decision_revision: 3
+      })
+      expect(memoryTable(migrated).listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'v45-claim',
+          generation: 1,
+          claimRevision: 3,
+          enqueuedAt: 1_000
+        }
+      ])
+      for (const tableName of [
+        'agent_memory_tombstone',
+        'agent_memory_clear_job',
+        'agent_memory_derivation',
+        'agent_memory_dirty',
+        'agent_memory_directive'
+      ]) {
+        expect(
+          db
+            .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .get(tableName)
+        ).toEqual({ present: 1 })
+      }
+      migrated.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(memoryTable(reopened).listDirtySeeds('a', 10)).toHaveLength(1)
+      expect(
+        reopened
+          .getDatabase()
+          .prepare('SELECT COUNT(*) AS count FROM agent_memory WHERE id = ?')
+          .get('v45-claim')
+      ).toEqual({ count: 1 })
+      reopened.close()
+    })
+  })
+
+  it('creates the fresh temporal schema with canonical memory state and reopens idempotently', () => {
     withTemporaryDatabase((databasePath) => {
       const first = new MainDatabaseCtor(databasePath)
       const db = first.getDatabase()
@@ -88,6 +226,10 @@ describeIfNative('Memory native SQLite migration', () => {
       expect(columns.some((column) => column.name === 'decision_revision')).toBe(true)
       expect(columns.some((column) => column.name === 'lifecycle_state')).toBe(true)
       expect(columns.some((column) => column.name === 'embedding_state')).toBe(true)
+      expect(columns.some((column) => column.name === 'temporal_kind')).toBe(true)
+      expect(columns.some((column) => column.name === 'temporal_confidence')).toBe(true)
+      expect(columns.some((column) => column.name === 'scope_type')).toBe(true)
+      expect(columns.some((column) => column.name === 'scope_id')).toBe(true)
       expect(() =>
         db.exec(
           "INSERT INTO agent_memory (id, agent_id, kind, content, lifecycle_state, created_at) VALUES ('bad-life', 'a', 'semantic', 'bad', 'invalid', 1)"
@@ -98,13 +240,404 @@ describeIfNative('Memory native SQLite migration', () => {
           "INSERT INTO agent_memory (id, agent_id, kind, content, embedding_state, created_at) VALUES ('bad-embedding', 'a', 'semantic', 'bad', 'invalid', 1)"
         )
       ).toThrow(/CHECK constraint failed/)
+      expect(() =>
+        db.exec(
+          "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, valid_from, valid_until, created_at) VALUES ('bad-time', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', 'UTC', 20, 10, 1)"
+        )
+      ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
+      expect(() =>
+        db.exec(
+          "INSERT INTO agent_memory (id, agent_id, kind, content, temporal_kind, temporal_confidence, temporal_precision, temporal_timezone, created_at) VALUES ('bad-zone', 'a', 'semantic', 'bad', 'state', 0.9, 'exact', ' UTC ', 1)"
+        )
+      ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
+      expect(() =>
+        db.exec(
+          "INSERT INTO agent_memory (id, agent_id, kind, content, scope_type, scope_id, created_at) VALUES ('bad-scope', 'a', 'semantic', 'bad', 'agent', 'unexpected', 1)"
+        )
+      ).toThrow(/CHECK constraint failed|invalid agent_memory scope/)
       expect(
         db.prepare("SELECT 1 AS present FROM sqlite_master WHERE name = 'agent_memory_fts'").get()
       ).toEqual({ present: 1 })
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_memory_recall_importance_v5'"
+          )
+          .get()
+      ).toBeUndefined()
       first.close()
 
       const reopened = new MainDatabaseCtor(databasePath)
-      expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(42)
+      expect(reopened.getLatestSchemaVersion()).toBeGreaterThanOrEqual(46)
+      reopened.close()
+    })
+  })
+
+  it('resumes an interrupted Agent clear after reopening the database', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      const table = memoryTable(seeded)
+      for (let index = 0; index < 300; index += 1) {
+        table.insert({
+          id: `clear-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `clear claim ${index}`,
+          provenanceKey: `clear-source-${index}`
+        })
+      }
+      table.beginMemoryClear('a', 2_000)
+      expect(table.processMemoryClearBatch('a')).toMatchObject({
+        removedInBatch: 256,
+        job: { phase: 'claims', removed: 256 }
+      })
+      seeded.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      const resumedTable = memoryTable(reopened)
+      expect(resumedTable.listPendingMemoryClearJobs()).toEqual([
+        expect.objectContaining({ agentId: 'a', phase: 'claims', removed: 256 })
+      ])
+      const finalBatch = resumedTable.processMemoryClearBatch('a')
+      expect(finalBatch).toMatchObject({
+        removedInBatch: 44,
+        job: { phase: 'vectors', removed: 300 }
+      })
+      expect(resumedTable.countByAgent('a')).toBe(0)
+      expect(resumedTable.completeMemoryClear('a')).toBe(true)
+      expect(resumedTable.listPendingMemoryClearJobs()).toEqual([])
+      expect(
+        reopened
+          .getDatabase()
+          .prepare("SELECT COUNT(*) AS count FROM agent_memory_tombstone WHERE agent_id = 'a'")
+          .get()
+      ).toEqual({ count: 600 })
+      expect(() =>
+        resumedTable.insert({
+          id: 'after-clear',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'new independent claim'
+        })
+      ).not.toThrow()
+      reopened.close()
+    })
+  })
+
+  it('repairs invalid upgraded temporal metadata before startup validation', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      memoryTable(seeded).insert({
+        id: 'corrupted-temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Corrupted temporal metadata survives as a claim.',
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 10,
+          validUntil: 20,
+          temporalConfidence: 0.9,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+      memoryTable(seeded).insertInternalMemory({
+        id: 'corrupted-persona-temporal',
+        agentId: 'a',
+        kind: 'persona',
+        content: 'Active self model remains internal.',
+        personaState: 'active'
+      })
+      memoryTable(seeded).insertInternalMemory({
+        id: 'corrupted-working-temporal',
+        agentId: 'a',
+        kind: 'working',
+        content: 'Working projection remains internal.'
+      })
+      seeded.close()
+
+      const corrupted = new DatabaseCtor(databasePath)
+      corrupted.exec(`
+        DROP TRIGGER IF EXISTS agent_memory_temporal_bu_v1;
+        PRAGMA ignore_check_constraints = ON;
+        UPDATE agent_memory
+        SET temporal_kind = 'state',
+            valid_from = 20,
+            valid_until = 10,
+            temporal_confidence = 0.9,
+            temporal_precision = 'exact',
+            temporal_timezone = 'UTC'
+        WHERE id IN (
+          'corrupted-temporal',
+          'corrupted-persona-temporal',
+          'corrupted-working-temporal'
+        );
+        PRAGMA ignore_check_constraints = OFF;
+      `)
+      corrupted.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(
+        reopened
+          .getDatabase()
+          .prepare(
+            `SELECT content, temporal_kind, valid_from, valid_until, temporal_confidence,
+                    temporal_precision, temporal_timezone, lifecycle_state, status
+             FROM agent_memory WHERE id = 'corrupted-temporal'`
+          )
+          .get()
+      ).toEqual({
+        content: 'Corrupted temporal metadata survives as a claim.',
+        temporal_kind: 'atemporal',
+        valid_from: null,
+        valid_until: null,
+        temporal_confidence: null,
+        temporal_precision: null,
+        temporal_timezone: null,
+        lifecycle_state: 'archived',
+        status: 'archived'
+      })
+      expect(memoryTable(reopened).search('a', 'Corrupted temporal')).toEqual([])
+      expect(
+        reopened
+          .getDatabase()
+          .prepare(
+            `SELECT id, temporal_kind, valid_from, valid_until, temporal_confidence,
+                    temporal_precision, temporal_timezone, lifecycle_state, status
+             FROM agent_memory
+             WHERE id IN ('corrupted-persona-temporal', 'corrupted-working-temporal')
+             ORDER BY id`
+          )
+          .all()
+      ).toEqual([
+        {
+          id: 'corrupted-persona-temporal',
+          temporal_kind: 'atemporal',
+          valid_from: null,
+          valid_until: null,
+          temporal_confidence: null,
+          temporal_precision: null,
+          temporal_timezone: null,
+          lifecycle_state: 'active',
+          status: 'fts_only'
+        },
+        {
+          id: 'corrupted-working-temporal',
+          temporal_kind: 'atemporal',
+          valid_from: null,
+          valid_until: null,
+          temporal_confidence: null,
+          temporal_precision: null,
+          temporal_timezone: null,
+          lifecycle_state: 'active',
+          status: 'fts_only'
+        }
+      ])
+      expect(() =>
+        reopened
+          .getDatabase()
+          .prepare(
+            "UPDATE agent_memory SET temporal_kind = 'state' WHERE id = 'corrupted-temporal'"
+          )
+          .run()
+      ).toThrow(/invalid agent_memory temporal metadata/)
+      reopened.close()
+    })
+  })
+
+  it('migrates v47 claims into durable lineage and dirty work exactly once', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      memoryTable(seeded).insert({
+        id: 'legacy-claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'legacy claim',
+        createdAt: 1_000
+      })
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      dropV48DerivedArtifacts(legacy)
+      legacy.prepare('UPDATE agent_memory SET created_at = ? WHERE id = ?').run(-1, 'legacy-claim')
+      legacy.exec('DELETE FROM schema_versions')
+      legacy.exec('INSERT INTO schema_versions (version, applied_at) VALUES (47, 1)')
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const table = memoryTable(migrated)
+      expect(
+        migrated
+          .getDatabase()
+          .prepare('SELECT version FROM schema_versions WHERE version = 48')
+          .get()
+      ).toEqual({ version: 48 })
+      expect(
+        migrated
+          .getDatabase()
+          .prepare('SELECT version FROM schema_versions WHERE version = 49')
+          .get()
+      ).toEqual({ version: 49 })
+      expect(table.listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'legacy-claim',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 0
+        }
+      ])
+      expect(
+        table.insertDerivations([
+          {
+            agentId: 'a',
+            parentMemoryId: 'source-claim',
+            childMemoryId: 'legacy-claim',
+            derivationKind: 'merge',
+            createdAt: 2_000
+          }
+        ])
+      ).toBe(1)
+      migrated.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(memoryTable(reopened).listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'legacy-claim',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 0
+        }
+      ])
+      expect(memoryTable(reopened).listDerivationsByParent('a', 'source-claim')).toHaveLength(1)
+      reopened.close()
+    })
+  })
+
+  it('migrates v48 dirty work to include reflection claims', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      memoryTable(seeded).insert({
+        id: 'legacy-reflection',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'legacy reflection',
+        createdAt: 1_000
+      })
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      legacy.exec(`
+        DELETE FROM agent_memory_dirty WHERE memory_id = 'legacy-reflection';
+        DROP TRIGGER agent_memory_dirty_ai;
+        DROP TRIGGER agent_memory_dirty_au;
+        DROP TRIGGER agent_memory_dirty_ad;
+        CREATE TRIGGER agent_memory_dirty_ai
+        AFTER INSERT ON agent_memory
+        WHEN NEW.kind IN ('episodic', 'semantic')
+        BEGIN
+          SELECT 1;
+        END;
+        DELETE FROM schema_versions;
+        INSERT INTO schema_versions (version, applied_at) VALUES (48, 1);
+      `)
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const table = memoryTable(migrated)
+      expect(table.listDirtySeeds('a', 10)).toEqual([
+        {
+          memoryId: 'legacy-reflection',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 1_000
+        }
+      ])
+      table.insert({
+        id: 'new-reflection',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'new reflection',
+        createdAt: 2_000
+      })
+      expect(table.listDirtySeeds('a', 10).map((seed) => seed.memoryId)).toEqual([
+        'legacy-reflection',
+        'new-reflection'
+      ])
+      expect(
+        (
+          migrated
+            .getDatabase()
+            .prepare(
+              "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'agent_memory_dirty_ai'"
+            )
+            .get() as { sql: string }
+        ).sql
+      ).toContain("NEW.kind IN ('episodic', 'semantic', 'reflection')")
+      migrated.close()
+    })
+  })
+
+  it('migrates v49 databases to the isolated directive trust store', () => {
+    withTemporaryDatabase((databasePath) => {
+      const seeded = new MainDatabaseCtor(databasePath)
+      seeded.close()
+
+      const legacy = new DatabaseCtor(databasePath)
+      legacy.exec(`
+        DROP TABLE agent_memory_directive;
+        DELETE FROM schema_versions;
+        INSERT INTO schema_versions (version, applied_at) VALUES (49, 1);
+      `)
+      legacy.close()
+
+      const migrated = new MainDatabaseCtor(databasePath)
+      const db = migrated.getDatabase()
+      expect(db.prepare('SELECT version FROM schema_versions WHERE version = 50').get()).toEqual({
+        version: 50
+      })
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_directive'"
+          )
+          .get()
+      ).toEqual({ present: 1 })
+      expect(() =>
+        db.exec(`
+          INSERT INTO agent_memory_directive (
+            agent_id, id, kind, status, source, content, normalized_topic,
+            identity_hash, created_at, updated_at
+          )
+          VALUES (
+            'a', 'approved-derived', 'instruction', 'active', 'derived_suggestion',
+            'Approved suggestion', NULL,
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 1
+          )
+        `)
+      ).not.toThrow()
+      expect(() =>
+        db.exec(`
+          INSERT INTO agent_memory_directive (
+            agent_id, id, kind, status, source, content, normalized_topic,
+            identity_hash, created_at, updated_at
+          )
+          VALUES (
+            'a', 'bad-kind', 'unknown', 'active', 'manual',
+            'Invalid kind', NULL,
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 1, 1
+          )
+        `)
+      ).toThrow(/CHECK constraint failed/)
+      migrated.close()
+
+      const reopened = new MainDatabaseCtor(databasePath)
+      expect(reopened.getLatestSchemaVersion()).toBe(52)
+      expect(
+        reopened
+          .getDatabase()
+          .prepare('SELECT id FROM agent_memory_directive WHERE agent_id = ?')
+          .all('a')
+      ).toEqual([{ id: 'approved-derived' }])
       reopened.close()
     })
   })
@@ -332,6 +865,94 @@ describeIfNative('Memory native SQLite migration', () => {
     }
   })
 
+  it('does not resurrect target-forgotten claims during database import', async () => {
+    const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-tombstone-import-'))
+    const sourcePath = join(directory, 'source.db')
+    const targetPath = join(directory, 'target.db')
+    try {
+      const source = new MainDatabaseCtor(sourcePath)
+      memoryTable(source).insert({
+        id: 'forgotten-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron uses Rust.',
+        provenanceKey: 'session:saffron'
+      })
+      memoryTable(source).insert({
+        id: 'allowed-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron uses Rust 2024 edition.',
+        provenanceKey: 'session:saffron-2024'
+      })
+      const sourceForgotten = memoryTable(source).insert({
+        id: 'source-forgotten-original',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron stores secrets in plaintext.',
+        provenanceKey: 'session:saffron-secrets'
+      })
+      memoryTable(source).tombstoneAndDelete({
+        agentId: 'a',
+        id: sourceForgotten.id,
+        expectedRevision: sourceForgotten.decision_revision,
+        createdAt: 900
+      })
+      memoryTable(source).insert({
+        id: 'source-forgotten-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron stores secrets in plaintext.',
+        provenanceKey: 'session:saffron-secrets'
+      })
+      source.close()
+
+      const target = new MainDatabaseCtor(targetPath)
+      const forgotten = memoryTable(target).insert({
+        id: 'forgotten-original',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron uses Rust.',
+        provenanceKey: 'session:saffron'
+      })
+      expect(
+        memoryTable(target).tombstoneAndDelete({
+          agentId: 'a',
+          id: forgotten.id,
+          expectedRevision: forgotten.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: forgotten.id })
+      target.close()
+
+      const importer = new DataImporterCtor(sourcePath, targetPath)
+      const summary = await importer.importData()
+      importer.close()
+
+      const reopened = new MainDatabaseCtor(targetPath)
+      expect(memoryTable(reopened).getById('forgotten-replay')).toBeUndefined()
+      expect(memoryTable(reopened).getById('source-forgotten-replay')).toBeUndefined()
+      expect(memoryTable(reopened).getById('allowed-replay')).toMatchObject({
+        content: 'Project Saffron uses Rust 2024 edition.'
+      })
+      expect(summary.skippedRowCounts.agent_memory).toBe(2)
+      const tombstones = reopened
+        .getDatabase()
+        .prepare(
+          `SELECT identity_kind, identity_hash
+           FROM agent_memory_tombstone
+           WHERE agent_id = 'a'`
+        )
+        .all() as Array<{ identity_kind: string; identity_hash: string }>
+      expect(tombstones).toHaveLength(4)
+      expect(JSON.stringify(tombstones)).not.toContain('Project Saffron')
+      expect(JSON.stringify(tombstones)).not.toContain('session:saffron')
+      reopened.close()
+    } finally {
+      actualFs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('promotes clean v41 FTS metadata in place and rebuilds partial or dirty variants', () => {
     const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-fts-upgrade-'))
     try {
@@ -352,6 +973,7 @@ describeIfNative('Memory native SQLite migration', () => {
         seeded.close()
 
         const legacy = new DatabaseCtor(databasePath)
+        dropV48DerivedArtifacts(legacy)
         dropV42CanonicalArtifacts(legacy)
         legacy.exec('ALTER TABLE agent_memory DROP COLUMN embedding_state')
         if (variant !== 'partial') {
@@ -574,6 +1196,63 @@ describeIfNative('Memory native SQLite migration', () => {
     }
   })
 
+  it('skips malformed temporal and scope rows without rolling back valid memory imports', async () => {
+    const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-invariant-import-'))
+    const sourcePath = join(directory, 'source.db')
+    const targetPath = join(directory, 'target.db')
+    try {
+      const source = new MainDatabaseCtor(sourcePath)
+      for (const id of ['valid', 'bad-temporal', 'bad-scope']) {
+        memoryTable(source).insert({
+          id,
+          agentId: 'a',
+          kind: 'semantic',
+          content: id,
+          temporal: {
+            temporalKind: 'state',
+            validFrom: 10,
+            validUntil: 20,
+            temporalConfidence: 0.9,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          }
+        })
+      }
+      source.close()
+
+      const malformed = new DatabaseCtor(sourcePath)
+      malformed.exec(`
+        DROP TRIGGER IF EXISTS agent_memory_temporal_bu_v1;
+        DROP TRIGGER IF EXISTS agent_memory_scope_bu_v1;
+        PRAGMA ignore_check_constraints = ON;
+        UPDATE agent_memory
+        SET valid_from = 20, valid_until = 10
+        WHERE id = 'bad-temporal';
+        UPDATE agent_memory
+        SET scope_type = 'agent', scope_id = 'unexpected'
+        WHERE id = 'bad-scope';
+        PRAGMA ignore_check_constraints = OFF;
+      `)
+      malformed.close()
+
+      const target = new MainDatabaseCtor(targetPath)
+      target.close()
+      const importer = new DataImporterCtor(sourcePath, targetPath)
+      const summary = await importer.importData()
+      importer.close()
+
+      expect(summary.tableCounts.agent_memory).toBe(1)
+      expect(summary.skippedRowCounts.agent_memory).toBe(2)
+      const imported = new DatabaseCtor(targetPath)
+      expect(imported.prepare('SELECT id FROM agent_memory ORDER BY id').all()).toEqual([
+        { id: 'valid' }
+      ])
+      imported.close()
+    } finally {
+      actualFs.rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a canonical import target without the required legacy status shadow', async () => {
     const directory = actualFs.mkdtempSync(join(tmpdir(), 'deepchat-memory-import-schema-'))
     const sourcePath = join(directory, 'source.db')
@@ -644,6 +1323,7 @@ describeIfNative('Memory native SQLite migration', () => {
         seeded.close()
 
         const legacy = new DatabaseCtor(databasePath)
+        dropV48DerivedArtifacts(legacy)
         dropV42CanonicalArtifacts(legacy)
         legacy.exec('DROP INDEX IF EXISTS idx_agent_memory_active_recall')
         legacy.exec('DROP INDEX IF EXISTS idx_agent_memory_recall_importance_v5')

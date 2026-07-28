@@ -18,8 +18,10 @@ import {
   type ConversationExportFormat
 } from './formats/conversationExporter'
 import {
+  isPdfAttachment,
   normalizeAttachmentRepresentationPreference,
-  normalizeAttachmentResolvedRepresentation
+  normalizeAttachmentResolvedRepresentation,
+  normalizePdfEmbeddedTextCoverage
 } from '@shared/utils/attachmentRepresentation'
 
 export class AgentSessionExportService {
@@ -139,30 +141,44 @@ export class AgentSessionExportService {
       if (!parsed || typeof parsed !== 'object') return fallback
       const record = parsed as Record<string, unknown>
       const files = Array.isArray(record.files)
-        ? (record.files as Array<Record<string, unknown>>).map((file) => ({
-            name: typeof file.name === 'string' ? file.name : '',
-            content: '',
-            mimeType:
+        ? (record.files as Array<Record<string, unknown>>).map((file) => {
+            const name = typeof file.name === 'string' ? file.name : ''
+            const path = typeof file.path === 'string' ? file.path : ''
+            const type = typeof file.type === 'string' ? file.type : undefined
+            const mimeType =
               typeof file.mimeType === 'string'
                 ? file.mimeType
-                : typeof file.type === 'string'
-                  ? file.type
-                  : 'application/octet-stream',
-            metadata: {
-              fileName: typeof file.name === 'string' ? file.name : '',
-              fileSize: typeof file.size === 'number' ? file.size : 0,
-              fileCreated: new Date(),
-              fileModified: new Date()
-            },
-            token: 0,
-            path: typeof file.path === 'string' ? file.path : '',
-            requestedRepresentation: normalizeAttachmentRepresentationPreference(
-              file.requestedRepresentation
-            ),
-            resolvedRepresentation: normalizeAttachmentResolvedRepresentation(
+                : (type ?? 'application/octet-stream')
+            const resolvedRepresentation = normalizeAttachmentResolvedRepresentation(
               file.resolvedRepresentation
             )
-          }))
+            const pdfAttachment = isPdfAttachment({ name, path, type, mimeType })
+            return {
+              name,
+              content:
+                resolvedRepresentation?.kind === 'embedded_text' &&
+                pdfAttachment &&
+                typeof file.content === 'string'
+                  ? file.content
+                  : '',
+              mimeType,
+              metadata: {
+                fileName: name,
+                fileSize: typeof file.size === 'number' ? file.size : 0,
+                fileCreated: new Date(),
+                fileModified: new Date()
+              },
+              token: 0,
+              path,
+              requestedRepresentation: normalizeAttachmentRepresentationPreference(
+                file.requestedRepresentation
+              ),
+              pdfTextCoverage: pdfAttachment
+                ? normalizePdfEmbeddedTextCoverage(file.pdfTextCoverage)
+                : undefined,
+              resolvedRepresentation
+            }
+          })
         : []
       const links = Array.isArray(record.links)
         ? (record.links as unknown[]).filter((link): link is string => typeof link === 'string')

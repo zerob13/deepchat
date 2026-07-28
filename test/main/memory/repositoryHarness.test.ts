@@ -8,11 +8,11 @@ describe('memory repository fakes', () => {
     const repo = createFakeRepository()
     const harness = createMemoryServiceHarness({
       read: createCapabilityFragment(repo, ['getById', 'listByAgent']),
-      mutation: createCapabilityFragment(repo, ['insert'])
+      mutation: createCapabilityFragment(repo, ['insertClaimUnlessTombstoned'])
     })
     const repository = Object.assign({}, harness.compose(['read']), harness.compose(['mutation']))
     for (let index = 0; index < 3; index += 1) {
-      repository.insert({
+      repository.insertClaimUnlessTombstoned({
         id: `m${index}`,
         agentId: 'a',
         kind: 'semantic',
@@ -154,6 +154,41 @@ describe('memory repository fakes', () => {
     expect(repo.listTopAccessed('a', 5).map((row) => row.id)).toEqual(['active'])
   })
 
+  it('matches AgentMemoryTable pending-clear bookkeeping fences', () => {
+    const repo = createFakeRepository()
+    for (const id of ['access', 'decay', 'confidence', 'consolidated']) {
+      repo.insert({
+        id,
+        agentId: 'a',
+        kind: 'semantic',
+        content: `${id} claim`
+      })
+    }
+    repo.insert({
+      id: 'other-agent',
+      agentId: 'b',
+      kind: 'semantic',
+      content: 'other agent claim'
+    })
+    const before = new Map(
+      ['access', 'decay', 'confidence', 'consolidated'].map((id) => [id, { ...repo.getById(id)! }])
+    )
+
+    repo.beginMemoryClear('a', 2_000)
+    repo.recordAccessBatch(['access', 'other-agent'], 3_000)
+    repo.updateDecayScore('decay', 0.25, 3_000)
+    repo.setConfidence('confidence', 0.9)
+    repo.setLastConsolidatedAt('consolidated', 3_000)
+
+    for (const [id, row] of before) {
+      expect(repo.getById(id)).toEqual(row)
+    }
+    expect(repo.getById('other-agent')).toMatchObject({
+      last_accessed: 3_000,
+      access_count: 1
+    })
+  })
+
   it('matches AgentMemoryTable current dimension tie-break for equal timestamps', () => {
     const repo = createFakeRepository()
     repo.insert({
@@ -182,6 +217,230 @@ describe('memory repository fakes', () => {
     })
 
     expect(repo.getCurrentEmbeddingDimension('a', 'p:m')).toBe(4)
+  })
+
+  it('matches AgentMemoryTable exact-forgetting tombstone behavior', () => {
+    const repo = createFakeRepository()
+    const claim = repo.insert({
+      id: 'forgotten',
+      agentId: 'a',
+      kind: 'semantic',
+      content: '  private   fact ',
+      provenanceKey: 'private-source'
+    })
+
+    expect(
+      repo.tombstoneAndDelete({
+        agentId: 'a',
+        id: claim.id,
+        expectedRevision: claim.decision_revision,
+        createdAt: 1_000
+      })
+    ).toMatchObject({ id: claim.id })
+    expect(repo.tombstones.size).toBe(2)
+    expect(JSON.stringify([...repo.tombstones.values()])).not.toContain('private fact')
+    expect(JSON.stringify([...repo.tombstones.values()])).not.toContain('private-source')
+    expect(
+      repo.insertClaimUnlessTombstoned({
+        id: 'replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'private fact',
+        provenanceKey: 'new-source'
+      })
+    ).toBeNull()
+    expect(
+      repo.insertClaimUnlessTombstoned({
+        id: 'other-agent',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'private fact',
+        provenanceKey: 'private-source'
+      })
+    ).toMatchObject({ id: 'other-agent' })
+
+    expect(repo.retireAgentMemoryNamespace('a')).toBe(0)
+    expect(repo.tombstones.size).toBe(0)
+    expect(
+      repo.insertClaimUnlessTombstoned({
+        id: 'after-retirement',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'private fact',
+        provenanceKey: 'new-source'
+      })
+    ).toMatchObject({ id: 'after-retirement' })
+  })
+
+  it('matches AgentMemoryTable explicit relearn behavior', () => {
+    const repo = createFakeRepository()
+    const claim = repo.insert({
+      id: 'forgotten',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'private fact',
+      provenanceKey: 'private-source'
+    })
+    repo.tombstoneAndDelete({
+      agentId: 'a',
+      id: claim.id,
+      expectedRevision: claim.decision_revision,
+      createdAt: 1_000
+    })
+
+    expect(
+      repo.insertExplicitlyReauthorizedClaim({
+        id: 'unrelated',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'unrelated fact',
+        provenanceKey: 'unrelated-source'
+      })
+    ).toBeNull()
+    expect(repo.tombstones.size).toBe(2)
+    expect(
+      repo.insertExplicitlyReauthorizedClaim({
+        id: 'reauthorized',
+        agentId: 'a',
+        kind: 'semantic',
+        content: ' private   fact ',
+        provenanceKey: 'private-source'
+      })
+    ).toMatchObject({ id: 'reauthorized' })
+    expect(repo.tombstones.size).toBe(0)
+  })
+
+  it('restricts runtime raw mutations to internal memory kinds', () => {
+    const repo = createFakeRepository()
+    expect(() =>
+      repo.insertInternalMemory({
+        id: 'invalid-internal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user claim'
+      } as unknown as Parameters<typeof repo.insertInternalMemory>[0])
+    ).toThrow(/unsupported internal memory kind/)
+    const claim = repo.insert({
+      id: 'claim',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'user claim'
+    })
+    const working = repo.insertInternalMemory({
+      id: 'working',
+      agentId: 'a',
+      kind: 'working',
+      content: 'working projection'
+    })
+
+    expect(repo.deleteInternalMemory('a', claim.id)).toBe(false)
+    expect(repo.deleteInternalMemory('other', working.id)).toBe(false)
+    expect(repo.deleteInternalMemory('a', working.id)).toBe(true)
+    expect(repo.getById(claim.id)).toBeDefined()
+  })
+
+  it('matches durable lineage and generation-checked dirty work behavior', () => {
+    const repo = createFakeRepository()
+    const parent = repo.insert({
+      id: 'parent',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'source claim',
+      status: 'embedded',
+      createdAt: 1_000
+    })
+    repo.insert({
+      id: 'child',
+      agentId: 'a',
+      kind: 'reflection',
+      content: 'derived claim',
+      createdAt: 1_100
+    })
+    const edge = {
+      agentId: 'a',
+      parentMemoryId: parent.id,
+      childMemoryId: 'child',
+      derivationKind: 'reflection' as const,
+      createdAt: 1_100
+    }
+
+    expect(
+      repo.insertDerivations([
+        edge,
+        edge,
+        {
+          ...edge,
+          parentMemoryId: 'child'
+        }
+      ])
+    ).toBe(1)
+    expect(repo.listDerivationsByChild('a', 'child')).toHaveLength(1)
+    const staleSeed = repo.listDirtySeeds('a', 10)[0]
+    expect(
+      repo.updateUserMetadataIfRevision({
+        agentId: 'a',
+        id: parent.id,
+        expectedRevision: parent.decision_revision,
+        importance: 0.9,
+        lastAccessedAt: 2_000
+      })
+    ).toBe(true)
+    const currentSeed = repo.listDirtySeeds('a', 10).find((seed) => seed.memoryId === parent.id)!
+    expect(currentSeed.generation).toBe(staleSeed.generation + 1)
+    expect(repo.deferDirtySeeds('a', [staleSeed], 2_500)).toBe(0)
+    expect(repo.deferDirtySeeds('a', [currentSeed], 2_500)).toBe(1)
+    expect(repo.listDirtySeeds('a', 10).find((seed) => seed.memoryId === parent.id)).toEqual({
+      ...currentSeed,
+      enqueuedAt: 2_500
+    })
+    expect(repo.settleDirtySeeds('a', [staleSeed])).toBe(0)
+    expect(repo.settleDirtySeeds('a', [currentSeed])).toBe(1)
+
+    repo.delete(parent.id)
+    expect(repo.listDerivationsByParent('a', parent.id)).toHaveLength(1)
+    expect(repo.countDirtySeeds('a')).toBe(2)
+    expect(repo.retireAgentMemoryNamespace('a')).toBe(1)
+    expect(repo.listDerivationsByChild('a', 'child')).toEqual([])
+    expect(repo.countDirtySeeds('a')).toBe(0)
+  })
+
+  it('rolls back claims, tombstones, lineage, and dirty work together', () => {
+    const repo = createFakeRepository()
+    const claim = repo.insert({
+      id: 'claim',
+      agentId: 'a',
+      kind: 'semantic',
+      content: 'source claim',
+      provenanceKey: 'source',
+      createdAt: 1_000
+    })
+    const initialSeed = repo.listDirtySeeds('a', 10)[0]
+
+    expect(() =>
+      repo.runInTransaction(() => {
+        repo.insertDerivations([
+          {
+            agentId: 'a',
+            parentMemoryId: claim.id,
+            childMemoryId: 'derived-claim',
+            derivationKind: 'manual_edit',
+            createdAt: 2_000
+          }
+        ])
+        repo.tombstoneAndDelete({
+          agentId: 'a',
+          id: claim.id,
+          expectedRevision: claim.decision_revision,
+          createdAt: 2_000
+        })
+        throw new Error('rollback')
+      })
+    ).toThrow('rollback')
+
+    expect(repo.getById(claim.id)).toEqual(claim)
+    expect(repo.tombstones.size).toBe(0)
+    expect(repo.listDerivationsByChild('a', claim.id)).toEqual([])
+    expect(repo.listDirtySeeds('a', 10)).toEqual([initialSeed])
   })
 
   it('matches AgentMemoryAuditTable list limit defaults and caps', () => {

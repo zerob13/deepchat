@@ -3,6 +3,9 @@ import type {
   AgentMemoryEmbeddingState,
   AgentMemoryHealthCategory,
   AgentMemoryLifecycleState,
+  AgentMemoryScopeType,
+  AgentMemoryTemporalKind,
+  AgentMemoryTemporalPrecision,
   LegacyAgentMemoryStatus
 } from '@shared/types/agent-memory'
 import { AGENT_MEMORY_HEALTH_KIND_KEYS } from '@shared/types/agent-memory'
@@ -14,6 +17,21 @@ export type VectorStoreCleanupDisposition = 'completed' | 'pending-restart'
 export interface MemoryClearResult {
   removed: number
   cleanupPendingRestart: boolean
+}
+
+export type MemoryClearPhase = 'claims' | 'vectors'
+
+export interface MemoryClearJob {
+  agentId: string
+  cutoffRowId: number
+  createdAt: number
+  removed: number
+  phase: MemoryClearPhase
+}
+
+export interface MemoryClearBatchResult {
+  job: MemoryClearJob
+  removedInBatch: number
 }
 
 export interface DeletedAgentMemoryCleanupResult {
@@ -63,8 +81,109 @@ export class VectorStoreLeaseUnavailableError extends Error {
 export type AgentMemoryKind = (typeof AGENT_MEMORY_HEALTH_KIND_KEYS)[number]
 export type AgentMemoryStatus = LegacyAgentMemoryStatus
 export type { AgentMemoryEmbeddingState, AgentMemoryLifecycleState }
+export type { AgentMemoryScopeType }
 export type AgentMemoryConflictState = 'challenged'
 export type AgentMemoryPersonaState = 'draft' | 'active' | 'superseded' | 'rejected'
+export type { AgentMemoryTemporalKind, AgentMemoryTemporalPrecision }
+
+export interface MemoryTemporalMetadata {
+  temporalKind: AgentMemoryTemporalKind
+  validFrom: number | null
+  validUntil: number | null
+  temporalConfidence: number | null
+  temporalPrecision: AgentMemoryTemporalPrecision | null
+  temporalTimeZone: string | null
+}
+
+export type MemoryScope =
+  | { type: 'agent' }
+  | { type: Exclude<AgentMemoryScopeType, 'agent'>; id: string }
+
+export interface MemoryScopeContext {
+  userId?: string
+  projectId?: string
+  sessionId?: string
+}
+
+export type MemoryTemporalPolicyMode = 'current' | 'evidence'
+export type MemoryTemporalStatus =
+  | 'atemporal'
+  | 'current'
+  | 'undated'
+  | 'future'
+  | 'expired'
+  | 'historical'
+  | 'future_event'
+  | 'planned'
+  | 'previously_planned'
+  | 'recurring'
+  | 'future_recurrence'
+  | 'ended_recurrence'
+
+export interface MemoryTemporalPolicyResult {
+  eligible: boolean
+  scoreFactor: number
+  status: MemoryTemporalStatus
+  annotation: string | null
+}
+
+export interface MemoryTemporalTrace {
+  status: MemoryTemporalStatus
+  confidence: number | null
+  factor: number
+}
+
+export type MemoryTombstoneIdentityKind = 'provenance' | 'content'
+export type MemoryTombstoneReason = 'selective_delete' | 'agent_clear'
+export type MemoryDerivationKind = 'merge' | 'reflection' | 'supersede' | 'manual_edit'
+
+export interface MemoryTombstoneIdentity {
+  identityKind: MemoryTombstoneIdentityKind
+  identityHash: string
+}
+
+export interface MemoryTombstoneDeleteInput {
+  agentId: string
+  id: string
+  expectedRevision: number
+  createdAt: number
+}
+
+export interface MemoryDerivationInsertInput {
+  agentId: string
+  parentMemoryId: string
+  childMemoryId: string
+  derivationKind: MemoryDerivationKind
+  createdAt: number
+}
+
+export interface AgentMemoryDerivationRow {
+  agent_id: string
+  parent_memory_id: string
+  child_memory_id: string
+  derivation_kind: MemoryDerivationKind
+  created_at: number
+}
+
+export interface MemoryDirtySeed {
+  memoryId: string
+  generation: number
+  claimRevision: number
+  enqueuedAt: number
+}
+
+export type MemoryClaimInsertResult =
+  | { action: 'inserted'; id: string }
+  | { action: 'suppressed'; reason: 'forgotten' | 'collision' }
+
+export type MemoryExplicitRelearnResult =
+  | { action: 'inserted'; id: string }
+  | { action: 'not-forgotten' }
+  | { action: 'suppressed'; reason: 'collision' }
+
+export type MemoryClaimContentUpdateResult =
+  | { action: 'updated' }
+  | { action: 'suppressed'; reason: 'forgotten' | 'concurrent-update' }
 
 export interface MemoryTransitionTarget {
   agentId: string
@@ -89,12 +208,14 @@ export type ResolveChallengerTransition = ResolveChallengerTransitionBase &
         content?: never
         provenanceKey?: never
         category?: never
+        temporal?: never
         at?: never
       }
     | {
         content: string
         provenanceKey: string | null
         category?: string | null
+        temporal?: MemoryTemporalMetadata
         at: number
       }
   )
@@ -114,6 +235,7 @@ export interface UserContentTransition extends MemoryTransitionTarget {
   at: number
   category?: string | null
   importance?: number
+  temporal?: MemoryTemporalMetadata
 }
 
 export interface InternalContentTransition extends MemoryTransitionTarget {
@@ -126,12 +248,15 @@ export interface UserMetadataTransition extends MemoryTransitionTarget {
   category?: string | null
   importance?: number
   lastAccessedAt?: number
+  temporal?: MemoryTemporalMetadata
 }
 
 export interface AgentMemoryRow {
   id: string
   agent_id: string
   user_scope: string | null
+  scope_type: AgentMemoryScopeType
+  scope_id: string | null
   kind: AgentMemoryKind
   category: string | null
   content: string
@@ -152,6 +277,12 @@ export interface AgentMemoryRow {
   decay_score: number | null
   source_entry_ids: string | null
   confidence: number | null
+  temporal_kind: AgentMemoryTemporalKind
+  valid_from: number | null
+  valid_until: number | null
+  temporal_confidence: number | null
+  temporal_precision: AgentMemoryTemporalPrecision | null
+  temporal_timezone: string | null
   last_consolidated_at: number | null
   conflict_state: string | null
   conflict_with: string | null
@@ -204,15 +335,20 @@ export type AgentMemoryInsertInput = {
   content: string
   importance?: number
   status?: AgentMemoryStatus
-  userScope?: string | null
+  scope?: MemoryScope
   sourceSession?: string | null
   provenanceKey?: string | null
   isAnchor?: boolean
   createdAt?: number
   sourceEntryIds?: number[] | null
+  temporal?: MemoryTemporalMetadata
   conflictWith?: string | null
   personaState?: AgentMemoryPersonaState | null
 } & AgentMemoryCanonicalInsertState
+
+export type InternalMemoryInsertInput = AgentMemoryInsertInput & {
+  kind: Extract<AgentMemoryKind, 'persona' | 'working'>
+}
 
 export interface AgentMemoryListOptions {
   kinds?: AgentMemoryKind[]
@@ -275,11 +411,6 @@ export interface MemoryVectorRef {
   embeddingModel: string
 }
 
-export interface ConsolidationScanCursor {
-  createdAt: number
-  id: string
-}
-
 export interface MemoryManagementPageCursor {
   createdAt: number
   id: string
@@ -295,6 +426,7 @@ export interface MemoryCandidate {
   category?: string | null
   content: string
   importance?: number
+  temporal?: MemoryTemporalMetadata
 }
 
 export interface NormalizedMemoryCandidate {
@@ -302,17 +434,18 @@ export interface NormalizedMemoryCandidate {
   category: AgentMemoryCategory | null
   content: string
   importance: number
+  temporal: MemoryTemporalMetadata
 }
 
 export interface WriteMemoriesOptions {
   agentId: string
   sourceSession?: string | null
-  userScope?: string | null
+  scope?: MemoryScope
   sourceEntryIds?: number[] | null
 }
 
 export type MemoryWriteOutcome =
-  | { action: 'created'; id: string }
+  | { action: 'created'; id: string; reauthorized?: boolean }
   | { action: 'updated'; id: string }
   | { action: 'superseded'; id: string; supersededId: string; created?: boolean }
   | { action: 'noop'; reason: string; id?: string }
@@ -336,6 +469,8 @@ export interface MemoryRecallItem {
   similarity?: number
   sourceSession?: string | null
   sourceEntryIds?: number[] | null
+  temporal?: MemoryTemporalMetadata
+  temporalAnnotation?: string
   breakdown?: {
     similarity: number
     recency: number
@@ -343,6 +478,7 @@ export interface MemoryRecallItem {
     confidence: number
     rrf: number
     final: number
+    temporal?: MemoryTemporalTrace
   }
 }
 
@@ -386,6 +522,7 @@ export interface FuseOptions {
   halfLifeMs?: number
   ftsBaseline?: number
   trace?: boolean
+  temporalMode?: MemoryTemporalPolicyMode
 }
 
 export interface MemoryStatus {
@@ -397,6 +534,8 @@ export interface MemoryStatus {
   conflictCount: number
   personaDraftCount: number
   personaVersionCount: number
+  directiveDraftCount: number
+  activeDirectiveCount: number
   reindexing?: boolean
   lastReindex?: MemoryReindexResult
 }
@@ -425,6 +564,7 @@ export interface MemoryReindexResult {
 
 export interface MemoryUpdateContext {
   memoryId?: string
+  directiveId?: string
   sessionId?: string | null
   createdIds?: string[]
 }
@@ -433,6 +573,7 @@ export interface MemoryExtractionInput {
   agentId: string
   spanText: string
   model: MemoryModelRef
+  scope?: MemoryScope
   sourceSession?: string | null
   sourceEntryIds?: number[] | null
 }
@@ -475,8 +616,14 @@ export type ProvenanceHitResult =
 
 export type ContentUpdateResult =
   | { action: 'updated'; id: string }
-  | { action: 'folded'; id: string }
-  | { action: 'superseded'; id: string; supersededId: string; created?: boolean }
+  | { action: 'folded'; id: string; retiredHeadId?: string }
+  | {
+      action: 'superseded'
+      id: string
+      supersededId: string
+      created?: boolean
+      retiredHeadId?: string
+    }
   | { action: 'suppressed'; id: string; reason: string }
 
 export interface ManualEditFieldFlags {

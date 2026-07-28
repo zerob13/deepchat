@@ -2254,6 +2254,137 @@ describe('dispatchDeepchatRoute', () => {
     expect(listByAgent).not.toHaveBeenCalled()
   })
 
+  it('dispatches directive management without exposing persistence identities', async () => {
+    const { runtime, providerSettings } = createRuntime()
+    vi.mocked(providerSettings.getAgentType).mockResolvedValue('deepchat')
+    const row = {
+      agent_id: 'deepchat',
+      id: 'directive-1',
+      kind: 'suppress_topic',
+      status: 'draft',
+      source: 'derived_suggestion',
+      content: 'Do not mention Project Saffron.',
+      normalized_topic: 'project saffron',
+      identity_hash: 'a'.repeat(64),
+      created_at: 1_000,
+      updated_at: 1_000
+    } as const
+    const listDirectives = vi.fn().mockReturnValue([row])
+    const createDirectiveResult = vi.fn().mockReturnValue({
+      action: 'applied',
+      directive: { ...row, status: 'active', source: 'manual' }
+    })
+    const approveDirectiveResult = vi.fn().mockReturnValue({
+      action: 'applied',
+      directive: { ...row, status: 'active' }
+    })
+    const rejectDirective = vi.fn().mockReturnValue({ ...row, status: 'rejected' })
+    const deleteDirective = vi.fn().mockReturnValue(true)
+    ;(runtime as any).memoryService = {
+      listDirectives,
+      createDirectiveResult,
+      approveDirectiveResult,
+      rejectDirective,
+      deleteDirective
+    }
+
+    const context = { webContentsId: 42, windowId: 7 }
+    const listed = await dispatchDeepchatRoute(
+      runtime,
+      'memory.listDirectives',
+      { agentId: 'deepchat', statuses: ['draft'] },
+      context
+    )
+    const created = await dispatchDeepchatRoute(
+      runtime,
+      'memory.createDirective',
+      {
+        agentId: 'deepchat',
+        directive: {
+          kind: 'suppress_topic',
+          content: 'Do not mention Project Saffron.',
+          topic: 'Project Saffron'
+        }
+      },
+      context
+    )
+    const approved = await dispatchDeepchatRoute(
+      runtime,
+      'memory.approveDirective',
+      { agentId: 'deepchat', directiveId: 'directive-1' },
+      context
+    )
+    const rejected = await dispatchDeepchatRoute(
+      runtime,
+      'memory.rejectDirective',
+      { agentId: 'deepchat', directiveId: 'directive-1' },
+      context
+    )
+    const deleted = await dispatchDeepchatRoute(
+      runtime,
+      'memory.deleteDirective',
+      { agentId: 'deepchat', directiveId: 'directive-1' },
+      context
+    )
+
+    expect(listDirectives).toHaveBeenCalledWith('deepchat', {
+      statuses: ['draft'],
+      limit: 200
+    })
+    expect(createDirectiveResult).toHaveBeenCalledWith(
+      'deepchat',
+      {
+        kind: 'suppress_topic',
+        content: 'Do not mention Project Saffron.',
+        topic: 'Project Saffron'
+      },
+      'manual'
+    )
+    expect(approved).toMatchObject({
+      action: 'applied',
+      directive: { status: 'active' }
+    })
+    expect(rejected.directive).toMatchObject({ status: 'rejected' })
+    expect(deleted).toEqual({ ok: true })
+    expect(listed.directives[0]).not.toHaveProperty('identityHash')
+    expect(listed.directives[0]).not.toHaveProperty('identity_hash')
+    expect(created).toMatchObject({
+      action: 'applied',
+      directive: { source: 'manual', topic: 'project saffron' }
+    })
+  })
+
+  it('rejects directive mutations outside DeepChat agents', async () => {
+    const { runtime, providerSettings } = createRuntime()
+    vi.mocked(providerSettings.getAgentType).mockResolvedValue('acp')
+    const createDirectiveResult = vi.fn()
+    const deleteDirective = vi.fn()
+    ;(runtime as any).memoryService = { createDirectiveResult, deleteDirective }
+    const context = { webContentsId: 42, windowId: 7 }
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'memory.createDirective',
+        {
+          agentId: 'acp-agent',
+          directive: { kind: 'instruction', content: 'Be concise.' }
+        },
+        context
+      )
+    ).resolves.toEqual({ action: 'rejected', directive: null, reason: 'unavailable' })
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'memory.deleteDirective',
+        { agentId: 'acp-agent', directiveId: 'directive-1' },
+        context
+      )
+    ).resolves.toEqual({ ok: false })
+    expect(createDirectiveResult).not.toHaveBeenCalled()
+    expect(deleteDirective).not.toHaveBeenCalled()
+  })
+
   it('dispatches memory health with deepchat guard and zero fallback', async () => {
     const { runtime, providerSettings } = createRuntime()
     const health = {
@@ -2553,6 +2684,8 @@ describe('dispatchDeepchatRoute', () => {
         id: 'm2',
         agent_id: 'deepchat',
         user_scope: null,
+        scope_type: 'agent',
+        scope_id: null,
         kind: 'semantic',
         category: 'project_fact',
         content: 'archived memory',
@@ -2581,6 +2714,8 @@ describe('dispatchDeepchatRoute', () => {
         id: 'm1',
         agent_id: 'deepchat',
         user_scope: null,
+        scope_type: 'agent',
+        scope_id: null,
         kind: 'semantic',
         category: null,
         content: 'active memory',
@@ -2627,8 +2762,18 @@ describe('dispatchDeepchatRoute', () => {
     expect(getByIds).toHaveBeenCalledWith('deepchat', ['m2', 'm1'])
     expect(result).toEqual({
       memories: [
-        expect.objectContaining({ id: 'm2', status: 'archived' }),
-        expect.objectContaining({ id: 'm1', status: 'embedded' })
+        expect.objectContaining({
+          id: 'm2',
+          scopeType: 'agent',
+          scopeId: null,
+          status: 'archived'
+        }),
+        expect.objectContaining({
+          id: 'm1',
+          scopeType: 'agent',
+          scopeId: null,
+          status: 'embedded'
+        })
       ]
     })
   })
@@ -2759,6 +2904,8 @@ describe('dispatchDeepchatRoute', () => {
           id: 'm1',
           agent_id: 'deepchat',
           user_scope: null,
+          scope_type: 'agent',
+          scope_id: null,
           kind: 'semantic',
           category: null,
           content: 'paged fact',
@@ -2797,7 +2944,9 @@ describe('dispatchDeepchatRoute', () => {
     )
 
     expect(pageMemories).toHaveBeenCalledWith('deepchat', null, 25)
-    expect(result.items.map((item) => item.id)).toEqual(['m1'])
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: 'm1', scopeType: 'agent', scopeId: null })
+    ])
     expect(decodeMemoryPageCursor(result.nextCursor!)).toEqual({
       v: 1,
       createdAt: 1000,

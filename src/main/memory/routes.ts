@@ -5,10 +5,13 @@ import {
   decodeMemoryPageCursor,
   encodeMemoryPageCursor,
   memoryAddRoute,
+  memoryApproveDirectiveRoute,
   memoryApprovePersonaDraftRoute,
   memoryArchiveRoute,
   memoryClearRoute,
+  memoryCreateDirectiveRoute,
   memoryDeleteRoute,
+  memoryDeleteDirectiveRoute,
   memoryGetArchiveCandidateLifecyclePreviewRoute,
   memoryGetByIdsRoute,
   memoryGetHealthRoute,
@@ -17,11 +20,13 @@ import {
   memoryGetStatusRoute,
   memoryListAuditEventsRoute,
   memoryListConflictsRoute,
+  memoryListDirectivesRoute,
   memoryListPersonaDraftsRoute,
   memoryListPersonaVersionsRoute,
   memoryListRoute,
   memoryListViewManifestsRoute,
   memoryPageRoute,
+  memoryRejectDirectiveRoute,
   memoryRejectPersonaDraftRoute,
   memoryReindexRoute,
   memoryResolveConflictRoute,
@@ -46,12 +51,22 @@ import type {
   MemoryConflictResolution,
   MemoryManagementPage,
   MemorySearchHit,
+  MemoryScope,
+  MemoryScopeContext,
   MemoryStatus,
   MemoryWriteOutcome
 } from './types'
+import type {
+  AgentMemoryDirectiveRow,
+  ExplicitMemoryDirectiveSource,
+  MemoryDirectiveCommandResult,
+  MemoryDirectiveInput,
+  MemoryDirectiveListOptions
+} from './domain/directives'
 import type { CanonicalAgentMemoryRow as AgentMemoryRow, MemoryClearResult } from './domain/types'
 import { projectLegacyStatus } from './domain/stateModel'
 import type { AgentMemoryAuditRow, MemoryAuditListOptions } from './domain/audit'
+import { temporalMetadataFromRow } from './core/temporal'
 
 const MEMORY_PERSONA_STATES = ['draft', 'active', 'superseded', 'rejected'] as const
 type MemoryPersonaState = (typeof MEMORY_PERSONA_STATES)[number]
@@ -85,9 +100,12 @@ function normalizeMemoryPersonaState(value: unknown): MemoryPersonaState | null 
 }
 
 export function toMemoryItemDto(row: AgentMemoryRow) {
+  const temporal = temporalMetadataFromRow(row)
   return {
     id: row.id,
     agentId: row.agent_id,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id,
     kind: row.kind,
     category: isAgentMemoryCategory(row.category) ? row.category : null,
     content: row.content,
@@ -98,6 +116,12 @@ export function toMemoryItemDto(row: AgentMemoryRow) {
     supersededBy: row.superseded_by,
     createdAt: row.created_at,
     confidence: row.confidence,
+    temporalKind: temporal.temporalKind,
+    validFrom: temporal.validFrom,
+    validUntil: temporal.validUntil,
+    temporalConfidence: temporal.temporalConfidence,
+    temporalPrecision: temporal.temporalPrecision,
+    temporalTimeZone: temporal.temporalTimeZone,
     conflictState: row.conflict_state,
     conflictWith: row.conflict_with,
     personaState: normalizeMemoryPersonaState(row.persona_state),
@@ -105,11 +129,35 @@ export function toMemoryItemDto(row: AgentMemoryRow) {
   }
 }
 
+export function toMemoryDirectiveDto(row: AgentMemoryDirectiveRow) {
+  return {
+    id: row.id,
+    agentId: row.agent_id,
+    kind: row.kind,
+    status: row.status,
+    source: row.source,
+    content: row.content,
+    topic: row.normalized_topic,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function toMemoryDirectiveCommandDto(result: MemoryDirectiveCommandResult) {
+  return result.action === 'applied'
+    ? { action: 'applied' as const, directive: toMemoryDirectiveDto(result.directive) }
+    : result
+}
+
 function toMemoryAddResultDto(outcome: MemoryWriteOutcome) {
   switch (outcome.action) {
     case 'created':
     case 'updated':
-      return { action: outcome.action, memoryId: outcome.id }
+      return {
+        action: outcome.action,
+        memoryId: outcome.id,
+        ...(outcome.action === 'created' && outcome.reauthorized ? { reauthorized: true } : {})
+      }
     case 'superseded':
       return { action: outcome.action, memoryId: outcome.id, supersededId: outcome.supersededId }
     case 'challenged':
@@ -195,7 +243,7 @@ interface MemoryRouteService {
   searchMemories(
     agentId: string,
     query: string,
-    options: { limit?: number }
+    options: { limit?: number; scopeContext?: MemoryScopeContext }
   ): Promise<MemorySearchHit[]>
   addUserMemory(
     agentId: string,
@@ -204,6 +252,7 @@ interface MemoryRouteService {
       kind?: 'episodic' | 'semantic'
       category?: string | null
       importance?: number
+      scope?: MemoryScope
     },
     sessionId?: string | null
   ): Promise<MemoryWriteOutcome>
@@ -238,6 +287,15 @@ interface MemoryRouteService {
   approvePersonaDraft(agentId: string, draftId: string): Promise<boolean>
   rejectPersonaDraft(agentId: string, draftId: string): Promise<boolean>
   setPersonaAnchor(agentId: string, versionId: string, anchored: boolean): Promise<boolean>
+  listDirectives(agentId: string, options?: MemoryDirectiveListOptions): AgentMemoryDirectiveRow[]
+  createDirectiveResult(
+    agentId: string,
+    input: MemoryDirectiveInput,
+    source?: ExplicitMemoryDirectiveSource
+  ): MemoryDirectiveCommandResult
+  approveDirectiveResult(agentId: string, directiveId: string): MemoryDirectiveCommandResult
+  rejectDirective(agentId: string, directiveId: string): AgentMemoryDirectiveRow | null
+  deleteDirective(agentId: string, directiveId: string): boolean
 }
 
 export function createMemoryRoutes(deps: {
@@ -305,7 +363,8 @@ export function createMemoryRoutes(deps: {
       async (rawInput) => {
         const input = memorySearchRoute.input.parse(rawInput)
         const hits = await memoryService.searchMemories(input.agentId, input.query, {
-          limit: input.limit
+          limit: input.limit,
+          scopeContext: input.scopeContext
         })
         return memorySearchRoute.output.parse({
           results: hits.map((hit) => ({
@@ -327,7 +386,8 @@ export function createMemoryRoutes(deps: {
             content: input.content,
             kind: input.kind,
             category: input.category,
-            importance: input.importance
+            importance: input.importance,
+            scope: input.scope
           },
           input.sessionId
         )
@@ -583,6 +643,69 @@ export function createMemoryRoutes(deps: {
         const input = memorySetPersonaAnchorRoute.input.parse(rawInput)
         return memorySetPersonaAnchorRoute.output.parse({
           ok: await memoryService.setPersonaAnchor(input.agentId, input.versionId, input.anchored)
+        })
+      }
+    ],
+    [
+      memoryListDirectivesRoute.name,
+      async (rawInput) => {
+        const input = memoryListDirectivesRoute.input.parse(rawInput)
+        if ((await deps.getAgentType(input.agentId)) !== 'deepchat') {
+          return memoryListDirectivesRoute.output.parse({ directives: [] })
+        }
+        return memoryListDirectivesRoute.output.parse({
+          directives: memoryService
+            .listDirectives(input.agentId, {
+              statuses: input.statuses,
+              limit: input.limit
+            })
+            .map(toMemoryDirectiveDto)
+        })
+      }
+    ],
+    [
+      memoryCreateDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryCreateDirectiveRoute.input.parse(rawInput)
+        const result =
+          (await deps.getAgentType(input.agentId)) === 'deepchat'
+            ? memoryService.createDirectiveResult(input.agentId, input.directive, 'manual')
+            : { action: 'rejected' as const, directive: null, reason: 'unavailable' as const }
+        return memoryCreateDirectiveRoute.output.parse(toMemoryDirectiveCommandDto(result))
+      }
+    ],
+    [
+      memoryApproveDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryApproveDirectiveRoute.input.parse(rawInput)
+        const result =
+          (await deps.getAgentType(input.agentId)) === 'deepchat'
+            ? memoryService.approveDirectiveResult(input.agentId, input.directiveId)
+            : { action: 'rejected' as const, directive: null, reason: 'unavailable' as const }
+        return memoryApproveDirectiveRoute.output.parse(toMemoryDirectiveCommandDto(result))
+      }
+    ],
+    [
+      memoryRejectDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryRejectDirectiveRoute.input.parse(rawInput)
+        const directive =
+          (await deps.getAgentType(input.agentId)) === 'deepchat'
+            ? memoryService.rejectDirective(input.agentId, input.directiveId)
+            : null
+        return memoryRejectDirectiveRoute.output.parse({
+          directive: directive ? toMemoryDirectiveDto(directive) : null
+        })
+      }
+    ],
+    [
+      memoryDeleteDirectiveRoute.name,
+      async (rawInput) => {
+        const input = memoryDeleteDirectiveRoute.input.parse(rawInput)
+        return memoryDeleteDirectiveRoute.output.parse({
+          ok:
+            (await deps.getAgentType(input.agentId)) === 'deepchat' &&
+            memoryService.deleteDirective(input.agentId, input.directiveId)
         })
       }
     ]

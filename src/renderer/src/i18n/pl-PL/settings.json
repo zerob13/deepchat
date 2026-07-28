@@ -231,9 +231,9 @@
       "tabMemories": "Wspomnienia",
       "tabPersona": "Oś czasu persony",
       "memoriesCount": "Wspomnienia: {count}",
-      "clearAll": "Wyczyść wszystko",
-      "clearConfirmTitle": "Wyczyścić wszystkie wspomnienia?",
-      "clearConfirmBody": "To trwale usuwa wszystkie wspomnienia tego agenta. Tej operacji nie można cofnąć.",
+      "clearAll": "Wyczyść wspomnienia",
+      "clearConfirmTitle": "Wyczyścić wspomnienia faktów i personę?",
+      "clearConfirmBody": "To trwale usuwa wspomnienia faktów i personę tego agenta. Stałe dyrektywy zostają zachowane i można nimi zarządzać osobno. Tej operacji nie można cofnąć.",
       "cleanupPendingRestart": "Zablokowane pliki wektorowe zostaną usunięte po ponownym uruchomieniu",
       "emptyMemories": "Brak wspomnień. Gromadzą się podczas rozmów z tym agentem.",
       "emptyPersona": "Brak wersji modelu siebie.",
@@ -3058,7 +3058,7 @@
       "archivedMatches": "Dopasowania w archiwum",
       "refresh": "Odśwież",
       "inboxTitle": "Wymaga uwagi",
-      "inboxDescription": "Rozwiąż konflikty pamięci i szkice profilu, zanim znikną z widoku.",
+      "inboxDescription": "Rozwiąż konflikty pamięci, szkice profilu i sugerowane dyrektywy, zanim znikną z widoku.",
       "conflictBadge": "{count} konfliktów",
       "personaDraftBadge": "{count} szkiców profilu",
       "conflictSectionTitle": "Konflikty pamięci ({count})",
@@ -3105,7 +3105,48 @@
         "memory-persona-rollback": "Przywrócono profil",
         "memory-persona-anchor": "Zaktualizowano kotwicę profilu",
         "memory-reindex": "Ponownie zindeksowano pamięć"
-      }
+      },
+      "tabDirectives": "Dyrektywy",
+      "directiveDraftBadge": "{count} szkiców dyrektyw",
+      "directiveDraftSectionTitle": "Sugerowane dyrektywy ({count})",
+      "directiveCreateTitle": "Utwórz stałą dyrektywę",
+      "directiveCreateDescription": "Ręczne dyrektywy stają się aktywne natychmiast. Sugestie modelu pozostają szkicami do czasu ich zatwierdzenia.",
+      "directiveRuntimeEnabled": "Stosowana podczas działania",
+      "directiveRuntimeDisabled": "Nieaktywna, gdy pamięć jest wyłączona",
+      "directiveKindLabel": "Typ dyrektywy",
+      "directiveKind": {
+        "instruction": "Stała instrukcja",
+        "suppress_topic": "Ukryj temat"
+      },
+      "directiveTopicLabel": "Pasujący temat",
+      "directiveTopicPlaceholder": "Dokładny temat lub fraza do ukrycia w przywołanej pamięci",
+      "directiveTopicTooBroad": "Tematy zawierające znaki CJK muszą mieć co najmniej {min} widoczne znaki, aby nie ukrywać niepowiązanych wspomnień.",
+      "directiveContentLabel": "Instrukcja",
+      "directiveInstructionPlaceholder": "Napisz stałą instrukcję dla tego agenta.",
+      "directiveSuppressPlaceholder": "Wyjaśnij, jak agent ma postępować z tym tematem.",
+      "directiveInstructionHint": "To wskazówka na poziomie użytkownika, która nie może zastępować reguł systemowych ani bezpieczeństwa.",
+      "directiveSuppressHint": "Temat filtruje przywołaną pamięć, a instrukcja kieruje odpowiedzią. Nie jest to filtr wyjścia.",
+      "directiveLength": "Instrukcja {content}/{contentMax} · Temat {topic}/{topicMax}",
+      "directiveCreateAction": "Aktywuj dyrektywę",
+      "directiveCapacityTitle": "Osiągnięto limit aktywnych dyrektyw",
+      "directiveCapacityDescription": "Każdy agent może mieć do {max} aktywnych dyrektyw. Usuń aktywną dyrektywę przed dodaniem lub zatwierdzeniem kolejnej.",
+      "directiveListTitle": "Zapisane dyrektywy",
+      "directiveListDescription": "{active} aktywnych · {draft} oczekuje na zatwierdzenie",
+      "directiveEmptyTitle": "Brak dyrektyw",
+      "directiveEmptyDescription": "Utwórz tutaj stałą instrukcję lub zatwierdź sugestię ze skrzynki odbiorczej.",
+      "directiveStatus": {
+        "active": "Aktywna",
+        "draft": "Szkic",
+        "rejected": "Odrzucona"
+      },
+      "directiveSource": {
+        "explicit_user": "Jawne działanie użytkownika",
+        "manual": "Ustawienia",
+        "derived_suggestion": "Zasugerowana na podstawie rozmowy"
+      },
+      "directiveTopicValue": "Temat: {topic}",
+      "directiveDeleteTitle": "Usunąć tę dyrektywę?",
+      "directiveDeleteDescription": "Dyrektywa natychmiast przestanie obowiązywać. Możesz utworzyć ją ponownie później."
     }
   },
   "pluginsHub": {

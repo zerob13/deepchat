@@ -90,12 +90,71 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
     expect(JSON.parse(event.input_refs_json)).toEqual({
       kind: 'semantic',
       category: null,
-      importance: 0.8
+      importance: 0.8,
+      scopeType: 'agent',
+      scopeId: null
     })
     expect(JSON.parse(event.output_refs_json)).toEqual({ action: 'created', memoryId })
     // Direct-add path has no extraction model, so the audit records no model context.
     expect(event.model_provider_id).toBeNull()
     expect(event.model_id).toBeNull()
+  })
+
+  it('keeps background replay suppressed until an explicit user add reauthorizes the claim', async () => {
+    const { presenter, repo, auditRepo } = makePresenter(enabledConfig)
+    const created = await presenter.addUserMemory('deepchat', {
+      content: 'Project Saffron uses Rust.'
+    })
+    if (created.action !== 'created') throw new Error('expected initial memory creation')
+
+    await expect(presenter.deleteMemory('deepchat', created.id)).resolves.toBe(true)
+    expect(
+      presenter.writeMemoriesSync(
+        [{ kind: 'semantic', content: '  Project   Saffron uses Rust.  ' }],
+        { agentId: 'deepchat' }
+      )
+    ).toEqual([])
+    expect(repo.listByAgent('deepchat')).toEqual([])
+    expect(repo.tombstones.size).toBe(2)
+
+    const relearned = await presenter.addUserMemory('deepchat', {
+      content: '  Project   Saffron uses Rust.  '
+    })
+    expect(relearned).toMatchObject({ action: 'created', reauthorized: true })
+    expect(repo.listByAgent('deepchat')).toHaveLength(1)
+    expect(repo.tombstones.size).toBe(0)
+
+    await expect(
+      presenter.addUserMemory('deepchat', {
+        content: 'Project Saffron uses Rust 2024 edition.'
+      })
+    ).resolves.toMatchObject({ action: 'created' })
+
+    const relearnAudit = auditRepo
+      .listByAgent('deepchat', { eventType: 'memory/add' })
+      .find((row) => JSON.parse(row.output_refs_json).reauthorized === true)
+    expect(relearnAudit).toMatchObject({ status: 'completed', reason: null })
+    expect(relearnAudit?.input_refs_json).not.toContain('Project Saffron')
+    expect(relearnAudit?.output_refs_json).not.toContain('Project Saffron')
+  })
+
+  it('keeps an exact forgotten claim suppressed through the runtime remember entry point', async () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    const created = await presenter.addUserMemory('deepchat', {
+      content: 'The user prefers dark mode.'
+    })
+    if (created.action !== 'created') throw new Error('expected initial memory creation')
+    await presenter.deleteMemory('deepchat', created.id)
+
+    await expect(
+      presenter.rememberMemory(
+        { kind: 'semantic', content: ' The user   prefers dark mode. ' },
+        { agentId: 'deepchat' },
+        null
+      )
+    ).resolves.toEqual({ action: 'noop', reason: 'forgotten' })
+    expect(repo.listByAgent('deepchat')).toEqual([])
+    expect(repo.tombstones.size).toBe(2)
   })
 
   it('defaults kind to semantic and never stores raw content in audit refs', async () => {
@@ -266,6 +325,89 @@ describe('MemoryService.addUserMemory (manual user write)', () => {
 
     expect(outcome.action).toBe('updated')
     expect(repo.getById('target-project')?.category).toBe('project_fact')
+  })
+
+  it.each([
+    {
+      decisionKind: 'UPDATE',
+      decision: '{"decision":"UPDATE","targetIndex":0,"mergedContent":"redis forgotten claim"}',
+      candidate: 'redis update candidate'
+    },
+    {
+      decisionKind: 'SUPERSEDE',
+      decision: '{"decision":"SUPERSEDE","targetIndex":0,"mergedContent":"redis forgotten claim"}',
+      candidate: 'redis supersede candidate'
+    }
+  ])(
+    'keeps $decisionKind rewrites atomic when they would recreate a forgotten claim',
+    async ({ decision, candidate }) => {
+      const { presenter, repo } = makeLLM(decision)
+      const forgotten = repo.insert({
+        id: 'forgotten',
+        agentId: 'deepchat',
+        kind: 'semantic',
+        content: 'redis forgotten claim',
+        provenanceKey: 'forgotten-source'
+      })
+      repo.tombstoneAndDelete({
+        agentId: 'deepchat',
+        id: forgotten.id,
+        expectedRevision: forgotten.decision_revision,
+        createdAt: 1_000
+      })
+      const target = repo.insert({
+        id: 'target',
+        agentId: 'deepchat',
+        kind: 'semantic',
+        content: 'redis current target',
+        status: 'embedded'
+      })
+      const targetRevision = target.decision_revision
+
+      await expect(presenter.addUserMemory('deepchat', { content: candidate })).resolves.toEqual({
+        action: 'noop',
+        reason: 'forgotten'
+      })
+      expect(repo.getById(target.id)).toMatchObject({
+        content: 'redis current target',
+        superseded_by: null,
+        conflict_state: null,
+        decision_revision: targetRevision
+      })
+      expect(repo.listByAgent('deepchat', { includeSuperseded: true })).toHaveLength(1)
+    }
+  )
+
+  it('reauthorizes an exact forgotten claim before invoking the decision model', async () => {
+    const { presenter, repo, generateText } = makeLLM(
+      '{"decision":"CHALLENGE","targetIndex":0,"mergedContent":null}'
+    )
+    const forgotten = repo.insert({
+      id: 'forgotten',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'redis forgotten claim',
+      provenanceKey: 'v2:deepchat:semantic:redis-forgotten-claim'
+    })
+    repo.tombstoneAndDelete({
+      agentId: 'deepchat',
+      id: forgotten.id,
+      expectedRevision: forgotten.decision_revision,
+      createdAt: 1_000
+    })
+    repo.insert({
+      id: 'target',
+      agentId: 'deepchat',
+      kind: 'semantic',
+      content: 'redis current target',
+      status: 'embedded'
+    })
+
+    await expect(
+      presenter.addUserMemory('deepchat', { content: 'redis forgotten claim' })
+    ).resolves.toMatchObject({ action: 'created', reauthorized: true })
+    expect(generateText).not.toHaveBeenCalled()
+    expect(repo.listByAgent('deepchat', { includeSuperseded: true })).toHaveLength(2)
   })
 
   it('carries candidate category into SUPERSEDE and CHALLENGE rows', async () => {

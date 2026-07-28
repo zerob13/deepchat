@@ -5,7 +5,8 @@ import type { AgentPlanDisplayItem, AgentPlanTerminalReason } from '../agent-pla
 import type { QuestionOption } from './question'
 import type {
   AttachmentRepresentationPreference,
-  AttachmentResolvedRepresentation
+  AttachmentResolvedRepresentation,
+  PdfEmbeddedTextCoverage
 } from '../attachment'
 
 export type {
@@ -73,6 +74,7 @@ export type MessageFile = {
   thumbnail?: string
   requestedRepresentation?: AttachmentRepresentationPreference
   resolvedRepresentation?: AttachmentResolvedRepresentation
+  pdfTextCoverage?: PdfEmbeddedTextCoverage
 }
 
 export type AssistantMessageBlock = {

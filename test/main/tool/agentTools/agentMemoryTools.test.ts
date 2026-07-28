@@ -99,7 +99,43 @@ describe('Agent memory tools', () => {
       'conv-1',
       { providerId: 'openai', modelId: 'gpt-4.1' }
     )
-    expect(JSON.parse(result.content)).toMatchObject({ ok: true, action: 'created', id: 'mem-1' })
+    expect(JSON.parse(result.content)).toMatchObject({
+      ok: true,
+      action: 'created',
+      id: 'mem-1'
+    })
+  })
+
+  it('requires an explicit user action when memory_remember matches a tombstone', async () => {
+    const runtimePort = buildRuntimePort({
+      rememberMemory: vi.fn().mockResolvedValue({ action: 'noop', reason: 'forgotten' })
+    })
+    const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
+
+    const result = await handler.call(
+      MEMORY_TOOL_NAMES.remember,
+      { content: 'previously deleted private fact' },
+      'conv-1'
+    )
+
+    expect(JSON.parse(result.content)).toEqual({
+      ok: false,
+      action: 'noop',
+      reason: 'requires_user_reauthorization'
+    })
+    expect(JSON.stringify(result.rawData)).toContain('requires an explicit user action')
+  })
+
+  it('recalls the current session scope without broadening the agent owner boundary', async () => {
+    const recallMemory = vi.fn().mockResolvedValue([])
+    const runtimePort = buildRuntimePort({ recallMemory })
+    const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
+
+    await handler.call(MEMORY_TOOL_NAMES.recall, { query: 'redis' }, 'conv-1')
+
+    expect(recallMemory).toHaveBeenCalledWith('deepchat', 'redis', {
+      sessionId: 'conv-1'
+    })
   })
 
   it('exposes memory_forget as a soft forget operation', async () => {
@@ -115,7 +151,8 @@ describe('Agent memory tools', () => {
     expect(forgetDef?.function.description).not.toContain('Delete')
     expect(runtimePort.forgetMemory).toHaveBeenCalledWith('deepchat', 'mem-1')
     expect(JSON.parse(result.content)).toEqual({ ok: true })
-    expect(JSON.stringify(result.rawData)).toContain('Forgot the memory.')
+    expect(JSON.stringify(result.rawData)).toContain('Archived the memory.')
+    expect(JSON.stringify(result.rawData)).toContain('retained locally')
     expect(JSON.stringify(result.rawData)).not.toContain('Deleted the memory.')
   })
 })

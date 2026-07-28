@@ -16,12 +16,20 @@ import {
 } from '../core/batchDecision'
 import { normalizeMemoryCandidate } from '../core/candidates'
 import {
+  evaluateNormalizedMemoryTemporalPolicy,
+  memoryTemporalMetadataEquals,
+  reconcileEquivalentClaimTemporalMetadata,
+  resolveMergedClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
+import {
   buildExtractionPrompt,
   buildTriagePrompt,
   parseMemoryCandidates,
   parseTriageDecision
 } from '../core/extraction'
-import { buildMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
+import { buildScopedMemoryProvenanceKey, normalizeForProvenanceV2 } from '../core/scoring'
+import { AGENT_MEMORY_AGENT_SCOPE, normalizeMemoryScope, rowsShareMemoryScope } from '../core/scope'
 import {
   DECISION_NEIGHBOR_TOP_S,
   DECISION_RETRY_MAX_CANDIDATES,
@@ -35,11 +43,14 @@ import type {
   MemoryDecisionNeighborSet,
   MemoryDecisionQueryVectorSnapshot,
   MemoryRecallItem,
+  MemoryScope,
+  MemoryTemporalMetadata,
   NormalizedMemoryCandidate,
   MemoryUpdateContext,
   MemoryWriteOutcome,
   WriteMemoriesOptions
 } from '../types'
+import type { MemoryDirectiveInput } from '../domain/directives'
 import {
   type MemoryModelRef,
   type MemoryOperationFence,
@@ -49,6 +60,7 @@ import type {
   MemoryAgentPolicyPort,
   MemoryEmbeddingRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
   MemoryTextGenerationPort,
@@ -100,7 +112,11 @@ function userAddAuditFromOutcome(outcome: MemoryWriteOutcome): {
       return {
         status: 'completed',
         reason: null,
-        outputRefs: { action: 'created', memoryId: outcome.id }
+        outputRefs: {
+          action: 'created',
+          memoryId: outcome.id,
+          ...(outcome.reauthorized ? { reauthorized: true } : {})
+        }
       }
     case 'updated':
       return {
@@ -158,6 +174,7 @@ function isChallengedDecisionHead(agentId: string, row: AgentMemoryRow | undefin
 
 class DecisionRevisionConflictError extends Error {}
 class DecisionInsertCollisionError extends Error {}
+class DecisionForgottenClaimError extends Error {}
 
 type CoordinateWriteResult = MemoryWriteOutcome | { action: 'retry' }
 
@@ -167,7 +184,6 @@ interface IndexedCandidate {
 }
 
 interface PreparedCoordinateCandidate extends IndexedCandidate {
-  provenanceKey: string
   decisionHeadId: string | null
   neighbors: MemoryRecallItem[]
   queryVector?: MemoryDecisionQueryVectorSnapshot
@@ -196,7 +212,22 @@ interface CandidateApplyPolicy {
   retryConflict: boolean
 }
 
+type TombstoneReleasePolicy = 'preserve' | 'explicit-user-action'
+
+function resolveContentMergeTemporalMetadata(
+  existing: AgentMemoryRow,
+  incoming: NormalizedMemoryCandidate,
+  mergedContent: string
+): MemoryTemporalMetadata {
+  const normalizedMergedContent = normalizeForProvenanceV2(mergedContent)
+  return resolveMergedClaimTemporalMetadata(temporalMetadataFromRow(existing), incoming.temporal, {
+    existing: normalizedMergedContent === normalizeForProvenanceV2(existing.content),
+    incoming: normalizedMergedContent === normalizeForProvenanceV2(incoming.content)
+  })
+}
+
 function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
+  const temporal = temporalMetadataFromRow(row)
   return {
     id: row.id,
     decisionRevision: row.decision_revision,
@@ -207,6 +238,7 @@ function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
     sources: { fts: true },
     sourceSession: row.source_session,
     sourceEntryIds: null,
+    temporal,
     breakdown: {
       similarity: 0,
       recency: row.last_accessed ?? row.created_at,
@@ -215,6 +247,30 @@ function recallItemFromRow(row: AgentMemoryRow): MemoryRecallItem {
       rrf: 1,
       final: 1
     }
+  }
+}
+
+function temporalDecisionAnnotation(
+  temporal: MemoryTemporalMetadata,
+  now: number
+): string | undefined {
+  return evaluateNormalizedMemoryTemporalPolicy(temporal, now, 'evidence').annotation ?? undefined
+}
+
+function toBatchDecisionInput(
+  prepared: PreparedCoordinateCandidate,
+  now: number
+): BatchDecisionInput {
+  return {
+    candidateIndex: prepared.candidateIndex,
+    candidate: prepared.candidate,
+    candidateTemporalAnnotation: temporalDecisionAnnotation(prepared.candidate.temporal, now),
+    neighbors: prepared.neighbors.map((neighbor) => ({
+      content: neighbor.content,
+      temporalAnnotation:
+        neighbor.temporalAnnotation ??
+        (neighbor.temporal ? temporalDecisionAnnotation(neighbor.temporal, now) : undefined)
+    }))
   }
 }
 
@@ -228,6 +284,7 @@ export class WriteCoordinator {
         MemoryMutationRepositoryPort &
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       policy: MemoryAgentPolicyPort
       textGeneration: MemoryTextGenerationPort
@@ -235,18 +292,21 @@ export class WriteCoordinator {
       retrieveForDecision: (
         agentId: string,
         query: string,
-        now: number
+        now: number,
+        scopeFilter?: readonly MemoryScope[]
       ) => Promise<MemoryRecallItem[]>
       retrieveForDecisions: (
         agentId: string,
         candidates: readonly NormalizedMemoryCandidate[],
         now: number,
         queryVectors?: readonly (MemoryDecisionQueryVectorSnapshot | undefined)[],
-        pinnedIdsByCandidate?: readonly (readonly string[] | undefined)[]
+        pinnedIdsByCandidate?: readonly (readonly string[] | undefined)[],
+        scopeFilter?: readonly MemoryScope[]
       ) => Promise<MemoryDecisionNeighborSet[]>
       markWorkingMemoryDirty: (agentId: string) => void
       triggerEmbedding: (agentId: string) => Promise<void>
       scheduleConsolidation: (agentId: string) => void
+      suggestDirective: (agentId: string, input: MemoryDirectiveInput) => void
       diagnostics?: {
         recordExtraction(
           agentId: string,
@@ -263,33 +323,55 @@ export class WriteCoordinator {
   }
 
   writeMemoriesSync(candidates: MemoryCandidate[], options: WriteMemoriesOptions): string[] {
-    if (!candidates.length) return []
+    if (!candidates.length || !this.ctx.canWriteAgentMemory(options.agentId)) return []
     const created: string[] = []
+    let touched = false
+    const now = this.ctx.now()
+    const scope = normalizeMemoryScope(options.scope)
+    const normalizedOptions = { ...options, scope }
     for (const candidate of candidates) {
       const normalized = normalizeMemoryCandidate(candidate)
       if (!normalized) continue
       const content = normalized.content
-      const provenanceKey = buildMemoryProvenanceKey(options.agentId, normalized.kind, content)
-      const duplicate = this.ports.rows.resolveProvenance(options.agentId, normalized.kind, content)
+      const duplicate = this.ports.rows.resolveProvenance(
+        options.agentId,
+        normalized.kind,
+        content,
+        scope
+      )
       if (duplicate) {
         const hit = this.ports.rows.handleProvenanceHit(options.agentId, duplicate)
         if (hit.action === 'absorbed') {
-          if (this.absorbArchivedProvenanceOwner(options.agentId, duplicate)) {
+          if (this.absorbArchivedProvenanceOwner(options.agentId, duplicate, normalized.temporal)) {
             created.push(duplicate.id)
+            touched = true
           }
+        } else if (
+          hit.action === 'noop' &&
+          hit.reason === 'duplicate' &&
+          this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+            options.agentId,
+            duplicate,
+            normalized.temporal
+          )
+        ) {
+          touched = true
         }
         continue
       }
-      const id = this.ports.rows.insertMemory(
+      const insert = this.ports.rows.insertMemory(
         options.agentId,
         normalized,
         content,
-        provenanceKey,
-        options
+        normalizedOptions,
+        now
       )
-      if (id) created.push(id)
+      if (insert.action === 'inserted') {
+        created.push(insert.id)
+        touched = true
+      }
     }
-    if (created.length > 0) this.ctx.markDomainMutationCommitted(options.agentId)
+    if (touched) this.ctx.markDomainMutationCommitted(options.agentId)
     return created
   }
 
@@ -330,12 +412,14 @@ export class WriteCoordinator {
         return { ok: true, createdIds: [] }
       }
 
+      const now = this.ctx.now()
+      const timeZone = this.ctx.timeZone()
       llmCalls += 1
       const response = await this.ports.textGeneration.generateText(
         input.agentId,
         model.providerId,
         model.modelId,
-        buildExtractionPrompt(span),
+        buildExtractionPrompt(span, { now, timeZone }),
         'extraction'
       )
       if (!this.ctx.canContinueOperation(operationFence)) {
@@ -350,10 +434,10 @@ export class WriteCoordinator {
       const candidateStats = this.prepareExtractionCandidates(parsed.candidates)
       const options: WriteMemoriesOptions = {
         agentId: input.agentId,
+        scope: normalizeMemoryScope(input.scope),
         sourceSession: input.sourceSession ?? null,
         sourceEntryIds: input.sourceEntryIds ?? null
       }
-      const now = Date.now()
       const batch = await this.coordinateBatchWrites(
         input.agentId,
         candidateStats.candidates,
@@ -377,9 +461,19 @@ export class WriteCoordinator {
           touched = true
         }
       }
+      if (!batch.failed) {
+        for (const suggestion of parsed.directiveSuggestions) {
+          if (!this.ctx.canContinueOperation(operationFence)) {
+            extractionOutcome = 'cancelled'
+            break
+          }
+          this.ports.suggestDirective(input.agentId, suggestion)
+        }
+      }
       this.writeExtractionAudit(input, model, {
         parsedCount: parsed.candidates.length,
         acceptedCount: candidateStats.candidates.length,
+        directiveSuggestionCount: parsed.directiveSuggestions.length,
         duplicateCandidateIndexes: candidateStats.duplicateCandidateIndexes,
         rejectedCandidates: candidateStats.rejectedCandidates,
         decisionBudgetFallbacks: batch.decisionBudgetFallbacks,
@@ -420,7 +514,7 @@ export class WriteCoordinator {
       candidateIndex: number
       reason: 'candidate-too-large'
     }> = []
-    const seen = new Set<string>()
+    const acceptedIndexByKey = new Map<string, number>()
     candidates.forEach((candidate, candidateIndex) => {
       const normalized = normalizeMemoryCandidate(candidate)
       if (!normalized) return
@@ -429,11 +523,23 @@ export class WriteCoordinator {
         return
       }
       const key = `${normalized.kind}\0${normalizeForProvenanceV2(normalized.content)}`
-      if (seen.has(key)) {
+      const acceptedIndex = acceptedIndexByKey.get(key)
+      if (acceptedIndex !== undefined) {
         duplicateCandidateIndexes.push(candidateIndex)
+        const existing = accepted[acceptedIndex]
+        accepted[acceptedIndex] = {
+          ...existing,
+          candidate: {
+            ...existing.candidate,
+            temporal: reconcileEquivalentClaimTemporalMetadata(
+              existing.candidate.temporal,
+              normalized.temporal
+            )
+          }
+        }
         return
       }
-      seen.add(key)
+      acceptedIndexByKey.set(key, accepted.length)
       accepted.push({ candidateIndex, candidate: normalized })
     })
     return { candidates: accepted, duplicateCandidateIndexes, rejectedCandidates }
@@ -445,6 +551,7 @@ export class WriteCoordinator {
     summary: {
       parsedCount: number
       acceptedCount: number
+      directiveSuggestionCount: number
       duplicateCandidateIndexes: number[]
       rejectedCandidates: Array<{ candidateIndex: number; reason: 'candidate-too-large' }>
       decisionBudgetFallbacks: number
@@ -458,7 +565,8 @@ export class WriteCoordinator {
       reason: summary.failed ? 'partial-apply-failed' : null,
       inputRefs: {
         parsedCount: summary.parsedCount,
-        acceptedCount: summary.acceptedCount
+        acceptedCount: summary.acceptedCount,
+        directiveSuggestionCount: summary.directiveSuggestionCount
       },
       outputRefs: {
         duplicateCandidateIndexes: summary.duplicateCandidateIndexes,
@@ -472,11 +580,16 @@ export class WriteCoordinator {
 
   private prepareCoordinateCandidate(
     agentId: string,
-    indexed: IndexedCandidate
+    indexed: IndexedCandidate,
+    scope: MemoryScope
   ): PrepareCoordinateCandidateResult {
     const content = indexed.candidate.content
-    const provenanceKey = buildMemoryProvenanceKey(agentId, indexed.candidate.kind, content)
-    const duplicate = this.ports.rows.resolveProvenance(agentId, indexed.candidate.kind, content)
+    const duplicate = this.ports.rows.resolveProvenance(
+      agentId,
+      indexed.candidate.kind,
+      content,
+      scope
+    )
     let decisionHeadId: string | null = null
     if (duplicate) {
       const hit = this.ports.rows.handleProvenanceHit(agentId, duplicate, {
@@ -509,7 +622,6 @@ export class WriteCoordinator {
     return {
       prepared: {
         ...indexed,
-        provenanceKey,
         decisionHeadId,
         neighbors: []
       }
@@ -534,25 +646,50 @@ export class WriteCoordinator {
     now: number,
     allowInsert: boolean
   ): MemoryWriteOutcome {
+    const scope = normalizeMemoryScope(options.scope)
     let outcome: MemoryWriteOutcome = { action: 'noop', reason: 'concurrent-update' }
     this.ports.repository.runInTransaction(() => {
-      const owner = this.ports.rows.resolveProvenance(agentId, candidate.kind, candidate.content)
+      const owner = this.ports.rows.resolveProvenance(
+        agentId,
+        candidate.kind,
+        candidate.content,
+        scope
+      )
       if (owner) {
         const hit = this.ports.rows.handleProvenanceHit(agentId, owner, {
           allowDecisionForSuperseded: true
         })
         if (hit.action === 'absorbed') {
-          outcome = this.ports.repository.restoreArchivedMemory({
+          const restored = this.ports.repository.restoreArchivedMemory({
             agentId,
             id: owner.id,
             expectedRevision: owner.decision_revision
           })
+          if (restored) {
+            const current = this.ports.repository.getById(owner.id)
+            if (current) {
+              this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+                agentId,
+                current,
+                candidate.temporal
+              )
+            }
+          }
+          outcome = restored
             ? { action: 'updated', id: owner.id }
             : { action: 'noop', reason: 'concurrent-update' }
           return
         }
         if (hit.action === 'noop') {
-          outcome = { action: 'noop', reason: hit.reason, id: owner.id }
+          outcome =
+            hit.reason === 'duplicate' &&
+            this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+              agentId,
+              owner,
+              candidate.temporal
+            )
+              ? { action: 'updated', id: owner.id }
+              : { action: 'noop', reason: hit.reason, id: owner.id }
           return
         }
         const head = this.ports.rows.supersedeHead(agentId, owner)
@@ -560,19 +697,30 @@ export class WriteCoordinator {
           outcome = { action: 'noop', reason: 'conflict', id: head.id }
           return
         }
-        outcome = this.reviveProvenanceOwner(agentId, owner, now, candidate.category)
+        outcome = this.reviveProvenanceOwner(
+          agentId,
+          owner,
+          now,
+          candidate.category,
+          candidate.temporal
+        )
         return
       }
       if (!allowInsert) return
-      const provenanceKey = buildMemoryProvenanceKey(agentId, candidate.kind, candidate.content)
-      const id = this.ports.rows.insertMemory(
+      const insert = this.ports.rows.insertMemory(
         agentId,
         candidate,
         candidate.content,
-        provenanceKey,
-        options
+        options,
+        now
       )
-      outcome = id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
+      outcome =
+        insert.action === 'inserted'
+          ? { action: 'created', id: insert.id }
+          : {
+              action: 'noop',
+              reason: insert.reason === 'forgotten' ? 'forgotten' : 'insert-skipped'
+            }
     })
     return outcome
   }
@@ -613,8 +761,7 @@ export class WriteCoordinator {
       prepared.neighbors,
       parsed?.valid ? parsed.decision : ADD_DECISION,
       options,
-      now,
-      prepared.provenanceKey
+      now
     )
     if (result.action === 'retry' && !policy.retryConflict) {
       return { action: 'noop', reason: 'concurrent-update' }
@@ -626,6 +773,7 @@ export class WriteCoordinator {
     agentId: string,
     prepared: readonly PreparedCoordinateCandidate[],
     now: number,
+    scope: MemoryScope,
     queryVectors?: readonly (MemoryDecisionQueryVectorSnapshot | undefined)[]
   ): Promise<PreparedCoordinateCandidate[]> {
     if (!prepared.length) return []
@@ -635,7 +783,8 @@ export class WriteCoordinator {
         prepared.map((item) => item.candidate),
         now,
         queryVectors,
-        prepared.map((item) => (item.decisionHeadId ? [item.decisionHeadId] : undefined))
+        prepared.map((item) => (item.decisionHeadId ? [item.decisionHeadId] : undefined)),
+        [scope]
       )
       return prepared.map((item, index) => ({
         ...item,
@@ -702,8 +851,9 @@ export class WriteCoordinator {
       return { outcomes: [], decisionBudgetFallbacks: 0, failed: false, llmCalls: 0, casRetries: 0 }
     }
 
+    const scope = normalizeMemoryScope(options.scope)
     const preparation = candidates.map((candidate) =>
-      this.prepareCoordinateCandidate(agentId, candidate)
+      this.prepareCoordinateCandidate(agentId, candidate, scope)
     )
     const preparationByIndex = new Map(
       preparation.map((result) => [
@@ -714,18 +864,15 @@ export class WriteCoordinator {
     const preparedInitial = await this.retrievePreparedCandidates(
       agentId,
       preparation.flatMap((result) => ('prepared' in result ? [result.prepared] : [])),
-      now
+      now,
+      scope
     )
     const preparedByIndex = new Map(
       preparedInitial.map((prepared) => [prepared.candidateIndex, prepared])
     )
     const initialDecisionInputs: BatchDecisionInput[] = preparedInitial
       .filter((prepared) => prepared.neighbors.length > 0)
-      .map((prepared) => ({
-        candidateIndex: prepared.candidateIndex,
-        candidate: prepared.candidate,
-        neighbors: prepared.neighbors
-      }))
+      .map((prepared) => toBatchDecisionInput(prepared, now))
     const initialBatch = await this.requestBatchDecisions(
       agentId,
       model,
@@ -802,10 +949,14 @@ export class WriteCoordinator {
     })
     if (!failed && retryEligible.length && this.ctx.canContinueOperation(operationFence)) {
       const retryPreparation = retryEligible.map((candidate) =>
-        this.prepareCoordinateCandidate(agentId, {
-          candidateIndex: candidate.candidateIndex,
-          candidate: candidate.candidate
-        })
+        this.prepareCoordinateCandidate(
+          agentId,
+          {
+            candidateIndex: candidate.candidateIndex,
+            candidate: candidate.candidate
+          },
+          scope
+        )
       )
       const retryPreparationByIndex = new Map(
         retryPreparation.map((result) => [
@@ -823,16 +974,13 @@ export class WriteCoordinator {
         agentId,
         retryPreparedBase,
         now,
+        scope,
         retryPreparedBase.map((candidate) => oldVectors.get(candidate.candidateIndex))
       )
       const retryByIndex = new Map(retryPrepared.map((item) => [item.candidateIndex, item]))
       const retryInputs: BatchDecisionInput[] = retryPrepared
         .filter((candidate) => candidate.neighbors.length > 0)
-        .map((candidate) => ({
-          candidateIndex: candidate.candidateIndex,
-          candidate: candidate.candidate,
-          neighbors: candidate.neighbors
-        }))
+        .map((candidate) => toBatchDecisionInput(candidate, now))
       const retryBatch = await this.requestBatchDecisions(
         agentId,
         model,
@@ -944,23 +1092,35 @@ export class WriteCoordinator {
     const normalized = normalizeMemoryCandidate(candidate)
     if (!normalized) return { action: 'noop', reason: 'empty' }
     const content = normalized.content
+    const scope = normalizeMemoryScope(options.scope)
     if (!this.ctx.canContinueOperation(operationFence)) {
       return { action: 'noop', reason: 'disposed' }
     }
 
-    const provenanceKey = buildMemoryProvenanceKey(agentId, normalized.kind, content)
-    const duplicate = this.ports.rows.resolveProvenance(agentId, normalized.kind, content)
+    const duplicate = this.ports.rows.resolveProvenance(agentId, normalized.kind, content, scope)
     let decisionHead: AgentMemoryRow | null = null
     if (duplicate) {
       const hit = this.ports.rows.handleProvenanceHit(agentId, duplicate, {
         allowDecisionForSuperseded: true
       })
       if (hit.action === 'absorbed') {
-        return this.absorbArchivedProvenanceOwner(agentId, duplicate)
+        return this.absorbArchivedProvenanceOwner(agentId, duplicate, normalized.temporal)
           ? { action: 'updated', id: duplicate.id }
           : { action: 'noop', reason: 'concurrent-update', id: duplicate.id }
       }
-      if (hit.action === 'noop') return { action: 'noop', reason: hit.reason, id: duplicate.id }
+      if (hit.action === 'noop') {
+        if (
+          hit.reason === 'duplicate' &&
+          this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+            agentId,
+            duplicate,
+            normalized.temporal
+          )
+        ) {
+          return { action: 'updated', id: duplicate.id }
+        }
+        return { action: 'noop', reason: hit.reason, id: duplicate.id }
+      }
       const head = this.ports.rows.supersedeHead(agentId, duplicate)
       if (isChallengedDecisionHead(agentId, head)) {
         return { action: 'noop', reason: 'conflict', id: head.id }
@@ -970,7 +1130,7 @@ export class WriteCoordinator {
 
     let neighbors: MemoryRecallItem[] = []
     try {
-      const hits = await this.ports.retrieveForDecision(agentId, content, now)
+      const hits = await this.ports.retrieveForDecision(agentId, content, now, [scope])
       neighbors = hits.slice(0, DECISION_NEIGHBOR_TOP_S)
       const currentDecisionHead = decisionHead
         ? this.ports.repository.getById(decisionHead.id)
@@ -1001,7 +1161,15 @@ export class WriteCoordinator {
         model.modelId,
         buildDecisionPrompt(
           normalized,
-          neighbors.map((neighbor) => ({ content: neighbor.content }))
+          neighbors.map((neighbor) => ({
+            content: neighbor.content,
+            temporalAnnotation:
+              neighbor.temporalAnnotation ??
+              (neighbor.temporal ? temporalDecisionAnnotation(neighbor.temporal, now) : undefined)
+          })),
+          {
+            candidateTemporalAnnotation: temporalDecisionAnnotation(normalized.temporal, now)
+          }
         ),
         'decision'
       )
@@ -1026,15 +1194,7 @@ export class WriteCoordinator {
       return { action: 'noop', reason: 'disposed' }
     }
 
-    return this.applyDecisionAttempt(
-      agentId,
-      normalized,
-      neighbors,
-      decision,
-      options,
-      now,
-      provenanceKey
-    )
+    return this.applyDecisionAttempt(agentId, normalized, neighbors, decision, options, now)
   }
 
   private applyDecisionAttempt(
@@ -1043,10 +1203,10 @@ export class WriteCoordinator {
     neighbors: readonly MemoryRecallItem[],
     decision: MemoryDecision,
     options: WriteMemoriesOptions,
-    now: number,
-    provenanceKey: string
+    now: number
   ): CoordinateWriteResult {
     const content = normalized.content
+    const scope = normalizeMemoryScope(options.scope)
     const target = decision.targetIndex !== null ? neighbors[decision.targetIndex] : null
     switch (decision.decision) {
       case 'NOOP':
@@ -1054,17 +1214,29 @@ export class WriteCoordinator {
       case 'UPDATE':
         if (target) {
           const targetRow = this.ports.repository.getById(target.id)
-          if (isLiveDecisionTarget(agentId, targetRow)) {
+          if (
+            isLiveDecisionTarget(agentId, targetRow) &&
+            rowsShareMemoryScope(targetRow, {
+              scope_type: scope.type,
+              scope_id: scope.type === 'agent' ? null : scope.id
+            })
+          ) {
             const merged = decision.mergedContent ?? content
-            const mergedKey = buildMemoryProvenanceKey(agentId, targetRow.kind, merged)
-            const owner = this.ports.rows.resolveProvenance(agentId, targetRow.kind, merged)
+            const mergedTemporal = resolveContentMergeTemporalMetadata(
+              targetRow,
+              normalized,
+              merged
+            )
+            const mergedKey = buildScopedMemoryProvenanceKey(agentId, targetRow.kind, merged, scope)
+            const owner = this.ports.rows.resolveProvenance(agentId, targetRow.kind, merged, scope)
             if (owner && owner.id !== targetRow.id) {
               const folded = this.foldDecisionTargetIntoOwner(
                 agentId,
                 target,
                 owner,
                 now,
-                normalized.category
+                normalized.category,
+                mergedTemporal
               )
               if (folded.action !== 'superseded') return folded
               return { action: 'updated', id: folded.id }
@@ -1082,12 +1254,19 @@ export class WriteCoordinator {
                   content: merged,
                   provenanceKey: mergedKey,
                   at: now,
-                  category: nextCategory
+                  category: nextCategory,
+                  temporal: mergedTemporal
                 })
-                if (!applied) throw new DecisionRevisionConflictError()
+                if (applied.action === 'suppressed') {
+                  if (applied.reason === 'forgotten') throw new DecisionForgottenClaimError()
+                  throw new DecisionRevisionConflictError()
+                }
                 this.ports.rows.bumpConfidence(targetRow.id)
               })
             } catch (error) {
+              if (error instanceof DecisionForgottenClaimError) {
+                return { action: 'noop', reason: 'forgotten' }
+              }
               if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
               throw error
             }
@@ -1099,24 +1278,48 @@ export class WriteCoordinator {
       case 'SUPERSEDE':
         if (target) {
           const targetRow = this.ports.repository.getById(target.id)
-          if (!isLiveDecisionTarget(agentId, targetRow)) return { action: 'retry' }
+          if (
+            !isLiveDecisionTarget(agentId, targetRow) ||
+            !rowsShareMemoryScope(targetRow, {
+              scope_type: scope.type,
+              scope_id: scope.type === 'agent' ? null : scope.id
+            })
+          )
+            return { action: 'retry' }
           const merged = decision.mergedContent ?? content
-          const mergedKey = buildMemoryProvenanceKey(agentId, normalized.kind, merged)
-          const collisionOwner = this.ports.rows.resolveProvenance(agentId, normalized.kind, merged)
+          const mergedTemporal = resolveContentMergeTemporalMetadata(targetRow, normalized, merged)
+          const mergedCandidate = { ...normalized, temporal: mergedTemporal }
+          const collisionOwner = this.ports.rows.resolveProvenance(
+            agentId,
+            normalized.kind,
+            merged,
+            scope
+          )
           if (collisionOwner && collisionOwner.id !== target.id) {
             return this.foldDecisionTargetIntoOwner(
               agentId,
               target,
               collisionOwner,
               now,
-              normalized.category
+              normalized.category,
+              mergedTemporal
             )
           }
           let newId: string | null = null
           try {
             this.ports.repository.runInTransaction(() => {
-              newId = this.ports.rows.insertMemory(agentId, normalized, merged, mergedKey, options)
-              if (!newId) throw new DecisionInsertCollisionError()
+              const insert = this.ports.rows.insertMemory(
+                agentId,
+                mergedCandidate,
+                merged,
+                options,
+                now
+              )
+              if (insert.action === 'suppressed') {
+                if (insert.reason === 'forgotten') throw new DecisionForgottenClaimError()
+                throw new DecisionInsertCollisionError()
+              }
+              newId = insert.id
               if (
                 !this.ports.repository.markSupersededIfRevision(
                   agentId,
@@ -1127,12 +1330,36 @@ export class WriteCoordinator {
               ) {
                 throw new DecisionRevisionConflictError()
               }
+              this.ports.repository.insertDerivations([
+                {
+                  agentId,
+                  parentMemoryId: target.id,
+                  childMemoryId: newId,
+                  derivationKind: 'supersede',
+                  createdAt: now
+                }
+              ])
             })
           } catch (error) {
+            if (error instanceof DecisionForgottenClaimError) {
+              return { action: 'noop', reason: 'forgotten' }
+            }
             if (error instanceof DecisionInsertCollisionError) {
-              const owner = this.ports.rows.resolveProvenance(agentId, normalized.kind, merged)
+              const owner = this.ports.rows.resolveProvenance(
+                agentId,
+                normalized.kind,
+                merged,
+                scope
+              )
               return owner && owner.id !== target.id
-                ? this.foldDecisionTargetIntoOwner(agentId, target, owner, now, normalized.category)
+                ? this.foldDecisionTargetIntoOwner(
+                    agentId,
+                    target,
+                    owner,
+                    now,
+                    normalized.category,
+                    mergedTemporal
+                  )
                 : { action: 'retry' }
             }
             if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
@@ -1149,7 +1376,8 @@ export class WriteCoordinator {
           const collisionOwner = this.ports.rows.resolveProvenance(
             agentId,
             normalized.kind,
-            content
+            content,
+            scope
           )
           if (collisionOwner && collisionOwner.id !== target.id) {
             return this.foldDecisionTargetIntoOwner(
@@ -1157,21 +1385,26 @@ export class WriteCoordinator {
               target,
               collisionOwner,
               now,
-              normalized.category
+              normalized.category,
+              normalized.temporal
             )
           }
           let challengerId: string | null = null
           try {
             this.ports.repository.runInTransaction(() => {
-              challengerId = this.ports.rows.insertConflictedMemory(
+              const insert = this.ports.rows.insertConflictedMemory(
                 agentId,
                 normalized,
                 content,
-                provenanceKey,
                 target.id,
-                options
+                options,
+                now
               )
-              if (!challengerId) throw new DecisionInsertCollisionError()
+              if (insert.action === 'suppressed') {
+                if (insert.reason === 'forgotten') throw new DecisionForgottenClaimError()
+                throw new DecisionInsertCollisionError()
+              }
+              challengerId = insert.id
               if (
                 !this.ports.repository.markConflictIfRevision(
                   agentId,
@@ -1184,10 +1417,25 @@ export class WriteCoordinator {
               }
             })
           } catch (error) {
+            if (error instanceof DecisionForgottenClaimError) {
+              return { action: 'noop', reason: 'forgotten' }
+            }
             if (error instanceof DecisionInsertCollisionError) {
-              const owner = this.ports.rows.resolveProvenance(agentId, normalized.kind, content)
+              const owner = this.ports.rows.resolveProvenance(
+                agentId,
+                normalized.kind,
+                content,
+                scope
+              )
               return owner && owner.id !== target.id
-                ? this.foldDecisionTargetIntoOwner(agentId, target, owner, now, normalized.category)
+                ? this.foldDecisionTargetIntoOwner(
+                    agentId,
+                    target,
+                    owner,
+                    now,
+                    normalized.category,
+                    normalized.temporal
+                  )
                 : { action: 'retry' }
             }
             if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
@@ -1208,8 +1456,16 @@ export class WriteCoordinator {
     target: MemoryRecallItem,
     owner: AgentMemoryRow,
     now: number,
-    category: AgentMemoryRow['category']
+    category: AgentMemoryRow['category'],
+    incomingTemporal: MemoryTemporalMetadata
   ): CoordinateWriteResult {
+    const currentTarget = this.ports.repository.getById(target.id)
+    if (
+      !isLiveDecisionTarget(agentId, currentTarget) ||
+      !rowsShareMemoryScope(currentTarget, owner)
+    ) {
+      return { action: 'retry' }
+    }
     const hit = this.ports.rows.handleProvenanceHit(agentId, owner, {
       allowDecisionForSuperseded: true
     })
@@ -1222,6 +1478,7 @@ export class WriteCoordinator {
         let ownerRevision = owner.decision_revision
         const ownerHead =
           hit.action === 'continue' ? this.ports.rows.supersedeHead(agentId, owner) : undefined
+        let retiredHeadId: string | null = null
         if (
           !this.ports.repository.markSupersededIfRevision(
             agentId,
@@ -1256,29 +1513,49 @@ export class WriteCoordinator {
               throw new DecisionRevisionConflictError()
             }
           } else {
-            if (!this.ports.rows.reviveSupersededAfterDecision(agentId, owner).applied) {
+            const revival = this.ports.rows.reviveSupersededAfterDecision(agentId, owner)
+            if (!revival.applied) {
               throw new DecisionRevisionConflictError()
             }
+            retiredHeadId = revival.retiredHeadId
           }
           ownerRevision += 1
         }
-        if (
+        const currentTemporal = temporalMetadataFromRow(owner)
+        const nextTemporal = reconcileEquivalentClaimTemporalMetadata(
+          currentTemporal,
+          incomingTemporal
+        )
+        const shouldUpdateTemporal = !memoryTemporalMetadataEquals(currentTemporal, nextTemporal)
+        const shouldUpdateCategory =
           (owner.kind === 'episodic' || owner.kind === 'semantic') &&
           owner.category === null &&
           category !== null
-        ) {
+        if (shouldUpdateCategory || shouldUpdateTemporal) {
           if (
             !this.ports.repository.updateUserMetadataIfRevision({
               agentId,
               id: owner.id,
               expectedRevision: ownerRevision,
-              category,
+              ...(shouldUpdateCategory ? { category } : {}),
+              ...(shouldUpdateTemporal ? { temporal: nextTemporal } : {}),
               lastAccessedAt: now
             })
           ) {
             throw new DecisionRevisionConflictError()
           }
         }
+        this.ports.repository.insertDerivations(
+          [target.id, retiredHeadId]
+            .filter((parentMemoryId): parentMemoryId is string => parentMemoryId !== null)
+            .map((parentMemoryId) => ({
+              agentId,
+              parentMemoryId,
+              childMemoryId: owner.id,
+              derivationKind: 'supersede' as const,
+              createdAt: now
+            }))
+        )
       })
     } catch (error) {
       if (error instanceof DecisionRevisionConflictError) return { action: 'retry' }
@@ -1292,21 +1569,44 @@ export class WriteCoordinator {
     options: WriteMemoriesOptions,
     model?: MemoryModelRef | null
   ): Promise<MemoryWriteOutcome> {
+    // Runtime/model writes are not user authorization. They use the same tombstone-preserving
+    // contract as extraction, maintenance, and replay.
+    return this.rememberMemoryWithPolicy(candidate, options, model, 'preserve')
+  }
+
+  private async rememberMemoryWithPolicy(
+    candidate: MemoryCandidate,
+    options: WriteMemoriesOptions,
+    model: MemoryModelRef | null | undefined,
+    tombstoneRelease: TombstoneReleasePolicy
+  ): Promise<MemoryWriteOutcome> {
     if (!this.ctx.canWriteAgentMemory(options.agentId)) {
       return { action: 'noop', reason: 'disposed' }
     }
-    const resolvedModel = model ? this.ctx.resolveExtractionModel(options.agentId, model) : null
+    const normalizedOptions: WriteMemoriesOptions = {
+      ...options,
+      scope: normalizeMemoryScope(options.scope)
+    }
     const operationFence = this.ctx.captureOperationFence(options.agentId)
-    const outcome = resolvedModel
-      ? await this.coordinateWrite(
-          options.agentId,
-          candidate,
-          resolvedModel,
-          options,
-          Date.now(),
-          operationFence
-        )
-      : this.directAddMemory(options.agentId, candidate, options)
+    const now = this.ctx.now()
+    const explicitlyRelearned =
+      tombstoneRelease === 'explicit-user-action'
+        ? this.tryExplicitRelearn(options.agentId, candidate, normalizedOptions, now)
+        : null
+    const resolvedModel =
+      explicitlyRelearned || !model ? null : this.ctx.resolveExtractionModel(options.agentId, model)
+    const outcome =
+      explicitlyRelearned ??
+      (resolvedModel
+        ? await this.coordinateWrite(
+            options.agentId,
+            candidate,
+            resolvedModel,
+            normalizedOptions,
+            now,
+            operationFence
+          )
+        : this.directAddMemory(options.agentId, candidate, normalizedOptions, now))
     if (!this.ctx.canContinueOperation(operationFence)) {
       return { action: 'noop', reason: 'disposed' }
     }
@@ -1324,47 +1624,97 @@ export class WriteCoordinator {
     return outcome
   }
 
+  private tryExplicitRelearn(
+    agentId: string,
+    candidate: MemoryCandidate,
+    options: WriteMemoriesOptions,
+    now: number
+  ): MemoryWriteOutcome | null {
+    const normalized = normalizeMemoryCandidate(candidate)
+    if (!normalized) return null
+    const result = this.ports.rows.reauthorizeForgottenMemory(
+      agentId,
+      normalized,
+      normalized.content,
+      options,
+      now
+    )
+    return result.action === 'inserted'
+      ? { action: 'created', id: result.id, reauthorized: true }
+      : null
+  }
+
   private directAddMemory(
     agentId: string,
     candidate: MemoryCandidate,
-    options: WriteMemoriesOptions
+    options: WriteMemoriesOptions,
+    now: number
   ): MemoryWriteOutcome {
     const normalized = normalizeMemoryCandidate(candidate)
     if (!normalized) return { action: 'noop', reason: 'empty' }
     const content = normalized.content
-    const provenanceKey = buildMemoryProvenanceKey(agentId, normalized.kind, content)
-    const duplicate = this.ports.rows.resolveProvenance(agentId, normalized.kind, content)
+    const scope = normalizeMemoryScope(options.scope)
+    const duplicate = this.ports.rows.resolveProvenance(agentId, normalized.kind, content, scope)
     if (duplicate) {
       const hit = this.ports.rows.handleProvenanceHit(agentId, duplicate)
       if (hit.action === 'absorbed') {
-        return this.absorbArchivedProvenanceOwner(agentId, duplicate)
+        return this.absorbArchivedProvenanceOwner(agentId, duplicate, normalized.temporal)
           ? { action: 'updated', id: duplicate.id }
           : { action: 'noop', reason: 'concurrent-update', id: duplicate.id }
+      }
+      if (
+        hit.action === 'noop' &&
+        hit.reason === 'duplicate' &&
+        this.ports.rows.enrichEquivalentClaimTemporalMetadata(
+          agentId,
+          duplicate,
+          normalized.temporal
+        )
+      ) {
+        return { action: 'updated', id: duplicate.id }
       }
       const reason = hit.action === 'noop' ? hit.reason : 'duplicate'
       return { action: 'noop', reason, id: duplicate.id }
     }
-    const id = this.ports.rows.insertMemory(agentId, normalized, content, provenanceKey, options)
-    return id ? { action: 'created', id } : { action: 'noop', reason: 'insert-skipped' }
+    const insert = this.ports.rows.insertMemory(agentId, normalized, content, options, now)
+    return insert.action === 'inserted'
+      ? { action: 'created', id: insert.id }
+      : {
+          action: 'noop',
+          reason: insert.reason === 'forgotten' ? 'forgotten' : 'insert-skipped'
+        }
   }
 
-  private absorbArchivedProvenanceOwner(agentId: string, existing: AgentMemoryRow): boolean {
-    return this.ports.repository.runInTransaction(() =>
-      this.ports.repository.restoreArchivedMemory({
+  private absorbArchivedProvenanceOwner(
+    agentId: string,
+    existing: AgentMemoryRow,
+    temporal: MemoryTemporalMetadata
+  ): boolean {
+    let restored = false
+    this.ports.repository.runInTransaction(() => {
+      restored = this.ports.repository.restoreArchivedMemory({
         agentId,
         id: existing.id,
         expectedRevision: existing.decision_revision
       })
-    )
+      if (!restored) return
+      const current = this.ports.repository.getById(existing.id)
+      if (current) {
+        this.ports.rows.enrichEquivalentClaimTemporalMetadata(agentId, current, temporal)
+      }
+    })
+    return restored
   }
 
   private reviveProvenanceOwner(
     agentId: string,
     existing: AgentMemoryRow,
     now: number,
-    category: AgentMemoryRow['category']
+    category: AgentMemoryRow['category'],
+    temporal: MemoryTemporalMetadata
   ): MemoryWriteOutcome {
     let transitionApplied = true
+    let retiredHeadId: string | null = null
     this.ports.repository.runInTransaction(() => {
       let expectedRevision = existing.decision_revision
       if (existing.lifecycle_state === 'archived' && existing.superseded_by === null) {
@@ -1376,18 +1726,36 @@ export class WriteCoordinator {
         if (transitionApplied) expectedRevision += 1
       }
       if (existing.superseded_by !== null) {
-        transitionApplied = this.ports.rows.reviveSupersededAfterDecision(agentId, existing).applied
+        const revival = this.ports.rows.reviveSupersededAfterDecision(agentId, existing)
+        transitionApplied = revival.applied
+        retiredHeadId = revival.retiredHeadId
         if (transitionApplied) expectedRevision += 1
       }
       if (!transitionApplied) return
-      if (existing.category === null && category !== null) {
+      const currentTemporal = temporalMetadataFromRow(existing)
+      const nextTemporal = reconcileEquivalentClaimTemporalMetadata(currentTemporal, temporal)
+      const shouldUpdateTemporal = !memoryTemporalMetadataEquals(currentTemporal, nextTemporal)
+      const shouldUpdateCategory = existing.category === null && category !== null
+      if (shouldUpdateCategory || shouldUpdateTemporal) {
         transitionApplied = this.ports.repository.updateUserMetadataIfRevision({
           agentId,
           id: existing.id,
           expectedRevision,
-          category,
+          ...(shouldUpdateCategory ? { category } : {}),
+          ...(shouldUpdateTemporal ? { temporal: nextTemporal } : {}),
           lastAccessedAt: now
         })
+      }
+      if (transitionApplied && retiredHeadId !== null) {
+        this.ports.repository.insertDerivations([
+          {
+            agentId,
+            parentMemoryId: retiredHeadId,
+            childMemoryId: existing.id,
+            derivationKind: 'supersede',
+            createdAt: now
+          }
+        ])
       }
     })
 
@@ -1403,6 +1771,7 @@ export class WriteCoordinator {
       kind?: 'episodic' | 'semantic'
       category?: string | null
       importance?: number
+      scope?: MemoryScope
     },
     sessionId?: string | null
   ): Promise<MemoryWriteOutcome> {
@@ -1419,10 +1788,16 @@ export class WriteCoordinator {
       configured?.providerId && configured?.modelId
         ? { providerId: configured.providerId, modelId: configured.modelId }
         : null
-    const outcome = await this.rememberMemory(
+    const scope = normalizeMemoryScope(input.scope ?? AGENT_MEMORY_AGENT_SCOPE)
+    const outcome = await this.rememberMemoryWithPolicy(
       candidate,
-      { agentId, sourceSession: sessionId ?? null },
-      model
+      {
+        agentId,
+        sourceSession: sessionId ?? null,
+        scope
+      },
+      model,
+      'explicit-user-action'
     )
     if (!this.ctx.canWriteAgentMemory(agentId)) return outcome
     const audit = userAddAuditFromOutcome(outcome)
@@ -1434,7 +1809,9 @@ export class WriteCoordinator {
       inputRefs: {
         kind: candidate.kind,
         category: candidate.category ?? null,
-        importance: candidate.importance ?? null
+        importance: candidate.importance ?? null,
+        scopeType: scope.type,
+        scopeId: scope.type === 'agent' ? null : scope.id
       },
       outputRefs: audit.outputRefs,
       model,

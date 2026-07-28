@@ -2702,9 +2702,9 @@
       "tabMemories": "حافظه‌ها",
       "tabPersona": "خط زمانی شخصیت",
       "memoriesCount": "{count} حافظه",
-      "clearAll": "پاک کردن همه",
-      "clearConfirmTitle": "همه حافظه‌ها پاک شوند؟",
-      "clearConfirmBody": "این کار همه حافظه‌های این عامل را برای همیشه حذف می‌کند. قابل بازگشت نیست.",
+      "clearAll": "پاک کردن حافظه‌ها",
+      "clearConfirmTitle": "حافظه‌های واقعی و پرسونای عامل پاک شوند؟",
+      "clearConfirmBody": "این کار حافظه‌های واقعی و پرسونای این عامل را برای همیشه حذف می‌کند. دستورالعمل‌های پایدار حفظ می‌شوند و می‌توان آن‌ها را جداگانه مدیریت کرد. قابل بازگشت نیست.",
       "cleanupPendingRestart": "فایل‌های برداری قفل‌شده پس از راه‌اندازی مجدد حذف می‌شوند",
       "emptyMemories": "هنوز حافظه‌ای نیست. با گفتگو با این عامل انباشته می‌شوند.",
       "emptyPersona": "هنوز نسخه‌ای از مدل خود وجود ندارد.",
@@ -3067,7 +3067,7 @@
       "archivedMatches": "نتایج بایگانی‌شده",
       "refresh": "بازخوانی",
       "inboxTitle": "نیازمند توجه",
-      "inboxDescription": "ناسازگاری‌های حافظه و پیش‌نویس‌های پرسونا را پیش از ناپدید شدن از دید حل کنید.",
+      "inboxDescription": "ناسازگاری‌های حافظه، پیش‌نویس‌های پرسونا و دستورالعمل‌های پیشنهادی را پیش از آن‌که از دید خارج شوند، بررسی کنید.",
       "conflictBadge": "{count} ناسازگاری",
       "personaDraftBadge": "{count} پیش‌نویس پرسونا",
       "conflictSectionTitle": "ناسازگاری‌های حافظه ({count})",
@@ -3114,7 +3114,48 @@
         "memory-persona-rollback": "پرسونا بازگردانده شد",
         "memory-persona-anchor": "لنگر پرسونا به‌روزرسانی شد",
         "memory-reindex": "حافظه دوباره نمایه‌سازی شد"
-      }
+      },
+      "tabDirectives": "دستورالعمل‌ها",
+      "directiveDraftBadge": "{count} پیش‌نویس دستورالعمل",
+      "directiveDraftSectionTitle": "دستورالعمل‌های پیشنهادی ({count})",
+      "directiveCreateTitle": "ایجاد دستورالعمل پایدار",
+      "directiveCreateDescription": "دستورالعمل‌های دستی بلافاصله فعال می‌شوند. پیشنهادهای مدل تا زمان تأیید شما به‌صورت پیش‌نویس می‌مانند.",
+      "directiveRuntimeEnabled": "در زمان اجرا اعمال می‌شود",
+      "directiveRuntimeDisabled": "هنگام خاموش بودن حافظه غیرفعال است",
+      "directiveKindLabel": "نوع دستورالعمل",
+      "directiveKind": {
+        "instruction": "دستورالعمل پایدار",
+        "suppress_topic": "سرکوب موضوع"
+      },
+      "directiveTopicLabel": "موضوع منطبق",
+      "directiveTopicPlaceholder": "موضوع یا عبارت دقیق برای حذف از حافظهٔ بازیابی‌شده",
+      "directiveTopicTooBroad": "موضوع‌های دارای نویسه‌های CJK باید دست‌کم {min} نویسهٔ قابل مشاهده داشته باشند تا حافظه‌های نامرتبط پنهان نشوند.",
+      "directiveContentLabel": "دستورالعمل",
+      "directiveInstructionPlaceholder": "یک دستورالعمل پایدار برای این عامل بنویسید.",
+      "directiveSuppressPlaceholder": "توضیح دهید عامل چگونه باید با این موضوع برخورد کند.",
+      "directiveInstructionHint": "این راهنمایی در سطح کاربر است و نمی‌تواند قوانین سیستم یا ایمنی را نادیده بگیرد.",
+      "directiveSuppressHint": "موضوع، حافظهٔ بازیابی‌شده را فیلتر می‌کند و دستورالعمل پاسخ را هدایت می‌کند. این یک فیلتر خروجی نیست.",
+      "directiveLength": "دستورالعمل {content}/{contentMax} · موضوع {topic}/{topicMax}",
+      "directiveCreateAction": "فعال‌سازی دستورالعمل",
+      "directiveCapacityTitle": "حد دستورالعمل‌های فعال پر شده است",
+      "directiveCapacityDescription": "هر عامل می‌تواند حداکثر {max} دستورالعمل فعال داشته باشد. پیش از افزودن یا تأیید مورد جدید، یک دستورالعمل فعال را حذف کنید.",
+      "directiveListTitle": "دستورالعمل‌های ذخیره‌شده",
+      "directiveListDescription": "{active} فعال · {draft} در انتظار تأیید",
+      "directiveEmptyTitle": "هنوز دستورالعملی وجود ندارد",
+      "directiveEmptyDescription": "اینجا یک دستورالعمل پایدار ایجاد کنید یا پیشنهادی را از صندوق ورودی تأیید کنید.",
+      "directiveStatus": {
+        "active": "فعال",
+        "draft": "پیش‌نویس",
+        "rejected": "ردشده"
+      },
+      "directiveSource": {
+        "explicit_user": "اقدام صریح کاربر",
+        "manual": "تنظیمات",
+        "derived_suggestion": "پیشنهادشده از گفتگو"
+      },
+      "directiveTopicValue": "موضوع: {topic}",
+      "directiveDeleteTitle": "این دستورالعمل حذف شود؟",
+      "directiveDeleteDescription": "اعمال این دستورالعمل بلافاصله متوقف می‌شود. بعداً می‌توانید دوباره آن را ایجاد کنید."
     }
   },
   "pluginsHub": {

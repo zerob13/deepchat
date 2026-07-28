@@ -3,6 +3,11 @@ import path from 'node:path'
 
 import runtimeVersions from '../../../resources/runtime-versions.json'
 import {
+  DocumentTextExtractionService,
+  type DocumentTextExtractionInput,
+  type DocumentTextExtractionResult
+} from './documentTextExtractionService'
+import {
   ImageTextExtractionService,
   type ImageTextExtractionBatchItem,
   type ImageTextExtractionInput,
@@ -11,7 +16,9 @@ import {
 import { LightOcrProcessHost, type LightOcrProcessHostStatus } from './lightOcrProcessHost'
 import { OcrArtifactStore, type OcrArtifactStoreStats } from './ocrArtifactStore'
 import { SafeStorageOcrCacheKeyProvider } from './ocrCacheKeyProvider'
+import { OcrExtractionScheduler } from './ocrExtractionScheduler'
 import { OcrRuntimeAssetResolver, type OcrRuntimeAvailability } from './ocrRuntimeAssetResolver'
+import { OcrSourceSnapshotBudget } from './ocrSourceSnapshotBudget'
 
 export interface OcrRuntimeServiceOptions {
   appPath: string
@@ -33,7 +40,9 @@ export interface OcrRuntimeServiceStatus {
 interface RuntimeResources {
   host: LightOcrProcessHost
   store: OcrArtifactStore
+  scheduler: OcrExtractionScheduler
   extraction: ImageTextExtractionService
+  documentExtraction: DocumentTextExtractionService
 }
 
 /** Lazily owns the offline OCR helper, engine, and derived cache for the application lifetime. */
@@ -58,7 +67,7 @@ export class OcrRuntimeService {
       return {
         status: 'unavailable',
         reason: 'service_closed',
-        lightOcrVersion: runtimeVersions.lightOcr.version,
+        lightOcrVersion: runtimeVersions.lightOcr.facadeVersion,
         bundleId: runtimeVersions.lightOcr.bundleId
       }
     }
@@ -72,6 +81,10 @@ export class OcrRuntimeService {
 
   async extractBatch(inputs: ImageTextExtractionInput[]): Promise<ImageTextExtractionBatchItem[]> {
     return await (await this.getResources()).extraction.extractBatch(inputs)
+  }
+
+  async extractDocument(input: DocumentTextExtractionInput): Promise<DocumentTextExtractionResult> {
+    return await (await this.getResources()).documentExtraction.extractDocument(input)
   }
 
   async getStatus(): Promise<OcrRuntimeServiceStatus> {
@@ -89,6 +102,7 @@ export class OcrRuntimeService {
     const processStatus = resources.host.getStatus()
     if (
       resources.extraction.hasActiveExtractions() ||
+      resources.documentExtraction.hasActiveExtractions() ||
       processStatus.queuedRequests > 0 ||
       processStatus.state === 'starting' ||
       processStatus.state === 'busy' ||
@@ -105,6 +119,8 @@ export class OcrRuntimeService {
     const resources = await this.resourcesPromise?.catch(() => null)
     if (!resources) return
     resources.extraction.close()
+    resources.documentExtraction.close()
+    resources.scheduler.close()
     await resources.host.close()
     await resources.store.close()
   }
@@ -132,6 +148,8 @@ export class OcrRuntimeService {
     let host: LightOcrProcessHost | null = null
     let store: OcrArtifactStore | null = null
     let extraction: ImageTextExtractionService | null = null
+    let documentExtraction: DocumentTextExtractionService | null = null
+    let scheduler: OcrExtractionScheduler | null = null
     try {
       host = new LightOcrProcessHost({
         nodeExecutable: availability.assets.nodeExecutable,
@@ -146,17 +164,34 @@ export class OcrRuntimeService {
         dbPath: path.join(cacheDir, 'ocr-cache.db'),
         keyProvider: new SafeStorageOcrCacheKeyProvider(path.join(cacheDir, 'cache-key.json'))
       })
+      scheduler = new OcrExtractionScheduler()
+      const snapshotBudget = new OcrSourceSnapshotBudget()
       extraction = new ImageTextExtractionService({
         processHost: host,
         artifactStore: store,
+        scheduler,
+        closeSchedulerOnClose: false,
+        snapshotBudget,
         lightOcrVersion: availability.assets.lightOcrVersion,
         bundleId: availability.assets.bundleId,
         onDiagnostic: this.options.onDiagnostic
       })
+      documentExtraction = new DocumentTextExtractionService({
+        processHost: host,
+        artifactStore: store,
+        scheduler,
+        closeSchedulerOnClose: false,
+        snapshotBudget,
+        facadeVersion: availability.assets.lightOcrVersion,
+        bundleId: availability.assets.bundleId,
+        onDiagnostic: this.options.onDiagnostic
+      })
       if (this.closed) throw new Error('OCR runtime service is closed')
-      return { host, store, extraction }
+      return { host, store, scheduler, extraction, documentExtraction }
     } catch (error) {
       extraction?.close()
+      documentExtraction?.close()
+      scheduler?.close()
       await Promise.allSettled([host?.close(), store?.close()])
       throw error
     }

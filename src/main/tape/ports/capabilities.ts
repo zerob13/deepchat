@@ -118,7 +118,29 @@ export interface TapeMemoryViewManifestInspection {
   selectedIds: string[] | null
   droppedCount: number
   queryHash: string | null
+  allocation?: TapeMemoryContributionBudgetInspection | null
   createdAt: number
+}
+
+export interface TapeMemoryContributionTokenInspection {
+  directive: number
+  persona: number
+  working: number
+  queryRecall: number
+}
+
+export interface TapeMemoryContributionBudgetInspection {
+  policyVersion: number
+  totalTokenBudget: number
+  overheadTokens: number
+  demand: TapeMemoryContributionTokenInspection
+  allocated: TapeMemoryContributionTokenInspection
+  used: TapeMemoryContributionTokenInspection
+  borrowed: TapeMemoryContributionTokenInspection
+  unallocatedTokens: number
+  estimatedTotalTokens: number
+  unusedTokens: number
+  constrained: boolean
 }
 
 export interface TapeLifecycleAdmin {

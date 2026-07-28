@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { MemoryService } from '@/memory'
-import { createFakeRepository, FakeVectorStore } from './support/memoryFakes'
+import {
+  createFakeRepository,
+  FakeDirectiveRepository,
+  FakeVectorStore
+} from './support/memoryFakes'
 
 function createPresenter(getEmbeddings: () => Promise<number[][]>, withEmbedding = true) {
   const repository = createFakeRepository()
   const presenter = new MemoryService({
     repository,
+    directiveRepository: new FakeDirectiveRepository(),
     executeWithRateLimit: vi.fn(async () => undefined),
     resolveAgentConfig: () => ({
       memoryEnabled: true,
@@ -84,6 +89,7 @@ describe('EmbeddingPipeline diagnostics', () => {
     const repository = createFakeRepository()
     const presenter = new MemoryService({
       repository,
+      directiveRepository: new FakeDirectiveRepository(),
       executeWithRateLimit: vi.fn(async () => undefined),
       resolveAgentConfig: () => ({
         memoryEnabled: true,

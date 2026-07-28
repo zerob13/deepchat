@@ -2702,9 +2702,9 @@
       "tabMemories": "Memórias",
       "tabPersona": "Linha do tempo da persona",
       "memoriesCount": "{count} memórias",
-      "clearAll": "Limpar tudo",
-      "clearConfirmTitle": "Limpar todas as memórias?",
-      "clearConfirmBody": "Isso remove permanentemente todas as memórias deste agente. Não pode ser desfeito.",
+      "clearAll": "Limpar memórias",
+      "clearConfirmTitle": "Limpar memórias factuais e persona?",
+      "clearConfirmBody": "Isso remove permanentemente as memórias factuais e a persona deste agente. As diretivas permanentes são mantidas e podem ser gerenciadas separadamente. Não pode ser desfeito.",
       "cleanupPendingRestart": "Os arquivos vetoriais bloqueados serão excluídos após a reinicialização",
       "emptyMemories": "Ainda sem memórias. Elas se acumulam conforme você conversa com este agente.",
       "emptyPersona": "Ainda sem versões do automodelo.",
@@ -3067,7 +3067,7 @@
       "archivedMatches": "Correspondências arquivadas",
       "refresh": "Atualizar",
       "inboxTitle": "Precisa de atenção",
-      "inboxDescription": "Resolva conflitos de memória e rascunhos de perfil antes que saiam de vista.",
+      "inboxDescription": "Resolva conflitos de memória, rascunhos de perfil e diretrizes sugeridas antes que saiam de vista.",
       "conflictBadge": "{count} conflitos",
       "personaDraftBadge": "{count} rascunhos de perfil",
       "conflictSectionTitle": "Conflitos de memória ({count})",
@@ -3114,7 +3114,48 @@
         "memory-persona-rollback": "Perfil revertido",
         "memory-persona-anchor": "Âncora de perfil atualizada",
         "memory-reindex": "Memória reindexada"
-      }
+      },
+      "tabDirectives": "Diretrizes",
+      "directiveDraftBadge": "{count} rascunhos de diretriz",
+      "directiveDraftSectionTitle": "Diretrizes sugeridas ({count})",
+      "directiveCreateTitle": "Criar uma diretriz permanente",
+      "directiveCreateDescription": "As diretrizes manuais ficam ativas imediatamente. As sugestões do modelo permanecem como rascunhos até serem aprovadas.",
+      "directiveRuntimeEnabled": "Aplicada durante a execução",
+      "directiveRuntimeDisabled": "Inativa enquanto a memória estiver desligada",
+      "directiveKindLabel": "Tipo de diretriz",
+      "directiveKind": {
+        "instruction": "Instrução permanente",
+        "suppress_topic": "Suprimir tópico"
+      },
+      "directiveTopicLabel": "Tópico correspondente",
+      "directiveTopicPlaceholder": "Tópico ou frase exata a suprimir da memória recuperada",
+      "directiveTopicTooBroad": "Tópicos com caracteres CJK precisam de pelo menos {min} caracteres visíveis para não suprimir memórias não relacionadas.",
+      "directiveContentLabel": "Instrução",
+      "directiveInstructionPlaceholder": "Escreva uma instrução permanente para este agente.",
+      "directiveSuppressPlaceholder": "Explique como o agente deve lidar com este tópico.",
+      "directiveInstructionHint": "Esta é uma orientação no nível do usuário e não pode substituir regras do sistema ou de segurança.",
+      "directiveSuppressHint": "O tópico filtra a memória recuperada; a instrução orienta a resposta. Isso não é um filtro de saída.",
+      "directiveLength": "Instrução {content}/{contentMax} · Tópico {topic}/{topicMax}",
+      "directiveCreateAction": "Ativar diretriz",
+      "directiveCapacityTitle": "Limite de diretrizes ativas atingido",
+      "directiveCapacityDescription": "Cada agente pode ter até {max} diretrizes ativas. Exclua uma diretriz ativa antes de adicionar ou aprovar outra.",
+      "directiveListTitle": "Diretrizes salvas",
+      "directiveListDescription": "{active} ativas · {draft} aguardando aprovação",
+      "directiveEmptyTitle": "Nenhuma diretriz ainda",
+      "directiveEmptyDescription": "Crie uma instrução permanente aqui ou aprove uma sugestão da caixa de entrada.",
+      "directiveStatus": {
+        "active": "Ativa",
+        "draft": "Rascunho",
+        "rejected": "Rejeitada"
+      },
+      "directiveSource": {
+        "explicit_user": "Ação explícita do usuário",
+        "manual": "Configurações",
+        "derived_suggestion": "Sugerida a partir da conversa"
+      },
+      "directiveTopicValue": "Tópico: {topic}",
+      "directiveDeleteTitle": "Excluir esta diretriz?",
+      "directiveDeleteDescription": "A diretriz deixará de ser aplicada imediatamente. Você poderá criá-la novamente depois."
     }
   },
   "pluginsHub": {

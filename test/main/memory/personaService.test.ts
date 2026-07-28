@@ -182,7 +182,11 @@ describe('MemoryService.maybeEvolvePersona (guarded, default off)', () => {
       getEmbeddings: async (_p, _m, texts) => texts.map(() => [1, 0, 0, 0]),
       generateText,
       createVectorStore: async () => new FakeVectorStore(),
-      resetVectorStore: async () => {}
+      resetVectorStore: async () => {},
+      clock: {
+        now: () => 1000,
+        timeZone: () => 'UTC'
+      }
     })
     return { presenter, repo, generateText }
   }

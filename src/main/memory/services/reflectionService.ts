@@ -9,7 +9,8 @@ import {
   REFLECTION_MEMORY_LIMIT,
   REFLECTION_PROMPT_OVERHEAD_TOKENS
 } from '../runtimeConstants'
-import { buildMemoryProvenanceKey } from '../core/scoring'
+import { buildScopedMemoryProvenanceKey } from '../core/scoring'
+import { AGENT_MEMORY_AGENT_SCOPE } from '../core/scope'
 import { buildReflectionInsightsPrompt, parseReflectionInsights } from '../core/extraction'
 import { estimateTokens } from '../core/injectionPort'
 import { selectMaintenanceRowsWithinTokenBudget } from '../core/maintenanceBudget'
@@ -18,6 +19,7 @@ import type { MemoryMaintenanceReflectionResult, MemoryReflectionResult } from '
 import { isUniqueConstraintError, type MemoryModelRef, type MemoryRuntimeContext } from '../context'
 import type {
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMutationRepositoryPort,
   MemoryProvenanceResolverPort,
   MemoryReadRepositoryPort,
@@ -35,6 +37,7 @@ export class ReflectionService {
       repository: MemoryReadRepositoryPort &
         MemoryMutationRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
         MemoryTransactionPort
       textGeneration: MemoryTextGenerationPort
       provenance: MemoryProvenanceResolverPort
@@ -119,12 +122,26 @@ export class ReflectionService {
       }
       if (!this.ctx.canContinueOperation(operationFence)) return finish(null)
       const insights = parseReflectionInsights(raw)
-      const reflectionIds = this.ports.repository.runInTransaction(() =>
-        insights.flatMap((insight) => {
-          const id = this.insertReflection(agentId, insight, sourceSession ?? null)
+      const now = this.ctx.now()
+      const sourceMemoryIds = top.map((row) => row.id)
+      const reflectionIds = this.ports.repository.runInTransaction(() => {
+        const insertedIds = insights.flatMap((insight) => {
+          const id = this.insertReflection(agentId, insight, sourceSession ?? null, now)
           return id ? [id] : []
         })
-      )
+        this.ports.repository.insertDerivations(
+          insertedIds.flatMap((childMemoryId) =>
+            sourceMemoryIds.map((parentMemoryId) => ({
+              agentId,
+              parentMemoryId,
+              childMemoryId,
+              derivationKind: 'reflection' as const,
+              createdAt: now
+            }))
+          )
+        )
+        return insertedIds
+      })
       if (!reflectionIds.length) {
         this.reflectionAttemptWatermark.set(agentId, maxUnitCreatedAt)
         return finish(null)
@@ -137,7 +154,7 @@ export class ReflectionService {
       void this.ports.triggerEmbedding(agentId).catch((error) => {
         logger.warn(`[Memory] background embedding failed: ${String(error)}`)
       })
-      return finish({ reflectionIds, sourceMemoryIds: top.map((row) => row.id) })
+      return finish({ reflectionIds, sourceMemoryIds })
     } catch (error) {
       logger.warn(`[Memory] reflection skipped: ${String(error)}`)
       return finish(null)
@@ -147,16 +164,30 @@ export class ReflectionService {
   private insertReflection(
     agentId: string,
     content: string,
-    sourceSession: string | null
+    sourceSession: string | null,
+    createdAt: number
   ): string | null {
     if (!this.ctx.canWriteAgentMemory(agentId)) return null
     const trimmed = content.trim()
     if (!trimmed) return null
-    const provenanceKey = buildMemoryProvenanceKey(agentId, 'reflection', trimmed)
-    if (this.ports.provenance.resolveProvenance(agentId, 'reflection', trimmed)) return null
+    const provenanceKey = buildScopedMemoryProvenanceKey(
+      agentId,
+      'reflection',
+      trimmed,
+      AGENT_MEMORY_AGENT_SCOPE
+    )
+    if (
+      this.ports.provenance.resolveProvenance(
+        agentId,
+        'reflection',
+        trimmed,
+        AGENT_MEMORY_AGENT_SCOPE
+      )
+    )
+      return null
     const id = `mem-${nanoid(12)}`
     try {
-      this.ports.repository.insert({
+      const inserted = this.ports.repository.insertClaimUnlessTombstoned({
         id,
         agentId,
         kind: 'reflection',
@@ -164,10 +195,12 @@ export class ReflectionService {
         importance: REFLECTION_IMPORTANCE,
         lifecycleState: 'active',
         embeddingState: 'pending',
+        scope: AGENT_MEMORY_AGENT_SCOPE,
         sourceSession,
-        provenanceKey
+        provenanceKey,
+        createdAt
       })
-      return id
+      return inserted ? id : null
     } catch (error) {
       if (!isUniqueConstraintError(error)) throw error
       return null

@@ -55,6 +55,53 @@
           </div>
 
           <div
+            v-if="allocation"
+            data-testid="memory-budget-allocation"
+            class="rounded-md border p-3"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-xs font-medium">{{ t('chat.memory.turn.allocation') }}</p>
+              <p class="text-xs tabular-nums text-muted-foreground">
+                {{ allocation.estimatedTotalTokens }} / {{ allocation.totalTokenBudget }}
+              </p>
+            </div>
+            <div class="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
+              <div>
+                <p class="text-muted-foreground">{{ t('chat.memory.turn.directive') }}</p>
+                <p class="mt-0.5 font-medium tabular-nums">
+                  {{ allocation.used.directive }} / {{ allocation.allocated.directive }}
+                </p>
+              </div>
+              <div>
+                <p class="text-muted-foreground">{{ t('chat.memory.turn.persona') }}</p>
+                <p class="mt-0.5 font-medium tabular-nums">
+                  {{ allocation.used.persona }} / {{ allocation.allocated.persona }}
+                </p>
+              </div>
+              <div>
+                <p class="text-muted-foreground">{{ t('chat.memory.turn.working') }}</p>
+                <p class="mt-0.5 font-medium tabular-nums">
+                  {{ allocation.used.working }} / {{ allocation.allocated.working }}
+                </p>
+              </div>
+              <div>
+                <p class="text-muted-foreground">{{ t('chat.memory.turn.queryRecall') }}</p>
+                <p class="mt-0.5 font-medium tabular-nums">
+                  {{ allocation.used.queryRecall }} / {{ allocation.allocated.queryRecall }}
+                </p>
+              </div>
+            </div>
+            <p class="mt-2 text-[11px] text-muted-foreground">
+              {{
+                t('chat.memory.turn.overheadSummary', {
+                  overhead: allocation.overheadTokens,
+                  unused: allocation.unusedTokens
+                })
+              }}
+            </p>
+          </div>
+
+          <div
             v-if="turn.manifest.selectedIds === null"
             class="rounded-md border p-3 text-sm text-muted-foreground"
           >
@@ -130,6 +177,7 @@ const memoryActivity = useMemoryActivityStore()
 const { t } = useI18n()
 const { toast } = useToast()
 const turn = computed(() => memoryActivity.selectedTurn)
+const allocation = computed(() => turn.value?.manifest?.allocation ?? null)
 const mutationDisabled = computed(() => props.readOnly === true || memoryActivity.readOnly)
 const forgettingIds = ref(new Set<string>())
 

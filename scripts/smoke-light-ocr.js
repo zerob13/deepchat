@@ -18,14 +18,32 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { createGzip, gunzip } from 'node:zlib'
+import { createGzip, deflateSync, gunzip } from 'node:zlib'
 
-const PROTOCOL_VERSION = 1
-const MAX_PROTOCOL_LINE_BYTES = 4 * 1024 * 1024
+import {
+  classifyLightOcrArtifact,
+  getRequiredPdfiumArtifactPaths,
+  groupLightOcrArtifactPaths,
+  hasSameLightOcrArtifactInventory,
+  isEncodedMacLightOcrArtifact
+} from './light-ocr-artifacts.mjs'
+
+export const PACKAGED_LIGHT_OCR_PROTOCOL_VERSION = 2
+export const PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES = 4 * 1024 * 1024
 const DEFAULT_OPERATION_TIMEOUT_MS = 120_000
 const DEFAULT_PEAK_RSS_LIMIT_BYTES = 768 * 1024 * 1024
 const MAX_ENCODED_OVERHEAD_BYTES = 1024 * 1024
 const MIB = 1024 * 1024
+const PDF_FIXTURE_PAGE_WIDTH = 700
+const PDF_FIXTURE_PAGE_HEIGHT = 260
+export const DOCUMENT_SMOKE_OPTIONS = Object.freeze({
+  dpi: 150,
+  pageRange: Object.freeze({ start: 1, end: 100 }),
+  maxPages: 100,
+  maxFileBytes: 50 * MIB,
+  maxPagePixels: 4096 * 4096,
+  maxTotalPixels: 100 * MIB
+})
 const execFileAsync = promisify(execFile)
 const gunzipAsync = promisify(gunzip)
 const BOOLEAN_ARGS = new Set([
@@ -152,6 +170,7 @@ export function createPackagedLightOcrEnvironment(inherited = process.env, nativ
   if (nativeRuntimeOverride) {
     environment.LIGHT_OCR_NODE_BINARY = nativeRuntimeOverride.nodeBinaryPath
     environment.LIGHT_OCR_RUNTIME_DESCRIPTOR = nativeRuntimeOverride.runtimeDescriptorPath
+    environment.LIGHT_OCR_PDFIUM_MODULE = nativeRuntimeOverride.pdfiumModulePath
   }
   return environment
 }
@@ -195,6 +214,20 @@ async function assertPackageIdentity(packageDir, expectedName, expectedVersion) 
   const packageJson = await readJson(path.join(packageDir, 'package.json'))
   if (packageJson.name !== expectedName || packageJson.version !== expectedVersion) {
     throw new Error(`Unexpected packaged OCR identity for ${expectedName}`)
+  }
+}
+
+async function assertExactPackageDependency(
+  packageDir,
+  dependencyField,
+  dependencyName,
+  expectedVersion
+) {
+  const packageJson = await readJson(path.join(packageDir, 'package.json'))
+  if (packageJson[dependencyField]?.[dependencyName] !== expectedVersion) {
+    throw new Error(
+      `${packageJson.name} does not own ${dependencyName}@${expectedVersion} through ${dependencyField}`
+    )
   }
 }
 
@@ -314,11 +347,6 @@ async function verifyModelChecksums(bundlePath) {
   }
 }
 
-function isDarwinCodeArtifact(relativePath) {
-  const extension = path.extname(relativePath).toLowerCase()
-  return extension === '.dylib' || extension === '.node'
-}
-
 async function readEncodedNativeArtifact(nativePackageDir, entry) {
   const rawPath = resolveContainedPath(
     nativePackageDir,
@@ -393,7 +421,12 @@ function base64Value(code) {
   return -1
 }
 
-async function verifyNativeChecksums(nativePackageDir, nativePayloadEncoding) {
+async function verifyNativeChecksums(
+  nativePackageDir,
+  nativePayloadEncoding,
+  platform,
+  expectedInventory
+) {
   const manifest = await readJson(path.join(nativePackageDir, 'artifact-hashes.json'))
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
     throw new Error('Packaged OCR native checksum list is empty')
@@ -410,7 +443,10 @@ async function verifyNativeChecksums(nativePackageDir, nativePayloadEncoding) {
       throw new Error('Packaged OCR native checksum list is malformed')
     }
     const filePath = resolveContainedPath(nativePackageDir, entry.path, 'OCR native checksum path')
-    if (nativePayloadEncoding === 'gzip-base64-v1' && isDarwinCodeArtifact(entry.path)) {
+    if (
+      nativePayloadEncoding === 'gzip-base64-v1' &&
+      isEncodedMacLightOcrArtifact(entry.path)
+    ) {
       await readEncodedNativeArtifact(nativePackageDir, entry)
       continue
     }
@@ -420,6 +456,46 @@ async function verifyNativeChecksums(nativePackageDir, nativePayloadEncoding) {
       expectedSha256: entry.sha256,
       label: `Packaged OCR native artifact ${entry.path}`
     })
+  }
+  await assertExactPackagedPdfiumDirectory(
+    nativePackageDir,
+    platform,
+    nativePayloadEncoding
+  )
+  const actualInventory = groupLightOcrArtifactPaths(
+    manifest.files.map((entry) => entry.path),
+    platform
+  )
+  if (!hasSameLightOcrArtifactInventory(actualInventory, expectedInventory)) {
+    throw new Error('Packaged OCR native artifact inventory does not match its runtime manifest')
+  }
+}
+
+async function assertExactPackagedPdfiumDirectory(
+  nativePackageDir,
+  platform,
+  nativePayloadEncoding
+) {
+  const entries = await readdir(path.join(nativePackageDir, 'pdfium'), { withFileTypes: true })
+  if (entries.some((entry) => !entry.isFile())) {
+    throw new Error(`Packaged OCR PDFium directory contains a non-file entry for ${platform}`)
+  }
+  const actualPaths = entries.map((entry) => `pdfium/${entry.name}`).sort()
+  const expectedPaths = getRequiredPdfiumArtifactPaths(platform)
+    .map((relativePath) =>
+      nativePayloadEncoding === 'gzip-base64-v1' &&
+      isEncodedMacLightOcrArtifact(relativePath)
+        ? `${relativePath}.gz.b64`
+        : relativePath
+    )
+    .sort()
+  if (
+    actualPaths.length !== expectedPaths.length ||
+    actualPaths.some((relativePath, index) => relativePath !== expectedPaths[index])
+  ) {
+    throw new Error(
+      `Packaged OCR PDFium directory mismatch for ${platform}: expected ${expectedPaths.join(', ')}`
+    )
   }
 }
 
@@ -464,10 +540,13 @@ export async function resolvePackagedOcrLayout({
   const expectedNodeArtifact = runtimeVersions.nodeArtifacts?.[`${platform}-${arch}`] ?? null
 
   if (
-    manifest.schemaVersion !== 2 ||
+    manifest.schemaVersion !== 3 ||
     manifest.platform !== platform ||
     manifest.arch !== arch ||
-    manifest.lightOcrVersion !== pinned.version ||
+    manifest.facadeVersion !== pinned.facadeVersion ||
+    manifest.runtimeVersion !== pinned.runtimeVersion ||
+    manifest.modelVersion !== pinned.modelVersion ||
+    manifest.nativeVersion !== pinned.nativeVersion ||
     manifest.bundleId !== pinned.bundleId ||
     typeof manifest.supported !== 'boolean'
   ) {
@@ -475,19 +554,32 @@ export async function resolvePackagedOcrLayout({
   }
 
   if (!expectedNativePackage) {
-    if (manifest.supported || manifest.reason !== 'unsupported_platform') {
+    if (
+      manifest.supported ||
+      manifest.reason !== 'unsupported_platform' ||
+      manifest.pdfSupport !== false
+    ) {
       throw new Error('Unsupported OCR target has an invalid availability manifest')
     }
     await assertUnsupportedLayout(unpackedRoot)
     return {
       supported: false,
       unpackedRoot,
-      lightOcrVersion: pinned.version,
+      lightOcrVersion: pinned.facadeVersion,
+      runtimeVersion: pinned.runtimeVersion,
+      modelVersion: pinned.modelVersion,
+      nativeVersion: pinned.nativeVersion,
       bundleId: pinned.bundleId
     }
   }
 
-  if (!manifest.supported || manifest.nativePackage !== expectedNativePackage || !manifest.paths) {
+  if (
+    !manifest.supported ||
+    manifest.pdfSupport !== true ||
+    manifest.nativePackage !== expectedNativePackage ||
+    !manifest.nativeArtifactInventory ||
+    !manifest.paths
+  ) {
     throw new Error('Supported OCR target has an invalid availability manifest')
   }
   const expectedNativePayloadEncoding = platform === 'darwin' ? 'gzip-base64-v1' : 'direct'
@@ -509,6 +601,7 @@ export async function resolvePackagedOcrLayout({
     'OCR helper path'
   )
   const facadeDir = resolveContainedPath(unpackedRoot, manifest.paths.facade, 'OCR facade path')
+  const runtimeDir = resolveContainedPath(unpackedRoot, manifest.paths.runtime, 'OCR runtime path')
   const bundlePath = resolveContainedPath(unpackedRoot, manifest.paths.bundle, 'OCR bundle path')
   const nativePackageDir = resolveContainedPath(
     unpackedRoot,
@@ -520,7 +613,8 @@ export async function resolvePackagedOcrLayout({
   await Promise.all([
     access(nodeExecutable),
     access(helperEntryPath),
-    access(path.join(facadeDir, 'js', 'index.cjs')),
+    access(path.join(facadeDir, 'src', 'index.cjs')),
+    access(path.join(runtimeDir, 'src', 'index.cjs')),
     access(path.join(nativePackageDir, 'native', 'runtime-descriptor.json'))
   ])
   await assertPackagedArtifactIntegrity({
@@ -531,9 +625,28 @@ export async function resolvePackagedOcrLayout({
     verifySignature: effectiveSignatureVerifier
   })
   await Promise.all([
-    assertPackageIdentity(facadeDir, '@arcships/light-ocr', pinned.version),
-    assertPackageIdentity(modelPackageDir, pinned.modelPackage, pinned.version),
-    assertPackageIdentity(nativePackageDir, expectedNativePackage, pinned.version)
+    assertPackageIdentity(facadeDir, '@arcships/light-ocr', pinned.facadeVersion),
+    assertPackageIdentity(runtimeDir, pinned.runtimePackage, pinned.runtimeVersion),
+    assertPackageIdentity(modelPackageDir, pinned.modelPackage, pinned.modelVersion),
+    assertPackageIdentity(nativePackageDir, expectedNativePackage, pinned.nativeVersion),
+    assertExactPackageDependency(
+      facadeDir,
+      'dependencies',
+      pinned.runtimePackage,
+      pinned.runtimeVersion
+    ),
+    assertExactPackageDependency(
+      facadeDir,
+      'dependencies',
+      pinned.modelPackage,
+      pinned.modelVersion
+    ),
+    assertExactPackageDependency(
+      runtimeDir,
+      'optionalDependencies',
+      expectedNativePackage,
+      pinned.nativeVersion
+    )
   ])
   const bundleManifest = await readJson(path.join(bundlePath, 'manifest.json'))
   if (bundleManifest.bundleId !== pinned.bundleId) {
@@ -541,7 +654,12 @@ export async function resolvePackagedOcrLayout({
   }
   await Promise.all([
     verifyModelChecksums(bundlePath),
-    verifyNativeChecksums(nativePackageDir, manifest.nativePayloadEncoding)
+    verifyNativeChecksums(
+      nativePackageDir,
+      manifest.nativePayloadEncoding,
+      platform,
+      manifest.nativeArtifactInventory
+    )
   ])
 
   return {
@@ -550,12 +668,16 @@ export async function resolvePackagedOcrLayout({
     nodeExecutable,
     helperEntryPath,
     facadeDir,
+    runtimeDir,
     modelPackageDir,
     bundlePath,
     nativePackageDir,
     nativePayloadEncoding: manifest.nativePayloadEncoding,
     nativePackage: expectedNativePackage,
-    lightOcrVersion: pinned.version,
+    lightOcrVersion: pinned.facadeVersion,
+    runtimeVersion: pinned.runtimeVersion,
+    modelVersion: pinned.modelVersion,
+    nativeVersion: pinned.nativeVersion,
     bundleId: pinned.bundleId
   }
 }
@@ -589,7 +711,10 @@ function createProtocolClient(child) {
 
   child.stdout.on('data', (chunk) => {
     stdoutBuffer = Buffer.concat([stdoutBuffer, Buffer.from(chunk)])
-    if (stdoutBuffer.byteLength > MAX_PROTOCOL_LINE_BYTES && !stdoutBuffer.includes(0x0a)) {
+    if (
+      stdoutBuffer.byteLength > PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES &&
+      !stdoutBuffer.includes(0x0a)
+    ) {
       rejectWaiters(new Error('Packaged OCR helper exceeded the protocol line limit'))
       return
     }
@@ -597,7 +722,7 @@ function createProtocolClient(child) {
     while (newlineIndex >= 0) {
       const line = stdoutBuffer.subarray(0, newlineIndex)
       stdoutBuffer = stdoutBuffer.subarray(newlineIndex + 1)
-      if (line.byteLength > MAX_PROTOCOL_LINE_BYTES) {
+      if (line.byteLength > PACKAGED_LIGHT_OCR_MAX_PROTOCOL_LINE_BYTES) {
         rejectWaiters(new Error('Packaged OCR helper exceeded the protocol line limit'))
         return
       }
@@ -676,8 +801,13 @@ function normalizedRecognitionText(result) {
   if (!result || !Array.isArray(result.lines)) {
     throw new Error('Packaged OCR helper returned an invalid recognition result')
   }
-  return result.lines
-    .map((line) => (typeof line?.text === 'string' ? line.text : ''))
+  return normalizeFixtureText(
+    result.lines.map((line) => (typeof line?.text === 'string' ? line.text : ''))
+  )
+}
+
+function normalizeFixtureText(lines) {
+  return lines
     .join(' ')
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '')
@@ -687,6 +817,24 @@ export function assertFixtureRecognized(result) {
   const normalized = normalizedRecognitionText(result)
   if (!normalized.includes('DEEPCHAT') || !normalized.includes('2026')) {
     throw new Error('Packaged OCR did not recognize the deterministic smoke fixture')
+  }
+}
+
+export function assertDocumentFixtureRecognized(pages) {
+  if (
+    !Array.isArray(pages) ||
+    !pages.some((page) => {
+      if (
+        !Array.isArray(page?.lines) ||
+        !page.lines.every((line) => typeof line === 'string')
+      ) {
+        return false
+      }
+      const normalized = normalizeFixtureText(page.lines)
+      return normalized.includes('DEEPCHAT') && normalized.includes('2026')
+    })
+  ) {
+    throw new Error('Packaged PDF OCR did not recognize the deterministic smoke fixture')
   }
 }
 
@@ -702,9 +850,87 @@ function fixtureSvg() {
   `)
 }
 
-async function createFixture(filePath) {
+export function buildRasterPdfFixture(compressedRgb, width, height) {
+  if (
+    !Buffer.isBuffer(compressedRgb) ||
+    compressedRgb.byteLength === 0 ||
+    !Number.isInteger(width) ||
+    width <= 0 ||
+    !Number.isInteger(height) ||
+    height <= 0
+  ) {
+    throw new Error('Invalid raster PDF smoke fixture input')
+  }
+  const content = Buffer.from(
+    `q\n${PDF_FIXTURE_PAGE_WIDTH} 0 0 ${PDF_FIXTURE_PAGE_HEIGHT} 0 0 cm\n/Im0 Do\nQ\n`,
+    'ascii'
+  )
+  const objects = [
+    Buffer.from('<< /Type /Catalog /Pages 2 0 R >>', 'ascii'),
+    Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>', 'ascii'),
+    Buffer.from(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PDF_FIXTURE_PAGE_WIDTH} ${PDF_FIXTURE_PAGE_HEIGHT}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`,
+      'ascii'
+    ),
+    Buffer.concat([
+      Buffer.from(
+        `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${compressedRgb.byteLength} >>\nstream\n`,
+        'ascii'
+      ),
+      compressedRgb,
+      Buffer.from('\nendstream', 'ascii')
+    ]),
+    Buffer.concat([
+      Buffer.from(`<< /Length ${content.byteLength} >>\nstream\n`, 'ascii'),
+      content,
+      Buffer.from('endstream', 'ascii')
+    ])
+  ]
+  const chunks = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'binary')]
+  const offsets = [0]
+  let byteOffset = chunks[0].byteLength
+
+  for (let index = 0; index < objects.length; index += 1) {
+    offsets.push(byteOffset)
+    const object = Buffer.concat([
+      Buffer.from(`${index + 1} 0 obj\n`, 'ascii'),
+      objects[index],
+      Buffer.from('\nendobj\n', 'ascii')
+    ])
+    chunks.push(object)
+    byteOffset += object.byteLength
+  }
+
+  const xrefOffset = byteOffset
+  const xrefEntries = offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
+    .join('')
+  chunks.push(
+    Buffer.from(
+      `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${xrefEntries}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
+      'ascii'
+    )
+  )
+  return Buffer.concat(chunks)
+}
+
+async function createFixtures(imagePath, documentPath) {
   const sharpModule = await import('sharp')
-  await sharpModule.default(fixtureSvg(), { density: 144 }).png().toFile(filePath)
+  const source = sharpModule.default(fixtureSvg(), { density: 144 })
+  const [, raster] = await Promise.all([
+    source.clone().png().toFile(imagePath),
+    source.clone().removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  ])
+  if (raster.info.channels !== 3) {
+    throw new Error('Unable to create the deterministic RGB PDF smoke fixture')
+  }
+  const pdf = buildRasterPdfFixture(
+    deflateSync(raster.data, { level: 9 }),
+    raster.info.width,
+    raster.info.height
+  )
+  await writeFile(documentPath, pdf, { flag: 'wx', mode: 0o600 })
 }
 
 async function materializePackagedNativeRuntime(layout, tempRoot) {
@@ -720,10 +946,31 @@ async function materializePackagedNativeRuntime(layout, tempRoot) {
   const descriptorEntry = manifest.files.find(
     (entry) => entry?.path === 'native/runtime-descriptor.json'
   )
-  const codeEntries = manifest.files.filter(
-    (entry) => entry && typeof entry.path === 'string' && isDarwinCodeArtifact(entry.path)
+  const nativeCodeEntries = manifest.files.filter(
+    (entry) =>
+      entry &&
+      typeof entry.path === 'string' &&
+      classifyLightOcrArtifact(entry.path) === 'native-code'
   )
-  if (!descriptorEntry || codeEntries.length === 0) {
+  const requiredPdfiumPaths = getRequiredPdfiumArtifactPaths('darwin').sort()
+  const declaredPdfiumPaths = manifest.files
+    .filter((entry) => entry && typeof entry.path === 'string' && entry.path.startsWith('pdfium/'))
+    .map((entry) => entry.path)
+    .sort()
+  const pdfiumLoaderEntry = manifest.files.find((entry) => entry?.path === 'pdfium/index.cjs')
+  const pdfiumCodeEntries = manifest.files.filter(
+    (entry) =>
+      entry &&
+      typeof entry.path === 'string' &&
+      classifyLightOcrArtifact(entry.path) === 'pdfium-code'
+  )
+  if (
+    !descriptorEntry ||
+    nativeCodeEntries.length === 0 ||
+    !pdfiumLoaderEntry ||
+    declaredPdfiumPaths.length !== requiredPdfiumPaths.length ||
+    declaredPdfiumPaths.some((entry, index) => entry !== requiredPdfiumPaths[index])
+  ) {
     throw new Error('Packaged OCR encoded native payload is incomplete')
   }
 
@@ -740,12 +987,27 @@ async function materializePackagedNativeRuntime(layout, tempRoot) {
   })
   const descriptorBytes = await readFile(sourceDescriptor)
   const descriptor = JSON.parse(descriptorBytes.toString('utf8'))
+  const descriptorArtifacts = [descriptor?.addon, ...(descriptor?.runtime?.artifacts ?? [])]
+  const descriptorPaths = descriptorArtifacts.map((entry) => entry?.path).sort()
+  const declaredNativeCodePaths = nativeCodeEntries.map((entry) => entry.path).sort()
+  const descriptorInventoryMatches =
+    descriptorPaths.length === declaredNativeCodePaths.length &&
+    descriptorPaths.every((entry, index) => entry === declaredNativeCodePaths[index]) &&
+    descriptorArtifacts.every((entry) => {
+      const declared = nativeCodeEntries.find((candidate) => candidate.path === entry?.path)
+      return (
+        declared &&
+        declared.bytes === entry.bytes &&
+        declared.sha256 === entry.sha256
+      )
+    })
   const addonPath = descriptor?.addon?.path
   if (
     typeof addonPath !== 'string' ||
-    !codeEntries.some((entry) => entry.path === addonPath)
+    !descriptorInventoryMatches ||
+    !nativeCodeEntries.some((entry) => entry.path === addonPath)
   ) {
-    throw new Error('Packaged OCR native runtime descriptor has an invalid addon path')
+    throw new Error('Packaged OCR native runtime descriptor has an invalid inventory')
   }
 
   const materializedRoot = await mkdtemp(path.join(tempRoot, 'native-runtime-'))
@@ -756,7 +1018,28 @@ async function materializePackagedNativeRuntime(layout, tempRoot) {
   )
   await mkdir(path.dirname(destinationDescriptor), { recursive: true, mode: 0o700 })
   await writeFile(destinationDescriptor, descriptorBytes, { flag: 'wx', mode: 0o600 })
-  for (const entry of codeEntries) {
+  const sourcePdfiumLoader = resolveContainedPath(
+    layout.nativePackageDir,
+    pdfiumLoaderEntry.path,
+    'OCR PDFium loader path'
+  )
+  await assertPackagedArtifactIntegrity({
+    filePath: sourcePdfiumLoader,
+    expectedBytes: pdfiumLoaderEntry.bytes,
+    expectedSha256: pdfiumLoaderEntry.sha256,
+    label: 'Packaged OCR PDFium loader'
+  })
+  const destinationPdfiumLoader = resolveContainedPath(
+    materializedRoot,
+    pdfiumLoaderEntry.path,
+    'materialized OCR PDFium loader path'
+  )
+  await mkdir(path.dirname(destinationPdfiumLoader), { recursive: true, mode: 0o700 })
+  await writeFile(destinationPdfiumLoader, await readFile(sourcePdfiumLoader), {
+    flag: 'wx',
+    mode: 0o600
+  })
+  for (const entry of [...nativeCodeEntries, ...pdfiumCodeEntries]) {
     const decoded = await readEncodedNativeArtifact(layout.nativePackageDir, entry)
     const destination = resolveContainedPath(
       materializedRoot,
@@ -772,7 +1055,8 @@ async function materializePackagedNativeRuntime(layout, tempRoot) {
       addonPath,
       'materialized OCR addon path'
     ),
-    runtimeDescriptorPath: destinationDescriptor
+    runtimeDescriptorPath: destinationDescriptor,
+    pdfiumModulePath: destinationPdfiumLoader
   }
 }
 
@@ -824,17 +1108,83 @@ async function recognize(client, requestId, fixturePath, timeoutMs) {
   return { result, durationMs: performance.now() - startedAt }
 }
 
+async function recognizeDocument(
+  client,
+  requestId,
+  fixturePath,
+  expectedBundleId,
+  backend,
+  timeoutMs
+) {
+  const startedAt = performance.now()
+  const deadline = startedAt + timeoutMs
+  const pages = []
+  client.send({
+    type: 'recognize_document',
+    id: requestId,
+    filePath: fixturePath,
+    backend,
+    strategy: 'bounded-960',
+    options: DOCUMENT_SMOKE_OPTIONS
+  })
+
+  while (true) {
+    const remainingMs = deadline - performance.now()
+    if (remainingMs <= 0) {
+      throw new Error(`Timed out waiting for packaged OCR ${requestId}`)
+    }
+    const message = await client.waitFor(
+      (candidate) =>
+        candidate?.id === requestId &&
+        (candidate.type === 'document_page' ||
+          candidate.type === 'request_complete' ||
+          candidate.type === 'error'),
+      requestId,
+      remainingMs
+    )
+    if (message.type === 'error') {
+      assertResult(message, requestId)
+    }
+    if (message.type === 'request_complete') {
+      if (message.emittedPages !== pages.length || pages.length === 0) {
+        throw new Error('Packaged OCR helper returned an invalid PDF completion')
+      }
+      assertDocumentFixtureRecognized(pages)
+      return { pages, durationMs: performance.now() - startedAt }
+    }
+
+    const page = message.page
+    const expectedPageIndex = DOCUMENT_SMOKE_OPTIONS.pageRange.start - 1 + pages.length
+    if (
+      pages.length >= DOCUMENT_SMOKE_OPTIONS.maxPages ||
+      !page ||
+      page.index !== expectedPageIndex ||
+      !Number.isInteger(page.width) ||
+      page.width <= 0 ||
+      !Number.isInteger(page.height) ||
+      page.height <= 0 ||
+      page.modelBundleId !== expectedBundleId ||
+      !Array.isArray(page.lines) ||
+      !page.lines.every((line) => typeof line === 'string')
+    ) {
+      throw new Error('Packaged OCR helper returned an invalid PDF page')
+    }
+    pages.push(page)
+  }
+}
+
 export async function runPackagedLightOcr(layout, options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'deepchat-light-ocr-smoke-'))
   const fixturePath = path.join(tempRoot, 'fixture.png')
+  const documentFixturePath = path.join(tempRoot, 'fixture.pdf')
   let child = null
   let sampler = null
   let rssSampling = null
   let peakRssBytes = 0
 
   try {
-    await createFixture(fixturePath)
+    await createFixtures(fixturePath, documentFixturePath)
     const nativeRuntimeOverride = await materializePackagedNativeRuntime(layout, tempRoot)
     child = spawn(
       layout.nodeExecutable,
@@ -875,16 +1225,17 @@ export async function runPackagedLightOcr(layout, options = {}) {
       Math.min(timeoutMs, 60_000)
     )
     if (
-      hello.protocolVersion !== PROTOCOL_VERSION ||
+      hello.protocolVersion !== PACKAGED_LIGHT_OCR_PROTOCOL_VERSION ||
       hello.nodeVersion !== options.expectedNodeVersion
     ) {
       throw new Error('Packaged OCR helper handshake does not match the pinned runtime')
     }
 
+    const backend = options.backend ?? 'auto'
     client.send({
       type: 'configure',
       id: 'configure',
-      backend: options.backend ?? 'auto',
+      backend,
       strategy: 'bounded-960'
     })
     const engine = assertResult(
@@ -898,6 +1249,14 @@ export async function runPackagedLightOcr(layout, options = {}) {
 
     const cold = await recognize(client, 'recognize-cold', fixturePath, timeoutMs)
     const warm = await recognize(client, 'recognize-warm', fixturePath, timeoutMs)
+    const document = await recognizeDocument(
+      client,
+      'recognize-document',
+      documentFixturePath,
+      layout.bundleId,
+      backend,
+      timeoutMs
+    )
     await sampleRss()
 
     client.send({ type: 'shutdown', id: 'shutdown' })
@@ -908,6 +1267,8 @@ export async function runPackagedLightOcr(layout, options = {}) {
       initializationMs,
       coldRecognitionMs: cold.durationMs,
       warmRecognitionMs: warm.durationMs,
+      documentRecognitionMs: document.durationMs,
+      documentPages: document.pages.length,
       peakRssBytes: peakRssBytes || null,
       engine: {
         coreVersion: engine.coreVersion,
@@ -1025,7 +1386,13 @@ function sumMetrics(metrics, includeCompressed) {
 export async function measurePackagedOcrAssets(layout, { includeCompressed = true } = {}) {
   if (!layout.supported) return measureRoots([], includeCompressed)
   return measureRoots(
-    [layout.facadeDir, layout.modelPackageDir, layout.nativePackageDir, layout.helperEntryPath],
+    [
+      layout.facadeDir,
+      layout.runtimeDir,
+      layout.modelPackageDir,
+      layout.nativePackageDir,
+      layout.helperEntryPath
+    ],
     includeCompressed
   )
 }
@@ -1203,6 +1570,11 @@ export async function main(argv = process.argv.slice(2)) {
           report.runtimeMetrics.warmRecognitionMs,
           timeoutMs,
           'Packaged OCR warm recognition time'
+        )
+        assertThreshold(
+          report.runtimeMetrics.documentRecognitionMs,
+          timeoutMs,
+          'Packaged PDF OCR recognition time'
         )
         if (report.runtimeMetrics.peakRssBytes === null && args['require-peak-rss']) {
           throw new Error('Unable to measure packaged OCR peak RSS')

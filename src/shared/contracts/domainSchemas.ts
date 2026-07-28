@@ -5,6 +5,7 @@ import {
   AttachmentRepresentationPreferenceSchema,
   FileMetadataValueSchema,
   ImageGenerationOptionsSchema,
+  PdfEmbeddedTextCoverageSchema,
   VideoGenerationOptionsSchema,
   TtsSettingsSchema,
   JsonValueSchema,
@@ -745,6 +746,7 @@ export const PreparedMessageFileSchema = z.object({
   token: z.number().optional(),
   thumbnail: z.string().optional(),
   metadata: z.record(z.string(), FileMetadataValueSchema).optional(),
+  pdfTextCoverage: PdfEmbeddedTextCoverageSchema.optional(),
   requestedRepresentation: AttachmentRepresentationPreferenceSchema.optional()
 })
 

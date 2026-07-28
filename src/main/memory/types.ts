@@ -3,10 +3,12 @@ import type { LLM_EMBEDDING_ATTRS } from '@shared/types/provider'
 import type { MemoryUpdateReason } from '@shared/contracts/events/memory.events'
 
 import type { MemoryUpdateContext } from './domain/types'
+import type { MemoryDomainClock } from './domain/clock'
 import type {
   IMemoryVectorStore,
   MemoryAgentPolicyPort,
   MemoryAuditRepositoryPort,
+  MemoryDirectiveRepositoryPort,
   MemoryPerfObserver,
   MemoryRepositoryPort
 } from './ports'
@@ -15,6 +17,7 @@ export type {
   AgentMemoryConflictState,
   AgentMemoryEmbeddingState,
   AgentMemoryHealthStats,
+  AgentMemoryDerivationRow,
   AgentMemoryInsertInput,
   AgentMemoryKind,
   AgentMemoryLifecycleState,
@@ -23,7 +26,6 @@ export type {
   AgentMemoryPersonaState,
   AgentMemoryStatus,
   AgentMemoryWorkingCandidateCursor,
-  ConsolidationScanCursor,
   EmbeddedMemoryUpdate,
   FailedEmbeddingUpdate,
   FuseOptions,
@@ -44,8 +46,29 @@ export type {
   MemoryManagementPageCursor,
   MemoryPersonaDraftResult,
   MemoryRecallItem,
+  MemoryTemporalMetadata,
+  MemoryTemporalPolicyMode,
+  MemoryTemporalPolicyResult,
+  MemoryTemporalStatus,
+  MemoryTemporalTrace,
+  MemoryClaimContentUpdateResult,
+  MemoryClaimInsertResult,
+  MemoryClearBatchResult,
+  MemoryClearJob,
+  MemoryClearPhase,
+  MemoryExplicitRelearnResult,
+  MemoryDerivationInsertInput,
+  MemoryDerivationKind,
+  MemoryDirtySeed,
+  InternalMemoryInsertInput,
+  MemoryTombstoneDeleteInput,
+  MemoryTombstoneIdentity,
+  MemoryTombstoneIdentityKind,
+  MemoryTombstoneReason,
   MemoryReflectionResult,
   MemorySearchHit,
+  MemoryScope,
+  MemoryScopeContext,
   MemoryStatus,
   MemoryTransitionTarget,
   ResolveChallengerTransition,
@@ -75,19 +98,26 @@ export type {
 export type {
   IMemoryVectorStore,
   MemoryAuditRepositoryPort,
+  MemoryDirectiveRepositoryPort,
   MemoryRepositoryPort,
   MemoryRetrievalPort
 } from './ports'
 export type { MemoryUpdateReason } from '@shared/contracts/events/memory.events'
+export type { MemoryDomainClock } from './domain/clock'
 
 export type {
+  DirectiveContributionManifest,
+  DirectiveContributionResult,
+  DirectiveContributionSelection,
   MemoryInjectionPayload,
   MemoryInjectionPort,
   MemoryInjectionResult
 } from './injection'
+export type { AgentMemoryDirectiveRow, MemoryDirectiveInput } from './domain/directives'
 
 export interface MemoryServiceDeps {
   repository: MemoryRepositoryPort
+  directiveRepository: MemoryDirectiveRepositoryPort
   auditRepository?: MemoryAuditRepositoryPort
   perfObserver?: MemoryPerfObserver
   resolveAgentConfig: MemoryAgentPolicyPort['resolveAgentConfig']
@@ -129,6 +159,7 @@ export interface MemoryServiceDeps {
     reason: MemoryUpdateReason,
     context?: MemoryUpdateContext
   ) => void
+  clock?: MemoryDomainClock
 }
 
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.2

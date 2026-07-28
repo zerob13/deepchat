@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { shouldExcludeFromSqliteCopy } from '@/data/sqliteCopyExclusions'
 
 const mocks = vi.hoisted(() => {
   const stores = new Map<string, Record<string, unknown>>()
@@ -277,5 +278,13 @@ describe('DatabaseSecurityService', () => {
     expect(names).toContain('deepchat_tape_search_projection')
     expect(names).toContain('deepchat_tape_search_projection_meta')
     expect(names).not.toContain('deepchat_tape_search_fts_meta')
+  })
+
+  it('rebuilds memory dirty work while preserving durable lineage during database copies', () => {
+    expect(shouldExcludeFromSqliteCopy('agent_memory_dirty')).toBe(true)
+    expect(shouldExcludeFromSqliteCopy('agent_memory_dirty_ai')).toBe(true)
+    expect(shouldExcludeFromSqliteCopy('agent_memory_dirty_au')).toBe(true)
+    expect(shouldExcludeFromSqliteCopy('agent_memory_dirty_ad')).toBe(true)
+    expect(shouldExcludeFromSqliteCopy('agent_memory_derivation')).toBe(false)
   })
 })

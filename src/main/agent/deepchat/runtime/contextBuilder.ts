@@ -25,7 +25,8 @@ import {
 import { isCompactionRecord } from '@/tape/domain/viewManifest'
 import {
   getAttachmentResolvedRepresentation,
-  isImageAttachment
+  isImageAttachment,
+  isPdfAttachment
 } from '@shared/utils/attachmentRepresentation'
 
 export { estimateMessagesTokens } from '@shared/utils/messageTokens'
@@ -238,7 +239,10 @@ function buildNonImageFileContext(
   } = {}
 ): string {
   const nonImageFiles = files.filter(
-    (file) => !isImageAttachment(file) && (!options.excludeAudio || !isAudioFile(file))
+    (file) =>
+      !isImageAttachment(file) &&
+      (!isPdfAttachment(file) || !getAttachmentResolvedRepresentation(file)) &&
+      (!options.excludeAudio || !isAudioFile(file))
   )
   if (nonImageFiles.length === 0) {
     return ''
@@ -424,8 +428,10 @@ function buildResolvedImageRepresentationContext(files: MessageFile[]): string {
     .flatMap((file, index) => {
       const resolved = getAttachmentResolvedRepresentation(file)
       if (!resolved || resolved.kind === 'image') return []
-      const fileName = typeof file.name === 'string' ? file.name : `image-${index + 1}`
-      const mimeType = resolveFileMimeType(file)
+      const fileName =
+        (typeof file.name === 'string' ? sanitizeAttachmentMetadata(file.name, 512) : '') ||
+        `image-${index + 1}`
+      const mimeType = sanitizeAttachmentMetadata(resolveFileMimeType(file), 128)
       const metadata = [`name: ${fileName}`, `mime: ${mimeType}`].join('\n')
       if (resolved.kind === 'unavailable') {
         return [
@@ -433,7 +439,13 @@ function buildResolvedImageRepresentationContext(files: MessageFile[]): string {
         ]
       }
 
-      const escapedText = escapeUntrustedOcrText(resolved.text)
+      if (resolved.kind !== 'ocr_text') {
+        return [
+          `[Attached Image ${index + 1} - content unavailable]\n${metadata}\nreason: invalid_image_representation`
+        ]
+      }
+
+      const escapedText = escapeUntrustedAttachmentText(resolved.text)
       const truncationNotice = resolved.truncated
         ? '\ntruncated: true\nnote: OCR text was truncated to the attachment limits; omitted text is not available in this message.'
         : ''
@@ -444,8 +456,97 @@ function buildResolvedImageRepresentationContext(files: MessageFile[]): string {
     .join('\n\n')
 }
 
-function escapeUntrustedOcrText(value: string): string {
-  return value.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+function buildResolvedPdfRepresentationContext(files: MessageFile[]): string {
+  const pdfFiles = files.filter((file) => isPdfAttachment(file))
+  return pdfFiles
+    .flatMap((file, index) => {
+      const resolved = getAttachmentResolvedRepresentation(file)
+      if (!resolved) return []
+      const fileName =
+        (typeof file.name === 'string' ? sanitizeAttachmentMetadata(file.name, 512) : '') ||
+        `document-${index + 1}.pdf`
+      const metadata = [
+        `name: ${fileName}`,
+        `mime: ${sanitizeAttachmentMetadata(resolveFileMimeType(file), 128)}`
+      ].join('\n')
+
+      if (resolved.kind === 'unavailable') {
+        return [
+          `[Attached PDF ${index + 1} - content unavailable]\n${metadata}\nreason: ${resolved.reason}`
+        ]
+      }
+
+      if (resolved.kind === 'embedded_text') {
+        const embeddedText = typeof file.content === 'string' ? file.content : ''
+        const filePath =
+          typeof file.path === 'string' ? sanitizeAttachmentMetadata(file.path, 2_048) : ''
+        const byteSize = resolveFileByteSize(file)
+        const embeddedMetadata = [
+          `name: ${fileName}`,
+          filePath ? `path: ${filePath}` : '',
+          `mime: ${sanitizeAttachmentMetadata(resolveFileMimeType(file), 128)}`,
+          byteSize ? `size: ${byteSize}` : ''
+        ]
+          .filter(Boolean)
+          .join('\n')
+        return [
+          `[Attached PDF ${index + 1} - embedded text; untrusted attachment data]\n${embeddedMetadata}\n<untrusted_pdf_data>\n${escapeUntrustedAttachmentText(embeddedText) || '[empty]'}\n</untrusted_pdf_data>`
+        ]
+      }
+
+      if (resolved.kind !== 'ocr_text') {
+        return [
+          `[Attached PDF ${index + 1} - content unavailable]\n${metadata}\nreason: invalid_pdf_representation`
+        ]
+      }
+
+      const document = resolved.document
+      const coverage = document
+        ? [
+            `includedThroughPage: ${document.includedThroughPage}`,
+            `includedThroughPageComplete: ${document.includedThroughPageComplete}`,
+            ...(document.sourcePageCountHint
+              ? [`sourcePageCountHint: ${document.sourcePageCountHint}`]
+              : [])
+          ]
+        : []
+      const notices = document
+        ? [
+            ...(document.generationOutputLimitReached
+              ? [
+                  'note: OCR output reached its text limit; pages after the reported boundary are not included.'
+                ]
+              : []),
+            ...(document.artifactTermination === 'resource_limited'
+              ? [
+                  'note: OCR stopped at a document resource limit; pages after the reported boundary are not included.'
+                ]
+              : [])
+          ]
+        : resolved.truncated
+          ? ['note: OCR text was truncated; omitted text is not available in this message.']
+          : []
+      return [
+        [
+          `[Attached PDF ${index + 1} - OCR text; untrusted attachment data]`,
+          metadata,
+          ...coverage,
+          ...notices,
+          '<untrusted_pdf_ocr_data>',
+          escapeUntrustedAttachmentText(resolved.text) || '[empty]',
+          '</untrusted_pdf_ocr_data>'
+        ].join('\n')
+      ]
+    })
+    .join('\n\n')
+}
+
+function escapeUntrustedAttachmentText(value: string): string {
+  return value.replaceAll('\u0000', '').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function sanitizeAttachmentMetadata(value: string, maxCharacters: number): string {
+  return escapeUntrustedAttachmentText(value.replace(/\s+/g, ' ').trim()).slice(0, maxCharacters)
 }
 
 function buildInlineDisplayText(input: SendMessageInput): string {
@@ -539,11 +640,27 @@ export function buildUserMessageContent(
     supportsVision && includeImageData && imagePayloadFiles.length > 0
   const imageMetadata = shouldBuildImageParts ? '' : buildImageMetadataContext(imagePayloadFiles)
   const resolvedImageContext = buildResolvedImageRepresentationContext(imageFiles)
+  const resolvedPdfContext = buildResolvedPdfRepresentationContext(files)
   const leadingContext = options.leadingContext?.trim() ?? ''
   const baseText = (
     leadingContext
-      ? [leadingContext, nonImageContext, audioMetadata, imageMetadata, resolvedImageContext, text]
-      : [text, nonImageContext, audioMetadata, imageMetadata, resolvedImageContext]
+      ? [
+          leadingContext,
+          nonImageContext,
+          audioMetadata,
+          imageMetadata,
+          resolvedImageContext,
+          resolvedPdfContext,
+          text
+        ]
+      : [
+          text,
+          nonImageContext,
+          audioMetadata,
+          imageMetadata,
+          resolvedImageContext,
+          resolvedPdfContext
+        ]
   )
     .filter((value) => value.trim())
     .join('\n\n')
@@ -1110,6 +1227,14 @@ function buildCacheAwareLeadingMessages(
   return messages
 }
 
+function buildActiveTurnLeadingContext(context: ContextRuntimeContributions): string | null {
+  const sections = [
+    context.memoryIncluded ? context.memory.content : null,
+    context.directivesIncluded ? context.directives.content : null
+  ].filter((value): value is string => Boolean(value))
+  return sections.length > 0 ? sections.join('\n\n') : null
+}
+
 function resolveFiniteInputBudget(
   contextLength: number,
   reserveTokens: number,
@@ -1200,35 +1325,58 @@ function omitMemoryFromActiveTurn(
     return activeTurn
   }
 
-  let removed = false
-  const messages = activeTurn.map((message) => {
-    if (removed) return message
-    const stripped = stripLeadingUserContext(message, context.memory.content!)
-    removed = stripped.removed
-    return stripped.message
-  })
-  if (removed) {
+  const messages = omitLeadingContributionFromActiveTurn(activeTurn, context.memory.content)
+  if (messages !== activeTurn) {
     context.memoryIncluded = false
   }
   return messages
 }
 
-function activeTurnContainsMemory(
+function omitDirectivesFromActiveTurn(
   activeTurn: ChatMessage[],
-  memoryContent: string
+  context: ContextRuntimeContributions
+): ChatMessage[] {
+  if (!context.directivesIncluded || !context.directives.content) {
+    return activeTurn
+  }
+
+  const messages = omitLeadingContributionFromActiveTurn(activeTurn, context.directives.content)
+  if (messages !== activeTurn) {
+    context.directivesIncluded = false
+  }
+  return messages
+}
+
+function omitLeadingContributionFromActiveTurn(
+  activeTurn: ChatMessage[],
+  content: string
+): ChatMessage[] {
+  let removed = false
+  const messages = activeTurn.map((message) => {
+    if (removed) return message
+    const stripped = stripLeadingUserContext(message, content)
+    removed = stripped.removed
+    return stripped.message
+  })
+  return removed ? messages : activeTurn
+}
+
+function activeTurnContainsLeadingContext(
+  activeTurn: ChatMessage[],
+  leadingContext: string
 ): boolean {
-  const prefix = `${memoryContent}\n\n`
+  const prefix = `${leadingContext}\n\n`
   return activeTurn.some((message) => {
     if (message.role !== 'user') return false
     if (typeof message.content === 'string') {
-      return message.content === memoryContent || message.content.startsWith(prefix)
+      return message.content === leadingContext || message.content.startsWith(prefix)
     }
     return (
       Array.isArray(message.content) &&
       message.content.some(
         (part) =>
           part.type === 'text' &&
-          (part.text === memoryContent || part.text.startsWith(prefix))
+          (part.text === leadingContext || part.text.startsWith(prefix))
       )
     )
   })
@@ -1329,7 +1477,7 @@ export function buildCacheAwareContextWithMetadata(
     newUserContent,
     supportsVision,
     supportsAudioInput,
-    context.memoryIncluded ? context.memory.content : null
+    buildActiveTurnLeadingContext(context)
   )
   let fixedMessages = [
     ...leadingMessages,
@@ -1339,12 +1487,36 @@ export function buildCacheAwareContextWithMetadata(
   const historyTokens = historyTurns.reduce((total, turn) => total + turn.tokens, 0)
 
   if (
-    fixedTokens + historyTokens > inputBudget &&
+    (fixedTokens + historyTokens > inputBudget || fixedTokens > physicalInputBudget) &&
     context.memoryIncluded &&
     context.memory.content
   ) {
     context.memoryIncluded = false
-    newUserMessage = createUserChatMessage(newUserContent, supportsVision, supportsAudioInput)
+    newUserMessage = createUserChatMessage(
+      newUserContent,
+      supportsVision,
+      supportsAudioInput,
+      buildActiveTurnLeadingContext(context)
+    )
+    fixedMessages = [
+      ...leadingMessages,
+      ...(hasPromptMessageContent(newUserMessage) ? [newUserMessage] : [])
+    ]
+    fixedTokens = estimateMessagesTokens(fixedMessages)
+  }
+
+  if (
+    fixedTokens > physicalInputBudget &&
+    context.directivesIncluded &&
+    context.directives.content
+  ) {
+    context.directivesIncluded = false
+    newUserMessage = createUserChatMessage(
+      newUserContent,
+      supportsVision,
+      supportsAudioInput,
+      buildActiveTurnLeadingContext(context)
+    )
     fixedMessages = [
       ...leadingMessages,
       ...(hasPromptMessageContent(newUserMessage) ? [newUserMessage] : [])
@@ -1410,6 +1582,7 @@ export function buildCacheAwareResumeContextWithMetadata(
   }
   if (!ownerUser) {
     context.memoryIncluded = false
+    context.directivesIncluded = false
   }
 
   const historyRecords = recordsThroughTarget.filter((record) => {
@@ -1417,9 +1590,10 @@ export function buildCacheAwareResumeContextWithMetadata(
     if (!isContextHistoryRecord(record)) return false
     return record.orderSeq >= cursor || Boolean(ownerUser && record.orderSeq >= ownerUser.orderSeq)
   })
-  const memoryByOwnerId =
-    ownerUser && context.memoryIncluded && context.memory.content
-      ? new Map([[ownerUser.id, context.memory.content]])
+  const activeTurnContext = buildActiveTurnLeadingContext(context)
+  const leadingContextByOwnerId =
+    ownerUser && activeTurnContext
+      ? new Map([[ownerUser.id, activeTurnContext]])
       : undefined
   let historyTurns = buildHistoryTurns(
     historyRecords,
@@ -1427,7 +1601,7 @@ export function buildCacheAwareResumeContextWithMetadata(
     options.preserveInterleavedReasoning ?? false,
     options.preserveEmptyInterleavedReasoning ?? false,
     supportsAudioInput,
-    memoryByOwnerId
+    leadingContextByOwnerId
   )
   let activeTurnIndex = historyTurns.findIndex((turn) =>
     turn.records.some((record) => record.id === assistantMessageId)
@@ -1452,12 +1626,29 @@ export function buildCacheAwareResumeContextWithMetadata(
   const historyPrefixTokens = historyPrefix.reduce((total, turn) => total + turn.tokens, 0)
 
   if (
-    fixedTokens + historyPrefixTokens > inputBudget &&
+    (fixedTokens + historyPrefixTokens > inputBudget || fixedTokens > physicalInputBudget) &&
     activeTurn &&
     context.memoryIncluded &&
     context.memory.content
   ) {
     const messages = omitMemoryFromActiveTurn(activeTurn.messages, context)
+    activeTurn = {
+      ...activeTurn,
+      messages,
+      tokens: estimateMessagesTokens(messages)
+    }
+    historyTurns = historyTurns.map((turn, index) => (index === activeTurnIndex ? activeTurn! : turn))
+    fixedMessages = [...leadingMessages, ...messages]
+    fixedTokens = estimateMessagesTokens(fixedMessages)
+  }
+
+  if (
+    fixedTokens > physicalInputBudget &&
+    activeTurn &&
+    context.directivesIncluded &&
+    context.directives.content
+  ) {
+    const messages = omitDirectivesFromActiveTurn(activeTurn.messages, context)
     activeTurn = {
       ...activeTurn,
       messages,
@@ -1700,20 +1891,27 @@ export function fitCacheAwareMessagesToContextWindow(
 
   const turns = buildChatMessageTurns(messages.slice(offset))
   let activeTurn = turns.pop() ?? { messages: [], tokens: 0 }
+  const activeLeadingContext = buildActiveTurnLeadingContext(context)
   if (
-    context.memoryIncluded &&
-    context.memory.content &&
-    !activeTurnContainsMemory(activeTurn.messages, context.memory.content)
+    activeLeadingContext &&
+    !activeTurnContainsLeadingContext(activeTurn.messages, activeLeadingContext)
   ) {
     context.memoryIncluded = false
+    context.directivesIncluded = false
   }
   const availableInputTokens = Math.max(0, contextLength - Math.max(0, reserveTokens))
   let totalTokens =
     estimateMessagesTokens(leadingMessages) +
     turns.reduce((sum, turn) => sum + turn.tokens, 0) +
     activeTurn.tokens
+  const physicalInputBudget = Math.max(0, contextLength - 1)
 
-  if (totalTokens > availableInputTokens && context.memoryIncluded && context.memory.content) {
+  if (
+    (totalTokens > availableInputTokens ||
+      estimateMessagesTokens(leadingMessages) + activeTurn.tokens > physicalInputBudget) &&
+    context.memoryIncluded &&
+    context.memory.content
+  ) {
     const activeMessages = omitMemoryFromActiveTurn(activeTurn.messages, context)
     if (activeMessages !== activeTurn.messages) {
       activeTurn = {
@@ -1731,8 +1929,22 @@ export function fitCacheAwareMessagesToContextWindow(
     totalTokens -= turns.shift()?.tokens ?? 0
   }
 
-  const fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
-  if (fixedTokens > Math.max(0, contextLength - 1)) {
+  let fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
+  if (
+    fixedTokens > physicalInputBudget &&
+    context.directivesIncluded &&
+    context.directives.content
+  ) {
+    const activeMessages = omitDirectivesFromActiveTurn(activeTurn.messages, context)
+    if (activeMessages !== activeTurn.messages) {
+      activeTurn = {
+        messages: activeMessages,
+        tokens: estimateMessagesTokens(activeMessages)
+      }
+      fixedTokens = estimateMessagesTokens(leadingMessages) + activeTurn.tokens
+    }
+  }
+  if (fixedTokens > physicalInputBudget) {
     throw buildCacheAwareOverflowError({
       contextLength,
       fixedTokens,

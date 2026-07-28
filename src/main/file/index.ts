@@ -11,6 +11,7 @@ import { detectMimeType, getMimeTypeAdapterMap } from './mime'
 import type { MessageFile } from '@shared/chat'
 import { approximateTokenSize } from 'tokenx'
 import { ImageFileAdapter } from './adapters/ImageFileAdapter'
+import { PdfFileAdapter } from './adapters/PdfFileAdapter'
 import { nanoid } from 'nanoid'
 import { DirectoryAdapter } from './adapters/DirectoryAdapter'
 import { UnsupportFileAdapter } from './adapters/UnsupportFileAdapter'
@@ -238,6 +239,10 @@ export class FileService implements FileServicePort {
             break
         }
         const thumbnail = adapter.getThumbnail ? await adapter.getThumbnail() : undefined
+        const pdfTextCoverage =
+          adapter instanceof PdfFileAdapter && contentType
+            ? await adapter.getTextCoverage()
+            : undefined
         const result = {
           name: adapter.fileMetaData?.fileName ?? '',
           token:
@@ -256,7 +261,8 @@ export class FileService implements FileServicePort {
             fileModified: new Date()
           },
           thumbnail: thumbnail,
-          content: content || ''
+          content: content || '',
+          ...(pdfTextCoverage ? { pdfTextCoverage } : {})
         }
         return result
       } else {

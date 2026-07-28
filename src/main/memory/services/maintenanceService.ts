@@ -6,7 +6,17 @@ import {
   isAgentMemoryCategory
 } from '@shared/types/agent-memory'
 import { ARCHIVE_AGE_MS, ARCHIVE_DECAY_THRESHOLD } from '../core/lifecycle'
-import { buildMemoryProvenanceKey, distanceToSimilarity } from '../core/scoring'
+import {
+  buildScopedMemoryProvenanceKey,
+  distanceToSimilarity,
+  normalizeForProvenanceV2
+} from '../core/scoring'
+import { memoryScopeFromRow, rowsShareMemoryScope } from '../core/scope'
+import {
+  evaluateNormalizedMemoryTemporalPolicy,
+  resolveMergedClaimTemporalMetadata,
+  temporalMetadataFromRow
+} from '../core/temporal'
 import {
   ADD_DECISION,
   buildDecisionPrompt,
@@ -19,14 +29,15 @@ import { MaintenanceBudget } from '../core/maintenanceBudget'
 import { AsyncSemaphore } from '../../lib/asyncSemaphore'
 import {
   CONSOLIDATION_COOLDOWN_MS,
+  CONSOLIDATION_DIRTY_SEED_LIMIT,
   CONSOLIDATION_FAILURE_COOLDOWN_MS,
   CONSOLIDATION_IDLE_MS,
-  CONSOLIDATION_MAX_NEIGHBOR_SCANS,
   CONSOLIDATION_MERGE_SIMILARITY,
   DECISION_NEIGHBOR_TOP_S,
   MAINTENANCE_HEAVY_MAX_CONCURRENCY,
   MAINTENANCE_MAX_INPUT_TOKENS,
   MAINTENANCE_START_DELAY_MS,
+  SCOPE_VECTOR_OVERSAMPLE_MULTIPLIER,
   STARTUP_ARM_STAGGER_MS,
   STARTUP_PREWARM_AGENT_LIMIT,
   STARTUP_PREWARM_DELAY_MS,
@@ -35,8 +46,8 @@ import {
 } from '../runtimeConstants'
 import {
   type AgentMemoryRow,
-  type ConsolidationScanCursor,
   FORGET_HALF_LIFE_MS,
+  type MemoryDirtySeed,
   type MemoryMaintenancePersonaResult,
   type MemoryMaintenanceReflectionResult,
   type MemoryMaintenanceStepResult
@@ -53,8 +64,10 @@ import type {
   MemoryAgentPolicyPort,
   MemoryAuditMaintenancePort,
   MemoryAuditReadPort,
+  MemoryDirtyRepositoryPort,
   MemoryEmbeddingRepositoryPort,
   MemoryLifecycleRepositoryPort,
+  MemoryLineageRepositoryPort,
   MemoryMaintenanceRowMutationPort,
   MemoryMutationRepositoryPort,
   MemoryReadRepositoryPort,
@@ -63,6 +76,7 @@ import type {
 } from '../ports'
 
 class MaintenanceRevisionConflictError extends Error {}
+class MaintenanceClaimSuppressedError extends Error {}
 
 export class MaintenanceService {
   private readonly ctx: MemoryRuntimeContext
@@ -70,7 +84,6 @@ export class MaintenanceService {
   private readonly consolidationTimerDueAt = new Map<string, number>()
   private readonly lastConsolidationAt = new Map<string, number>()
   private readonly lastConsolidationFailureAt = new Map<string, number>()
-  private readonly consolidationScanCursor = new Map<string, ConsolidationScanCursor>()
   private readonly consolidationRuns = new Set<Promise<unknown>>()
   private readonly consolidationPasses = new Map<string, Promise<void>>()
   private readonly heavySemaphore = new AsyncSemaphore(MAINTENANCE_HEAVY_MAX_CONCURRENCY)
@@ -86,6 +99,8 @@ export class MaintenanceService {
         MemoryMutationRepositoryPort &
         MemoryEmbeddingRepositoryPort &
         MemoryLifecycleRepositoryPort &
+        MemoryLineageRepositoryPort &
+        MemoryDirtyRepositoryPort &
         MemoryTransactionPort
       policy: MemoryAgentPolicyPort
       textGeneration: MemoryTextGenerationPort
@@ -184,12 +199,11 @@ export class MaintenanceService {
     this.consolidationTimerDueAt.clear()
     this.lastConsolidationAt.clear()
     this.lastConsolidationFailureAt.clear()
-    this.consolidationScanCursor.clear()
     this.consolidationPasses.clear()
   }
 
   private shouldArmMaintenance(agentId: string): boolean {
-    return isSafeAgentId(agentId) && this.ctx.isManagedAgent(agentId) && this.ctx.isEnabled(agentId)
+    return isSafeAgentId(agentId) && this.ctx.canContinueAgentMemoryTask(agentId)
   }
 
   private armCurrentActiveAgents(): void {
@@ -303,10 +317,11 @@ export class MaintenanceService {
     this.consolidationTimerDueAt.set(agentId, dueAt)
   }
 
-  async runConsolidationPass(agentId: string, now: number = Date.now()): Promise<void> {
+  async runConsolidationPass(agentId: string, now?: number): Promise<void> {
+    const effectiveNow = now ?? this.ctx.now()
     const existing = this.consolidationPasses.get(agentId)
     if (existing) return existing
-    const tracked = this.runConsolidationPassInternal(agentId, now).finally(() => {
+    const tracked = this.runConsolidationPassInternal(agentId, effectiveNow).finally(() => {
       if (this.consolidationPasses.get(agentId) === tracked) {
         this.consolidationPasses.delete(agentId)
       }
@@ -482,46 +497,66 @@ export class MaintenanceService {
   ): Promise<MemoryMaintenanceStepResult> {
     const result: MemoryMaintenanceStepResult = { touched: false, calls: 0, failures: 0 }
     try {
+      const queuedSeeds = this.ports.repository.listDirtySeeds(
+        agentId,
+        CONSOLIDATION_DIRTY_SEED_LIMIT
+      )
+      if (!queuedSeeds.length) return result
+      const terminalSeeds = queuedSeeds.filter((seed) => this.isTerminalDirtySeed(agentId, seed))
+      if (terminalSeeds.length) {
+        this.ports.repository.settleDirtySeeds(agentId, terminalSeeds)
+      }
+      const terminalMemoryIds = new Set(terminalSeeds.map((seed) => seed.memoryId))
+      const dirtySeeds = queuedSeeds.filter((seed) => !terminalMemoryIds.has(seed.memoryId))
+      if (!dirtySeeds.length) return result
+
       const embedding = this.ports.policy.resolveAgentConfig(agentId)?.memoryEmbedding
       if (!embedding?.providerId || !embedding?.modelId) return result
       const currentEmbedding = { providerId: embedding.providerId, modelId: embedding.modelId }
       const fingerprint = embeddingFingerprint(embedding.providerId, embedding.modelId)
       const dimensions = this.ports.repository.getCurrentEmbeddingDimension(agentId, fingerprint)
-      if (dimensions === null) return result
+      if (dimensions === null) {
+        this.ports.repository.deferDirtySeeds(agentId, dirtySeeds, now)
+        return result
+      }
       await this.ports.warmVectorStore(agentId, currentEmbedding)
       if (!this.ctx.canContinueOperation(operationFence)) return result
 
-      const cursor = this.consolidationScanCursor.get(agentId)
-      let scanRows = this.ports.repository.listConsolidationScanRows(agentId, {
-        embeddingDim: dimensions,
-        embeddingModel: fingerprint,
-        after: cursor,
-        limit: CONSOLIDATION_MAX_NEIGHBOR_SCANS + 1
-      })
-      if (cursor && scanRows.length === 0) {
-        scanRows = this.ports.repository.listConsolidationScanRows(agentId, {
-          embeddingDim: dimensions,
-          embeddingModel: fingerprint,
-          limit: CONSOLIDATION_MAX_NEIGHBOR_SCANS + 1
-        })
+      const seedsByMemoryId = new Map(dirtySeeds.map((seed) => [seed.memoryId, seed]))
+      const settledSeeds = new Map<string, MemoryDirtySeed>()
+      const deferredSeeds = new Map<string, MemoryDirtySeed>()
+      const processedMemoryIds = new Set<string>()
+      const settleSeed = (seed: MemoryDirtySeed): void => {
+        deferredSeeds.delete(seed.memoryId)
+        settledSeeds.set(seed.memoryId, seed)
       }
-      const hasMore = scanRows.length > CONSOLIDATION_MAX_NEIGHBOR_SCANS
-      scanRows = scanRows.slice(0, CONSOLIDATION_MAX_NEIGHBOR_SCANS)
-      if (!scanRows.length) {
-        this.consolidationScanCursor.delete(agentId)
-        return result
+      const settleSeedForMemory = (memoryId: string): void => {
+        const seed = seedsByMemoryId.get(memoryId)
+        if (seed) settleSeed(seed)
       }
-      const merged = new Set<string>()
-      let lastScanned: AgentMemoryRow | null = null
-      let touched = false
+      const deferSeed = (seed: MemoryDirtySeed): void => {
+        if (!settledSeeds.has(seed.memoryId)) deferredSeeds.set(seed.memoryId, seed)
+      }
 
-      for (const row of scanRows) {
+      for (const seed of dirtySeeds) {
         if (budget.snapshot().inputTokens >= MAINTENANCE_MAX_INPUT_TOKENS) break
-        lastScanned = row
-        if (merged.has(row.id)) continue
-        const source = this.ports.repository.getById(row.id)
-        if (!this.isCurrentEmbeddedConsolidationRow(agentId, source, dimensions, fingerprint))
+        if (processedMemoryIds.has(seed.memoryId)) {
+          settleSeed(seed)
           continue
+        }
+        const source = this.ports.repository.getById(seed.memoryId)
+        if (!this.isLiveDirtyConsolidationRow(agentId, source)) {
+          settleSeed(seed)
+          continue
+        }
+        if (source.decision_revision !== seed.claimRevision) {
+          settleSeed(seed)
+          continue
+        }
+        if (!this.isCurrentEmbeddedConsolidationRow(agentId, source, dimensions, fingerprint)) {
+          deferSeed(seed)
+          continue
+        }
 
         let matches: Array<{ memoryId: string; distance: number }> = []
         try {
@@ -530,25 +565,35 @@ export class MaintenanceService {
             currentEmbedding,
             dimensions,
             source.id,
-            DECISION_NEIGHBOR_TOP_S
+            DECISION_NEIGHBOR_TOP_S * SCOPE_VECTOR_OVERSAMPLE_MULTIPLIER
           )
         } catch {
+          deferSeed(seed)
           continue
         }
-        if (!this.ctx.canContinueOperation(operationFence)) break
+        if (!this.ctx.canContinueOperation(operationFence)) return result
         let neighbor: AgentMemoryRow | null = null
         for (const match of matches) {
-          if (match.memoryId === source.id || merged.has(match.memoryId)) continue
+          if (match.memoryId === source.id || processedMemoryIds.has(match.memoryId)) continue
           if (distanceToSimilarity(match.distance) < CONSOLIDATION_MERGE_SIMILARITY) continue
           const neighborRow = this.ports.repository.getById(match.memoryId)
           if (
-            !this.isCurrentEmbeddedConsolidationRow(agentId, neighborRow, dimensions, fingerprint)
+            !this.isCurrentEmbeddedConsolidationRow(
+              agentId,
+              neighborRow,
+              dimensions,
+              fingerprint
+            ) ||
+            !rowsShareMemoryScope(source, neighborRow)
           )
             continue
           neighbor = neighborRow
           break
         }
-        if (!neighbor) continue
+        if (!neighbor) {
+          settleSeed(seed)
+          continue
+        }
 
         const sourceSnapshot = { ...source }
         const neighborSnapshot = { ...neighbor }
@@ -556,16 +601,47 @@ export class MaintenanceService {
           kind: sourceSnapshot.kind === 'episodic' ? 'episodic' : 'semantic',
           category: sourceSnapshot.category,
           content: sourceSnapshot.content,
-          importance: sourceSnapshot.importance
+          importance: sourceSnapshot.importance,
+          temporal: temporalMetadataFromRow(sourceSnapshot)
         })
-        if (!promptCandidate) continue
-        const estimatedPromptTokens =
-          estimateTokens(sourceSnapshot.content) + estimateTokens(neighborSnapshot.content) + 256
-        if (estimatedPromptTokens > MAINTENANCE_MAX_INPUT_TOKENS - budget.snapshot().inputTokens) {
+        if (!promptCandidate) {
+          settleSeed(seed)
           continue
         }
-        const prompt = buildDecisionPrompt(promptCandidate, [{ content: neighborSnapshot.content }])
-        if (!budget.reserve('merge', estimateTokens(prompt))) break
+        const estimatedPromptTokens =
+          estimateTokens(sourceSnapshot.content) + estimateTokens(neighborSnapshot.content) + 256
+        if (estimatedPromptTokens > MAINTENANCE_MAX_INPUT_TOKENS) {
+          settleSeed(seed)
+          continue
+        }
+        if (estimatedPromptTokens > MAINTENANCE_MAX_INPUT_TOKENS - budget.snapshot().inputTokens)
+          break
+        const prompt = buildDecisionPrompt(
+          promptCandidate,
+          [
+            {
+              content: neighborSnapshot.content,
+              temporalAnnotation:
+                evaluateNormalizedMemoryTemporalPolicy(
+                  temporalMetadataFromRow(neighborSnapshot),
+                  now,
+                  'evidence'
+                ).annotation ?? undefined
+            }
+          ],
+          {
+            candidateTemporalAnnotation:
+              evaluateNormalizedMemoryTemporalPolicy(promptCandidate.temporal, now, 'evidence')
+                .annotation ?? undefined
+          }
+        )
+        const promptTokens = estimateTokens(prompt)
+        if (promptTokens > MAINTENANCE_MAX_INPUT_TOKENS) {
+          settleSeed(seed)
+          continue
+        }
+        if (promptTokens > MAINTENANCE_MAX_INPUT_TOKENS - budget.snapshot().inputTokens) break
+        if (!budget.reserve('merge', promptTokens)) break
         result.calls += 1
         let decision: MemoryDecision = ADD_DECISION
         try {
@@ -580,9 +656,10 @@ export class MaintenanceService {
         } catch (error) {
           result.failures += 1
           logger.warn(`[Memory] consolidation decision failed: ${String(error)}`)
+          deferSeed(seed)
           continue
         }
-        if (!this.ctx.canContinueOperation(operationFence)) break
+        if (!this.ctx.canContinueOperation(operationFence)) return result
 
         if (
           decision.mergedContent !== null &&
@@ -590,6 +667,10 @@ export class MaintenanceService {
         ) {
           decision = ADD_DECISION
         }
+        processedMemoryIds.add(sourceSnapshot.id)
+        processedMemoryIds.add(neighborSnapshot.id)
+        settleSeed(seed)
+        settleSeedForMemory(neighborSnapshot.id)
         if (decision.decision === 'UPDATE' || decision.decision === 'SUPERSEDE') {
           const [primary, secondary] =
             sourceSnapshot.created_at >= neighborSnapshot.created_at
@@ -603,29 +684,17 @@ export class MaintenanceService {
             mergedContent,
             now
           )
-          merged.add(primary.id)
-          merged.add(secondary.id)
           if (applied) {
-            touched = true
             result.touched = true
           }
         }
         this.ports.repository.setLastConsolidatedAt(source.id, now)
       }
-      const windowFullyScanned =
-        !!lastScanned &&
-        scanRows.length > 0 &&
-        lastScanned.id === scanRows[scanRows.length - 1].id &&
-        lastScanned.created_at === scanRows[scanRows.length - 1].created_at
-      if (lastScanned && (hasMore || !windowFullyScanned)) {
-        this.consolidationScanCursor.set(agentId, {
-          createdAt: lastScanned.created_at,
-          id: lastScanned.id
-        })
-      } else {
-        this.consolidationScanCursor.delete(agentId)
-      }
-      result.touched = result.touched || touched
+      if (!this.ctx.canContinueOperation(operationFence)) return result
+      this.ports.repository.runInTransaction(() => {
+        this.ports.repository.settleDirtySeeds(agentId, [...settledSeeds.values()])
+        this.ports.repository.deferDirtySeeds(agentId, [...deferredSeeds.values()], now)
+      })
       return result
     } catch (error) {
       logger.warn(`[Memory] consolidation merge scan aborted for ${agentId}: ${String(error)}`)
@@ -640,7 +709,9 @@ export class MaintenanceService {
     mergedContent: string,
     now: number
   ): boolean {
-    const owner = this.ports.rows.resolveProvenance(agentId, primary.kind, mergedContent)
+    if (!rowsShareMemoryScope(primary, secondary)) return false
+    const scope = memoryScopeFromRow(primary)
+    const owner = this.ports.rows.resolveProvenance(agentId, primary.kind, mergedContent, scope)
     if (owner && owner.id !== primary.id && owner.id !== secondary.id) {
       this.ports.repository.setLastConsolidatedAt(primary.id, now)
       this.ports.repository.setLastConsolidatedAt(secondary.id, now)
@@ -654,7 +725,21 @@ export class MaintenanceService {
       survivor.kind === 'episodic' || survivor.kind === 'semantic'
         ? (survivor.category ?? otherCategory)
         : undefined
-    const provenanceKey = buildMemoryProvenanceKey(agentId, survivor.kind, mergedContent)
+    const provenanceKey = buildScopedMemoryProvenanceKey(
+      agentId,
+      survivor.kind,
+      mergedContent,
+      scope
+    )
+    const normalizedMergedContent = normalizeForProvenanceV2(mergedContent)
+    const nextTemporal = resolveMergedClaimTemporalMetadata(
+      temporalMetadataFromRow(survivor),
+      temporalMetadataFromRow(retired),
+      {
+        existing: normalizedMergedContent === normalizeForProvenanceV2(survivor.content),
+        incoming: normalizedMergedContent === normalizeForProvenanceV2(retired.content)
+      }
+    )
 
     try {
       this.ports.repository.runInTransaction(() => {
@@ -666,9 +751,12 @@ export class MaintenanceService {
           provenanceKey,
           at: now,
           category: nextCategory,
-          importance: Math.max(survivor.importance, retired.importance)
+          importance: Math.max(survivor.importance, retired.importance),
+          temporal: nextTemporal
         })
-        if (!contentApplied) throw new MaintenanceRevisionConflictError()
+        if (contentApplied.action === 'suppressed') {
+          throw new MaintenanceClaimSuppressedError()
+        }
         if (
           !this.ports.repository.markSupersededIfRevision(
             agentId,
@@ -680,9 +768,22 @@ export class MaintenanceService {
           throw new MaintenanceRevisionConflictError()
         }
         this.ports.rows.bumpConfidence(survivor.id)
+        this.ports.repository.insertDerivations([
+          {
+            agentId,
+            parentMemoryId: retired.id,
+            childMemoryId: survivor.id,
+            derivationKind: 'merge',
+            createdAt: now
+          }
+        ])
       })
     } catch (error) {
-      if (error instanceof MaintenanceRevisionConflictError || isUniqueConstraintError(error)) {
+      if (
+        error instanceof MaintenanceRevisionConflictError ||
+        error instanceof MaintenanceClaimSuppressedError ||
+        isUniqueConstraintError(error)
+      ) {
         return false
       }
       throw error
@@ -754,6 +855,30 @@ export class MaintenanceService {
     )
   }
 
+  private isLiveDirtyConsolidationRow(
+    agentId: string,
+    row: AgentMemoryRow | undefined
+  ): row is AgentMemoryRow {
+    return (
+      !!row &&
+      row.agent_id === agentId &&
+      (row.kind === 'episodic' || row.kind === 'semantic' || row.kind === 'reflection') &&
+      row.lifecycle_state === 'active' &&
+      row.superseded_by === null
+    )
+  }
+
+  private isTerminalDirtySeed(agentId: string, seed: MemoryDirtySeed): boolean {
+    return !this.isLiveDirtyConsolidationRow(agentId, this.ports.repository.getById(seed.memoryId))
+  }
+
+  private settleTerminalDirtySeeds(agentId: string): number {
+    const terminalSeeds = this.ports.repository
+      .listDirtySeeds(agentId, CONSOLIDATION_DIRTY_SEED_LIMIT)
+      .filter((seed) => this.isTerminalDirtySeed(agentId, seed))
+    return this.ports.repository.settleDirtySeeds(agentId, terminalSeeds)
+  }
+
   private async runCheapMaintenance(agentId: string, now: number, archive: boolean): Promise<void> {
     const startedAt = performance.now()
     let outcome: 'completed' | 'failed' = 'completed'
@@ -774,6 +899,7 @@ export class MaintenanceService {
           outputRefs: { repaired }
         })
       }
+      this.settleTerminalDirtySeeds(agentId)
       if (workingDirty) this.ports.syncWorkingMemoryAfterMutation(agentId)
     } catch (error) {
       outcome = 'failed'
@@ -814,12 +940,13 @@ export class MaintenanceService {
     }
   }
 
-  archiveStale(agentId: string, now: number = Date.now()): number {
+  archiveStale(agentId: string, now?: number): number {
+    const effectiveNow = now ?? this.ctx.now()
     const minimumBaseAgeMs =
       FORGET_HALF_LIFE_MS * (Math.log(ARCHIVE_DECAY_THRESHOLD) / Math.log(0.5))
     const archivedIds = this.ports.repository.archiveEligibleBatch(agentId, {
-      now,
-      createdBefore: now - ARCHIVE_AGE_MS,
+      now: effectiveNow,
+      createdBefore: effectiveNow - ARCHIVE_AGE_MS,
       minimumBaseAgeMs,
       limit: 256
     })
@@ -845,7 +972,6 @@ export class MaintenanceService {
     this.consolidationTimerDueAt.delete(agentId)
     this.lastConsolidationAt.delete(agentId)
     this.lastConsolidationFailureAt.delete(agentId)
-    this.consolidationScanCursor.delete(agentId)
     this.consolidationPasses.delete(agentId)
   }
 

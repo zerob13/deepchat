@@ -1,6 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,22 +23,39 @@ import {
   LightOcrProcessHost,
   LightOcrProcessHostError,
   resolveBundledNodeExecutable,
-  type LightOcrProcessHostOptions
+  type LightOcrProcessHostOptions,
+  type LightOcrRecognizeDocumentInput
 } from '../../../src/main/ocr/lightOcrProcessHost'
+import {
+  LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS,
+  LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+  type LightOcrDocumentOptions
+} from '../../../src/main/ocr/lightOcrProtocol'
 
 const fixturePath = fileURLToPath(
   new URL('../../fixtures/light-ocr/fake-helper.mjs', import.meta.url)
 )
 const bundleId = 'ppocrv6-small-native-20260719.1'
+const documentOptions: LightOcrDocumentOptions = {
+  dpi: 150,
+  pageRange: { start: 1, end: 100 },
+  maxPages: 100,
+  maxFileBytes: LIGHT_OCR_HELPER_MAX_INPUT_BYTES,
+  maxPagePixels: LIGHT_OCR_DOCUMENT_MAX_PAGE_PIXELS,
+  maxTotalPixels: LIGHT_OCR_DOCUMENT_MAX_TOTAL_PIXELS
+}
 
 describe('LightOcrProcessHost', () => {
   let tempDir: string
   let bundlePath: string
+  let documentSourceSequence: number
   const hosts: LightOcrProcessHost[] = []
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'deepchat-light-ocr-host-test-'))
     bundlePath = path.join(tempDir, 'bundle')
+    documentSourceSequence = 0
     await mkdir(bundlePath)
   })
 
@@ -47,6 +74,8 @@ describe('LightOcrProcessHost', () => {
       tempBaseDir: tempDir,
       initializationTimeoutMs: 2_000,
       recognitionTimeoutMs: 2_000,
+      documentIdleTimeoutMs: 2_000,
+      documentTotalTimeoutMs: 5_000,
       idleTimeoutMs: 10_000,
       cancelGraceMs: 100,
       shutdownGraceMs: 100,
@@ -54,6 +83,25 @@ describe('LightOcrProcessHost', () => {
     })
     hosts.push(host)
     return host
+  }
+
+  async function recognizeTestDocument(
+    host: LightOcrProcessHost,
+    input: Omit<LightOcrRecognizeDocumentInput, 'snapshot'> & { encoded: Uint8Array }
+  ) {
+    const sourcePath = path.join(tempDir, `document-source-${documentSourceSequence++}.pdf`)
+    await writeFile(sourcePath, input.encoded)
+    const snapshot = await host.createDocumentSourceSnapshot({
+      filePath: sourcePath,
+      maxFileBytes: input.options.maxFileBytes,
+      signal: input.signal
+    })
+    const { encoded: _encoded, ...request } = input
+    try {
+      return await host.recognizeDocument({ ...request, snapshot })
+    } finally {
+      await snapshot.release()
+    }
   }
 
   it('inherits only required process environment variables for the helper', () => {
@@ -66,7 +114,8 @@ describe('LightOcrProcessHost', () => {
         NODE_OPTIONS: '--require malicious.js',
         DYLD_INSERT_LIBRARIES: '/tmp/injected.dylib',
         LIGHT_OCR_NODE_BINARY: '/tmp/injected.node',
-        LIGHT_OCR_RUNTIME_DESCRIPTOR: '/tmp/injected.json'
+        LIGHT_OCR_RUNTIME_DESCRIPTOR: '/tmp/injected.json',
+        LIGHT_OCR_PDFIUM_MODULE: '/tmp/injected.cjs'
       },
       {
         FAKE_OCR_BEHAVIOR: 'cancellable',
@@ -88,13 +137,15 @@ describe('LightOcrProcessHost', () => {
       {},
       {
         nodeBinaryPath: '/private/runtime/native/light_ocr_node.node',
-        runtimeDescriptorPath: '/private/runtime/native/runtime-descriptor.json'
+        runtimeDescriptorPath: '/private/runtime/native/runtime-descriptor.json',
+        pdfiumModulePath: '/private/runtime/pdfium/index.cjs'
       }
     )
 
     expect(environment).toMatchObject({
       LIGHT_OCR_NODE_BINARY: '/private/runtime/native/light_ocr_node.node',
       LIGHT_OCR_RUNTIME_DESCRIPTOR: '/private/runtime/native/runtime-descriptor.json',
+      LIGHT_OCR_PDFIUM_MODULE: '/private/runtime/pdfium/index.cjs',
       DEEPCHAT_LIGHT_OCR_HELPER: '1'
     })
   })
@@ -102,7 +153,11 @@ describe('LightOcrProcessHost', () => {
   it('materializes encoded native bytes once and passes trusted override paths to the helper', async () => {
     const nativePackageDir = path.join(tempDir, 'native-package')
     const nativeDir = path.join(nativePackageDir, 'native')
-    await mkdir(nativeDir, { recursive: true })
+    const pdfiumDir = path.join(nativePackageDir, 'pdfium')
+    await Promise.all([
+      mkdir(nativeDir, { recursive: true }),
+      mkdir(pdfiumDir, { recursive: true })
+    ])
     const hash = (value: Buffer | string) => createHash('sha256').update(value).digest('hex')
     const addon = Buffer.from('qualified-addon')
     const runtime = Buffer.from('qualified-runtime')
@@ -124,6 +179,24 @@ describe('LightOcrProcessHost', () => {
       bytes: descriptor.byteLength,
       sha256: hash(descriptor)
     }
+    const pdfiumLoader = Buffer.from('module.exports = require("./pdfium.node")')
+    const pdfiumAddon = Buffer.from('qualified-pdfium-addon')
+    const pdfiumLibrary = Buffer.from('qualified-pdfium-library')
+    const pdfiumLoaderArtifact = {
+      path: 'pdfium/index.cjs',
+      bytes: pdfiumLoader.byteLength,
+      sha256: hash(pdfiumLoader)
+    }
+    const pdfiumAddonArtifact = {
+      path: 'pdfium/pdfium.node',
+      bytes: pdfiumAddon.byteLength,
+      sha256: hash(pdfiumAddon)
+    }
+    const pdfiumLibraryArtifact = {
+      path: 'pdfium/libpdfium.dylib',
+      bytes: pdfiumLibrary.byteLength,
+      sha256: hash(pdfiumLibrary)
+    }
     await Promise.all([
       writeFile(
         `${path.join(nativePackageDir, addonArtifact.path)}.gz.b64`,
@@ -133,10 +206,28 @@ describe('LightOcrProcessHost', () => {
         `${path.join(nativePackageDir, runtimeArtifact.path)}.gz.b64`,
         gzipSync(runtime).toString('base64')
       ),
+      writeFile(
+        `${path.join(nativePackageDir, pdfiumAddonArtifact.path)}.gz.b64`,
+        gzipSync(pdfiumAddon).toString('base64')
+      ),
+      writeFile(
+        `${path.join(nativePackageDir, pdfiumLibraryArtifact.path)}.gz.b64`,
+        gzipSync(pdfiumLibrary).toString('base64')
+      ),
       writeFile(path.join(nativePackageDir, descriptorArtifact.path), descriptor),
+      writeFile(path.join(nativePackageDir, pdfiumLoaderArtifact.path), pdfiumLoader),
       writeFile(
         path.join(nativePackageDir, 'artifact-hashes.json'),
-        JSON.stringify({ files: [addonArtifact, runtimeArtifact, descriptorArtifact] })
+        JSON.stringify({
+          files: [
+            addonArtifact,
+            runtimeArtifact,
+            descriptorArtifact,
+            pdfiumLoaderArtifact,
+            pdfiumAddonArtifact,
+            pdfiumLibraryArtifact
+          ]
+        })
       )
     ])
 
@@ -157,15 +248,20 @@ describe('LightOcrProcessHost', () => {
     expect(spawnedEnvironments).toHaveLength(2)
     const materializedAddon = spawnedEnvironments[0].LIGHT_OCR_NODE_BINARY
     const materializedDescriptor = spawnedEnvironments[0].LIGHT_OCR_RUNTIME_DESCRIPTOR
+    const materializedPdfium = spawnedEnvironments[0].LIGHT_OCR_PDFIUM_MODULE
     expect(materializedAddon).toBeTypeOf('string')
     expect(materializedDescriptor).toBeTypeOf('string')
+    expect(materializedPdfium).toBeTypeOf('string')
     expect(spawnedEnvironments[1].LIGHT_OCR_NODE_BINARY).toBe(materializedAddon)
     expect(spawnedEnvironments[1].LIGHT_OCR_RUNTIME_DESCRIPTOR).toBe(materializedDescriptor)
+    expect(spawnedEnvironments[1].LIGHT_OCR_PDFIUM_MODULE).toBe(materializedPdfium)
     await expect(readFile(materializedAddon!)).resolves.toEqual(addon)
     await expect(readFile(materializedDescriptor!)).resolves.toEqual(descriptor)
+    await expect(readFile(materializedPdfium!)).resolves.toEqual(pdfiumLoader)
 
     await host.close()
     await expect(readFile(materializedAddon!)).rejects.toThrow()
+    await expect(readFile(materializedPdfium!)).rejects.toThrow()
   })
 
   it('uses an immutable input snapshot and reports the actual engine selection', async () => {
@@ -208,6 +304,442 @@ describe('LightOcrProcessHost', () => {
       recognition: { actualProviderChain: ['cpu'], precision: 'fp32' }
     })
     expect(result.engine).toEqual(prepared)
+  })
+
+  it('streams validated document pages in order and reports natural completion', async () => {
+    const host = createHost()
+    const pages: string[] = []
+
+    const outcome = await recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond\fthird'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'continue'
+      }
+    })
+
+    expect(pages).toEqual(['first', 'second', 'third'])
+    expect(outcome).toMatchObject({
+      artifactTermination: 'request_complete',
+      emittedPages: 3,
+      generationOutputLimitReached: false,
+      engine: {
+        modelBundleId: bundleId,
+        requestedProvider: 'cpu',
+        strategy: 'bounded-960'
+      }
+    })
+  })
+
+  it('frames document messages split across arbitrary stdout chunks', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-fragmented-page' }
+    })
+    const pages: string[] = []
+
+    const outcome = await recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'continue'
+      }
+    })
+
+    expect(pages).toEqual(['first', 'second'])
+    expect(outcome.emittedPages).toBe(2)
+  })
+
+  it('stops document generation after the page consumer reaches its output limit', async () => {
+    const host = createHost()
+    const pages: string[] = []
+
+    const outcome = await recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond\fthird'),
+      backend: 'auto',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'output_limit_reached'
+      }
+    })
+
+    expect(pages).toEqual(['first'])
+    expect(outcome).toMatchObject({
+      artifactTermination: 'stopped_by_output_limit',
+      emittedPages: 1,
+      generationOutputLimitReached: true,
+      engine: { requestedProvider: 'auto' }
+    })
+  })
+
+  it('allows a document-stop acknowledgement to outlive cancellation grace', async () => {
+    const host = createHost({
+      cancelGraceMs: 10,
+      documentStopTimeoutMs: 200,
+      testEnvironment: { FAKE_OCR_DOCUMENT_STOP_DELAY_MS: '50' }
+    })
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'output_limit_reached'
+      })
+    ).resolves.toMatchObject({
+      artifactTermination: 'stopped_by_output_limit',
+      emittedPages: 1,
+      generationOutputLimitReached: true
+    })
+  })
+
+  it('keeps stream completion separate from a raced output-limit stop', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-stop-race' }
+    })
+    const pages: string[] = []
+
+    const outcome = await recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond\fthird'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'output_limit_reached'
+      }
+    })
+
+    expect(pages).toEqual(['first'])
+    expect(outcome).toMatchObject({
+      artifactTermination: 'request_complete',
+      emittedPages: 3,
+      generationOutputLimitReached: true,
+      engine: { requestedProvider: 'cpu' }
+    })
+  })
+
+  it('returns a deterministic resource-limited prefix only after a validated page', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-after-page' }
+    })
+    const pages: string[] = []
+
+    const outcome = await recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: (page) => {
+        pages.push(page.lines[0] ?? '')
+        return 'continue'
+      }
+    })
+
+    expect(pages).toEqual(['first'])
+    expect(outcome).toMatchObject({
+      artifactTermination: 'resource_limited',
+      emittedPages: 1,
+      generationOutputLimitReached: false,
+      resourceLimit: { code: 'resource_limit_exceeded' }
+    })
+  })
+
+  it('records output-limit and resource-limit facts independently', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-after-page' }
+    })
+
+    const outcome = await recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      onPage: () => 'output_limit_reached'
+    })
+
+    expect(outcome).toMatchObject({
+      artifactTermination: 'resource_limited',
+      emittedPages: 1,
+      generationOutputLimitReached: true
+    })
+  })
+
+  it('rejects a resource limit before the helper emits any document page', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-resource-before-page' }
+    })
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'continue'
+      })
+    ).rejects.toMatchObject({
+      code: 'helper_error',
+      helperCode: 'resource_limit_exceeded'
+    })
+  })
+
+  it('rejects non-resource helper errors even after document pages were emitted', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-error-after-page' }
+    })
+    const pages: string[] = []
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'helper_error', helperCode: 'runtime_failure' })
+    expect(pages).toEqual(['first'])
+  })
+
+  it.each(['document-invalid-sequence', 'document-invalid-completion', 'document-invalid-model'])(
+    'rejects invalid document protocol behavior: %s',
+    async (behavior) => {
+      const host = createHost({ testEnvironment: { FAKE_OCR_BEHAVIOR: behavior } })
+
+      await expect(
+        recognizeTestDocument(host, {
+          encoded: Buffer.from('first\fsecond'),
+          backend: 'cpu',
+          strategy: 'bounded-960',
+          options: documentOptions,
+          onPage: () => 'continue'
+        })
+      ).rejects.toMatchObject({ code: 'invalid_protocol' })
+    }
+  )
+
+  it('rejects document pages that exceed cumulative request pixel accounting', async () => {
+    const host = createHost()
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: { ...documentOptions, maxTotalPixels: 30_000 },
+        onPage: () => 'continue'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+  })
+
+  it('uses an idle timeout that resets after each valid document page', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-hang-after-page' },
+      documentIdleTimeoutMs: 50
+    })
+    const pages: string[] = []
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'timeout' })
+    expect(pages).toEqual(['first'])
+  })
+
+  it('enforces a total document timeout independently of page activity', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_DOCUMENT_PAGE_DELAY_MS: '30' },
+      documentIdleTimeoutMs: 100,
+      documentTotalTimeoutMs: 70
+    })
+    const pages: string[] = []
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('one\ftwo\fthree\ffour\ffive'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'timeout' })
+    expect(pages.length).toBeGreaterThan(0)
+    expect(pages.length).toBeLessThan(5)
+  })
+
+  it('rejects a malformed output-stop acknowledgement', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-invalid-stop-result' }
+    })
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'output_limit_reached'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+  })
+
+  it('rejects document output emitted after a completion terminal', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-page-after-completion' }
+    })
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: () => 'output_limit_reached'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+  })
+
+  it('cancels document recognition as control flow and discards the stream owner', async () => {
+    const host = createHost({
+      testEnvironment: { FAKE_OCR_BEHAVIOR: 'document-hang-after-page' }
+    })
+    const controller = new AbortController()
+
+    const recognition = recognizeTestDocument(host, {
+      encoded: Buffer.from('first\fsecond'),
+      backend: 'cpu',
+      strategy: 'bounded-960',
+      options: documentOptions,
+      signal: controller.signal,
+      onPage: () => {
+        controller.abort()
+        return 'continue'
+      }
+    })
+
+    await expect(recognition).rejects.toMatchObject({ code: 'cancelled' })
+    expect(host.getStatus().pendingInputBytes).toBe(0)
+  })
+
+  it('does not replay a document stream after the helper crashes with emitted pages', async () => {
+    const counter = path.join(tempDir, 'document-start-counter')
+    const host = createHost({
+      testEnvironment: {
+        FAKE_OCR_BEHAVIOR: 'document-crash-after-page',
+        FAKE_OCR_START_COUNTER: counter
+      }
+    })
+    const pages: string[] = []
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first\fsecond'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: documentOptions,
+        onPage: (page) => {
+          pages.push(page.lines[0] ?? '')
+          return 'continue'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'unexpected_exit' })
+    expect(pages).toEqual(['first'])
+    expect((await readFile(counter, 'utf8')).trim().split('\n')).toHaveLength(1)
+  })
+
+  it('rejects invalid document resource options before starting the helper', async () => {
+    const host = createHost()
+
+    await expect(
+      recognizeTestDocument(host, {
+        encoded: Buffer.from('first'),
+        backend: 'cpu',
+        strategy: 'bounded-960',
+        options: { ...documentOptions, maxPages: 101 },
+        onPage: () => 'continue'
+      })
+    ).rejects.toMatchObject({ code: 'invalid_protocol' })
+    expect(host.getStatus().pid).toBeNull()
+  })
+
+  it('copies document sources into a private bounded snapshot', async () => {
+    const host = createHost()
+    const sourcePath = path.join(tempDir, 'source.pdf')
+    const source = Buffer.from('%PDF-private-snapshot')
+    await writeFile(sourcePath, source)
+
+    const snapshot = await host.createDocumentSourceSnapshot({
+      filePath: sourcePath,
+      maxFileBytes: source.byteLength
+    })
+
+    expect(snapshot.byteLength).toBe(source.byteLength)
+    expect(snapshot.sourceSha256).toBe(createHash('sha256').update(source).digest('hex'))
+    await expect(readFile(snapshot.filePath)).resolves.toEqual(source)
+    if (process.platform !== 'win32') {
+      expect((await stat(snapshot.filePath)).mode & 0o777).toBe(0o600)
+    }
+
+    await snapshot.release()
+    await snapshot.release()
+    await expect(readFile(snapshot.filePath)).rejects.toThrow()
+  })
+
+  it('rejects document sources that exceed the bounded snapshot limit', async () => {
+    const host = createHost()
+    const sourcePath = path.join(tempDir, 'oversized.pdf')
+    await writeFile(sourcePath, Buffer.alloc(5, 1))
+
+    await expect(
+      host.createDocumentSourceSnapshot({ filePath: sourcePath, maxFileBytes: 4 })
+    ).rejects.toMatchObject({ code: 'input_too_large' })
+  })
+
+  it('serializes the private root creation for concurrent document snapshots', async () => {
+    const host = createHost()
+    const firstSourcePath = path.join(tempDir, 'first-source.pdf')
+    const secondSourcePath = path.join(tempDir, 'second-source.pdf')
+    await Promise.all([
+      writeFile(firstSourcePath, '%PDF-first'),
+      writeFile(secondSourcePath, '%PDF-second')
+    ])
+
+    const [first, second] = await Promise.all([
+      host.createDocumentSourceSnapshot({
+        filePath: firstSourcePath,
+        maxFileBytes: 1_024
+      }),
+      host.createDocumentSourceSnapshot({
+        filePath: secondSourcePath,
+        maxFileBytes: 1_024
+      })
+    ])
+
+    expect(path.dirname(first.filePath)).toBe(path.dirname(second.filePath))
+    await Promise.all([first.release(), second.release()])
   })
 
   it('restarts once after an abnormal helper exit', async () => {

@@ -182,6 +182,60 @@ describeIfNativeSqlite('SessionPendingInputStore blocked queue', () => {
     }
   })
 
+  it('preserves validated PDF routing and document coverage in pending payloads', () => {
+    const { db, store } = createStore()
+    try {
+      const text = '## Page 1\n\npending PDF snapshot'
+      const pdfTextCoverage = {
+        routingRevision: 'pdf-text-coverage-v1',
+        pageCount: 2,
+        substantivePageCount: 0,
+        lowTextPageCount: 2,
+        lowTextPageSamples: [1, 2],
+        hasEmbeddedText: false
+      }
+      const item = store.createQueueInput('s1', {
+        text: '',
+        files: [
+          {
+            name: 'scan.pdf',
+            path: '/tmp/scan.pdf',
+            mimeType: 'application/pdf',
+            pdfTextCoverage,
+            resolvedRepresentation: {
+              kind: 'ocr_text',
+              text,
+              tokenCount: 7,
+              truncated: false,
+              document: {
+                pageSpans: [{ pageNumber: 1, start: 0, end: text.length, complete: true }],
+                sourcePageCountHint: 2,
+                includedThroughPage: 1,
+                includedThroughPageComplete: true,
+                artifactTermination: 'request_complete',
+                generationOutputLimitReached: false,
+                embeddedTextCoverage: pdfTextCoverage
+              }
+            }
+          }
+        ]
+      })
+
+      expect(item.payload.files?.[0]).toMatchObject({
+        pdfTextCoverage,
+        resolvedRepresentation: {
+          kind: 'ocr_text',
+          document: {
+            includedThroughPage: 1,
+            embeddedTextCoverage: pdfTextCoverage
+          }
+        }
+      })
+    } finally {
+      db.close()
+    }
+  })
+
   it('strips forged resolved snapshots when materializing pending payloads', () => {
     const { db, store } = createStore()
     try {

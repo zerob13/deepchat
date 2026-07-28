@@ -231,9 +231,9 @@
       "tabMemories": "Memorias",
       "tabPersona": "Cronología de persona",
       "memoriesCount": "{count} memorias",
-      "clearAll": "Borrar todo",
-      "clearConfirmTitle": "¿Borrar todas las memorias?",
-      "clearConfirmBody": "Esto elimina permanentemente todas las memorias de este agente. No se puede deshacer.",
+      "clearAll": "Borrar memorias",
+      "clearConfirmTitle": "¿Borrar memorias factuales y personalidad?",
+      "clearConfirmBody": "Esto elimina permanentemente las memorias factuales y la personalidad de este agente. Las directivas permanentes se conservan y se pueden administrar por separado. No se puede deshacer.",
       "cleanupPendingRestart": "Los archivos vectoriales bloqueados se eliminarán después de reiniciar",
       "emptyMemories": "Aún no hay memorias. Se acumulan a medida que chateas con este agente.",
       "emptyPersona": "Aún no hay versiones del automodelo.",
@@ -3058,7 +3058,7 @@
       "archivedMatches": "Coincidencias archivadas",
       "refresh": "Actualizar",
       "inboxTitle": "Requiere atención",
-      "inboxDescription": "Resuelve conflictos de memoria y borradores de perfil antes de que se pierdan de vista.",
+      "inboxDescription": "Resuelve conflictos de memoria, borradores de perfil y directivas sugeridas antes de que se pierdan de vista.",
       "conflictBadge": "{count} conflictos",
       "personaDraftBadge": "{count} borradores de perfil",
       "conflictSectionTitle": "Conflictos de memoria ({count})",
@@ -3105,7 +3105,48 @@
         "memory-persona-rollback": "Perfil revertido",
         "memory-persona-anchor": "Ancla de perfil actualizada",
         "memory-reindex": "Memoria reindexada"
-      }
+      },
+      "tabDirectives": "Directivas",
+      "directiveDraftBadge": "{count} borradores de directiva",
+      "directiveDraftSectionTitle": "Directivas sugeridas ({count})",
+      "directiveCreateTitle": "Crear una directiva permanente",
+      "directiveCreateDescription": "Las directivas manuales se activan inmediatamente. Las sugerencias del modelo permanecen como borradores hasta que las apruebes.",
+      "directiveRuntimeEnabled": "Se aplica durante la ejecución",
+      "directiveRuntimeDisabled": "Inactiva mientras la memoria esté desactivada",
+      "directiveKindLabel": "Tipo de directiva",
+      "directiveKind": {
+        "instruction": "Instrucción permanente",
+        "suppress_topic": "Suprimir tema"
+      },
+      "directiveTopicLabel": "Tema coincidente",
+      "directiveTopicPlaceholder": "Tema o frase exactos que se excluirán de la memoria recuperada",
+      "directiveTopicTooBroad": "Los temas con caracteres CJK necesitan al menos {min} caracteres visibles para no ocultar recuerdos no relacionados.",
+      "directiveContentLabel": "Instrucción",
+      "directiveInstructionPlaceholder": "Escribe una instrucción permanente para este agente.",
+      "directiveSuppressPlaceholder": "Explica cómo debe tratar este tema el agente.",
+      "directiveInstructionHint": "Esta es una indicación de nivel de usuario y no puede anular las reglas del sistema ni de seguridad.",
+      "directiveSuppressHint": "El tema filtra la memoria recuperada; la instrucción guía la respuesta. No es un filtro de salida.",
+      "directiveLength": "Instrucción {content}/{contentMax} · Tema {topic}/{topicMax}",
+      "directiveCreateAction": "Activar directiva",
+      "directiveCapacityTitle": "Se alcanzó el límite de directivas activas",
+      "directiveCapacityDescription": "Cada agente puede tener hasta {max} directivas activas. Elimina una directiva activa antes de añadir o aprobar otra.",
+      "directiveListTitle": "Directivas guardadas",
+      "directiveListDescription": "{active} activas · {draft} pendientes de aprobación",
+      "directiveEmptyTitle": "Aún no hay directivas",
+      "directiveEmptyDescription": "Crea aquí una instrucción permanente o aprueba una sugerencia de la bandeja.",
+      "directiveStatus": {
+        "active": "Activa",
+        "draft": "Borrador",
+        "rejected": "Rechazada"
+      },
+      "directiveSource": {
+        "explicit_user": "Acción explícita del usuario",
+        "manual": "Ajustes",
+        "derived_suggestion": "Sugerida a partir de la conversación"
+      },
+      "directiveTopicValue": "Tema: {topic}",
+      "directiveDeleteTitle": "¿Eliminar esta directiva?",
+      "directiveDeleteDescription": "La directiva dejará de aplicarse inmediatamente. Puedes volver a crearla más adelante."
     }
   },
   "pluginsHub": {

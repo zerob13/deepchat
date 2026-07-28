@@ -16,12 +16,22 @@ vi.mock('@/agent/deepchat/resources/systemPromptBuilder', () => ({
   buildSystemPromptWithSkills
 }))
 
-function createHarness(memoryContent: string | null = 'recalled memory') {
+function createHarness(
+  memoryContent: string | null = 'recalled memory',
+  directiveContent: string | null = null
+) {
   const runtime = new DeepChatAgentRuntime()
   const contribute = vi.fn(async () => ({
-    content: memoryContent,
-    manifest: null,
-    anchorEntryId: null
+    memory: {
+      content: memoryContent,
+      manifest: null,
+      anchorEntryId: null
+    },
+    directives: {
+      content: directiveContent,
+      manifest: null,
+      anchorEntryId: null
+    }
   }))
   const deps = {
     registry: runtime,
@@ -117,5 +127,21 @@ describe('PromptAssemblyService', () => {
         memoryQuery: 'query'
       })
     ).resolves.toMatchObject({ memoryIncluded: false })
+  })
+
+  it('reports directive inclusion independently from recalled memory', async () => {
+    const harness = createHarness(null, 'trusted directive')
+    await expect(
+      harness.service.createPostCompactionPromptAssembler().assemble({
+        memorySession: { sessionId: toAppSessionId(SESSION_ID) },
+        summaryText: null,
+        reconstructionAnchor: null,
+        memoryQuery: 'query'
+      })
+    ).resolves.toMatchObject({
+      memoryIncluded: false,
+      directivesIncluded: true,
+      directives: { content: 'trusted directive' }
+    })
   })
 })

@@ -20,6 +20,7 @@ const VIEW_ENTRY_REASONS = new Set([
   'summary_checkpoint',
   'reconstruction_checkpoint',
   'memory_context',
+  'directive_context',
   'selected_history',
   'new_user_input',
   'resume_target',
@@ -77,7 +78,8 @@ function isViewEntryRef(
     (value.source === 'tape' || value.source === 'synthetic') &&
     reason !== null &&
     VIEW_ENTRY_REASONS.has(reason) &&
-    (schemaVersion === 3 || !hasSchemaV3Fields) &&
+    (schemaVersion >= 3 || !hasSchemaV3Fields) &&
+    (reason !== 'directive_context' || schemaVersion >= 4) &&
     (value.sourceEntryIds === undefined ||
       (Array.isArray(value.sourceEntryIds) &&
         value.sourceEntryIds.every(
@@ -141,7 +143,10 @@ export function isTapeViewManifest(
 ): value is DeepChatTapeViewManifest {
   if (!isRecordObject(value)) return false
   const schemaVersion =
-    value.schemaVersion === 1 || value.schemaVersion === 2 || value.schemaVersion === 3
+    value.schemaVersion === 1 ||
+    value.schemaVersion === 2 ||
+    value.schemaVersion === 3 ||
+    value.schemaVersion === 4
       ? value.schemaVersion
       : null
   if (schemaVersion === null) return false
@@ -155,10 +160,10 @@ export function isTapeViewManifest(
     (value.taskType === 'chat' || value.taskType === 'resume' || value.taskType === 'tool_loop') &&
     typeof value.policy === 'string' &&
     VIEW_POLICIES.has(value.policy) &&
-    (value.policy !== 'cache_aware_context_v1' || schemaVersion === 3) &&
+    (value.policy !== 'cache_aware_context_v1' || schemaVersion >= 3) &&
     (typeof value.policyVersion === 'number' || value.policyVersion === null) &&
     (value.contextBuilderVersion === 'legacy-v1' ||
-      (schemaVersion === 3 && value.contextBuilderVersion === 'cache-aware-v1')) &&
+      (schemaVersion >= 3 && value.contextBuilderVersion === 'cache-aware-v1')) &&
     typeof value.latestEntryId === 'number' &&
     Array.isArray(value.anchorEntryIds) &&
     value.anchorEntryIds.every((entryId) => typeof entryId === 'number') &&

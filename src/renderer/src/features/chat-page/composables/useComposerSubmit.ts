@@ -15,7 +15,7 @@ import type {
   SendMessageInput,
   UserMessageInlineItem
 } from '@shared/types/agent-interface'
-import { isImageAttachment } from '@shared/utils/attachmentRepresentation'
+import { isAttachmentPreparationCandidate } from '@shared/utils/attachmentRepresentation'
 import {
   applyAcceptedComposerSubmission,
   composerDraftFingerprint,
@@ -332,7 +332,7 @@ export function useComposerSubmit(options: UseComposerSubmitOptions) {
       submissionId: nanoid(),
       preparesAttachments:
         sessionStore.activeSession?.providerId !== 'acp' &&
-        attachedFiles.value.some(isImageAttachment),
+        attachedFiles.value.some(isAttachmentPreparationCandidate),
       cancelled: false,
       mainDispatched: false
     }
@@ -630,7 +630,9 @@ export function useComposerSubmit(options: UseComposerSubmitOptions) {
       if (activeSubmissionPreparations.has(sessionId)) return false
       preparation = {
         submissionId: nanoid(),
-        preparesAttachments: (currentAttempt.payload.files ?? []).some(isImageAttachment),
+        preparesAttachments: (currentAttempt.payload.files ?? []).some(
+          isAttachmentPreparationCandidate
+        ),
         cancelled: false,
         mainDispatched: false
       }
@@ -645,11 +647,13 @@ export function useComposerSubmit(options: UseComposerSubmitOptions) {
       files: copyComposerFiles(currentAttempt.payload.files ?? []),
       ...(fallbackPolicy ? { attachmentFallbackPolicy: fallbackPolicy } : {})
     }
-    const hasImageAttachment = (payload.files ?? []).some(isImageAttachment)
+    const hasAttachmentPreparationCandidate = (payload.files ?? []).some(
+      isAttachmentPreparationCandidate
+    )
     const dispatchToken = ++nextDispatchToken
     activeDispatches.set(sessionId, {
       token: dispatchToken,
-      preparesAttachments: preparation.preparesAttachments && hasImageAttachment
+      preparesAttachments: preparation.preparesAttachments && hasAttachmentPreparationCandidate
     })
 
     const feedback =

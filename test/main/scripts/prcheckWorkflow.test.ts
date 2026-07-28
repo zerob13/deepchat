@@ -214,7 +214,7 @@ describe('PR Check workflow contracts', () => {
       'node scripts/smoke-memory-native-sqlite.js'
     )
     expect(getStep(nativeJob, 'Validate encrypted OCR artifact storage').run).toBe(
-      'pnpm exec vitest --config vitest.config.ts --run test/main/ocr/ocrArtifactStore.test.ts'
+      'pnpm exec vitest --config vitest.config.ts --run test/main/ocr/ocrArtifactStore.test.ts test/main/ocr/documentOcrArtifactStore.test.ts'
     )
     expect(getStep(nativeJob, 'Validate encrypted OCR artifact storage').env).toEqual({
       DEEPCHAT_REQUIRE_NATIVE_SQLITE: '1'

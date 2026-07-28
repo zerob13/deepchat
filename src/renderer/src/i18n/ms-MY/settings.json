@@ -231,9 +231,9 @@
       "tabMemories": "Ingatan",
       "tabPersona": "Garis masa persona",
       "memoriesCount": "{count} ingatan",
-      "clearAll": "Kosongkan semua",
-      "clearConfirmTitle": "Kosongkan semua ingatan?",
-      "clearConfirmBody": "Ini membuang secara kekal semua ingatan ejen ini. Tidak boleh dibatalkan.",
+      "clearAll": "Kosongkan ingatan",
+      "clearConfirmTitle": "Kosongkan ingatan fakta dan persona?",
+      "clearConfirmBody": "Ini membuang secara kekal ingatan fakta dan persona ejen ini. Arahan tetap dikekalkan dan boleh diurus secara berasingan. Tidak boleh dibatalkan.",
       "cleanupPendingRestart": "Fail vektor yang dikunci akan dipadam selepas dimulakan semula",
       "emptyMemories": "Belum ada ingatan. Ia terkumpul semasa anda berbual dengan ejen ini.",
       "emptyPersona": "Belum ada versi model-diri.",
@@ -3058,7 +3058,7 @@
       "archivedMatches": "Padanan dalam arkib",
       "refresh": "Segar semula",
       "inboxTitle": "Perlu perhatian",
-      "inboxDescription": "Selesaikan konflik memori dan draf profil sebelum ia terlepas pandang.",
+      "inboxDescription": "Selesaikan konflik memori, draf profil dan arahan yang dicadangkan sebelum ia terlepas pandang.",
       "conflictBadge": "{count} konflik",
       "personaDraftBadge": "{count} draf profil",
       "conflictSectionTitle": "Konflik memori ({count})",
@@ -3105,7 +3105,48 @@
         "memory-persona-rollback": "Profil dikembalikan",
         "memory-persona-anchor": "Sauh profil dikemas kini",
         "memory-reindex": "Memori diindeks semula"
-      }
+      },
+      "tabDirectives": "Arahan",
+      "directiveDraftBadge": "{count} draf arahan",
+      "directiveDraftSectionTitle": "Arahan yang dicadangkan ({count})",
+      "directiveCreateTitle": "Cipta arahan tetap",
+      "directiveCreateDescription": "Arahan manual menjadi aktif serta-merta. Cadangan model kekal sebagai draf sehingga anda meluluskannya.",
+      "directiveRuntimeEnabled": "Digunakan semasa runtime",
+      "directiveRuntimeDisabled": "Tidak aktif apabila memori dimatikan",
+      "directiveKindLabel": "Jenis arahan",
+      "directiveKind": {
+        "instruction": "Arahan tetap",
+        "suppress_topic": "Sekat topik"
+      },
+      "directiveTopicLabel": "Topik sepadan",
+      "directiveTopicPlaceholder": "Topik atau frasa tepat untuk disekat daripada memori yang diingat semula",
+      "directiveTopicTooBroad": "Topik yang mengandungi aksara CJK memerlukan sekurang-kurangnya {min} aksara yang kelihatan agar memori tidak berkaitan tidak disekat.",
+      "directiveContentLabel": "Arahan",
+      "directiveInstructionPlaceholder": "Tulis arahan tetap untuk ejen ini.",
+      "directiveSuppressPlaceholder": "Terangkan cara ejen harus mengendalikan topik ini.",
+      "directiveInstructionHint": "Ini ialah panduan peringkat pengguna dan tidak boleh mengatasi peraturan sistem atau keselamatan.",
+      "directiveSuppressHint": "Topik menapis memori yang diingat semula; arahan membimbing respons. Ini bukan penapis output.",
+      "directiveLength": "Arahan {content}/{contentMax} · Topik {topic}/{topicMax}",
+      "directiveCreateAction": "Aktifkan arahan",
+      "directiveCapacityTitle": "Had arahan aktif telah dicapai",
+      "directiveCapacityDescription": "Setiap ejen boleh mempunyai sehingga {max} arahan aktif. Padam arahan aktif sebelum menambah atau meluluskan arahan lain.",
+      "directiveListTitle": "Arahan tersimpan",
+      "directiveListDescription": "{active} aktif · {draft} menunggu kelulusan",
+      "directiveEmptyTitle": "Belum ada arahan",
+      "directiveEmptyDescription": "Cipta arahan tetap di sini atau luluskan cadangan daripada peti masuk.",
+      "directiveStatus": {
+        "active": "Aktif",
+        "draft": "Draf",
+        "rejected": "Ditolak"
+      },
+      "directiveSource": {
+        "explicit_user": "Tindakan pengguna yang jelas",
+        "manual": "Tetapan",
+        "derived_suggestion": "Dicadangkan daripada perbualan"
+      },
+      "directiveTopicValue": "Topik: {topic}",
+      "directiveDeleteTitle": "Padam arahan ini?",
+      "directiveDeleteDescription": "Arahan ini akan berhenti digunakan serta-merta. Anda boleh menciptanya semula kemudian."
     }
   },
   "pluginsHub": {

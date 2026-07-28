@@ -98,6 +98,13 @@ describe('MemoryService lifecycle revival (SDD-8)', () => {
       superseded_by: null
     })
     expect(repo.getById(headId)?.superseded_by).toBe(ownerId)
+    expect(repo.listDerivationsByChild('a', ownerId)).toEqual([
+      expect.objectContaining({
+        parent_memory_id: headId,
+        child_memory_id: ownerId,
+        derivation_kind: 'supersede'
+      })
+    ])
   })
 
   it('CHALLENGE fallback revives a superseded provenance owner and retires the head', async () => {
@@ -355,6 +362,11 @@ describe('MemoryService lifecycle revival (SDD-8)', () => {
     })
     expect(repo.getById(headId)?.superseded_by).toBe(ownerId)
     expect(repo.getById(targetId)?.superseded_by).toBe(ownerId)
+    const derivations = repo.listDerivationsByChild('a', ownerId)
+    expect(new Set(derivations.map((edge) => edge.parent_memory_id))).toEqual(
+      new Set([headId, targetId])
+    )
+    expect(derivations.every((edge) => edge.derivation_kind === 'supersede')).toBe(true)
   })
 
   it('an UPDATE collision with user-forgotten provenance is a true noop', async () => {

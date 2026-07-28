@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
+import { Database, dropV48DerivedArtifacts, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
 
 const tableModule = Database
   ? await import('@/memory/data/tables/agentMemory').catch(() => null)
@@ -13,6 +13,7 @@ const ftsPolicyModule = Database
 
 const AgentMemoryTable = tableModule?.AgentMemoryTable
 const buildPendingEmbeddingSelectSql = tableModule?.buildPendingEmbeddingSelectSql
+const buildScopedImportanceCandidatesSql = tableModule?.buildScopedImportanceCandidatesSql
 const AgentMemoryAuditTable = auditTableModule?.AgentMemoryAuditTable
 const agentFtsScope = ftsPolicyModule?.agentFtsScope
 const buildRecallablePredicate = ftsPolicyModule?.buildRecallablePredicate
@@ -24,6 +25,7 @@ const describeIfSqlite = nativeSqliteDescribeIf(
   Boolean(
     AgentMemoryTable &&
     buildPendingEmbeddingSelectSql &&
+    buildScopedImportanceCandidatesSql &&
     AgentMemoryAuditTable &&
     agentFtsScope &&
     buildRecallablePredicate &&
@@ -34,6 +36,23 @@ const describeIfSqlite = nativeSqliteDescribeIf(
 
 type AgentMemorySearchInternals = {
   searchLike(...args: unknown[]): unknown[]
+}
+
+function completeAgentMemoryClear(
+  table: InstanceType<typeof AgentMemoryTableCtor>,
+  agentId: string,
+  createdAt: number
+): number {
+  let job = table.beginMemoryClear(agentId, createdAt)
+  while (job.phase === 'claims') {
+    const batch = table.processMemoryClearBatch(agentId)
+    if (!batch) throw new Error('clear job disappeared before completion')
+    job = batch.job
+  }
+  if (!table.completeMemoryClear(agentId)) {
+    throw new Error('clear job did not reach vector cleanup')
+  }
+  return job.removed
 }
 
 function setTestMemoryStatus(
@@ -377,6 +396,12 @@ describeIfSqlite('AgentMemoryTable', () => {
           WHEN 'fts_only' THEN 'fts_only'
           ELSE 'pending'
         END;
+        UPDATE agent_memory
+        SET status = 'embedded',
+            lifecycle_state = 'active',
+            embedding_state = 'ready',
+            conflict_with = NULL
+        WHERE id = 'winner';
       `)
 
       statements.length = 0
@@ -638,7 +663,7 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: null,
           at: 10
         })
-      ).toBe(true)
+      ).toEqual({ action: 'updated' })
 
       expect(
         table.markPendingEmbeddingsReady('a', [
@@ -746,9 +771,17 @@ describeIfSqlite('AgentMemoryTable', () => {
           provenanceKey: 'after-key',
           category: 'user_preference',
           importance: 0.9,
+          temporal: {
+            temporalKind: 'state',
+            validFrom: 100,
+            validUntil: 200,
+            temporalConfidence: 0.8,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          },
           at: 10
         })
-      ).toBe(true)
+      ).toEqual({ action: 'updated' })
       const edited = table.getById('user')!
       expect(edited.decision_revision).toBe(restored.decision_revision + 1)
       expect(edited).toMatchObject({
@@ -756,6 +789,33 @@ describeIfSqlite('AgentMemoryTable', () => {
         provenance_key: 'after-key',
         category: 'user_preference',
         importance: 0.9,
+        temporal_kind: 'state',
+        valid_from: 100,
+        valid_until: 200,
+        temporal_confidence: 0.8,
+        embedding_state: 'pending'
+      })
+      expect(
+        table.updateUserMetadataIfRevision({
+          agentId: 'a',
+          id: edited.id,
+          expectedRevision: edited.decision_revision,
+          temporal: {
+            temporalKind: 'event',
+            validFrom: 300,
+            validUntil: 400,
+            temporalConfidence: 0.95,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          }
+        })
+      ).toBe(true)
+      expect(table.getById('user')).toMatchObject({
+        temporal_kind: 'event',
+        valid_from: 300,
+        valid_until: 400,
+        temporal_confidence: 0.95,
+        decision_revision: edited.decision_revision + 1,
         embedding_state: 'pending'
       })
 
@@ -857,11 +917,35 @@ describeIfSqlite('AgentMemoryTable', () => {
           agentId: 'a',
           id: challenger.id,
           expectedRevision: challenger.decision_revision,
-          targetId: challengedTarget.id
+          targetId: challengedTarget.id,
+          content: 'resolved challenger',
+          provenanceKey: 'resolved-provenance',
+          category: 'user_preference',
+          temporal: {
+            temporalKind: 'state',
+            validFrom: 100,
+            validUntil: null,
+            temporalConfidence: 0.8,
+            temporalPrecision: 'exact',
+            temporalTimeZone: 'UTC'
+          },
+          at: 200
         })
       ).toBe(true)
       const activated = table.getById('challenger')!
-      expect(activated.decision_revision).toBe(challenger.decision_revision + 1)
+      expect(activated).toMatchObject({
+        content: 'resolved challenger',
+        provenance_key: 'resolved-provenance',
+        category: 'user_preference',
+        last_accessed: 200,
+        temporal_kind: 'state',
+        valid_from: 100,
+        valid_until: null,
+        temporal_confidence: 0.8,
+        temporal_precision: 'exact',
+        temporal_timezone: 'UTC',
+        decision_revision: challenger.decision_revision + 1
+      })
       expect(
         table.archiveResolvedConflictTarget({
           agentId: 'a',
@@ -875,6 +959,58 @@ describeIfSqlite('AgentMemoryTable', () => {
         superseded_by: 'challenger',
         conflict_state: null,
         decision_revision: challengedTarget.decision_revision + 1
+      })
+
+      const secondTarget = table.insert({
+        id: 'target-preserve-temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'second target'
+      })
+      expect(
+        table.markConflictIfRevision(
+          'a',
+          secondTarget.id,
+          secondTarget.decision_revision,
+          'challenged'
+        )
+      ).toBe(true)
+      const temporalChallenger = table.insert({
+        id: 'challenger-preserve-temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'time-bound challenger',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: secondTarget.id,
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 300,
+          validUntil: 400,
+          temporalConfidence: 0.9,
+          temporalPrecision: 'exact',
+          temporalTimeZone: 'UTC'
+        }
+      })
+      expect(
+        table.activateResolvedChallenger({
+          agentId: 'a',
+          id: temporalChallenger.id,
+          expectedRevision: temporalChallenger.decision_revision,
+          targetId: secondTarget.id,
+          content: 'rewritten time-bound challenger',
+          provenanceKey: 'rewritten-time-bound-challenger',
+          at: 350
+        })
+      ).toBe(true)
+      expect(table.getById(temporalChallenger.id)).toMatchObject({
+        content: 'rewritten time-bound challenger',
+        temporal_kind: 'state',
+        valid_from: 300,
+        valid_until: 400,
+        temporal_confidence: 0.9,
+        temporal_precision: 'exact',
+        temporal_timezone: 'UTC'
       })
     } finally {
       db.close()
@@ -1214,6 +1350,165 @@ describeIfSqlite('AgentMemoryTable', () => {
       expect(xMemories).toHaveLength(1)
       expect(xMemories[0]?.id).toBe('a1')
       expect(table.countByAgent('agent-y')).toBe(1)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies identical exact-scope filters to id lookup and keyword recall', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const insert = (id: string, scope?: { type: 'agent' } | { type: 'session'; id: string }) =>
+        table.insert({
+          id,
+          agentId: 'agent-x',
+          kind: 'semantic',
+          content: `scopekeyword ${id}`,
+          scope
+        })
+
+      insert('global')
+      insert('session-1', { type: 'session', id: 'session-1' })
+      insert('session-2', { type: 'session', id: 'session-2' })
+      table.insert({
+        id: 'other-agent',
+        agentId: 'agent-y',
+        kind: 'semantic',
+        content: 'scopekeyword other agent',
+        scope: { type: 'session', id: 'session-1' }
+      })
+
+      const applicable = [{ type: 'agent' as const }, { type: 'session' as const, id: 'session-1' }]
+      expect(
+        table
+          .listApplicableByIds(
+            'agent-x',
+            ['session-2', 'global', 'other-agent', 'session-1'],
+            applicable
+          )
+          .map((row) => row.id)
+          .sort()
+      ).toEqual(['global', 'session-1'])
+      expect(table.search('agent-x', 'scopekeyword').map((row) => row.id)).toEqual(['global'])
+      expect(
+        table
+          .search('agent-x', 'scopekeyword', 20, { scopeFilter: applicable })
+          .map((row) => row.id)
+          .sort()
+      ).toEqual(['global', 'session-1'])
+      expect(
+        table
+          .search('agent-x', 'scopekeyword', 20, {
+            scopeFilter: [{ type: 'session', id: 'session-2' }]
+          })
+          .map((row) => row.id)
+      ).toEqual(['session-2'])
+      expect(
+        table.getCognitiveMaintenanceInput('agent-x', {
+          kinds: ['semantic'],
+          watermark: 0,
+          limit: 20
+        })
+      ).toMatchObject({
+        eligibleCount: 1,
+        topRows: [expect.objectContaining({ id: 'global' })]
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects cross-scope supersession links at the repository transition boundary', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const source = table.insert({
+        id: 'source',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'source',
+        scope: { type: 'session', id: 'session-1' }
+      })
+      table.insert({
+        id: 'other-scope',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'other scope',
+        scope: { type: 'session', id: 'session-2' }
+      })
+      table.insert({
+        id: 'same-scope',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'same scope',
+        scope: { type: 'session', id: 'session-1' }
+      })
+
+      expect(
+        table.markSupersededIfRevision(
+          'agent-x',
+          source.id,
+          source.decision_revision,
+          'other-scope'
+        )
+      ).toBe(false)
+      expect(table.getById(source.id)?.superseded_by).toBeNull()
+      expect(
+        table.markSupersededIfRevision('agent-x', source.id, source.decision_revision, 'same-scope')
+      ).toBe(true)
+
+      const target = table.insert({
+        id: 'conflict-target',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'conflict target',
+        scope: { type: 'session', id: 'session-1' }
+      })
+      expect(
+        table.markConflictIfRevision('agent-x', target.id, target.decision_revision, 'challenged')
+      ).toBe(true)
+      const challenger = table.insert({
+        id: 'cross-scope-challenger',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'cross scope challenger',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: target.id,
+        scope: { type: 'session', id: 'session-2' }
+      })
+      expect(
+        table.activateResolvedChallenger({
+          agentId: 'agent-x',
+          id: challenger.id,
+          targetId: target.id,
+          expectedRevision: challenger.decision_revision
+        })
+      ).toBe(false)
+
+      const sibling = table.insert({
+        id: 'same-scope-sibling',
+        agentId: 'agent-x',
+        kind: 'semantic',
+        content: 'same scope sibling',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: target.id,
+        scope: { type: 'session', id: 'session-1' }
+      })
+      expect(
+        table.retireConflictSiblings('agent-x', target.id, challenger.id, 'other-scope', 100)
+      ).toBe(0)
+      expect(table.getById(sibling.id)).toMatchObject({
+        lifecycle_state: 'conflicted',
+        superseded_by: null
+      })
+      expect(
+        table.retireConflictSiblings('agent-x', target.id, challenger.id, 'same-scope', 100)
+      ).toBe(1)
     } finally {
       db.close()
     }
@@ -1805,6 +2100,1027 @@ describeIfSqlite('AgentMemoryTable', () => {
     }
   })
 
+  it('atomically tombstones an exact claim without retaining its plaintext', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten',
+        agentId: 'a',
+        kind: 'semantic',
+        content: '  Secret   launch plan  ',
+        provenanceKey: 'session:secret-span'
+      })
+
+      db.exec(`
+        CREATE TRIGGER fail_forgotten_delete
+        BEFORE DELETE ON agent_memory
+        WHEN OLD.id = 'forgotten'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced delete failure');
+        END;
+      `)
+      expect(() =>
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toThrow(/forced delete failure/)
+      expect(table.getById(original.id)).toBeDefined()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+      db.exec('DROP TRIGGER fail_forgotten_delete')
+
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: original.id })
+      expect(table.getById(original.id)).toBeUndefined()
+
+      const tombstones = db
+        .prepare(
+          `SELECT agent_id, identity_kind, identity_hash, created_at, reason
+           FROM agent_memory_tombstone
+           ORDER BY identity_kind`
+        )
+        .all() as Array<{
+        agent_id: string
+        identity_kind: string
+        identity_hash: string
+        created_at: number
+        reason: string
+      }>
+      expect(tombstones).toHaveLength(2)
+      expect(tombstones.map((row) => row.identity_kind)).toEqual(['content', 'provenance'])
+      expect(tombstones.every((row) => /^[0-9a-f]{64}$/u.test(row.identity_hash))).toBe(true)
+      expect(tombstones.every((row) => row.created_at === 1_000)).toBe(true)
+      expect(tombstones.every((row) => row.reason === 'selective_delete')).toBe(true)
+      expect(JSON.stringify(tombstones)).not.toContain('Secret')
+      expect(JSON.stringify(tombstones)).not.toContain('session:secret-span')
+
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'same-content',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Secret launch plan',
+          provenanceKey: 'different-source'
+        })
+      ).toBeNull()
+      const editable = table.insert({
+        id: 'editable',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Unrelated live claim',
+        provenanceKey: 'editable-source'
+      })
+      expect(
+        table.updateUserContentAndInvalidateEmbedding({
+          agentId: 'a',
+          id: editable.id,
+          expectedRevision: editable.decision_revision,
+          content: 'Secret launch plan',
+          provenanceKey: 'another-source',
+          at: 1_001
+        })
+      ).toEqual({ action: 'suppressed', reason: 'forgotten' })
+      expect(table.getById(editable.id)).toMatchObject({
+        content: 'Unrelated live claim',
+        provenance_key: 'editable-source',
+        decision_revision: editable.decision_revision
+      })
+      const archivedReplay = table.insert({
+        id: 'archived-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Secret launch plan',
+        provenanceKey: 'archived-replay-source',
+        status: 'archived'
+      })
+      expect(
+        table.restoreArchivedMemory({
+          agentId: 'a',
+          id: archivedReplay.id,
+          expectedRevision: archivedReplay.decision_revision
+        })
+      ).toBe(false)
+      const supersededReplay = table.insert({
+        id: 'superseded-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Secret launch plan',
+        provenanceKey: 'superseded-replay-source',
+        supersededBy: editable.id
+      })
+      expect(
+        table.reviveSupersededMemory({
+          agentId: 'a',
+          id: supersededReplay.id,
+          expectedRevision: supersededReplay.decision_revision
+        })
+      ).toBe(false)
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'same-source',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Different content',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toBeNull()
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'similar-content',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Secret launch plan.',
+          provenanceKey: 'independent-source'
+        })
+      ).toMatchObject({ id: 'similar-content' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'other-agent',
+          agentId: 'b',
+          kind: 'semantic',
+          content: 'Secret launch plan',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toMatchObject({ id: 'other-agent' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'session-scope',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Secret launch plan',
+          provenanceKey: 'independent-session-source',
+          scope: { type: 'session', id: 'session-1' }
+        })
+      ).toMatchObject({ id: 'session-scope' })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('refuses to tombstone or delete internal persona and working rows', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const persona = table.insertInternalMemory({
+        id: 'persona',
+        agentId: 'a',
+        kind: 'persona',
+        content: 'active self model',
+        personaState: 'active'
+      })
+      const working = table.insertInternalMemory({
+        id: 'working',
+        agentId: 'a',
+        kind: 'working',
+        content: 'working projection'
+      })
+
+      for (const row of [persona, working]) {
+        expect(
+          table.tombstoneAndDelete({
+            agentId: 'a',
+            id: row.id,
+            expectedRevision: row.decision_revision,
+            createdAt: 1_000
+          })
+        ).toBeNull()
+        expect(table.getById(row.id)).toBeDefined()
+      }
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('isolates exact content tombstones by non-agent scope', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const forgottenScope = { type: 'project', id: 'project-1' } as const
+      const otherScope = { type: 'project', id: 'project-2' } as const
+      const original = table.insert({
+        id: 'forgotten-project',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-1-source',
+        scope: forgottenScope
+      })
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: original.id })
+
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'same-project',
+          agentId: 'a',
+          kind: 'semantic',
+          content: ' Project   Saffron is paused ',
+          provenanceKey: 'project-1-independent-source',
+          scope: forgottenScope
+        })
+      ).toBeNull()
+      const otherProject = table.insertClaimUnlessTombstoned({
+        id: 'other-project',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-2-source',
+        scope: otherScope
+      })
+      expect(otherProject).toMatchObject({ id: 'other-project' })
+      if (!otherProject) throw new Error('expected cross-scope insert to succeed')
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'agent-scope',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Project Saffron is paused',
+          provenanceKey: 'agent-source'
+        })
+      ).toMatchObject({ id: 'agent-scope' })
+
+      const editableReplay = table.insert({
+        id: 'project-edit-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Unrelated project claim',
+        provenanceKey: 'project-edit-source',
+        scope: forgottenScope
+      })
+      expect(
+        table.updateUserContentAndInvalidateEmbedding({
+          agentId: 'a',
+          id: editableReplay.id,
+          expectedRevision: editableReplay.decision_revision,
+          content: 'Project Saffron is paused',
+          provenanceKey: 'project-edit-replay-source',
+          at: 1_001
+        })
+      ).toEqual({ action: 'suppressed', reason: 'forgotten' })
+      expect(table.getById(editableReplay.id)).toMatchObject({
+        content: 'Unrelated project claim',
+        provenance_key: 'project-edit-source',
+        decision_revision: editableReplay.decision_revision
+      })
+
+      const archivedReplay = table.insert({
+        id: 'project-archived-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-archived-source',
+        status: 'archived',
+        scope: forgottenScope
+      })
+      expect(
+        table.restoreArchivedMemory({
+          agentId: 'a',
+          id: archivedReplay.id,
+          expectedRevision: archivedReplay.decision_revision
+        })
+      ).toBe(false)
+
+      const supersessionHead = table.insert({
+        id: 'project-supersession-head',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Current project status',
+        scope: forgottenScope
+      })
+      const supersededReplay = table.insert({
+        id: 'project-superseded-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-superseded-source',
+        supersededBy: supersessionHead.id,
+        scope: forgottenScope
+      })
+      expect(
+        table.reviveSupersededMemory({
+          agentId: 'a',
+          id: supersededReplay.id,
+          expectedRevision: supersededReplay.decision_revision
+        })
+      ).toBe(false)
+
+      const conflictTarget = table.insert({
+        id: 'project-conflict-target',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Current conflict target',
+        scope: forgottenScope
+      })
+      expect(
+        table.markConflictIfRevision(
+          'a',
+          conflictTarget.id,
+          conflictTarget.decision_revision,
+          'challenged'
+        )
+      ).toBe(true)
+      const conflictedReplay = table.insert({
+        id: 'project-conflicted-replay',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Project Saffron is paused',
+        provenanceKey: 'project-conflicted-source',
+        lifecycleState: 'conflicted',
+        embeddingState: 'pending',
+        conflictWith: conflictTarget.id,
+        scope: forgottenScope
+      })
+      expect(
+        table.activateResolvedChallenger({
+          agentId: 'a',
+          id: conflictedReplay.id,
+          targetId: conflictTarget.id,
+          expectedRevision: conflictedReplay.decision_revision
+        })
+      ).toBe(false)
+
+      expect(
+        table.updateUserContentAndInvalidateEmbedding({
+          agentId: 'a',
+          id: otherProject.id,
+          expectedRevision: otherProject.decision_revision,
+          content: 'Project Saffron is paused',
+          provenanceKey: 'project-2-updated-source',
+          at: 1_002
+        })
+      ).toEqual({ action: 'updated' })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('atomically releases exact tombstones only for an explicitly reauthorized insert', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Secret launch plan',
+        provenanceKey: 'session:secret-span'
+      })
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: original.id,
+          expectedRevision: original.decision_revision,
+          createdAt: 1_000
+        })
+      ).toMatchObject({ id: original.id })
+
+      expect(
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'unrelated',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Independent claim',
+          provenanceKey: 'independent-source'
+        })
+      ).toBeNull()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 2
+      })
+
+      db.exec(`
+        CREATE TRIGGER fail_explicit_relearn
+        BEFORE INSERT ON agent_memory
+        WHEN NEW.id = 'reauthorized'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced relearn failure');
+        END;
+      `)
+      expect(() =>
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'reauthorized',
+          agentId: 'a',
+          kind: 'semantic',
+          content: '  Secret   launch plan ',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toThrow(/forced relearn failure/)
+      expect(table.getById('reauthorized')).toBeUndefined()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 2
+      })
+
+      db.exec('DROP TRIGGER fail_explicit_relearn')
+      expect(
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'reauthorized',
+          agentId: 'a',
+          kind: 'semantic',
+          content: '  Secret   launch plan ',
+          provenanceKey: 'session:secret-span'
+        })
+      ).toMatchObject({ id: 'reauthorized' })
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('keeps unmatched provenance tombstones after content-only reauthorization', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const original = table.insert({
+        id: 'forgotten',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'Private source detail',
+        provenanceKey: 'old-source'
+      })
+      table.tombstoneAndDelete({
+        agentId: 'a',
+        id: original.id,
+        expectedRevision: original.decision_revision,
+        createdAt: 1_000
+      })
+
+      expect(
+        table.insertExplicitlyReauthorizedClaim({
+          id: 'reauthorized',
+          agentId: 'a',
+          kind: 'semantic',
+          content: ' Private   source detail ',
+          provenanceKey: 'new-source'
+        })
+      ).toMatchObject({ id: 'reauthorized' })
+      expect(
+        db
+          .prepare(
+            `SELECT identity_kind
+             FROM agent_memory_tombstone
+             WHERE agent_id = ?`
+          )
+          .all('a')
+      ).toEqual([{ identity_kind: 'provenance' }])
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'old-source-replay',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'Different replayed content',
+          provenanceKey: 'old-source'
+        })
+      ).toBeNull()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('keeps raw insertion and deletion outside the runtime mutation port', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      expect(() =>
+        table.insertInternalMemory({
+          id: 'invalid-internal',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'user claim'
+        } as unknown as Parameters<typeof table.insertInternalMemory>[0])
+      ).toThrow(/unsupported internal memory kind/)
+      const claim = table.insert({
+        id: 'claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'user claim'
+      })
+      const working = table.insertInternalMemory({
+        id: 'working',
+        agentId: 'a',
+        kind: 'working',
+        content: 'working projection'
+      })
+
+      expect(table.deleteInternalMemory('a', claim.id)).toBe(false)
+      expect(table.deleteInternalMemory('other', working.id)).toBe(false)
+      expect(table.deleteInternalMemory('a', working.id)).toBe(true)
+      expect(table.getById(claim.id)).toBeDefined()
+      expect(table.getById(working.id)).toBeUndefined()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('persists idempotent derivations after parent deletion', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'parent',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'source claim'
+      })
+      table.insert({
+        id: 'child',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'derived claim'
+      })
+      const edge = {
+        agentId: 'a',
+        parentMemoryId: 'parent',
+        childMemoryId: 'child',
+        derivationKind: 'reflection' as const,
+        createdAt: 2_000
+      }
+
+      expect(
+        table.insertDerivations([
+          edge,
+          edge,
+          {
+            ...edge,
+            parentMemoryId: 'child'
+          }
+        ])
+      ).toBe(1)
+      expect(table.listDerivationsByChild('a', 'child')).toEqual([
+        {
+          agent_id: 'a',
+          parent_memory_id: 'parent',
+          child_memory_id: 'child',
+          derivation_kind: 'reflection',
+          created_at: 2_000
+        }
+      ])
+      table.delete('parent')
+      expect(table.listDerivationsByParent('a', 'parent')).toHaveLength(1)
+      expect(table.listDerivationsByChild('other', 'child')).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects new lineage self-edges and removes historical ones on reopen', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({ id: 'claim', agentId: 'a', kind: 'semantic', content: 'source claim' })
+      table.insert({ id: 'child', agentId: 'a', kind: 'reflection', content: 'derived claim' })
+
+      expect(
+        table.insertDerivations([
+          {
+            agentId: 'a',
+            parentMemoryId: 'claim',
+            childMemoryId: 'claim',
+            derivationKind: 'manual_edit',
+            createdAt: 1_000
+          },
+          {
+            agentId: 'a',
+            parentMemoryId: 'claim',
+            childMemoryId: 'child',
+            derivationKind: 'reflection',
+            createdAt: 1_000
+          }
+        ])
+      ).toBe(1)
+      db.prepare(
+        `INSERT INTO agent_memory_derivation (
+           agent_id, parent_memory_id, child_memory_id, derivation_kind, created_at
+         ) VALUES ('a', 'child', 'child', 'manual_edit', 2_000)`
+      ).run()
+
+      table.createTable()
+
+      expect(table.listDerivationsByChild('a', 'claim')).toEqual([])
+      expect(table.listDerivationsByChild('a', 'child')).toEqual([
+        expect.objectContaining({
+          parent_memory_id: 'claim',
+          child_memory_id: 'child',
+          derivation_kind: 'reflection'
+        })
+      ])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('uses generation-checked dirty seeds and discards derived state on Agent retirement', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const claim = table.insert({
+        id: 'claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'claim',
+        status: 'embedded',
+        createdAt: 1_000
+      })
+      table.insert({
+        id: 'reflection',
+        agentId: 'a',
+        kind: 'reflection',
+        content: 'reflection',
+        status: 'embedded',
+        createdAt: 1_100
+      })
+      expect(table.countDirtySeeds('a')).toBe(2)
+      const staleSeed = table.listDirtySeeds('a', 10)[0]
+      expect(staleSeed).toEqual({
+        memoryId: claim.id,
+        generation: 1,
+        claimRevision: 1,
+        enqueuedAt: 1_000
+      })
+
+      expect(
+        table.updateUserMetadataIfRevision({
+          agentId: 'a',
+          id: claim.id,
+          expectedRevision: claim.decision_revision,
+          importance: 0.9,
+          lastAccessedAt: 2_000
+        })
+      ).toBe(true)
+      const currentSeed = table.listDirtySeeds('a', 10).find((seed) => seed.memoryId === claim.id)!
+      expect(currentSeed).toEqual({
+        memoryId: claim.id,
+        generation: 2,
+        claimRevision: 2,
+        enqueuedAt: 2_000
+      })
+      expect(table.listDirtySeeds('a', Number.NaN)).toEqual([])
+      const reflectionSeed = table
+        .listDirtySeeds('a', Number.POSITIVE_INFINITY)
+        .find((seed) => seed.memoryId === 'reflection')!
+      expect(reflectionSeed).toEqual({
+        memoryId: 'reflection',
+        generation: 1,
+        claimRevision: 1,
+        enqueuedAt: 1_100
+      })
+      table.insert({
+        id: 'later-claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'later claim',
+        createdAt: 3_000
+      })
+      expect(table.deferDirtySeeds('a', [staleSeed], 2_500)).toBe(0)
+      expect(table.deferDirtySeeds('a', [currentSeed], 2_500)).toBe(1)
+      expect(table.listDirtySeeds('a', 10)).toEqual([
+        reflectionSeed,
+        {
+          memoryId: 'later-claim',
+          generation: 1,
+          claimRevision: 1,
+          enqueuedAt: 3_000
+        },
+        { ...currentSeed, enqueuedAt: 3_001 }
+      ])
+      expect(table.settleDirtySeeds('a', [staleSeed])).toBe(0)
+      expect(table.settleDirtySeeds('a', [currentSeed, staleSeed])).toBe(1)
+
+      table.insertDerivations([
+        {
+          agentId: 'a',
+          parentMemoryId: claim.id,
+          childMemoryId: 'reflection',
+          derivationKind: 'manual_edit',
+          createdAt: 2_000
+        }
+      ])
+      expect(table.retireAgentMemoryNamespace('a')).toBe(3)
+      expect(table.countDirtySeeds('a')).toBe(0)
+      expect(table.listDerivationsByChild('a', 'reflection')).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('rejects stale or conflicted tombstone deletes without side effects', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const target = table.insert({
+        id: 'target',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'target fact',
+        provenanceKey: 'target-source'
+      })
+
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: target.id,
+          expectedRevision: target.decision_revision + 1,
+          createdAt: 1_000
+        })
+      ).toBeNull()
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'b',
+          id: target.id,
+          expectedRevision: target.decision_revision,
+          createdAt: 1_000
+        })
+      ).toBeNull()
+
+      table.insert({
+        id: 'challenger',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'challenger fact',
+        status: 'conflicted',
+        conflictWith: target.id
+      })
+      seedTestConflictState(db, target.id, 'challenged')
+      const challenged = table.getById(target.id)!
+      expect(
+        table.tombstoneAndDelete({
+          agentId: 'a',
+          id: challenged.id,
+          expectedRevision: challenged.decision_revision,
+          createdAt: 1_000
+        })
+      ).toBeNull()
+
+      expect(table.getById(target.id)).toBeDefined()
+      expect(db.prepare('SELECT COUNT(*) AS count FROM agent_memory_tombstone').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('tombstones claims on clear and retires the namespace for agent deletion', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'claim',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'remembered claim',
+        provenanceKey: 'claim-source'
+      })
+      table.insert({
+        id: 'archived',
+        agentId: 'a',
+        kind: 'episodic',
+        content: 'archived claim',
+        provenanceKey: 'archived-source'
+      })
+      archiveTestMemory(table, 'archived')
+      table.insert({ id: 'persona', agentId: 'a', kind: 'persona', content: 'persona text' })
+      table.insert({ id: 'working', agentId: 'a', kind: 'working', content: 'working text' })
+      table.insert({
+        id: 'other',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'remembered claim',
+        provenanceKey: 'claim-source'
+      })
+
+      expect(completeAgentMemoryClear(table, 'a', 2_000)).toBe(4)
+      expect(table.countByAgent('a')).toBe(0)
+      expect(table.countDirtySeeds('a')).toBe(0)
+      expect(table.getById('other')).toBeDefined()
+      expect(
+        db
+          .prepare(
+            `SELECT identity_kind, COUNT(*) AS count
+             FROM agent_memory_tombstone
+             WHERE agent_id = 'a'
+             GROUP BY identity_kind
+             ORDER BY identity_kind`
+          )
+          .all()
+      ).toEqual([
+        { identity_kind: 'content', count: 2 },
+        { identity_kind: 'provenance', count: 2 }
+      ])
+
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'claim-replay',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'remembered claim',
+          provenanceKey: 'claim-source'
+        })
+      ).toBeNull()
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'persona-replay',
+          agentId: 'a',
+          kind: 'persona',
+          content: 'persona text'
+        })
+      ).toMatchObject({ id: 'persona-replay' })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'working-replay',
+          agentId: 'a',
+          kind: 'working',
+          content: 'working text'
+        })
+      ).toMatchObject({ id: 'working-replay' })
+
+      expect(table.retireAgentMemoryNamespace('a')).toBe(2)
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS count FROM agent_memory_tombstone WHERE agent_id = 'a'")
+          .get()
+      ).toEqual({ count: 0 })
+      expect(
+        table.insertClaimUnlessTombstoned({
+          id: 'claim-after-retirement',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'remembered claim',
+          provenanceKey: 'claim-source'
+        })
+      ).toMatchObject({ id: 'claim-after-retirement' })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('persists and resumes a large clear across bounded transactions', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      const claimCount = 600
+      for (let index = 0; index < claimCount; index += 1) {
+        table.insert({
+          id: `claim-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `remembered claim ${index}`,
+          provenanceKey: `claim-source-${index}`
+        })
+      }
+      table.insert({
+        id: 'other-agent',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'other agent claim',
+        provenanceKey: 'other-agent-source'
+      })
+
+      expect(table.beginMemoryClear('a', 2_000)).toMatchObject({
+        agentId: 'a',
+        removed: 0,
+        phase: 'claims'
+      })
+      expect(table.completeMemoryClear('a')).toBe(false)
+      expect(table.listPendingMemoryClearJobs()).toHaveLength(1)
+      const firstBatch = table.processMemoryClearBatch('a')
+      expect(firstBatch).toMatchObject({
+        removedInBatch: 256,
+        job: { removed: 256, phase: 'claims' }
+      })
+      expect(table.countByAgent('a')).toBe(claimCount - 256)
+      expect(() =>
+        table.insert({
+          id: 'late-write',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'must not survive clear'
+        })
+      ).toThrow(/agent memory clear in progress/)
+      expect(() =>
+        db.prepare("UPDATE agent_memory SET content = 'escaped' WHERE id = 'claim-256'").run()
+      ).toThrow(/agent memory clear in progress/)
+      expect(() =>
+        db.prepare("UPDATE agent_memory SET agent_id = 'b' WHERE id = 'claim-256'").run()
+      ).toThrow(/agent memory clear in progress/)
+      expect(() =>
+        db.prepare("UPDATE agent_memory SET agent_id = 'a' WHERE id = 'other-agent'").run()
+      ).toThrow(/agent memory clear in progress/)
+
+      let job = firstBatch!.job
+      while (job.phase === 'claims') {
+        const batch = table.processMemoryClearBatch('a')
+        if (!batch) throw new Error('clear job disappeared before completion')
+        job = batch.job
+      }
+      expect(job.removed).toBe(claimCount)
+      expect(table.listPendingMemoryClearJobs()).toEqual([job])
+      expect(table.countByAgent('a')).toBe(0)
+      expect(table.getById('other-agent')).toBeDefined()
+      expect(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count
+             FROM agent_memory_tombstone
+             WHERE agent_id = 'a'`
+          )
+          .get()
+      ).toEqual({ count: claimCount * 2 })
+      expect(table.completeMemoryClear('a')).toBe(true)
+      expect(table.completeMemoryClear('a')).toBe(true)
+      expect(table.listPendingMemoryClearJobs()).toEqual([])
+      expect(() =>
+        table.insert({
+          id: 'post-clear-write',
+          agentId: 'a',
+          kind: 'semantic',
+          content: 'allowed after cleanup'
+        })
+      ).not.toThrow()
+    } finally {
+      db.close()
+    }
+  })
+
+  it('atomically skips stale bookkeeping writes while an Agent clear is pending', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      for (const id of ['access', 'batch', 'decay', 'confidence', 'consolidated']) {
+        table.insert({
+          id,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `${id} claim`
+        })
+      }
+      table.insert({
+        id: 'other-agent',
+        agentId: 'b',
+        kind: 'semantic',
+        content: 'other agent claim'
+      })
+      const before = new Map(
+        ['access', 'batch', 'decay', 'confidence', 'consolidated'].map((id) => [
+          id,
+          table.getById(id)
+        ])
+      )
+
+      table.beginMemoryClear('a', 2_000)
+
+      expect(() => {
+        table.recordAccess('access', 3_000)
+        table.recordAccessBatch(['batch', 'other-agent'], 3_000)
+        table.updateDecayScore('decay', 0.25, 3_000)
+        table.setConfidence('confidence', 0.9)
+        table.setLastConsolidatedAt('consolidated', 3_000)
+      }).not.toThrow()
+
+      for (const [id, row] of before) {
+        expect(table.getById(id)).toEqual(row)
+      }
+      expect(table.getById('other-agent')).toMatchObject({
+        last_accessed: 3_000,
+        access_count: 1
+      })
+    } finally {
+      db.close()
+    }
+  })
+
   it('round-trips source_entry_ids lineage and leaves it null when absent', () => {
     const db = new DatabaseCtor(':memory:')
     try {
@@ -1956,6 +3272,15 @@ describeIfSqlite('AgentMemoryTable', () => {
       })
       archiveTestMemory(table, archived.id)
       table.insert({ id: 'working', agentId: 'a', kind: 'working', content: 'working' })
+      table.insert({
+        id: 'session-only',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'session-only',
+        importance: 1,
+        createdAt: 10_000,
+        scope: { type: 'session', id: 'session-1' }
+      })
       const superseded = table.insert({
         id: 'superseded',
         agentId: 'a',
@@ -2207,6 +3532,71 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
     }
   })
 
+  it('keeps each scoped importance branch on the ordered recall index', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'global-high',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'global high',
+        importance: 0.9,
+        createdAt: 100
+      })
+      table.insert({
+        id: 'global-low',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'global low',
+        importance: 0.1,
+        createdAt: 100
+      })
+      table.insert({
+        id: 'session-applicable',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'session applicable',
+        importance: 0.8,
+        createdAt: 100,
+        scope: { type: 'session', id: 'session-1' }
+      })
+      table.insert({
+        id: 'session-hidden',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'session hidden',
+        importance: 1,
+        createdAt: 100,
+        scope: { type: 'session', id: 'session-2' }
+      })
+      const query = buildScopedImportanceCandidatesSql!(
+        'a',
+        [{ type: 'agent' }, { type: 'session', id: 'session-1' }],
+        3
+      )
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params) as Array<{
+        detail: string
+      }>
+      const scopedIndexSearches = plan
+        .map((row) => row.detail)
+        .filter((detail) => detail.includes('idx_agent_memory_recall_scope_v6'))
+
+      expect(scopedIndexSearches).toHaveLength(2)
+      expect(scopedIndexSearches.every((detail) => detail.includes('scope_type='))).toBe(true)
+      expect(
+        (
+          db.prepare(query.sql).all(...query.params) as Array<{
+            id: string
+          }>
+        ).map((row) => row.id)
+      ).toEqual(['global-high', 'session-applicable', 'global-low'])
+    } finally {
+      db.close()
+    }
+  })
+
   it('keeps unicode61 in permanent LIKE-only mode without mirror writes', () => {
     const db = new DatabaseCtor(':memory:')
     try {
@@ -2228,7 +3618,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
     }
   })
 
-  it('carries embedding_model + lineage in the authoritative schema and exposes migration v32', () => {
+  it('carries authoritative claim metadata and exposes additive migrations', () => {
     const db = new DatabaseCtor(':memory:')
     try {
       const table = new AgentMemoryTableCtor(db)
@@ -2242,13 +3632,31 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(createSql).toContain('conflict_with')
       expect(createSql).toContain('category')
       expect(createSql).toContain('decision_revision INTEGER NOT NULL DEFAULT 1')
-      expect(table.getLatestVersion()).toBe(42)
+      expect(createSql).toContain("temporal_kind TEXT NOT NULL DEFAULT 'atemporal'")
+      expect(createSql).toContain('temporal_confidence REAL')
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_tombstone')
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_clear_job')
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_derivation')
+      expect(createSql).toContain('CREATE TABLE IF NOT EXISTS agent_memory_dirty')
+      expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_dirty_ai')
+      expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_temporal_bi_v1')
+      expect(createSql).toContain("scope_type TEXT NOT NULL DEFAULT 'agent'")
+      expect(createSql).toContain('CREATE TRIGGER IF NOT EXISTS agent_memory_scope_bi_v1')
+      expect(table.getLatestVersion()).toBe(52)
       expect(table.getMigrationSQL(32)).toMatch(/ADD COLUMN embedding_model/)
       expect(table.getMigrationSQL(33)).toMatch(/ADD COLUMN confidence/)
       expect(table.getMigrationSQL(34)).toMatch(/ADD COLUMN persona_state/)
       expect(table.getMigrationSQL(35)).toMatch(/ADD COLUMN conflict_with/)
       expect(table.getMigrationSQL(37)).toMatch(/ADD COLUMN category/)
       expect(table.getMigrationSQL(41)).toMatch(/ADD COLUMN decision_revision/)
+      expect(table.getMigrationSQL(46)).toMatch(/ADD COLUMN temporal_kind/)
+      expect(table.getMigrationSQL(47)).toMatch(/CREATE TABLE IF NOT EXISTS agent_memory_tombstone/)
+      expect(table.getMigrationSQL(48)).toMatch(
+        /CREATE TABLE IF NOT EXISTS agent_memory_derivation/
+      )
+      expect(table.getMigrationSQL(49)).toMatch(/DROP TRIGGER IF EXISTS agent_memory_dirty_ai/)
+      expect(table.getMigrationSQL(51)).toMatch(/ADD COLUMN scope_type/)
+      expect(table.getMigrationSQL(52)).toMatch(/CREATE TABLE IF NOT EXISTS agent_memory_clear_job/)
       expect(table.getMigrationSQL(31)).toBeNull()
 
       table.createTable()
@@ -2260,6 +3668,245 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       expect(columns).toContain('conflict_with')
       expect(columns).toContain('category')
       expect(columns).toContain('decision_revision')
+      expect(columns).toContain('temporal_kind')
+      expect(columns).toContain('valid_from')
+      expect(columns).toContain('valid_until')
+      expect(columns).toContain('temporal_confidence')
+      expect(columns).toContain('temporal_precision')
+      expect(columns).toContain('temporal_timezone')
+      expect(columns).toContain('scope_type')
+      expect(columns).toContain('scope_id')
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_tombstone'"
+          )
+          .get()
+      ).toEqual({ name: 'agent_memory_tombstone' })
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_memory_recall_importance_v5'"
+          )
+          .get()
+      ).toBeUndefined()
+
+      const row = table.insert({
+        id: 'temporal',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'User is in Shanghai this month.',
+        temporal: {
+          temporalKind: 'state',
+          validFrom: 100,
+          validUntil: 200,
+          temporalConfidence: 0.9,
+          temporalPrecision: 'month',
+          temporalTimeZone: 'Asia/Shanghai'
+        }
+      })
+      expect(row).toMatchObject({
+        temporal_kind: 'state',
+        valid_from: 100,
+        valid_until: 200,
+        temporal_confidence: 0.9,
+        temporal_precision: 'month',
+        temporal_timezone: 'Asia/Shanghai'
+      })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies the temporal migration to a pre-temporal memory table', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE agent_memory (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO agent_memory (id, agent_id, kind, content, created_at)
+        VALUES ('legacy', 'a', 'semantic', 'legacy memory', 1),
+               ('invalid', 'a', 'semantic', 'invalid temporal memory', 2);
+      `)
+      const table = new AgentMemoryTableCtor(db)
+      const migration = table.getMigrationSQL(46)
+      if (!migration) throw new Error('expected temporal migration')
+
+      db.exec(migration)
+      db.prepare("UPDATE agent_memory SET temporal_kind = 'state' WHERE id = 'invalid'").run()
+      table.finalizeMigration(46)
+
+      expect(
+        db
+          .prepare(
+            `SELECT temporal_kind, valid_from, valid_until, temporal_confidence,
+                    temporal_precision, temporal_timezone
+             FROM agent_memory WHERE id = 'legacy'`
+          )
+          .get()
+      ).toEqual({
+        temporal_kind: 'atemporal',
+        valid_from: null,
+        valid_until: null,
+        temporal_confidence: null,
+        temporal_precision: null,
+        temporal_timezone: null
+      })
+      expect(db.prepare("SELECT id FROM agent_memory WHERE id = 'invalid'").get()).toBeUndefined()
+      expect(() =>
+        db.prepare('UPDATE agent_memory SET temporal_confidence = 2 WHERE id = ?').run('legacy')
+      ).toThrow(/CHECK constraint failed|invalid agent_memory temporal metadata/)
+      expect(() =>
+        db
+          .prepare(
+            `UPDATE agent_memory
+             SET temporal_kind = 'state',
+                 temporal_confidence = NULL,
+                 temporal_precision = NULL,
+                 temporal_timezone = NULL
+             WHERE id = ?`
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory temporal metadata/)
+      expect(() =>
+        db
+          .prepare(
+            `UPDATE agent_memory
+             SET temporal_kind = 'state',
+                 temporal_confidence = 0.9,
+                 temporal_precision = 'exact',
+                 temporal_timezone = 'UTC',
+                 valid_from = 20,
+                 valid_until = 10
+             WHERE id = ?`
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory temporal metadata/)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('migrates legacy rows to agent scope and enforces persisted scope pairs', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE agent_memory (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          user_scope TEXT,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          importance REAL NOT NULL DEFAULT 0.5,
+          lifecycle_state TEXT NOT NULL DEFAULT 'active',
+          superseded_by TEXT,
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO agent_memory (
+          id, agent_id, user_scope, kind, content, importance,
+          lifecycle_state, superseded_by, created_at
+        )
+        VALUES (
+          'legacy', 'a', 'legacy-user', 'semantic', 'legacy memory', 0.5,
+          'active', NULL, 1
+        );
+      `)
+      const table = new AgentMemoryTableCtor(db)
+      const migration = table.getMigrationSQL(51)
+      if (!migration) throw new Error('expected scope migration')
+
+      db.exec(migration)
+      table.finalizeMigration(51)
+
+      expect(
+        db
+          .prepare('SELECT user_scope, scope_type, scope_id FROM agent_memory WHERE id = ?')
+          .get('legacy')
+      ).toEqual({
+        user_scope: 'legacy-user',
+        scope_type: 'agent',
+        scope_id: null
+      })
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET scope_type = 'agent', scope_id = 'invalid' WHERE id = ?"
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory scope/)
+      expect(() =>
+        db
+          .prepare("UPDATE agent_memory SET scope_type = 'session', scope_id = NULL WHERE id = ?")
+          .run('legacy')
+      ).toThrow(/invalid agent_memory scope/)
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET user_scope = NULL, scope_type = 'session', scope_id = 'session-1' WHERE id = ?"
+          )
+          .run('legacy')
+      ).not.toThrow()
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET scope_type = 'user', scope_id = 'user-1', user_scope = 'other-user' WHERE id = ?"
+          )
+          .run('legacy')
+      ).toThrow(/invalid agent_memory scope/)
+      expect(() =>
+        db
+          .prepare(
+            "UPDATE agent_memory SET scope_type = 'user', scope_id = 'user-1', user_scope = 'user-1' WHERE id = ?"
+          )
+          .run('legacy')
+      ).not.toThrow()
+      expect(
+        db
+          .prepare(
+            "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_memory_recall_scope_v6'"
+          )
+          .get()
+      ).toEqual({ present: 1 })
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies the exact-forgetting tombstone migration to an existing memory schema', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      db.exec(`
+        CREATE TABLE agent_memory (
+          id TEXT PRIMARY KEY,
+          agent_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `)
+      const table = new AgentMemoryTableCtor(db)
+      const migration = table.getMigrationSQL(47)
+      if (!migration) throw new Error('expected tombstone migration')
+
+      db.exec(migration)
+
+      const sql = (
+        db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_memory_tombstone'"
+          )
+          .get() as { sql: string }
+      ).sql
+      expect(sql).toContain("identity_kind IN ('provenance', 'content')")
+      expect(sql).toContain("length(identity_hash) = 64 AND identity_hash NOT GLOB '*[^0-9a-f]*'")
+      expect(sql).toContain("reason IN ('selective_delete', 'agent_clear')")
+      expect(sql).toContain('PRIMARY KEY (agent_id, identity_kind, identity_hash)')
+      expect(sql).toMatch(/WITHOUT ROWID$/u)
     } finally {
       db.close()
     }
@@ -2298,6 +3945,26 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
       // 2 char CJK word is below trigram's window; the LIKE fallback still recalls it.
       expect(table.search('a', '中文').map((row) => row.id)).toContain('cn')
       expect(likeSpy).toHaveBeenCalledTimes(meta?.tokenizer === 'trigram' ? 1 : 3)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('allows bounded retrieval refills beyond the legacy 100-row search cap', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      for (let index = 0; index < 150; index += 1) {
+        table.insert({
+          id: `refill-${index}`,
+          agentId: 'a',
+          kind: 'semantic',
+          content: `redis refill candidate ${index}`
+        })
+      }
+
+      expect(table.searchWithStrategy('a', 'redis', 150).rows).toHaveLength(150)
     } finally {
       db.close()
     }
@@ -2546,6 +4213,48 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
           .get() as { tokenizer?: string } | undefined
         if (meta?.tokenizer === 'trigram') expect(likeSpy).not.toHaveBeenCalled()
       }
+    } finally {
+      db.close()
+    }
+  })
+
+  it('applies multi-scope filtering to both lexical and importance FTS legs', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new AgentMemoryTableCtor(db)
+      table.createTable()
+      table.insert({
+        id: 'global',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'redis global fact',
+        importance: 0.7
+      })
+      table.insert({
+        id: 'session-applicable',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'redis session fact',
+        importance: 0.9,
+        scope: { type: 'session', id: 'session-1' }
+      })
+      table.insert({
+        id: 'session-hidden',
+        agentId: 'a',
+        kind: 'semantic',
+        content: 'redis hidden fact',
+        importance: 1,
+        scope: { type: 'session', id: 'session-2' }
+      })
+
+      const ids = table
+        .search('a', 'redis', 2, {
+          scopeFilter: [{ type: 'agent' }, { type: 'session', id: 'session-1' }]
+        })
+        .map((row) => row.id)
+
+      expect(ids).toEqual(expect.arrayContaining(['global', 'session-applicable']))
+      expect(ids).not.toContain('session-hidden')
     } finally {
       db.close()
     }
@@ -3045,6 +4754,7 @@ describeIfSqlite('AgentMemoryTable FTS5 + migration', () => {
     try {
       const table = new AgentMemoryTableCtor(db)
       table.createTable()
+      dropV48DerivedArtifacts(db)
       db.exec('ALTER TABLE agent_memory DROP COLUMN decision_revision')
       db.prepare(
         'INSERT INTO agent_memory (id, agent_id, kind, content, created_at) VALUES (?, ?, ?, ?, ?)'

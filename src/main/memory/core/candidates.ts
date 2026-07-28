@@ -1,6 +1,7 @@
 import { CATEGORY_IMPORTANCE_FLOOR, isAgentMemoryCategory } from '@shared/types/agent-memory'
 
 import type { MemoryCandidate, NormalizedMemoryCandidate } from '../types'
+import { normalizeMemoryTemporalMetadata } from './temporal'
 
 function clampImportance(value: unknown): number {
   const num = typeof value === 'number' ? value : Number(value)
@@ -33,5 +34,11 @@ export function normalizeMemoryCandidate(
     ? Math.max(clampImportance(candidate.importance), CATEGORY_IMPORTANCE_FLOOR[category])
     : clampImportance(candidate.importance)
 
-  return { kind, category, content, importance }
+  return {
+    kind,
+    category,
+    content,
+    importance,
+    temporal: normalizeMemoryTemporalMetadata(candidate.temporal)
+  }
 }

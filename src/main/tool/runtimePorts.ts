@@ -19,7 +19,7 @@ import type {
 import type { SkillServicePort } from '@shared/types/skill'
 import type { AgentMemoryCategory } from '@shared/types/agent-memory'
 import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
-import type { MemoryWriteOutcome } from '../memory/types'
+import type { MemoryScopeContext, MemoryWriteOutcome } from '../memory/types'
 import type {
   CronJob,
   CronJobRun,
@@ -98,7 +98,8 @@ export interface AgentMemoryToolPort {
   ): Promise<MemoryWriteOutcome>
   recallMemory(
     agentId: string,
-    query: string
+    query: string,
+    scopeContext?: MemoryScopeContext
   ): Promise<Array<{ id: string; kind: string; content: string }>>
   forgetMemory(agentId: string, memoryId: string): Promise<boolean>
 }
