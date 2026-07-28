@@ -30,14 +30,11 @@ export function resolveProviderModelRuntimeFacts(
   return {
     serviceSelection: { providerId, modelId },
     modelConfig,
-    capabilitySnapshot: providerSettings.getCapabilitySnapshot(
+    capabilitySnapshot: providerSettings.getCapabilitySnapshot({
       providerId,
       modelId,
-      {
-        reasoning: modelConfig.reasoning
-      },
-      modelConfig
-    )
+      resolvedModelConfig: modelConfig
+    })
   }
 }
 

@@ -562,25 +562,21 @@ export const ModelCapabilitiesSchema = z.object({
     reasoning: BooleanRequestParameterPolicySchema,
     legacyThinking: LegacyThinkingRequestParameterPolicySchema
   }),
-  supportsAudioInput: z.boolean().nullable(),
-  supportsReasoning: z.boolean().nullable(),
+  supportsAudioInput: z.boolean(),
+  supportsReasoning: z.boolean(),
   reasoningPortrait: ReasoningPortraitSchema.nullable(),
-  thinkingBudgetRange: z
-    .object({
-      min: z.number().int().optional(),
-      max: z.number().int().optional(),
-      default: z.number().int().optional()
-    })
-    .nullable(),
-  supportsSearch: z.boolean().nullable(),
-  searchDefaults: z
-    .object({
-      default: z.boolean().optional(),
-      forced: z.boolean().optional(),
-      strategy: z.enum(['turbo', 'max']).optional()
-    })
-    .nullable(),
-  supportsTemperatureControl: z.boolean().nullable(),
+  thinkingBudgetRange: z.object({
+    min: z.number().int().optional(),
+    max: z.number().int().optional(),
+    default: z.number().int().optional()
+  }),
+  supportsSearch: z.boolean(),
+  searchDefaults: z.object({
+    default: z.boolean().optional(),
+    forced: z.boolean().optional(),
+    strategy: z.enum(['turbo', 'max']).optional()
+  }),
+  supportsTemperatureControl: z.boolean(),
   temperatureCapability: z.boolean().nullable(),
   supportsReasoningEffort: z.boolean(),
   reasoningEffortDefault: ReasoningEffortSchema.optional(),

@@ -690,18 +690,10 @@ function createMockProviderSettings() {
     getAutoCompactionEnabled: vi.fn().mockReturnValue(true),
     getAutoCompactionTriggerThreshold: vi.fn().mockReturnValue(80),
     getAutoCompactionRetainRecentPairs: vi.fn().mockReturnValue(2),
-    getReasoningPortrait: vi.fn().mockReturnValue(null),
-    getCapabilityProviderId: vi.fn().mockImplementation((providerId: string) => providerId),
     getProviderById: vi.fn().mockImplementation((providerId: string) => ({
       id: providerId,
       apiType: 'openai'
     })),
-    supportsReasoningCapability: vi.fn().mockReturnValue(false),
-    getThinkingBudgetRange: vi.fn().mockReturnValue({}),
-    supportsReasoningEffortCapability: vi.fn().mockReturnValue(false),
-    getReasoningEffortDefault: vi.fn().mockReturnValue(undefined),
-    supportsVerbosityCapability: vi.fn().mockReturnValue(false),
-    getVerbosityDefault: vi.fn().mockReturnValue(undefined),
     supportsAudioInputCapability: vi.fn().mockReturnValue(false),
     getSetting: vi.fn().mockReturnValue(undefined),
     getAgentType: vi.fn().mockResolvedValue('deepchat'),
@@ -719,32 +711,31 @@ function createMockProviderSettings() {
     })
   } as any
 
-  settings.getCapabilitySnapshot = vi.fn((providerId: string, modelId: string) => {
-    const reasoningPortrait = settings.getReasoningPortrait(providerId, modelId)
-    const temperatureCapability = undefined
-
-    return {
-      identity: {
-        providerId: settings.getCapabilityProviderId(providerId, modelId),
-        requestModelId: modelId,
-        catalogMatched: true,
-        catalogModelId: modelId
-      },
-      requestPolicy: createPassthroughModelRequestPolicy(),
-      supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
-      supportsReasoning: settings.supportsReasoningCapability(providerId, modelId),
-      reasoningPortrait,
-      thinkingBudgetRange: settings.getThinkingBudgetRange(providerId, modelId),
-      supportsSearch: false,
-      searchDefaults: {},
-      temperatureCapability,
-      supportsTemperatureControl: temperatureCapability !== false,
-      supportsReasoningEffort: settings.supportsReasoningEffortCapability(providerId, modelId),
-      reasoningEffortDefault: settings.getReasoningEffortDefault(providerId, modelId),
-      supportsVerbosity: settings.supportsVerbosityCapability(providerId, modelId),
-      verbosityDefault: settings.getVerbosityDefault(providerId, modelId)
+  settings.getCapabilitySnapshot = vi.fn(
+    ({ providerId, modelId }: { providerId: string; modelId: string }) => {
+      return {
+        identity: {
+          providerId,
+          requestModelId: modelId,
+          catalogMatched: true,
+          catalogModelId: modelId
+        },
+        requestPolicy: createPassthroughModelRequestPolicy(),
+        supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
+        supportsReasoning: false,
+        reasoningPortrait: null,
+        thinkingBudgetRange: {},
+        supportsSearch: false,
+        searchDefaults: {},
+        temperatureCapability: undefined,
+        supportsTemperatureControl: true,
+        supportsReasoningEffort: false,
+        reasoningEffortDefault: undefined,
+        supportsVerbosity: false,
+        verbosityDefault: undefined
+      }
     }
-  })
+  )
 
   return settings
 }

@@ -59,21 +59,12 @@ import {
   runAiSdkEmbeddings,
   runAiSdkGenerateText
 } from '@/provider/aiSdk/runtime'
-import { modelCapabilities } from '@/provider/modelCapabilities'
 import { APICallError } from '@ai-sdk/provider'
 import { clearLearnedEmbeddingBatchLimits } from '@/provider/aiSdk/embeddingBatchLimits'
 import { OPENAI_COMPATIBLE_PROMPT_CACHE_MARKER } from '@/provider/promptCacheStrategy'
 
 describe('AI SDK runtime', () => {
-  const createProviderSettings = () => ({
-    getCapabilityProviderId: vi.fn((providerId: string) => providerId),
-    supportsTemperatureControl: vi.fn((providerId: string, modelId: string) =>
-      modelCapabilities.supportsTemperatureControl(providerId, modelId)
-    ),
-    getTemperatureCapability: vi.fn((providerId: string, modelId: string) =>
-      modelCapabilities.getTemperatureCapability(providerId, modelId)
-    )
-  })
+  const createProviderSettings = () => ({})
 
   const createTextRuntimeContext = (overrides: Record<string, unknown> = {}) =>
     ({
@@ -514,10 +505,7 @@ describe('AI SDK runtime', () => {
         apiType: 'aws-bedrock',
         capabilityProviderId: 'anthropic'
       },
-      providerSettings: {
-        ...createProviderSettings(),
-        getCapabilityProviderId: vi.fn().mockReturnValue('anthropic')
-      }
+      providerSettings: createProviderSettings()
     })
 
     for await (const _event of runAiSdkCoreStream(
@@ -1841,10 +1829,7 @@ describe('AI SDK runtime', () => {
         id: 'anthropic',
         apiType: 'anthropic'
       },
-      providerSettings: {
-        ...createProviderSettings(),
-        supportsTemperatureControl: vi.fn().mockReturnValue(false)
-      },
+      providerSettings: createProviderSettings(),
       capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-7', false),
       defaultHeaders: {},
       emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
@@ -1878,11 +1863,7 @@ describe('AI SDK runtime', () => {
           id: 'aihubmix',
           apiType: 'openai-compatible'
         },
-        providerSettings: {
-          ...createProviderSettings(),
-          getCapabilityProviderId: vi.fn().mockReturnValue('anthropic'),
-          supportsTemperatureControl: vi.fn().mockReturnValue(false)
-        },
+        providerSettings: createProviderSettings(),
         capabilitySnapshot: createCapabilitySnapshot('anthropic', modelId, false),
         defaultHeaders: {},
         emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
@@ -1907,8 +1888,6 @@ describe('AI SDK runtime', () => {
       }
 
       const request = mockStreamText.mock.calls[0]?.[0] as Record<string, unknown>
-      expect(context.providerSettings.getCapabilityProviderId).not.toHaveBeenCalled()
-      expect(context.providerSettings.supportsTemperatureControl).not.toHaveBeenCalled()
       expect(request).not.toHaveProperty('temperature')
       expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
       expect(events).toEqual([])
@@ -1924,11 +1903,7 @@ describe('AI SDK runtime', () => {
         apiType: 'anthropic',
         capabilityProviderId: 'anthropic'
       },
-      providerSettings: {
-        ...createProviderSettings(),
-        getCapabilityProviderId: vi.fn().mockReturnValue('anthropic'),
-        supportsTemperatureControl: vi.fn().mockReturnValue(false)
-      },
+      providerSettings: createProviderSettings(),
       capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-8', false, {
         requestPolicy: {
           temperature: { mode: 'omit' },
@@ -1961,7 +1936,6 @@ describe('AI SDK runtime', () => {
     }
 
     const request = mockStreamText.mock.calls[0]?.[0] as Record<string, unknown>
-    expect(context.providerSettings.supportsTemperatureControl).not.toHaveBeenCalled()
     expect(request).not.toHaveProperty('temperature')
     expect(request).not.toHaveProperty('topP')
     expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
@@ -1977,10 +1951,7 @@ describe('AI SDK runtime', () => {
         id: 'anthropic',
         apiType: 'anthropic'
       },
-      providerSettings: {
-        ...createProviderSettings(),
-        supportsTemperatureControl: vi.fn().mockReturnValue(true)
-      },
+      providerSettings: createProviderSettings(),
       capabilitySnapshot: createCapabilitySnapshot('anthropic', 'claude-opus-4-6', true),
       defaultHeaders: {},
       emitRequestTrace: vi.fn(async (_modelConfig, payload) => {
@@ -2396,11 +2367,7 @@ describe('AI SDK runtime', () => {
         apiType: 'openai-completions',
         capabilityProviderId: 'anthropic'
       },
-      providerSettings: {
-        ...createProviderSettings(),
-        getCapabilityProviderId: vi.fn().mockReturnValue('anthropic'),
-        supportsTemperatureControl: vi.fn().mockReturnValue(true)
-      },
+      providerSettings: createProviderSettings(),
       defaultHeaders: {}
     } as any
 

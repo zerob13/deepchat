@@ -32,9 +32,11 @@ describe('provider input capabilities', () => {
       supportsAudioInput: true
     })
     expect(providerSettings.getModelConfig).toHaveBeenCalledWith('model', 'provider')
-    expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledWith('provider', 'model', {
-      reasoning: undefined
-    }, { vision: true })
+    expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledWith({
+      providerId: 'provider',
+      modelId: 'model',
+      resolvedModelConfig: { vision: true }
+    })
   })
 
   it('fails vision closed when the model config is unavailable', () => {

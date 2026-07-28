@@ -166,3 +166,30 @@ Validation:
 - The compatibility review retained legacy video detection and New API precedence, rejected
   speculative request fallback and cache changes, and found no remaining correctness, security,
   performance, naming, or maintenance issue in the final patch.
+
+## Capability query contract hardening
+
+- [x] Derive the route override and complete capability query types from shared Zod schemas.
+- [x] Replace positional snapshot arguments and `CapabilitySnapshotOptions` with a named query.
+- [x] Make draft query input and resolved model configuration statically mutually exclusive.
+- [x] Rename query and request-policy resolver input state to `reasoningEnabled`.
+- [x] Preserve `ModelRequestPolicy.reasoning` and persisted `ModelConfig.reasoning`.
+- [x] Tighten required capability response fields without changing lifecycle nullability.
+- [x] Migrate database model reasoning projection and remove twelve unused settings projections.
+- [x] Retain the pre-runtime audio-input fallback and Kimi persisted-reasoning fallback.
+- [x] Add query, schema, lifecycle, and projection-removal regressions.
+- [x] Run focused and required repository validation.
+- [x] Complete a severity-ordered pre-commit review and commit without pushing.
+
+### Validation result
+
+- Focused provider and agent regression suites passed 5 files and 113 tests after migrating the
+  remaining projection-based test doubles.
+- Full Vitest validation passed 658 files and 7,004 tests; 20 files and 277 tests remained skipped.
+- Formatting, i18n validation, lint, Node and renderer type checks, and the production build passed.
+- The production build refreshed provider and ACP registry inputs without producing tracked
+  resource changes.
+- The severity-ordered review found and fixed one medium-severity test-contract gap: stale doubles
+  still exposed removed projection getters and could mask future regressions. No remaining
+  correctness, compatibility, boundary, performance, security, naming, test, or maintenance
+  findings were identified.

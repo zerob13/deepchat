@@ -62,14 +62,9 @@ describe('Provider routes', () => {
       verbosityDefault: undefined
     } as const
     const getCapabilitySnapshot = vi.fn(() => snapshot)
-    const legacyGetter = vi.fn()
     const routes = createRoutes({
       providerSettings: {
-        getCapabilitySnapshot,
-        getCapabilityProviderId: legacyGetter,
-        supportsReasoningCapability: legacyGetter,
-        getReasoningPortrait: legacyGetter,
-        getTemperatureCapability: legacyGetter
+        getCapabilitySnapshot
       }
     })
     const routeOverride = {
@@ -84,17 +79,18 @@ describe('Provider routes', () => {
         providerId: 'new-api',
         modelId: 'claude-opus-4-8',
         routeOverride,
-        reasoning: false
+        reasoningEnabled: false
       },
       context
     )
 
     expect(getCapabilitySnapshot).toHaveBeenCalledTimes(1)
-    expect(getCapabilitySnapshot).toHaveBeenCalledWith('new-api', 'claude-opus-4-8', {
+    expect(getCapabilitySnapshot).toHaveBeenCalledWith({
+      providerId: 'new-api',
+      modelId: 'claude-opus-4-8',
       routeOverride,
-      reasoning: false
+      reasoningEnabled: false
     })
-    expect(legacyGetter).not.toHaveBeenCalled()
     expect(result).toEqual({
       capabilities: {
         ...snapshot,

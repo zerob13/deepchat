@@ -1,5 +1,6 @@
+import { z } from 'zod'
 import type { ReasoningEffort, ReasoningPortrait, Verbosity } from './model-db'
-import type { ModelType, NewApiEndpointType } from '../model'
+import { ModelType, NEW_API_ENDPOINT_TYPES } from '../model'
 import type { ModelRequestPolicy } from '../modelRequestPolicy'
 
 export type ResolvedCapabilityIdentity =
@@ -16,17 +17,23 @@ export type ResolvedCapabilityIdentity =
       catalogModelId: null
     }
 
-export type CapabilityRouteOverride = {
-  endpointType?: NewApiEndpointType
-  supportedEndpointTypes?: NewApiEndpointType[]
-  type?: ModelType
-  ownedBy?: string
-}
+export const CapabilityRouteOverrideSchema = z.object({
+  endpointType: z.enum(NEW_API_ENDPOINT_TYPES).optional(),
+  supportedEndpointTypes: z.array(z.enum(NEW_API_ENDPOINT_TYPES)).optional(),
+  type: z.enum(ModelType).optional(),
+  ownedBy: z.string().optional()
+})
 
-export type CapabilitySnapshotOptions = {
-  routeOverride?: CapabilityRouteOverride
-  reasoning?: boolean
-}
+export type CapabilityRouteOverride = z.infer<typeof CapabilityRouteOverrideSchema>
+
+export const CapabilitySnapshotQuerySchema = z.object({
+  providerId: z.string().min(1),
+  modelId: z.string().min(1),
+  routeOverride: CapabilityRouteOverrideSchema.optional(),
+  reasoningEnabled: z.boolean().optional()
+})
+
+export type CapabilitySnapshotQuery = z.infer<typeof CapabilitySnapshotQuerySchema>
 
 export type ResolvedModelCapabilitySnapshot = {
   identity: ResolvedCapabilityIdentity

@@ -481,42 +481,45 @@ const setup = async (options: SetupOptions = {}) => {
       verbosity: 'medium',
       ...options.modelConfig
     }),
-    getCapabilities: vi.fn().mockImplementation((providerId: string, modelId: string) => {
-      if (options.capabilityRequestError) {
-        return Promise.reject(options.capabilityRequestError)
-      }
+    getCapabilities: vi
+      .fn()
+      .mockImplementation(({ providerId, modelId }: { providerId: string; modelId: string }) => {
+        if (options.capabilityRequestError) {
+          return Promise.reject(options.capabilityRequestError)
+        }
 
-      return Promise.resolve({
-        identity: {
-          providerId: options.capabilityProviderId ?? providerId,
-          requestModelId: modelId,
-          catalogMatched: false,
-          catalogModelId: null
-        },
-        requestPolicy: options.requestPolicy ?? {
-          temperature:
-            options.temperatureCapability === false ? { mode: 'omit' } : { mode: 'passthrough' },
-          topP:
-            (options.capabilityProviderId ?? providerId) === 'anthropic' &&
-            options.temperatureCapability === false
-              ? { mode: 'omit' }
-              : { mode: 'passthrough' },
-          reasoning: { mode: 'passthrough' },
-          legacyThinking: { mode: 'passthrough' }
-        },
-        supportsReasoning: reasoningPortrait?.supported ?? true,
-        reasoningPortrait,
-        thinkingBudgetRange: reasoningPortrait?.budget ?? null,
-        supportsSearch: null,
-        searchDefaults: null,
-        supportsTemperatureControl: temperatureCapability !== false,
-        temperatureCapability,
-        supportsReasoningEffort: options.supportsEffort !== false,
-        reasoningEffortDefault,
-        supportsVerbosity: true,
-        verbosityDefault: 'medium'
+        return Promise.resolve({
+          identity: {
+            providerId: options.capabilityProviderId ?? providerId,
+            requestModelId: modelId,
+            catalogMatched: false,
+            catalogModelId: null
+          },
+          requestPolicy: options.requestPolicy ?? {
+            temperature:
+              options.temperatureCapability === false ? { mode: 'omit' } : { mode: 'passthrough' },
+            topP:
+              (options.capabilityProviderId ?? providerId) === 'anthropic' &&
+              options.temperatureCapability === false
+                ? { mode: 'omit' }
+                : { mode: 'passthrough' },
+            reasoning: { mode: 'passthrough' },
+            legacyThinking: { mode: 'passthrough' }
+          },
+          supportsAudioInput: false,
+          supportsReasoning: reasoningPortrait?.supported ?? true,
+          reasoningPortrait,
+          thinkingBudgetRange: reasoningPortrait?.budget ?? {},
+          supportsSearch: false,
+          searchDefaults: {},
+          supportsTemperatureControl: temperatureCapability !== false,
+          temperatureCapability,
+          supportsReasoningEffort: options.supportsEffort !== false,
+          reasoningEffortDefault,
+          supportsVerbosity: true,
+          verbosityDefault: 'medium'
+        })
       })
-    })
   }
 
   const baseSessionSettings: TestGenerationSettings = {

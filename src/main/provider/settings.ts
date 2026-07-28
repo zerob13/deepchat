@@ -29,13 +29,7 @@ import fs from 'fs'
 import { compare } from 'compare-versions'
 import { ModelConfigHelper } from '@/provider/modelConfig'
 import { providerDbLoader, type ProviderDbRefreshResult } from '@/provider/providerDbLoader'
-import {
-  ProviderAggregate,
-  ReasoningPortrait,
-  type ProviderModel,
-  type ReasoningEffort,
-  type Verbosity
-} from '@shared/types/model-db'
+import { ProviderAggregate, type ProviderModel } from '@shared/types/model-db'
 import { modelCapabilities } from '@/provider/modelCapabilities'
 import { ProviderHelper } from '@/provider/providerHelper'
 import { ModelStatusHelper } from '@/provider/modelStatusHelper'
@@ -65,7 +59,7 @@ import {
 } from './capabilityIdentity'
 import type {
   CapabilityRouteOverride,
-  CapabilitySnapshotOptions,
+  CapabilitySnapshotQuery,
   ResolvedCapabilityIdentity,
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
@@ -134,6 +128,17 @@ const isModelSelection = (value: unknown): value is ModelSelection => {
 }
 
 type CapabilitySnapshotModelConfig = ModelRouteConfig & Partial<Pick<ModelConfig, 'reasoning'>>
+export type CapabilitySnapshotResolutionInput =
+  | (CapabilitySnapshotQuery & {
+      resolvedModelConfig?: never
+    })
+  | {
+      providerId: string
+      modelId: string
+      resolvedModelConfig: CapabilitySnapshotModelConfig
+      routeOverride?: never
+      reasoningEnabled?: never
+    }
 
 const normalizeKnownModelId = (modelId: string): string => {
   const normalizedModelId = modelId.trim().toLowerCase()
@@ -246,31 +251,8 @@ export interface ProviderSettingsPort {
     resolvedConfig?: ModelRouteConfig
   ): ProviderModelRouteMetadata | undefined
   getDbProviderModels(providerId: string): RENDERER_MODEL_META[]
-  getCapabilitySnapshot(
-    providerId: string,
-    modelId: string,
-    options?: CapabilitySnapshotOptions,
-    resolvedModelConfig?: CapabilitySnapshotModelConfig
-  ): ResolvedModelCapabilitySnapshot
-  getCapabilityProviderId(providerId: string, modelId: string): string
-  supportsReasoningCapability(providerId: string, modelId: string): boolean
-  getReasoningPortrait(providerId: string, modelId: string): ReasoningPortrait | null
-  getThinkingBudgetRange(
-    providerId: string,
-    modelId: string
-  ): { min?: number; max?: number; default?: number }
-  getTemperatureCapability(providerId: string, modelId: string): boolean | undefined
-  supportsTemperatureControl(providerId: string, modelId: string): boolean
-  supportsSearchCapability(providerId: string, modelId: string): boolean
-  getSearchDefaults(
-    providerId: string,
-    modelId: string
-  ): { default?: boolean; forced?: boolean; strategy?: 'turbo' | 'max' }
+  getCapabilitySnapshot(input: CapabilitySnapshotResolutionInput): ResolvedModelCapabilitySnapshot
   supportsAudioInputCapability(providerId: string, modelId: string): boolean
-  supportsReasoningEffortCapability(providerId: string, modelId: string): boolean
-  getReasoningEffortDefault(providerId: string, modelId: string): ReasoningEffort | undefined
-  supportsVerbosityCapability(providerId: string, modelId: string): boolean
-  getVerbosityDefault(providerId: string, modelId: string): Verbosity | undefined
   setProviderModels(providerId: string, models: MODEL_META[]): void
   getEnabledProviders(): LLM_PROVIDER[]
   getAllEnabledModels(): Promise<{ providerId: string; models: RENDERER_MODEL_META[] }[]>
@@ -570,40 +552,28 @@ export class ProviderSettings implements ProviderSettingsPort {
     })
   }
 
-  getCapabilitySnapshot(
-    providerId: string,
-    modelId: string,
-    options?: CapabilitySnapshotOptions,
-    resolvedModelConfig?: CapabilitySnapshotModelConfig
-  ): ResolvedModelCapabilitySnapshot {
+  getCapabilitySnapshot(input: CapabilitySnapshotResolutionInput): ResolvedModelCapabilitySnapshot {
+    const { providerId, modelId, resolvedModelConfig } = input
     const identity = this.resolveCapabilityIdentityForModel(
       providerId,
       modelId,
-      options?.routeOverride,
+      input.routeOverride,
       resolvedModelConfig
     )
     const fixedTemperaturePolicy = getMoonshotKimiTemperaturePolicy(
       identity.providerId,
       identity.requestModelId
     )
-    const reasoning =
-      options?.reasoning ??
+    const reasoningEnabled =
+      input.reasoningEnabled ??
       resolvedModelConfig?.reasoning ??
       (fixedTemperaturePolicy
         ? this.getModelConfig(modelId, providerId, identity).reasoning
         : undefined)
 
     return buildResolvedCapabilitySnapshot(identity, {
-      reasoning
+      reasoningEnabled
     })
-  }
-
-  getCapabilityProviderId(providerId: string, modelId: string): string {
-    return this.getCapabilitySnapshot(providerId, modelId).identity.providerId
-  }
-
-  supportsReasoningCapability(providerId: string, modelId: string): boolean {
-    return this.getCapabilitySnapshot(providerId, modelId).supportsReasoning
   }
 
   private inferProviderDbModelType(model: ProviderModel): ModelType {
@@ -637,54 +607,8 @@ export class ProviderSettings implements ProviderSettingsPort {
     }
   }
 
-  getReasoningPortrait(providerId: string, modelId: string): ReasoningPortrait | null {
-    return this.getCapabilitySnapshot(providerId, modelId).reasoningPortrait
-  }
-
-  getThinkingBudgetRange(
-    providerId: string,
-    modelId: string
-  ): { min?: number; max?: number; default?: number } {
-    return this.getCapabilitySnapshot(providerId, modelId).thinkingBudgetRange
-  }
-
-  supportsSearchCapability(providerId: string, modelId: string): boolean {
-    return this.getCapabilitySnapshot(providerId, modelId).supportsSearch
-  }
-
-  getTemperatureCapability(providerId: string, modelId: string): boolean | undefined {
-    return this.getCapabilitySnapshot(providerId, modelId).temperatureCapability
-  }
-
-  supportsTemperatureControl(providerId: string, modelId: string): boolean {
-    return this.getCapabilitySnapshot(providerId, modelId).supportsTemperatureControl
-  }
-
-  getSearchDefaults(
-    providerId: string,
-    modelId: string
-  ): { default?: boolean; forced?: boolean; strategy?: 'turbo' | 'max' } {
-    return this.getCapabilitySnapshot(providerId, modelId).searchDefaults
-  }
-
   supportsAudioInputCapability(providerId: string, modelId: string): boolean {
-    return this.getCapabilitySnapshot(providerId, modelId).supportsAudioInput
-  }
-
-  supportsReasoningEffortCapability(providerId: string, modelId: string): boolean {
-    return this.getCapabilitySnapshot(providerId, modelId).supportsReasoningEffort
-  }
-
-  getReasoningEffortDefault(providerId: string, modelId: string): ReasoningEffort | undefined {
-    return this.getCapabilitySnapshot(providerId, modelId).reasoningEffortDefault
-  }
-
-  supportsVerbosityCapability(providerId: string, modelId: string): boolean {
-    return this.getCapabilitySnapshot(providerId, modelId).supportsVerbosity
-  }
-
-  getVerbosityDefault(providerId: string, modelId: string): Verbosity | undefined {
-    return this.getCapabilitySnapshot(providerId, modelId).verbosityDefault
+    return this.getCapabilitySnapshot({ providerId, modelId }).supportsAudioInput
   }
 
   private migrateConfigData(oldVersion: string | undefined): void {
@@ -1197,7 +1121,7 @@ export class ProviderSettings implements ProviderSettingsPort {
         Array.isArray(m?.modalities?.input) ? m.modalities!.input!.includes('image') : undefined
       ),
       functionCall: resolveModelFunctionCall(m.tool_call),
-      reasoning: this.supportsReasoningCapability(providerId, m.id),
+      reasoning: this.getCapabilitySnapshot({ providerId, modelId: m.id }).supportsReasoning,
       type: this.inferProviderDbModelType(m)
     }))
   }

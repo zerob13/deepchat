@@ -647,16 +647,7 @@ export function createProviderRoutes(deps: {
       modelsGetCapabilitiesRoute.name,
       async (rawInput) => {
         const input = modelsGetCapabilitiesRoute.input.parse(rawInput)
-        const snapshot = providerSettings.getCapabilitySnapshot(
-          input.providerId,
-          input.modelId,
-          input.routeOverride || input.reasoning !== undefined
-            ? {
-                routeOverride: input.routeOverride,
-                reasoning: input.reasoning
-              }
-            : undefined
-        )
+        const snapshot = providerSettings.getCapabilitySnapshot(input)
         return modelsGetCapabilitiesRoute.output.parse({
           capabilities: {
             ...snapshot,

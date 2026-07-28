@@ -1153,10 +1153,7 @@ const modelCapabilities = useModelCapabilities()
 const capabilityReasoningPortrait = computed(
   () => modelCapabilities.reasoningPortrait.value as ReasoningPortrait | null
 )
-const capabilitySupportsReasoning = computed(() => {
-  const supported = modelCapabilities.supportsReasoning.value
-  return supported ?? capabilityReasoningPortrait.value?.supported ?? null
-})
+const capabilitySupportsReasoning = computed(() => modelCapabilities.supportsReasoning.value)
 const capabilityProviderId = computed(
   () =>
     modelCapabilities.identity.value?.providerId ?? effectiveModelSelection.value?.providerId ?? ''
@@ -2195,7 +2192,7 @@ const runSyncGenerationSettings = async () => {
     return
   }
 
-  const capabilities = await modelCapabilities.load(selection.providerId, selection.modelId)
+  const capabilities = await modelCapabilities.load(selection)
   if (token !== generationSyncToken) {
     return
   }

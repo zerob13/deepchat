@@ -1172,8 +1172,8 @@ async function prepareFilesForCurrentModel(files: MessageFile[]): Promise<Messag
   }
 
   try {
-    const capabilities = await modelClient.getCapabilities(selection.providerId, selection.modelId)
-    if (capabilities.supportsAudioInput !== false) {
+    const capabilities = await modelClient.getCapabilities(selection)
+    if (capabilities.supportsAudioInput) {
       return files
     }
 

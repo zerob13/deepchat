@@ -978,7 +978,9 @@ const fetchCapabilities = async () => {
     return
   }
 
-  await modelCapabilities.load(props.providerId, targetModelId, {
+  await modelCapabilities.load({
+    providerId: props.providerId,
+    modelId: targetModelId,
     routeOverride: {
       endpointType: isNewApiEndpointType(config.value.endpointType)
         ? config.value.endpointType
@@ -987,7 +989,7 @@ const fetchCapabilities = async () => {
       type: effectiveNewApiModelType.value,
       ownedBy: providerModelMeta.value?.ownedBy
     },
-    reasoning: config.value.reasoning
+    reasoningEnabled: config.value.reasoning
   })
 }
 

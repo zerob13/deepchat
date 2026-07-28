@@ -99,29 +99,29 @@ export const getMoonshotKimiTemperaturePolicy = (
 export const resolveMoonshotKimiTemperaturePolicy = (
   providerId: string | null | undefined,
   modelId: string | null | undefined,
-  reasoning: boolean | null | undefined
+  reasoningEnabled: boolean | null | undefined
 ): ResolvedMoonshotKimiTemperaturePolicy | null => {
   const policy = getMoonshotKimiTemperaturePolicy(providerId, modelId)
   if (!policy) {
     return null
   }
 
-  const reasoningEnabled = policy.isThinkingVariant ? true : reasoning === true
+  const effectiveReasoningEnabled = policy.isThinkingVariant ? true : reasoningEnabled === true
 
   return {
     ...policy,
-    reasoningEnabled,
-    temperature: reasoningEnabled
+    reasoningEnabled: effectiveReasoningEnabled,
+    temperature: effectiveReasoningEnabled
       ? policy.thinkingEnabledTemperature
       : policy.thinkingDisabledTemperature,
-    thinkingType: reasoningEnabled ? 'enabled' : 'disabled'
+    thinkingType: effectiveReasoningEnabled ? 'enabled' : 'disabled'
   }
 }
 
 export const resolveModelRequestPolicy = (
   providerId: string | null | undefined,
   modelId: string | null | undefined,
-  reasoning: boolean | null | undefined
+  reasoningEnabled: boolean | null | undefined
 ): ModelRequestPolicy => {
   if (isKimiK3ModelId(modelId)) {
     return {
@@ -132,7 +132,7 @@ export const resolveModelRequestPolicy = (
     }
   }
 
-  const kimiPolicy = resolveMoonshotKimiTemperaturePolicy(providerId, modelId, reasoning)
+  const kimiPolicy = resolveMoonshotKimiTemperaturePolicy(providerId, modelId, reasoningEnabled)
   if (!kimiPolicy) {
     return createPassthroughModelRequestPolicy()
   }

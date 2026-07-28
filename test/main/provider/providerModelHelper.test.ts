@@ -888,8 +888,9 @@ describe('ProviderSettings provider DB model mapping', () => {
     }))
 
     const { ProviderSettings } = await import('../../../src/main/provider/settings')
+    const getCapabilitySnapshot = vi.fn(() => ({ supportsReasoning: false }))
     const presenter = Object.assign(Object.create(ProviderSettings.prototype), {
-      supportsReasoningCapability: vi.fn(() => false)
+      getCapabilitySnapshot
     }) as InstanceType<typeof ProviderSettings>
 
     const models = presenter.getDbProviderModels('aihubmix')
@@ -904,5 +905,13 @@ describe('ProviderSettings provider DB model mapping', () => {
         type: ModelType.Rerank
       })
     ])
+    expect(getCapabilitySnapshot).toHaveBeenNthCalledWith(1, {
+      providerId: 'aihubmix',
+      modelId: 'text-embedding-3-small'
+    })
+    expect(getCapabilitySnapshot).toHaveBeenNthCalledWith(2, {
+      providerId: 'aihubmix',
+      modelId: 'rerank-v1'
+    })
   })
 })

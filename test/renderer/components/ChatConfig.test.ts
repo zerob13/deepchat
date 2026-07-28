@@ -62,9 +62,9 @@ const createK3Capabilities = () => ({
     effort: 'max' as const,
     effortOptions: ['low', 'high', 'max'] as const
   },
-  thinkingBudgetRange: null,
+  thinkingBudgetRange: {},
   supportsSearch: false,
-  searchDefaults: null,
+  searchDefaults: {},
   supportsTemperatureControl: true,
   temperatureCapability: null,
   supportsReasoningEffort: true,

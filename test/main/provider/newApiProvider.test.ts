@@ -576,15 +576,6 @@ describe('NewApiProvider capability routing', () => {
         endpointType: 'openai'
       }
     })
-    const legacyCapabilityGetters = [
-      'getCapabilityProviderId',
-      'getTemperatureCapability',
-      'getReasoningPortrait',
-      'supportsReasoningCapability'
-    ] as const
-    for (const method of legacyCapabilityGetters) {
-      Object.assign(providerSettings, { [method]: vi.fn() })
-    }
     const provider = new AiSdkProvider(createProvider(), providerSettings)
     const getStoredModel = vi.spyOn(provider as any, 'getStoredModel')
     const resolveCapabilityIdentity = vi.spyOn(provider as any, 'resolveCapabilityIdentity')
@@ -611,9 +602,6 @@ describe('NewApiProvider capability routing', () => {
         continuation: ['thinking_blocks']
       }
     })
-    for (const method of legacyCapabilityGetters) {
-      expect(providerSettings[method]).not.toHaveBeenCalled()
-    }
     expect(getStoredModel).toHaveBeenCalledOnce()
     expect(resolveCapabilityIdentity).toHaveBeenCalledOnce()
     expect(providerSettings.getModelRouteConfig).toHaveBeenCalledOnce()

@@ -162,6 +162,37 @@ runtime serialization, covering passthrough, fixed, capability-derived omit, and
 Add direct Aihubmix K3, initial loading, silent error, rapid model switch, K2 fixed value, and
 effort-plus-temperature renderer regressions.
 
+## Capability query contract hardening
+
+Define `CapabilityRouteOverrideSchema` and `CapabilitySnapshotQuerySchema` in the shared capability
+domain and derive their TypeScript types with `z.infer`. The query directly contains provider ID,
+model ID, optional route override, and optional `reasoningEnabled`; remove the separate
+`CapabilitySnapshotOptions` shape and the duplicate inline route schema.
+
+Change `ProviderSettings.getCapabilitySnapshot` to accept one named resolution input. Model the two
+legal caller modes as an exclusive union or equivalent overloads:
+
+- renderer and typed-route callers provide the shared draft query;
+- runtime callers provide provider ID, model ID, and one already resolved model configuration.
+
+Do not allow a caller to combine route/reasoning draft fields with a resolved configuration.
+Preserve the narrow persisted Kimi reasoning fallback only when neither caller mode supplies an
+effective value. Rename the pure request-policy resolver input to `reasoningEnabled`, but retain
+`ModelRequestPolicy.reasoning` and `ModelConfig.reasoning` because they name the governed wire
+parameter and persisted field rather than query state.
+
+Tighten the typed capability response to the producer's actual guarantees. Required support flags,
+thinking-budget range, and search defaults are non-null once a snapshot exists. Keep reasoning
+portrait nullable and preserve temperature capability's explicit `undefined`-to-`null` IPC
+conversion. Audit renderer consumers manually: remove only field-level compatibility fallbacks and
+retain null handling caused by an absent snapshot during idle, loading, and error states.
+
+Migrate database provider-model reasoning projection to the authoritative snapshot. Remove the
+twelve unused ProviderSettings field projections and their port declarations, while retaining the
+audio-input fallback used before provider-model runtime facts exist. Do not remove the snapshot's
+derived `supportsTemperatureControl` field, broaden renderer client cleanup, add a DTO mapper, or
+introduce capability caching in this slice.
+
 ## External review hardening
 
 Harden Phase 2 input normalization for separator-normalized xAI owners and known dotted provider
@@ -219,6 +250,10 @@ Run focused tests after each slice:
 - direct Aihubmix K3 renderer tests
 - cross-layer renderer/wire policy matrix
 - agent generation settings tests
+- named-query false preservation and mutually exclusive resolution-input coverage
+- capability response schema rejection for null required fields
+- renderer loading/error lifecycle tests proving reasoning remains unknown and sampling controls
+  remain non-editable
 
 Before handoff run `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, full type checking, the
 relevant provider and renderer suites, the full test suite, and the production build when the

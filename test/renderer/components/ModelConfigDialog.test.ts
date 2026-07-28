@@ -26,7 +26,10 @@ type SetupOptions = {
   providerModels?: Array<Record<string, unknown>>
   customModels?: Array<Record<string, unknown>>
   getModelConfig?: (...args: string[]) => Promise<Record<string, unknown>> | Record<string, unknown>
-  getCapabilities?: (...args: unknown[]) => Promise<Record<string, unknown>>
+  getCapabilities?: (query: {
+    providerId: string
+    modelId: string
+  }) => Promise<Record<string, unknown>>
 }
 
 const createDeferred = <T>() => {
@@ -63,11 +66,12 @@ const createCapabilityResult = (options: SetupOptions, modelId = options.modelId
       reasoning: { mode: 'passthrough' as const },
       legacyThinking: { mode: 'passthrough' as const }
     },
+    supportsAudioInput: false,
     supportsReasoning: options.reasoningPortrait?.supported ?? true,
     reasoningPortrait: options.reasoningPortrait ?? null,
-    thinkingBudgetRange: options.reasoningPortrait?.budget ?? null,
-    supportsSearch: null,
-    searchDefaults: null,
+    thinkingBudgetRange: options.reasoningPortrait?.budget ?? {},
+    supportsSearch: false,
+    searchDefaults: {},
     supportsTemperatureControl: temperatureCapability !== false,
     temperatureCapability,
     supportsReasoningEffort: Boolean(options.reasoningPortrait?.effort),
@@ -123,7 +127,7 @@ const setup = async (options: SetupOptions) => {
     providers: [{ id: options.providerId, apiType: options.providerApiType ?? 'openai-compatible' }]
   })
 
-  const defaultGetCapabilities = (_providerId: string, modelId: string) =>
+  const defaultGetCapabilities = ({ modelId }: { providerId: string; modelId: string }) =>
     Promise.resolve(createCapabilityResult(options, modelId))
   const modelClient = {
     getCapabilities: vi.fn().mockImplementation(options.getCapabilities ?? defaultGetCapabilities)
@@ -1131,10 +1135,10 @@ describe('ModelConfigDialog new-api endpoint normalization', () => {
     ;(wrapper.vm as any).modelIdField = 'kimi-k3'
     await vi.waitFor(() =>
       expect(modelClient.getCapabilities).toHaveBeenCalledWith(
-        'new-api',
-        'kimi-k3',
         expect.objectContaining({
-          reasoning: expect.any(Boolean)
+          providerId: 'new-api',
+          modelId: 'kimi-k3',
+          reasoningEnabled: expect.any(Boolean)
         })
       )
     )
@@ -1171,9 +1175,10 @@ describe('ModelConfigDialog new-api endpoint normalization', () => {
     await vi.waitFor(() => expect(modelClient.getCapabilities).toHaveBeenCalledTimes(2))
 
     expect(modelClient.getCapabilities).toHaveBeenLastCalledWith(
-      'new-api',
-      'renamed-custom-model',
-      expect.any(Object)
+      expect.objectContaining({
+        providerId: 'new-api',
+        modelId: 'renamed-custom-model'
+      })
     )
     expect((wrapper.vm as any).currentModelLookupId).toBe('renamed-custom-model')
     expect((wrapper.vm as any).capabilitySnapshotMatchesCurrentModel).toBe(true)

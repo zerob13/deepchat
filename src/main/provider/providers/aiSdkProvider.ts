@@ -746,7 +746,7 @@ export class AiSdkProvider extends BaseLLMProvider {
       decision.capabilityIdentity ??
       this.resolveCapabilityIdentityFromProviderState(modelId, decision.endpointType)
     const capabilitySnapshot = buildResolvedCapabilitySnapshot(capabilityIdentity, {
-      reasoning: resolvedModelConfig.reasoning
+      reasoningEnabled: resolvedModelConfig.reasoning
     })
 
     const cleanHeaders =

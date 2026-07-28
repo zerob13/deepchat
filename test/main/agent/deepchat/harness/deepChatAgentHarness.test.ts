@@ -615,21 +615,8 @@ function createMockProviderSettings() {
     xai: 'grok'
   }
 
-  const settings = {
-    getModelConfig: vi.fn().mockReturnValue({
-      temperature: 0.7,
-      maxTokens: 4096,
-      contextLength: 128000,
-      thinkingBudget: 512,
-      reasoningEffort: 'medium',
-      verbosity: 'medium',
-      vision: false
-    }),
-    getDefaultModel: vi.fn().mockReturnValue({ providerId: 'openai', modelId: 'gpt-4' }),
-    getDefaultSystemPrompt: vi.fn().mockResolvedValue('You are a helpful assistant.'),
-    getMcpEnabled: vi.fn().mockResolvedValue(false),
-    getMcpServers: vi.fn().mockResolvedValue({}),
-    getReasoningPortrait: vi.fn().mockImplementation((providerId: string, modelId: string) => {
+  const capabilityFixture = {
+    reasoningPortrait: vi.fn().mockImplementation((providerId: string, modelId: string) => {
       if (providerId === 'gemini' && modelId === 'gemini-2.5-pro') {
         return {
           supported: true,
@@ -649,16 +636,31 @@ function createMockProviderSettings() {
         verbosityOptions: ['low', 'medium', 'high']
       }
     }),
-    supportsReasoningCapability: vi.fn().mockReturnValue(true),
-    getThinkingBudgetRange: vi.fn().mockReturnValue({ min: 0, max: 8192, default: 512 }),
-    supportsReasoningEffortCapability: vi.fn().mockReturnValue(true),
-    getReasoningEffortDefault: vi.fn().mockReturnValue('medium'),
-    supportsVerbosityCapability: vi.fn().mockReturnValue(true),
-    getVerbosityDefault: vi.fn().mockReturnValue('medium'),
+    supportsReasoning: vi.fn().mockReturnValue(true),
+    thinkingBudgetRange: vi.fn().mockReturnValue({ min: 0, max: 8192, default: 512 }),
+    supportsReasoningEffort: vi.fn().mockReturnValue(true),
+    reasoningEffortDefault: vi.fn().mockReturnValue('medium'),
+    supportsVerbosity: vi.fn().mockReturnValue(true),
+    verbosityDefault: vi.fn().mockReturnValue('medium'),
+    providerId: vi.fn().mockImplementation((providerId: string, _modelId: string) => providerId)
+  }
+
+  const settings = {
+    capabilityFixture,
+    getModelConfig: vi.fn().mockReturnValue({
+      temperature: 0.7,
+      maxTokens: 4096,
+      contextLength: 128000,
+      thinkingBudget: 512,
+      reasoningEffort: 'medium',
+      verbosity: 'medium',
+      vision: false
+    }),
+    getDefaultModel: vi.fn().mockReturnValue({ providerId: 'openai', modelId: 'gpt-4' }),
+    getDefaultSystemPrompt: vi.fn().mockResolvedValue('You are a helpful assistant.'),
+    getMcpEnabled: vi.fn().mockResolvedValue(false),
+    getMcpServers: vi.fn().mockResolvedValue({}),
     supportsAudioInputCapability: vi.fn().mockReturnValue(false),
-    getCapabilityProviderId: vi
-      .fn()
-      .mockImplementation((providerId: string, _modelId: string) => providerId),
     getAutoCompactionEnabled: vi.fn().mockReturnValue(true),
     getAutoCompactionTriggerThreshold: vi.fn().mockReturnValue(80),
     getAutoCompactionRetainRecentPairs: vi.fn().mockReturnValue(2),
@@ -672,38 +674,41 @@ function createMockProviderSettings() {
     resolveDeepChatAgentConfig: vi.fn().mockResolvedValue({}),
     agentSupportsCapability: vi.fn().mockResolvedValue(true)
   } as any
-  settings.getCapabilitySnapshot = vi.fn((providerId: string, modelId: string) => {
-    const portrait = settings.getReasoningPortrait(providerId, modelId)
-    const hasFixedKimiTemperature = providerId === 'moonshot' && modelId === 'moonshotai/kimi-k2.6'
-    return {
-      identity: {
-        providerId: settings.getCapabilityProviderId(providerId, modelId),
-        requestModelId: modelId,
-        catalogMatched: true,
-        catalogModelId: modelId
-      },
-      requestPolicy: {
-        temperature: hasFixedKimiTemperature
-          ? { mode: 'fixed', value: 1 }
-          : { mode: 'passthrough' },
-        topP: { mode: 'passthrough' },
-        reasoning: { mode: 'passthrough' },
-        legacyThinking: { mode: 'passthrough' }
-      },
-      supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
-      supportsReasoning: settings.supportsReasoningCapability(providerId, modelId),
-      reasoningPortrait: portrait,
-      thinkingBudgetRange: settings.getThinkingBudgetRange(providerId, modelId),
-      supportsSearch: false,
-      searchDefaults: {},
-      temperatureCapability: undefined,
-      supportsTemperatureControl: true,
-      supportsReasoningEffort: settings.supportsReasoningEffortCapability(providerId, modelId),
-      reasoningEffortDefault: settings.getReasoningEffortDefault(providerId, modelId),
-      supportsVerbosity: settings.supportsVerbosityCapability(providerId, modelId),
-      verbosityDefault: settings.getVerbosityDefault(providerId, modelId)
+  settings.getCapabilitySnapshot = vi.fn(
+    ({ providerId, modelId }: { providerId: string; modelId: string }) => {
+      const portrait = capabilityFixture.reasoningPortrait(providerId, modelId)
+      const hasFixedKimiTemperature =
+        providerId === 'moonshot' && modelId === 'moonshotai/kimi-k2.6'
+      return {
+        identity: {
+          providerId: capabilityFixture.providerId(providerId, modelId),
+          requestModelId: modelId,
+          catalogMatched: true,
+          catalogModelId: modelId
+        },
+        requestPolicy: {
+          temperature: hasFixedKimiTemperature
+            ? { mode: 'fixed', value: 1 }
+            : { mode: 'passthrough' },
+          topP: { mode: 'passthrough' },
+          reasoning: { mode: 'passthrough' },
+          legacyThinking: { mode: 'passthrough' }
+        },
+        supportsAudioInput: settings.supportsAudioInputCapability(providerId, modelId),
+        supportsReasoning: capabilityFixture.supportsReasoning(providerId, modelId),
+        reasoningPortrait: portrait,
+        thinkingBudgetRange: capabilityFixture.thinkingBudgetRange(providerId, modelId),
+        supportsSearch: false,
+        searchDefaults: {},
+        temperatureCapability: undefined,
+        supportsTemperatureControl: true,
+        supportsReasoningEffort: capabilityFixture.supportsReasoningEffort(providerId, modelId),
+        reasoningEffortDefault: capabilityFixture.reasoningEffortDefault(providerId, modelId),
+        supportsVerbosity: capabilityFixture.supportsVerbosity(providerId, modelId),
+        verbosityDefault: capabilityFixture.verbosityDefault(providerId, modelId)
+      }
     }
-  })
+  )
   return settings
 }
 
@@ -2297,7 +2302,7 @@ describe('DeepChatAgentHarness', () => {
         permissionMode: 'full_access'
       })
       expect(providerSettings.getDefaultSystemPrompt).not.toHaveBeenCalled()
-      expect(providerSettings.getReasoningPortrait).not.toHaveBeenCalled()
+      expect(providerSettings.getCapabilitySnapshot).not.toHaveBeenCalled()
     })
   })
 
@@ -5435,7 +5440,7 @@ describe('DeepChatAgentHarness', () => {
           vision: false
         }
       })
-      providerSettings.getReasoningPortrait.mockImplementation(
+      providerSettings.capabilityFixture.reasoningPortrait.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'moonshot' && modelId === 'moonshotai/kimi-k2.6') {
             return {
@@ -5486,7 +5491,7 @@ describe('DeepChatAgentHarness', () => {
         verbosity: 'medium',
         forceInterleavedThinkingCompat: true
       })
-      providerSettings.getReasoningPortrait.mockReturnValue({
+      providerSettings.capabilityFixture.reasoningPortrait.mockReturnValue({
         supported: true,
         defaultEnabled: true,
         mode: 'effort',
@@ -5617,7 +5622,7 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('normalizes reasoning effort by portrait option set instead of provider id', async () => {
-      providerSettings.getReasoningPortrait.mockImplementation(
+      providerSettings.capabilityFixture.reasoningPortrait.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'xai' && modelId === 'grok-3-mini-fast-beta') {
             return {
@@ -5659,7 +5664,7 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('normalizes stale reasoning effort values to a fixed portrait default', async () => {
-      providerSettings.getReasoningPortrait.mockReturnValue({
+      providerSettings.capabilityFixture.reasoningPortrait.mockReturnValue({
         supported: true,
         defaultEnabled: true,
         mode: 'effort',
@@ -5706,7 +5711,7 @@ describe('DeepChatAgentHarness', () => {
           vision: false
         }
       })
-      providerSettings.getReasoningPortrait.mockImplementation(
+      providerSettings.capabilityFixture.reasoningPortrait.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'anthropic' && modelId === 'claude-opus-4-7') {
             return {
@@ -5751,7 +5756,7 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('drops new-api anthropic adaptive reasoning overrides when backend reasoning is disabled', async () => {
-      providerSettings.getCapabilityProviderId.mockImplementation(
+      providerSettings.capabilityFixture.providerId.mockImplementation(
         (providerId: string, modelId: string) =>
           providerId === 'new-api' && modelId === 'claude-opus-4-7' ? 'anthropic' : providerId
       )
@@ -5780,7 +5785,7 @@ describe('DeepChatAgentHarness', () => {
           vision: false
         }
       })
-      providerSettings.getReasoningPortrait.mockImplementation(
+      providerSettings.capabilityFixture.reasoningPortrait.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'new-api' && modelId === 'claude-opus-4-7') {
             return {
@@ -5825,7 +5830,7 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('drops zenmux anthropic adaptive reasoning overrides when backend reasoning is disabled', async () => {
-      providerSettings.getCapabilityProviderId.mockImplementation(
+      providerSettings.capabilityFixture.providerId.mockImplementation(
         (providerId: string, modelId: string) =>
           providerId === 'zenmux' && modelId === 'anthropic/claude-opus-4-7'
             ? 'anthropic'
@@ -5855,7 +5860,7 @@ describe('DeepChatAgentHarness', () => {
           vision: false
         }
       })
-      providerSettings.getReasoningPortrait.mockImplementation(
+      providerSettings.capabilityFixture.reasoningPortrait.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'zenmux' && modelId === 'anthropic/claude-opus-4-7') {
             return {
@@ -5950,7 +5955,7 @@ describe('DeepChatAgentHarness', () => {
           verbosity: 'medium'
         }
       })
-      providerSettings.getThinkingBudgetRange.mockImplementation(
+      providerSettings.capabilityFixture.thinkingBudgetRange.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'anthropic' && modelId === 'claude-3-5-sonnet') {
             return { min: 0, max: 4096, default: 256 }
@@ -5958,7 +5963,7 @@ describe('DeepChatAgentHarness', () => {
           return { min: 0, max: 8192, default: 512 }
         }
       )
-      providerSettings.getReasoningEffortDefault.mockImplementation(
+      providerSettings.capabilityFixture.reasoningEffortDefault.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'anthropic' && modelId === 'claude-3-5-sonnet') {
             return 'low'
@@ -5966,7 +5971,7 @@ describe('DeepChatAgentHarness', () => {
           return 'medium'
         }
       )
-      providerSettings.getVerbosityDefault.mockImplementation(
+      providerSettings.capabilityFixture.verbosityDefault.mockImplementation(
         (providerId: string, modelId: string) => {
           if (providerId === 'anthropic' && modelId === 'claude-3-5-sonnet') {
             return 'high'
@@ -6214,15 +6219,15 @@ describe('DeepChatAgentHarness', () => {
           verbosity: 'medium'
         }
       })
-      providerSettings.supportsReasoningCapability.mockImplementation(
+      providerSettings.capabilityFixture.supportsReasoning.mockImplementation(
         (providerId: string, modelId: string) =>
           !(providerId === 'openai' && modelId === 'gpt-4o-mini')
       )
-      providerSettings.supportsReasoningEffortCapability.mockImplementation(
+      providerSettings.capabilityFixture.supportsReasoningEffort.mockImplementation(
         (providerId: string, modelId: string) =>
           !(providerId === 'openai' && modelId === 'gpt-4o-mini')
       )
-      providerSettings.supportsVerbosityCapability.mockImplementation(
+      providerSettings.capabilityFixture.supportsVerbosity.mockImplementation(
         (providerId: string, modelId: string) =>
           !(providerId === 'openai' && modelId === 'gpt-4o-mini')
       )

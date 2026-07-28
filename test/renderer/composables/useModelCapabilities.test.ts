@@ -40,9 +40,9 @@ const createCapabilities = (
   supportsAudioInput: false,
   supportsReasoning: false,
   reasoningPortrait: null,
-  thinkingBudgetRange: null,
+  thinkingBudgetRange: {},
   supportsSearch: false,
-  searchDefaults: null,
+  searchDefaults: {},
   supportsTemperatureControl: true,
   temperatureCapability: true,
   supportsReasoningEffort: false,
@@ -144,7 +144,7 @@ describe('useModelCapabilities', () => {
       })
     )
 
-    await api.load('openai', 'contract-fixture')
+    await api.load({ providerId: 'openai', modelId: 'contract-fixture' })
 
     expect(api.requestPolicy.value?.temperature).toEqual({ mode: 'passthrough' })
     expect(api.temperatureControl.value).toEqual({ mode: 'editable' })
@@ -265,22 +265,26 @@ describe('useModelCapabilities', () => {
       .mockResolvedValueOnce(createCapabilities())
     const api = useModelCapabilities()
 
-    const firstLoad = api.load('openai', 'gpt-4')
+    const firstLoad = api.load({ providerId: 'openai', modelId: 'gpt-4' })
     expect(api.status.value).toBe('loading')
     expect(api.snapshot.value).toBeNull()
+    expect(api.supportsReasoning.value).toBeNull()
     expect(api.temperatureControl.value).toEqual({ mode: 'loading' })
+    expect(api.topPControl.value).toEqual({ mode: 'loading' })
     pending.resolve(createCapabilities())
     await firstLoad
     expect(api.status.value).toBe('ready')
 
-    await api.load('openai', 'gpt-4')
+    await api.load({ providerId: 'openai', modelId: 'gpt-4' })
     expect(api.status.value).toBe('error')
     expect(api.queryIdentity.value).toEqual({
       providerId: 'openai',
       modelId: 'gpt-4'
     })
     expect(api.requestPolicy.value).toBeNull()
+    expect(api.supportsReasoning.value).toBeNull()
     expect(api.temperatureControl.value).toEqual({ mode: 'hidden' })
+    expect(api.topPControl.value).toEqual({ mode: 'hidden' })
 
     await api.refresh()
     expect(api.status.value).toBe('ready')
@@ -293,8 +297,8 @@ describe('useModelCapabilities', () => {
     const oldResponse = deferred<ReturnType<typeof createCapabilities>>()
     const newResponse = deferred<ReturnType<typeof createCapabilities>>()
 
-    modelClient.getCapabilities.mockImplementation((_provider, model) =>
-      model === 'gpt-old' ? oldResponse.promise : newResponse.promise
+    modelClient.getCapabilities.mockImplementation((query) =>
+      query.modelId === 'gpt-old' ? oldResponse.promise : newResponse.promise
     )
 
     const api = useModelCapabilities({ providerId, modelId })

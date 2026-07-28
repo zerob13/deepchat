@@ -229,9 +229,12 @@ describe('ProviderSettings provider model capability mapping', () => {
       getCustomModels: vi.fn().mockReturnValue([])
     }) as InstanceType<typeof ProviderSettings>
 
-    expect(presenter.getCapabilityProviderId('zenmux', 'anthropic/claude-opus-4-7')).toBe(
-      'anthropic'
-    )
+    expect(
+      presenter.getCapabilitySnapshot({
+        providerId: 'zenmux',
+        modelId: 'anthropic/claude-opus-4-7'
+      }).identity.providerId
+    ).toBe('anthropic')
   })
 
   it('does not load the full model list when a targeted capability route is absent', async () => {
@@ -254,7 +257,12 @@ describe('ProviderSettings provider model capability mapping', () => {
       getModelConfig: vi.fn().mockReturnValue(modelConfig)
     }) as InstanceType<typeof ProviderSettings>
 
-    expect(presenter.getCapabilityProviderId('custom-relay', 'unknown-model')).toBe('custom-relay')
+    expect(
+      presenter.getCapabilitySnapshot({
+        providerId: 'custom-relay',
+        modelId: 'unknown-model'
+      }).identity.providerId
+    ).toBe('custom-relay')
     expect(getProviderModelRouteMetadata).toHaveBeenCalledOnce()
     expect(getProviderModelRouteMetadata).toHaveBeenCalledWith(
       'custom-relay',

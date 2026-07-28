@@ -511,16 +511,54 @@ describe('capability identity resolution', () => {
     })
 
     expect(
-      providerSettings.getCapabilitySnapshot('new-api', 'kimi-k2.6').requestPolicy.temperature
+      providerSettings.getCapabilitySnapshot({
+        providerId: 'new-api',
+        modelId: 'kimi-k2.6'
+      }).requestPolicy.temperature
     ).toEqual({ mode: 'fixed', value: 1 })
     expect(getModelConfig).toHaveBeenCalledWith('kimi-k2.6', 'new-api', identity)
 
     expect(
-      providerSettings.getCapabilitySnapshot('new-api', 'kimi-k2.6', {
-        reasoning: false
+      providerSettings.getCapabilitySnapshot({
+        providerId: 'new-api',
+        modelId: 'kimi-k2.6',
+        reasoningEnabled: false
       }).requestPolicy.temperature
     ).toEqual({ mode: 'fixed', value: 0.6 })
     expect(getModelConfig).toHaveBeenCalledTimes(1)
+
+    expect(
+      providerSettings.getCapabilitySnapshot({
+        providerId: 'new-api',
+        modelId: 'kimi-k2.6',
+        resolvedModelConfig: {
+          endpointType: 'openai',
+          reasoning: false
+        }
+      }).requestPolicy.temperature
+    ).toEqual({ mode: 'fixed', value: 0.6 })
+    expect(resolveIdentity).toHaveBeenLastCalledWith('new-api', 'kimi-k2.6', undefined, {
+      endpointType: 'openai',
+      reasoning: false
+    })
+    expect(getModelConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    'getCapabilityProviderId',
+    'supportsReasoningCapability',
+    'getReasoningPortrait',
+    'getThinkingBudgetRange',
+    'getTemperatureCapability',
+    'supportsTemperatureControl',
+    'supportsSearchCapability',
+    'getSearchDefaults',
+    'supportsReasoningEffortCapability',
+    'getReasoningEffortDefault',
+    'supportsVerbosityCapability',
+    'getVerbosityDefault'
+  ])('does not expose retired capability projection %s', (methodName) => {
+    expect(ProviderSettings.prototype).not.toHaveProperty(methodName)
   })
 
   it('keeps Phase 1 narrow and transport fallback internal to identity resolution', () => {

@@ -127,8 +127,9 @@ catalog capability reads always consume `catalogModelId`.
 
 The main process returns one capability snapshot per provider/model selection. The snapshot contains
 the resolved identity, reasoning portrait, sampling capability, search defaults, and effective
-generation-parameter policy. Existing convenience getters may remain as compatibility wrappers,
-but they delegate to the same resolution and are not composed independently in hot paths.
+generation-parameter policy. Field-level compatibility getters are removed after their callers
+migrate to the snapshot, except for the audio-input fallback required before provider-model runtime
+facts are available.
 
 Renderer components do not import or execute capability-provider routing rules. ChatStatusBar and
 ModelConfigDialog consume the snapshot returned by the typed models capability route. Agent
@@ -155,6 +156,31 @@ consumer.
 State-dependent fixed policy uses the editor's explicit draft reasoning when supplied. Other
 snapshot consumers fall back to persisted model reasoning only for the narrow fixed-temperature
 model family; unrelated capability queries do not derive complete model configuration.
+
+The capability query is one shared schema-derived contract containing provider ID, model ID,
+optional route override, and optional `reasoningEnabled`. ProviderSettings accepts that query
+directly rather than a positional provider/model pair plus a nested options object. A caller may
+provide either draft query fields or one already resolved model configuration, never both.
+Runtime consumers pass only the resolved model configuration; renderer queries pass only draft
+fields. If neither supplies reasoning state, the narrow persisted Kimi fallback above remains
+authoritative.
+
+The `reasoningEnabled` name ends at the capability-query and request-policy resolver input
+boundary. `ModelRequestPolicy.reasoning` remains the policy governing the reasoning parameter,
+parallel to `temperature`, `topP`, and `legacyThinking`. `ModelConfig.reasoning` remains the
+backward-compatible persisted configuration field.
+
+The route output schema matches the resolved snapshot producer. `supportsAudioInput`,
+`supportsReasoning`, `supportsSearch`, `supportsTemperatureControl`, `thinkingBudgetRange`, and
+`searchDefaults` are non-null after a snapshot resolves. `reasoningPortrait` remains nullable.
+`temperatureCapability` remains the only tri-state capability field and converts internal
+`undefined` to `null` at the typed IPC boundary. Optional reasoning-effort and verbosity defaults
+remain optional because absence means that the catalog declares no default.
+
+Renderer lifecycle nullability is separate from resolved field nullability. While a query is
+`idle`, `loading`, or `error`, the renderer may expose `null` because no resolved snapshot is
+available. Contract tightening must remove only fallbacks that assume a present snapshot contains
+nullable required fields; it must preserve snapshot-level lifecycle guards.
 
 ### Generation parameter policy
 
@@ -342,6 +368,20 @@ consumer instead of resolving the same model configuration and snapshot twice.
     an already resolved identity performs no redundant query.
 30. ChatStatusBar initializes fixed top P from policy, and manual compaction reuses one resolved
     provider-model fact set for input capabilities.
+31. Capability route overrides and draft reasoning use one schema-derived query type. The main
+    resolver accepts a named input and statically rejects combining draft fields with an already
+    resolved model configuration.
+32. Capability query and request-policy resolver inputs use `reasoningEnabled`; the wire policy
+    field remains `ModelRequestPolicy.reasoning`, and persisted `ModelConfig.reasoning` remains
+    unchanged.
+33. A resolved capability response rejects null for audio input, reasoning, search, temperature
+    control, thinking-budget range, and search defaults. Reasoning portrait and tri-state
+    temperature retain their documented nullable semantics.
+34. During capability loading or a settled IPC error, renderer reasoning support remains `null`
+    rather than collapsing to `false`, and temperature/top-P controls remain non-editable. Schema
+    tightening does not remove snapshot-level lifecycle state.
+35. ProviderSettings exposes no unused field-level capability projections. Database model mapping
+    consumes the snapshot directly, while the pre-runtime audio-input fallback remains available.
 
 ## Constraints
 

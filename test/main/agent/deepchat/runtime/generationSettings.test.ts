@@ -45,15 +45,7 @@ function createProviderSettings(): ProviderSettingsPort {
       timeout: 60_000
     })),
     getProviderById: vi.fn(() => undefined),
-    getCapabilitySnapshot: vi.fn(() => createCapabilitySnapshot()),
-    getCapabilityProviderId: vi.fn((providerId: string) => providerId),
-    getReasoningPortrait: vi.fn(() => null),
-    getThinkingBudgetRange: vi.fn(() => ({})),
-    supportsReasoningCapability: vi.fn(() => false),
-    supportsReasoningEffortCapability: vi.fn(() => false),
-    getReasoningEffortDefault: vi.fn(() => undefined),
-    supportsVerbosityCapability: vi.fn(() => false),
-    getVerbosityDefault: vi.fn(() => undefined)
+    getCapabilitySnapshot: vi.fn(() => createCapabilitySnapshot())
   } as unknown as ProviderSettingsPort
 }
 
@@ -87,8 +79,6 @@ describe('generation settings policy', () => {
     expect(result).not.toHaveProperty('reasoningEffort')
     expect(result).not.toHaveProperty('verbosity')
     expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledTimes(1)
-    expect(providerSettings.getCapabilityProviderId).not.toHaveBeenCalled()
-    expect(providerSettings.getReasoningPortrait).not.toHaveBeenCalled()
   })
 
   it('keeps K3 session sampling settings while normalizing effort from the snapshot', async () => {
@@ -146,8 +136,6 @@ describe('generation settings policy', () => {
       reasoningEffort: 'max'
     })
     expect(providerSettings.getCapabilitySnapshot).toHaveBeenCalledTimes(1)
-    expect(providerSettings.getCapabilityProviderId).not.toHaveBeenCalled()
-    expect(providerSettings.getReasoningPortrait).not.toHaveBeenCalled()
   })
 
   it('shares one capability snapshot across persisted mapping and sanitization', async () => {

@@ -6,7 +6,7 @@ import {
   type NewApiEndpointType
 } from '@shared/model'
 import type {
-  CapabilitySnapshotOptions,
+  CapabilitySnapshotQuery,
   ResolvedCapabilityIdentity,
   ResolvedModelCapabilitySnapshot
 } from '@shared/types/model-capabilities'
@@ -375,7 +375,7 @@ export const resolveCapabilityIdentity = (
 
 export const buildResolvedCapabilitySnapshot = (
   identity: ResolvedCapabilityIdentity,
-  options: Pick<CapabilitySnapshotOptions, 'reasoning'> = {}
+  options: Pick<CapabilitySnapshotQuery, 'reasoningEnabled'> = {}
 ): ResolvedModelCapabilitySnapshot => {
   const catalogModelId = identity.catalogModelId ?? identity.requestModelId
   const catalog = modelCapabilities.getCatalogCapabilitySnapshot(
@@ -385,7 +385,7 @@ export const buildResolvedCapabilitySnapshot = (
   const baseRequestPolicy = resolveModelRequestPolicy(
     identity.providerId,
     identity.requestModelId,
-    options.reasoning
+    options.reasoningEnabled
   )
   const temperaturePolicy = resolveCapabilityAwareRequestParameterPolicy(
     baseRequestPolicy.temperature,

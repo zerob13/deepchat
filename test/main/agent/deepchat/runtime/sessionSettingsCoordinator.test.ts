@@ -36,7 +36,7 @@ function createProviderSettings(): ProviderModelResolutionPort {
       reasoning: true,
       type: ModelType.Chat
     }),
-    getCapabilitySnapshot: vi.fn((providerId: string, modelId: string) => ({
+    getCapabilitySnapshot: vi.fn(({ providerId, modelId }) => ({
       identity: {
         providerId,
         requestModelId: modelId,
@@ -62,15 +62,7 @@ function createProviderSettings(): ProviderModelResolutionPort {
       supportsVerbosity: false,
       verbosityDefault: undefined
     })),
-    getCapabilityProviderId: vi.fn((providerId: string) => providerId),
-    supportsReasoningCapability: vi.fn().mockReturnValue(true),
-    getReasoningPortrait: vi.fn().mockReturnValue(null),
-    getThinkingBudgetRange: vi.fn().mockReturnValue({}),
     supportsAudioInputCapability: vi.fn().mockReturnValue(false),
-    supportsReasoningEffortCapability: vi.fn().mockReturnValue(false),
-    getReasoningEffortDefault: vi.fn().mockReturnValue(undefined),
-    supportsVerbosityCapability: vi.fn().mockReturnValue(false),
-    getVerbosityDefault: vi.fn().mockReturnValue(undefined)
   }
 }
 

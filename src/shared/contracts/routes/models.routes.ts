@@ -7,7 +7,7 @@ import {
   ProviderModelCatalogSchema,
   ProviderModelConfigEntrySchema
 } from '../domainSchemas'
-import { ModelType, NEW_API_ENDPOINT_TYPES } from '../../model'
+import { CapabilitySnapshotQuerySchema } from '../../types/model-capabilities'
 
 export const modelsGetProviderCatalogRoute = defineRouteContract({
   name: 'models.getProviderCatalog',
@@ -181,19 +181,7 @@ export const modelsSetBatchStatusRoute = defineRouteContract({
 
 export const modelsGetCapabilitiesRoute = defineRouteContract({
   name: 'models.getCapabilities',
-  input: z.object({
-    providerId: EntityIdSchema,
-    modelId: z.string().min(1),
-    routeOverride: z
-      .object({
-        endpointType: z.enum(NEW_API_ENDPOINT_TYPES).optional(),
-        supportedEndpointTypes: z.array(z.enum(NEW_API_ENDPOINT_TYPES)).optional(),
-        type: z.enum(ModelType).optional(),
-        ownedBy: z.string().optional()
-      })
-      .optional(),
-    reasoning: z.boolean().optional()
-  }),
+  input: CapabilitySnapshotQuerySchema,
   output: z.object({
     capabilities: ModelCapabilitiesSchema
   })

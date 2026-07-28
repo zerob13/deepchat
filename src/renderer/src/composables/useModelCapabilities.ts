@@ -2,7 +2,7 @@ import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 
 import { createModelClient } from '@api/ModelClient'
 import type { RequestParameterPolicy } from '@shared/modelRequestPolicy'
-import type { CapabilitySnapshotOptions } from '@shared/types/model-capabilities'
+import type { CapabilitySnapshotQuery } from '@shared/types/model-capabilities'
 import type { ReasoningPortrait } from '@shared/types/model-db'
 import type { ThinkingBudgetRange } from './useThinkingBudget'
 
@@ -75,21 +75,14 @@ export interface UseModelCapabilitiesOptions {
   modelId: Ref<string | undefined>
 }
 
-export type CapabilityQueryIdentity = {
-  providerId: string
-  modelId: string
-}
-
-type CapabilityQuery = CapabilityQueryIdentity & {
-  options?: CapabilitySnapshotOptions
-}
+export type CapabilityQueryIdentity = Pick<CapabilitySnapshotQuery, 'providerId' | 'modelId'>
 
 export function useModelCapabilities(options?: UseModelCapabilitiesOptions) {
   const modelClient = createModelClient()
   const snapshot = shallowRef<RendererModelCapabilities | null>(null)
   const status = ref<CapabilityLoadStatus>('idle')
   const error = shallowRef<unknown>(null)
-  const lastQuery = shallowRef<CapabilityQuery | null>(null)
+  const lastQuery = shallowRef<CapabilitySnapshotQuery | null>(null)
   let requestId = 0
 
   const beginLoading = () => {
@@ -109,36 +102,31 @@ export function useModelCapabilities(options?: UseModelCapabilitiesOptions) {
   }
 
   const load = async (
-    providerId: string | null | undefined,
-    modelId: string | null | undefined,
-    queryOptions?: CapabilitySnapshotOptions
+    query: CapabilitySnapshotQuery | null | undefined
   ): Promise<RendererModelCapabilities | null> => {
     const currentRequestId = ++requestId
-    const normalizedProviderId = providerId?.trim()
-    const normalizedModelId = modelId?.trim()
+    const normalizedProviderId = query?.providerId.trim()
+    const normalizedModelId = query?.modelId.trim()
 
     snapshot.value = null
     error.value = null
 
-    if (!normalizedProviderId || !normalizedModelId) {
+    if (!query || !normalizedProviderId || !normalizedModelId) {
       lastQuery.value = null
       status.value = 'idle'
       return null
     }
 
-    lastQuery.value = {
+    const normalizedQuery: CapabilitySnapshotQuery = {
+      ...query,
       providerId: normalizedProviderId,
-      modelId: normalizedModelId,
-      options: queryOptions
+      modelId: normalizedModelId
     }
+    lastQuery.value = normalizedQuery
     status.value = 'loading'
 
     try {
-      const capabilities = await modelClient.getCapabilities(
-        normalizedProviderId,
-        normalizedModelId,
-        queryOptions
-      )
+      const capabilities = await modelClient.getCapabilities(normalizedQuery)
       if (currentRequestId !== requestId) return null
 
       snapshot.value = capabilities
@@ -156,11 +144,13 @@ export function useModelCapabilities(options?: UseModelCapabilitiesOptions) {
 
   const refresh = async (): Promise<RendererModelCapabilities | null> => {
     if (options) {
-      return await load(options.providerId.value, options.modelId.value)
+      const providerId = options.providerId.value
+      const modelId = options.modelId.value
+      return await load(providerId && modelId ? { providerId, modelId } : null)
     }
 
     const query = lastQuery.value
-    return query ? await load(query.providerId, query.modelId, query.options) : null
+    return query ? await load(query) : null
   }
 
   if (options) {

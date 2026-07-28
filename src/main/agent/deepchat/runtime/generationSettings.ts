@@ -110,7 +110,10 @@ export function mapPersistedGenerationPatch(
   if (sessionRow.reasoning_visibility !== null) {
     const snapshot =
       capabilitySnapshot ??
-      providerSettings.getCapabilitySnapshot(sessionRow.provider_id, sessionRow.model_id)
+      providerSettings.getCapabilitySnapshot({
+        providerId: sessionRow.provider_id,
+        modelId: sessionRow.model_id
+      })
     const reasoningVisibility = normalizeReasoningVisibility(
       snapshot.identity.providerId,
       snapshot.reasoningPortrait,
@@ -607,10 +610,10 @@ export function resolveInterleavedReasoningConfig(
   providerId: string,
   modelId: string,
   generationSettings: SessionGenerationSettings,
-  capabilitySnapshot: ResolvedModelCapabilitySnapshot = providerSettings.getCapabilitySnapshot(
+  capabilitySnapshot: ResolvedModelCapabilitySnapshot = providerSettings.getCapabilitySnapshot({
     providerId,
     modelId
-  )
+  })
 ): InterleavedReasoningConfig {
   const portrait = capabilitySnapshot.reasoningPortrait
   const isDeepSeekSeries = isDeepSeekSeriesModelId(modelId)

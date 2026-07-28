@@ -15,6 +15,7 @@ import type {
   SendMessageInput,
   UserMessageInlineItem
 } from '@shared/types/agent-interface'
+import type { CapabilitySnapshotQuery } from '@shared/types/model-capabilities'
 import { isAttachmentPreparationCandidate } from '@shared/utils/attachmentRepresentation'
 import {
   applyAcceptedComposerSubmission,
@@ -60,10 +61,7 @@ type SessionClientLike = {
 }
 
 type ModelClientLike = {
-  getCapabilities: (
-    providerId: string,
-    modelId: string
-  ) => Promise<{ supportsAudioInput?: boolean | null }>
+  getCapabilities: (query: CapabilitySnapshotQuery) => Promise<{ supportsAudioInput: boolean }>
 }
 
 type ComposerInputHandle = {
@@ -274,11 +272,8 @@ export function useComposerSubmit(options: UseComposerSubmitOptions) {
     }
 
     try {
-      const capabilities = await modelClient.getCapabilities(
-        selection.providerId,
-        selection.modelId
-      )
-      if (capabilities.supportsAudioInput !== false) {
+      const capabilities = await modelClient.getCapabilities(selection)
+      if (capabilities.supportsAudioInput) {
         return files
       }
 

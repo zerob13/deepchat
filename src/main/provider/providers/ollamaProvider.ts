@@ -86,7 +86,7 @@ export class OllamaProvider extends BaseLLMProvider {
         baseUrl: normalizeOllamaOpenAIBaseUrl(this.provider.baseUrl)
       },
       capabilitySnapshot: buildResolvedCapabilitySnapshot(capabilityIdentity, {
-        reasoning: modelConfig?.reasoning
+        reasoningEnabled: modelConfig?.reasoning
       }),
       providerSettings: this.providerSettings,
       defaultHeaders: this.defaultHeaders,
