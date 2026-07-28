@@ -346,14 +346,13 @@ export async function stageDarwinRuntime(extractDir, runtimeDir) {
   await normalizeDarwinHelperBundle(targetApp)
 }
 
-async function stageWindowsRuntime(extractDir, runtimeDir) {
+export async function stageWindowsRuntime(extractDir, runtimeDir) {
   const driver = await findFirst(extractDir, (file) => path.basename(file) === 'cua-driver.exe')
-  const uia = await findFirst(extractDir, (file) => path.basename(file) === 'cua-driver-uia.exe')
-  if (!driver || !uia) {
-    throw new Error('CUA Windows archive must contain cua-driver.exe and cua-driver-uia.exe')
+  if (!driver) {
+    throw new Error('CUA Windows archive is missing cua-driver.exe')
   }
   await fs.copyFile(driver, path.join(runtimeDir, 'cua-driver.exe'))
-  await fs.copyFile(uia, path.join(runtimeDir, 'cua-driver-uia.exe'))
+  await fs.rm(path.join(runtimeDir, 'cua-driver-uia.exe'), { force: true })
 }
 
 async function stageLinuxRuntime(extractDir, runtimeDir) {

@@ -278,10 +278,7 @@ function validateCuaRuntime(pluginDir, manifest, args) {
     [`darwin/${args.targetArch}`]: [
       `runtime/darwin/${args.targetArch}/${CUA_DARWIN_HELPER_APP}/Contents/MacOS/${CUA_DARWIN_HELPER_EXECUTABLE}`
     ],
-    [`win32/${args.targetArch}`]: [
-      `runtime/win32/${args.targetArch}/cua-driver.exe`,
-      `runtime/win32/${args.targetArch}/cua-driver-uia.exe`
-    ],
+    [`win32/${args.targetArch}`]: [`runtime/win32/${args.targetArch}/cua-driver.exe`],
     [`linux/${args.targetArch}`]: [`runtime/linux/${args.targetArch}/cua-driver`]
   }
   const requiredFiles = requiredByTarget[key]
@@ -290,6 +287,12 @@ function validateCuaRuntime(pluginDir, manifest, args) {
   }
   for (const relativePath of requiredFiles) {
     assertFile(pluginDir, relativePath, `CUA runtime binary ${key}`)
+  }
+  if (
+    targetPlatform === 'win32' &&
+    fileExists(pluginDir, `runtime/win32/${args.targetArch}/cua-driver-uia.exe`)
+  ) {
+    throw new Error(`CUA Windows runtime ${key} must not bundle cua-driver-uia.exe`)
   }
   if (targetPlatform === 'darwin') {
     validateCuaDarwinRuntime(pluginDir, args.targetArch)

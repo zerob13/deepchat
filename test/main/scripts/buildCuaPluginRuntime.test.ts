@@ -45,6 +45,7 @@ async function loadBuildRuntime() {
       }
     ) => { removedRpaths: string[] }
     stageDarwinRuntime: (extractDir: string, runtimeDir: string) => Promise<void>
+    stageWindowsRuntime: (extractDir: string, runtimeDir: string) => Promise<void>
   }
 }
 
@@ -115,6 +116,39 @@ describe('build-cua-plugin-runtime', () => {
     expect(plist).toContain('<key>CFBundleName</key>\n    <string>DeepChat Computer Use</string>')
     expect(plist).toContain('<key>CFBundleDisplayName</key>')
     expect(plist).toContain(`<string>${darwinHelperBinaryName}</string>`)
+  })
+
+  it('stages only the unsigned main Windows driver', async () => {
+    const { stageWindowsRuntime } = await loadBuildRuntime()
+    const extractDir = path.join(tempRoot, 'extract')
+    const runtimeDir = path.join(tempRoot, 'runtime')
+
+    await mkdir(path.join(extractDir, 'nested'), { recursive: true })
+    await mkdir(runtimeDir, { recursive: true })
+    await writeFile(path.join(extractDir, 'nested', 'cua-driver.exe'), 'driver')
+    await writeFile(path.join(extractDir, 'nested', 'cua-driver-uia.exe'), 'uia')
+    await writeFile(path.join(runtimeDir, 'cua-driver-uia.exe'), 'stale-uia')
+
+    await stageWindowsRuntime(extractDir, runtimeDir)
+
+    await expect(readFile(path.join(runtimeDir, 'cua-driver.exe'), 'utf8')).resolves.toBe('driver')
+    await expect(
+      readFile(path.join(runtimeDir, 'cua-driver-uia.exe'), 'utf8')
+    ).rejects.toThrow()
+  })
+
+  it('rejects Windows archives without the main driver', async () => {
+    const { stageWindowsRuntime } = await loadBuildRuntime()
+    const extractDir = path.join(tempRoot, 'extract')
+    const runtimeDir = path.join(tempRoot, 'runtime')
+
+    await mkdir(extractDir, { recursive: true })
+    await mkdir(runtimeDir, { recursive: true })
+    await writeFile(path.join(extractDir, 'cua-driver-uia.exe'), 'uia')
+
+    await expect(stageWindowsRuntime(extractDir, runtimeDir)).rejects.toThrow(
+      /missing cua-driver\.exe/
+    )
   })
 
   it('removes duplicate build-machine RPATHs before signing', async () => {

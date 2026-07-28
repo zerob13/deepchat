@@ -102,7 +102,6 @@ async function createCuaPluginFixture() {
     const runtimeDir = path.join(pluginDir, 'runtime', 'win32', arch)
     await mkdir(runtimeDir, { recursive: true })
     await writeFile(path.join(runtimeDir, 'cua-driver.exe'), 'driver')
-    await writeFile(path.join(runtimeDir, 'cua-driver-uia.exe'), 'uia')
   }
   const linuxRuntimeDir = path.join(pluginDir, 'runtime', 'linux', 'x64')
   const linuxExecutable = path.join(linuxRuntimeDir, 'cua-driver')
@@ -156,9 +155,28 @@ describe('package-plugin', () => {
     expect(manifest.mcpServers[0].args).toEqual(['mcp', '--no-daemon-relaunch'])
     expect(manifest.mcpServers[0].env.CUA_DRIVER_RS_MCP_NO_RELAUNCH).toBe('1')
     expect(Object.keys(files).filter((file) => file.startsWith('runtime/')).sort()).toEqual([
-      'runtime/win32/arm64/cua-driver-uia.exe',
       'runtime/win32/arm64/cua-driver.exe'
     ])
+  })
+
+  it('rejects Windows CUA packages that include the unsigned UIA worker', async () => {
+    const fixture = await createCuaPluginFixture()
+    const outDir = path.join(fixture.root, 'out')
+    const uiaPath = path.join(
+      fixture.pluginDir,
+      'runtime',
+      'win32',
+      'x64',
+      'cua-driver-uia.exe'
+    )
+    await writeFile(uiaPath, 'uia')
+
+    const result = runPackagePlugin(fixture.pluginDir, outDir, 'win32', 'x64')
+
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain(
+      'CUA Windows runtime win32/x64 must not bundle cua-driver-uia.exe'
+    )
   })
 
   it('packages the DeepChat-owned macOS CUA helper identity for each macOS arch', async () => {
