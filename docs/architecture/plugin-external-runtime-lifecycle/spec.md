@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation in progress.
+Implementation complete. Automated validation is complete; native release gates remain pending.
 
 ## Context
 
@@ -133,13 +133,19 @@ A sentinel is evidence: it is persisted immediately before a risky runtime spawn
 after a verified clean stop. A quarantine is policy: on startup, a residual sentinel for the same
 runtime fingerprint prevents automatic or on-demand restart.
 
-The fingerprint includes `pluginId`, `runtimeId`, target, and the verified executable digest. A new
-fingerprint is eligible for one controlled retry, which allows a repaired runtime release to
-recover without silently clearing evidence for the old binary.
+Each spawn attempt has a UUID `attemptId`. A clean stop may clear persisted evidence only when both
+the fingerprint and `attemptId` still match, so an older stop cannot erase evidence written by a
+newer attempt.
+
+The fingerprint includes `pluginId`, `runtimeId`, target, and the verified executable digest. A
+new fingerprint is eligible for one supervised start, which allows a repaired runtime release to
+recover without silently treating the old binary as healthy. Retrying the same quarantined
+fingerprint requires the explicit, private supervisor authorization path.
 
 User intent remains enabled while quarantined. The user action is `runtime.retry`, not “enable
-plugin.” Integrity mismatch is a hard block and cannot be bypassed with retry; repair or reinstall
-is required.
+plugin.” Integrity failure is tracked separately from quarantine, remains visible while stale
+evidence exists, and cannot be bypassed with retry; repair or reinstall followed by an integrity
+recheck is required before `runtime.retry` becomes available.
 
 ### Migration
 
@@ -188,9 +194,12 @@ metadata response validates:
 - MCP protocol version `2025-06-18`;
 - child PID, embedded mode, and host bundle identifier.
 
-The endpoint is unique per attempt, private to the user, persisted in the sentinel for exact stale
-cleanup, and constrained to the platform path-length rules. Start requests are coalesced and stop
-is idempotent.
+The endpoint is unique per attempt, private to the user, persisted before spawn, and constrained to
+the platform path-length rules. On POSIX, the supervisor adds the socket device/inode identity
+after readiness and stale recovery unlinks only a managed endpoint whose current identity matches.
+If identity was never observed, recovery leaves the path untouched and uses a new unique endpoint.
+Windows named pipes disappear with their owning process and require no filesystem unlink. Start
+requests are coalesced and stop is idempotent.
 
 ## Controlled process environment
 
@@ -289,7 +298,22 @@ Native release gates:
 - disable, crash, stale-sentinel quarantine, retry, and upgrade recovery on every target.
 
 CI runner success is not a substitute for Windows Defender or Linux desktop-session validation.
-DeepChat Linux builds continue normally. Before this architecture lands, a release must not ship
-another Linux CUA artifact that still bundles and auto-starts 0.7.1; if native CUA validation
-fails, whether to omit that optional plugin artifact is a release decision, not a reason to stop
-building the Linux application.
+DeepChat Linux builds continue normally. Until a release containing this architecture lands, a
+release must not ship another Linux CUA artifact that still bundles and auto-starts 0.7.1; if
+native CUA validation fails, whether to omit that optional plugin artifact is a release decision,
+not a reason to stop building the Linux application.
+
+## Implementation verification
+
+Automated verification completed on 2026-07-28:
+
+- `pnpm test`: 657 files and 6994 tests passed; 20 files and 277 tests were conditionally skipped.
+- `pnpm run build`, `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and
+  `pnpm run typecheck` passed.
+- CUA manifest validation and a real `darwin/arm64` plugin bundle/verification passed with the
+  development signing path.
+- Provider/ACP catalog refresh validation passed after the build-generated snapshots changed.
+
+The macOS development artifact was not notarized and did not exercise TCC, screen capture, or input.
+Windows, Linux desktop-session, macOS x64, and release-signed/notarized native gates remain release
+blockers and are tracked in `tasks.md`.

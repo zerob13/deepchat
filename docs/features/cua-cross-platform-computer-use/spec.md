@@ -2,7 +2,8 @@
 
 ## Status
 
-Implemented for driver 0.7.1; lifecycle hardening and the 0.12.6 upgrade are in progress.
+Implemented for driver 0.12.6 with the supervised embedded lifecycle. Native release validation
+remains pending.
 
 The maintained runtime and process-ownership contract now lives in
 `docs/architecture/plugin-external-runtime-lifecycle/`. Where this historical feature document
@@ -28,8 +29,8 @@ work changes the lifecycle and runtime version without collapsing the applicatio
 plugin build matrices.
 
 Upstream `trycua/cua` now publishes the Rust CUA driver as cross-platform release artifacts. The
-currently shipped driver is `cua-driver-rs-v0.7.1`. Issue #2039 demonstrated that retaining its
-eager Linux/X11 startup is unsafe. The next integration pins `cua-driver-rs-v0.12.6` and adds a
+previously shipped driver was `cua-driver-rs-v0.7.1`. Issue #2039 demonstrated that retaining its
+eager Linux/X11 startup is unsafe. The current integration pins `cua-driver-rs-v0.12.6` and adds a
 DeepChat-owned embedded lifecycle adapter, static tool discovery, crash quarantine, controlled
 environment inheritance, and pre-spawn integrity checks.
 

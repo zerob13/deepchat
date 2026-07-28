@@ -1,5 +1,9 @@
 # Plugin External Runtime Lifecycle Plan
 
+## Status
+
+Implementation and automated validation are complete. Native release validation remains pending.
+
 ## 1. Freeze the contracts
 
 - Extend plugin manifest types and validation for `startMode`, `surfaces`, `toolCatalog`,

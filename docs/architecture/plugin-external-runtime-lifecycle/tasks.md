@@ -2,72 +2,73 @@
 
 ## Contract and ownership
 
-- [ ] Add and validate manifest lifecycle, surface, catalog, environment, and adapter fields.
-- [ ] Add an in-memory trusted registry for plugin-owned servers.
-- [ ] Remove persisted MCP `enabled` as a second source of plugin user intent.
-- [ ] Reject server-name ownership collisions and untrusted lifecycle bypasses.
+- [x] Add and validate manifest lifecycle, surface, catalog, environment, and adapter fields.
+- [x] Add an in-memory trusted registry for plugin-owned servers.
+- [x] Remove persisted MCP `enabled` as a second source of plugin user intent.
+- [x] Reject server-name ownership collisions and untrusted lifecycle bypasses.
 
 ## Supervisor and startup
 
-- [ ] Implement coalesced start, idempotent stop, symmetric ownership, and transient status.
-- [ ] Gate all public MCP lifecycle methods at the service boundary.
-- [ ] Route initialization, manual toggle, config restart, auth restart, renderer, disable, and
+- [x] Implement coalesced start, idempotent stop, symmetric ownership, and transient status.
+- [x] Gate all public MCP lifecycle methods at the service boundary.
+- [x] Route initialization, manual toggle, config restart, auth restart, renderer, disable, and
       shutdown paths through the supervisor.
-- [ ] Split startup into plugin registration, non-plugin MCP initialization, and supervisor
+- [x] Split startup into plugin registration, non-plugin MCP initialization, and supervisor
       reconcile.
-- [ ] Keep Feishu eager and set CUA to on-demand.
+- [x] Keep Feishu eager and set CUA to on-demand.
 
 ## Discovery and dispatch
 
-- [ ] Generate and package the CUA static MCP tool catalog.
-- [ ] Merge catalog definitions with live client definitions without duplicate or unstable names.
-- [ ] Ensure runtime on first tool call, then verify the live tool before dispatch.
-- [ ] Reject on-demand prompt/resource manifests and every silent catalog fallback.
+- [x] Generate and package the CUA static MCP tool catalog.
+- [x] Merge catalog definitions with live client definitions without duplicate or unstable names.
+- [x] Ensure runtime on first tool call, then verify the live tool before dispatch.
+- [x] Reject on-demand prompt/resource manifests and every silent catalog fallback.
 
 ## Migration and safety state
 
-- [ ] Add the versioned, safe-side-first legacy CUA migration and idempotency tests.
-- [ ] Persist pre-spawn sentinels and clear them only after clean stop.
-- [ ] Derive quarantine from stale evidence and a verified runtime fingerprint.
-- [ ] Add controlled retry for a changed fingerprint and explicit user retry for the same one.
-- [ ] Treat integrity mismatch as non-bypassable and keep installation intent unchanged.
+- [x] Add the versioned, safe-side-first legacy CUA migration and idempotency tests.
+- [x] Persist pre-spawn sentinels and clear only matching spawn-attempt evidence after clean stop.
+- [x] Derive quarantine from stale evidence and a verified runtime fingerprint.
+- [x] Add a supervised changed-fingerprint start and explicit user retry for the same fingerprint.
+- [x] Treat integrity mismatch as non-bypassable and keep installation intent unchanged.
 
 ## CUA 0.12.6
 
-- [ ] Pin tag, commit, assets, checksums, and exact protocol versions.
-- [ ] Implement private endpoint generation and daemon metadata handshake.
-- [ ] Keep daemon stdin open for parent-liveness and guarantee timeout/failure cleanup.
-- [ ] Remove obsolete 0.7.1 launch flags and environment variables.
-- [ ] Keep the daemon warm after first use and stop it on disable/shutdown.
+- [x] Pin tag, commit, assets, checksums, and exact protocol versions.
+- [x] Implement private endpoint generation and daemon metadata handshake.
+- [x] Keep daemon stdin open for parent-liveness and guarantee timeout/failure cleanup.
+- [x] Remove obsolete 0.7.1 launch flags and environment variables.
+- [x] Keep the daemon warm after first use and stop it on disable/shutdown.
 
 ## Environment and integrity
 
-- [ ] Add legacy-compatible `inheritEnv` and the explicit cross-platform minimal baseline.
-- [ ] Generate a packaged CUA integrity descriptor and verify it before every spawn.
-- [ ] Reject path escape, symlink/non-regular runtime files, missing files, and unexpected
+- [x] Add legacy-compatible `inheritEnv` and the explicit cross-platform minimal baseline.
+- [x] Generate a packaged CUA integrity descriptor and verify it before every spawn.
+- [x] Reject path escape, symlink/non-regular runtime files, missing files, and unexpected
       executables.
-- [ ] Update the macOS signature/identity/hardened-runtime/exact-entitlement contract.
-- [ ] Package only the Windows primary executable and disable UIA-worker opt-in.
-- [ ] Document Feishu's `npx` artifact-closure exception and create a follow-up task after P1.
+- [x] Update the macOS signature/identity/hardened-runtime/exact-entitlement contract.
+- [x] Package only the Windows primary executable and disable UIA-worker opt-in.
+- [x] Document Feishu's `npx` artifact-closure exception.
+- [ ] Vendor and lock Feishu's runtime dependency closure as a post-P1 security follow-up.
 
 ## UX and diagnostics
 
-- [ ] Expose installation intent, runtime state, quarantine, and integrity errors separately.
-- [ ] Add “Test runtime” and recoverable “Retry runtime” actions for on-demand CUA.
-- [ ] Keep generic MCP controls from directly starting/stopping plugin-owned servers.
-- [ ] Provide actionable Windows Security guidance without suggesting exclusions.
+- [x] Expose installation intent, runtime state, quarantine, and integrity errors separately.
+- [x] Add “Test runtime” and recoverable “Retry runtime” actions for on-demand CUA.
+- [x] Keep generic MCP controls from directly starting/stopping plugin-owned servers.
+- [x] Provide actionable Windows Security guidance without suggesting exclusions.
 
 ## Automated validation
 
-- [ ] Cover all lifecycle entry points and unauthorized low-level access.
-- [ ] Cover concurrent first call, disable-during-start, shutdown, and failed-start cleanup.
-- [ ] Cover catalog/policy parity, live-tool revalidation, prompts/resources scope, and name
+- [x] Cover all lifecycle entry points and unauthorized low-level access.
+- [x] Cover concurrent first call, disable-during-start, shutdown, and failed-start cleanup.
+- [x] Cover catalog/policy parity, live-tool revalidation, prompts/resources scope, and name
       conflicts.
-- [ ] Cover migration re-entry, stale sentinel, changed fingerprint, retry, and integrity failure.
-- [ ] Cover environment allowlists and preservation of legacy MCP inheritance.
-- [ ] Cover per-target package layout, exact runtime files, checksums, and unsupported targets.
-- [ ] Run `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and `pnpm run typecheck`.
-- [ ] Run focused plugin, MCP, ToolManager, package, signing, and workflow tests.
+- [x] Cover migration re-entry, stale sentinel, changed fingerprint, retry, and integrity failure.
+- [x] Cover environment allowlists and preservation of legacy MCP inheritance.
+- [x] Cover per-target package layout, exact runtime files, checksums, and unsupported targets.
+- [x] Run `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and `pnpm run typecheck`.
+- [x] Run focused plugin, MCP, ToolManager, package, signing, and workflow tests.
 
 ## Native release gates
 
@@ -79,4 +80,21 @@
       recorded.
 - [ ] Linux x64 X11: reproduce the #2039 activation path with no desktop/session loss.
 - [ ] Linux x64 Wayland: validate discovery, input, capture, restart, and known limitations.
-- [ ] Confirm DeepChat Linux application releases remain independent from optional CUA artifacts.
+- [x] Confirm statically that DeepChat Linux application releases remain independent from optional
+      CUA artifacts.
+
+## Verification record
+
+Completed on 2026-07-28:
+
+- `pnpm test`: 657 files and 6994 tests passed; 20 files and 277 tests were conditionally skipped.
+- `pnpm run build`, `pnpm run format`, `pnpm run i18n`, `pnpm run lint`, and
+  `pnpm run typecheck` passed.
+- `pnpm run plugin:validate -- --name cua` passed.
+- `pnpm run plugin:bundle -- --name cua --platform darwin --arch arm64` passed and produced a
+  development-signed 0.12.6 artifact.
+- CUA plugin verification passed for `darwin/arm64` with `build/bundled-plugins` as the plugin
+  root.
+
+The development artifact does not satisfy the macOS native release gate. No Windows or Linux
+desktop-session native gate was run in this environment.
