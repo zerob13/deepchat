@@ -5,6 +5,7 @@ import {
   browserAttachCurrentWindowRoute,
   browserApplyImportRoute,
   browserClearSandboxDataRoute,
+  browserDismissPreviewRoute,
   browserDestroyRoute,
   browserDetachRoute,
   browserGetStatusRoute,
@@ -17,6 +18,10 @@ import {
   browserSetPreviewModeRoute,
   browserUpdateCurrentWindowBoundsRoute
 } from './routes/browser.routes'
+import {
+  computerUseDismissPreviewRoute,
+  computerUseSetPreviewModeRoute
+} from './routes/computerUse.routes'
 import {
   chatCancelSubmissionRoute,
   chatRespondToolInteractionRoute,
@@ -512,6 +517,7 @@ import {
 } from './routes/workspace.routes'
 
 export * from './routes/browser.routes'
+export * from './routes/computerUse.routes'
 export * from './routes/acp-terminal.routes'
 export * from './routes/chat.routes'
 export * from './routes/config.routes'
@@ -697,8 +703,11 @@ const DEEPCHAT_ROUTE_CATALOG_PART_2 = {
   [browserClearSandboxDataRoute.name]: browserClearSandboxDataRoute,
   [browserScanImportSourcesRoute.name]: browserScanImportSourcesRoute,
   [browserSetPreviewModeRoute.name]: browserSetPreviewModeRoute,
+  [browserDismissPreviewRoute.name]: browserDismissPreviewRoute,
   [browserPreviewImportRoute.name]: browserPreviewImportRoute,
   [browserApplyImportRoute.name]: browserApplyImportRoute,
+  [computerUseSetPreviewModeRoute.name]: computerUseSetPreviewModeRoute,
+  [computerUseDismissPreviewRoute.name]: computerUseDismissPreviewRoute,
   [tabCaptureCurrentAreaRoute.name]: tabCaptureCurrentAreaRoute,
   [tabStitchImagesWithWatermarkRoute.name]: tabStitchImagesWithWatermarkRoute
 } satisfies Record<string, RouteContract>
