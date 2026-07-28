@@ -858,7 +858,7 @@ describe('AI SDK runtime', () => {
 
   it('uses wire-shaped gpt-image-2 options for OpenAI-compatible image providers', async () => {
     mockCreateAiSdkProviderContext.mockReturnValueOnce({
-      providerOptionsKey: 'new-api',
+      providerOptionsKey: 'newApi',
       apiType: 'openai_chat',
       model: {},
       imageModel: {},
@@ -896,7 +896,7 @@ describe('AI SDK runtime', () => {
     expect(mockGenerateImage).toHaveBeenCalledWith(
       expect.objectContaining({
         providerOptions: {
-          'new-api': {
+          newApi: {
             output_format: 'jpeg',
             output_compression: 70
           }
@@ -2016,7 +2016,7 @@ describe('AI SDK runtime', () => {
 
   it('omits K3 sampling parameters and legacy thinking in non-streaming requests', async () => {
     mockCreateAiSdkProviderContext.mockReturnValue({
-      providerOptionsKey: 'new-api',
+      providerOptionsKey: 'newApi',
       apiType: 'openai_chat',
       model: {},
       endpoint: 'https://new-api.example.com/v1/chat/completions'
@@ -2075,10 +2075,10 @@ describe('AI SDK runtime', () => {
     const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, any>
     expect(request).not.toHaveProperty('temperature')
     expect(request).not.toHaveProperty('topP')
-    expect(request.providerOptions?.['new-api']).toMatchObject({
+    expect(request.providerOptions?.newApi).toMatchObject({
       reasoningEffort: 'max'
     })
-    expect(request.providerOptions?.['new-api']).not.toHaveProperty('thinking')
+    expect(request.providerOptions?.newApi).not.toHaveProperty('thinking')
     expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
     expect(tracePayloads[0]?.body).not.toHaveProperty('topP')
     expect(tracePayloads[0]?.modelConfig).toMatchObject({
@@ -2091,7 +2091,7 @@ describe('AI SDK runtime', () => {
 
   it('omits K3 sampling parameters and legacy thinking in streaming requests', async () => {
     mockCreateAiSdkProviderContext.mockReturnValue({
-      providerOptionsKey: 'new-api',
+      providerOptionsKey: 'newApi',
       apiType: 'openai_chat',
       model: {},
       endpoint: 'https://new-api.example.com/v1/chat/completions'
@@ -2150,17 +2150,17 @@ describe('AI SDK runtime', () => {
     const request = mockStreamText.mock.calls[0]?.[0] as Record<string, any>
     expect(request).not.toHaveProperty('temperature')
     expect(request).not.toHaveProperty('topP')
-    expect(request.providerOptions?.['new-api']).toMatchObject({
+    expect(request.providerOptions?.newApi).toMatchObject({
       reasoningEffort: 'high'
     })
-    expect(request.providerOptions?.['new-api']).not.toHaveProperty('thinking')
+    expect(request.providerOptions?.newApi).not.toHaveProperty('thinking')
     expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
     expect(tracePayloads[0]?.body).not.toHaveProperty('topP')
   })
 
   it('removes inherited K3 effort when the catalog declares a non-effort mode', async () => {
     mockCreateAiSdkProviderContext.mockReturnValue({
-      providerOptionsKey: 'new-api',
+      providerOptionsKey: 'newApi',
       apiType: 'openai_chat',
       model: {},
       endpoint: 'https://new-api.example.com/v1/chat/completions'
@@ -2205,7 +2205,7 @@ describe('AI SDK runtime', () => {
     )
 
     const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, any>
-    expect(request.providerOptions?.['new-api'] ?? {}).not.toHaveProperty('reasoningEffort')
+    expect(request.providerOptions?.newApi ?? {}).not.toHaveProperty('reasoningEffort')
   })
 
   it('does not inject or remove reasoning effort for non-K3 models', async () => {

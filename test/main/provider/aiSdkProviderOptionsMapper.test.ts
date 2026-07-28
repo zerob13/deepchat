@@ -374,7 +374,7 @@ describe('AI SDK provider options', () => {
     const result = buildProviderOptions({
       providerId: 'new-api',
       capabilityProviderId: 'moonshot',
-      providerOptionsKey: 'new-api',
+      providerOptionsKey: 'newApi',
       apiType: 'openai_chat',
       modelId: 'kimi-k3',
       modelConfig: {
@@ -394,10 +394,10 @@ describe('AI SDK provider options', () => {
       messages: []
     })
 
-    expect(result.providerOptions?.['new-api']).toMatchObject({
+    expect(result.providerOptions?.newApi).toMatchObject({
       reasoningEffort: 'max'
     })
-    expect(result.providerOptions?.['new-api']).not.toHaveProperty('thinking')
+    expect(result.providerOptions?.newApi).not.toHaveProperty('thinking')
   })
 
   it('routes Ollama reasoning effort through OpenAI-compatible provider options', () => {

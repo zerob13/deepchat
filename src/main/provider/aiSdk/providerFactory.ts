@@ -68,6 +68,12 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function toOpenAICompatibleProviderOptionsKey(providerName: string): string {
+  // Mirrors the private toCamelCase helper in @ai-sdk/openai-compatible@3.0.14.
+  // Broader camel-case transforms can produce namespaces the adapter does not read.
+  return providerName.replace(/[_-]([a-z])/g, (match) => match[1].toUpperCase())
+}
+
 function parseOpenAICompatiblePromptCacheMarker(
   value: unknown
 ): OpenAICompatiblePromptCacheMarker | undefined {
@@ -702,7 +708,7 @@ export function createAiSdkProviderContext(
       })
 
       return {
-        providerOptionsKey: params.provider.id,
+        providerOptionsKey: toOpenAICompatibleProviderOptionsKey(params.provider.id),
         apiType: 'openai_chat',
         model: maybeWrapModel(provider.chatModel(params.modelId) as any),
         embeddingModel: provider.embeddingModel(params.modelId),
