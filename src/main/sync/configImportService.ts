@@ -7,6 +7,12 @@ import { AppSettingsTable } from '@/settings/data/tables/appSettingsTable'
 import { ProviderSettingsTable } from '@/provider/data/settingsTable'
 import { McpSettingsTable } from '@/mcp/data/settingsTable'
 import { AgentCatalogSettingsTable } from '@/agent/acp/catalog/data/settingsTable'
+import {
+  LEGACY_MODEL_CONFIG_META_KEY,
+  normalizeUserModelConfigEntry,
+  USER_MODEL_CONFIG_MIGRATION_ID
+} from '@/provider/userModelConfig'
+import { RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID } from '@/provider/providerModelFacts'
 import { openSQLiteDatabase } from '../data/databaseConnection'
 
 export const CURRENT_SYNC_BACKUP_VERSION = 2
@@ -154,12 +160,24 @@ export class SyncConfigImportService {
     }
   }
 
-  ensureConfigMigrationMarker(): void {
+  finalizeSqliteConfigImport(): void {
     const db = this.openDatabase(this.targetDbPath)
     try {
       const appSettingsTable = new AppSettingsTable(db)
+      const providerSettings = new ProviderSettingsTable(db)
       appSettingsTable.createTable()
+      providerSettings.createTable()
+      const providerModelResult = providerSettings.migrateProviderModelsToRawFacts()
+      const modelConfigResult = providerSettings.migrateModelConfigsToUserOnly()
+      console.info(
+        `[Sync] Normalized imported provider models: ${providerModelResult.updated} of ${providerModelResult.scanned} updated`
+      )
+      console.info(
+        `[Sync] Normalized imported model configs: ${modelConfigResult.preserved} preserved, ${modelConfigResult.removed} removed`
+      )
       appSettingsTable.markConfigMigrationApplied()
+      appSettingsTable.markConfigMigrationApplied(RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID)
+      appSettingsTable.markConfigMigrationApplied(USER_MODEL_CONFIG_MIGRATION_ID)
     } finally {
       db.close()
     }
@@ -311,9 +329,28 @@ export class SyncConfigImportService {
       return
     }
     payload.sections.modelConfigs = true
+    const legacyMeta = modelConfig[LEGACY_MODEL_CONFIG_META_KEY]
+    const legacyUserKeys = new Set(
+      isRecord(legacyMeta) && Array.isArray(legacyMeta.userConfigKeys)
+        ? legacyMeta.userConfigKeys.filter(
+            (key): key is string => typeof key === 'string' && key.length > 0
+          )
+        : []
+    )
+    const normalizedConfigs = Object.fromEntries(
+      Object.entries(modelConfig).flatMap(([cacheKey, value]) => {
+        if (cacheKey === LEGACY_MODEL_CONFIG_META_KEY) {
+          return []
+        }
+        const entry = normalizeUserModelConfigEntry(value, {
+          legacyUserKey: legacyUserKeys.has(cacheKey)
+        })
+        return entry ? [[cacheKey, entry]] : []
+      })
+    )
     payload.modelConfigs = {
       ...payload.modelConfigs,
-      ...modelConfig
+      ...normalizedConfigs
     }
   }
 

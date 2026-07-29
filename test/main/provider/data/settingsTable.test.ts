@@ -112,6 +112,160 @@ describeIfSqlite('ProviderSettingsTable', () => {
       id: 'gpt-4',
       providerId: 'openai'
     })
+    expect(
+      table.setModelConfigStoreEntry('openai-_-provider-cache', {
+        id: 'provider-cache',
+        providerId: 'openai',
+        source: 'provider',
+        config: { maxTokens: 4096, isUserDefined: false }
+      })
+    ).toBe(false)
+    expect(table.getModelConfigStoreEntry('openai-_-provider-cache')).toBeUndefined()
+
+    db.close()
+  })
+
+  it('migrates legacy rows using explicit user intent without value heuristics', () => {
+    const { db, table } = createTable()
+    const insert = db.prepare(
+      `INSERT INTO model_configs (
+        cache_key, provider_id, model_id, source, config_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, 1)`
+    )
+    insert.run(
+      '__meta__',
+      '',
+      '',
+      null,
+      JSON.stringify({ userConfigKeys: ['legacy-user', 'explicit-provider'] })
+    )
+    insert.run(
+      'legacy-user',
+      'openai',
+      'legacy',
+      null,
+      JSON.stringify({
+        id: 'legacy',
+        providerId: 'openai',
+        config: { maxTokens: 1234, isUserDefined: false }
+      })
+    )
+    insert.run(
+      'explicit-provider',
+      'openai',
+      'provider-cache',
+      'provider',
+      JSON.stringify({
+        id: 'provider-cache',
+        providerId: 'openai',
+        source: 'provider',
+        config: { maxTokens: 4096, isUserDefined: false }
+      })
+    )
+    insert.run(
+      'unknown-legacy',
+      'openai',
+      'unknown',
+      null,
+      JSON.stringify({
+        id: 'unknown',
+        providerId: 'openai',
+        config: { maxTokens: 9999, isUserDefined: false }
+      })
+    )
+    insert.run(
+      'explicit-user',
+      'openai',
+      'custom',
+      'user',
+      JSON.stringify({
+        id: 'custom',
+        providerId: 'openai',
+        source: 'user',
+        config: { maxTokens: 200000, isUserDefined: true }
+      })
+    )
+
+    expect(table.migrateModelConfigsToUserOnly()).toEqual({ removed: 3, preserved: 2 })
+    expect(table.listModelConfigStore()).toEqual({
+      'legacy-user': expect.objectContaining({
+        source: 'user',
+        config: expect.objectContaining({ maxTokens: 1234, isUserDefined: true })
+      }),
+      'explicit-user': expect.objectContaining({
+        source: 'user',
+        config: expect.objectContaining({ maxTokens: 200000, isUserDefined: true })
+      })
+    })
+    const timestamps = db
+      .prepare(
+        `SELECT cache_key, created_at, updated_at
+         FROM model_configs
+         ORDER BY cache_key`
+      )
+      .all() as Array<{ cache_key: string; created_at: number; updated_at: number }>
+    expect(timestamps).toEqual([
+      { cache_key: 'explicit-user', created_at: 1, updated_at: 1 },
+      expect.objectContaining({ cache_key: 'legacy-user', created_at: 1 })
+    ])
+    expect(timestamps.find((row) => row.cache_key === 'legacy-user')?.updated_at).toBeGreaterThan(1)
+
+    db.close()
+  })
+
+  it('migrates persisted provider projections without touching remote upstream facts', () => {
+    const { db, table } = createTable()
+    const catalogProjection = {
+      id: 'gpt-5.6-sol',
+      name: 'GPT-5.6 Sol',
+      group: 'Codex',
+      providerId: 'openai-codex',
+      isCustom: false,
+      contextLength: 16_000,
+      maxTokens: 4096,
+      vision: false,
+      functionCall: true,
+      reasoning: false,
+      type: 'chat',
+      selectableEndpointTypes: ['openai']
+    } as MODEL_META
+    const remoteFacts = {
+      id: 'upstream-model',
+      name: 'Upstream Model',
+      group: 'remote',
+      providerId: 'new-api',
+      isCustom: false,
+      contextLength: 123_456,
+      maxTokens: 12_345,
+      selectableEndpointTypes: ['openai']
+    } as MODEL_META
+    table.replaceProviderModels('openai-codex', 'provider', [catalogProjection])
+    table.replaceProviderModels('new-api', 'provider', [remoteFacts])
+    const restoreLegacyProjection = db.prepare(
+      `UPDATE provider_models
+       SET model_json = ?
+       WHERE provider_id = ? AND model_id = ? AND source = 'provider'`
+    )
+    restoreLegacyProjection.run(
+      JSON.stringify(catalogProjection),
+      'openai-codex',
+      catalogProjection.id
+    )
+    restoreLegacyProjection.run(JSON.stringify(remoteFacts), 'new-api', remoteFacts.id)
+
+    expect(table.migrateProviderModelsToRawFacts()).toEqual({ scanned: 2, updated: 2 })
+    expect(table.listProviderModels('openai-codex', 'provider')[0]).not.toHaveProperty(
+      'contextLength'
+    )
+    expect(table.listProviderModels('openai-codex', 'provider')[0]).not.toHaveProperty('maxTokens')
+    expect(table.listProviderModels('new-api', 'provider')[0]).toMatchObject({
+      contextLength: 123_456,
+      maxTokens: 12_345
+    })
+    expect(table.listProviderModels('new-api', 'provider')[0]).not.toHaveProperty(
+      'selectableEndpointTypes'
+    )
+    expect(table.migrateProviderModelsToRawFacts()).toEqual({ scanned: 2, updated: 0 })
 
     db.close()
   })

@@ -12,8 +12,13 @@ import { DEFAULT_SYSTEM_PROMPT } from '@/agent/promptSettings'
 import type { ProviderDatabase } from '@/provider/data/database'
 import type { McpDatabase } from '@/mcp/data/database'
 import type { AgentDatabase } from '@/agent/data/database'
+import {
+  LEGACY_MODEL_CONFIG_META_KEY,
+  normalizeUserModelConfigEntry,
+  USER_MODEL_CONFIG_MIGRATION_ID
+} from '@/provider/userModelConfig'
+import { RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID } from '@/provider/providerModelFacts'
 
-const MODEL_CONFIG_META_KEY = '__meta__'
 const PROVIDER_MODELS_DIR = 'provider_models'
 const APP_STARTUP_STATE_MIGRATION_ID = 'app-startup-state-v1'
 const LEGACY_APP_STARTUP_STATE_KEYS = [
@@ -22,8 +27,7 @@ const LEGACY_APP_STARTUP_STATE_KEYS = [
 ] as const
 
 interface LegacyModelConfigMeta {
-  lastRefreshVersion?: string
-  userConfigKeys?: string[]
+  userConfigKeys?: unknown
 }
 
 export interface ConfigMigrationResult {
@@ -45,7 +49,9 @@ export function migrateConfigStorage(options: {
   const currentAppVersion = options.currentAppVersion ?? app.getVersion()
   const previousAppVersion = options.settings.get<string>('appVersion')
 
-  migrateBusinessConfigToSqlite(options, currentAppVersion)
+  migrateBusinessConfigToSqlite(options)
+  migrateProviderModelsToRawFacts(options)
+  migrateModelConfigsToUserOnly(options)
   migrateSensitiveConfigToSqlite(options)
   migrateAppStartupState(options)
 
@@ -57,10 +63,7 @@ export function migrateConfigStorage(options: {
   return { previousAppVersion, appVersionChanged }
 }
 
-function migrateBusinessConfigToSqlite(
-  options: Parameters<typeof migrateConfigStorage>[0],
-  currentAppVersion: string
-): void {
+function migrateBusinessConfigToSqlite(options: Parameters<typeof migrateConfigStorage>[0]): void {
   const appSettingsTable = options.database.appSettingsTable
   if (appSettingsTable.hasConfigMigration()) {
     return
@@ -92,7 +95,7 @@ function migrateBusinessConfigToSqlite(
     providerSettings.setModelStatus(statusKey, parsed.providerId, parsed.modelId, enabled)
   }
 
-  for (const [cacheKey, config] of Object.entries(readLegacyModelConfigs(currentAppVersion))) {
+  for (const [cacheKey, config] of Object.entries(readLegacyModelConfigs())) {
     providerSettings.setModelConfigStoreEntry(cacheKey, config)
   }
 
@@ -110,6 +113,34 @@ function migrateBusinessConfigToSqlite(
   agentSettings.setAgentSetting('version', '4')
   agentSettings.setAgentMcpSelections(options.acpCatalog.sharedMcpSelections)
   appSettingsTable.markConfigMigrationApplied()
+}
+
+function migrateProviderModelsToRawFacts(
+  options: Parameters<typeof migrateConfigStorage>[0]
+): void {
+  const appSettingsTable = options.database.appSettingsTable
+  if (appSettingsTable.hasConfigMigration(RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID)) {
+    return
+  }
+
+  const result = options.providerDatabase.settingsTable.migrateProviderModelsToRawFacts()
+  console.info(
+    `[Config] Migrated ${result.updated} of ${result.scanned} provider models to raw facts`
+  )
+  appSettingsTable.markConfigMigrationApplied(RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID)
+}
+
+function migrateModelConfigsToUserOnly(options: Parameters<typeof migrateConfigStorage>[0]): void {
+  const appSettingsTable = options.database.appSettingsTable
+  if (appSettingsTable.hasConfigMigration(USER_MODEL_CONFIG_MIGRATION_ID)) {
+    return
+  }
+
+  const result = options.providerDatabase.settingsTable.migrateModelConfigsToUserOnly()
+  console.info(
+    `[Config] Migrated model configs to user-only storage: ${result.preserved} preserved, ${result.removed} removed`
+  )
+  appSettingsTable.markConfigMigrationApplied(USER_MODEL_CONFIG_MIGRATION_ID)
 }
 
 function migrateSensitiveConfigToSqlite(options: Parameters<typeof migrateConfigStorage>[0]): void {
@@ -185,41 +216,29 @@ function migrateAppStartupState(options: Parameters<typeof migrateConfigStorage>
   appSettingsTable.markConfigMigrationApplied(APP_STARTUP_STATE_MIGRATION_ID)
 }
 
-function readLegacyModelConfigs(currentAppVersion: string): Record<string, IModelConfig> {
+function readLegacyModelConfigs(): Record<string, IModelConfig> {
   const store = new ElectronStore<Record<string, IModelConfig | LegacyModelConfigMeta>>({
     name: 'model-config'
   })
   const snapshot = store.store
-  const meta = snapshot[MODEL_CONFIG_META_KEY] as LegacyModelConfigMeta | undefined
-  const entries = Object.entries(snapshot).filter(([key]) => key !== MODEL_CONFIG_META_KEY)
-
-  if (meta) {
-    const allowedKeys =
-      meta.lastRefreshVersion === currentAppVersion
-        ? null
-        : new Set(meta.userConfigKeys?.filter((key) => typeof key === 'string') ?? [])
-    return Object.fromEntries(
-      entries.filter(([key, value]) => value && (!allowedKeys || allowedKeys.has(key)))
-    ) as Record<string, IModelConfig>
-  }
+  const meta = snapshot[LEGACY_MODEL_CONFIG_META_KEY] as LegacyModelConfigMeta | undefined
+  const legacyUserKeys = new Set(
+    Array.isArray(meta?.userConfigKeys)
+      ? meta.userConfigKeys.filter(
+          (key): key is string => typeof key === 'string' && key.length > 0
+        )
+      : []
+  )
 
   return Object.fromEntries(
-    entries.flatMap(([key, value]) => {
-      const entry = value as IModelConfig | undefined
-      const isUserConfig = entry?.source === 'user' || entry?.config?.isUserDefined === true
-      if (!entry || !isUserConfig) {
+    Object.entries(snapshot).flatMap(([key, value]) => {
+      if (key === LEGACY_MODEL_CONFIG_META_KEY) {
         return []
       }
-      return [
-        [
-          key,
-          {
-            ...entry,
-            source: 'user',
-            config: { ...entry.config, isUserDefined: true }
-          }
-        ]
-      ]
+      const entry = normalizeUserModelConfigEntry(value, {
+        legacyUserKey: legacyUserKeys.has(key)
+      })
+      return entry ? [[key, entry]] : []
     })
   )
 }

@@ -3,6 +3,8 @@ import * as fsMock from 'fs'
 import os from 'os'
 import type { IModelConfig, LLM_PROVIDER, MODEL_META } from '@shared/types/provider'
 import type { MCPServerConfig } from '@shared/types/mcp'
+import { RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID } from '@/provider/providerModelFacts'
+import { USER_MODEL_CONFIG_MIGRATION_ID } from '@/provider/userModelConfig'
 
 const realFs = await vi.importActual<typeof import('fs')>('fs')
 Object.assign(fsMock, realFs)
@@ -22,6 +24,8 @@ type MockState = {
   appSettings: Record<string, unknown>
   agentMcpSelections: string[]
   migrations: Set<string>
+  providerModelMigrations: number
+  modelConfigMigrations: number
 }
 
 const mockConfigStates = new Map<string, MockState>()
@@ -36,7 +40,9 @@ const createMockState = (): MockState => ({
   agentSettings: {},
   appSettings: {},
   agentMcpSelections: [],
-  migrations: new Set()
+  migrations: new Set(),
+  providerModelMigrations: 0,
+  modelConfigMigrations: 0
 })
 
 const getMockState = (dbPath: string): MockState => {
@@ -188,6 +194,16 @@ class MockAppSettingsTable {
     this.state.modelConfigs = {}
   }
 
+  migrateProviderModelsToRawFacts(): { scanned: number; updated: number } {
+    this.state.providerModelMigrations += 1
+    return { scanned: 0, updated: 0 }
+  }
+
+  migrateModelConfigsToUserOnly(): { removed: number; preserved: number } {
+    this.state.modelConfigMigrations += 1
+    return { removed: 0, preserved: 0 }
+  }
+
   listMcpServers(): Record<string, MCPServerConfig> {
     return { ...this.state.mcpServers }
   }
@@ -312,6 +328,19 @@ describe('SyncConfigImportService', () => {
     removeDir(tempDir)
   })
 
+  it('normalizes model configs before completing a SQLite config import', () => {
+    const service = new SyncConfigImportService(dbPath)
+
+    service.finalizeSqliteConfigImport()
+
+    const state = getMockState(dbPath)
+    expect(state.providerModelMigrations).toBe(1)
+    expect(state.modelConfigMigrations).toBe(1)
+    expect(state.migrations).toContain('config-sqlite-v1')
+    expect(state.migrations).toContain(RAW_PROVIDER_MODEL_FACTS_MIGRATION_ID)
+    expect(state.migrations).toContain(USER_MODEL_CONFIG_MIGRATION_ID)
+  })
+
   it('imports legacy app, model, MCP, and ACP config into sqlite tables', () => {
     writeLegacyConfigFixture(extractionDir)
 
@@ -341,8 +370,17 @@ describe('SyncConfigImportService', () => {
       })
       expect(tables.getModelConfigStoreEntry('imported:gpt-4')).toMatchObject({
         id: 'gpt-4',
-        providerId: 'imported'
+        providerId: 'imported',
+        source: 'user',
+        config: { isUserDefined: true }
       })
+      expect(tables.getModelConfigStoreEntry('imported:legacy-user')).toMatchObject({
+        id: 'legacy-user',
+        providerId: 'imported',
+        source: 'user',
+        config: { maxTokens: 456, isUserDefined: true }
+      })
+      expect(tables.getModelConfigStoreEntry('imported:provider-cache')).toBeUndefined()
       expect(tables.listMcpServers()['server-a'].enabled).toBe(true)
       expect(tables.listMcpServers()['server-b'].enabled).toBe(false)
       expect(tables.listMcpSettings()).toMatchObject({
@@ -384,7 +422,8 @@ describe('SyncConfigImportService', () => {
       tables.setModelConfigStoreEntry('imported:gpt-4', {
         id: 'gpt-4',
         providerId: 'imported',
-        config: { maxTokens: 1 }
+        source: 'user',
+        config: { maxTokens: 1, isUserDefined: true }
       })
       tables.replaceMcpServers({
         'server-a': mcpServer('local-server-a', false)
@@ -461,7 +500,8 @@ describe('SyncConfigImportService', () => {
       tables.setModelConfigStoreEntry('local:old-model', {
         id: 'old-model',
         providerId: 'local',
-        config: { maxTokens: 1 }
+        source: 'user',
+        config: { maxTokens: 1, isUserDefined: true }
       })
       tables.replaceMcpServers({ local: mcpServer('local-server', true) })
       tables.setMcpSetting('mcpEnabled', true)
@@ -537,10 +577,25 @@ function writeLegacyConfigFixture(extractionDir: string) {
   })
 
   writeJson(path.join(extractionDir, 'configs', 'model-config.json'), {
+    __meta__: {
+      userConfigKeys: ['imported:legacy-user', 'imported:provider-cache']
+    },
     'imported:gpt-4': {
       id: 'gpt-4',
       providerId: 'imported',
-      config: { maxTokens: 123 }
+      source: 'user',
+      config: { maxTokens: 123, isUserDefined: true }
+    },
+    'imported:legacy-user': {
+      id: 'legacy-user',
+      providerId: 'imported',
+      config: { maxTokens: 456, isUserDefined: false }
+    },
+    'imported:provider-cache': {
+      id: 'provider-cache',
+      providerId: 'imported',
+      source: 'provider',
+      config: { maxTokens: 4096, isUserDefined: false }
     }
   })
 
