@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.0-beta.11 (2026-07-31)
+- Tolerated invalid MCP tool output schemas without rejecting otherwise usable tools
+- 容忍无效的 MCP 工具输出 Schema，避免拒绝其他可用工具
+
 ## v1.1.0-beta.10 (2026-07-31)
 - Improved alert confirmations and notification feedback so user actions report reliable results
 - Added MCP v2 ecosystem support and a built-in McDonald's server
