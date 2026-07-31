@@ -202,6 +202,7 @@ describe('McpSettings', () => {
 
     expect(servers['deepchat/computer-use']).toBeUndefined()
     expect(servers.demo).toBeDefined()
+    expect(servers.demo).not.toHaveProperty('autoApprove')
     expect(mcpStore.get('removedBuiltInServers')).toEqual(['demo'])
   })
 

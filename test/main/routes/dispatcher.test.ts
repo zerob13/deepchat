@@ -1564,6 +1564,8 @@ function createRuntime() {
   })
   const mcpRoutes = createMcpRoutes({
     mcpService,
+    mcpAppHost: {} as any,
+    isSettingsWindow: () => true,
     recordSettingsActivity: (input) => sqlitePresenter.recordSettingsActivity(input)
   })
   const remoteRoutes = createRemoteRoutes(remoteService)
@@ -3695,7 +3697,15 @@ describe('dispatchDeepchatRoute', () => {
   it('returns typed MCP add results and records only persisted additions', async () => {
     const { runtime, mcpService, sqlitePresenter } = createRuntime()
     const context = { webContentsId: 42, windowId: 7 }
-    const config = { type: 'stdio', command: 'node' } as const
+    const config = {
+      type: 'stdio',
+      command: 'node',
+      args: [],
+      env: {},
+      descriptions: '',
+      icons: '',
+      enabled: false
+    } as const
 
     const added = await dispatchDeepchatRoute(
       runtime,
