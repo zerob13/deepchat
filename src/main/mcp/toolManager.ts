@@ -23,7 +23,11 @@ import type { SemanticNotificationPublisher } from '@/notifications'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpSettings } from './settings'
 import { CUA_PLUGIN_ID } from '@shared/types/plugin'
-import { appendCuaResultProjections, normalizeCuaToolArguments } from '@/plugin/cuaToolAdapter'
+import {
+  appendCuaResultProjections,
+  normalizeCuaToolArguments,
+  validateCuaSnapshotTargetArguments
+} from '@/plugin/cuaToolAdapter'
 import type {
   PluginOwnedToolCatalogRegistration,
   PluginRuntimeStartReason
@@ -792,7 +796,8 @@ export class ToolManager {
             ? appendCuaResultProjections(
                 formattedResponse.content,
                 originalName,
-                result.structuredContent
+                result.structuredContent,
+                result.isError === true
               )
             : formattedResponse.content,
         ...(ownerPluginId ? { ownerPluginId } : {}),
@@ -1120,6 +1125,10 @@ export class ToolManager {
     }
 
     const normalizedArgs = normalizeCuaToolArguments(toolName, args)
+    const validationError = validateCuaSnapshotTargetArguments(toolName, normalizedArgs)
+    if (validationError) {
+      return { ok: false, error: validationError }
+    }
     if (toolName !== 'launch_app' || process.platform !== 'win32') {
       return { ok: true, args: normalizedArgs }
     }
