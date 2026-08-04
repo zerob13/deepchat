@@ -16,7 +16,6 @@ import type { AgentSettingsPort } from '@/agent/settings'
 import { ServerManager } from './serverManager'
 import { McpClient } from './mcpClient'
 import { jsonrepair } from 'jsonrepair'
-import { isDeepStrictEqual } from 'node:util'
 import { getExplicitlyDeniedPluginTools, resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
 import type { DeepchatEventPublisher } from '@shared/contracts/events'
 import type { SemanticNotificationPublisher } from '@/notifications'
@@ -33,6 +32,7 @@ import type {
   PluginRuntimeStartReason
 } from '@/plugin/runtimeSupervisor'
 import { createPersistedMcpToolResult, getToolVisibility } from './resultProjection'
+import { findJsonValueDifference, type JsonValueDifference } from './schemaValidation'
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
@@ -42,6 +42,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const PLUGIN_RUNTIME_DIAGNOSTIC_TIMEOUT_MS = 30_000
 const TOOL_CATALOG_VALIDATION_TIMEOUT_MS = 30_000
+const MAX_SCHEMA_DIFFERENCE_PATH_LENGTH = 512
+
+const SCHEMA_DIFFERENCE_REASONS: Record<JsonValueDifference['kind'], string> = {
+  type: 'type differs',
+  value: 'value differs',
+  'array-length': 'array length differs',
+  'missing-key': 'missing from live schema',
+  'unexpected-key': 'not present in packaged schema'
+}
+
+const formatSchemaDifference = (difference: JsonValueDifference): string => {
+  const path =
+    difference.path.length <= MAX_SCHEMA_DIFFERENCE_PATH_LENGTH
+      ? difference.path
+      : `${difference.path.slice(0, MAX_SCHEMA_DIFFERENCE_PATH_LENGTH - 3)}...`
+  return `${JSON.stringify(path)} (${SCHEMA_DIFFERENCE_REASONS[difference.kind]})`
+}
 
 type McpToolAccessContext = {
   enabledTools?: string[]
@@ -109,6 +126,11 @@ type ToolTarget = {
   catalogTool?: Tool
 }
 
+type CatalogValidationState = {
+  readonly liveTools: ReadonlyMap<string, Tool>
+  readonly verifiedToolNames: Set<string>
+}
+
 const normalizeStringList = (items?: string[]): string[] | undefined => {
   if (!Array.isArray(items)) {
     return undefined
@@ -136,7 +158,7 @@ export class ToolManager {
   private serverManager: ServerManager
   private cachedToolDefinitions: MCPToolDefinition[] | null = null
   private toolNameToTargetMap: Map<string, ToolTarget> | null = null
-  private catalogValidationPromises = new WeakMap<McpClient, Promise<Map<string, Tool>>>()
+  private catalogValidationPromises = new WeakMap<McpClient, Promise<CatalogValidationState>>()
   private toolDefinitionsCacheGeneration = 0
   private activeToolDefinitionsRefresh: ActiveToolDefinitionsRefresh | null = null
 
@@ -890,7 +912,10 @@ export class ToolManager {
             }
             tools.set(liveTool.name, liveTool)
           }
-          return tools
+          return {
+            liveTools: tools,
+            verifiedToolNames: new Set<string>()
+          }
         })
         .catch((error) => {
           this.serverManager.setServerLastError(client.serverName, error)
@@ -904,19 +929,25 @@ export class ToolManager {
       })
     }
 
-    const liveTools = await awaitWithAbort(validationPromise, signal)
+    const validation = await awaitWithAbort(validationPromise, signal)
     signal?.throwIfAborted()
-    const liveTool = liveTools.get(catalogTool.name)
+    if (validation.verifiedToolNames.has(catalogTool.name)) {
+      return
+    }
+
+    const liveTool = validation.liveTools.get(catalogTool.name)
     if (!liveTool) {
       const errorMessage = `Live MCP tool "${catalogTool.name}" is missing from catalog-backed server "${client.serverName}"`
       this.serverManager.setServerLastError(client.serverName, errorMessage)
       throw new Error(errorMessage)
     }
-    if (!isDeepStrictEqual(liveTool.inputSchema, catalogTool.inputSchema)) {
-      const errorMessage = `Live MCP tool "${catalogTool.name}" schema differs from the packaged catalog for server "${client.serverName}"`
+    const difference = findJsonValueDifference(catalogTool.inputSchema, liveTool.inputSchema)
+    if (difference) {
+      const errorMessage = `Live MCP tool "${catalogTool.name}" schema differs from the packaged catalog for server "${client.serverName}" at ${formatSchemaDifference(difference)}`
       this.serverManager.setServerLastError(client.serverName, errorMessage)
       throw new Error(errorMessage)
     }
+    validation.verifiedToolNames.add(catalogTool.name)
   }
 
   private getCatalogTool(serverName: string, toolName: string): Tool {

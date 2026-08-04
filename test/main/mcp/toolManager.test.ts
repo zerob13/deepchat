@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CUA_PLUGIN_ID } from '@shared/types/plugin'
 import { ToolManager, type ComputerUsePreviewObserver } from '@/mcp/toolManager'
+import { validateAndCloneMcpTool } from '@/mcp/schemaValidation'
 import type { PluginRuntimeStartReason } from '@/plugin/runtimeSupervisor'
 import * as toolPolicyStore from '@/plugin/toolPolicyStore'
 
@@ -336,6 +337,88 @@ describe('ToolManager', () => {
     expect(liveClient.callTool).toHaveBeenCalledTimes(2)
   })
 
+  it('accepts representation-only schema differences and revalidates after invalidation', async () => {
+    const serverName = 'catalog-server'
+    const liveTool = validateAndCloneMcpTool(
+      {
+        name: 'inspect_screen',
+        description: 'Live inspect screen',
+        inputSchema: {
+          required: ['display_id'],
+          properties: { display_id: { type: 'integer' } },
+          type: 'object'
+        }
+      },
+      serverName
+    )
+    const driftedLiveTool = validateAndCloneMcpTool(
+      {
+        ...liveTool,
+        inputSchema: {
+          type: 'object',
+          properties: { display_id: { type: 'number' } },
+          required: ['display_id']
+        }
+      },
+      serverName
+    )
+    const liveClient = createClient(serverName, [liveTool])
+    liveClient.listTools.mockResolvedValueOnce([liveTool]).mockResolvedValueOnce([driftedLiveTool])
+    const serverManager = createServerManager([])
+    serverManager.getClient.mockReturnValue(liveClient)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      serverManager,
+      { [serverName]: TOOL_POLICY_PLUGIN_ID },
+      {
+        ensureRunning: vi.fn().mockResolvedValue(undefined),
+        catalogs: [
+          {
+            pluginId: TOOL_POLICY_PLUGIN_ID,
+            serverName,
+            displayName: 'Catalog Server',
+            toolCatalog: {
+              version: '1.0.0',
+              tools: [
+                {
+                  name: 'inspect_screen',
+                  description: 'Static inspect screen',
+                  inputSchema: {
+                    type: 'object',
+                    properties: { display_id: { type: 'integer' } },
+                    required: ['display_id']
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    )
+
+    const result = await manager.callTool({
+      id: 'catalog-equivalent-schema',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{"display_id":1}' }
+    })
+
+    expect(result.isError).toBe(false)
+    expect(liveClient.callTool).toHaveBeenCalledOnce()
+    expect(serverManager.setServerLastError).not.toHaveBeenCalled()
+
+    manager.invalidateRegistry()
+    const driftedResult = await manager.callTool({
+      id: 'catalog-drifted-after-invalidation',
+      type: 'function',
+      function: { name: 'inspect_screen', arguments: '{"display_id":1}' }
+    })
+
+    expect(driftedResult.isError).toBe(true)
+    expect(driftedResult.content).toContain('at "#/properties/display_id/type" (value differs)')
+    expect(liveClient.listTools).toHaveBeenCalledTimes(2)
+    expect(liveClient.callTool).toHaveBeenCalledOnce()
+  })
+
   it('hard-fails when a catalog tool is missing from the live runtime', async () => {
     const serverName = 'catalog-server'
     const liveClient = createClient(serverName, [
@@ -522,7 +605,9 @@ describe('ToolManager', () => {
     })
 
     expect(result.isError).toBe(true)
-    expect(result.content).toContain('schema differs from the packaged catalog')
+    expect(result.content).toContain(
+      'schema differs from the packaged catalog for server "catalog-server" at "#/properties/display_id" (not present in packaged schema)'
+    )
     expect(liveClient.callTool).not.toHaveBeenCalled()
   })
 
@@ -1997,12 +2082,12 @@ describe('ToolManager', () => {
       }),
       expect.objectContaining({
         message:
-          'Live MCP tool "get_window_state" schema differs from the packaged catalog for server "cua-driver"'
+          'Live MCP tool "get_window_state" schema differs from the packaged catalog for server "cua-driver" at "#/properties/window_id" (missing from live schema)'
       })
     )
     expect(serverManager.setServerLastError).toHaveBeenCalledWith(
       'cua-driver',
-      'Live MCP tool "get_window_state" schema differs from the packaged catalog for server "cua-driver"'
+      'Live MCP tool "get_window_state" schema differs from the packaged catalog for server "cua-driver" at "#/properties/window_id" (missing from live schema)'
     )
   })
 

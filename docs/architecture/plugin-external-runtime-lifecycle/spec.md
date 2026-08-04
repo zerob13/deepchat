@@ -136,6 +136,11 @@ Live revalidation compares both the tool name and its complete input schema with
 catalog. A protocol or capability version match is not a substitute for schema equality because an
 upstream release can change a schema without correctly bumping those versions.
 
+Schema equality follows JSON structural semantics rather than JavaScript object identity:
+prototype and object-key insertion order are not protocol data, while array order, keys, types, and
+values remain exact. Live and packaged schemas pass through the same bounded validator before
+comparison, and a mismatch fails closed with a bounded JSON Pointer diagnostic.
+
 Package verification fails if the catalog is missing, malformed, contains duplicate/empty names,
 contains invalid input schemas, disagrees with the pinned runtime's generated catalog, lacks exact
 tool-policy coverage, declares a non-tool surface, or cannot be resolved from the packaged plugin.
