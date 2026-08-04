@@ -138,6 +138,7 @@ import {
   workspaceInvalidatedEvent,
   workspaceWatchStatusChangedEvent
 } from './events/workspace.events'
+import { liveDelegationChangedEvent } from './events/orchestration.events'
 
 export * from './events/browser.events'
 export * from './events/computerUse.events'
@@ -155,6 +156,7 @@ export * from './events/project.events'
 export * from './events/models.events'
 export * from './events/notification.events'
 export * from './events/oauth.events'
+export * from './events/orchestration.events'
 export * from './events/providers.events'
 export * from './events/settings.events'
 export * from './events/startup.events'
@@ -170,6 +172,7 @@ export const DEEPCHAT_EVENT_CATALOG = {
   [windowStateChangedEvent.name]: windowStateChangedEvent,
   [workspaceInvalidatedEvent.name]: workspaceInvalidatedEvent,
   [workspaceWatchStatusChangedEvent.name]: workspaceWatchStatusChangedEvent,
+  [liveDelegationChangedEvent.name]: liveDelegationChangedEvent,
   [browserActivityChangedEvent.name]: browserActivityChangedEvent,
   [browserPreviewActionEvent.name]: browserPreviewActionEvent,
   [browserPreviewFrameEvent.name]: browserPreviewFrameEvent,

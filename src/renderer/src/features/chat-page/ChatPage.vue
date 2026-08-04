@@ -121,6 +121,19 @@
           <ChatSessionSkeleton />
         </div>
       </div>
+      <div
+        v-if="isReadOnlySession && activePendingInteraction"
+        data-testid="chat-read-only-interaction-region"
+        class="chat-capture-hide relative w-full px-6 pb-3 pt-3"
+        style="z-index: var(--dc-z-sticky)"
+      >
+        <ChatToolInteractionOverlay
+          class="pointer-events-auto mx-auto"
+          :interaction="activePendingInteraction"
+          :processing="isHandlingInteraction"
+          @respond="onToolInteractionRespond"
+        />
+      </div>
       <!-- Composer is outside message scroll geometry. -->
       <div
         v-if="!isReadOnlySession"
@@ -1099,7 +1112,6 @@ const {
 } = useToolInteraction({
   sessionId: () => props.sessionId,
   messageStore,
-  isReadOnlySession,
   chatClient,
   loadMessagesForSession,
   applyRestoredSessionSummary,
@@ -1212,6 +1224,7 @@ const {
   notify: notifyRenderer,
   t
 })
+
 switchComposerSessionDraft = switchComposerSession
 
 watch(

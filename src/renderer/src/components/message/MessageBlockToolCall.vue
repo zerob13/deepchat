@@ -1,7 +1,17 @@
 <template>
   <div class="flex flex-col w-full">
+    <LiveDelegationToolCallCard
+      v-if="liveDelegationSpawn && threadId"
+      :parent-session-id="threadId"
+      :spawn="liveDelegationSpawn"
+      :tool-status="block.status"
+      :details-id="detailsId"
+      :details-expanded="isExpanded"
+      :read-only="readOnly"
+      @toggle-details="toggleExpanded"
+    />
     <button
-      v-if="renderMode !== 'app-only'"
+      v-else-if="renderMode !== 'app-only'"
       type="button"
       data-testid="tool-call-trigger"
       class="tool-call-pill inline-flex w-fit min-h-7 border rounded-lg items-center gap-2 px-2 py-1.5 text-left text-xs leading-4 transition-colors duration-[var(--dc-motion-fast)] ease-[var(--dc-ease-out-soft)] select-none overflow-hidden bg-accent hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -234,6 +244,8 @@ import { useSessionStore } from '@/stores/ui/session'
 import { getLanguageFromFilename } from '@shared/utils/codeLanguage'
 import type { DisplayAssistantMessageBlock } from '@/features/chat-page/model/displayMessage'
 import { createDeviceClient } from '@api/DeviceClient'
+import { parseLiveDelegationSpawnBlock } from '@/lib/liveDelegationToolCall'
+import LiveDelegationToolCallCard from './LiveDelegationToolCallCard.vue'
 import MessageBlockToolCallImagePreview from './MessageBlockToolCallImagePreview.vue'
 
 const McpAppView = defineAsyncComponent(() => import('@/components/mcp/McpAppView.vue'))
@@ -248,6 +260,7 @@ const props = defineProps<{
   block: DisplayAssistantMessageBlock
   messageId?: string
   threadId?: string
+  readOnly?: boolean
   renderMode?: 'full' | 'tool-only' | 'app-only'
 }>()
 
@@ -275,6 +288,13 @@ const detailsId = `tool-call-details-${useId()}`
 // Slightly past --dc-motion-default (220ms) so the collapse transition finishes first.
 const DETAILS_UNMOUNT_DELAY_MS = 240
 let detailsUnmountTimer: number | null = null
+
+const liveDelegationSpawn = computed(() => {
+  const parsed = parseLiveDelegationSpawnBlock(props.block)
+  if (!parsed || !props.threadId) return null
+  if (parsed.delegation && parsed.delegation.parentSessionId !== props.threadId) return null
+  return parsed
+})
 
 const statusVariant = computed(() => {
   if (props.block.status === 'error') return 'error'

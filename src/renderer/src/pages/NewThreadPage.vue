@@ -202,6 +202,7 @@ import GuidedOnboardingOverlay from '@/components/onboarding/GuidedOnboardingOve
 import { useGuidedOnboardingStep } from '@/composables/useGuidedOnboardingStep'
 import { resolveGuidedOnboardingStepTarget } from '@shared/guidedOnboarding'
 import { DEFAULT_DISABLED_AGENT_TOOLS } from '@shared/agentTools'
+import { DEFAULT_ORCHESTRATION_POLICY } from '@shared/orchestration/policy'
 import type {
   DeepChatAgentConfig,
   MessageFile,
@@ -852,7 +853,6 @@ const applyStartDeeplink = async (payload: StartDeeplinkPayload) => {
 
 async function onSubmit() {
   if (isAcpWorkdirUnavailable.value || isSubmittingInput.value) return
-
   const text = message.value.trim()
   if (!text && (isAcpSelectedAgent.value || attachedFiles.value.length === 0)) return
   if (shouldIgnoreManualCompactionDraft(text)) return
@@ -950,6 +950,7 @@ async function submitText(
   const agentId = selectedAgent.value.id
   const draftPermissionMode = draftStore.permissionMode
   const draftDisabledAgentTools = [...draftStore.disabledAgentTools]
+  const draftOrchestrationPolicy = draftStore.orchestrationPolicy
   const draftGenerationSettings = draftStore.toGenerationSettings()
 
   try {
@@ -1009,6 +1010,7 @@ async function submitText(
       modelId,
       permissionMode: draftPermissionMode,
       disabledAgentTools: isAcp ? undefined : draftDisabledAgentTools,
+      orchestrationPolicy: isAcp ? DEFAULT_ORCHESTRATION_POLICY : draftOrchestrationPolicy,
       generationSettings: draftGenerationSettings,
       activeSkills: messagePayload.activeSkills
     }
@@ -1089,6 +1091,7 @@ const applyDraftDefaultsForSelectedAgent = async (requestSeq: number): Promise<v
   draftStore.modelId = undefined
   draftStore.permissionMode = 'full_access'
   draftStore.disabledAgentTools = [...DEFAULT_DISABLED_AGENT_TOOLS]
+  draftStore.orchestrationPolicy = DEFAULT_ORCHESTRATION_POLICY
   draftStore.systemPrompt = undefined
   draftStore.temperature = undefined
   draftStore.topP = undefined

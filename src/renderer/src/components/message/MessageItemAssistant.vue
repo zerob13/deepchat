@@ -47,6 +47,7 @@
                 :duration-ms="item.durationMs"
                 :reasoning-count="item.reasoningCount"
                 :tool-call-count="item.toolCallCount"
+                :read-only="isReadOnly"
                 @toggle-collapse="handleCollapseToggle"
               />
               <MessageBlockToolCall
@@ -79,6 +80,7 @@
                 :block="item.block"
                 :message-id="currentMessage.id"
                 :thread-id="currentThreadId"
+                :read-only="isReadOnly"
                 :render-mode="item.block.tool_call?.mcpResult?.app ? 'tool-only' : 'full'"
               />
               <MessageBlockQuestionRequest

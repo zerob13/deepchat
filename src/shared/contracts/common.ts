@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { OrchestrationPolicySchema } from '../orchestration/policy'
 import { ModelType, NEW_API_ENDPOINT_TYPES } from '../model'
 import type { Agent } from '../types/agent-interface'
 import {
@@ -28,6 +29,7 @@ import {
   PDF_PAGE_COUNT_SANITY_LIMIT
 } from '../types/attachment'
 import { isValidDocumentOcrTextPageSpans } from '../utils/documentOcrText'
+import { LiveDelegationSubagentContextSchema } from '../orchestration/liveDelegation'
 
 export type JsonValue =
   | string
@@ -143,7 +145,8 @@ export const DeepChatSubagentMetaSchema = z
   .object({
     slotId: EntityIdSchema,
     displayName: z.string(),
-    targetAgentId: EntityIdSchema.nullable().optional()
+    targetAgentId: EntityIdSchema.nullable().optional(),
+    liveDelegation: LiveDelegationSubagentContextSchema.optional()
   })
   .nullable()
 
@@ -400,6 +403,7 @@ export const SessionWithStateSchema = z.object({
   sessionKind: SessionKindSchema,
   parentSessionId: EntityIdSchema.nullable().optional(),
   subagentMeta: DeepChatSubagentMetaSchema.optional(),
+  orchestrationPolicy: OrchestrationPolicySchema,
   createdAt: TimestampMsSchema,
   updatedAt: TimestampMsSchema,
   revision: RevisionSchema.optional(),

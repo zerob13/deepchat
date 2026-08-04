@@ -545,6 +545,13 @@ import {
   workspaceUnwatchRoute,
   workspaceWatchRoute
 } from './routes/workspace.routes'
+import {
+  orchestrationGetCapabilityRoute,
+  orchestrationInspectLiveDelegationRoute,
+  orchestrationInterruptLiveDelegationRoute,
+  orchestrationListLiveDelegationsRoute,
+  orchestrationSetPolicyRoute
+} from './routes/orchestration.routes'
 
 export * from './routes/browser.routes'
 export * from './routes/computerUse.routes'
@@ -584,6 +591,7 @@ export * from './routes/tools.routes'
 export * from './routes/upgrade.routes'
 export * from './routes/window.routes'
 export * from './routes/workspace.routes'
+export * from './routes/orchestration.routes'
 
 // 路由目录按块拆分并各自导出：单个巨型对象的 `typeof` 在声明输出(.d.ts)时会超过
 // TS 的类型序列化上限触发 TS7056。拆成多块后每块单独序列化，合并类型只保存引用，
@@ -1091,7 +1099,12 @@ const DEEPCHAT_ROUTE_CATALOG_PART_5 = {
   [dialogRespondRoute.name]: dialogRespondRoute,
   [dialogErrorRoute.name]: dialogErrorRoute,
   [toolsListDefinitionsRoute.name]: toolsListDefinitionsRoute,
-  [systemOpenSettingsRoute.name]: systemOpenSettingsRoute
+  [systemOpenSettingsRoute.name]: systemOpenSettingsRoute,
+  [orchestrationGetCapabilityRoute.name]: orchestrationGetCapabilityRoute,
+  [orchestrationSetPolicyRoute.name]: orchestrationSetPolicyRoute,
+  [orchestrationListLiveDelegationsRoute.name]: orchestrationListLiveDelegationsRoute,
+  [orchestrationInspectLiveDelegationRoute.name]: orchestrationInspectLiveDelegationRoute,
+  [orchestrationInterruptLiveDelegationRoute.name]: orchestrationInterruptLiveDelegationRoute
 } satisfies Record<string, RouteContract>
 
 export type DeepchatRouteCatalog = typeof DEEPCHAT_ROUTE_CATALOG_PART_1 &

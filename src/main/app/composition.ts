@@ -1,6 +1,6 @@
 import logger from '@shared/logger'
 import { projectEnvironmentsChangedEvent } from '@shared/contracts/events/project.events'
-import { sessionsUpdatedEvent } from '@shared/contracts/events'
+import { liveDelegationChangedEvent, sessionsUpdatedEvent } from '@shared/contracts/events'
 import { performance } from 'node:perf_hooks'
 import path from 'path'
 import { DialogService } from '../desktop/dialog'
@@ -14,6 +14,8 @@ import { ShortcutPresenter } from '../desktop/shortcut'
 import type { FileServicePort } from '@shared/types/file'
 import type { WorkspaceServicePort } from '@shared/types/workspace'
 import type { ToolServicePort } from '@shared/types/tool'
+import type { AssistantMessageBlock } from '@shared/types/agent-interface'
+import { projectFinalAssistantAnswer } from '@shared/lib/assistantDeliverySegments'
 import type { SkillServicePort } from '@shared/types/skill'
 import type { SkillSyncServicePort } from '@shared/types/skillSync'
 import type { IConversationExporter } from '../exporter/interface'
@@ -25,6 +27,7 @@ import type {
 import type { DialogServicePort } from '@shared/types/dialog'
 import type { KnowledgeServicePort } from '@shared/types/knowledge'
 import { ProviderRuntime } from '../provider'
+import { AgentInvocationAdmission } from '@/agent/invocationAdmission'
 import { ProviderImportService } from '../provider/providerImportService'
 import { ProviderDatabase } from '../provider/data/database'
 import { createProviderRoutes } from '../provider/routes'
@@ -90,6 +93,7 @@ import { KnowledgeSettings } from '@/knowledge/settings'
 import { PromptSettings } from '@/agent/promptSettings'
 import { AgentSettings } from '@/agent/settings'
 import { AgentLifecycleGate } from '@/agent/lifecycleGate'
+import { SessionDeletionGate } from '@/session/deletionGate'
 import { emitAcpAgentModelsChanged, emitAgentCatalogChanged } from '@/app/agentEvents'
 import { emitModelsChanged } from '@/provider/eventPublishers'
 import { createWorkspaceRoutes } from '../workspace/routes'
@@ -151,6 +155,13 @@ import { ProjectDatabase } from '@/project/data/database'
 import { SettingsDatabase } from '@/settings/data/database'
 import { SchedulerDatabase } from '@/scheduler/data/database'
 import { AppDatabase } from '@/app/data/database'
+import { createOrchestrationRoutes } from '@/orchestration/routes'
+import { OrchestrationCapabilityResolver } from '@/orchestration/capability'
+import { LiveDelegationDatabase } from '@/orchestration/data/database'
+import { LiveDelegationRepository } from '@/orchestration/liveDelegationRepository'
+import { LiveDelegationService } from '@/orchestration/liveDelegationService'
+import { LiveDelegationSafetyCoordinator } from '@/orchestration/liveDelegationSafety'
+import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
 import { createProjectRoutes } from '../project/routes'
 import { RemoteService } from '../remote'
 import type { RemoteServiceLike } from '../remote/ports'
@@ -256,6 +267,9 @@ export async function createMainProcessControl(dependencies: {
   const databaseSecurityService = dependencies.databaseSecurityService
   const startupWorkloadCoordinator = dependencies.startupWorkloadCoordinator
   const mainDatabase = dependencies.database
+  const liveDelegationRepository = new LiveDelegationRepository(
+    new LiveDelegationDatabase(mainDatabase)
+  )
   const fileWatcherService = new FileWatcherService()
   let windowPresenter: IWindowPresenter
   let providerSettings: ProviderSettings
@@ -313,6 +327,7 @@ export async function createMainProcessControl(dependencies: {
   let sessionHistorySearch: SessionHistorySearch
   let agentSessionExportService: AgentSessionExportService
   let sessionTranslation: SessionTranslation
+  let liveDelegationService: LiveDelegationService
   let acpAsLlmProviderSessionControl: AcpAsLlmProviderSessionControlPort
   let acpAsLlmProviderPermission: AcpAsLlmProviderPermissionPort
   let hasInitialized = false
@@ -427,6 +442,7 @@ export async function createMainProcessControl(dependencies: {
   const appDatabase = new AppDatabase(mainDatabase)
   const agentRepository = new AgentRepository(agentDatabase, sessionData.database, memoryDatabase)
   const agentLifecycle = new AgentLifecycleGate()
+  const sessionDeletionGate = new SessionDeletionGate()
   const promptSettings = new PromptSettings(dependencies.settingsStore, {
     publishCustomPromptsChanged: (prompts) =>
       publishDeepchatEvent('config.customPrompts.changed', {
@@ -604,6 +620,7 @@ export async function createMainProcessControl(dependencies: {
   filePermissionService = new FilePermissionService()
   settingsPermissionService = new SettingsPermissionService()
   toolPermissionBroker = new ToolPermissionBroker()
+  const liveDelegationConsent = new LiveDelegationConsentAuthority()
   deviceService = new DeviceService()
   const loggingService = new LoggingService(
     dependencies.settingsStore,
@@ -825,7 +842,9 @@ export async function createMainProcessControl(dependencies: {
     }
   )
 
+  const agentInvocationAdmission = new AgentInvocationAdmission()
   const agentToolDependencies: AgentToolDependencies = {
+    agentInvocationAdmission,
     sessions: {
       resolveConversationWorkdir: async (conversationId) => {
         try {
@@ -873,13 +892,15 @@ export async function createMainProcessControl(dependencies: {
           modelId: session.modelId,
           projectDir: session.projectDir ?? null,
           permissionMode,
+          orchestrationPolicy: session.orchestrationPolicy,
           generationSettings,
           disabledAgentTools,
           activeSkills,
           sessionKind: session.sessionKind,
           parentSessionId: session.parentSessionId ?? null,
           subagentMeta: session.subagentMeta ?? null,
-          subagentCapability
+          subagentCapability,
+          status: session.status
         }
       }
     },
@@ -939,6 +960,7 @@ export async function createMainProcessControl(dependencies: {
       },
       subscribeSessionRuntimeUpdates: (listener) => sessionRuntimeEvents.subscribe(listener)
     },
+    liveDelegation: createLivePort(() => liveDelegationService),
     skills: skillService,
     browser: yoBrowserPresenter.toolHandler,
     files: {
@@ -994,7 +1016,20 @@ export async function createMainProcessControl(dependencies: {
     desktopSettings,
     commandPermissionHandler,
     permissionBroker: toolPermissionBroker,
-    agentTools: agentToolDependencies
+    liveDelegationConsent,
+    agentTools: agentToolDependencies,
+    effectObserver: {
+      beforeToolAuthorization: async (observation, signal) => {
+        const permissionMode = await liveDelegationService.beforeToolAuthorization(
+          observation,
+          signal
+        )
+        return permissionMode ? { permissionMode } : null
+      },
+      beforeToolExecution: async (observation, signal) => {
+        await liveDelegationService.beforeToolExecution(observation, signal)
+      }
+    }
   })
 
   // Plugin activation is a shared startup barrier for Skill migration and MCP startup.
@@ -1164,7 +1199,12 @@ export async function createMainProcessControl(dependencies: {
     skillSettings,
     traceSettings,
     promptSettings,
-    attachmentRouter
+    attachmentRouter,
+    interactionContinuationAdmission: {
+      resume: async (sessionId, signal) =>
+        await liveDelegationService.beforeInteractionContinuation(sessionId, signal),
+      suspend: (sessionId) => liveDelegationService.suspendInteractionContinuation(sessionId)
+    }
   })
   const sessionTranscriptMutations = new SessionTranscriptMutations({
     transcript: sessionData.transcript,
@@ -1286,6 +1326,11 @@ export async function createMainProcessControl(dependencies: {
   }
   sessionDeletion = new SessionDeletion({
     sessions: appSessionService,
+    gate: sessionDeletionGate,
+    orchestration: {
+      prepareSessionDeletion: async (sessionId) =>
+        await liveDelegationService.prepareSessionDeletion(sessionId)
+    },
     runtime: {
       cleanupSessionBackends: async (sessionId) =>
         await agentManager.cleanupSessionBackends(sessionId)
@@ -1395,6 +1440,7 @@ export async function createMainProcessControl(dependencies: {
     projection: sessionQuery,
     desktop: desktopSessionBinding,
     deletion: sessionDeletion,
+    deletionGate: sessionDeletionGate,
     permissions: sessionPermissionPort,
     agentLifecycle
   })
@@ -1410,6 +1456,105 @@ export async function createMainProcessControl(dependencies: {
     agentSettings,
     providerRuntime: providerRuntime
   })
+  const orchestrationCapabilityResolver = new OrchestrationCapabilityResolver({
+    sessions: agentToolDependencies.sessions,
+    agents: agentSettings
+  })
+  const liveDelegationSafety = new LiveDelegationSafetyCoordinator({
+    sessions: agentToolDependencies.sessions,
+    assignmentPolicy: sessionAssignmentPolicy,
+    assignment: sessionAssignment,
+    permissions: sessionPermissionPort,
+    executionSnapshots: deepChatAgentHarness
+  })
+  const createLiveDelegationService = (): LiveDelegationService =>
+    new LiveDelegationService({
+      repository: liveDelegationRepository,
+      admission: agentInvocationAdmission,
+      deletionGate: sessionDeletionGate,
+      safety: liveDelegationSafety,
+      consent: liveDelegationConsent,
+      sessions: {
+        ...agentToolDependencies.sessions,
+        ...agentToolDependencies.subagents,
+        findDelegationChild: async (parentSessionId, delegationId) => {
+          const matches = appSessionService
+            .list({ includeSubagents: true, parentSessionId })
+            .filter(
+              (session) => session.subagentMeta?.liveDelegation?.delegationId === delegationId
+            )
+          if (matches.length > 1) {
+            throw new Error(`Multiple child Sessions share live delegation ${delegationId}.`)
+          }
+          return matches[0]
+            ? await agentToolDependencies.sessions.resolveConversationSessionInfo(matches[0].id)
+            : null
+        },
+        getAssistantResult: async (sessionId, messageId) => {
+          const messages = sessionData.database.deepchatMessagesTable
+          const identity = messageId
+            ? messages.getAssistantIdentity(messageId)
+            : messages.getLatestAssistantIdentity(sessionId)
+          if (!identity || identity.session_id !== sessionId) return null
+
+          const resultRows =
+            sessionData.database.deepchatAssistantBlocksTable.listResultProjectionByMessageId(
+              identity.id
+            )
+          if (resultRows.length > 0) {
+            const answer = projectFinalAssistantAnswer(
+              resultRows.map(
+                (row): AssistantMessageBlock => ({
+                  type: row.block_type,
+                  status: row.status,
+                  timestamp: row.updated_at,
+                  content: row.text_content ?? undefined
+                })
+              )
+            )
+            return answer
+              ? {
+                  messageId: identity.id,
+                  answerMarkdown: answer,
+                  updatedAt: identity.updated_at
+                }
+              : null
+          }
+
+          const legacyMessage = await sessionQuery.getMessage(identity.id)
+          if (!legacyMessage || legacyMessage.sessionId !== sessionId) return null
+          try {
+            const parsed = JSON.parse(legacyMessage.content) as AssistantMessageBlock[] | string
+            const answer = Array.isArray(parsed)
+              ? projectFinalAssistantAnswer(parsed)
+              : typeof parsed === 'string'
+                ? parsed.trim()
+                : ''
+            return answer
+              ? { messageId: identity.id, answerMarkdown: answer, updatedAt: identity.updated_at }
+              : null
+          } catch {
+            const answer = legacyMessage.content.trim()
+            return answer
+              ? { messageId: identity.id, answerMarkdown: answer, updatedAt: identity.updated_at }
+              : null
+          }
+        }
+      },
+      onChanged: (parentSessionId, delegationId) => {
+        sessionQuery.notify({ sessionIds: [parentSessionId], reason: 'updated' })
+        try {
+          publishDeepchatEvent(liveDelegationChangedEvent.name, {
+            schemaVersion: 1,
+            parentSessionId,
+            delegation: liveDelegationService.getSummary(parentSessionId, delegationId)
+          })
+        } catch (error) {
+          logger.warn('[LiveDelegationService] Failed to publish delegation projection', { error })
+        }
+      }
+    })
+  liveDelegationService = createLiveDelegationService()
   remoteService = new RemoteService({
     settings: dependencies.settingsStore,
     catalog: {
@@ -1485,6 +1630,7 @@ export async function createMainProcessControl(dependencies: {
       return
     }
 
+    liveDelegationService.start()
     hasInitialized = true
 
     const providers = providerSettings.getProviders()
@@ -1708,6 +1854,7 @@ export async function createMainProcessControl(dependencies: {
 
   async function destroy(): Promise<void> {
     await runDestroyStep('providerCatalog.unsubscribe', () => unsubscribeProviderDbCatalog())
+    await runDestroyStep('liveDelegationService.stop', () => liveDelegationService.stop())
     await runDestroyStep('cronJobs.destroy', () => cronJobs.destroy())
     await runDestroyStep('remoteService.destroy', () => remoteService.destroy())
     await runDestroyStep('hookService.stop', () => hookService.stop())
@@ -1899,6 +2046,16 @@ export async function createMainProcessControl(dependencies: {
       }
     })
     const workspaceRoutes = createWorkspaceRoutes(workspaceService)
+    const orchestrationRoutes = createOrchestrationRoutes({
+      resolveCapability: (target) =>
+        'sessionId' in target
+          ? orchestrationCapabilityResolver.resolveSession(target.sessionId)
+          : orchestrationCapabilityResolver.resolveDraft(target.agentId),
+      getPolicy: (sessionId) => sessionAssignment.getOrchestrationPolicy(sessionId),
+      setPolicy: (sessionId, policy) =>
+        sessionAssignment.updateOrchestrationPolicy(sessionId, policy),
+      liveDelegations: createLivePort(() => liveDelegationService)
+    })
     const projectRoutes = createProjectRoutes({
       projectService,
       publishEnvironmentsChanged: (action, environmentPath, version) => {
@@ -2071,6 +2228,7 @@ export async function createMainProcessControl(dependencies: {
         ocrRoutes,
         knowledgeRoutes,
         workspaceRoutes,
+        orchestrationRoutes,
         projectRoutes,
         sessionRoutes,
         agentRoutes,
@@ -2271,6 +2429,7 @@ export async function createMainProcessControl(dependencies: {
     if (
       routeName.startsWith('chat.') ||
       routeName.startsWith('sessions.') ||
+      routeName.startsWith('orchestration.') ||
       routeName.startsWith('remoteControl.') ||
       routeName.startsWith('cronJobs.')
     ) {
@@ -2291,6 +2450,7 @@ export async function createMainProcessControl(dependencies: {
     let operationResult: T | undefined
     let operationError: unknown
     try {
+      await liveDelegationService.stop()
       await cronJobs.stop()
       await remoteService.destroy()
       await hookService.stop()
@@ -2332,6 +2492,8 @@ export async function createMainProcessControl(dependencies: {
       hookService.start()
       cronJobs.start()
       await remoteService.initialize()
+      liveDelegationService = createLiveDelegationService()
+      liveDelegationService.start()
       startupWorkloadCoordinator.createRun('main')
       scheduleBackgroundWork()
       databaseMaintenanceState = 'running'
