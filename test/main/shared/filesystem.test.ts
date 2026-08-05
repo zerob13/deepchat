@@ -9,6 +9,7 @@ describe('filesystem utilities', () => {
     expect(
       isHardlinkUnavailableError(Object.assign(new Error('unsupported'), { code: 'EPERM' }))
     ).toBe(true)
+    expect(isHardlinkUnavailableError({ code: 'EPERM' })).toBe(true)
     expect(
       isHardlinkUnavailableError(Object.assign(new Error('missing'), { code: 'ENOENT' }))
     ).toBe(false)
