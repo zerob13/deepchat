@@ -10,6 +10,7 @@ import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_SCOPES,
   LOCAL_CONTROL_SURFACE_VERSION,
+  LOCAL_CONTROL_METHOD_HEADER,
   LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
   LocalControlDescriptorSchema,
   LocalControlRpcResponseSchema,
@@ -21,6 +22,7 @@ import {
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
 import { CliServer, type CliServerDependencies, type CliUploadedInputFile } from '@/cli/server'
+import { CliRequestError } from '@/cli/errors'
 import {
   AgentCliTokenAuthority,
   type AgentCliRequestBeginResult,
@@ -71,7 +73,11 @@ function rpcRequest(
     protocolVersion?: number
     surfaceVersion?: number
   },
-  options: { includeContentLength?: boolean } = {}
+  options: {
+    includeContentLength?: boolean
+    methodHeader?: string | null
+    sendBody?: boolean
+  } = {}
 ): Promise<RpcResult> {
   const serialized = Buffer.from(
     JSON.stringify({
@@ -86,6 +92,9 @@ function rpcRequest(
     authorization: `Bearer ${input.token ?? descriptor.token}`,
     'content-type': 'application/json'
   }
+  const methodHeader =
+    options.methodHeader === undefined ? (input.method ?? 'cli.version') : options.methodHeader
+  if (methodHeader !== null) headers[LOCAL_CONTROL_METHOD_HEADER] = methodHeader
   if (options.includeContentLength !== false) headers['content-length'] = serialized.length
 
   return new Promise<RpcResult>((resolve, reject) => {
@@ -120,7 +129,9 @@ function rpcRequest(
       }
     )
     request.once('error', reject)
-    if (options.includeContentLength === false) {
+    if (options.sendBody === false) {
+      request.flushHeaders()
+    } else if (options.includeContentLength === false) {
       const midpoint = Math.max(1, Math.floor(serialized.length / 2))
       request.write(serialized.subarray(0, midpoint))
       request.end(serialized.subarray(midpoint))
@@ -138,6 +149,8 @@ function uploadRequest(
     includeContentLength?: boolean
     signal?: AbortSignal
     binding?: LocalControlUploadBinding
+    expectContinue?: boolean
+    onContinue?: () => void
   }
 ): Promise<RpcResult> {
   const envelope = Buffer.from(
@@ -160,7 +173,9 @@ function uploadRequest(
     'content-type': 'application/octet-stream',
     [LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]: envelope
   }
+  const expectsContinue = input.expectContinue !== false
   if (input.includeContentLength !== false) headers['content-length'] = input.body.length
+  if (expectsContinue) headers.expect = '100-continue'
 
   return new Promise<RpcResult>((resolve, reject) => {
     let responseReceived = false
@@ -199,13 +214,22 @@ function uploadRequest(
     request.once('error', (error) => {
       if (!responseReceived) reject(error)
     })
-    if (input.includeContentLength === false) {
-      const midpoint = Math.max(1, Math.floor(input.body.length / 2))
-      request.write(input.body.subarray(0, midpoint))
-      request.end(input.body.subarray(midpoint))
-    } else {
-      request.end(input.body)
+    const sendBody = () => {
+      if (input.includeContentLength === false) {
+        const midpoint = Math.max(1, Math.floor(input.body.length / 2))
+        request.write(input.body.subarray(0, midpoint))
+        request.end(input.body.subarray(midpoint))
+      } else {
+        request.end(input.body)
+      }
     }
+    if (expectsContinue) {
+      request.once('continue', () => {
+        input.onContinue?.()
+        sendBody()
+      })
+      request.flushHeaders()
+    } else sendBody()
   })
 }
 
@@ -432,6 +456,43 @@ describe('CLI local transport', () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
+  it('requires the method header to match the typed request body', async () => {
+    const { descriptor, dispatch } = await createTestServer()
+
+    const missing = await rpcRequest(descriptor, {}, { methodHeader: null })
+    const mismatched = await rpcRequest(
+      descriptor,
+      { method: 'cli.version' },
+      { methodHeader: 'providers.listPublic' }
+    )
+
+    expect(missing).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: 'invalid_request' } }
+    })
+    expect(mismatched).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: 'invalid_request' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects a declared JSON body against its route limit before reading it', async () => {
+    const { descriptor, dispatch } = await createTestServer()
+
+    const response = await rpcRequest(
+      descriptor,
+      { params: { padding: 'x'.repeat(20 * 1024) } },
+      { sendBody: false }
+    )
+
+    expect(response).toMatchObject({
+      status: 413,
+      body: { ok: false, error: { code: 'body_too_large' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
   it('reports invalid route output as an internal contract failure', async () => {
     const { descriptor } = await createTestServer({
       dispatchOutput: () => ({ appVersion: '' })
@@ -505,6 +566,74 @@ describe('CLI local transport', () => {
       })
     )
     await expect(stat(uploadedPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
+  })
+
+  it('waits for upload approval before accepting file bytes', async () => {
+    let resolveApproval!: (admission: CliRequestAdmission) => void
+    const approval = new Promise<CliRequestAdmission>((resolve) => {
+      resolveApproval = resolve
+    })
+    let continued = false
+    const { descriptor, userDataPath, dispatchUpload, authorize } = await createTestServer({
+      surface: createUploadSurface(16),
+      authorize: async () => await approval,
+      dispatchUpload: async () => ({
+        appVersion: '1.2.3',
+        protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+        surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION
+      })
+    })
+
+    const response = uploadRequest(descriptor, {
+      body: Buffer.from('audio-input'),
+      onContinue: () => {
+        continued = true
+      }
+    })
+    await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce())
+
+    expect(continued).toBe(false)
+    expect(dispatchUpload).not.toHaveBeenCalled()
+    expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
+
+    resolveApproval({ release: () => undefined })
+
+    await expect(response).resolves.toMatchObject({ status: 200, body: { ok: true } })
+    expect(continued).toBe(true)
+    expect(dispatchUpload).toHaveBeenCalledOnce()
+  })
+
+  it('rejects an upload without accepting file bytes when approval fails', async () => {
+    let rejectApproval!: (reason: unknown) => void
+    const approval = new Promise<CliRequestAdmission>((_resolve, reject) => {
+      rejectApproval = reject
+    })
+    let continued = false
+    const { descriptor, userDataPath, dispatchUpload, authorize } = await createTestServer({
+      surface: createUploadSurface(16),
+      authorize: async () => await approval
+    })
+
+    const response = uploadRequest(descriptor, {
+      body: Buffer.from('audio-input'),
+      onContinue: () => {
+        continued = true
+      }
+    })
+    await vi.waitFor(() => expect(authorize).toHaveBeenCalledOnce())
+    rejectApproval(
+      new CliRequestError('approval_denied', 'Approval was denied', {
+        httpStatus: 403
+      })
+    )
+
+    await expect(response).resolves.toMatchObject({
+      status: 403,
+      body: { ok: false, error: { code: 'approval_denied' } }
+    })
+    expect(continued).toBe(false)
+    expect(dispatchUpload).not.toHaveBeenCalled()
     expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
   })
 

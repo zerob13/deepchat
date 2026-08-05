@@ -185,20 +185,26 @@ this protocol.
 - `GET /v1/artifacts/:id`: ownership-checked binary output download.
 - `GET /v1/events`: ownership-checked NDJSON event subscription with request/run filters.
 
-All endpoints require `Authorization: Bearer`. RPC envelopes carry a caller-generated request ID,
-method, and params. Responses carry the same ID and either typed result metadata or a stable error
-object. HTTP status communicates transport/authentication failure; CLI exit codes communicate the
-domain outcome. Proxy environment variables are ignored for local transport.
+All endpoints require `Authorization: Bearer`. RPC and stream requests also carry a singular
+`X-DeepChat-Method` header. Main resolves that method's surface and byte limit before reading the
+JSON body, then requires the typed envelope method to match the header. RPC envelopes carry a
+caller-generated request ID, method, and params. Responses carry the same ID and either typed result
+metadata or a stable error object. HTTP status communicates transport/authentication failure; CLI
+exit codes communicate the domain outcome. Proxy environment variables are ignored for local
+transport.
 
 `Content-Length` is rejected when missing for fixed JSON bodies, invalid, conflicting, or above the
 route limit. Upload metadata is the normal RPC envelope encoded as canonical base64url in a singular,
 4 KiB-bounded `X-DeepChat-Upload-Request` header. This lets main authenticate and validate version,
 surface, caller, scopes, and typed metadata before accepting the large body. The body is raw
 `application/octet-stream`; uploads with or without `Content-Length` enforce a cumulative route byte
-limit while reading. Bodies spill to a private `0700` directory above a route-specific memory
-threshold. Upload bytes always stream into a private temporary file, so there is no multipart
-extraction pass or base64 expansion. Abort, parse error, timeout, limit failure, and shutdown all
-remove partial files. The public protocol does not expose those temporary paths.
+limit while reading. The packaged client sends `Expect: 100-continue`; main sends `100 Continue`
+only after authentication, surface checks, typed metadata validation, scope policy, and any renderer
+approval complete. Rejection therefore does not read or persist the source bytes. Bodies spill to a
+private `0700` directory above a route-specific memory threshold. Upload bytes always stream into a
+private temporary file, so there is no multipart extraction pass or base64 expansion. Abort, parse
+error, timeout, limit failure, and shutdown all remove partial files. The public protocol does not
+expose those temporary paths.
 
 ## Contract Ownership and Surface
 

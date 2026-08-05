@@ -33,9 +33,13 @@ function createEndpoint(): LocalControlEndpoint {
   return { kind: 'unix', path: socketPath }
 }
 
-async function listen(listener: RequestListener): Promise<LocalControlDescriptor> {
+async function listen(
+  listener: RequestListener,
+  checkContinueListener?: RequestListener
+): Promise<LocalControlDescriptor> {
   const endpoint = createEndpoint()
   const server = createServer(listener)
+  if (checkContinueListener) server.on('checkContinue', checkContinueListener)
   servers.push(server)
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -219,7 +223,10 @@ describe('CLI response transport', () => {
   it('uploads a stable regular-file snapshot with a typed envelope header', async () => {
     let receivedBody = Buffer.alloc(0)
     let receivedEnvelope: unknown
-    const descriptor = await listen((request, response) => {
+    let receivedExpectHeader: string | undefined
+    let bytesBeforeContinue = 0
+    let continueSent = false
+    const handleUpload: RequestListener = (request, response) => {
       const rawEnvelope = request.headers[LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]
       receivedEnvelope = LocalControlUploadRequestSchema.parse(
         JSON.parse(Buffer.from(String(rawEnvelope), 'base64url').toString('utf8'))
@@ -230,6 +237,17 @@ describe('CLI response transport', () => {
         receivedBody = Buffer.concat(chunks)
         response.setHeader('content-type', 'application/json; charset=utf-8')
         response.end(JSON.stringify(createLocalControlSuccess('request-1', { accepted: true })))
+      })
+    }
+    const descriptor = await listen(handleUpload, (request, response) => {
+      receivedExpectHeader = request.headers.expect
+      request.on('data', (chunk: Buffer) => {
+        if (!continueSent) bytesBeforeContinue += chunk.length
+      })
+      setImmediate(() => {
+        continueSent = true
+        response.writeContinue()
+        handleUpload(request, response)
       })
     })
     const directory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-upload-'))
@@ -249,6 +267,8 @@ describe('CLI response transport', () => {
     })
 
     expect(result).toMatchObject({ ok: true, result: { accepted: true } })
+    expect(receivedExpectHeader).toBe('100-continue')
+    expect(bytesBeforeContinue).toBe(0)
     expect(receivedEnvelope).toMatchObject({
       id: 'request-1',
       method: 'audio.transcribeUpload',

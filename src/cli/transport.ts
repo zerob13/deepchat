@@ -6,6 +6,7 @@ import {
   LOCAL_CONTROL_RPC_PATH,
   LOCAL_CONTROL_STREAM_PATH,
   LOCAL_CONTROL_UPLOAD_PATH,
+  LOCAL_CONTROL_METHOD_HEADER,
   LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
   LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES,
   LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES,
@@ -201,6 +202,7 @@ export async function invokeLocalControlRpc(
         authorization: `Bearer ${invocation.token}`,
         'content-type': 'application/json',
         'content-length': body.length,
+        [LOCAL_CONTROL_METHOD_HEADER]: invocation.method,
         connection: 'close',
         'user-agent': `DeepChat-CLI/${CLI_VERSION}`
       }
@@ -354,6 +356,7 @@ export async function invokeLocalControlUpload(
             authorization: `Bearer ${invocation.token}`,
             'content-type': 'application/octet-stream',
             'content-length': openedStat.size,
+            expect: '100-continue',
             [LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]: envelope,
             connection: 'close',
             'user-agent': `DeepChat-CLI/${CLI_VERSION}`
@@ -386,7 +389,8 @@ export async function invokeLocalControlUpload(
             finish(() => reject(transportFailure('Upload source could not be read')))
           }
         })
-        uploadStream.pipe(request)
+        request.once('continue', () => uploadStream.pipe(request))
+        request.flushHeaders()
       })
     } finally {
       uploadStream.destroy()
@@ -424,6 +428,7 @@ export async function invokeLocalControlStream(
         authorization: `Bearer ${invocation.token}`,
         'content-type': 'application/json',
         'content-length': body.length,
+        [LOCAL_CONTROL_METHOD_HEADER]: invocation.method,
         connection: 'close',
         'user-agent': `DeepChat-CLI/${CLI_VERSION}`
       }

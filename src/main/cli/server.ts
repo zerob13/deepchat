@@ -9,6 +9,8 @@ import { JsonValueSchema, TimestampMsSchema, type JsonValue } from '@shared/cont
 import {
   LOCAL_CONTROL_DESCRIPTOR_FILENAME,
   LOCAL_CONTROL_ARTIFACT_PATH_PREFIX,
+  LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS,
+  LOCAL_CONTROL_METHOD_HEADER,
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_RPC_PATH,
   LOCAL_CONTROL_SCOPES,
@@ -20,6 +22,7 @@ import {
   LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES,
   LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES,
   LocalControlEventEnvelopeSchema,
+  LocalControlMethodSchema,
   LocalControlScopesSchema,
   LocalControlTokenSchema,
   LocalControlRpcRequestSchema,
@@ -60,6 +63,7 @@ const MAX_CONNECTIONS = 64
 const MAX_PENDING_REQUESTS = 64
 const MAX_PENDING_PER_CONNECTION = 8
 const MAX_IN_MEMORY_BODY_BYTES = 256 * 1024
+const REQUEST_TIMEOUT_GRACE_MS = 5_000
 const SHUTDOWN_GRACE_MS = 2_000
 const UNKNOWN_REQUEST_ID = 'unknown'
 const emptyAdmission: CliRequestAdmission = Object.freeze({ release: () => undefined })
@@ -190,15 +194,18 @@ function parseUploadRequestHeader(request: IncomingMessage): unknown {
   return parseBoundedJsonBytes(decoded)
 }
 
-function getMaxBodyBytes(
-  surface: ReadonlyMap<string, CliSurfaceEntry>,
-  transport: 'rpc' | 'stream'
-): number {
-  let maxBytes = 1
-  for (const entry of surface.values()) {
-    if (entry.transport === transport) maxBytes = Math.max(maxBytes, entry.limits.maxBodyBytes)
+function readRequestMethodHeader(request: IncomingMessage): string {
+  const parsed = LocalControlMethodSchema.safeParse(
+    readSingularRequestHeader(request, LOCAL_CONTROL_METHOD_HEADER)
+  )
+  if (!parsed.success) {
+    throw new CliRequestError('invalid_request', 'Method header is missing or invalid')
   }
-  return maxBytes
+  return parsed.data
+}
+
+function requestExpectsContinue(request: IncomingMessage): boolean {
+  return readSingularRequestHeader(request, 'expect')?.trim().toLowerCase() === '100-continue'
 }
 
 function toSafeRequestId(value: unknown): string {
@@ -338,7 +345,7 @@ export class CliServer {
     const startedAt = this.now()
     await prepareLocalControlLayout(layout, this.platform)
 
-    const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES }, (request, response) => {
+    const serveRequest = (request: IncomingMessage, response: ServerResponse) => {
       void this.handleRequest(request, response).catch((error) => {
         this.log.error('[CLI] Unhandled request failure', error)
         if (!response.headersSent && !response.destroyed) {
@@ -354,10 +361,12 @@ export class CliServer {
           response.destroy()
         }
       })
-    })
+    }
+    const server = createServer({ maxHeaderSize: MAX_HEADER_BYTES }, serveRequest)
+    server.on('checkContinue', serveRequest)
     server.maxConnections = MAX_CONNECTIONS
     server.headersTimeout = 10_000
-    server.requestTimeout = 30_000
+    server.requestTimeout = LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS + REQUEST_TIMEOUT_GRACE_MS
     server.keepAliveTimeout = 5_000
     server.on('connection', (socket) => {
       this.sockets.add(socket)
@@ -532,7 +541,8 @@ export class CliServer {
       )
       return
     }
-    if (request.headers.expect !== undefined) {
+    const expectsContinue = requestExpectsContinue(request)
+    if (request.headers.expect !== undefined && (!isUploadRequest || !expectsContinue)) {
       this.sendFailure(
         response,
         417,
@@ -637,23 +647,30 @@ export class CliServer {
     let requestId = UNKNOWN_REQUEST_ID
     let routeMethod = 'unknown'
     try {
-      let bodySize = 0
       let rawRequest: unknown
       let transportBinding: LocalControlUploadBinding | undefined
+      let declaredMethod: string | undefined
+      let entry: CliSurfaceEntry | undefined
       if (requestTransport === 'upload') {
         rawRequest = parseUploadRequestHeader(request)
       } else {
-        const maxBodyBytes = getMaxBodyBytes(this.surface, requestTransport)
+        declaredMethod = readRequestMethodHeader(request)
+        routeMethod = declaredMethod
+        entry = this.surface.get(declaredMethod)
+        if (!entry || entry.transport !== requestTransport) {
+          throw new CliRequestError('not_found', 'Method is not exposed by CLI surface V1', {
+            httpStatus: 404
+          })
+        }
         const body = await readBoundedRequestBody(request, {
-          maxBytes: maxBodyBytes,
-          memoryThresholdBytes: Math.min(maxBodyBytes, MAX_IN_MEMORY_BODY_BYTES),
+          maxBytes: entry.limits.maxBodyBytes,
+          memoryThresholdBytes: Math.min(entry.limits.maxBodyBytes, MAX_IN_MEMORY_BODY_BYTES),
           tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
           requireContentLength: true,
           ...(agentGrant
             ? { consumeBytes: (bytes: number) => this.consumeAgentBytes(agentGrant, bytes) }
             : {})
         })
-        bodySize = body.size
         rawRequest = await parseBoundedJsonBody(body)
       }
       if (isRecord(rawRequest)) requestId = toSafeRequestId(rawRequest.id)
@@ -686,15 +703,16 @@ export class CliServer {
       }
       requestId = rpcRequest.id
       routeMethod = rpcRequest.method
-      const entry = this.surface.get(rpcRequest.method)
+      if (declaredMethod && rpcRequest.method !== declaredMethod) {
+        throw new CliRequestError(
+          'invalid_request',
+          'Method header does not match the request body'
+        )
+      }
+      entry ??= this.surface.get(rpcRequest.method)
       if (!entry || entry.transport !== requestTransport) {
         throw new CliRequestError('not_found', 'Method is not exposed by CLI surface V1', {
           httpStatus: 404
-        })
-      }
-      if (requestTransport !== 'upload' && bodySize > entry.limits.maxBodyBytes) {
-        throw new CliRequestError('body_too_large', 'Request body exceeds method limit', {
-          httpStatus: 413
         })
       }
       if (transportBinding && transportBinding.size > entry.limits.maxBodyBytes) {
@@ -759,6 +777,7 @@ export class CliServer {
               retriable: true
             })
           }
+          if (expectsContinue) response.writeContinue()
           const uploadBody = await readBoundedRequestBody(request, {
             maxBytes: entry.limits.maxBodyBytes,
             memoryThresholdBytes: 0,
