@@ -7,6 +7,9 @@ MCP、OCR、Artifact 和 Agent 状态仍由正在运行的 DeepChat main 进程�
 
 - 不提供 CLI 开关。DeepChat 启动时自动启动本机 control plane。
 - server 监听成功后，DeepChat 自动、幂等地安装或修复自己拥有的 `deepchat` launcher。
+- 用户命令位置中的 launcher 是普通文件；它固定引用当前应用中校验过的 CLI 与 bundled Node，
+  应用移动或升级后由下次启动原子刷新。旧版 owned symlink 会自动迁移。
+- launcher 不会回退到 `PATH` 中的系统 Node；bundled runtime 缺失时以 `127` 失败关闭。
 - launcher 冲突时保持失败关闭：不会覆盖同名的外部命令、被修改的 managed block、符号链接
   profile 或不属于 DeepChat 的文件。
 - launcher 不是 daemon。DeepChat 未运行时，命令返回 `unavailable`，退出码为 `3`。

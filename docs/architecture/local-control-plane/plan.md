@@ -73,7 +73,9 @@
 
 1. Build the CLI as a packaged application resource that runs on the bundled Node runtime.
 2. Automatically reconcile platform launchers after server startup, with no settings toggle and with
-   explicit, reversible ownership that never overwrites foreign commands or shell content.
+   explicit, reversible ownership that never overwrites foreign commands or shell content. Install a
+   stable regular-file shim, atomically refresh its pinned app-resource paths, migrate the owned
+   legacy POSIX symlink, and never fall back to a runtime from `PATH`.
 3. Add the internal scoped-token issuer, conversation binding, expiry/revocation, call/byte quotas,
    and main-enforced Agent restrictions. Derive each token's exact scopes from the shared command
    catalog and `CLI_SURFACE`; the issuer has no broad default capability set.

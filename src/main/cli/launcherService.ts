@@ -54,6 +54,7 @@ type PosixLauncherMarker = Readonly<{
   platform: 'posix'
   commandPath: string
   launcherTarget: string
+  commandHash?: string
   profileKind: PosixProfileKind | null
   profilePrefixLength: 0 | 1 | 2
   profileCreated: boolean
@@ -97,10 +98,14 @@ type AppendedManagedBlock = Readonly<{
 }>
 
 type CliSource = Readonly<{
-  directory: string
   posixLauncher: string
   modulePath: string
+  runtimeNode: string
 }>
+
+type OwnedCommand =
+  | Readonly<{ kind: 'link'; value: string }>
+  | Readonly<{ kind: 'text'; value: string; executable: boolean }>
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -134,6 +139,8 @@ function parseLauncherMarker(value: unknown): LauncherMarker | null {
   if (
     marker.platform === 'posix' &&
     typeof marker.launcherTarget === 'string' &&
+    (marker.commandHash === undefined ||
+      (typeof marker.commandHash === 'string' && /^[0-9a-f]{64}$/.test(marker.commandHash))) &&
     (marker.profileKind === null || isPosixProfileKind(marker.profileKind)) &&
     (marker.profilePrefixLength === 0 ||
       marker.profilePrefixLength === 1 ||
@@ -202,31 +209,50 @@ function escapeBatchLiteral(value: string): string {
   return value.replaceAll('%', '%%')
 }
 
+function quotePosixLiteral(value: string): string {
+  return "'" + value.replaceAll("'", "'\\''") + "'"
+}
+
+function createPosixCommand(source: CliSource): string {
+  return [
+    '#!/bin/sh',
+    'set -eu',
+    'runtime_node=' + quotePosixLiteral(source.runtimeNode),
+    'cli_module=' + quotePosixLiteral(source.modulePath),
+    'if [ ! -x "$runtime_node" ] || [ ! -f "$cli_module" ]; then',
+    '  echo "DeepChat CLI bundled resources are unavailable." >&2',
+    '  exit 127',
+    'fi',
+    'exec "$runtime_node" "$cli_module" "$@"',
+    ''
+  ].join('\n')
+}
+
 function createWindowsCommand(source: CliSource): string {
   const cliModule = escapeBatchLiteral(source.modulePath)
-  const runtimeCandidates = [
-    path.join(source.directory, '..', 'runtime', 'node', 'node.exe'),
-    path.join(source.directory, '..', '..', 'runtime', 'node', 'node.exe')
-  ].map((candidate) => escapeBatchLiteral(path.resolve(candidate)))
+  const runtimeNode = escapeBatchLiteral(source.runtimeNode)
   return [
     '@echo off',
     'setlocal',
     `set "cli_module=${cliModule}"`,
-    `set "runtime_node=${runtimeCandidates[0]}"`,
-    `if not exist "%runtime_node%" set "runtime_node=${runtimeCandidates[1]}"`,
-    'if exist "%runtime_node%" goto bundled_runtime',
-    'where node >nul 2>&1',
-    'if errorlevel 1 goto missing_runtime',
-    'node "%cli_module%" %*',
-    'exit /b %errorlevel%',
-    ':bundled_runtime',
+    `set "runtime_node=${runtimeNode}"`,
+    'if not exist "%runtime_node%" goto missing_runtime',
+    'if not exist "%cli_module%" goto missing_runtime',
     '"%runtime_node%" "%cli_module%" %*',
     'exit /b %errorlevel%',
     ':missing_runtime',
-    'echo DeepChat CLI requires the bundled Node.js runtime or node on PATH. 1>&2',
+    'echo DeepChat CLI bundled resources are unavailable. 1>&2',
     'exit /b 127',
     ''
   ].join('\r\n')
+}
+
+function ownedCommandsEqual(left: OwnedCommand | null, right: OwnedCommand | null): boolean {
+  return (
+    left?.kind === right?.kind &&
+    left?.value === right?.value &&
+    (left?.kind !== 'text' || (right?.kind === 'text' && left.executable === right.executable))
+  )
 }
 
 export class CliLauncherService {
@@ -289,10 +315,33 @@ export class CliLauncherService {
     const directory = this.options.resolveCliDirectory()
     if (!directory) return null
     const resolvedDirectory = path.resolve(directory)
-    const source = {
-      directory: resolvedDirectory,
+    const runtimeExecutable =
+      this.platform === 'win32' ? path.join('node', 'node.exe') : path.join('node', 'bin', 'node')
+    const runtimeCandidates = [
+      path.resolve(resolvedDirectory, '..', 'runtime', runtimeExecutable),
+      path.resolve(resolvedDirectory, '..', '..', 'runtime', runtimeExecutable)
+    ]
+    let runtimeNode: string | null = null
+    for (const candidate of runtimeCandidates) {
+      try {
+        const stats = await lstat(candidate)
+        if (
+          stats.isFile() &&
+          !stats.isSymbolicLink() &&
+          (this.platform === 'win32' || (stats.mode & 0o111) !== 0)
+        ) {
+          runtimeNode = candidate
+          break
+        }
+      } catch (error) {
+        if (!isMissingFileError(error)) throw error
+      }
+    }
+    if (!runtimeNode) return null
+    const source: CliSource = {
       posixLauncher: path.join(resolvedDirectory, 'deepchat'),
-      modulePath: path.join(resolvedDirectory, 'deepchat.mjs')
+      modulePath: path.join(resolvedDirectory, 'deepchat.mjs'),
+      runtimeNode
     }
     const requiredPaths =
       this.platform === 'win32' ? [source.modulePath] : [source.posixLauncher, source.modulePath]
@@ -444,7 +493,8 @@ export class CliLauncherService {
     )
     const stale =
       marker.platform === 'posix'
-        ? marker.launcherTarget !== (current as PosixLauncherMarker).launcherTarget
+        ? marker.commandHash === undefined ||
+          marker.commandHash !== (current as PosixLauncherMarker).commandHash
         : marker.commandHash !== (current as WindowsLauncherMarker).commandHash
     return {
       state: stale ? 'stale' : 'installed',
@@ -533,7 +583,7 @@ export class CliLauncherService {
     let commandChanged = false
     let profileChanged = false
     try {
-      if (previousCommand !== nextCommand) {
+      if (!ownedCommandsEqual(previousCommand, nextCommand)) {
         await this.writeOwnedCommand(source, previousCommand)
         commandChanged = true
       }
@@ -768,6 +818,7 @@ export class CliLauncherService {
       platform: 'posix',
       commandPath,
       launcherTarget: source.posixLauncher,
+      commandHash: sha256(createPosixCommand(source)),
       profileKind,
       profilePrefixLength,
       profileCreated
@@ -778,96 +829,139 @@ export class CliLauncherService {
     marker: LauncherMarker
   ): Promise<'current' | 'missing' | 'modified'> {
     try {
-      if (marker.platform === 'posix') {
-        const target = await this.readPosixCommandTarget()
-        if (target === null) return 'missing'
-        return target === path.resolve(marker.launcherTarget) ? 'current' : 'modified'
-      }
-      const content = await this.readWindowsCommand()
-      if (content === null) return 'missing'
-      return sha256(content) === marker.commandHash ? 'current' : 'modified'
+      const command = await this.readOwnedCommand()
+      if (command === null) return 'missing'
+      return this.commandMatchesMarker(command, marker) ? 'current' : 'modified'
     } catch {
       return 'modified'
     }
   }
 
-  private async captureOwnedCommand(marker: LauncherMarker | null): Promise<string | null> {
-    if (this.platform === 'win32') {
-      const content = await this.readWindowsCommand()
-      if (content === null) return null
-      if (!marker || marker.platform !== 'windows' || sha256(content) !== marker.commandHash) {
-        throw new Error('Refusing to replace an unowned DeepChat CLI command')
-      }
-      return content
+  private commandMatchesMarker(command: OwnedCommand, marker: LauncherMarker): boolean {
+    if (marker.platform === 'windows') {
+      return command.kind === 'text' && sha256(command.value) === marker.commandHash
     }
-    const target = await this.readPosixCommandTarget()
-    if (target === null) return null
-    if (!marker || marker.platform !== 'posix' || target !== path.resolve(marker.launcherTarget)) {
+    if (marker.commandHash !== undefined) {
+      return (
+        command.kind === 'text' &&
+        command.executable &&
+        sha256(command.value) === marker.commandHash
+      )
+    }
+    return command.kind === 'link' && command.value === path.resolve(marker.launcherTarget)
+  }
+
+  private async captureOwnedCommand(marker: LauncherMarker | null): Promise<OwnedCommand | null> {
+    const command = await this.readOwnedCommand()
+    if (command === null) return null
+    if (!marker || !this.commandMatchesMarker(command, marker)) {
       throw new Error('Refusing to replace an unowned DeepChat CLI command')
     }
-    return target
+    return command
   }
 
   private async writeOwnedCommand(
     source: CliSource,
-    previousCommand: string | null
+    previousCommand: OwnedCommand | null
   ): Promise<void> {
     const commandPath = this.commandPath
     if (!commandPath) throw new Error('CLI launcher command path is unavailable')
     await this.prepareCommandDirectory(path.dirname(commandPath))
     if (this.platform === 'win32') {
-      await this.atomicWriteText(commandPath, createWindowsCommand(source), previousCommand, 0o755)
+      if (previousCommand?.kind === 'link') {
+        throw new Error('Windows CLI launcher cannot replace a symbolic link')
+      }
+      await this.atomicWriteText(
+        commandPath,
+        createWindowsCommand(source),
+        previousCommand?.value ?? null,
+        0o755
+      )
       return
     }
-    await this.atomicWriteLink(commandPath, source.posixLauncher, previousCommand)
+    await this.atomicWritePosixCommand(
+      { kind: 'text', value: createPosixCommand(source), executable: true },
+      previousCommand
+    )
   }
 
-  private commandForSource(source: CliSource): string {
-    return this.platform === 'win32'
-      ? createWindowsCommand(source)
-      : path.resolve(source.posixLauncher)
+  private commandForSource(source: CliSource): OwnedCommand {
+    return {
+      kind: 'text',
+      value: this.platform === 'win32' ? createWindowsCommand(source) : createPosixCommand(source),
+      executable: true
+    }
   }
 
   private async restoreOwnedCommand(
-    previousCommand: string | null,
-    expectedCurrent: string | null
+    previousCommand: OwnedCommand | null,
+    expectedCurrent: OwnedCommand | null
   ): Promise<void> {
     const commandPath = this.commandPath
     if (!commandPath) return
-    if (previousCommand === null) {
-      if (expectedCurrent === null) return
-      if (this.platform === 'win32') {
-        await this.unlinkTextIfMatches(commandPath, expectedCurrent)
+    if (this.platform !== 'win32') {
+      if (previousCommand === null) {
+        if (expectedCurrent !== null) await this.unlinkPosixCommandIfMatches(expectedCurrent)
       } else {
-        await this.unlinkLinkIfMatches(commandPath, expectedCurrent)
+        await this.atomicWritePosixCommand(previousCommand, expectedCurrent)
       }
       return
     }
-    if (this.platform === 'win32') {
-      await this.atomicWriteText(commandPath, previousCommand, expectedCurrent, 0o755)
-    } else {
-      await this.atomicWriteLink(commandPath, previousCommand, expectedCurrent)
+    if (previousCommand?.kind === 'link' || expectedCurrent?.kind === 'link') {
+      throw new Error('Windows CLI launcher cannot restore a symbolic link')
     }
+    if (previousCommand === null) {
+      if (expectedCurrent !== null) {
+        await this.unlinkTextIfMatches(commandPath, expectedCurrent.value)
+      }
+      return
+    }
+    await this.atomicWriteText(
+      commandPath,
+      previousCommand.value,
+      expectedCurrent?.value ?? null,
+      0o755
+    )
   }
 
-  private async removeOwnedCommand(previousCommand: string): Promise<void> {
+  private async removeOwnedCommand(previousCommand: OwnedCommand): Promise<void> {
     const commandPath = this.commandPath
     if (!commandPath) return
     if (this.platform === 'win32') {
-      await this.unlinkTextIfMatches(commandPath, previousCommand)
+      if (previousCommand.kind !== 'text') {
+        throw new Error('Windows CLI launcher cannot remove a symbolic link')
+      }
+      await this.unlinkTextIfMatches(commandPath, previousCommand.value)
     } else {
-      await this.unlinkLinkIfMatches(commandPath, previousCommand)
+      await this.unlinkPosixCommandIfMatches(previousCommand)
     }
   }
 
-  private async readPosixCommandTarget(): Promise<string | null> {
+  private async readOwnedCommand(): Promise<OwnedCommand | null> {
+    if (this.platform === 'win32') {
+      const content = await this.readWindowsCommand()
+      return content === null ? null : { kind: 'text', value: content, executable: true }
+    }
+    return await this.readPosixCommand()
+  }
+
+  private async readPosixCommand(): Promise<OwnedCommand | null> {
     const commandPath = this.commandPath
     if (!commandPath) return null
     try {
       const stats = await lstat(commandPath)
-      if (!stats.isSymbolicLink()) throw new Error('DeepChat CLI command is not a symbolic link')
-      const target = await readlink(commandPath)
-      return path.resolve(path.dirname(commandPath), target)
+      if (stats.isSymbolicLink()) {
+        const target = await readlink(commandPath)
+        return { kind: 'link', value: path.resolve(path.dirname(commandPath), target) }
+      }
+      if (!stats.isFile() || stats.size > 64 * 1024) {
+        throw new Error('DeepChat CLI command is not an owned launcher')
+      }
+      return {
+        kind: 'text',
+        value: await readFile(commandPath, 'utf8'),
+        executable: (stats.mode & 0o111) !== 0
+      }
     } catch (error) {
       if (isMissingFileError(error)) return null
       throw error
@@ -916,21 +1010,32 @@ export class CliLauncherService {
     }
   }
 
-  private async atomicWriteLink(
-    commandPath: string,
-    target: string,
-    expectedTarget: string | null
+  private async atomicWritePosixCommand(
+    command: OwnedCommand,
+    expectedCommand: OwnedCommand | null
   ): Promise<void> {
-    const currentTarget = await this.readPosixCommandTarget()
-    if (currentTarget !== (expectedTarget && path.resolve(expectedTarget))) {
+    const commandPath = this.commandPath
+    if (!commandPath) throw new Error('CLI launcher command path is unavailable')
+    const currentCommand = await this.readPosixCommand()
+    if (!ownedCommandsEqual(currentCommand, expectedCommand)) {
       throw new Error('CLI launcher changed during installation')
     }
     const tempPath = path.join(path.dirname(commandPath), `.deepchat-${randomUUID()}.tmp`)
     try {
-      await symlink(path.resolve(target), tempPath)
-      const verifiedTarget = await this.readPosixCommandTarget()
-      if (verifiedTarget !== currentTarget)
+      if (command.kind === 'link') {
+        await symlink(command.value, tempPath)
+      } else {
+        await writeFile(tempPath, command.value, {
+          encoding: 'utf8',
+          flag: 'wx',
+          mode: 0o755
+        })
+        await chmod(tempPath, 0o755)
+      }
+      const verifiedCommand = await this.readPosixCommand()
+      if (!ownedCommandsEqual(verifiedCommand, currentCommand)) {
         throw new Error('CLI launcher changed during installation')
+      }
       await rename(tempPath, commandPath)
     } catch (error) {
       await unlink(tempPath).catch(() => undefined)
@@ -993,9 +1098,11 @@ export class CliLauncherService {
     }
   }
 
-  private async unlinkLinkIfMatches(commandPath: string, expectedTarget: string): Promise<void> {
-    const currentTarget = await this.readPosixCommandTarget()
-    if (currentTarget !== path.resolve(expectedTarget)) {
+  private async unlinkPosixCommandIfMatches(expectedCommand: OwnedCommand): Promise<void> {
+    const commandPath = this.commandPath
+    if (!commandPath) return
+    const currentCommand = await this.readPosixCommand()
+    if (!ownedCommandsEqual(currentCommand, expectedCommand)) {
       throw new Error('Refusing to remove a changed CLI launcher')
     }
     await unlink(commandPath)

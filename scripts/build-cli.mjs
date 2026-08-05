@@ -12,43 +12,32 @@ export const cliOutputDirectory = path.join(repositoryRoot, 'out', 'cli')
 export const POSIX_LAUNCHER = `#!/bin/sh
 set -eu
 
-script_path=$0
-while [ -L "$script_path" ]; do
-  script_dir=$(CDPATH= cd -P -- "$(dirname -- "$script_path")" && pwd)
-  link_target=$(readlink "$script_path")
-  case "$link_target" in
-    /*) script_path=$link_target ;;
-    *) script_path=$script_dir/$link_target ;;
-  esac
-done
-script_dir=$(CDPATH= cd -P -- "$(dirname -- "$script_path")" && pwd)
+case "$0" in
+  */*) script_dir=\${0%/*} ;;
+  *) script_dir=. ;;
+esac
+script_dir=$(CDPATH= cd -P -- "$script_dir" && pwd)
 runtime_node="$script_dir/../runtime/node/bin/node"
 if [ ! -x "$runtime_node" ]; then
   runtime_node="$script_dir/../../runtime/node/bin/node"
 fi
-if [ -x "$runtime_node" ]; then
-  exec "$runtime_node" "$script_dir/deepchat.mjs" "$@"
+cli_module="$script_dir/deepchat.mjs"
+if [ -x "$runtime_node" ] && [ -f "$cli_module" ]; then
+  exec "$runtime_node" "$cli_module" "$@"
 fi
-if command -v node >/dev/null 2>&1; then
-  exec node "$script_dir/deepchat.mjs" "$@"
-fi
-echo "DeepChat CLI requires the bundled Node.js runtime or node on PATH." >&2
+echo "DeepChat CLI bundled resources are unavailable." >&2
 exit 127
 `
 
 export const WINDOWS_LAUNCHER = `@echo off\r
 set "runtime_node=%~dp0..\\runtime\\node\\node.exe"\r
 if not exist "%runtime_node%" set "runtime_node=%~dp0..\\..\\runtime\\node\\node.exe"\r
-if exist "%runtime_node%" goto bundled_runtime\r
-where node >nul 2>&1\r
-if errorlevel 1 goto missing_runtime\r
-node "%~dp0deepchat.mjs" %*\r
-exit /b %errorlevel%\r
-:bundled_runtime\r
+if not exist "%runtime_node%" goto missing_runtime\r
+if not exist "%~dp0deepchat.mjs" goto missing_runtime\r
 "%runtime_node%" "%~dp0deepchat.mjs" %*\r
 exit /b %errorlevel%\r
 :missing_runtime\r
-echo DeepChat CLI requires the bundled Node.js runtime or node on PATH. 1>&2\r
+echo DeepChat CLI bundled resources are unavailable. 1>&2\r
 exit /b 127\r
 `
 

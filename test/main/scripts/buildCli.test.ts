@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -14,28 +14,42 @@ import {
 const execFileAsync = promisify(execFile)
 
 async function runGeneratedLauncher(outputDirectory: string) {
-  const environment = {
-    ...process.env,
-    PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter)
-  }
   if (process.platform === 'win32') {
     const launcherPath = path.join(outputDirectory, 'deepchat.cmd')
     return await execFileAsync(
       process.env.ComSpec ?? 'cmd.exe',
       ['/d', '/s', '/c', `"${launcherPath}" help`],
-      { env: environment }
+      { env: { ...process.env, PATH: '' } }
     )
   }
   return await execFileAsync(path.join(outputDirectory, 'deepchat'), ['help'], {
-    env: environment
+    env: { ...process.env, PATH: '' }
   })
+}
+
+async function provisionBundledRuntime(outputDirectory: string): Promise<void> {
+  const runtimeNode = path.resolve(
+    outputDirectory,
+    '..',
+    'runtime',
+    'node',
+    process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node')
+  )
+  await mkdir(path.dirname(runtimeNode), { recursive: true })
+  if (process.platform === 'win32') {
+    await copyFile(process.execPath, runtimeNode)
+  } else {
+    await symlink(process.execPath, runtimeNode)
+  }
 }
 
 describe('CLI bundle', () => {
   it('builds a standalone Node entry and explicit bundled-runtime launchers', async () => {
-    const outputDirectory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-build-'))
+    const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-build-'))
+    const outputDirectory = path.join(temporaryDirectory, 'cli')
     try {
       await buildCli({ outDir: outputDirectory, logLevel: 'silent' })
+      await provisionBundledRuntime(outputDirectory)
       const entryPath = path.join(outputDirectory, 'deepchat.mjs')
       const source = await readFile(entryPath, 'utf8')
       const result = await execFileAsync(process.execPath, [entryPath, 'help'])
@@ -52,10 +66,13 @@ describe('CLI bundle', () => {
       )
       expect(POSIX_LAUNCHER).toContain('../runtime/node/bin/node')
       expect(POSIX_LAUNCHER).toContain('../../runtime/node/bin/node')
+      expect(POSIX_LAUNCHER).not.toContain('command -v node')
       expect(WINDOWS_LAUNCHER).toContain('..\\runtime\\node\\node.exe')
       expect(WINDOWS_LAUNCHER).toContain('..\\..\\runtime\\node\\node.exe')
+      expect(WINDOWS_LAUNCHER).not.toContain('where node')
+      expect(WINDOWS_LAUNCHER).not.toContain('node "%~dp0deepchat.mjs"')
     } finally {
-      await rm(outputDirectory, { recursive: true })
+      await rm(temporaryDirectory, { recursive: true })
     }
   })
 

@@ -1,4 +1,14 @@
-import { lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -19,6 +29,14 @@ async function createFixture(platform: NodeJS.Platform = 'darwin') {
   await writeFile(path.join(cliDirectory, 'deepchat'), '#!/bin/sh\n', { mode: 0o755 })
   await writeFile(path.join(cliDirectory, 'deepchat.cmd'), '@echo off\r\n')
   await writeFile(path.join(cliDirectory, 'deepchat.mjs'), 'console.log("deepchat")\n')
+  const runtimeNode = path.join(
+    root,
+    'runtime',
+    'node',
+    platform === 'win32' ? 'node.exe' : path.join('bin', 'node')
+  )
+  await mkdir(path.dirname(runtimeNode), { recursive: true })
+  await writeFile(runtimeNode, 'fixture runtime\n', { mode: 0o755 })
   let currentCliDirectory: string | null = cliDirectory
   const service = new CliLauncherService({
     platform,
@@ -38,6 +56,7 @@ async function createFixture(platform: NodeJS.Platform = 'darwin') {
     userDataDirectory,
     localAppDataDirectory,
     cliDirectory,
+    runtimeNode,
     service,
     setCliDirectory: (directory: string | null) => {
       currentCliDirectory = directory
@@ -68,9 +87,14 @@ describe('CliLauncherService', () => {
       commandPath,
       shellConfigPath: profilePath
     })
-    expect(path.resolve(path.dirname(commandPath), await readlink(commandPath))).toBe(
-      path.join(fixture.cliDirectory, 'deepchat')
-    )
+    const commandStats = await lstat(commandPath)
+    const command = await readFile(commandPath, 'utf8')
+    expect(commandStats.isFile()).toBe(true)
+    expect(commandStats.isSymbolicLink()).toBe(false)
+    expect(commandStats.mode & 0o111).not.toBe(0)
+    expect(command).toContain(`runtime_node='${fixture.runtimeNode}'`)
+    expect(command).toContain(`cli_module='${path.join(fixture.cliDirectory, 'deepchat.mjs')}'`)
+    expect(command).not.toContain('command -v node')
     expect(await readFile(profilePath, 'utf8')).toBe(
       [
         'export EDITOR=vim',
@@ -203,6 +227,7 @@ describe('CliLauncherService', () => {
     const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
     const profilePath = path.join(fixture.homeDirectory, '.zprofile')
     await fixture.service.ensureInstalled()
+    const installedCommand = await readFile(commandPath, 'utf8')
     await rm(commandPath)
     await symlink('/tmp/not-deepchat', commandPath)
 
@@ -214,7 +239,7 @@ describe('CliLauncherService', () => {
     expect(await readlink(commandPath)).toBe('/tmp/not-deepchat')
 
     await rm(commandPath)
-    await symlink(path.join(fixture.cliDirectory, 'deepchat'), commandPath)
+    await writeFile(commandPath, installedCommand, { mode: 0o755 })
     await writeFile(
       profilePath,
       (await readFile(profilePath, 'utf8'))
@@ -239,10 +264,13 @@ describe('CliLauncherService', () => {
       reason: 'command-missing'
     })
     await expect(fixture.service.ensureInstalled()).resolves.toMatchObject({ state: 'installed' })
-    expect((await lstat(commandPath)).isSymbolicLink()).toBe(true)
+    const repairedCommand = await lstat(commandPath)
+    expect(repairedCommand.isFile()).toBe(true)
+    expect(repairedCommand.isSymbolicLink()).toBe(false)
+    expect(repairedCommand.mode & 0o111).not.toBe(0)
   })
 
-  it('refreshes only a stale launcher whose previous target is still owned', async () => {
+  it('refreshes only a stale launcher whose previous content is still owned', async () => {
     const fixture = await createFixture()
     const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
     await fixture.service.ensureInstalled()
@@ -257,10 +285,50 @@ describe('CliLauncherService', () => {
       reason: 'upgrade-required'
     })
     await fixture.service.ensureInstalled()
-    expect(path.resolve(path.dirname(commandPath), await readlink(commandPath))).toBe(
-      path.join(nextCliDirectory, 'deepchat')
+    const refreshedCommand = await readFile(commandPath, 'utf8')
+    expect(refreshedCommand).toContain(
+      `cli_module='${path.join(nextCliDirectory, 'deepchat.mjs')}'`
     )
+    expect(refreshedCommand).not.toContain(fixture.cliDirectory)
     await expect(fixture.service.getStatus()).resolves.toMatchObject({ state: 'installed' })
+  })
+
+  it('migrates an owned legacy POSIX symlink to the stable command shim', async () => {
+    const fixture = await createFixture()
+    const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
+    const markerPath = path.join(fixture.userDataDirectory, 'local-control', 'launcher.json')
+    await fixture.service.ensureInstalled()
+
+    const marker = JSON.parse(await readFile(markerPath, 'utf8')) as Record<string, unknown>
+    delete marker.commandHash
+    await writeFile(markerPath, `${JSON.stringify(marker)}\n`)
+    await rm(commandPath)
+    await symlink(path.join(fixture.cliDirectory, 'deepchat'), commandPath)
+
+    await expect(fixture.service.getStatus()).resolves.toMatchObject({
+      state: 'stale',
+      reason: 'upgrade-required'
+    })
+    await expect(fixture.service.ensureInstalled()).resolves.toMatchObject({ state: 'installed' })
+
+    const migratedStats = await lstat(commandPath)
+    const migratedMarker = JSON.parse(await readFile(markerPath, 'utf8')) as Record<string, unknown>
+    expect(migratedStats.isFile()).toBe(true)
+    expect(migratedStats.isSymbolicLink()).toBe(false)
+    expect(migratedMarker.commandHash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('fails closed when an owned POSIX shim loses its executable mode', async () => {
+    const fixture = await createFixture()
+    const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
+    await fixture.service.ensureInstalled()
+    await chmod(commandPath, 0o644)
+
+    await expect(fixture.service.getStatus()).resolves.toMatchObject({
+      state: 'conflict',
+      reason: 'command-modified'
+    })
+    await expect(fixture.service.ensureInstalled()).rejects.toThrow('unowned')
   })
 
   it('uses an owned Windows command shim and refreshes it across app paths', async () => {
@@ -280,6 +348,10 @@ describe('CliLauncherService', () => {
     expect(await readFile(commandPath, 'utf8')).toContain(
       `set "cli_module=${path.join(fixture.cliDirectory, 'deepchat.mjs')}"`
     )
+    expect(await readFile(commandPath, 'utf8')).toContain(
+      `set "runtime_node=${fixture.runtimeNode}"`
+    )
+    expect(await readFile(commandPath, 'utf8')).not.toContain('where node')
 
     const nextCliDirectory = path.join(fixture.root, 'cli-win-v2')
     await mkdir(nextCliDirectory)
