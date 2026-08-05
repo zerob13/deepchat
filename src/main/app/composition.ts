@@ -213,6 +213,7 @@ import {
   type RouteDispatcher
 } from '@/routes'
 import { createNodeScheduler } from '@/routes/scheduler'
+import { coordinateApplicationDataReset } from './applicationDataReset'
 import {
   AgentCliCommandAccess,
   AgentCliTokenAuthority,
@@ -2840,19 +2841,12 @@ export async function createMainProcessControl(dependencies: {
   async function resetApplicationData(
     resetType: 'chat' | 'knowledge' | 'config' | 'all'
   ): Promise<void> {
-    if (resetType === 'all') {
-      const launcherStatus = await cliLauncherService.getStatus()
-      if (launcherStatus.state === 'conflict' && launcherStatus.reason !== 'unowned-command') {
-        throw new Error(
-          'Cannot reset application data while the owned DeepChat CLI launcher is inconsistent'
-        )
-      }
-      if (launcherStatus.reason !== 'unowned-command') {
-        await cliLauncherService.removeOwnedLauncher()
-      }
-    }
-    await stop()
-    await deviceService.resetDataByType(resetType)
+    await coordinateApplicationDataReset(resetType, {
+      cliLauncher: cliLauncherService,
+      logger,
+      stop,
+      resetDataByType: (type) => deviceService.resetDataByType(type)
+    })
   }
 
   async function restartApplication(): Promise<void> {

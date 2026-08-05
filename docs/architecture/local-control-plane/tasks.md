@@ -80,6 +80,8 @@
 - [x] Package the CLI with the bundled Node runtime on all supported targets.
 - [x] Add automatic, idempotent, reversible platform launcher/PATH integration with no settings
   toggle, a hash-reconciled regular-file shim, legacy symlink migration, and no system-Node fallback.
+- [x] Keep full data reset available when launcher ownership conflicts or cleanup fails, while
+  preserving external files and logging only safe diagnostics.
 - [x] Add in-memory scoped Agent token issuance, expiry, revocation, and quotas.
 - [x] Derive Agent token scopes from the shared command catalog and fail closed for human-only
   commands, including self-blocking `run watch`.

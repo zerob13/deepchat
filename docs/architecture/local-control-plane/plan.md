@@ -75,7 +75,9 @@
 2. Automatically reconcile platform launchers after server startup, with no settings toggle and with
    explicit, reversible ownership that never overwrites foreign commands or shell content. Install a
    stable regular-file shim, atomically refresh its pinned app-resource paths, migrate the owned
-   legacy POSIX symlink, and never fall back to a runtime from `PATH`.
+   legacy POSIX symlink, and never fall back to a runtime from `PATH`. During full data reset, stop
+   the server first and treat owned-launcher removal as best-effort: conflicts or cleanup failures
+   preserve external files and cannot block application-data deletion.
 3. Add the internal scoped-token issuer, conversation binding, expiry/revocation, call/byte quotas,
    and main-enforced Agent restrictions. Derive each token's exact scopes from the shared command
    catalog and `CLI_SURFACE`; the issuer has no broad default capability set.

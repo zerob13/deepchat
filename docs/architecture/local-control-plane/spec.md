@@ -604,7 +604,10 @@ installation and never falls back to a runtime discovered through `PATH`. Startu
 reconciles its content hash after an app move or upgrade and migrates a still-owned legacy POSIX
 symlink. It never overwrites an unowned command or modified shell block, does not install an npm
 package or copy credentials, and records enough ownership state for exact rollback during full data
-reset.
+reset. Full reset first stops the local control server, then removes only launcher files whose
+ownership and content still match. An ownership conflict, inspection failure, or removal failure
+preserves the external command/profile, emits a secret-safe diagnostic, and never blocks deletion of
+DeepChat application data.
 
 Main owns the server lifetime. Desktop shutdown first stops accepting new work, aborts every pending
 request and stream with a typed `unavailable` result when the connection remains writable, then

@@ -16,7 +16,8 @@ MCP、OCR、Artifact 和 Agent 状态仍由正在运行的 DeepChat main 进程�
 - DeepChat 退出时先停止接收请求，再取消进行中的 RPC、上传、下载和 stream。连接会在有界宽限期
   内关闭，所有已连接且正在等待 main 的 CLI 进程自行退出，退出码为 `3`；不会遗留 CLI 后台进程。
 - 普通退出保留 launcher，便于下次启动后直接使用。完整数据重置只删除仍能证明由 DeepChat
-  拥有的 launcher 集成。
+  拥有且未被修改的 launcher 集成；ownership 冲突或清理失败会保留外部命令/profile 并记录安全
+  诊断，但不会阻止应用数据重置。
 
 先用诊断命令确认桌面端和协议可用：
 
