@@ -209,7 +209,9 @@ import {
 import { createNodeScheduler } from '@/routes/scheduler'
 import {
   ArtifactSpool,
+  CliAudioTranscriptionService,
   CliComputeService,
+  CliOcrService,
   CliServer,
   createArtifactRoutes,
   createCliComputeRoutes,
@@ -345,6 +347,8 @@ export async function createMainProcessControl(dependencies: {
   let acpAsLlmProviderPermission: AcpAsLlmProviderPermissionPort
   let routeDispatcher: RouteDispatcher | undefined
   let cliComputeService: CliComputeService
+  let cliAudioTranscriptionService: CliAudioTranscriptionService
+  let cliOcrService: CliOcrService
   let hasInitialized = false
   let databaseMaintenanceState: 'running' | 'maintenance' | 'failed' = 'running'
   let appLifecycleState: 'starting' | 'running' | 'stopping' | 'stopped' = 'starting'
@@ -373,6 +377,14 @@ export async function createMainProcessControl(dependencies: {
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
     dispatch: async (method, input, caller, signal) => {
+      if (cliAudioTranscriptionService?.handlesRpc(method)) {
+        assertRouteAllowedDuringDatabaseMaintenance(method)
+        return await cliAudioTranscriptionService.dispatchRpc(method, input, caller, signal)
+      }
+      if (cliOcrService?.handlesRpc(method)) {
+        assertRouteAllowedDuringDatabaseMaintenance(method)
+        return await cliOcrService.dispatchRpc(method, input, caller, signal)
+      }
       if (!routeDispatcher) throw new Error('CLI route dispatcher is not ready')
       signal.throwIfAborted()
       const output = await dispatchDeepchatRoute(routeDispatcher, method, input, { caller })
@@ -383,6 +395,22 @@ export async function createMainProcessControl(dependencies: {
       if (!cliComputeService) throw new Error('CLI compute service is not ready')
       assertRouteAllowedDuringDatabaseMaintenance(method)
       return await cliComputeService.dispatchStream(method, input, caller, requestId, signal, emit)
+    },
+    dispatchUpload: async (method, input, upload, caller, signal) => {
+      assertRouteAllowedDuringDatabaseMaintenance(method)
+      if (cliAudioTranscriptionService?.handlesUpload(method)) {
+        return await cliAudioTranscriptionService.dispatchUpload(
+          method,
+          input,
+          upload,
+          caller,
+          signal
+        )
+      }
+      if (cliOcrService?.handlesUpload(method)) {
+        return await cliOcrService.dispatchUpload(method, input, upload, caller, signal)
+      }
+      throw new Error(`CLI upload service is not ready for ${method}`)
     },
     artifactSpool,
     log: logger
@@ -642,6 +670,12 @@ export async function createMainProcessControl(dependencies: {
     mediaCacheDirectory: path.join(app.getPath('userData'), 'images'),
     log: logger
   })
+  cliAudioTranscriptionService = new CliAudioTranscriptionService({
+    providerSettings,
+    providerRuntime,
+    artifactSpool,
+    log: logger
+  })
   const agentDefaults = new DeepChatDefaults({
     settings: dependencies.settingsStore,
     publishSettingChanged: (key, value) =>
@@ -715,6 +749,12 @@ export async function createMainProcessControl(dependencies: {
     nodeRuntimePath: runtimeHelper.getNodeRuntimePath(),
     tempBaseDir: app.getPath('temp'),
     userDataDir: app.getPath('userData')
+  })
+  cliOcrService = new CliOcrService({
+    appVersion: app.getVersion(),
+    ocrRuntime: ocrRuntimeService,
+    artifactSpool,
+    log: logger
   })
   const attachmentRouter = new AttachmentCapabilityRouter({
     extraction: ocrRuntimeService,

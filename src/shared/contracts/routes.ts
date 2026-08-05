@@ -5,6 +5,7 @@ import {
   artifactsDescribeRoute,
   artifactsReadRoute
 } from './routes/artifacts.routes'
+import { audioTranscribeArtifactRoute, audioTranscribeUploadRoute } from './routes/audio.routes'
 import { acpTerminalInputRoute, acpTerminalKillRoute } from './routes/acp-terminal.routes'
 import {
   browserAttachCurrentWindowRoute,
@@ -287,7 +288,12 @@ import {
   notificationAcknowledgePresentationRoute,
   notificationRendererReadyRoute
 } from './routes/notification.routes'
-import { ocrClearCacheRoute, ocrGetRuntimeStatusRoute } from './routes/ocr.routes'
+import {
+  ocrClearCacheRoute,
+  ocrExtractArtifactRoute,
+  ocrExtractUploadRoute,
+  ocrGetRuntimeStatusRoute
+} from './routes/ocr.routes'
 import {
   onboardingCompleteRoute,
   onboardingGetStateRoute,
@@ -573,6 +579,7 @@ import {
 
 export * from './routes/browser.routes'
 export * from './routes/artifacts.routes'
+export * from './routes/audio.routes'
 export * from './routes/computerUse.routes'
 export * from './routes/acp-terminal.routes'
 export * from './routes/chat.routes'
@@ -941,6 +948,8 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
   [imagesGenerateRoute.name]: imagesGenerateRoute,
   [videosGenerateRoute.name]: videosGenerateRoute,
   [speechGenerateRoute.name]: speechGenerateRoute,
+  [audioTranscribeUploadRoute.name]: audioTranscribeUploadRoute,
+  [audioTranscribeArtifactRoute.name]: audioTranscribeArtifactRoute,
   [modelsListRuntimeRoute.name]: modelsListRuntimeRoute,
   [modelsSetBatchStatusRoute.name]: modelsSetBatchStatusRoute,
   [modelsSetStatusRoute.name]: modelsSetStatusRoute,
@@ -1010,6 +1019,8 @@ const DEEPCHAT_ROUTE_CATALOG_PART_5 = {
   [memoryDeleteDirectiveRoute.name]: memoryDeleteDirectiveRoute,
   [ocrGetRuntimeStatusRoute.name]: ocrGetRuntimeStatusRoute,
   [ocrClearCacheRoute.name]: ocrClearCacheRoute,
+  [ocrExtractUploadRoute.name]: ocrExtractUploadRoute,
+  [ocrExtractArtifactRoute.name]: ocrExtractArtifactRoute,
   [skillsListMetadataRoute.name]: skillsListMetadataRoute,
   [skillsListCatalogRoute.name]: skillsListCatalogRoute,
   [skillsGetDirectoryRoute.name]: skillsGetDirectoryRoute,

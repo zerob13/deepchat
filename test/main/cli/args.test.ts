@@ -331,4 +331,133 @@ describe('CLI argument grammar', () => {
     expect(formatCliHelp({ domain: 'video', verb: 'generate' })).toContain('--watermark <bool>')
     expect(formatCliHelp({ domain: 'audio', verb: 'speak' })).toContain('--voice <value>')
   })
+
+  it('selects upload and artifact contracts for audio transcription', () => {
+    expect(
+      parseCliArguments(
+        [
+          'audio',
+          'transcribe',
+          '--provider',
+          'provider-1',
+          '--model',
+          'whisper-1',
+          '--file',
+          './meeting.MP3'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'upload',
+      inputPath: './meeting.MP3',
+      uploadMaxBytes: 25 * 1024 * 1024,
+      contract: { name: 'audio.transcribeUpload' },
+      params: {
+        providerId: 'provider-1',
+        modelId: 'whisper-1',
+        mimeType: 'audio/mpeg',
+        filename: 'meeting.MP3'
+      }
+    })
+
+    expect(
+      parseCliArguments(
+        [
+          'audio',
+          'transcribe',
+          '--provider',
+          'provider-1',
+          '--model',
+          'whisper-1',
+          '--artifact',
+          'artifact_identifier_123'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'rpc',
+      contract: { name: 'audio.transcribeArtifact' },
+      params: {
+        providerId: 'provider-1',
+        modelId: 'whisper-1',
+        artifactId: 'artifact_identifier_123'
+      }
+    })
+  })
+
+  it('maps OCR input modes and bounded PDF options', () => {
+    expect(
+      parseCliArguments(
+        [
+          'ocr',
+          'extract',
+          '--file',
+          './scan.pdf',
+          '--backend',
+          'cpu',
+          '--page-count',
+          '12',
+          '--max-tokens',
+          '4096'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'upload',
+      inputPath: './scan.pdf',
+      uploadMaxBytes: 50 * 1024 * 1024,
+      contract: { name: 'ocr.extractUpload' },
+      params: {
+        mimeType: 'application/pdf',
+        backend: 'cpu',
+        sourcePageCountHint: 12,
+        generationTokenLimit: 4096
+      }
+    })
+    expect(
+      parseCliArguments(['ocr', 'extract', '--artifact', 'artifact_identifier_123'], {})
+    ).toMatchObject({
+      operation: 'rpc',
+      contract: { name: 'ocr.extractArtifact' },
+      params: { artifactId: 'artifact_identifier_123' }
+    })
+    expect(parseCliArguments(['ocr', 'status'], {}).contract?.name).toBe('ocr.getRuntimeStatus')
+    expect(parseCliArguments(['ocr', 'clear-cache'], {})).toMatchObject({
+      contract: { name: 'ocr.clearCache' },
+      timeoutMs: 1_800_000
+    })
+  })
+
+  it('rejects ambiguous or unverifiable file-input options', () => {
+    expect(() =>
+      parseCliArguments(
+        ['ocr', 'extract', '--file', './scan.png', '--artifact', 'artifact_identifier_123'],
+        {}
+      )
+    ).toThrow('exactly one of --file or --artifact')
+    expect(() => parseCliArguments(['ocr', 'extract', '--file', './scan.unknown'], {})).toThrow(
+      'provide --mime'
+    )
+    expect(() =>
+      parseCliArguments(['ocr', 'extract', '--file', './scan.png', '--mime', '   '], {})
+    ).toThrow('--mime must not be empty')
+    expect(() =>
+      parseCliArguments(
+        ['ocr', 'extract', '--artifact', 'artifact_identifier_123', '--mime', 'image/png'],
+        {}
+      )
+    ).toThrow('--mime is only valid together with --file')
+    expect(() =>
+      parseCliArguments(['ocr', 'extract', '--file', './scan.pdf', '--max-tokens', '16001'], {})
+    ).toThrow('--max-tokens must not exceed 16000')
+    expect(() =>
+      parseCliArguments(['ocr', 'extract', '--file', './scan.png', '--page-count', '1'], {})
+    ).toThrow('only valid for PDF input')
+  })
+
+  it('keeps transcription and OCR options discoverable', () => {
+    expect(formatCliHelp({ domain: 'audio', verb: 'transcribe' })).toContain('--mime <type>')
+    expect(formatCliHelp({ domain: 'ocr', verb: 'extract' })).toContain('--page-count <n>')
+    expect(formatCliHelp()).toContain('ocr clear-cache')
+  })
 })

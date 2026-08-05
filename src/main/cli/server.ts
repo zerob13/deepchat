@@ -218,7 +218,10 @@ async function runAbortable<T>(signal: AbortSignal, action: () => Promise<T>): P
     signal.addEventListener('abort', onAbort, { once: true })
 
     void Promise.resolve()
-      .then(action)
+      .then(() => {
+        if (signal.aborted) throw requestAbortError(signal)
+        return action()
+      })
       .then(
         (value) => finish(() => resolve(value)),
         (error: unknown) => finish(() => reject(error))
@@ -665,12 +668,14 @@ export class CliServer {
                 httpStatus: 500
               })
             }
-            rawOutput = await dispatchUpload(
-              entry.contract.name,
-              input,
-              { path: uploadBody.path, size: uploadBody.size },
-              caller,
-              controller.signal
+            rawOutput = await runAbortable(controller.signal, async () =>
+              dispatchUpload(
+                entry.contract.name,
+                input,
+                { path: uploadBody.path, size: uploadBody.size },
+                caller,
+                controller.signal
+              )
             )
           } finally {
             await uploadBody.cleanup()

@@ -25,8 +25,10 @@ import { formatHumanResult, serializeMachineResponse } from './format'
 import {
   invokeLocalControlRpc,
   invokeLocalControlStream,
+  invokeLocalControlUpload,
   type CliRpcInvocation,
-  type CliStreamEventHandler
+  type CliStreamEventHandler,
+  type CliUploadInvocation
 } from './transport'
 import { downloadArtifact } from './artifacts'
 import { readBoundedUtf8Stdin } from './stdin'
@@ -50,6 +52,7 @@ export type CliRunDependencies = Readonly<{
     invocation: CliRpcInvocation,
     onEvent: CliStreamEventHandler
   ) => Promise<LocalControlRpcResponse>
+  invokeUpload?: (invocation: CliUploadInvocation) => Promise<LocalControlRpcResponse>
   forceExit?: (code: number) => void
 }>
 
@@ -221,6 +224,16 @@ export async function runCli(
         CLI_EXIT_CODES.authorization
       )
     }
+    if (
+      parsed.operation === 'upload' &&
+      Object.prototype.hasOwnProperty.call(env, LOCAL_CONTROL_AGENT_TOKEN_ENV)
+    ) {
+      throw new CliClientError(
+        'permission_denied',
+        'Agent callers cannot upload local file bytes or use --file',
+        CLI_EXIT_CODES.authorization
+      )
+    }
     const invocationContract =
       parsed.operation === 'download' ? artifactsDescribeRoute : parsed.contract
     const invocation: CliRpcInvocation = {
@@ -254,10 +267,28 @@ export async function runCli(
         streamedTextEndsWithNewline = parsedEvent.text.endsWith('\n')
       }
     }
-    const response =
-      parsed.operation === 'stream'
-        ? await (dependencies.invokeStream ?? invokeLocalControlStream)(invocation, onStreamEvent)
-        : await (dependencies.invokeRpc ?? invokeLocalControlRpc)(invocation)
+    let response: LocalControlRpcResponse
+    if (parsed.operation === 'stream') {
+      response = await (dependencies.invokeStream ?? invokeLocalControlStream)(
+        invocation,
+        onStreamEvent
+      )
+    } else if (parsed.operation === 'upload') {
+      if (!parsed.inputPath || !parsed.uploadMaxBytes) {
+        throw new CliClientError(
+          'internal_error',
+          'Upload command has no validated input source',
+          CLI_EXIT_CODES.internal
+        )
+      }
+      response = await (dependencies.invokeUpload ?? invokeLocalControlUpload)({
+        ...invocation,
+        filePath: parsed.inputPath,
+        maxBytes: parsed.uploadMaxBytes
+      })
+    } else {
+      response = await (dependencies.invokeRpc ?? invokeLocalControlRpc)(invocation)
+    }
 
     if (!response.ok) {
       if (streamedText && !streamedTextEndsWithNewline) stdout.write('\n')

@@ -8,7 +8,8 @@ import type { DeepchatRouteName } from '@shared/contracts/routes'
 import type { JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_AGENT_TOKEN_ENV,
-  LocalControlRpcResponseSchema
+  LocalControlRpcResponseSchema,
+  type LocalControlDescriptor
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
 import { CliServer } from '@/cli/server'
@@ -17,6 +18,16 @@ import { runCli } from '../../../src/cli/run'
 
 const servers: CliServer[] = []
 const temporaryDirectories: string[] = []
+
+const testDescriptor: LocalControlDescriptor = {
+  protocolVersion: 1,
+  surfaceVersion: 1,
+  appVersion: '9.8.7',
+  endpoint: { kind: 'unix', path: '/tmp/deepchat-test.sock' },
+  pid: 1,
+  token: 'h'.repeat(43),
+  startedAt: 1
+}
 
 function captureOutput(): { stream: NodeJS.WriteStream; read(): string } {
   let value = ''
@@ -398,5 +409,90 @@ describe('bundled CLI client', () => {
       .map((line) => LocalControlRpcResponseSchema.parse(JSON.parse(line)))
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({ ok: false, error: { code: 'internal_error' } })
+  })
+
+  it('uploads human audio input with only typed metadata in the RPC envelope', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const invokeUpload = vi.fn(async (invocation) =>
+      LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: {
+          providerId: 'provider-1',
+          modelId: 'whisper-1',
+          text: 'meeting transcript',
+          truncated: false,
+          inputBytes: 10,
+          mimeType: 'audio/mpeg',
+          durationMs: 25
+        }
+      })
+    )
+
+    await expect(
+      runCli(
+        [
+          'audio',
+          'transcribe',
+          '--provider',
+          'provider-1',
+          '--model',
+          'whisper-1',
+          '--file',
+          '/private/input/meeting.mp3'
+        ],
+        {
+          env: {},
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+          randomId: () => 'request-1',
+          loadDescriptor: async () => testDescriptor,
+          invokeUpload
+        }
+      )
+    ).resolves.toBe(0)
+
+    expect(stdout.read()).toBe('meeting transcript\n')
+    expect(stderr.read()).toBe('')
+    expect(invokeUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'audio.transcribeUpload',
+        params: {
+          providerId: 'provider-1',
+          modelId: 'whisper-1',
+          mimeType: 'audio/mpeg',
+          filename: 'meeting.mp3'
+        },
+        filePath: '/private/input/meeting.mp3',
+        maxBytes: 25 * 1024 * 1024
+      })
+    )
+  })
+
+  it('rejects Agent --file input before the upload transport can open it', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const invokeUpload = vi.fn()
+
+    await expect(
+      runCli(['ocr', 'extract', '--file', '/private/input/scan.png', '--json'], {
+        env: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: 'a'.repeat(43) },
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeUpload
+      })
+    ).resolves.toBe(4)
+
+    expect(LocalControlRpcResponseSchema.parse(JSON.parse(stdout.read()))).toMatchObject({
+      ok: false,
+      error: { code: 'permission_denied' }
+    })
+    expect(stderr.read()).toBe('')
+    expect(invokeUpload).not.toHaveBeenCalled()
   })
 })

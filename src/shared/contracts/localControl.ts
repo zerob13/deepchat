@@ -37,6 +37,7 @@ export const LOCAL_CONTROL_SCOPES = [
   'audio:transcribe',
   'ocr:read',
   'ocr:extract',
+  'ocr:manage',
   'sessions:run',
   'runs:read',
   'runs:cancel',

@@ -10,12 +10,18 @@ describe('CLI surface V1', () => {
       'artifacts.delete',
       'artifacts.describe',
       'artifacts.read',
+      'audio.transcribeArtifact',
+      'audio.transcribeUpload',
       'cli.capabilities',
       'cli.doctor',
       'cli.status',
       'cli.version',
       'images.generate',
       'models.invoke',
+      'ocr.clearCache',
+      'ocr.extractArtifact',
+      'ocr.extractUpload',
+      'ocr.getRuntimeStatus',
       'providers.listPublic',
       'speech.generate',
       'videos.generate'
@@ -38,6 +44,19 @@ describe('CLI surface V1', () => {
       expect.objectContaining({ method: 'artifacts.delete', effect: 'local-maintenance' }),
       expect.objectContaining({ method: 'artifacts.describe', effect: 'read' }),
       expect.objectContaining({ method: 'artifacts.read', effect: 'read', transport: 'download' }),
+      expect.objectContaining({
+        method: 'audio.transcribeArtifact',
+        effect: 'compute',
+        transport: 'rpc',
+        callers: ['human', 'agent'],
+        scopes: ['audio:transcribe', 'artifacts:read']
+      }),
+      expect.objectContaining({
+        method: 'audio.transcribeUpload',
+        effect: 'compute',
+        transport: 'upload',
+        callers: ['human']
+      }),
       expect.objectContaining({ method: 'cli.capabilities', effect: 'read' }),
       expect.objectContaining({ method: 'cli.doctor', effect: 'read' }),
       expect.objectContaining({ method: 'cli.status', effect: 'read' }),
@@ -52,6 +71,26 @@ describe('CLI surface V1', () => {
         effect: 'compute',
         transport: 'stream'
       }),
+      expect.objectContaining({
+        method: 'ocr.clearCache',
+        effect: 'local-maintenance',
+        approval: 'never',
+        callers: ['human']
+      }),
+      expect.objectContaining({
+        method: 'ocr.extractArtifact',
+        effect: 'compute',
+        transport: 'rpc',
+        callers: ['human', 'agent'],
+        scopes: ['ocr:extract', 'artifacts:read']
+      }),
+      expect.objectContaining({
+        method: 'ocr.extractUpload',
+        effect: 'compute',
+        transport: 'upload',
+        callers: ['human']
+      }),
+      expect.objectContaining({ method: 'ocr.getRuntimeStatus', effect: 'read' }),
       expect.objectContaining({ method: 'providers.listPublic', effect: 'read' }),
       expect.objectContaining({
         method: 'speech.generate',

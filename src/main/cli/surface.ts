@@ -1,14 +1,22 @@
 import type { RouteContract } from '@shared/contracts/contract'
 import {
+  AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
+  OCR_EXTRACTION_MAX_INPUT_BYTES,
   artifactsDeleteRoute,
   artifactsDescribeRoute,
   artifactsReadRoute,
+  audioTranscribeArtifactRoute,
+  audioTranscribeUploadRoute,
   cliCapabilitiesRoute,
   cliDoctorRoute,
   cliStatusRoute,
   cliVersionRoute,
   imagesGenerateRoute,
   modelsInvokeRoute,
+  ocrClearCacheRoute,
+  ocrExtractArtifactRoute,
+  ocrExtractUploadRoute,
+  ocrGetRuntimeStatusRoute,
   providersListPublicRoute,
   speechGenerateRoute,
   videosGenerateRoute,
@@ -80,6 +88,75 @@ const CLI_SURFACE_V1_ENTRIES = [
   mediaEntry(imagesGenerateRoute),
   mediaEntry(videosGenerateRoute),
   mediaEntry(speechGenerateRoute),
+  {
+    contract: audioTranscribeUploadRoute,
+    effect: 'compute',
+    callers: ['human'],
+    scopes: ['audio:transcribe'],
+    transport: 'upload',
+    approval: 'never',
+    limits: {
+      maxBodyBytes: AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
+  {
+    contract: audioTranscribeArtifactRoute,
+    effect: 'compute',
+    callers: ['human', 'agent'],
+    scopes: ['audio:transcribe', 'artifacts:read'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: {
+      maxBodyBytes: 16 * 1024,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
+  {
+    contract: ocrGetRuntimeStatusRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['ocr:read'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: ocrExtractUploadRoute,
+    effect: 'compute',
+    callers: ['human'],
+    scopes: ['ocr:extract'],
+    transport: 'upload',
+    approval: 'never',
+    limits: {
+      maxBodyBytes: OCR_EXTRACTION_MAX_INPUT_BYTES,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
+  {
+    contract: ocrExtractArtifactRoute,
+    effect: 'compute',
+    callers: ['human', 'agent'],
+    scopes: ['ocr:extract', 'artifacts:read'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: {
+      maxBodyBytes: 16 * 1024,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
+  {
+    contract: ocrClearCacheRoute,
+    effect: 'local-maintenance',
+    callers: ['human'],
+    scopes: ['ocr:manage'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: {
+      maxBodyBytes: 16 * 1024,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
   {
     contract: providersListPublicRoute,
     effect: 'read',

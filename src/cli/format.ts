@@ -89,6 +89,31 @@ export function formatHumanResult(
     case 'models.invoke': {
       return contract.output.parse(value).text
     }
+    case 'audio.transcribeUpload':
+    case 'audio.transcribeArtifact': {
+      return contract.output.parse(value).text
+    }
+    case 'ocr.getRuntimeStatus': {
+      const result = contract.output.parse(value)
+      const availability =
+        result.availability.status === 'available'
+          ? `available (${result.availability.lightOcrVersion})`
+          : `unavailable (${result.availability.reason})`
+      return [
+        `OCR: ${availability}`,
+        `Platform: ${result.platform}/${result.arch}`,
+        `Runtime: ${result.process?.state ?? 'not started'}`,
+        `Cache: ${result.cache ? `${result.cache.entryCount} entries, ${result.cache.logicalBytes} bytes` : 'not initialized'}`
+      ].join('\n')
+    }
+    case 'ocr.extractUpload':
+    case 'ocr.extractArtifact': {
+      return contract.output.parse(value).text
+    }
+    case 'ocr.clearCache': {
+      const result = contract.output.parse(value)
+      return `OCR cache cleared (${result.cache.entryCount} entries, ${result.cache.logicalBytes} bytes)`
+    }
     case 'images.generate':
     case 'videos.generate':
     case 'speech.generate': {

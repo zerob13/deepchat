@@ -32,17 +32,17 @@
 - [x] Add raw `models.invoke` over `coreStream` with no Agent/session/tool side effects.
 - [x] Add image and video standalone generation surfaces.
 - [x] Add formal standalone speech generation and typed audio output.
-- [ ] Add upload and owned-artifact transcription inputs.
+- [x] Add upload and owned-artifact transcription inputs.
 - [x] Implement output-only `ArtifactSpool` ownership, quotas, expiry, and cleanup.
 - [ ] Add stream, media, speech, transcription, artifact, and quota tests.
 
 ## OCR
 
-- [ ] Add explicit upload and owned-artifact extraction contracts and handlers.
-- [ ] Preserve automatic-attachment-setting independence and background priority.
-- [ ] Enforce bounded text output and exclude layout/batch/model administration.
+- [x] Add explicit upload and owned-artifact extraction contracts and handlers.
+- [x] Preserve automatic-attachment-setting independence and background priority.
+- [x] Enforce bounded text output and exclude layout/batch/model administration.
 - [ ] Classify cache clear as audited human-only `local-maintenance` without approval.
-- [ ] Report cache hit, warm-runtime miss, cold-runtime, and offline metrics accurately.
+- [x] Report cache hit, warm-runtime miss, cold-runtime, and offline metrics accurately.
 - [ ] Add OCR caller, input, cache, runtime-state, output-bound, and benchmark tests.
 
 ## Effects and Approval

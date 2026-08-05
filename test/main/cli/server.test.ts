@@ -113,6 +113,7 @@ function uploadRequest(
     token?: string
     body: Buffer
     includeContentLength?: boolean
+    signal?: AbortSignal
   }
 ): Promise<RpcResult> {
   const envelope = Buffer.from(
@@ -141,6 +142,7 @@ function uploadRequest(
           descriptor.endpoint.kind === 'unix' ? descriptor.endpoint.path : descriptor.endpoint.name,
         path: '/v1/upload',
         method: 'POST',
+        signal: input.signal,
         headers
       },
       (response) => {
@@ -416,6 +418,25 @@ describe('CLI local transport', () => {
       body: { ok: false, error: { code: 'body_too_large' } }
     })
     expect(dispatchUpload).not.toHaveBeenCalled()
+    expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
+  })
+
+  it('releases cancelled upload requests when a domain adapter ignores the signal', async () => {
+    const controller = new AbortController()
+    const { descriptor, userDataPath, server, dispatchUpload } = await createTestServer({
+      surface: createUploadSurface(16),
+      dispatchUpload: async () => await new Promise<never>(() => undefined)
+    })
+
+    const response = uploadRequest(descriptor, {
+      body: Buffer.from('audio-input'),
+      signal: controller.signal
+    })
+    await vi.waitFor(() => expect(dispatchUpload).toHaveBeenCalledOnce())
+    controller.abort()
+
+    await expect(response).rejects.toBeDefined()
+    await vi.waitFor(() => expect(server.getStatus().pendingRequests).toBe(0))
     expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
   })
 

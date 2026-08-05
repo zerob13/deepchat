@@ -10,6 +10,11 @@ import {
   artifactsDescribeRoute,
   artifactsReadRoute
 } from '@shared/contracts/routes/artifacts.routes'
+import {
+  AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
+  audioTranscribeArtifactRoute,
+  audioTranscribeUploadRoute
+} from '@shared/contracts/routes/audio.routes'
 import { modelsInvokeRoute } from '@shared/contracts/routes/models.routes'
 import {
   imagesGenerateRoute,
@@ -17,8 +22,20 @@ import {
   videosGenerateRoute
 } from '@shared/contracts/routes/media.routes'
 import { providersListPublicRoute } from '@shared/contracts/routes/providers.routes'
+import {
+  OCR_EXTRACTION_MAX_INPUT_BYTES,
+  ocrClearCacheRoute,
+  ocrExtractArtifactRoute,
+  ocrExtractUploadRoute,
+  ocrGetRuntimeStatusRoute
+} from '@shared/contracts/routes/ocr.routes'
 import type { JsonValue } from '@shared/contracts/json'
 import { LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS } from '@shared/contracts/localControl'
+import {
+  ATTACHMENT_PDF_OCR_MAX_TOKENS,
+  PDF_PAGE_COUNT_SANITY_LIMIT
+} from '@shared/types/attachment'
+import path from 'node:path'
 import { CliUsageError } from './errors'
 
 export const CLI_OUTPUT_ENV = 'DEEPCHAT_CLI_OUTPUT'
@@ -40,9 +57,15 @@ export type CliRpcContract =
   | typeof imagesGenerateRoute
   | typeof videosGenerateRoute
   | typeof speechGenerateRoute
+  | typeof audioTranscribeUploadRoute
+  | typeof audioTranscribeArtifactRoute
+  | typeof ocrGetRuntimeStatusRoute
+  | typeof ocrExtractUploadRoute
+  | typeof ocrExtractArtifactRoute
+  | typeof ocrClearCacheRoute
   | typeof providersListPublicRoute
 
-export type CliCommandOperation = 'rpc' | 'stream' | 'download'
+export type CliCommandOperation = 'rpc' | 'stream' | 'upload' | 'download'
 
 export type ParsedCliArguments = Readonly<{
   domain: string
@@ -53,6 +76,8 @@ export type ParsedCliArguments = Readonly<{
   helpRequested: boolean
   operation: CliCommandOperation
   params: JsonValue
+  inputPath?: string
+  uploadMaxBytes?: number
   outputPath?: string
   overwrite: boolean
   readStdin: boolean
@@ -70,6 +95,10 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['image generate', imagesGenerateRoute],
   ['video generate', videosGenerateRoute],
   ['audio speak', speechGenerateRoute],
+  ['audio transcribe', audioTranscribeUploadRoute],
+  ['ocr status', ocrGetRuntimeStatusRoute],
+  ['ocr extract', ocrExtractUploadRoute],
+  ['ocr clear-cache', ocrClearCacheRoute],
   ['provider list', providersListPublicRoute]
 ])
 
@@ -110,6 +139,17 @@ const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
     return parsed.data
   },
   out: stringOption,
+  file: stringOption,
+  artifact: (value) => {
+    const parsed = ArtifactIdSchema.safeParse(value)
+    if (!parsed.success) throw new CliUsageError('--artifact is not a valid artifact identifier')
+    return parsed.data
+  },
+  mime: (value) => {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) throw new CliUsageError('--mime must not be empty')
+    return normalized
+  },
   provider: stringOption,
   model: stringOption,
   prompt: stringOption,
@@ -131,7 +171,10 @@ const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
   audio: (value) => parseBoolean(value, '--audio'),
   voice: stringOption,
   speed: (value) => parseNumberInRange(value, '--speed', 0.25, 4),
-  instructions: stringOption
+  instructions: stringOption,
+  backend: stringOption,
+  'page-count': (value) =>
+    parseNumberInRange(value, '--page-count', 1, PDF_PAGE_COUNT_SANITY_LIMIT, true)
 }
 
 const FLAG_DOMAIN_OPTIONS = new Set(['overwrite', 'stdin', 'enabled-only'])
@@ -178,8 +221,50 @@ const COMMAND_DOMAIN_OPTIONS = new Map<string, ReadonlySet<string>>([
     'audio speak',
     new Set(['provider', 'model', 'text', 'stdin', 'voice', 'format', 'speed', 'instructions'])
   ],
+  ['audio transcribe', new Set(['provider', 'model', 'file', 'artifact', 'mime'])],
+  ['ocr extract', new Set(['file', 'artifact', 'mime', 'backend', 'page-count', 'max-tokens'])],
+  ['ocr status', new Set()],
+  ['ocr clear-cache', new Set()],
   ['provider list', new Set(['enabled-only'])]
 ])
+
+const AUDIO_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.aac': 'audio/aac',
+  '.amr': 'audio/amr',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.webm': 'audio/webm'
+}
+
+const OCR_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.tif': 'image/tiff',
+  '.tiff': 'image/tiff',
+  '.webp': 'image/webp'
+}
+
+function resolveInputMimeType(
+  filePath: string,
+  explicitMimeType: string | undefined,
+  mimeTypesByExtension: Readonly<Record<string, string>>
+): string {
+  if (explicitMimeType) return explicitMimeType
+  const inferred = mimeTypesByExtension[path.extname(filePath).toLowerCase()]
+  if (!inferred) {
+    throw new CliUsageError('Cannot infer input MIME type; provide --mime <type>')
+  }
+  return inferred
+}
 
 function parseOutputMode(value: string | undefined): CliOutputMode {
   if (value === undefined || value.trim() === '') return 'text'
@@ -225,7 +310,7 @@ export function parseCliArguments(
 
   const commandKey = `${domain} ${verb}`
   const isHelpCommand = commandKey === 'help commands'
-  const contract = COMMANDS.get(commandKey) ?? null
+  let contract = COMMANDS.get(commandKey) ?? null
   if (!contract && !isHelpCommand) {
     throw new CliUsageError(`Unknown command: deepchat ${domain} ${verb}`)
   }
@@ -237,7 +322,10 @@ export function parseCliArguments(
     : commandKey === 'model invoke' ||
         commandKey === 'image generate' ||
         commandKey === 'video generate' ||
-        commandKey === 'audio speak'
+        commandKey === 'audio speak' ||
+        commandKey === 'audio transcribe' ||
+        commandKey === 'ocr extract' ||
+        commandKey === 'ocr clear-cache'
       ? DEFAULT_COMPUTE_TIMEOUT_MS
       : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
@@ -332,6 +420,9 @@ export function parseCliArguments(
     return typeof value === 'boolean' ? value : undefined
   }
   const artifactId = getString('id')
+  const inputArtifactId = getString('artifact')
+  const inputPath = getString('file')
+  const mimeType = getString('mime')
   const outputPath = getString('out')
   const overwrite = getBoolean('overwrite') ?? false
   const providerId = getString('provider')
@@ -358,6 +449,8 @@ export function parseCliArguments(
   const voice = getString('voice')
   const speed = getNumber('speed')
   const instructions = getString('instructions')
+  const backend = getString('backend')
+  const sourcePageCountHint = getNumber('page-count')
 
   const isArtifactCommand = domain === 'artifact'
   if (!helpRequested && isArtifactCommand && !artifactId) {
@@ -381,6 +474,8 @@ export function parseCliArguments(
   const isImageGenerate = commandKey === 'image generate'
   const isVideoGenerate = commandKey === 'video generate'
   const isSpeechGenerate = commandKey === 'audio speak'
+  const isAudioTranscribe = commandKey === 'audio transcribe'
+  const isOcrExtract = commandKey === 'ocr extract'
   const isMediaGenerate = isImageGenerate || isVideoGenerate || isSpeechGenerate
   const isProviderList = commandKey === 'provider list'
   const allowedDomainOptions = COMMAND_DOMAIN_OPTIONS.get(commandKey) ?? new Set<string>()
@@ -410,6 +505,27 @@ export function parseCliArguments(
   }
   if (!helpRequested && isSpeechGenerate && (textInput !== undefined) === readStdin) {
     throw new CliUsageError('deepchat audio speak requires exactly one of --text or --stdin')
+  }
+  if (!helpRequested && isAudioTranscribe && (!providerId || !modelId)) {
+    throw new CliUsageError('deepchat audio transcribe requires --provider and --model')
+  }
+  if (
+    !helpRequested &&
+    (isAudioTranscribe || isOcrExtract) &&
+    (inputPath !== undefined) === (inputArtifactId !== undefined)
+  ) {
+    throw new CliUsageError(
+      `deepchat ${domain} ${verb} requires exactly one of --file or --artifact`
+    )
+  }
+  if (!helpRequested && inputArtifactId && mimeType) {
+    throw new CliUsageError('--mime is only valid together with --file')
+  }
+  if (backend !== undefined && backend !== 'auto' && backend !== 'cpu') {
+    throw new CliUsageError('--backend must be auto or cpu')
+  }
+  if (isOcrExtract && maxTokens !== undefined && maxTokens > ATTACHMENT_PDF_OCR_MAX_TOKENS) {
+    throw new CliUsageError(`--max-tokens must not exceed ${ATTACHMENT_PDF_OCR_MAX_TOKENS}`)
   }
 
   let params: JsonValue = artifactId ? { id: artifactId } : {}
@@ -473,6 +589,44 @@ export function parseCliArguments(
       ...(Object.keys(options).length > 0 ? { options } : {})
     }
   }
+  if (isAudioTranscribe && providerId && modelId && (inputPath || inputArtifactId)) {
+    if (inputPath) {
+      contract = audioTranscribeUploadRoute
+      params = {
+        providerId,
+        modelId,
+        mimeType: resolveInputMimeType(inputPath, mimeType, AUDIO_MIME_BY_EXTENSION),
+        filename: path.basename(inputPath)
+      }
+    } else if (inputArtifactId) {
+      contract = audioTranscribeArtifactRoute
+      params = { providerId, modelId, artifactId: inputArtifactId }
+    }
+  }
+  if (isOcrExtract && (inputPath || inputArtifactId)) {
+    const options = {
+      ...(backend !== undefined ? { backend } : {}),
+      ...(sourcePageCountHint !== undefined ? { sourcePageCountHint } : {}),
+      ...(maxTokens !== undefined ? { generationTokenLimit: maxTokens } : {})
+    }
+    if (inputPath) {
+      const resolvedMimeType = resolveInputMimeType(inputPath, mimeType, OCR_MIME_BY_EXTENSION)
+      if (
+        resolvedMimeType !== 'application/pdf' &&
+        (sourcePageCountHint !== undefined || maxTokens !== undefined)
+      ) {
+        throw new CliUsageError('--page-count and --max-tokens are only valid for PDF input')
+      }
+      contract = ocrExtractUploadRoute
+      params = {
+        ...options,
+        mimeType: resolvedMimeType
+      }
+    } else if (inputArtifactId) {
+      contract = ocrExtractArtifactRoute
+      params = { ...options, artifactId: inputArtifactId }
+    }
+  }
 
   return {
     domain,
@@ -484,10 +638,17 @@ export function parseCliArguments(
     operation:
       commandKey === 'artifact get'
         ? 'download'
-        : isModelInvoke || isMediaGenerate
-          ? 'stream'
-          : 'rpc',
+        : inputPath && (isAudioTranscribe || isOcrExtract)
+          ? 'upload'
+          : isModelInvoke || isMediaGenerate
+            ? 'stream'
+            : 'rpc',
     params,
+    ...(inputPath ? { inputPath } : {}),
+    ...(isAudioTranscribe && inputPath
+      ? { uploadMaxBytes: AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES }
+      : {}),
+    ...(isOcrExtract && inputPath ? { uploadMaxBytes: OCR_EXTRACTION_MAX_INPUT_BYTES } : {}),
     ...(outputPath ? { outputPath } : {}),
     overwrite,
     readStdin
@@ -505,11 +666,15 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
           ? ' --provider <id> --model <id> (--prompt <text>|--stdin)'
           : command.domain === 'image' || command.domain === 'video'
             ? ' --provider <id> --model <id> (--prompt <text>|--stdin)'
-            : command.domain === 'audio'
+            : command.domain === 'audio' && command.verb === 'speak'
               ? ' --provider <id> --model <id> (--text <text>|--stdin)'
-              : command.domain === 'provider'
-                ? ' [--enabled-only]'
-                : ''
+              : command.domain === 'audio'
+                ? ' --provider <id> --model <id> (--file <path>|--artifact <id>)'
+                : command.domain === 'ocr' && command.verb === 'extract'
+                  ? ' (--file <path>|--artifact <id>)'
+                  : command.domain === 'provider'
+                    ? ' [--enabled-only]'
+                    : ''
     const commandKey = `${command.domain} ${command.verb}`
     const optionLines =
       commandKey === 'model invoke'
@@ -544,7 +709,16 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
                   '  --speed <n>          Set playback speed (0.25..4)',
                   '  --instructions <text> Add provider-supported speech guidance'
                 ]
-              : []
+              : commandKey === 'audio transcribe'
+                ? ['  --mime <type>        Override the MIME type inferred from --file']
+                : commandKey === 'ocr extract'
+                  ? [
+                      '  --mime <type>        Override the MIME type inferred from --file',
+                      '  --backend <value>    Select auto or cpu',
+                      '  --page-count <n>     Provide a PDF page-count hint',
+                      '  --max-tokens <n>     Limit PDF OCR output tokens'
+                    ]
+                  : []
     return [
       `Usage: deepchat ${command.domain} ${command.verb}${commandOptions} [--json|--jsonl] [--timeout <ms>]`,
       '',
@@ -568,6 +742,10 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  image generate       Generate image artifacts',
     '  video generate       Generate video artifacts',
     '  audio speak          Generate a speech artifact',
+    '  audio transcribe     Transcribe an audio file or owned artifact',
+    '  ocr status           Show offline OCR runtime and cache status',
+    '  ocr extract          Extract text from an image or PDF',
+    '  ocr clear-cache      Clear derived OCR cache entries',
     '  provider list        List redacted providers and models',
     '  help commands        Show this help',
     '',

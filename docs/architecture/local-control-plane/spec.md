@@ -425,12 +425,15 @@ Results distinguish:
 - `cold-runtime`;
 - `offline-availability`.
 
-They report at least `runtimeWasReady`, cache state, input bytes/type, pages where applicable,
-duration, output characters/tokens, engine identity, app/protocol/surface version, and availability.
-`clearCache()` first calls `getResources()` and therefore warms an unstarted runtime. A clear followed
-by extraction is necessarily a warm-runtime cache miss, never a cold-runtime measurement. Cold
-runtime requires restarting the desktop application or an external harness. V1 does not expose
-`restart-runtime` merely to improve a benchmark.
+They report at least `runtimeStateBefore`, `runtimeWasReady`, cache state, input bytes/type, pages
+where applicable, duration, output characters/tokens, engine identity, app/protocol/surface version,
+and availability.
+`clearCache()` first calls `getResources()`, which initializes the resource graph and cache backend
+but does not spawn the OCR helper. A clear followed by extraction is a warm-runtime miss only when
+the helper was already `ready`; a fresh or restarted application whose host is still `idle` produces
+a cold-runtime miss. `busy`, `starting`, and `stopping` states reject clearing. Classification always
+uses the actual pre-extraction host state. V1 does not expose `restart-runtime` merely to improve a
+benchmark.
 
 ## File I/O Boundary
 
