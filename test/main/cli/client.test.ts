@@ -263,8 +263,7 @@ describe('bundled CLI client', () => {
         modelId: 'model-1',
         text: 'Hello',
         finishReason: 'complete',
-        durationMs: 10,
-        ttftMs: 1
+        latency: { queueMs: 0, firstEventMs: 1, firstTextMs: 1, totalMs: 10 }
       }
     } as const
     const { userDataPath } = await createClientServer({ stream })
@@ -515,8 +514,7 @@ describe('bundled CLI client', () => {
           modelId: 'model-1',
           text: 'safe',
           finishReason: 'complete',
-          durationMs: 10,
-          ttftMs: 1
+          latency: { queueMs: 0, firstEventMs: 1, firstTextMs: 1, totalMs: 10 }
         }
       })
     })

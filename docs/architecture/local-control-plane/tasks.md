@@ -29,7 +29,8 @@
 
 ## Compute and Artifacts
 
-- [x] Add raw `models.invoke` over `coreStream` with no Agent/session/tool side effects.
+- [x] Add raw `models.invoke` over `coreStream` with no Agent/session/tool side effects, explicit
+  benchmark timings, and secret-safe provider failure metadata.
 - [x] Add image and video standalone generation surfaces.
 - [x] Add formal standalone speech generation and typed audio output.
 - [x] Add upload and owned-artifact transcription inputs.

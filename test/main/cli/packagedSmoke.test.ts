@@ -98,8 +98,7 @@ describe('packaged CLI smoke', () => {
           modelId: parsedInput.modelId,
           text: 'fixture reply',
           finishReason: 'complete',
-          durationMs: 5,
-          ttftMs: 1
+          latency: { queueMs: 0, firstEventMs: 1, firstTextMs: 1, totalMs: 5 }
         }
       }
       server = new CliServer({

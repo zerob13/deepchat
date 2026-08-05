@@ -68,7 +68,13 @@ async function* streamEvents(
   for (const event of events) yield event
 }
 
-function createService(events: readonly LLMCoreStreamEvent[]) {
+function createService(
+  events: readonly LLMCoreStreamEvent[],
+  options: {
+    now?: () => number
+    providerRuntime?: Partial<CliComputeServiceOptions['providerRuntime']>
+  } = {}
+) {
   const providerSettings: CliComputeServiceOptions['providerSettings'] = {
     getProviders: vi.fn(() => [provider]),
     getProviderById: vi.fn(() => provider),
@@ -81,11 +87,17 @@ function createService(events: readonly LLMCoreStreamEvent[]) {
   }
   const providerRuntime: CliComputeServiceOptions['providerRuntime'] = {
     executeWithRateLimit: vi.fn(async () => undefined),
-    streamChat: vi.fn(() => streamEvents(events))
+    streamChat: vi.fn(() => streamEvents(events)),
+    ...options.providerRuntime
   }
   const log = { warn: vi.fn() }
   return {
-    service: new CliComputeService({ providerSettings, providerRuntime, log, now: () => 100 }),
+    service: new CliComputeService({
+      providerSettings,
+      providerRuntime,
+      log,
+      now: options.now ?? (() => 100)
+    }),
     providerSettings,
     providerRuntime,
     log
@@ -194,17 +206,21 @@ describe('CLI compute service', () => {
   })
 
   it('streams only typed raw-model events and never enables tools', async () => {
-    const { service, providerRuntime } = createService([
-      { type: 'text', content: 'Hel' },
-      { type: 'text', content: '' },
-      { type: 'reasoning', reasoning_content: 'Think' },
-      { type: 'text', content: 'lo' },
-      {
-        type: 'usage',
-        usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 }
-      },
-      { type: 'stop', stop_reason: 'complete' }
-    ])
+    const timestamps = [0, 5, 25, 40, 80]
+    const { service, providerRuntime } = createService(
+      [
+        { type: 'text', content: 'Hel' },
+        { type: 'text', content: '' },
+        { type: 'reasoning', reasoning_content: 'Think' },
+        { type: 'text', content: 'lo' },
+        {
+          type: 'usage',
+          usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 }
+        },
+        { type: 'stop', stop_reason: 'complete' }
+      ],
+      { now: () => timestamps.shift() ?? 80 }
+    )
     const emitted: ModelInvokeEvent[] = []
     const signal = new AbortController().signal
 
@@ -230,7 +246,8 @@ describe('CLI compute service', () => {
       text: 'Hello',
       reasoning: 'Think',
       usage: { totalTokens: 5 },
-      finishReason: 'complete'
+      finishReason: 'complete',
+      latency: { queueMs: 20, firstEventMs: 40, firstTextMs: 40, totalMs: 80 }
     })
     expect(emitted.map((event) => event.type)).toEqual([
       'text_delta',
@@ -244,9 +261,18 @@ describe('CLI compute service', () => {
     expect(streamCall?.[7]).toEqual({ signal })
   })
 
-  it('does not expose provider error details through the local protocol', async () => {
+  it('exposes normalized provider failure metadata without upstream text or headers', async () => {
     const { service, log } = createService([
-      { type: 'error', error_message: 'secret upstream response' }
+      {
+        type: 'error',
+        error_message: 'secret upstream response',
+        failure: {
+          statusCode: 401,
+          code: 'SECRET_PROVIDER_CODE',
+          retryable: false,
+          retryHeaders: { 'retry-after': 'secret-header-value' }
+        }
+      }
     ])
 
     await expect(
@@ -265,10 +291,16 @@ describe('CLI compute service', () => {
     ).rejects.toMatchObject({
       code: 'unavailable',
       message: 'Model provider request failed',
-      retriable: true
+      retriable: false,
+      options: {
+        details: { providerFailure: { statusCode: 401, retryable: false } }
+      }
     })
     expect(log.warn).toHaveBeenCalledOnce()
-    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('secret upstream response')
+    const serializedLog = JSON.stringify(log.warn.mock.calls)
+    expect(serializedLog).not.toContain('secret upstream response')
+    expect(serializedLog).not.toContain('SECRET_PROVIDER_CODE')
+    expect(serializedLog).not.toContain('secret-header-value')
   })
 
   it('rejects tool events instead of turning raw invocation into an Agent run', async () => {

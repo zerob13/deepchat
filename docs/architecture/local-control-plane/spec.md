@@ -405,8 +405,11 @@ foundation with:
 
 The server always produces the canonical stream. Human-readable and non-stream JSON CLI modes buffer
 that stream in the CLI; main does not maintain a second non-stream execution path. Events include
-text/reasoning deltas as permitted, usage, finish reason, resolved provider/model identity, TTFT,
-latency, and redacted resolved settings.
+text/reasoning deltas as permitted, usage, finish reason, and resolved provider/model identity. The
+terminal result reports rate-limit queue duration plus request-relative first-provider-event,
+first-text, and total latency. Provider failures preserve a normalized upstream HTTP status and
+retryability when available, but raw upstream messages, codes, headers, and response bodies never
+cross the local-control boundary because they may contain credentials or request content.
 
 ### Media and speech
 
@@ -600,7 +603,7 @@ Benchmarks are external harnesses over stable CLI output. Terminal records inclu
 - requested and resolved provider/model;
 - redacted generation settings and capability identity;
 - input/output token or byte counts where available;
-- usage, TTFT, end-to-end latency, finish reason, retries, and cancellation outcome;
+- usage, queue/first-event/first-text/total latency, finish reason, retries, and cancellation outcome;
 - artifact MIME, size, hash, and ID without local paths;
 - OCR cache/runtime classification;
 - app, protocol, surface, CLI, and provider adapter versions.

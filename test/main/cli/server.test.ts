@@ -916,8 +916,7 @@ describe('CLI local transport', () => {
           modelId: 'model-1',
           text: 'hello',
           finishReason: 'complete',
-          durationMs: 10,
-          ttftMs: 1
+          latency: { queueMs: 0, firstEventMs: 1, firstTextMs: 1, totalMs: 10 }
         }
       }
     })

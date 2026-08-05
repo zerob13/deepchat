@@ -27,8 +27,9 @@
 
 ## Stage B: Raw Model, Media, Speech, OCR, and Artifacts
 
-1. Add `models.invoke` on the existing `coreStream` foundation with tools/session/memory disabled and
-   one canonical stream for all CLI output modes.
+1. Add `models.invoke` on the existing `coreStream` foundation with tools/session/memory disabled,
+   one canonical stream for all CLI output modes, explicit benchmark timings, and secret-safe
+   provider failure metadata.
 2. Expose standalone image and video generation through typed contracts and output artifacts.
 3. Add a provider-runtime `generateSpeechStandalone` capability and typed audio artifact; keep the
    current VoiceAI event quirk behind its adapter.

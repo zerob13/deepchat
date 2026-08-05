@@ -22,6 +22,22 @@ export const ModelInvokeUsageSchema = z
   })
   .strict()
 
+export const ModelInvokeLatencySchema = z
+  .object({
+    queueMs: z.number().int().nonnegative(),
+    firstEventMs: z.number().int().nonnegative().nullable(),
+    firstTextMs: z.number().int().nonnegative().nullable(),
+    totalMs: z.number().int().nonnegative()
+  })
+  .strict()
+
+export const ModelInvokeProviderFailureSchema = z
+  .object({
+    statusCode: z.number().int().min(100).max(599).optional(),
+    retryable: z.boolean()
+  })
+  .strict()
+
 export const ModelInvokeEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text_delta'), text: z.string().max(1024 * 1024) }).strict(),
   z.object({ type: z.literal('reasoning_delta'), text: z.string().max(1024 * 1024) }).strict(),
@@ -86,8 +102,7 @@ export const modelsInvokeRoute = defineRouteContract({
       reasoning: z.string().max(MODEL_INVOKE_MAX_OUTPUT_CHARACTERS).optional(),
       usage: ModelInvokeUsageSchema.optional(),
       finishReason: z.enum(['tool_use', 'max_tokens', 'max_turn_requests', 'error', 'complete']),
-      durationMs: z.number().int().nonnegative(),
-      ttftMs: z.number().int().nonnegative().nullable()
+      latency: ModelInvokeLatencySchema
     })
     .strict()
     .superRefine((output, context) => {

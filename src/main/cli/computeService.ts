@@ -2,6 +2,7 @@ import {
   MODEL_INVOKE_MAX_OUTPUT_CHARACTERS,
   MediaGenerationEventSchema,
   ModelInvokeEventSchema,
+  ModelInvokeProviderFailureSchema,
   PublicProviderSchema,
   imagesGenerateRoute,
   modelsInvokeRoute,
@@ -29,6 +30,7 @@ import { isVideoGenerationModelConfig } from '@shared/videoGenerationSettings'
 import { isTtsModelConfig, isTtsModelId } from '@shared/ttsSettings'
 import type { ProviderSettingsPort } from '@/provider/settings'
 import type { ProviderRuntime } from '@/provider'
+import { extractProviderFailureMetadata } from '@/provider/providerFailure'
 import {
   createRouteMap,
   type CliRouteCaller,
@@ -116,6 +118,15 @@ function toUsage(event: Extract<LLMCoreStreamEvent, { type: 'usage' }>): ModelIn
         : {})
     }
   })
+}
+
+function providerFailureIsRetryable(
+  statusCode: number | undefined,
+  retryable: boolean | undefined
+) {
+  if (retryable !== undefined) return retryable
+  if (statusCode === undefined) return true
+  return statusCode === 408 || statusCode === 409 || statusCode === 429 || statusCode >= 500
 }
 
 export class CliComputeService {
@@ -241,7 +252,7 @@ export class CliComputeService {
     emit: ComputeEmitter
   ): Promise<ModelInvokeOutput> {
     const startedAt = this.now()
-    let providerError: unknown
+    let providerError: Extract<LLMCoreStreamEvent, { type: 'error' }> | undefined
     let emittedEvents = 0
     const emitEvent = async (event: ModelInvokeEvent): Promise<void> => {
       if (emittedEvents >= MAX_MODEL_STREAM_EVENTS) {
@@ -261,6 +272,7 @@ export class CliComputeService {
         })
       }
 
+      const queueStartedAt = this.now()
       let queuedEmission = Promise.resolve()
       let queuedEmissionError: unknown
       await this.options.providerRuntime.executeWithRateLimit(input.providerId, {
@@ -279,6 +291,7 @@ export class CliComputeService {
           })
         }
       })
+      const queueFinishedAt = this.now()
       await queuedEmission
       if (queuedEmissionError) throw queuedEmissionError
 
@@ -297,10 +310,16 @@ export class CliComputeService {
       let outputCharacters = 0
       let usage: ModelInvokeOutput['usage']
       let finishReason: ProviderRoundStopReason | undefined
-      let firstTokenAt: number | undefined
+      let firstEventAt: number | undefined
+      let firstTextAt: number | undefined
 
       for await (const event of stream) {
         signal.throwIfAborted()
+        let eventAt: number | undefined
+        if (firstEventAt === undefined) {
+          eventAt = this.now()
+          firstEventAt = eventAt
+        }
         switch (event.type) {
           case 'text':
           case 'reasoning': {
@@ -311,7 +330,9 @@ export class CliComputeService {
                 httpStatus: 413
               })
             }
-            if (firstTokenAt === undefined && delta.length > 0) firstTokenAt = this.now()
+            if (event.type === 'text' && firstTextAt === undefined && delta.length > 0) {
+              firstTextAt = eventAt ?? this.now()
+            }
             if (event.type === 'text') textChunks.push(delta)
             else reasoningChunks.push(delta)
             for (const chunk of splitStreamDelta(delta)) {
@@ -382,8 +403,12 @@ export class CliComputeService {
         ...(reasoning ? { reasoning } : {}),
         ...(usage ? { usage } : {}),
         finishReason,
-        durationMs: Math.max(0, this.now() - startedAt),
-        ttftMs: firstTokenAt === undefined ? null : Math.max(0, firstTokenAt - startedAt)
+        latency: {
+          queueMs: Math.max(0, queueFinishedAt - queueStartedAt),
+          firstEventMs: firstEventAt === undefined ? null : Math.max(0, firstEventAt - startedAt),
+          firstTextMs: firstTextAt === undefined ? null : Math.max(0, firstTextAt - startedAt),
+          totalMs: Math.max(0, this.now() - startedAt)
+        }
       })
     } catch (error) {
       if (error instanceof CliRequestError) throw error
@@ -392,17 +417,20 @@ export class CliComputeService {
           retriable: true
         })
       }
+      const metadata = extractProviderFailureMetadata(providerError ?? error)
+      const failure = ModelInvokeProviderFailureSchema.parse({
+        ...(metadata?.statusCode !== undefined ? { statusCode: metadata.statusCode } : {}),
+        retryable: providerFailureIsRetryable(metadata?.statusCode, metadata?.retryable)
+      })
       this.log.warn('[CLI] Model invocation failed', {
         providerId: input.providerId,
         modelId: input.modelId,
-        failure:
-          providerError && typeof providerError === 'object' && 'failure' in providerError
-            ? providerError.failure
-            : { name: error instanceof Error ? error.name : typeof error }
+        failure
       })
       throw new CliRequestError('unavailable', 'Model provider request failed', {
         httpStatus: 503,
-        retriable: true
+        retriable: failure.retryable,
+        details: { providerFailure: failure }
       })
     }
   }
