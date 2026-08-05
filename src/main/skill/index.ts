@@ -5,8 +5,8 @@ import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import matter from 'gray-matter'
-import { unzipSync } from 'fflate'
 import type { SkillSettingsPort } from './settings'
+import { extractSkillArchive } from './archive'
 import {
   createWatcherRequestId,
   type IFileWatcherService,
@@ -73,7 +73,7 @@ export const SKILL_CONFIG = {
   /** Maximum size for SKILL.md file (bytes) - prevents memory exhaustion */
   SKILL_FILE_MAX_SIZE: 5 * 1024 * 1024, // 5MB
 
-  /** Maximum size for ZIP file (bytes) - prevents ZIP bomb attacks */
+  /** Maximum compressed ZIP input size (bytes) */
   ZIP_MAX_SIZE: 200 * 1024 * 1024, // 200MB
 
   /** Download timeout (milliseconds) - prevents hanging connections */
@@ -2173,7 +2173,9 @@ export class SkillService implements SkillServicePort {
 
     const tempDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'deepchat-skill-'))
     try {
-      this.extractZipToDirectory(zipPath, tempDir)
+      await extractSkillArchive(zipPath, tempDir, {
+        maxArchiveBytes: SKILL_CONFIG.ZIP_MAX_SIZE
+      })
       const skillDir = this.resolveSkillDirFromExtracted(tempDir)
       if (!skillDir) {
         return { success: false, error: 'SKILL.md not found in zip archive' }
@@ -3023,65 +3025,6 @@ export class SkillService implements SkillServicePort {
   private isFileSystemLockError(error: unknown): boolean {
     const code = (error as { code?: unknown } | null)?.code
     return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'ENOTEMPTY'
-  }
-
-  private extractZipToDirectory(zipPath: string, targetDir: string): void {
-    // Check ZIP file size before loading to prevent memory exhaustion
-    const stats = fs.statSync(zipPath)
-    if (stats.size > SKILL_CONFIG.ZIP_MAX_SIZE) {
-      throw new Error(`ZIP file too large: ${stats.size} bytes (max: ${SKILL_CONFIG.ZIP_MAX_SIZE})`)
-    }
-
-    const zipContent = new Uint8Array(fs.readFileSync(zipPath))
-    const extracted = unzipSync(zipContent)
-    const resolvedTargetDir = path.resolve(targetDir)
-
-    for (const entryName of Object.keys(extracted)) {
-      const fileContent = extracted[entryName]
-      if (!fileContent) {
-        continue
-      }
-
-      const normalizedEntry = entryName.replace(/\\/g, '/')
-      if (!normalizedEntry) {
-        continue
-      }
-
-      if (/^[A-Za-z]:/.test(normalizedEntry) || normalizedEntry.startsWith('/')) {
-        throw new Error('Invalid zip entry')
-      }
-
-      const segments = normalizedEntry.split('/')
-      const safeSegments: string[] = []
-      for (const segment of segments) {
-        if (!segment || segment === '.') {
-          continue
-        }
-        if (segment === '..') {
-          throw new Error('Invalid zip entry')
-        }
-        safeSegments.push(segment)
-      }
-
-      if (safeSegments.length === 0) {
-        continue
-      }
-
-      const isDirectoryEntry = normalizedEntry.endsWith('/')
-      const destination = path.resolve(resolvedTargetDir, ...safeSegments)
-      const relativeToTarget = path.relative(resolvedTargetDir, destination)
-      if (relativeToTarget.startsWith('..') || path.isAbsolute(relativeToTarget)) {
-        throw new Error('Invalid zip entry')
-      }
-
-      if (isDirectoryEntry) {
-        fs.mkdirSync(destination, { recursive: true })
-        continue
-      }
-
-      fs.mkdirSync(path.dirname(destination), { recursive: true })
-      fs.writeFileSync(destination, Buffer.from(fileContent))
-    }
   }
 
   private resolveSkillDirFromExtracted(extractDir: string): string | null {
