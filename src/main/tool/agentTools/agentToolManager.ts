@@ -366,7 +366,8 @@ export class AgentToolManager {
       this.bashHandler = new AgentBashHandler(
         [this.agentWorkspacePath],
         this.settings,
-        this.commandPermissionHandler
+        this.commandPermissionHandler,
+        this.commandEnvironment
       )
     }
   }
@@ -389,7 +390,8 @@ export class AgentToolManager {
       this.bashHandler = new AgentBashHandler(
         [effectiveWorkspacePath],
         this.settings,
-        this.commandPermissionHandler
+        this.commandPermissionHandler,
+        this.commandEnvironment
       )
     } else {
       this.fileSystemHandler = null

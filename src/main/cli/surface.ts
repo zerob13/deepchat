@@ -576,7 +576,7 @@ const CLI_SURFACE_V1_ENTRIES = [
   {
     contract: eventsSubscribeRoute,
     effect: 'read',
-    callers: ['human', 'agent'],
+    callers: ['human'],
     scopes: ['runs:read'],
     transport: 'stream',
     approval: 'never',

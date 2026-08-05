@@ -138,6 +138,14 @@ afterEach(async () => {
 })
 
 describe('bundled CLI client', () => {
+  it('renders top-level help without discovering a running app', async () => {
+    const invocation = runWithCapturedOutput(['help'], {})
+
+    await expect(invocation.result).resolves.toBe(0)
+    expect(invocation.stdout.read()).toContain('Usage: deepchat <domain> <verb> [options]')
+    expect(invocation.stderr.read()).toBe('')
+  })
+
   it('keeps usage failures machine-readable when a post-command mode is valid', async () => {
     const invocation = runWithCapturedOutput(['system', 'status', '--json', '--unknown'], {})
 

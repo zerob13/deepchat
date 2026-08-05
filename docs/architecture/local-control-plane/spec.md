@@ -166,7 +166,14 @@ is diagnostic information, not authority to launch or kill a process.
 The human descriptor token authenticates same-user local automation; it is not a defense against
 arbitrary malware running as the same OS user. Agent invocation receives a short-lived scoped token
 through the Agent runtime and must not rely on the descriptor token. The CLI must never fall back to
-the human descriptor when an Agent-token environment is present but invalid or expired.
+the human descriptor when an Agent-token environment is present but invalid, denied, exhausted, or
+expired. A recognized direct `deepchat` command that is not Agent-accessible receives an explicitly
+invalid Agent-token environment so it fails closed instead of changing principal.
+
+Every conversation-bound Agent shell process receives that fail-closed token environment by default,
+including ordinary commands and wrapper processes. A catalog-approved direct CLI command replaces it
+with a one-command capability token. Environment identity and command-rewrite control are separate:
+ordinary commands may still use RTK rewriting, while an approved CLI command is preserved verbatim.
 
 The bearer token proves possession, not whether a same-UID process is semantically a human or an
 Agent. A process that can read and deliberately replay the human descriptor can present as a human
@@ -504,6 +511,10 @@ The spool is output-only and intentionally smaller than a general asset store:
   a separate request;
 - bounded streaming download with backpressure.
 
+For a human descriptor, ownership means the same local application user, not one transient HTTP
+connection. `connectionId` remains quota and audit provenance because publication and detached-run
+recovery intentionally span separate CLI processes. Agent ownership remains conversation-bound.
+
 Input uploads use a separate private temporary-body utility and never become spool artifacts unless a
 domain operation deliberately produces a new output artifact.
 
@@ -527,6 +538,10 @@ existing lifecycle, then starts the initial turn. It returns a durable run/sessi
 streaming. Disconnect does not destroy a detached run; status/messages can be recovered from session
 state and event cursors. `runs.cancel` is idempotent and ownership checked.
 
+`events.subscribe` is human-only in V1. An Agent can own only its currently executing conversation,
+so waiting on that run from its bash tool would deadlock the run on itself. Agent callers may use the
+nonblocking owned `runs.get` snapshot and idempotent `runs.cancel`; they cannot invoke `run watch`.
+
 ## CLI Product Contract
 
 The command grammar starts with exactly two capability tokens:
@@ -534,6 +549,10 @@ The command grammar starts with exactly two capability tokens:
 ```text
 deepchat <domain> <verb> [options]
 ```
+
+The local-only `deepchat help` command is the sole one-token exception. It prints static client help
+without discovery, authentication, or a main-process request. Per-command help remains
+`deepchat <domain> <verb> --help`; `deepchat help commands` is rejected.
 
 Global output/timeout flags follow the domain and verb, or use environment variables. Forms such as
 `deepchat --json image generate` are rejected. This is a security contract: the existing shell
@@ -548,6 +567,11 @@ are:
 3. `CLI_SURFACE` caller policy;
 4. effect policy and renderer approval;
 5. rate, quota, ownership, and audit enforcement.
+
+The shared command catalog is the sole mapping from `<domain> <verb>` to route identity. Agent
+issuance resolves that catalog entry against `CLI_SURFACE`, then mints exactly the route scopes; the
+token authority has no broad default-scope fallback. Commands marked human-only or unknown fail
+closed without a token that could fall back to human authority.
 
 The first control is a hard dependency, not a decorative outer layer. Its parser must recognize
 output/input redirection, file-descriptor redirection, command substitution, process substitution,
@@ -587,6 +611,10 @@ An internal Agent meta-tool asks main to mint an in-memory token containing prin
 conversation binding, allowed surface scopes, expiry, call/byte quotas, and a random identifier.
 The token is passed to the CLI invocation environment and is never written to the descriptor or
 transcript. Main revokes it when the session ends, permission caches clear, or the app stops.
+
+The bundled CLI directory is prepended to the effective controlled shell `PATH`; existing path
+entries and other controlled environment values are retained and de-duplicated. Agent integration
+must not replace `PATH` with the CLI directory alone.
 
 Agent defaults allow bounded raw compute/media and owned-artifact operations. They deny
 `sessions.runDetached`, credentials, destructive operations, arbitrary input paths, and output paths.

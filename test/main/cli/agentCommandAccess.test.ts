@@ -45,8 +45,9 @@ describe('AgentCliCommandAccess', () => {
     )
 
     expect(environment).toEqual({
-      [LOCAL_CONTROL_AGENT_TOKEN_ENV]: agentToken,
-      PATH: directory
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: agentToken },
+      prependPath: [directory],
+      preserveCommand: true
     })
     const first = authority.beginRequest(agentToken)
     expect(first.status).toBe('granted')
@@ -54,7 +55,7 @@ describe('AgentCliCommandAccess', () => {
     expect(first.grant.claims).toMatchObject({
       conversationId: 'conversation-1',
       expiresAt: 301_000,
-      scopes: expect.arrayContaining(['models:invoke'])
+      scopes: ['models:invoke']
     })
     first.grant.release()
     expect(authority.beginRequest(agentToken)).toEqual({ status: 'quota-exhausted' })
@@ -63,12 +64,14 @@ describe('AgentCliCommandAccess', () => {
   it.each([
     'deepchat --json model invoke',
     'deepchat model',
+    'deepchat run watch --run conversation-1',
+    'deepchat provider remove --provider provider-1',
+    'deepchat unknown command',
     'deepchat model invoke > output.txt',
     'deepchat model invoke | tee output.txt',
     'FOO=bar deepchat model invoke',
-    `deepchat model invoke --prompt $${LOCAL_CONTROL_AGENT_TOKEN_ENV}`,
-    'ls -la'
-  ])('does not issue authority for %j', async (command) => {
+    `deepchat model invoke --prompt $${LOCAL_CONTROL_AGENT_TOKEN_ENV}`
+  ])('blocks human-token fallback without issuing authority for %j', async (command) => {
     const { directory } = await createCliDirectory()
     const authority = new AgentCliTokenAuthority()
     const access = new AgentCliCommandAccess({
@@ -77,8 +80,77 @@ describe('AgentCliCommandAccess', () => {
       resolveCliDirectory: () => directory
     })
 
-    expect(access.createEnvironment('conversation-1', command)).toBeUndefined()
+    expect(access.createEnvironment('conversation-1', command)).toEqual({
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: '' },
+      prependPath: [],
+      preserveCommand: true
+    })
     expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+  })
+
+  it('marks non-CLI commands as unprivileged without suppressing command rewriting', async () => {
+    const { directory } = await createCliDirectory()
+    const authority = new AgentCliTokenAuthority()
+    const access = new AgentCliCommandAccess({
+      tokenAuthority: authority,
+      commandPermission: new CommandPermissionService(),
+      resolveCliDirectory: () => directory
+    })
+
+    expect(access.createEnvironment('conversation-1', 'ls -la')).toEqual({
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: '' },
+      prependPath: [],
+      preserveCommand: false
+    })
+    expect(access.createEnvironment('conversation-1', '"deepchat" model invoke')).toEqual({
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: '' },
+      prependPath: [],
+      preserveCommand: false
+    })
+    expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+  })
+
+  it('resolves local help through the bundled launcher without granting authority', async () => {
+    const { directory } = await createCliDirectory()
+    const authority = new AgentCliTokenAuthority()
+    const access = new AgentCliCommandAccess({
+      tokenAuthority: authority,
+      commandPermission: new CommandPermissionService(),
+      resolveCliDirectory: () => directory
+    })
+
+    expect(access.createEnvironment('conversation-1', 'deepchat help')).toEqual({
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: '' },
+      prependPath: [directory],
+      preserveCommand: true
+    })
+    expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+  })
+
+  it('derives dynamic artifact command scopes from the Agent surface', async () => {
+    const { directory } = await createCliDirectory()
+    const agentToken = 'b'.repeat(43)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => 'token-id-conversation-1'
+    })
+    const access = new AgentCliCommandAccess({
+      tokenAuthority: authority,
+      commandPermission: new CommandPermissionService(),
+      resolveCliDirectory: () => directory
+    })
+
+    expect(
+      access.createEnvironment(
+        'conversation-1',
+        'deepchat audio transcribe --artifact artifact-1 --provider p --model m'
+      )
+    ).toMatchObject({ variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: agentToken } })
+    const request = authority.beginRequest(agentToken)
+    expect(request.status).toBe('granted')
+    if (request.status !== 'granted') throw new Error('Expected Agent CLI grant')
+    expect(request.grant.claims.scopes).toEqual(['audio:transcribe', 'artifacts:read'])
+    request.grant.release()
   })
 
   it('fails closed without a built launcher', () => {
@@ -89,7 +161,11 @@ describe('AgentCliCommandAccess', () => {
       resolveCliDirectory: () => null
     })
 
-    expect(access.createEnvironment('conversation-1', 'deepchat cli status')).toBeUndefined()
+    expect(access.createEnvironment('conversation-1', 'deepchat system status')).toEqual({
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: '' },
+      prependPath: [],
+      preserveCommand: true
+    })
     expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
   })
 })

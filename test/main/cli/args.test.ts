@@ -59,11 +59,14 @@ describe('CLI argument grammar', () => {
     expect(() => parseCliArguments(['system', 'status', 'extra'], {})).toThrow('Unknown option')
   })
 
-  it('keeps help inside the two-token grammar', () => {
-    expect(parseCliArguments(['help', 'commands'], {})).toMatchObject({
+  it('keeps top-level help local while command help follows the two-token grammar', () => {
+    expect(parseCliArguments(['help'], {})).toMatchObject({
+      domain: 'help',
+      verb: '',
       contract: null,
       helpRequested: true
     })
+    expect(() => parseCliArguments(['help', 'commands'], {})).toThrow('deepchat help')
     expect(() => parseCliArguments(['--help'], {})).toThrow('deepchat <domain> <verb>')
     expect(formatCliHelp({ domain: 'agent', verb: 'run' })).toContain('--max-turns <n>')
     expect(formatCliHelp({ domain: 'run', verb: 'watch' })).toContain('--cursor <event-cursor>')

@@ -75,15 +75,20 @@
 2. Automatically reconcile platform launchers after server startup, with no settings toggle and with
    explicit, reversible ownership that never overwrites foreign commands or shell content.
 3. Add the internal scoped-token issuer, conversation binding, expiry/revocation, call/byte quotas,
-   and main-enforced Agent restrictions.
+   and main-enforced Agent restrictions. Derive each token's exact scopes from the shared command
+   catalog and `CLI_SURFACE`; the issuer has no broad default capability set.
 4. Harden `CommandPermissionService` so redirection and compound shell syntax cannot inherit a safe
    base-command decision.
 5. Integrate `deepchat <domain> <verb>` without adding `deepchat` to `SAFE_COMMANDS`; reject
-   prefix-global-flag grammar and deny Agent artifact-byte/output-path access.
-6. Add the bundled DeepChat CLI Skill and ensure instructions never expose the human descriptor.
-7. Add packaged smoke coverage for diagnostics, raw text, artifact download, OCR, and scoped Agent
+   prefix-global-flag grammar, deny Agent artifact-byte/output-path access, and make human-only
+   commands and wrapper processes fail closed without descriptor fallback. Keep `run watch`
+   human-only to avoid an Agent waiting on its own active run.
+6. Prepend the packaged CLI directory to the controlled Agent shell `PATH` while retaining and
+   de-duplicating existing entries.
+7. Add the bundled DeepChat CLI Skill and ensure instructions never expose the human descriptor.
+8. Add packaged smoke coverage for diagnostics, raw text, artifact download, OCR, and scoped Agent
    denial paths without requiring external credentials where fixtures can substitute providers.
-8. Complete cross-platform packaging validation and user-facing documentation.
+9. Complete cross-platform packaging validation and user-facing documentation.
 
 ## Validation Order
 

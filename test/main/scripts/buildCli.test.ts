@@ -22,11 +22,11 @@ async function runGeneratedLauncher(outputDirectory: string) {
     const launcherPath = path.join(outputDirectory, 'deepchat.cmd')
     return await execFileAsync(
       process.env.ComSpec ?? 'cmd.exe',
-      ['/d', '/s', '/c', `"${launcherPath}" help commands`],
+      ['/d', '/s', '/c', `"${launcherPath}" help`],
       { env: environment }
     )
   }
-  return await execFileAsync(path.join(outputDirectory, 'deepchat'), ['help', 'commands'], {
+  return await execFileAsync(path.join(outputDirectory, 'deepchat'), ['help'], {
     env: environment
   })
 }
@@ -38,7 +38,7 @@ describe('CLI bundle', () => {
       await buildCli({ outDir: outputDirectory, logLevel: 'silent' })
       const entryPath = path.join(outputDirectory, 'deepchat.mjs')
       const source = await readFile(entryPath, 'utf8')
-      const result = await execFileAsync(process.execPath, [entryPath, 'help', 'commands'])
+      const result = await execFileAsync(process.execPath, [entryPath, 'help'])
       const launcherResult = await runGeneratedLauncher(outputDirectory)
 
       expect(source.startsWith('#!/usr/bin/env node')).toBe(true)

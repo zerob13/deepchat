@@ -130,8 +130,9 @@ describe('AgentBashHandler', () => {
     permissionService.approve('conv-1', 'deepchat model', false)
     const commandEnvironment = {
       createEnvironment: vi.fn(() => ({
-        DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token',
-        PATH: '/bundled/cli'
+        variables: { DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token' },
+        prependPath: ['/bundled/cli'],
+        preserveCommand: true
       }))
     }
     const handler = new AgentBashHandler(
@@ -143,7 +144,7 @@ describe('AgentBashHandler', () => {
     const prepareCommand = vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
       originalCommand: 'deepchat model invoke --prompt hello',
       command: 'deepchat model invoke --prompt hello',
-      env: { DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token', PATH: '/bundled/cli' },
+      env: { DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token' },
       rewritten: false,
       rtkApplied: false,
       rtkMode: 'bypass'
@@ -161,7 +162,13 @@ describe('AgentBashHandler', () => {
         command: 'deepchat model invoke --prompt hello',
         description: 'Invoke model'
       },
-      { conversationId: 'conv-1' }
+      {
+        conversationId: 'conv-1',
+        env: {
+          PATH: ['/controlled/bin', '/shared/bin'].join(path.delimiter),
+          CONTROLLED_VALUE: 'preserved'
+        }
+      }
     )
 
     expect(commandEnvironment.createEnvironment).toHaveBeenCalledWith(
@@ -170,16 +177,28 @@ describe('AgentBashHandler', () => {
     )
     expect(prepareCommand).toHaveBeenCalledWith(
       'deepchat model invoke --prompt hello',
-      {
+      expect.objectContaining({
         DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token',
-        PATH: '/bundled/cli'
-      },
+        CONTROLLED_VALUE: 'preserved'
+      }),
       true
     )
+    const preparedEnvironment = prepareCommand.mock.calls[0]?.[1] as Record<string, string>
+    expect(preparedEnvironment.PATH?.split(path.delimiter).slice(0, 3)).toEqual([
+      '/bundled/cli',
+      '/controlled/bin',
+      '/shared/bin'
+    ])
   })
 
   it('does not issue a scoped environment while command approval is pending', async () => {
-    const commandEnvironment = { createEnvironment: vi.fn(() => ({})) }
+    const commandEnvironment = {
+      createEnvironment: vi.fn(() => ({
+        variables: {},
+        prependPath: [],
+        preserveCommand: false
+      }))
+    }
     const handler = new AgentBashHandler(
       ['/workspace'],
       { get: () => undefined },

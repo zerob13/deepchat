@@ -232,7 +232,7 @@ export async function runCli(
     const outputMode = inferCliOutputMode(argv, env)
     if (outputMode === 'text') {
       writeHumanText(stderr, message)
-      writeHumanText(stderr, 'Run: deepchat help commands')
+      writeHumanText(stderr, 'Run: deepchat help')
     } else {
       writeClientError(
         new CliClientError('invalid_request', message, CLI_EXIT_CODES.usage),

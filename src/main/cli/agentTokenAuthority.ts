@@ -15,26 +15,6 @@ export const MAX_AGENT_CLI_TOKEN_BYTES = 1024 * 1024 * 1024
 const DEFAULT_MAX_TOKENS = 256
 const DEFAULT_MAX_TOKENS_PER_CONVERSATION = 8
 
-export const DEFAULT_AGENT_CLI_SCOPES = [
-  'system:read',
-  'models:read',
-  'models:invoke',
-  'media:generate',
-  'audio:transcribe',
-  'ocr:read',
-  'ocr:extract',
-  'runs:read',
-  'runs:cancel',
-  'artifacts:read',
-  'settings:read',
-  'settings:write',
-  'providers:read',
-  'skills:read',
-  'skills:write',
-  'mcp:read',
-  'mcp:write'
-] as const satisfies readonly LocalControlScope[]
-
 export type AgentCliTokenClaims = Readonly<{
   tokenId: string
   conversationId: string
@@ -137,14 +117,15 @@ export class AgentCliTokenAuthority {
   issue(
     input: Readonly<{
       conversationId: string
-      scopes?: readonly LocalControlScope[]
+      scopes: readonly LocalControlScope[]
       ttlMs?: number
       maxCalls?: number
       maxBytes?: number
     }>
   ): IssuedAgentCliToken {
     const conversationId = normalizeConversationId(input.conversationId)
-    const scopes = LocalControlScopesSchema.parse([...(input.scopes ?? DEFAULT_AGENT_CLI_SCOPES)])
+    const scopes = LocalControlScopesSchema.parse([...input.scopes])
+    if (scopes.length === 0) throw new Error('scopes must contain at least one capability')
     const ttlMs = boundedPositiveSafeInteger(
       input.ttlMs ?? DEFAULT_AGENT_CLI_TOKEN_TTL_MS,
       MAX_AGENT_CLI_TOKEN_TTL_MS,

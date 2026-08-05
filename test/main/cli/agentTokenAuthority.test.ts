@@ -5,6 +5,8 @@ function token(character: string): string {
   return character.repeat(43)
 }
 
+const TEST_SCOPES = ['system:read'] as const
+
 describe('AgentCliTokenAuthority', () => {
   it('issues bounded in-memory claims and consumes call and byte quotas', () => {
     let now = 1_000
@@ -53,9 +55,9 @@ describe('AgentCliTokenAuthority', () => {
       createToken: () => generatedTokens.shift()!,
       createTokenId: () => `token-id-${generatedTokens.length}`.padEnd(16, '0')
     })
-    const first = authority.issue({ conversationId: 'conversation-1' })
-    const second = authority.issue({ conversationId: 'conversation-1' })
-    const other = authority.issue({ conversationId: 'conversation-2' })
+    const first = authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    const second = authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    const other = authority.issue({ conversationId: 'conversation-2', scopes: TEST_SCOPES })
     const active = authority.beginRequest(first.token)
     if (active.status !== 'granted') throw new Error('Expected grant')
     const abort = vi.fn()
@@ -78,15 +80,15 @@ describe('AgentCliTokenAuthority', () => {
       maxTokens: 2,
       maxTokensPerConversation: 1
     })
-    const first = authority.issue({ conversationId: 'conversation-1' })
-    const replacement = authority.issue({ conversationId: 'conversation-1' })
+    const first = authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    const replacement = authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
 
     expect(authority.beginRequest(first.token)).toEqual({ status: 'invalid' })
     expect(authority.beginRequest(replacement.token).status).toBe('granted')
-    authority.issue({ conversationId: 'conversation-2' })
-    expect(() => authority.issue({ conversationId: 'conversation-3' })).toThrow(
-      AgentCliTokenCapacityError
-    )
+    authority.issue({ conversationId: 'conversation-2', scopes: TEST_SCOPES })
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-3', scopes: TEST_SCOPES })
+    ).toThrow(AgentCliTokenCapacityError)
   })
 
   it('reclaims completed exhausted grants before enforcing global capacity', () => {
@@ -97,15 +99,19 @@ describe('AgentCliTokenAuthority', () => {
       createTokenId: () => `token-id-${String((tokenId += 1)).padStart(8, '0')}`,
       maxTokens: 1
     })
-    const first = authority.issue({ conversationId: 'conversation-1', maxCalls: 1 })
+    const first = authority.issue({
+      conversationId: 'conversation-1',
+      scopes: TEST_SCOPES,
+      maxCalls: 1
+    })
     const active = authority.beginRequest(first.token)
     if (active.status !== 'granted') throw new Error('Expected grant')
 
-    expect(() => authority.issue({ conversationId: 'conversation-2' })).toThrow(
-      AgentCliTokenCapacityError
-    )
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-2', scopes: TEST_SCOPES })
+    ).toThrow(AgentCliTokenCapacityError)
     active.grant.release()
-    const second = authority.issue({ conversationId: 'conversation-2' })
+    const second = authority.issue({ conversationId: 'conversation-2', scopes: TEST_SCOPES })
 
     expect(authority.beginRequest(first.token)).toEqual({ status: 'invalid' })
     expect(authority.beginRequest(second.token).status).toBe('granted')
@@ -117,7 +123,18 @@ describe('AgentCliTokenAuthority', () => {
       createTokenId: () => 'token-id-1234567890'
     })
 
-    expect(() => authority.issue({ conversationId: 'conversation-1' })).toThrow()
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    ).toThrow()
+    expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+  })
+
+  it('requires every issued token to carry an explicit nonempty scope set', () => {
+    const authority = new AgentCliTokenAuthority()
+
+    expect(() => authority.issue({ conversationId: 'conversation-1', scopes: [] })).toThrow(
+      'scopes must contain at least one capability'
+    )
     expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
   })
 
@@ -129,9 +146,11 @@ describe('AgentCliTokenAuthority', () => {
       createTokenId: () => `token-id-${String((tokenId += 1)).padStart(8, '0')}`,
       maxTokensPerConversation: 1
     })
-    const existing = authority.issue({ conversationId: 'conversation-1' })
+    const existing = authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
 
-    expect(() => authority.issue({ conversationId: 'conversation-1' })).toThrow()
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    ).toThrow()
     expect(authority.beginRequest(existing.token).status).toBe('granted')
   })
 
@@ -139,13 +158,21 @@ describe('AgentCliTokenAuthority', () => {
     const authority = new AgentCliTokenAuthority()
 
     expect(() =>
-      authority.issue({ conversationId: 'conversation-1', ttlMs: 60 * 60_000 + 1 })
+      authority.issue({
+        conversationId: 'conversation-1',
+        scopes: TEST_SCOPES,
+        ttlMs: 60 * 60_000 + 1
+      })
     ).toThrow('ttlMs exceeds')
-    expect(() => authority.issue({ conversationId: 'conversation-1', maxCalls: 1025 })).toThrow(
-      'maxCalls exceeds'
-    )
     expect(() =>
-      authority.issue({ conversationId: 'conversation-1', maxBytes: 1024 * 1024 * 1024 + 1 })
+      authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES, maxCalls: 1025 })
+    ).toThrow('maxCalls exceeds')
+    expect(() =>
+      authority.issue({
+        conversationId: 'conversation-1',
+        scopes: TEST_SCOPES,
+        maxBytes: 1024 * 1024 * 1024 + 1
+      })
     ).toThrow('maxBytes exceeds')
     expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
   })

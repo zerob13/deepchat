@@ -26,7 +26,7 @@ artifacts, Agent runs, and approvals.
   is injected only after the command has passed the normal shell permission check.
 - A shell approval authorizes command execution. Sensitive mutations can additionally pause for a
   renderer approval; wait for that decision and never attempt to manufacture confirmation data.
-- Use `deepchat help commands` or `deepchat <domain> <verb> --help` only when the options below are
+- Use `deepchat help` or `deepchat <domain> <verb> --help` only when the options below are
   insufficient. Do not probe undocumented routes.
 
 ## Agent file and recursion boundaries
@@ -35,7 +35,9 @@ artifacts, Agent runs, and approvals.
   with `artifact describe`.
 - Do not use `--file`, `--out`, `--overwrite`, `artifact get`, or `artifact delete`. Agent callers
   cannot upload arbitrary local bytes, download artifact bytes, or choose output paths.
-- Do not call `agent run`; an Agent cannot recursively create a detached Agent run.
+- Do not call `agent run` or `run watch`. An Agent cannot recursively create a detached Agent run,
+  and waiting on its own currently executing run would deadlock it. Use `run get` for a nonblocking
+  snapshot or `run cancel` to request cancellation.
 - Generated media remains in DeepChat's artifact spool. Return the artifact metadata or ID so the
   application can render or reuse it.
 

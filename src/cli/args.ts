@@ -1,78 +1,29 @@
-import {
-  cliCapabilitiesRoute,
-  cliDoctorRoute,
-  cliStatusRoute,
-  cliVersionRoute
-} from '@shared/contracts/routes/cli.routes'
-import {
-  ArtifactIdSchema,
-  artifactsDeleteRoute,
-  artifactsDescribeRoute,
-  artifactsReadRoute
-} from '@shared/contracts/routes/artifacts.routes'
+import { ArtifactIdSchema } from '@shared/contracts/routes/artifacts.routes'
 import {
   AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
   audioTranscribeArtifactRoute,
   audioTranscribeUploadRoute
 } from '@shared/contracts/routes/audio.routes'
 import {
-  modelsGetPublicConfigRoute,
-  modelsInvokeRoute,
-  modelsListRuntimeRoute,
-  modelsResetConfigRoute,
-  modelsSetPublicConfigRoute,
-  modelsSetStatusRoute
-} from '@shared/contracts/routes/models.routes'
-import {
-  imagesGenerateRoute,
-  speechGenerateRoute,
-  videosGenerateRoute
-} from '@shared/contracts/routes/media.routes'
-import {
-  mcpAddPublicRoute,
-  mcpListPublicRoute,
-  mcpRemovePublicRoute,
-  mcpSetPublicStatusRoute,
-  mcpStartPublicRoute,
-  mcpStopPublicRoute,
-  mcpUpdatePublicRoute
-} from '@shared/contracts/routes/mcp.routes'
-import {
-  providersAddPublicRoute,
-  providersListPublicRoute,
-  providersRemoveRoute,
-  providersSetCredentialRoute,
-  providersTestPublicConnectionRoute,
-  providersUpdatePublicRoute
-} from '@shared/contracts/routes/providers.routes'
-import {
   OCR_EXTRACTION_MAX_INPUT_BYTES,
-  ocrClearCacheRoute,
   ocrExtractArtifactRoute,
-  ocrExtractUploadRoute,
-  ocrGetRuntimeStatusRoute
+  ocrExtractUploadRoute
 } from '@shared/contracts/routes/ocr.routes'
 import {
-  settingsGetPublicRoute,
-  settingsUpdatePublicRoute
-} from '@shared/contracts/routes/settings.routes'
-import {
   skillsInstallPublicUrlRoute,
-  skillsInstallUploadRoute,
-  skillsListPublicRoute,
-  skillsSetPublicStatusRoute,
-  skillsUninstallPublicRoute
+  skillsInstallUploadRoute
 } from '@shared/contracts/routes/skills.routes'
 import {
-  eventsSubscribeRoute,
   RUN_MAX_MESSAGE_PAGE_SIZE,
   RunEventCursorSchema,
-  RunIdSchema,
-  runsCancelRoute,
-  runsGetRoute,
-  sessionsRunDetachedRoute
+  RunIdSchema
 } from '@shared/contracts/routes/runs.routes'
 import { MessagePageCursorSchema } from '@shared/contracts/common'
+import {
+  cliCommandKey,
+  getCliCommandDefinition,
+  type CliRpcContract
+} from '@shared/contracts/cliCommands'
 import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
 import { LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS } from '@shared/contracts/localControl'
 import {
@@ -91,53 +42,7 @@ export const DEFAULT_COMPUTE_TIMEOUT_MS = MAX_CLI_TIMEOUT_MS
 export const DEFAULT_MUTATION_TIMEOUT_MS = 10 * 60_000
 
 export type CliOutputMode = 'text' | 'json' | 'jsonl'
-export type CliRpcContract =
-  | typeof cliStatusRoute
-  | typeof cliVersionRoute
-  | typeof cliCapabilitiesRoute
-  | typeof cliDoctorRoute
-  | typeof artifactsDescribeRoute
-  | typeof artifactsReadRoute
-  | typeof artifactsDeleteRoute
-  | typeof modelsInvokeRoute
-  | typeof imagesGenerateRoute
-  | typeof videosGenerateRoute
-  | typeof speechGenerateRoute
-  | typeof audioTranscribeUploadRoute
-  | typeof audioTranscribeArtifactRoute
-  | typeof ocrGetRuntimeStatusRoute
-  | typeof ocrExtractUploadRoute
-  | typeof ocrExtractArtifactRoute
-  | typeof ocrClearCacheRoute
-  | typeof providersListPublicRoute
-  | typeof providersTestPublicConnectionRoute
-  | typeof providersAddPublicRoute
-  | typeof providersUpdatePublicRoute
-  | typeof providersSetCredentialRoute
-  | typeof providersRemoveRoute
-  | typeof modelsListRuntimeRoute
-  | typeof modelsGetPublicConfigRoute
-  | typeof modelsSetStatusRoute
-  | typeof modelsSetPublicConfigRoute
-  | typeof modelsResetConfigRoute
-  | typeof settingsGetPublicRoute
-  | typeof settingsUpdatePublicRoute
-  | typeof skillsListPublicRoute
-  | typeof skillsInstallPublicUrlRoute
-  | typeof skillsInstallUploadRoute
-  | typeof skillsSetPublicStatusRoute
-  | typeof skillsUninstallPublicRoute
-  | typeof mcpListPublicRoute
-  | typeof mcpAddPublicRoute
-  | typeof mcpUpdatePublicRoute
-  | typeof mcpRemovePublicRoute
-  | typeof mcpSetPublicStatusRoute
-  | typeof mcpStartPublicRoute
-  | typeof mcpStopPublicRoute
-  | typeof sessionsRunDetachedRoute
-  | typeof runsGetRoute
-  | typeof runsCancelRoute
-  | typeof eventsSubscribeRoute
+export type { CliRpcContract } from '@shared/contracts/cliCommands'
 
 export type CliCommandOperation = 'rpc' | 'stream' | 'upload' | 'download'
 
@@ -156,93 +61,6 @@ export type ParsedCliArguments = Readonly<{
   overwrite: boolean
   readStdin: boolean
 }>
-
-const COMMANDS = new Map<string, CliRpcContract>([
-  ['system status', cliStatusRoute],
-  ['system version', cliVersionRoute],
-  ['system capabilities', cliCapabilitiesRoute],
-  ['system doctor', cliDoctorRoute],
-  ['artifact describe', artifactsDescribeRoute],
-  ['artifact get', artifactsReadRoute],
-  ['artifact delete', artifactsDeleteRoute],
-  ['model invoke', modelsInvokeRoute],
-  ['image generate', imagesGenerateRoute],
-  ['video generate', videosGenerateRoute],
-  ['audio speak', speechGenerateRoute],
-  ['audio transcribe', audioTranscribeUploadRoute],
-  ['ocr status', ocrGetRuntimeStatusRoute],
-  ['ocr extract', ocrExtractUploadRoute],
-  ['ocr clear-cache', ocrClearCacheRoute],
-  ['provider list', providersListPublicRoute],
-  ['provider test', providersTestPublicConnectionRoute],
-  ['provider add', providersAddPublicRoute],
-  ['provider update', providersUpdatePublicRoute],
-  ['provider set-credential', providersSetCredentialRoute],
-  ['provider clear-credential', providersSetCredentialRoute],
-  ['provider remove', providersRemoveRoute],
-  ['model list', modelsListRuntimeRoute],
-  ['model config-get', modelsGetPublicConfigRoute],
-  ['model enable', modelsSetStatusRoute],
-  ['model disable', modelsSetStatusRoute],
-  ['model config-set', modelsSetPublicConfigRoute],
-  ['model config-reset', modelsResetConfigRoute],
-  ['settings get', settingsGetPublicRoute],
-  ['settings set', settingsUpdatePublicRoute],
-  ['skill list', skillsListPublicRoute],
-  ['skill install', skillsInstallPublicUrlRoute],
-  ['skill enable', skillsSetPublicStatusRoute],
-  ['skill disable', skillsSetPublicStatusRoute],
-  ['skill remove', skillsUninstallPublicRoute],
-  ['mcp list', mcpListPublicRoute],
-  ['mcp add', mcpAddPublicRoute],
-  ['mcp update', mcpUpdatePublicRoute],
-  ['mcp enable', mcpSetPublicStatusRoute],
-  ['mcp disable', mcpSetPublicStatusRoute],
-  ['mcp start', mcpStartPublicRoute],
-  ['mcp stop', mcpStopPublicRoute],
-  ['mcp remove', mcpRemovePublicRoute],
-  ['agent run', sessionsRunDetachedRoute],
-  ['run get', runsGetRoute],
-  ['run watch', eventsSubscribeRoute],
-  ['run cancel', runsCancelRoute]
-])
-
-const LONG_RUNNING_COMMANDS = new Set([
-  'artifact get',
-  'model invoke',
-  'image generate',
-  'video generate',
-  'audio speak',
-  'audio transcribe',
-  'ocr extract',
-  'ocr clear-cache',
-  'skill install',
-  'agent run',
-  'run watch'
-])
-
-const APPROVED_MUTATION_COMMANDS = new Set([
-  'provider add',
-  'provider update',
-  'provider set-credential',
-  'provider clear-credential',
-  'provider remove',
-  'model enable',
-  'model disable',
-  'model config-set',
-  'model config-reset',
-  'settings set',
-  'skill enable',
-  'skill disable',
-  'skill remove',
-  'mcp add',
-  'mcp update',
-  'mcp enable',
-  'mcp disable',
-  'mcp start',
-  'mcp stop',
-  'mcp remove'
-])
 
 function parseBoolean(value: string, source: string): boolean {
   if (value === 'true') return true
@@ -561,16 +379,32 @@ export function parseCliArguments(
   argv: readonly string[],
   env: NodeJS.ProcessEnv = process.env
 ): ParsedCliArguments {
+  if (argv[0] === 'help') {
+    if (argv.length !== 1) throw new CliUsageError('Expected: deepchat help')
+    return {
+      domain: 'help',
+      verb: '',
+      contract: null,
+      outputMode: parseOutputMode(env[CLI_OUTPUT_ENV]),
+      timeoutMs: DEFAULT_CLI_TIMEOUT_MS,
+      helpRequested: true,
+      operation: 'rpc',
+      params: {},
+      overwrite: false,
+      readStdin: false
+    }
+  }
+
   const domain = argv[0]
   const verb = argv[1]
   if (!domain || !verb || domain.startsWith('-') || verb.startsWith('-')) {
     throw new CliUsageError('Expected: deepchat <domain> <verb> [options]')
   }
 
-  const commandKey = `${domain} ${verb}`
-  const isHelpCommand = commandKey === 'help commands'
-  let contract = COMMANDS.get(commandKey) ?? null
-  if (!contract && !isHelpCommand) {
+  const commandKey = cliCommandKey(domain, verb)
+  const commandDefinition = getCliCommandDefinition(domain, verb)
+  let contract = commandDefinition?.contract ?? null
+  if (!contract) {
     throw new CliUsageError(`Unknown command: deepchat ${domain} ${verb}`)
   }
 
@@ -578,9 +412,9 @@ export function parseCliArguments(
   let explicitOutputMode: CliOutputMode | undefined
   let timeoutMs = env[CLI_TIMEOUT_ENV]
     ? parseTimeout(env[CLI_TIMEOUT_ENV], CLI_TIMEOUT_ENV)
-    : LONG_RUNNING_COMMANDS.has(commandKey)
+    : commandDefinition?.timeoutClass === 'long-running'
       ? DEFAULT_COMPUTE_TIMEOUT_MS
-      : APPROVED_MUTATION_COMMANDS.has(commandKey)
+      : commandDefinition?.timeoutClass === 'approved-mutation'
         ? DEFAULT_MUTATION_TIMEOUT_MS
         : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
@@ -1128,7 +962,7 @@ export function parseCliArguments(
     contract,
     outputMode,
     timeoutMs,
-    helpRequested: helpRequested || isHelpCommand,
+    helpRequested,
     operation:
       commandKey === 'artifact get'
         ? 'download'
@@ -1322,7 +1156,7 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  run get             Read an owned run snapshot and messages',
     '  run watch           Stream targeted run events with a resume cursor',
     '  run cancel          Idempotently cancel an owned active run',
-    '  help commands        Show this help',
+    '  help                 Show this help',
     '',
     'Options (after domain and verb):',
     '  --json               Emit one JSON result envelope',

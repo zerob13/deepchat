@@ -79,9 +79,12 @@
 - [x] Add automatic, idempotent, reversible platform launcher/PATH integration with no settings
   toggle.
 - [x] Add in-memory scoped Agent token issuance, expiry, revocation, and quotas.
+- [x] Derive Agent token scopes from the shared command catalog and fail closed for human-only
+  commands, including self-blocking `run watch`.
 - [x] Harden shell permission checks for redirection and compound syntax before Agent enablement.
 - [x] Keep `deepchat` out of `SAFE_COMMANDS`, enforce domain/verb-first grammar, and deny Agent
   artifact-byte/output-path access.
+- [x] Prepend the bundled CLI directory while retaining the controlled Agent command `PATH`.
 - [x] Add the bundled CLI Skill without exposing the human descriptor.
 - [x] Add bundled diagnostics/compute/artifact/OCR/Agent-policy and desktop-shutdown smoke coverage.
 

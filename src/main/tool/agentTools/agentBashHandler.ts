@@ -14,7 +14,7 @@ import {
   RTK_ENABLED_SETTING_KEY,
   rtkRuntimeService
 } from '@/agent/shared/process/rtkRuntimeService'
-import { getUserShell } from '@/agent/shared/process/shellEnvHelper'
+import { getUserShell, mergeCommandEnvironment } from '@/agent/shared/process/shellEnvHelper'
 import {
   createUtf8OutputDecoderPair,
   prepareShellCommandForUtf8Output
@@ -51,7 +51,16 @@ export interface ExecuteCommandOptions {
 }
 
 export interface AgentCommandEnvironmentPort {
-  createEnvironment(conversationId: string, command: string): Record<string, string> | undefined
+  createEnvironment(
+    conversationId: string,
+    command: string
+  ):
+    | Readonly<{
+        variables: Readonly<Record<string, string>>
+        prependPath: readonly string[]
+        preserveCommand: boolean
+      }>
+    | undefined
 }
 
 interface PreparedCommand {
@@ -654,8 +663,13 @@ export class AgentBashHandler {
       : undefined
     if (!scopedEnvironment) return { env: options.env, preserveCommand: false }
     return {
-      env: { ...options.env, ...scopedEnvironment },
-      preserveCommand: true
+      env: mergeCommandEnvironment({
+        processEnv: process.env,
+        overrides: { ...options.env, ...scopedEnvironment.variables },
+        prependPathSources: [...scopedEnvironment.prependPath],
+        includeDefaultPaths: false
+      }),
+      preserveCommand: scopedEnvironment.preserveCommand
     }
   }
 

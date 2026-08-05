@@ -44,7 +44,7 @@ deepchat --json image generate
 查看全部命令或单个命令参数：
 
 ```bash
-deepchat help commands
+deepchat help
 deepchat image generate --help
 ```
 
@@ -177,7 +177,9 @@ deepchat run cancel --run <run-id> --json
 ```
 
 `agent run` 先创建 durable detached Session，再启动首轮。CLI 断开不会删除 run；可以通过
-`run get` 恢复消息，通过 cursor 续接 `run watch`。Agent caller 自身不能递归执行 `agent run`。
+`run get` 恢复消息，human caller 可通过 cursor 续接 `run watch`。Agent caller 自身不能递归执行
+`agent run`，也不能等待当前正在执行的自身 run；Agent 仅可使用非阻塞的 `run get` 与幂等的
+`run cancel`。
 
 ## 设置、Skill 与 MCP
 

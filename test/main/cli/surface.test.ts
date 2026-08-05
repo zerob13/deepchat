@@ -384,7 +384,7 @@ describe('CLI surface V1', () => {
         method: 'events.subscribe',
         possibleEffects: ['read'],
         transport: 'stream',
-        callers: ['human', 'agent'],
+        callers: ['human'],
         scopes: ['runs:read']
       }),
       expect.objectContaining({
