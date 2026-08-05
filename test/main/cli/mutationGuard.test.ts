@@ -9,7 +9,7 @@ const rendererCaller = (webContentsId: number) => ({
   windowId: 7
 })
 
-function createHarness() {
+function createHarness(maxPendingPerScope?: number) {
   const requests: Array<Parameters<CliApprovalPresentationPort['present']>[1]> = []
   const close = vi.fn<CliApprovalPresentationPort['close']>(async () => undefined)
   const presentation: CliApprovalPresentationPort = {
@@ -20,7 +20,9 @@ function createHarness() {
     }),
     close
   }
-  const approvals = new ApprovalBroker()
+  const approvals = new ApprovalBroker(
+    maxPendingPerScope === undefined ? undefined : { maxPendingPerScope }
+  )
   const guard = new CliMutationGuard(approvals, presentation)
   const authorize = (signal = new AbortController().signal) =>
     guard.authorize({
@@ -119,6 +121,22 @@ describe('CliMutationGuard', () => {
       harness.guard.resolve({ requestId: secondId, decision: 'denied' }, rendererCaller(70))
     ).toBe(true)
     await expect(second).rejects.toMatchObject({ code: 'approval_denied' })
+  })
+
+  it('limits pending mutations across one CLI connection', async () => {
+    const harness = createHarness(1)
+    const first = harness.authorize()
+    await waitForRequests(harness.requests, 1)
+
+    await expect(harness.authorize()).rejects.toMatchObject({
+      code: 'rate_limited',
+      httpStatus: 429
+    })
+    expect(harness.requests).toHaveLength(1)
+
+    const requestId = harness.requests[0].requestId
+    harness.guard.resolve({ requestId, decision: 'denied' }, rendererCaller(70))
+    await expect(first).rejects.toMatchObject({ code: 'approval_denied' })
   })
 
   it('fails closed when no trusted renderer is available', async () => {

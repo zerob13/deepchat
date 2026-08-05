@@ -256,6 +256,39 @@ describe('ArtifactSpool', () => {
     ).rejects.toMatchObject({ code: 'rate_limited' })
   })
 
+  it('releases committed quota after removing an artifact', async () => {
+    const { spool } = await createSpool({
+      limits: {
+        maxArtifactBytes: 6,
+        maxRequestBytes: 6,
+        maxConnectionBytes: 6,
+        maxOwnerBytes: 6,
+        maxTotalBytes: 6,
+        maxRequestCount: 1,
+        maxConnectionCount: 1,
+        maxOwnerCount: 1,
+        maxTotalCount: 1
+      }
+    })
+    const first = await spool.write({
+      caller: humanCaller,
+      requestId: 'request-before-removal',
+      mimeType: 'application/octet-stream',
+      data: Buffer.alloc(6)
+    })
+
+    await spool.discard(first.id)
+
+    await expect(
+      spool.write({
+        caller: humanCaller,
+        requestId: 'request-after-removal',
+        mimeType: 'application/octet-stream',
+        data: Buffer.alloc(6)
+      })
+    ).resolves.toMatchObject({ size: 6 })
+  })
+
   it('expires artifacts and removes their files', async () => {
     let now = 1_000
     const { spool, directory } = await createSpool({ now: () => now })

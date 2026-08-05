@@ -261,6 +261,123 @@ describe('CLI compute service', () => {
     expect(streamCall?.[7]).toEqual({ signal })
   })
 
+  it('serializes repeated rate-limit queue events before model output', async () => {
+    const releases: Array<() => void> = []
+    const startedQueueLengths: number[] = []
+    let activeEmissions = 0
+    let maxActiveEmissions = 0
+    const { service } = createService([{ type: 'stop', stop_reason: 'complete' }], {
+      providerRuntime: {
+        executeWithRateLimit: vi.fn(async (_providerId, options) => {
+          options?.onQueued?.({
+            providerId: provider.id,
+            qpsLimit: 1,
+            currentQps: 1,
+            queueLength: 2,
+            estimatedWaitTime: 20
+          })
+          options?.onQueued?.({
+            providerId: provider.id,
+            qpsLimit: 1,
+            currentQps: 1,
+            queueLength: 1,
+            estimatedWaitTime: 10
+          })
+        })
+      }
+    })
+
+    const invocation = service.dispatchStream(
+      modelsInvokeRoute.name,
+      {
+        providerId: provider.id,
+        modelId: model.id,
+        messages: [{ role: 'user', content: 'hello' }]
+      },
+      caller,
+      'request-queued',
+      new AbortController().signal,
+      async (_event, data) => {
+        const event = data as ModelInvokeEvent
+        if (event.type !== 'rate_limit') return
+        activeEmissions += 1
+        maxActiveEmissions = Math.max(maxActiveEmissions, activeEmissions)
+        startedQueueLengths.push(event.queueLength)
+        await new Promise<void>((resolve) => releases.push(resolve))
+        activeEmissions -= 1
+      }
+    )
+
+    await vi.waitFor(() => expect(releases).toHaveLength(1))
+    expect(startedQueueLengths).toEqual([2])
+    releases.shift()?.()
+    await vi.waitFor(() => expect(releases).toHaveLength(1))
+    expect(startedQueueLengths).toEqual([2, 1])
+    releases.shift()?.()
+
+    await expect(invocation).resolves.toMatchObject({ finishReason: 'complete' })
+    expect(maxActiveEmissions).toBe(1)
+  })
+
+  it('drains queued events before propagating an admission failure', async () => {
+    let releaseEmission!: () => void
+    const emissionGate = new Promise<void>((resolve) => {
+      releaseEmission = resolve
+    })
+    let emissionStarted = false
+    let emissionFinished = false
+    const { service, providerRuntime } = createService([], {
+      providerRuntime: {
+        executeWithRateLimit: vi.fn(async (_providerId, options) => {
+          options?.onQueued?.({
+            providerId: provider.id,
+            qpsLimit: 1,
+            currentQps: 1,
+            queueLength: 1,
+            estimatedWaitTime: 10
+          })
+          throw new Error('Rate-limit admission failed')
+        })
+      }
+    })
+
+    const invocation = service.dispatchStream(
+      modelsInvokeRoute.name,
+      {
+        providerId: provider.id,
+        modelId: model.id,
+        messages: [{ role: 'user', content: 'hello' }]
+      },
+      caller,
+      'request-admission-failure',
+      new AbortController().signal,
+      async (_event, data) => {
+        if ((data as ModelInvokeEvent).type !== 'rate_limit') return
+        emissionStarted = true
+        await emissionGate
+        emissionFinished = true
+      }
+    )
+    let settled = false
+    void invocation.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+
+    await vi.waitFor(() => expect(emissionStarted).toBe(true))
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    releaseEmission()
+
+    await expect(invocation).rejects.toMatchObject({ code: 'unavailable' })
+    expect(emissionFinished).toBe(true)
+    expect(providerRuntime.streamChat).not.toHaveBeenCalled()
+  })
+
   it('exposes normalized provider failure metadata without upstream text or headers', async () => {
     const { service, log } = createService([
       {

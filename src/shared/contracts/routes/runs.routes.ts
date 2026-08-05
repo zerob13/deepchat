@@ -17,6 +17,11 @@ export const RunIdSchema = EntityIdSchema.max(128)
 export const RunEventCursorSchema = LocalControlEventCursorSchema
 
 const BoundedIdentifierSchema = z.string().trim().min(1).max(256)
+const PublicRunMessageTextSchema = z
+  .string()
+  .refine((value) => new TextEncoder().encode(value).byteLength <= RUN_MESSAGE_MAX_TEXT_BYTES, {
+    message: 'Run message text exceeds its UTF-8 byte limit'
+  })
 const UniqueIdentifierListSchema = z
   .array(BoundedIdentifierSchema)
   .max(128)
@@ -35,7 +40,7 @@ export const PublicRunMessageSchema = z
     id: EntityIdSchema,
     role: z.enum(['user', 'assistant']),
     status: z.enum(['pending', 'sent', 'error']),
-    text: z.string(),
+    text: PublicRunMessageTextSchema,
     textTruncated: z.boolean(),
     createdAt: TimestampMsSchema,
     updatedAt: TimestampMsSchema

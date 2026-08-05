@@ -458,7 +458,9 @@ export function parseCliArguments(
     if (argument === '--timeout') {
       if (timeoutSeen) throw new CliUsageError('--timeout may be specified only once')
       const value = argv[index + 1]
-      if (!value) throw new CliUsageError('Missing value for --timeout')
+      if (!value || value.startsWith('--')) {
+        throw new CliUsageError('Missing value for --timeout')
+      }
       timeoutMs = parseTimeout(value, '--timeout')
       timeoutSeen = true
       index += 1

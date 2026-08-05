@@ -211,10 +211,14 @@ export class ArtifactSpool {
   private readonly cleanupIntervalMs: number
   private readonly log: Pick<Console, 'warn'>
   private readonly artifacts = new Map<string, StoredArtifact>()
+  private readonly storedOwnerUsage = new Map<string, QuotaReservation>()
+  private readonly storedRequestUsage = new Map<string, QuotaReservation>()
+  private readonly storedConnectionUsage = new Map<string, QuotaReservation>()
   private readonly ownerReservations = new Map<string, QuotaReservation>()
   private readonly requestReservations = new Map<string, QuotaReservation>()
   private readonly connectionReservations = new Map<string, QuotaReservation>()
   private readonly allocatedIds = new Set<string>()
+  private storedBytes = 0
   private reservedBytes = 0
   private reservedCount = 0
   private activeWrites = 0
@@ -394,7 +398,7 @@ export class ArtifactSpool {
       await unlink(tempPath)
       tempPath = ''
       throwIfArtifactWriteCancelled(input.signal)
-      this.artifacts.set(id, {
+      this.recordStoredArtifact({
         metadata,
         filePath: finalPath,
         ownerKey: ownerQuotaKey,
@@ -506,10 +510,14 @@ export class ArtifactSpool {
     this.openReadStreams.clear()
     this.pendingRemovalIds.clear()
     this.removalPromises.clear()
+    this.storedOwnerUsage.clear()
+    this.storedRequestUsage.clear()
+    this.storedConnectionUsage.clear()
     this.ownerReservations.clear()
     this.requestReservations.clear()
     this.connectionReservations.clear()
     this.allocatedIds.clear()
+    this.storedBytes = 0
     this.reservedBytes = 0
     this.reservedCount = 0
   }
@@ -529,79 +537,66 @@ export class ArtifactSpool {
   }
 
   private reserveArtifact(owner: string, request: string, connection: string): void {
-    const stored = Array.from(this.artifacts.values())
     if (
-      this.quotaUsage(stored, 'ownerKey', owner, this.ownerReservations).count + 1 >
+      this.quotaUsage(this.storedOwnerUsage, this.ownerReservations, owner).count + 1 >
         this.limits.maxOwnerCount ||
-      this.quotaUsage(stored, 'requestKey', request, this.requestReservations).count + 1 >
+      this.quotaUsage(this.storedRequestUsage, this.requestReservations, request).count + 1 >
         this.limits.maxRequestCount ||
-      this.quotaUsage(stored, 'connectionId', connection, this.connectionReservations).count + 1 >
+      this.quotaUsage(this.storedConnectionUsage, this.connectionReservations, connection).count +
+        1 >
         this.limits.maxConnectionCount ||
-      stored.length + this.reservedCount + 1 > this.limits.maxTotalCount
+      this.artifacts.size + this.reservedCount + 1 > this.limits.maxTotalCount
     ) {
       throw this.quotaError()
     }
-    this.addReservation(this.ownerReservations, owner, 0, 1)
-    this.addReservation(this.requestReservations, request, 0, 1)
-    this.addReservation(this.connectionReservations, connection, 0, 1)
+    this.addQuotaUsage(this.ownerReservations, owner, 0, 1)
+    this.addQuotaUsage(this.requestReservations, request, 0, 1)
+    this.addQuotaUsage(this.connectionReservations, connection, 0, 1)
     this.reservedCount += 1
   }
 
   private reserveBytes(owner: string, request: string, connection: string, bytes: number): void {
-    const stored = Array.from(this.artifacts.values())
     if (
-      this.quotaUsage(stored, 'ownerKey', owner, this.ownerReservations).bytes + bytes >
+      this.quotaUsage(this.storedOwnerUsage, this.ownerReservations, owner).bytes + bytes >
         this.limits.maxOwnerBytes ||
-      this.quotaUsage(stored, 'requestKey', request, this.requestReservations).bytes + bytes >
+      this.quotaUsage(this.storedRequestUsage, this.requestReservations, request).bytes + bytes >
         this.limits.maxRequestBytes ||
-      this.quotaUsage(stored, 'connectionId', connection, this.connectionReservations).bytes +
+      this.quotaUsage(this.storedConnectionUsage, this.connectionReservations, connection).bytes +
         bytes >
         this.limits.maxConnectionBytes ||
-      stored.reduce((total, artifact) => total + artifact.metadata.size, 0) +
-        this.reservedBytes +
-        bytes >
-        this.limits.maxTotalBytes
+      this.storedBytes + this.reservedBytes + bytes > this.limits.maxTotalBytes
     ) {
       throw this.quotaError()
     }
-    this.addReservation(this.ownerReservations, owner, bytes, 0)
-    this.addReservation(this.requestReservations, request, bytes, 0)
-    this.addReservation(this.connectionReservations, connection, bytes, 0)
+    this.addQuotaUsage(this.ownerReservations, owner, bytes, 0)
+    this.addQuotaUsage(this.requestReservations, request, bytes, 0)
+    this.addQuotaUsage(this.connectionReservations, connection, bytes, 0)
     this.reservedBytes += bytes
   }
 
   private quotaUsage(
-    artifacts: readonly StoredArtifact[],
-    key: 'ownerKey' | 'requestKey' | 'connectionId',
-    value: string,
-    reservations: ReadonlyMap<string, QuotaReservation>
+    storedUsage: ReadonlyMap<string, QuotaReservation>,
+    reservations: ReadonlyMap<string, QuotaReservation>,
+    key: string
   ): QuotaReservation {
-    const stored = artifacts
-      .filter((artifact) => artifact[key] === value)
-      .reduce(
-        (usage, artifact) => ({
-          bytes: usage.bytes + artifact.metadata.size,
-          count: usage.count + 1
-        }),
-        { bytes: 0, count: 0 }
-      )
-    const reserved = reservations.get(value)
+    const stored = storedUsage.get(key)
+    const reserved = reservations.get(key)
     return {
-      bytes: stored.bytes + (reserved?.bytes ?? 0),
-      count: stored.count + (reserved?.count ?? 0)
+      bytes: (stored?.bytes ?? 0) + (reserved?.bytes ?? 0),
+      count: (stored?.count ?? 0) + (reserved?.count ?? 0)
     }
   }
 
-  private addReservation(
-    reservations: Map<string, QuotaReservation>,
+  private addQuotaUsage(
+    usageByKey: Map<string, QuotaReservation>,
     key: string,
     bytes: number,
     count: number
   ): void {
-    const reservation = reservations.get(key) ?? { bytes: 0, count: 0 }
-    reservation.bytes += bytes
-    reservation.count += count
-    reservations.set(key, reservation)
+    const usage = usageByKey.get(key) ?? { bytes: 0, count: 0 }
+    usage.bytes += bytes
+    usage.count += count
+    usageByKey.set(key, usage)
   }
 
   private releaseReservation(
@@ -610,24 +605,49 @@ export class ArtifactSpool {
     connection: string,
     bytes: number
   ): void {
-    this.subtractReservation(this.ownerReservations, owner, bytes, 1)
-    this.subtractReservation(this.requestReservations, request, bytes, 1)
-    this.subtractReservation(this.connectionReservations, connection, bytes, 1)
+    this.subtractQuotaUsage(this.ownerReservations, owner, bytes, 1)
+    this.subtractQuotaUsage(this.requestReservations, request, bytes, 1)
+    this.subtractQuotaUsage(this.connectionReservations, connection, bytes, 1)
     this.reservedBytes = Math.max(0, this.reservedBytes - bytes)
     this.reservedCount = Math.max(0, this.reservedCount - 1)
   }
 
-  private subtractReservation(
-    reservations: Map<string, QuotaReservation>,
+  private subtractQuotaUsage(
+    usageByKey: Map<string, QuotaReservation>,
     key: string,
     bytes: number,
     count: number
   ): void {
-    const reservation = reservations.get(key)
-    if (!reservation) return
-    reservation.bytes = Math.max(0, reservation.bytes - bytes)
-    reservation.count = Math.max(0, reservation.count - count)
-    if (reservation.bytes === 0 && reservation.count === 0) reservations.delete(key)
+    const usage = usageByKey.get(key)
+    if (!usage) return
+    usage.bytes = Math.max(0, usage.bytes - bytes)
+    usage.count = Math.max(0, usage.count - count)
+    if (usage.bytes === 0 && usage.count === 0) usageByKey.delete(key)
+  }
+
+  private recordStoredArtifact(artifact: StoredArtifact): void {
+    const id = artifact.metadata.id
+    if (this.artifacts.has(id)) throw new Error('Artifact ID is already stored')
+    this.artifacts.set(id, artifact)
+    this.addQuotaUsage(this.storedOwnerUsage, artifact.ownerKey, artifact.metadata.size, 1)
+    this.addQuotaUsage(this.storedRequestUsage, artifact.requestKey, artifact.metadata.size, 1)
+    this.addQuotaUsage(this.storedConnectionUsage, artifact.connectionId, artifact.metadata.size, 1)
+    this.storedBytes += artifact.metadata.size
+  }
+
+  private forgetStoredArtifact(artifact: StoredArtifact): void {
+    const id = artifact.metadata.id
+    if (this.artifacts.get(id) !== artifact) return
+    this.artifacts.delete(id)
+    this.subtractQuotaUsage(this.storedOwnerUsage, artifact.ownerKey, artifact.metadata.size, 1)
+    this.subtractQuotaUsage(this.storedRequestUsage, artifact.requestKey, artifact.metadata.size, 1)
+    this.subtractQuotaUsage(
+      this.storedConnectionUsage,
+      artifact.connectionId,
+      artifact.metadata.size,
+      1
+    )
+    this.storedBytes = Math.max(0, this.storedBytes - artifact.metadata.size)
   }
 
   private quotaError(): CliRequestError {
@@ -767,7 +787,7 @@ export class ArtifactSpool {
       await unlink(artifact.filePath).catch((error) => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       })
-      if (this.artifacts.get(id) === artifact) this.artifacts.delete(id)
+      this.forgetStoredArtifact(artifact)
       this.pendingRemovalIds.delete(id)
     })()
     this.removalPromises.set(id, removal)

@@ -82,7 +82,7 @@ export class CliMutationGuard {
     }
 
     const executionId = randomUUID()
-    const scopeKey = `cli:${input.connectionId}:${executionId}`
+    const scopeKey = `cli:${input.connectionId}`
     let approvalRequestId: string | undefined
     let closeReason: DeepchatEventPayload<'approvals.closed'>['reason'] = 'cancelled'
 

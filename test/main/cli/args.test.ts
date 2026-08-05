@@ -56,6 +56,9 @@ describe('CLI argument grammar', () => {
     expect(() => parseCliArguments(['system', 'status', '--timeout', '1800001'], {})).toThrow(
       'must not exceed'
     )
+    expect(() => parseCliArguments(['system', 'status', '--timeout', '--json'], {})).toThrow(
+      'Missing value for --timeout'
+    )
     expect(() => parseCliArguments(['system', 'status', 'extra'], {})).toThrow('Unknown option')
   })
 

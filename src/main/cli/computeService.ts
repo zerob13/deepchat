@@ -274,26 +274,37 @@ export class CliComputeService {
 
       const queueStartedAt = this.now()
       let queuedEmission = Promise.resolve()
-      let queuedEmissionError: unknown
-      await this.options.providerRuntime.executeWithRateLimit(input.providerId, {
-        signal,
-        onQueued: (snapshot) => {
-          const event = ModelInvokeEventSchema.parse({
-            type: 'rate_limit',
-            providerId: snapshot.providerId,
-            qpsLimit: snapshot.qpsLimit,
-            currentQps: snapshot.currentQps,
-            queueLength: snapshot.queueLength,
-            estimatedWaitTimeMs: snapshot.estimatedWaitTime
-          })
-          queuedEmission = emitEvent(event).catch((error) => {
-            queuedEmissionError = error
-          })
-        }
-      })
+      let queuedEmissionFailure: { error: unknown } | undefined
+      let admissionFailure: { error: unknown } | undefined
+      try {
+        await this.options.providerRuntime.executeWithRateLimit(input.providerId, {
+          signal,
+          onQueued: (snapshot) => {
+            const event = ModelInvokeEventSchema.parse({
+              type: 'rate_limit',
+              providerId: snapshot.providerId,
+              qpsLimit: snapshot.qpsLimit,
+              currentQps: snapshot.currentQps,
+              queueLength: snapshot.queueLength,
+              estimatedWaitTimeMs: snapshot.estimatedWaitTime
+            })
+            queuedEmission = queuedEmission.then(async () => {
+              if (queuedEmissionFailure) return
+              try {
+                await emitEvent(event)
+              } catch (error) {
+                queuedEmissionFailure = { error }
+              }
+            })
+          }
+        })
+      } catch (error) {
+        admissionFailure = { error }
+      }
       const queueFinishedAt = this.now()
       await queuedEmission
-      if (queuedEmissionError) throw queuedEmissionError
+      if (admissionFailure) throw admissionFailure.error
+      if (queuedEmissionFailure) throw queuedEmissionFailure.error
 
       const stream = this.options.providerRuntime.streamChat(
         input.providerId,

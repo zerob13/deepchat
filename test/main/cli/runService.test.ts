@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   RUN_MESSAGE_MAX_TEXT_BYTES,
   RUN_PROMPT_MAX_CHARACTERS,
+  PublicRunMessageSchema,
   eventsSubscribeRoute,
   runsCancelRoute,
   runsGetRoute,
@@ -256,6 +257,30 @@ describe('CliRunService', () => {
       RUN_MESSAGE_MAX_TEXT_BYTES
     )
     expect(JSON.stringify(result)).not.toContain('private-provider-detail')
+  })
+
+  it('enforces the public message limit in UTF-8 bytes', () => {
+    const message = {
+      id: 'message-1',
+      role: 'assistant' as const,
+      status: 'sent' as const,
+      textTruncated: false,
+      createdAt: 100,
+      updatedAt: 101
+    }
+
+    expect(
+      PublicRunMessageSchema.safeParse({
+        ...message,
+        text: 'x'.repeat(RUN_MESSAGE_MAX_TEXT_BYTES)
+      }).success
+    ).toBe(true)
+    expect(
+      PublicRunMessageSchema.safeParse({
+        ...message,
+        text: '🙂'.repeat(RUN_MESSAGE_MAX_TEXT_BYTES / 4 + 1)
+      }).success
+    ).toBe(false)
   })
 
   it('keeps escaped transcript pages within the local response byte limit', async () => {

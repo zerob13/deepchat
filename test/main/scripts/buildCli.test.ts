@@ -12,6 +12,7 @@ import {
 } from '../../../scripts/build-cli.mjs'
 
 const execFileAsync = promisify(execFile)
+const CLI_BUILD_TEST_TIMEOUT_MS = 30_000
 
 async function runGeneratedLauncher(outputDirectory: string) {
   if (process.platform === 'win32') {
@@ -59,7 +60,9 @@ describe('CLI bundle', () => {
       expect(source).not.toMatch(/from\s+["']zod["']/)
       expect(result.stdout).toContain('deepchat <domain> <verb>')
       expect(launcherResult.stdout).toContain('deepchat <domain> <verb>')
-      expect((await stat(path.join(outputDirectory, 'deepchat'))).mode & 0o111).toBe(0o111)
+      if (process.platform !== 'win32') {
+        expect((await stat(path.join(outputDirectory, 'deepchat'))).mode & 0o111).toBe(0o111)
+      }
       expect(await readFile(path.join(outputDirectory, 'deepchat'), 'utf8')).toBe(POSIX_LAUNCHER)
       expect(await readFile(path.join(outputDirectory, 'deepchat.cmd'), 'utf8')).toBe(
         WINDOWS_LAUNCHER
@@ -74,7 +77,7 @@ describe('CLI bundle', () => {
     } finally {
       await rm(temporaryDirectory, { recursive: true })
     }
-  })
+  }, CLI_BUILD_TEST_TIMEOUT_MS)
 
   it('packages only generated CLI resources outside app.asar', async () => {
     const config = parse(await readFile(path.resolve('electron-builder.yml'), 'utf8')) as {

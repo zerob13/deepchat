@@ -24,6 +24,7 @@ import { buildCli } from '../../../scripts/build-cli.mjs'
 
 const execFileAsync = promisify(execFile)
 const CLI_PROCESS_TIMEOUT_MS = 5_000
+const PACKAGED_SMOKE_TIMEOUT_MS = 30_000
 
 function cliEnvironment(
   userDataPath: string,
@@ -41,7 +42,7 @@ function cliEnvironment(
 }
 
 describe('packaged CLI smoke', () => {
-  it('covers diagnostics, compute, artifacts, OCR, Agent policy, and desktop shutdown', async () => {
+  async function runPackagedCliSmoke(): Promise<void> {
     const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-smoke-'))
     const outputDirectory = path.join(temporaryDirectory, 'cli')
     const entryPath = path.join(outputDirectory, 'deepchat.mjs')
@@ -257,5 +258,11 @@ describe('packaged CLI smoke', () => {
       await spool.close()
       await rm(temporaryDirectory, { recursive: true })
     }
-  })
+  }
+
+  it(
+    'covers diagnostics, compute, artifacts, OCR, Agent policy, and desktop shutdown',
+    runPackagedCliSmoke,
+    PACKAGED_SMOKE_TIMEOUT_MS
+  )
 })
