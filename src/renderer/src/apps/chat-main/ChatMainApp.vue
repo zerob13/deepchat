@@ -25,6 +25,7 @@ import MessageDialog from '@/components/ui/MessageDialog.vue'
 import McpSamplingDialog from '@/components/mcp/McpSamplingDialog.vue'
 import McpElicitationDialog from '@/components/mcp/McpElicitationDialog.vue'
 import McpAppConsentDialog from '@/components/mcp/McpAppConsentDialog.vue'
+import CliApprovalDialog from '@/components/cli/CliApprovalDialog.vue'
 import { initAppStores, useMcpInstallDeeplinkHandler } from '@/lib/storeInitializer'
 import { ensureIconsLoaded } from '@/lib/iconLoader'
 import { useFontManager } from '@/composables/useFontManager'
@@ -553,6 +554,7 @@ onBeforeUnmount(() => {
     <McpSamplingDialog />
     <McpElicitationDialog />
     <McpAppConsentDialog />
+    <CliApprovalDialog />
     <NotificationHost surface="main" :theme="toasterTheme" :dir="langStore.dir" />
     <SelectedTextContextMenu />
     <TranslatePopup />

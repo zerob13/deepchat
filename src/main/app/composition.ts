@@ -1,6 +1,11 @@
 import logger from '@shared/logger'
 import { projectEnvironmentsChangedEvent } from '@shared/contracts/events/project.events'
-import { liveDelegationChangedEvent, sessionsUpdatedEvent } from '@shared/contracts/events'
+import {
+  approvalClosedEvent,
+  approvalRequestedEvent,
+  liveDelegationChangedEvent,
+  sessionsUpdatedEvent
+} from '@shared/contracts/events'
 import { performance } from 'node:perf_hooks'
 import path from 'path'
 import { DialogService } from '../desktop/dialog'
@@ -105,7 +110,7 @@ import { createPlatformRoutes } from '../platform/routes'
 import { createHookRoutes } from '../hook/routes'
 import { createAppSettingsRoutes } from './settingsRoutes'
 import { createAppRoutes } from './routes'
-import { ApprovalBroker } from '@/approval'
+import { ApprovalBroker, createApprovalRoutes } from '@/approval'
 import {
   CommandPermissionService,
   FilePermissionService,
@@ -211,8 +216,11 @@ import { createNodeScheduler } from '@/routes/scheduler'
 import {
   ArtifactSpool,
   CliAudioTranscriptionService,
+  CliAuditLog,
   CliComputeService,
+  CliMutationGuard,
   CliOcrService,
+  CliRequestPolicy,
   CliServer,
   createArtifactRoutes,
   createCliComputeRoutes,
@@ -351,6 +359,8 @@ export async function createMainProcessControl(dependencies: {
   let cliComputeService: CliComputeService
   let cliAudioTranscriptionService: CliAudioTranscriptionService
   let cliOcrService: CliOcrService
+  let cliMutationGuard: CliMutationGuard
+  let cliRequestPolicy: CliRequestPolicy
   let hasInitialized = false
   let databaseMaintenanceState: 'running' | 'maintenance' | 'failed' = 'running'
   let appLifecycleState: 'starting' | 'running' | 'stopping' | 'stopped' = 'starting'
@@ -374,6 +384,9 @@ export async function createMainProcessControl(dependencies: {
   const artifactSpool = new ArtifactSpool({
     directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
     log: logger
+  })
+  const cliAuditLog = new CliAuditLog({
+    directory: path.join(app.getPath('userData'), 'local-control')
   })
   const cliServer = new CliServer({
     userDataPath: app.getPath('userData'),
@@ -414,6 +427,10 @@ export async function createMainProcessControl(dependencies: {
       }
       throw new Error(`CLI upload service is not ready for ${method}`)
     },
+    authorize: async (input) => {
+      if (!cliRequestPolicy) throw new Error('CLI request policy is not ready')
+      return await cliRequestPolicy.authorize(input)
+    },
     artifactSpool,
     log: logger
   })
@@ -423,10 +440,14 @@ export async function createMainProcessControl(dependencies: {
     semanticNotificationScheduler
   )
   let handleSemanticRendererUnavailable = (_webContentsId: number): void => undefined
+  let handleApprovalRendererUnavailable = (_webContentsId: number): void => undefined
   const semanticNotificationTargets = new ElectronWindowNotificationTargets(
     windowPresenter,
     () => tabPresenter,
-    (webContentsId) => handleSemanticRendererUnavailable(webContentsId)
+    (webContentsId) => {
+      handleSemanticRendererUnavailable(webContentsId)
+      handleApprovalRendererUnavailable(webContentsId)
+    }
   )
   const semanticNotificationDiagnostics = new AggregatedWindowNotificationDiagnostics({
     scheduler: semanticNotificationScheduler,
@@ -701,6 +722,54 @@ export async function createMainProcessControl(dependencies: {
   settingsPermissionService = new SettingsPermissionService()
   approvalBroker = new ApprovalBroker({ log: logger })
   toolPermissionBroker = new ToolPermissionBroker({ approvalBroker })
+  cliMutationGuard = new CliMutationGuard(approvalBroker, {
+    getTarget: async () => {
+      const focused = await semanticNotificationTargets.getFocusedTarget()
+      const target =
+        focused?.kind === 'main'
+          ? focused
+          : (await semanticNotificationTargets.getExistingTargets()).find(
+              (candidate) => candidate.kind === 'main'
+            )
+      return target ? { windowId: target.windowId, webContentsId: target.webContentsId } : null
+    },
+    present: async (target, payload) => {
+      const readyTarget = await semanticNotificationTargets.getTargetForWindow(target.windowId)
+      if (
+        !readyTarget ||
+        readyTarget.kind !== 'main' ||
+        readyTarget.webContentsId !== target.webContentsId
+      ) {
+        return false
+      }
+      windowPresenter.show(target.windowId, true)
+      return await semanticNotificationTargets.sendDeepchatEvent(
+        readyTarget,
+        approvalRequestedEvent.name,
+        payload
+      )
+    },
+    close: async (target, payload) => {
+      const readyTarget = await semanticNotificationTargets.getTargetByWebContents(
+        target.webContentsId
+      )
+      if (!readyTarget || readyTarget.kind !== 'main' || readyTarget.windowId !== target.windowId) {
+        return
+      }
+      await semanticNotificationTargets.sendDeepchatEvent(
+        readyTarget,
+        approvalClosedEvent.name,
+        payload
+      )
+    }
+  })
+  handleApprovalRendererUnavailable = (webContentsId) => {
+    cliMutationGuard.cancelRenderer(webContentsId)
+  }
+  cliRequestPolicy = new CliRequestPolicy({
+    mutationGuard: cliMutationGuard,
+    audit: (record) => cliAuditLog.record(record)
+  })
   const liveDelegationConsent = new LiveDelegationConsentAuthority()
   deviceService = new DeviceService()
   const loggingService = new LoggingService(
@@ -1941,6 +2010,8 @@ export async function createMainProcessControl(dependencies: {
 
   async function destroy(): Promise<void> {
     await runDestroyStep('cliServer.stop', () => cliServer.stop())
+    await runDestroyStep('cliMutationGuard.clear', () => cliMutationGuard.clear())
+    await runDestroyStep('cliAuditLog.close', () => cliAuditLog.close())
     await runDestroyStep('artifactSpool.close', () => artifactSpool.close())
     await runDestroyStep('providerCatalog.unsubscribe', () => unsubscribeProviderDbCatalog())
     await runDestroyStep('liveDelegationService.stop', () => liveDelegationService.stop())
@@ -2302,8 +2373,13 @@ export async function createMainProcessControl(dependencies: {
     const cliRoutes = createCliRoutes({
       appVersion: app.getVersion(),
       getStatus: () => cliServer.getStatus(),
-      hasTrustedRenderer: () =>
-        windowPresenter.getAllWindows().some((window) => !window.isDestroyed())
+      hasTrustedRenderer: async () =>
+        (await semanticNotificationTargets.getExistingTargets()).some(
+          (target) => target.kind === 'main'
+        )
+    })
+    const approvalRoutes = createApprovalRoutes({
+      resolve: (input, caller) => cliMutationGuard.resolve(input, caller)
     })
     const artifactRoutes = createArtifactRoutes(artifactSpool)
     const cliComputeRoutes = createCliComputeRoutes(cliComputeService)
@@ -2341,6 +2417,7 @@ export async function createMainProcessControl(dependencies: {
         notificationRoutes,
         appSettingsRoutes,
         appRoutes,
+        approvalRoutes,
         cliRoutes,
         artifactRoutes,
         cliComputeRoutes

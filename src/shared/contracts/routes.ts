@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import type { RouteContract } from './common'
+import { approvalsResolveRoute } from './routes/approvals.routes'
 import {
   artifactsDeleteRoute,
   artifactsDescribeRoute,
@@ -578,6 +579,7 @@ import {
 } from './routes/orchestration.routes'
 
 export * from './routes/browser.routes'
+export * from './routes/approvals.routes'
 export * from './routes/artifacts.routes'
 export * from './routes/audio.routes'
 export * from './routes/computerUse.routes'
@@ -625,6 +627,7 @@ export * from './routes/orchestration.routes'
 // TS 的类型序列化上限触发 TS7056。拆成多块后每块单独序列化，合并类型只保存引用，
 // 既绕过上限又保留逐路由精确的输入/输出类型。新增路由追加到任意一块即可，保持各块体量适中。
 const DEEPCHAT_ROUTE_CATALOG_PART_1 = {
+  [approvalsResolveRoute.name]: approvalsResolveRoute,
   [acpTerminalInputRoute.name]: acpTerminalInputRoute,
   [acpTerminalKillRoute.name]: acpTerminalKillRoute,
   [shortcutRegisterRoute.name]: shortcutRegisterRoute,

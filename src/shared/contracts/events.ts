@@ -7,6 +7,7 @@ import {
   acpTerminalOutputEvent,
   acpTerminalStartedEvent
 } from './events/acp-terminal.events'
+import { approvalClosedEvent, approvalRequestedEvent } from './events/approvals.events'
 import {
   appRuntimeGuidedOnboardingStartRequestedEvent,
   appRuntimeMcpInstallRequestedEvent,
@@ -143,6 +144,7 @@ import { liveDelegationChangedEvent } from './events/orchestration.events'
 export * from './events/browser.events'
 export * from './events/computerUse.events'
 export * from './events/acp-terminal.events'
+export * from './events/approvals.events'
 export * from './events/app-runtime.events'
 export * from './events/chat.events'
 export * from './events/config.events'
@@ -169,6 +171,8 @@ export * from './events/window.events'
 export * from './events/workspace.events'
 
 export const DEEPCHAT_EVENT_CATALOG = {
+  [approvalRequestedEvent.name]: approvalRequestedEvent,
+  [approvalClosedEvent.name]: approvalClosedEvent,
   [windowStateChangedEvent.name]: windowStateChangedEvent,
   [workspaceInvalidatedEvent.name]: workspaceInvalidatedEvent,
   [workspaceWatchStatusChangedEvent.name]: workspaceWatchStatusChangedEvent,

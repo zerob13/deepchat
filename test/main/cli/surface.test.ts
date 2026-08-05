@@ -37,6 +37,7 @@ describe('CLI surface V1', () => {
     expect(getCliSurfaceEntry('settings.getSnapshot')).toBeUndefined()
     expect(getCliSurfaceEntry('mcp.callTool')).toBeUndefined()
     expect(getCliSurfaceEntry('databaseSecurity.disable')).toBeUndefined()
+    expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
   })
 
   it('publishes stable sorted capability metadata', () => {

@@ -1,4 +1,5 @@
 import type { RouteContract } from '@shared/contracts/contract'
+import type { JsonValue } from '@shared/contracts/json'
 import {
   AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
   OCR_EXTRACTION_MAX_INPUT_BYTES,
@@ -44,8 +45,28 @@ export type CliSurfaceEntry = Readonly<{
   scopes: readonly LocalControlScope[]
   transport: LocalControlTransport
   approval: LocalControlApprovalMode
+  auditProjection?: (input: unknown) => JsonValue
+  approvalDisplay?: (input: unknown) => JsonValue
   limits: CliRouteLimits
 }>
+
+function selectAuditFields(input: unknown, fields: readonly string[]): Record<string, JsonValue> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const source = input as Record<string, unknown>
+  const selected: Record<string, JsonValue> = {}
+  for (const field of fields) {
+    const value = source[field]
+    if (
+      value === null ||
+      typeof value === 'string' ||
+      (typeof value === 'number' && Number.isFinite(value)) ||
+      typeof value === 'boolean'
+    ) {
+      selected[field] = value
+    }
+  }
+  return selected
+}
 
 const DIAGNOSTIC_LIMITS = {
   maxBodyBytes: 16 * 1024,
@@ -69,6 +90,7 @@ const mediaEntry = (contract: RouteContract): CliSurfaceEntry => ({
   scopes: ['media:generate'],
   transport: 'stream',
   approval: 'never',
+  auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId']),
   limits: {
     maxBodyBytes: 512 * 1024,
     timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
@@ -83,6 +105,19 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['models:invoke'],
     transport: 'stream',
     approval: 'never',
+    auditProjection: (input) => {
+      const selected = selectAuditFields(input, [
+        'providerId',
+        'modelId',
+        'temperature',
+        'maxTokens'
+      ])
+      const messages =
+        input && typeof input === 'object' && !Array.isArray(input)
+          ? (input as Record<string, unknown>).messages
+          : undefined
+      return { ...selected, messageCount: Array.isArray(messages) ? messages.length : 0 }
+    },
     limits: { maxBodyBytes: 5 * 1024 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
   },
   mediaEntry(imagesGenerateRoute),
@@ -95,6 +130,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['audio:transcribe'],
     transport: 'upload',
     approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId', 'mimeType']),
     limits: {
       maxBodyBytes: AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
       timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
@@ -107,6 +143,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['audio:transcribe', 'artifacts:read'],
     transport: 'rpc',
     approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId', 'artifactId']),
     limits: {
       maxBodyBytes: 16 * 1024,
       timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
@@ -128,6 +165,13 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['ocr:extract'],
     transport: 'upload',
     approval: 'never',
+    auditProjection: (input) =>
+      selectAuditFields(input, [
+        'mimeType',
+        'backend',
+        'sourcePageCountHint',
+        'generationTokenLimit'
+      ]),
     limits: {
       maxBodyBytes: OCR_EXTRACTION_MAX_INPUT_BYTES,
       timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
@@ -140,6 +184,13 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['ocr:extract', 'artifacts:read'],
     transport: 'rpc',
     approval: 'never',
+    auditProjection: (input) =>
+      selectAuditFields(input, [
+        'artifactId',
+        'backend',
+        'sourcePageCountHint',
+        'generationTokenLimit'
+      ]),
     limits: {
       maxBodyBytes: 16 * 1024,
       timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
@@ -173,6 +224,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['artifacts:read'],
     transport: 'rpc',
     approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['id']),
     limits: DIAGNOSTIC_LIMITS
   },
   {
@@ -182,6 +234,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['artifacts:read'],
     transport: 'download',
     approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['id']),
     limits: { maxBodyBytes: 1, timeoutMs: 5 * 60_000 }
   },
   {
@@ -191,6 +244,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['artifacts:manage'],
     transport: 'rpc',
     approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['id']),
     limits: DIAGNOSTIC_LIMITS
   },
   diagnosticEntry(cliStatusRoute),

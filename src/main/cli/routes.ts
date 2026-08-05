@@ -25,7 +25,7 @@ export type CliRuntimeStatus = Readonly<{
 export function createCliRoutes(deps: {
   appVersion: string
   getStatus(): CliRuntimeStatus
-  hasTrustedRenderer(): boolean
+  hasTrustedRenderer(): boolean | Promise<boolean>
 }): DeepchatRouteMap {
   return createRouteMap([
     [
@@ -64,7 +64,7 @@ export function createCliRoutes(deps: {
         cliDoctorRoute.input.parse(rawInput)
         const status = deps.getStatus()
         const capabilities = listCliSurfaceCapabilities()
-        const hasTrustedRenderer = deps.hasTrustedRenderer()
+        const hasTrustedRenderer = await deps.hasTrustedRenderer()
         const checks = [
           {
             id: 'transport' as const,

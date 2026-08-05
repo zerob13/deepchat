@@ -19,6 +19,7 @@ import {
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
 import { CliServer, type AgentCliToken, type CliUploadedInputFile } from '@/cli/server'
+import type { CliRequestAdmission, CliRequestPolicyInput } from '@/cli/policy'
 import type { CliSurfaceEntry } from '@/cli/surface'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { invokeLocalControlStream } from '../../../src/cli/transport'
@@ -211,6 +212,7 @@ async function createTestServer(
       caller: CliRouteCaller,
       signal: AbortSignal
     ) => Promise<unknown>
+    authorize?: (input: CliRequestPolicyInput) => Promise<CliRequestAdmission>
   } = {}
 ): Promise<{
   userDataPath: string
@@ -218,6 +220,7 @@ async function createTestServer(
   descriptor: LocalControlDescriptor
   dispatch: ReturnType<typeof vi.fn>
   dispatchUpload: ReturnType<typeof vi.fn>
+  authorize: ReturnType<typeof vi.fn>
 }> {
   const userDataPath = await createTemporaryDirectory()
   let server: CliServer
@@ -235,6 +238,7 @@ async function createTestServer(
     }
   )
   const dispatchUpload = vi.fn(options.dispatchUpload ?? (async () => ({})))
+  const authorize = vi.fn(options.authorize ?? (async () => ({ release: () => undefined })))
   server = new CliServer({
     userDataPath,
     appVersion: '1.2.3',
@@ -256,12 +260,13 @@ async function createTestServer(
       : {}),
     resolveAgentToken: options.resolveAgentToken,
     dispatchUpload,
+    ...(options.authorize ? { authorize } : {}),
     surface: options.surface,
     log: { warn: vi.fn(), error: vi.fn() }
   })
   servers.push(server)
   const descriptor = await server.start()
-  return { userDataPath, server, descriptor, dispatch, dispatchUpload }
+  return { userDataPath, server, descriptor, dispatch, dispatchUpload, authorize }
 }
 
 afterEach(async () => {
@@ -364,6 +369,23 @@ describe('CLI local transport', () => {
       status: 500,
       body: { ok: false, error: { code: 'internal_error' } }
     })
+  })
+
+  it('releases policy admission after a route contract failure', async () => {
+    const release = vi.fn()
+    const { descriptor, authorize } = await createTestServer({
+      authorize: async () => ({ release }),
+      dispatchOutput: () => ({ appVersion: '' })
+    })
+
+    const response = await rpcRequest(descriptor, {})
+
+    expect(response).toMatchObject({
+      status: 500,
+      body: { ok: false, error: { code: 'internal_error' } }
+    })
+    expect(authorize).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('requires Content-Length and never accepts implicit chunked RPC input', async () => {

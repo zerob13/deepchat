@@ -12,3 +12,4 @@ export {
   type ApprovalResolution,
   type ApprovalSnapshot
 } from './approvalBroker'
+export { createApprovalRoutes, type ApprovalRoutesDependencies } from './routes'

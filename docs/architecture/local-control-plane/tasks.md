@@ -41,7 +41,7 @@
 - [x] Add explicit upload and owned-artifact extraction contracts and handlers.
 - [x] Preserve automatic-attachment-setting independence and background priority.
 - [x] Enforce bounded text output and exclude layout/batch/model administration.
-- [ ] Classify cache clear as audited human-only `local-maintenance` without approval.
+- [x] Classify cache clear as audited human-only `local-maintenance` without approval.
 - [x] Report cache hit, warm-runtime miss, cold-runtime, and offline metrics accurately.
 - [ ] Add OCR caller, input, cache, runtime-state, output-bound, and benchmark tests.
 
@@ -49,10 +49,10 @@
 
 - [x] Extract generic canonicalization/pending/timeout/consume mechanics into `ApprovalBroker`.
 - [x] Preserve MCP, Agent pre-check, and live-delegation behavior through `ToolPermissionBroker`.
-- [ ] Add `CliMutationGuard` with unique live-request-bound approvals and no replay token.
-- [ ] Add targeted approval events and renderer-only `approvals.resolve` IPC.
-- [ ] Implement effect/caller/operation policy, scopes, quotas, rate limits, and redacted audit.
-- [ ] Add concurrent-identical-call, timeout, abort, cancellation, redaction, and compatibility tests.
+- [x] Add `CliMutationGuard` with unique live-request-bound approvals and no replay token.
+- [x] Add targeted approval events and renderer-only `approvals.resolve` IPC.
+- [x] Implement effect/caller/operation policy, scopes, quotas, rate limits, and redacted audit.
+- [x] Add concurrent-identical-call, timeout, abort, cancellation, redaction, and compatibility tests.
 
 ## Administration Surface
 

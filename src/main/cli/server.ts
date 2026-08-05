@@ -29,6 +29,7 @@ import {
   type LocalControlStreamRecord
 } from '@shared/contracts/localControl'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
+import type { CliRequestAdmission, CliRequestPolicyInput } from './policy'
 import { parseBoundedJsonBody, parseBoundedJsonBytes, readBoundedRequestBody } from './body'
 import {
   cleanupLocalControlLayout,
@@ -52,6 +53,7 @@ const MAX_PENDING_PER_CONNECTION = 8
 const MAX_IN_MEMORY_BODY_BYTES = 256 * 1024
 const SHUTDOWN_GRACE_MS = 2_000
 const UNKNOWN_REQUEST_ID = 'unknown'
+const emptyAdmission: CliRequestAdmission = Object.freeze({ release: () => undefined })
 
 const AgentCliTokenSchema = z
   .object({
@@ -94,6 +96,7 @@ export type CliServerDependencies = Readonly<{
     caller: CliRouteCaller,
     signal: AbortSignal
   ): Promise<unknown>
+  authorize?(input: CliRequestPolicyInput): Promise<CliRequestAdmission>
   surface?: ReadonlyMap<string, CliSurfaceEntry>
   resolveAgentToken?(token: string): AgentCliToken | null
   artifactSpool?: ArtifactSpool
@@ -615,8 +618,6 @@ export class CliServer {
           httpStatus: 413
         })
       }
-      this.assertSurfaceAccess(entry, caller)
-
       const parsedInput = entry.contract.input.safeParse(rpcRequest.params)
       if (!parsedInput.success) {
         throw new CliRequestError('invalid_request', 'Request does not match the route contract')
@@ -632,8 +633,18 @@ export class CliServer {
         )
       }, entry.limits.timeoutMs)
       timeout.unref()
+      let admission: CliRequestAdmission | undefined
       let rawOutput: unknown
       try {
+        admission = await this.authorizeRequest({
+          entry,
+          input,
+          caller,
+          requestId,
+          signal: controller.signal
+        })
+        this.assertSurfaceAccess(entry, caller)
+        if (controller.signal.aborted) throw requestAbortError(controller.signal)
         if (requestTransport === 'stream') {
           await this.dispatchStreamResponse(
             response,
@@ -686,6 +697,7 @@ export class CliServer {
           )
         }
       } finally {
+        admission?.release()
         clearTimeout(timeout)
       }
       if (controller.signal.aborted) {
@@ -728,6 +740,10 @@ export class CliServer {
         httpStatus: 403
       })
     }
+  }
+
+  private async authorizeRequest(input: CliRequestPolicyInput): Promise<CliRequestAdmission> {
+    return this.dependencies.authorize ? await this.dependencies.authorize(input) : emptyAdmission
   }
 
   private parseRouteOutput(
@@ -936,9 +952,18 @@ export class CliServer {
       )
     }, entry.limits.timeoutMs)
     timeout.unref()
+    let admission: CliRequestAdmission | undefined
 
     try {
+      admission = await this.authorizeRequest({
+        entry,
+        input: { id: parsedId.data },
+        caller,
+        requestId: randomUUID(),
+        signal: controller.signal
+      })
       this.assertSurfaceAccess(entry, caller)
+      if (controller.signal.aborted) throw requestAbortError(controller.signal)
       if (!this.dependencies.artifactSpool) {
         throw new CliRequestError('unavailable', 'Artifact service is unavailable', {
           httpStatus: 503,
@@ -978,6 +1003,7 @@ export class CliServer {
       }
       if (!response.destroyed) response.destroy()
     } finally {
+      admission?.release()
       clearTimeout(timeout)
       request.off('aborted', abort)
       response.off('close', abortOnIncompleteResponse)
