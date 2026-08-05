@@ -14,7 +14,7 @@
 ## Typed Foundation
 
 - [x] Add `RouteCaller` and migrate renderer-dependent integrations without behavior change.
-- [ ] Add canonical local-control contracts and redacted public DTOs.
+- [x] Add canonical local-control contracts and redacted public DTOs.
 - [x] Define and test the deny-by-default versioned surface registry.
 - [x] Add local-control error codes, request/result envelopes, and route limits.
 
@@ -34,7 +34,7 @@
 - [x] Add formal standalone speech generation and typed audio output.
 - [x] Add upload and owned-artifact transcription inputs.
 - [x] Implement output-only `ArtifactSpool` ownership, quotas, expiry, and cleanup.
-- [ ] Add stream, media, speech, transcription, artifact, and quota tests.
+- [x] Add stream, media, speech, transcription, artifact, and quota tests.
 
 ## OCR
 
@@ -43,7 +43,7 @@
 - [x] Enforce bounded text output and exclude layout/batch/model administration.
 - [x] Classify cache clear as audited human-only `local-maintenance` without approval.
 - [x] Report cache hit, warm-runtime miss, cold-runtime, and offline metrics accurately.
-- [ ] Add OCR caller, input, cache, runtime-state, output-bound, and benchmark tests.
+- [x] Add OCR caller, input, cache, runtime-state, output-bound, and benchmark tests.
 
 ## Effects and Approval
 
@@ -76,24 +76,41 @@
 - [x] Package the CLI with the bundled Node runtime on all supported targets.
 - [x] Add automatic, idempotent, reversible platform launcher/PATH integration with no settings
   toggle.
-- [ ] Add in-memory scoped Agent token issuance, expiry, revocation, and quotas.
-- [ ] Harden shell permission checks for redirection and compound syntax before Agent enablement.
-- [ ] Keep `deepchat` out of `SAFE_COMMANDS`, enforce domain/verb-first grammar, and deny Agent
+- [x] Add in-memory scoped Agent token issuance, expiry, revocation, and quotas.
+- [x] Harden shell permission checks for redirection and compound syntax before Agent enablement.
+- [x] Keep `deepchat` out of `SAFE_COMMANDS`, enforce domain/verb-first grammar, and deny Agent
   artifact-byte/output-path access.
-- [ ] Add the bundled CLI Skill without exposing the human descriptor.
+- [x] Add the bundled CLI Skill without exposing the human descriptor.
 - [x] Add bundled diagnostics/compute/artifact/OCR/Agent-policy and desktop-shutdown smoke coverage.
 
 ## Validation and Delivery
 
-- [ ] Run focused tests after each implementation slice.
-- [ ] Run format and i18n validation.
-- [ ] Run lint and typecheck.
-- [ ] Run the full test suite and production build.
-- [ ] Run current-platform unsigned packaging and packaged smoke where prerequisites allow.
-- [ ] Complete a severity-ranked review before every commit and resolve findings.
-- [ ] Commit all V1 work locally with behavior-specific messages.
-- [ ] Do not push.
+- [x] Run focused tests after each implementation slice.
+- [x] Run format and i18n validation.
+- [x] Run lint and typecheck.
+- [x] Run the full test suite and production build.
+- [ ] Complete current-platform unsigned packaging with the pinned bundled runtimes.
+- [x] Run packaged CLI smoke where local prerequisites allow.
+- [x] Complete a severity-ranked review before every commit and resolve findings.
+- [x] Commit all V1 work locally with behavior-specific messages.
+- [x] Do not push.
 
 ## Local Validation Evidence
 
-Not yet recorded.
+Recorded on 2026-08-05 using macOS arm64, Node 24.14.1, and pnpm 10.33.4:
+
+- `pnpm exec vitest run --config vitest.config.ts test/main/cli`: 26 files and 262 tests
+  passed, including the real bundled CLI child-process smoke for desktop shutdown.
+- `pnpm test`: 778 files and 8,199 tests passed; 26 files and 348 tests were skipped by
+  their existing suite configuration.
+- `pnpm run build`: passed Node and renderer typecheck, all Electron production bundles, and
+  `out/cli/deepchat.mjs` generation. The provider catalog fetch failed closed to the committed
+  snapshot; the ACP registry refresh succeeded without a tracked diff.
+- `pnpm run format:check`, `pnpm run i18n`, `pnpm run lint`, and `pnpm run typecheck`: passed.
+- `pnpm run build:unpack`: application build, native rebuild, and Electron extraction completed,
+  but afterPack correctly rejected the missing pinned `runtime/node/bin/node`. Both the standard
+  runtime installer and a direct network probe failed during TLS setup against the upstream runtime
+  hosts, so a complete unsigned package remains an environment-blocked validation item.
+- The partially assembled app contains `deepchat`, `deepchat.cmd`, and `deepchat.mjs`; the POSIX
+  launcher retains its executable bit. Running that packaged launcher against an isolated
+  stopped-desktop profile produced the versioned `unavailable` error envelope and exit code `3`.
