@@ -307,6 +307,68 @@ describe('CLI MCP administration routes', () => {
     expect(harness.recordSettingsActivity).toHaveBeenCalledOnce()
   })
 
+  it('returns canonical MCP state read back after successful mutations', async () => {
+    const harness = createHarness({ server: stdioConfig() })
+    harness.addMcpServer.mockImplementationOnce(async (serverName, config) => {
+      harness.servers.set(serverName, {
+        ...config,
+        command: '/managed/bin/pnpm',
+        enabled: true
+      })
+      return { status: 'added' as const }
+    })
+
+    await expect(
+      harness.invoke(mcpAddPublicRoute.name, {
+        serverName: 'normalized',
+        config: { type: 'stdio', command: 'npx' }
+      })
+    ).resolves.toMatchObject({
+      server: { name: 'normalized', commandName: 'pnpm', enabled: true }
+    })
+
+    harness.updateMcpServer.mockImplementationOnce(async (serverName, updates) => {
+      harness.servers.set(serverName, {
+        ...harness.servers.get(serverName)!,
+        ...updates,
+        descriptions: 'Persisted description'
+      })
+    })
+    await expect(
+      harness.invoke(mcpUpdatePublicRoute.name, {
+        serverName: 'server',
+        updates: { description: 'Requested description' }
+      })
+    ).resolves.toMatchObject({ server: { description: 'Persisted description' } })
+
+    harness.setMcpServerEnabled.mockImplementationOnce(async (serverName) => {
+      harness.servers.set(serverName, { ...harness.servers.get(serverName)!, enabled: false })
+    })
+    await expect(
+      harness.invoke(mcpSetPublicStatusRoute.name, { serverName: 'server', enabled: true })
+    ).resolves.toMatchObject({ server: { enabled: false } })
+  })
+
+  it('marks a successful mutation as applied when canonical read-back fails', async () => {
+    const harness = createHarness()
+    harness.getMcpServers.mockRejectedValueOnce(new Error('store unavailable'))
+
+    const failure = await harness
+      .invoke(mcpAddPublicRoute.name, {
+        serverName: 'applied-server',
+        config: { type: 'stdio', command: 'npx' }
+      })
+      .catch((error: unknown) => error)
+
+    expect(harness.servers.has('applied-server')).toBe(true)
+    expect(failure).toMatchObject({
+      code: 'unavailable',
+      retriable: false,
+      options: { details: { serverName: 'applied-server', applied: true } }
+    })
+    expect(harness.recordSettingsActivity).toHaveBeenCalledOnce()
+  })
+
   it('preserves unmentioned secrets and clears incompatible fields on transport changes', async () => {
     const harness = createHarness({
       server: stdioConfig({ customNpmRegistry: 'https://registry.example/npm' })

@@ -334,6 +334,27 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
     }
     return server
   }
+  const summarizeAppliedServer = async (serverName: string): Promise<PublicMcpServer> => {
+    try {
+      const config = (await dependencies.mcp.getMcpServers())[serverName]
+      if (!config) throw new Error('Persisted MCP server is missing after mutation')
+      return await summarizeServer(serverName, config)
+    } catch (error) {
+      log.warn('[CLI] Could not confirm MCP state after a successful mutation', {
+        serverName,
+        failure: { name: error instanceof Error ? error.name : typeof error }
+      })
+      throw new CliRequestError(
+        'unavailable',
+        'MCP mutation completed, but persisted state could not be confirmed',
+        {
+          httpStatus: 503,
+          retriable: false,
+          details: { serverName, applied: true }
+        }
+      )
+    }
+  }
   const recordActivity = (
     action: SettingsActivityInput['action'],
     serverName: string,
@@ -385,12 +406,10 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
       async (rawInput, context) => {
         requireCliCaller(context.caller)
         const input = mcpAddPublicRoute.input.parse(rawInput)
+        const storedConfig = toStoredConfig(input.config)
         let result: Awaited<ReturnType<PublicMcpPort['addMcpServer']>>
         try {
-          result = await dependencies.mcp.addMcpServer(
-            input.serverName,
-            toStoredConfig(input.config)
-          )
+          result = await dependencies.mcp.addMcpServer(input.serverName, storedConfig)
         } catch (error) {
           throw unavailable('add the MCP server', error)
         }
@@ -405,7 +424,7 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
           'settings.controlCenter.activity.mcpServerCreated'
         )
         return mcpAddPublicRoute.output.parse({
-          server: await summarizeServer(input.serverName, toStoredConfig(input.config))
+          server: await summarizeAppliedServer(input.serverName)
         })
       }
     ],
@@ -421,16 +440,14 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
         } catch (error) {
           throw unavailable('update the MCP server', error)
         }
-        const server = await summarizeServer(input.serverName, {
-          ...current.config,
-          ...storedUpdate
-        })
         recordActivity(
           'updated',
           input.serverName,
           'settings.controlCenter.activity.mcpServerUpdated'
         )
-        return mcpUpdatePublicRoute.output.parse({ server })
+        return mcpUpdatePublicRoute.output.parse({
+          server: await summarizeAppliedServer(input.serverName)
+        })
       }
     ],
     [
@@ -482,10 +499,7 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
           'settings.controlCenter.activity.mcpServerStatusChanged'
         )
         return mcpSetPublicStatusRoute.output.parse({
-          server: await summarizeServer(input.serverName, {
-            ...current.config,
-            enabled: input.enabled
-          })
+          server: await summarizeAppliedServer(input.serverName)
         })
       }
     ],
