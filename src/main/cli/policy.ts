@@ -37,6 +37,7 @@ export type CliPolicyAuditRecord = Readonly<{
 export type CliRequestPolicyInput = Readonly<{
   entry: CliSurfaceEntry
   input: unknown
+  transportBinding?: JsonValue
   caller: CliRouteCaller
   requestId: string
   signal: AbortSignal
@@ -130,9 +131,20 @@ export class CliRequestPolicy {
         httpStatus: 500
       })
     }
+    const redactedArguments =
+      input.transportBinding !== undefined
+        ? {
+            request: auditProjection(input.entry, input.input),
+            transport: input.transportBinding
+          }
+        : auditProjection(input.entry, input.input)
+    const approvalArguments =
+      input.transportBinding !== undefined
+        ? { params: input.input, transport: input.transportBinding }
+        : input.input
     const redactedArgumentsHash = hashApprovalArguments({
       operation: input.entry.contract.name,
-      arguments: auditProjection(input.entry, input.input)
+      arguments: redactedArguments
     })
     const audit = async (
       outcome: CliPolicyAuditOutcome,
@@ -187,14 +199,19 @@ export class CliRequestPolicy {
       }
       let approvalRequestId: string
       try {
+        const routeDisplayData = input.entry.approvalDisplay(input.input)
+        const approvalDisplayData =
+          input.transportBinding !== undefined
+            ? { request: routeDisplayData, transport: input.transportBinding }
+            : routeDisplayData
         const approval = await this.options.mutationGuard.authorize({
           operation: input.entry.contract.name,
           effect,
           principal: input.caller.principal,
           connectionId: input.caller.connectionId,
           clientRequestId: input.requestId,
-          arguments: input.input,
-          displayData: input.entry.approvalDisplay(input.input),
+          arguments: approvalArguments,
+          displayData: approvalDisplayData,
           signal: input.signal
         })
         approvalRequestId = approval.approvalRequestId

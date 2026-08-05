@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer, type RequestListener, type Server } from 'node:http'
 import os from 'node:os'
@@ -8,7 +8,7 @@ import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_SURFACE_VERSION,
   LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
-  LocalControlRpcRequestSchema,
+  LocalControlUploadRequestSchema,
   createLocalControlSuccess,
   type LocalControlDescriptor,
   type LocalControlEndpoint,
@@ -221,7 +221,7 @@ describe('CLI response transport', () => {
     let receivedEnvelope: unknown
     const descriptor = await listen((request, response) => {
       const rawEnvelope = request.headers[LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]
-      receivedEnvelope = LocalControlRpcRequestSchema.parse(
+      receivedEnvelope = LocalControlUploadRequestSchema.parse(
         JSON.parse(Buffer.from(String(rawEnvelope), 'base64url').toString('utf8'))
       )
       const chunks: Buffer[] = []
@@ -252,7 +252,11 @@ describe('CLI response transport', () => {
     expect(receivedEnvelope).toMatchObject({
       id: 'request-1',
       method: 'audio.transcribeUpload',
-      params: { filename: 'sample.wav' }
+      params: { filename: 'sample.wav' },
+      upload: {
+        size: 11,
+        sha256: createHash('sha256').update('audio-bytes').digest('hex')
+      }
     })
     expect(receivedBody).toEqual(Buffer.from('audio-bytes'))
   })

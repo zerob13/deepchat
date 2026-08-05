@@ -137,6 +137,17 @@ export const LocalControlRpcRequestSchema = z
   })
   .strict()
 
+export const LocalControlUploadBindingSchema = z
+  .object({
+    size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/)
+  })
+  .strict()
+
+export const LocalControlUploadRequestSchema = LocalControlRpcRequestSchema.extend({
+  upload: LocalControlUploadBindingSchema
+}).strict()
+
 export const LOCAL_CONTROL_ERROR_CODES = [
   'invalid_request',
   'unsupported_version',
@@ -211,6 +222,8 @@ export type LocalControlPrincipal = z.infer<typeof LocalControlPrincipalSchema>
 export type LocalControlEndpoint = z.infer<typeof LocalControlEndpointSchema>
 export type LocalControlDescriptor = z.infer<typeof LocalControlDescriptorSchema>
 export type LocalControlRpcRequest = z.infer<typeof LocalControlRpcRequestSchema>
+export type LocalControlUploadBinding = z.infer<typeof LocalControlUploadBindingSchema>
+export type LocalControlUploadRequest = z.infer<typeof LocalControlUploadRequestSchema>
 export type LocalControlErrorCode = z.infer<typeof LocalControlErrorCodeSchema>
 export type LocalControlError = z.infer<typeof LocalControlErrorSchema>
 export type LocalControlRpcResponse = z.infer<typeof LocalControlRpcResponseSchema>

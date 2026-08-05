@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
 import type { IncomingMessage } from 'node:http'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
@@ -8,6 +9,10 @@ import { parseBoundedJsonBody, parseBoundedJsonBytes, readBoundedRequestBody } f
 import { CliRequestError } from '@/cli/errors'
 
 const temporaryDirectories: string[] = []
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
 
 async function createTemporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-body-'))
@@ -48,7 +53,7 @@ describe('bounded CLI request bodies', () => {
       requireContentLength: true
     })
 
-    expect(body).toMatchObject({ kind: 'memory', size: 12 })
+    expect(body).toMatchObject({ kind: 'memory', size: 12, sha256: sha256('{"value":42}') })
     expect(body.kind === 'memory' ? body.bytes.toString('utf8') : '').toBe('{"value":42}')
     await expect(stat(tempDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -68,6 +73,7 @@ describe('bounded CLI request bodies', () => {
     expect(body.kind).toBe('file')
     if (body.kind !== 'file') throw new Error('Expected a spilled body')
     expect(await readFile(body.path, 'utf8')).toBe('1234567890')
+    expect(body.sha256).toBe(sha256('1234567890'))
     if (process.platform !== 'win32') {
       expect((await stat(body.path)).mode & 0o777).toBe(0o600)
     }
@@ -118,6 +124,7 @@ describe('bounded CLI request bodies', () => {
         kind: 'memory',
         bytes: Buffer.from('{"nested":{"__proto__":true}}'),
         size: 31,
+        sha256: sha256('{"nested":{"__proto__":true}}'),
         cleanup
       })
     ).rejects.toMatchObject({ code: 'invalid_request' })

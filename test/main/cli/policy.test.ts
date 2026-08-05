@@ -256,6 +256,28 @@ describe('CliRequestPolicy', () => {
     expect(harness.auditRecords[0].redactedArgumentsHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('binds upload metadata to mutation approval without exposing raw params', async () => {
+    const harness = createHarness()
+    const transportBinding = { size: 11, sha256: 'a'.repeat(64) }
+
+    await harness.policy.authorize({
+      entry: entry('supply-chain', 'policy'),
+      input: { secret: 'must-be-bound' },
+      transportBinding,
+      caller: humanCaller,
+      requestId: 'request-upload',
+      signal: new AbortController().signal
+    })
+
+    expect(harness.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: { params: { secret: 'must-be-bound' }, transport: transportBinding },
+        displayData: { request: { target: 'safe-setting' }, transport: transportBinding }
+      })
+    )
+    expect(JSON.stringify(harness.auditRecords)).not.toContain('must-be-bound')
+  })
+
   it('limits concurrent and burst agent compute per conversation and releases idempotently', async () => {
     const harness = createHarness({ agentComputeLimit: 1, agentComputeStartsPerMinute: 2 })
     const first = await harness.invoke('compute', agentCaller)

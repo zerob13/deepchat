@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, unlink, type FileHandle } from 'node:fs/promises'
 import path from 'node:path'
 import type { IncomingMessage } from 'node:http'
@@ -14,12 +14,14 @@ export type BoundedRequestBody =
       kind: 'memory'
       bytes: Buffer
       size: number
+      sha256: string
       cleanup(): Promise<void>
     }>
   | Readonly<{
       kind: 'file'
       path: string
       size: number
+      sha256: string
       cleanup(): Promise<void>
     }>
 
@@ -30,7 +32,7 @@ export type BoundedBodyOptions = Readonly<{
   requireContentLength: boolean
 }>
 
-function parseDeclaredLength(request: IncomingMessage): number | null {
+export function readDeclaredBodyLength(request: IncomingMessage): number | null {
   const distinctValues = request.headersDistinct['content-length']
   if (distinctValues && distinctValues.length !== 1) {
     throw new CliRequestError('invalid_request', 'Content-Length must be singular')
@@ -90,7 +92,7 @@ export async function readBoundedRequestBody(
     throw new CliRequestError('invalid_request', 'Content-Encoding is not supported')
   }
 
-  const declaredLength = parseDeclaredLength(request)
+  const declaredLength = readDeclaredBodyLength(request)
   if (options.requireContentLength && declaredLength === null) {
     throw new CliRequestError('invalid_request', 'Content-Length is required', {
       httpStatus: 411
@@ -103,6 +105,7 @@ export async function readBoundedRequestBody(
   }
 
   const chunks: Buffer[] = []
+  const sha256 = createHash('sha256')
   let size = 0
   let filePosition = 0
   let fileHandle: FileHandle | undefined
@@ -133,6 +136,8 @@ export async function readBoundedRequestBody(
         })
       }
 
+      sha256.update(chunk)
+
       if (!fileHandle && size > options.memoryThresholdBytes) {
         await mkdir(options.tempDirectory, { recursive: true, mode: 0o700 })
         tempPath = path.join(options.tempDirectory, `body-${randomUUID()}.tmp`)
@@ -151,6 +156,8 @@ export async function readBoundedRequestBody(
       throw new CliRequestError('invalid_request', 'Request body length does not match')
     }
 
+    const digest = sha256.digest('hex')
+
     if (fileHandle && tempPath) {
       await fileHandle.close()
       fileHandle = undefined
@@ -160,6 +167,7 @@ export async function readBoundedRequestBody(
         kind: 'file',
         path: persistedPath,
         size,
+        sha256: digest,
         cleanup: async () => {
           if (cleaned) return
           await removeFile(persistedPath)
@@ -172,6 +180,7 @@ export async function readBoundedRequestBody(
       kind: 'memory',
       bytes: Buffer.concat(chunks, size),
       size,
+      sha256: digest,
       cleanup: async () => undefined
     }
   } catch (error) {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { lstat, open } from 'node:fs/promises'
 import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage } from 'node:http'
@@ -13,9 +14,11 @@ import {
   LocalControlRpcRequestSchema,
   LocalControlRpcResponseSchema,
   LocalControlStreamRecordSchema,
+  LocalControlUploadRequestSchema,
   type LocalControlDescriptor,
   type LocalControlEventEnvelope,
-  type LocalControlRpcResponse
+  type LocalControlRpcResponse,
+  type LocalControlUploadBinding
 } from '@shared/contracts/localControl'
 import type { JsonValue } from '@shared/contracts/json'
 import { CLI_EXIT_CODES, CliClientError } from './errors'
@@ -86,6 +89,25 @@ function createInvocationBody(invocation: CliRpcInvocation): Buffer {
     ),
     'utf8'
   )
+}
+
+function createUploadInvocationHeader(
+  invocation: CliRpcInvocation,
+  upload: LocalControlUploadBinding
+): string {
+  return Buffer.from(
+    JSON.stringify(
+      LocalControlUploadRequestSchema.parse({
+        protocolVersion: invocation.descriptor.protocolVersion,
+        surfaceVersion: invocation.descriptor.surfaceVersion,
+        id: invocation.id,
+        method: invocation.method,
+        params: invocation.params,
+        upload
+      })
+    ),
+    'utf8'
+  ).toString('base64url')
 }
 
 async function readJsonResponse(
@@ -213,17 +235,39 @@ function uploadFileError(message: string, code: 'invalid_request' | 'body_too_la
   )
 }
 
+async function hashUploadFile(
+  handle: Awaited<ReturnType<typeof open>>,
+  size: number,
+  signal: AbortSignal
+): Promise<string> {
+  try {
+    const hash = createHash('sha256')
+    const buffer = Buffer.allocUnsafe(Math.min(size, 256 * 1024))
+    let position = 0
+    while (position < size) {
+      if (signal.aborted) throw abortReason(signal)
+      const length = Math.min(buffer.length, size - position)
+      const { bytesRead } = await handle.read(buffer, 0, length, position)
+      if (bytesRead === 0) {
+        throw uploadFileError('Upload source changed while it was being read', 'invalid_request')
+      }
+      hash.update(buffer.subarray(0, bytesRead))
+      position += bytesRead
+    }
+    return hash.digest('hex')
+  } catch (error) {
+    if (signal.aborted) throw abortReason(signal)
+    if (error instanceof CliClientError) throw error
+    throw uploadFileError('Upload source could not be read', 'invalid_request')
+  }
+}
+
 export async function invokeLocalControlUpload(
   invocation: CliUploadInvocation
 ): Promise<LocalControlRpcResponse> {
   if (invocation.signal.aborted) throw abortReason(invocation.signal)
   if (!Number.isSafeInteger(invocation.maxBytes) || invocation.maxBytes <= 0) {
     throw protocolFailure('CLI upload limit is invalid')
-  }
-
-  const envelope = createInvocationBody(invocation).toString('base64url')
-  if (Buffer.byteLength(envelope, 'ascii') > LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES) {
-    throw uploadFileError('Upload metadata exceeds the CLI byte limit', 'invalid_request')
   }
 
   let pathStat
@@ -262,6 +306,24 @@ export async function invokeLocalControlUpload(
       openedStat.ino !== pathStat.ino
     ) {
       throw uploadFileError('Upload source changed before it could be read', 'invalid_request')
+    }
+
+    const sha256 = await hashUploadFile(handle, openedStat.size, invocation.signal)
+    const hashedStat = await handle.stat()
+    if (
+      !hashedStat.isFile() ||
+      hashedStat.size !== openedStat.size ||
+      hashedStat.dev !== openedStat.dev ||
+      hashedStat.ino !== openedStat.ino
+    ) {
+      throw uploadFileError('Upload source changed while it was being read', 'invalid_request')
+    }
+    const envelope = createUploadInvocationHeader(invocation, {
+      size: openedStat.size,
+      sha256
+    })
+    if (Buffer.byteLength(envelope, 'ascii') > LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES) {
+      throw uploadFileError('Upload metadata exceeds the CLI byte limit', 'invalid_request')
     }
 
     const uploadStream = handle.createReadStream({

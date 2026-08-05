@@ -23,14 +23,22 @@ import {
   LocalControlScopesSchema,
   LocalControlTokenSchema,
   LocalControlRpcRequestSchema,
+  LocalControlUploadRequestSchema,
   createLocalControlFailure,
   createLocalControlSuccess,
   type LocalControlDescriptor,
+  type LocalControlRpcRequest,
+  type LocalControlUploadBinding,
   type LocalControlStreamRecord
 } from '@shared/contracts/localControl'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import type { CliRequestAdmission, CliRequestPolicyInput } from './policy'
-import { parseBoundedJsonBody, parseBoundedJsonBytes, readBoundedRequestBody } from './body'
+import {
+  parseBoundedJsonBody,
+  parseBoundedJsonBytes,
+  readBoundedRequestBody,
+  readDeclaredBodyLength
+} from './body'
 import {
   cleanupLocalControlLayout,
   createLocalControlLayout,
@@ -574,6 +582,7 @@ export class CliServer {
     try {
       let bodySize = 0
       let rawRequest: unknown
+      let transportBinding: LocalControlUploadBinding | undefined
       if (requestTransport === 'upload') {
         rawRequest = parseUploadRequestHeader(request)
       } else {
@@ -600,11 +609,21 @@ export class CliServer {
         )
       }
 
-      const parsedRequest = LocalControlRpcRequestSchema.safeParse(rawRequest)
-      if (!parsedRequest.success) {
-        throw new CliRequestError('invalid_request', 'Request does not match the RPC contract')
+      let rpcRequest: LocalControlRpcRequest
+      if (requestTransport === 'upload') {
+        const parsedRequest = LocalControlUploadRequestSchema.safeParse(rawRequest)
+        if (!parsedRequest.success) {
+          throw new CliRequestError('invalid_request', 'Request does not match the upload contract')
+        }
+        rpcRequest = parsedRequest.data
+        transportBinding = parsedRequest.data.upload
+      } else {
+        const parsedRequest = LocalControlRpcRequestSchema.safeParse(rawRequest)
+        if (!parsedRequest.success) {
+          throw new CliRequestError('invalid_request', 'Request does not match the RPC contract')
+        }
+        rpcRequest = parsedRequest.data
       }
-      const rpcRequest = parsedRequest.data
       requestId = rpcRequest.id
       routeMethod = rpcRequest.method
       const entry = this.surface.get(rpcRequest.method)
@@ -617,6 +636,20 @@ export class CliServer {
         throw new CliRequestError('body_too_large', 'Request body exceeds method limit', {
           httpStatus: 413
         })
+      }
+      if (transportBinding && transportBinding.size > entry.limits.maxBodyBytes) {
+        throw new CliRequestError('body_too_large', 'Upload body exceeds method limit', {
+          httpStatus: 413
+        })
+      }
+      if (transportBinding) {
+        const declaredLength = readDeclaredBodyLength(request)
+        if (declaredLength !== null && declaredLength !== transportBinding.size) {
+          throw new CliRequestError(
+            'invalid_request',
+            'Content-Length does not match the upload binding'
+          )
+        }
       }
       const parsedInput = entry.contract.input.safeParse(rpcRequest.params)
       if (!parsedInput.success) {
@@ -641,7 +674,8 @@ export class CliServer {
           input,
           caller,
           requestId,
-          signal: controller.signal
+          signal: controller.signal,
+          ...(transportBinding ? { transportBinding } : {})
         })
         this.assertSurfaceAccess(entry, caller)
         if (controller.signal.aborted) throw requestAbortError(controller.signal)
@@ -671,8 +705,12 @@ export class CliServer {
             requireContentLength: false
           })
           try {
-            if (uploadBody.size === 0) {
-              throw new CliRequestError('invalid_request', 'Upload body is empty')
+            if (
+              !transportBinding ||
+              uploadBody.size !== transportBinding.size ||
+              uploadBody.sha256 !== transportBinding.sha256
+            ) {
+              throw new CliRequestError('invalid_request', 'Upload body does not match its binding')
             }
             if (uploadBody.kind !== 'file') {
               throw new CliRequestError('internal_error', 'Upload body was not persisted', {

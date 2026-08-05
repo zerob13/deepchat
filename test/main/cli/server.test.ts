@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { request as httpRequest } from 'node:http'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
@@ -11,11 +12,12 @@ import {
   LOCAL_CONTROL_SURFACE_VERSION,
   LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
   LocalControlDescriptorSchema,
-  LocalControlRpcRequestSchema,
   LocalControlRpcResponseSchema,
+  LocalControlUploadRequestSchema,
   type LocalControlDescriptor,
   type LocalControlRpcResponse,
-  type LocalControlScope
+  type LocalControlScope,
+  type LocalControlUploadBinding
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
 import { CliServer, type AgentCliToken, type CliUploadedInputFile } from '@/cli/server'
@@ -115,16 +117,21 @@ function uploadRequest(
     body: Buffer
     includeContentLength?: boolean
     signal?: AbortSignal
+    binding?: LocalControlUploadBinding
   }
 ): Promise<RpcResult> {
   const envelope = Buffer.from(
     JSON.stringify(
-      LocalControlRpcRequestSchema.parse({
+      LocalControlUploadRequestSchema.parse({
         protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
         surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION,
         id: 'request-upload',
         method: cliVersionRoute.name,
-        params: {}
+        params: {},
+        upload: input.binding ?? {
+          size: input.body.length,
+          sha256: createHash('sha256').update(input.body).digest('hex')
+        }
       })
     )
   ).toString('base64url')
@@ -403,8 +410,9 @@ describe('CLI local transport', () => {
   it('validates upload policy before spilling and cleans the private input file', async () => {
     let uploadedPath = ''
     let uploadedBytes = Buffer.alloc(0)
-    const { descriptor, userDataPath, dispatchUpload } = await createTestServer({
+    const { descriptor, userDataPath, dispatchUpload, authorize } = await createTestServer({
       surface: createUploadSurface(16),
+      authorize: async () => ({ release: () => undefined }),
       dispatchUpload: async (_method, _input, upload) => {
         uploadedPath = upload.path
         uploadedBytes = await readFile(upload.path)
@@ -421,8 +429,50 @@ describe('CLI local transport', () => {
     expect(response).toMatchObject({ status: 200, body: { ok: true } })
     expect(uploadedBytes).toEqual(Buffer.from('audio-input'))
     expect(dispatchUpload).toHaveBeenCalledOnce()
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transportBinding: {
+          size: 11,
+          sha256: createHash('sha256').update('audio-input').digest('hex')
+        }
+      })
+    )
     await expect(stat(uploadedPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
+  })
+
+  it('rejects upload bytes that do not match the approved size or digest', async () => {
+    const { descriptor, dispatchUpload, authorize } = await createTestServer({
+      surface: createUploadSurface(16),
+      authorize: async () => ({ release: () => undefined })
+    })
+    const body = Buffer.from('audio-input')
+
+    const wrongSize = await uploadRequest(descriptor, {
+      body,
+      binding: {
+        size: 10,
+        sha256: createHash('sha256').update(body).digest('hex')
+      }
+    })
+    const wrongDigest = await uploadRequest(descriptor, {
+      body,
+      binding: {
+        size: 11,
+        sha256: createHash('sha256').update('other-bytes').digest('hex')
+      }
+    })
+
+    expect(wrongSize).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: 'invalid_request' } }
+    })
+    expect(wrongDigest).toMatchObject({
+      status: 400,
+      body: { ok: false, error: { code: 'invalid_request' } }
+    })
+    expect(authorize).toHaveBeenCalledOnce()
+    expect(dispatchUpload).not.toHaveBeenCalled()
   })
 
   it('bounds chunked uploads cumulatively and removes partial spill files', async () => {
