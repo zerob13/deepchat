@@ -546,9 +546,17 @@ and `8` internal/protocol failure.
 
 The packaged CLI source lives in `src/cli`; main-side transport adapters live in `src/main/cli`.
 The built standalone entry and launchers use the bundled Node runtime and ship outside `app.asar` as
-application resources. Installation is opt-in and places a small launcher in the platform's user
-command location. It does not install an npm package or copy credentials. Upgrades replace app-owned
-resources while keeping the launcher stable.
+application resources. After the local control server is listening, startup automatically and
+idempotently places a small launcher in the platform's user command location; there is no settings
+toggle. It never overwrites an unowned command or modified shell block, does not install an npm
+package or copy credentials, and records enough ownership state for exact rollback during full data
+reset. Upgrades replace app-owned resources while keeping the launcher stable.
+
+Main owns the server lifetime. Desktop shutdown first stops accepting new work, aborts every pending
+request and stream with a typed `unavailable` result when the connection remains writable, then
+closes idle and active sockets within a bounded grace period. A thin CLI invocation has no daemon
+mode and must exit after that terminal result or EOF; it must never outlive DeepChat waiting on a
+stale local endpoint.
 
 ## Agent Token and Bundled Skill
 
@@ -602,7 +610,8 @@ and cold application restarts.
 - Surface tests prove every exposed method is declared, registered, classified, bounded, and allowed
   only for its caller/scopes; internal routes are unreachable.
 - Transport tests cover descriptor permissions/rotation, token comparison, stale endpoints, malformed
-  HTTP, fixed and chunked body limits, spill cleanup, aborts, backpressure, and shutdown ordering.
+  HTTP, fixed and chunked body limits, spill cleanup, aborts, backpressure, shutdown ordering, and
+  termination of active CLI streams when the desktop exits.
 - Caller migration tests prove renderer-only routes reject CLI/internal callers without sentinel IDs.
 - Approval tests cover binding, redaction, timeout, abort, scope cancellation, single consumption,
   concurrent identical CLI mutations, renderer-only resolution, and preserved tool behavior.

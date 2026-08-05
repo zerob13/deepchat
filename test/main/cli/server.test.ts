@@ -20,7 +20,7 @@ import {
   type LocalControlUploadBinding
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
-import { CliServer, type CliUploadedInputFile } from '@/cli/server'
+import { CliServer, type CliServerDependencies, type CliUploadedInputFile } from '@/cli/server'
 import {
   AgentCliTokenAuthority,
   type AgentCliRequestBeginResult,
@@ -235,6 +235,7 @@ async function createTestServer(
       contexts?: readonly (Readonly<{ runId?: string; cursor?: string }> | undefined)[]
       result: unknown
     }>
+    dispatchStream?: NonNullable<CliServerDependencies['dispatchStream']>
     surface?: ReadonlyMap<string, CliSurfaceEntry>
     dispatchUpload?: (
       method: string,
@@ -274,27 +275,29 @@ async function createTestServer(
     userDataPath,
     appVersion: '1.2.3',
     dispatch,
-    ...(options.streamOutput
-      ? {
-          dispatchStream: async (
-            method: string,
-            _input: unknown,
-            _caller: CliRouteCaller,
-            _requestId: string,
-            _signal: AbortSignal,
-            emit: (
-              event: string,
-              data: JsonValue,
-              context?: Readonly<{ runId?: string; cursor?: string }>
-            ) => Promise<void>
-          ) => {
-            for (const [index, event] of (options.streamOutput?.events ?? []).entries()) {
-              await emit(method, event, options.streamOutput?.contexts?.[index])
+    ...(options.dispatchStream
+      ? { dispatchStream: options.dispatchStream }
+      : options.streamOutput
+        ? {
+            dispatchStream: async (
+              method: string,
+              _input: unknown,
+              _caller: CliRouteCaller,
+              _requestId: string,
+              _signal: AbortSignal,
+              emit: (
+                event: string,
+                data: JsonValue,
+                context?: Readonly<{ runId?: string; cursor?: string }>
+              ) => Promise<void>
+            ) => {
+              for (const [index, event] of (options.streamOutput?.events ?? []).entries()) {
+                await emit(method, event, options.streamOutput?.contexts?.[index])
+              }
+              return options.streamOutput?.result
             }
-            return options.streamOutput?.result
           }
-        }
-      : {}),
+        : {}),
     beginAgentRequest: options.beginAgentRequest,
     dispatchUpload,
     ...(options.authorize ? { authorize } : {}),
@@ -363,6 +366,40 @@ describe('CLI local transport', () => {
     if (descriptor.endpoint.kind === 'unix') {
       await expect(stat(descriptor.endpoint.path)).rejects.toMatchObject({ code: 'ENOENT' })
     }
+  })
+
+  it('terminates active CLI streams when the desktop server stops', async () => {
+    const dispatchStream = vi.fn(async () => await new Promise<never>(() => undefined))
+    const { server, descriptor } = await createTestServer({ dispatchStream })
+    const response = invokeLocalControlStream(
+      {
+        descriptor,
+        token: descriptor.token,
+        id: 'request-stream-shutdown',
+        method: 'models.invoke',
+        params: {
+          providerId: 'provider-1',
+          modelId: 'model-1',
+          messages: [{ role: 'user', content: 'wait' }]
+        },
+        signal: new AbortController().signal
+      },
+      async () => undefined
+    )
+    await vi.waitFor(() => expect(dispatchStream).toHaveBeenCalledOnce())
+
+    await server.stop()
+
+    await expect(response).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'unavailable', retriable: true }
+    })
+    expect(server.getStatus()).toMatchObject({
+      running: false,
+      activeConnections: 0,
+      pendingRequests: 0,
+      descriptorReady: false
+    })
   })
 
   it('fails closed on invalid authentication without dispatching', async () => {

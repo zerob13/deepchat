@@ -12,13 +12,33 @@ import {
   writeFile
 } from 'node:fs/promises'
 import path from 'node:path'
-import type { CliLauncherStatus } from '@shared/contracts/routes'
 
-export type {
-  CliLauncherReason,
-  CliLauncherState,
-  CliLauncherStatus
-} from '@shared/contracts/routes'
+export type CliLauncherState =
+  | 'not-installed'
+  | 'installed'
+  | 'stale'
+  | 'needs-repair'
+  | 'conflict'
+  | 'unavailable'
+
+export type CliLauncherReason =
+  | 'unsupported-platform'
+  | 'source-missing'
+  | 'path-unavailable'
+  | 'ownership-marker-invalid'
+  | 'unowned-command'
+  | 'command-modified'
+  | 'command-missing'
+  | 'shell-config-modified'
+  | 'shell-config-missing'
+  | 'upgrade-required'
+
+export type CliLauncherStatus = Readonly<{
+  state: CliLauncherState
+  reason: CliLauncherReason | null
+  commandPath: string | null
+  shellConfigPath: string | null
+}>
 
 const LAUNCHER_MARKER_VERSION = 1
 const LAUNCHER_MARKER_FILENAME = 'launcher.json'
@@ -221,19 +241,17 @@ export class CliLauncherService {
     return await this.runExclusive(() => this.inspectStatus())
   }
 
-  async setInstalled(installed: boolean): Promise<CliLauncherStatus> {
+  async ensureInstalled(): Promise<CliLauncherStatus> {
     return await this.runExclusive(async () => {
-      if (installed) await this.installOrRepair()
-      else await this.uninstall()
+      await this.installOrRepair()
       return await this.inspectStatus()
     })
   }
 
-  async reconcileOwnedLauncher(): Promise<void> {
-    await this.runExclusive(async () => {
-      const status = await this.inspectStatus()
-      if (status.state !== 'stale') return
-      await this.installOrRepair()
+  async removeOwnedLauncher(): Promise<CliLauncherStatus> {
+    return await this.runExclusive(async () => {
+      await this.uninstall()
+      return await this.inspectStatus()
     })
   }
 
@@ -303,7 +321,6 @@ export class CliLauncherService {
       return {
         state: 'unavailable',
         reason: 'unsupported-platform',
-        owned: false,
         commandPath: null,
         shellConfigPath: null
       }
@@ -314,7 +331,6 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'ownership-marker-invalid',
-        owned: false,
         commandPath,
         shellConfigPath: null
       }
@@ -325,7 +341,6 @@ export class CliLauncherService {
         return {
           state: 'conflict',
           reason: 'unowned-command',
-          owned: false,
           commandPath,
           shellConfigPath: null
         }
@@ -334,7 +349,6 @@ export class CliLauncherService {
         return {
           state: 'unavailable',
           reason: 'path-unavailable',
-          owned: false,
           commandPath,
           shellConfigPath: null
         }
@@ -343,7 +357,6 @@ export class CliLauncherService {
       return {
         state: source ? 'not-installed' : 'unavailable',
         reason: source ? null : 'source-missing',
-        owned: false,
         commandPath,
         shellConfigPath: null
       }
@@ -355,7 +368,6 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'ownership-marker-invalid',
-        owned: false,
         commandPath,
         shellConfigPath: null
       }
@@ -376,7 +388,6 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'shell-config-modified',
-        owned: true,
         commandPath,
         shellConfigPath: profile.path
       }
@@ -387,7 +398,6 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'command-modified',
-        owned: true,
         commandPath,
         shellConfigPath: profile?.path ?? null
       }
@@ -398,7 +408,6 @@ export class CliLauncherService {
       return {
         state: 'unavailable',
         reason: 'source-missing',
-        owned: true,
         commandPath,
         shellConfigPath: profile?.path ?? null
       }
@@ -407,7 +416,6 @@ export class CliLauncherService {
       return {
         state: 'needs-repair',
         reason: 'command-missing',
-        owned: true,
         commandPath,
         shellConfigPath: profile?.path ?? null
       }
@@ -416,7 +424,6 @@ export class CliLauncherService {
       return {
         state: 'needs-repair',
         reason: 'shell-config-missing',
-        owned: true,
         commandPath,
         shellConfigPath: profile.path
       }
@@ -425,7 +432,6 @@ export class CliLauncherService {
       return {
         state: 'needs-repair',
         reason: 'path-unavailable',
-        owned: true,
         commandPath,
         shellConfigPath: null
       }
@@ -443,7 +449,6 @@ export class CliLauncherService {
     return {
       state: stale ? 'stale' : 'installed',
       reason: stale ? 'upgrade-required' : null,
-      owned: true,
       commandPath,
       shellConfigPath: profile?.path ?? null
     }
@@ -639,7 +644,9 @@ export class CliLauncherService {
 
   private async selectProfileKind(): Promise<PosixProfileKind | null> {
     if (this.isCommandDirectoryOnPath()) return null
-    switch (path.basename(this.options.shell ?? '')) {
+    const fallbackShell =
+      this.platform === 'darwin' ? 'zsh' : this.platform === 'linux' ? 'bash' : ''
+    switch (path.basename(this.options.shell ?? fallbackShell)) {
       case 'zsh':
         return 'zsh'
       case 'bash':

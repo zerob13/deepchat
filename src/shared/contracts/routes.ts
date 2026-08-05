@@ -84,8 +84,6 @@ import {
 import {
   cliCapabilitiesRoute,
   cliDoctorRoute,
-  cliGetLauncherStatusRoute,
-  cliSetLauncherInstalledRoute,
   cliStatusRoute,
   cliVersionRoute
 } from './routes/cli.routes'
@@ -1019,8 +1017,6 @@ const DEEPCHAT_ROUTE_CATALOG_PART_5 = {
   [cliVersionRoute.name]: cliVersionRoute,
   [cliCapabilitiesRoute.name]: cliCapabilitiesRoute,
   [cliDoctorRoute.name]: cliDoctorRoute,
-  [cliGetLauncherStatusRoute.name]: cliGetLauncherStatusRoute,
-  [cliSetLauncherInstalledRoute.name]: cliSetLauncherInstalledRoute,
   [chatCancelSubmissionRoute.name]: chatCancelSubmissionRoute,
   [chatSendMessageRoute.name]: chatSendMessageRoute,
   [chatSteerActiveTurnRoute.name]: chatSteerActiveTurnRoute,

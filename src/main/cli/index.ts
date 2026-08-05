@@ -31,7 +31,6 @@ export {
   type CliLauncherState,
   type CliLauncherStatus
 } from './launcherService'
-export { createCliLauncherRoutes } from './launcherRoutes'
 export {
   createCliProviderModelAdminRoutes,
   type CliProviderModelAdminDependencies

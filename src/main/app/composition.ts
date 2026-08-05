@@ -230,7 +230,6 @@ import {
   createArtifactRoutes,
   createCliComputeRoutes,
   createCliMcpAdminRoutes,
-  createCliLauncherRoutes,
   createCliProviderModelAdminRoutes,
   createCliRoutes,
   resolveBundledCliDirectory
@@ -2475,7 +2474,6 @@ export async function createMainProcessControl(dependencies: {
           (target) => target.kind === 'main'
         )
     })
-    const cliLauncherRoutes = createCliLauncherRoutes(cliLauncherService)
     const approvalRoutes = createApprovalRoutes({
       resolve: (input, caller) => cliMutationGuard.resolve(input, caller)
     })
@@ -2538,7 +2536,6 @@ export async function createMainProcessControl(dependencies: {
         appRoutes,
         approvalRoutes,
         cliRoutes,
-        cliLauncherRoutes,
         artifactRoutes,
         cliComputeRoutes,
         cliProviderModelAdminRoutes,
@@ -2851,7 +2848,7 @@ export async function createMainProcessControl(dependencies: {
         )
       }
       if (launcherStatus.reason !== 'unowned-command') {
-        await cliLauncherService.setInstalled(false)
+        await cliLauncherService.removeOwnedLauncher()
       }
     }
     await stop()
@@ -2950,10 +2947,12 @@ export async function createMainProcessControl(dependencies: {
   } catch (error) {
     logger.error('[CLI] Failed to start local control server', error)
   }
-  try {
-    await cliLauncherService.reconcileOwnedLauncher()
-  } catch (error) {
-    logger.warn('[CLI] Failed to refresh the owned command launcher', error)
+  if (cliServer.getStatus().running) {
+    try {
+      await cliLauncherService.ensureInstalled()
+    } catch (error) {
+      logger.warn('[CLI] Failed to install or refresh the command launcher', error)
+    }
   }
   init(dependencies.startupRunId)
   scheduleBackgroundWork()

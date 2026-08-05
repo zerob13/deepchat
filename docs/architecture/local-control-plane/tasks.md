@@ -74,7 +74,8 @@
 ## Packaging and Agent Use
 
 - [x] Package the CLI with the bundled Node runtime on all supported targets.
-- [ ] Add opt-in, reversible platform launcher/PATH integration.
+- [x] Add automatic, idempotent, reversible platform launcher/PATH integration with no settings
+  toggle.
 - [ ] Add in-memory scoped Agent token issuance, expiry, revocation, and quotas.
 - [ ] Harden shell permission checks for redirection and compound syntax before Agent enablement.
 - [ ] Keep `deepchat` out of `SAFE_COMMANDS`, enforce domain/verb-first grammar, and deny Agent

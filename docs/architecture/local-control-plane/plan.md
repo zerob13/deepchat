@@ -70,7 +70,8 @@
 ## Stage E: Packaged Product and Agent Integration
 
 1. Build the CLI as a packaged application resource that runs on the bundled Node runtime.
-2. Add opt-in platform launchers and PATH installation/removal with explicit, reversible ownership.
+2. Automatically reconcile platform launchers after server startup, with no settings toggle and with
+   explicit, reversible ownership that never overwrites foreign commands or shell content.
 3. Add the internal scoped-token issuer, conversation binding, expiry/revocation, call/byte quotas,
    and main-enforced Agent restrictions.
 4. Harden `CommandPermissionService` so redirection and compound shell syntax cannot inherit a safe
