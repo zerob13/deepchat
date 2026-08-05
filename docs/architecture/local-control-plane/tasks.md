@@ -47,8 +47,8 @@
 
 ## Effects and Approval
 
-- [ ] Extract generic canonicalization/pending/timeout/consume mechanics into `ApprovalBroker`.
-- [ ] Preserve MCP, Agent pre-check, and live-delegation behavior through `ToolPermissionBroker`.
+- [x] Extract generic canonicalization/pending/timeout/consume mechanics into `ApprovalBroker`.
+- [x] Preserve MCP, Agent pre-check, and live-delegation behavior through `ToolPermissionBroker`.
 - [ ] Add `CliMutationGuard` with unique live-request-bound approvals and no replay token.
 - [ ] Add targeted approval events and renderer-only `approvals.resolve` IPC.
 - [ ] Implement effect/caller/operation policy, scopes, quotas, rate limits, and redacted audit.

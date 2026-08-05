@@ -105,6 +105,7 @@ import { createPlatformRoutes } from '../platform/routes'
 import { createHookRoutes } from '../hook/routes'
 import { createAppSettingsRoutes } from './settingsRoutes'
 import { createAppRoutes } from './routes'
+import { ApprovalBroker } from '@/approval'
 import {
   CommandPermissionService,
   FilePermissionService,
@@ -334,6 +335,7 @@ export async function createMainProcessControl(dependencies: {
   let commandPermissionService: CommandPermissionService
   let filePermissionService: FilePermissionService
   let settingsPermissionService: SettingsPermissionService
+  let approvalBroker: ApprovalBroker
   let toolPermissionBroker: ToolPermissionBroker
   let legacyChatImportService: LegacyChatImportService
   let usageStatsService: UsageStatsService
@@ -697,7 +699,8 @@ export async function createMainProcessControl(dependencies: {
   commandPermissionService = commandPermissionHandler
   filePermissionService = new FilePermissionService()
   settingsPermissionService = new SettingsPermissionService()
-  toolPermissionBroker = new ToolPermissionBroker()
+  approvalBroker = new ApprovalBroker({ log: logger })
+  toolPermissionBroker = new ToolPermissionBroker({ approvalBroker })
   const liveDelegationConsent = new LiveDelegationConsentAuthority()
   deviceService = new DeviceService()
   const loggingService = new LoggingService(
@@ -2694,7 +2697,7 @@ export async function createMainProcessControl(dependencies: {
       commandPermissionService.clearAll()
       filePermissionService.clearAll()
       settingsPermissionService.clearAll()
-      toolPermissionBroker.clear()
+      approvalBroker.clear()
       dependencies.mcpAppSandboxRegistry.clear()
     },
     confirmShutdown: async () => await knowledgeService.confirmShutdown(),
