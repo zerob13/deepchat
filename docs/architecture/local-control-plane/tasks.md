@@ -66,7 +66,8 @@
 ## Events and Agent Runs
 
 - [x] Add explicit renderer/connection/request/run Event Hub targets.
-- [x] Add bounded queues, ordering, overflow, disconnect, and recovery semantics.
+- [x] Add bounded subscriber queues and global retention, idle expiry, ordering, overflow,
+  disconnect, and incarnation-safe recovery semantics.
 - [x] Compose detached session creation with initial-turn execution.
 - [x] Add owned status, event streaming, result recovery, and idempotent cancellation.
 - [x] Add event-isolation, backpressure, detached-recovery, recursion-denial, and cancellation tests.

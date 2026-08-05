@@ -67,7 +67,7 @@ describe('TypedEventHub', () => {
       { kind: 'run', runId: 'run-1' }
     )
     const first = await nextEvent(runOne.events)
-    expect(first.cursor).toBe('test-epoch:1')
+    expect(first.cursor).toBe('test-epoch_1:1')
 
     const replay = hub.subscribe(
       { kind: 'run', runId: 'run-1' },
@@ -90,7 +90,129 @@ describe('TypedEventHub', () => {
     )
 
     expect(subscription.recoveryReason).toBe('server_restarted')
-    expect(subscription.initialCursor).toBe('test-epoch:0')
+    expect(subscription.initialCursor).toBe('test-epoch_1:0')
+  })
+
+  it('expires cursors when an evicted stream is recreated in the same process', () => {
+    const { hub } = createHub({ maxStreams: 1 })
+    const first = hub.subscribe({ kind: 'run', runId: 'run-1' })
+    first.close()
+    const other = hub.subscribe({ kind: 'run', runId: 'run-2' })
+    other.close()
+
+    const recreated = hub.subscribe(
+      { kind: 'run', runId: 'run-1' },
+      { afterCursor: first.initialCursor }
+    )
+
+    expect(recreated.recoveryReason).toBe('cursor_expired')
+    expect(recreated.initialCursor).toBe('test-epoch_3:0')
+  })
+
+  it('expires idle streams before accepting a stale cursor', () => {
+    let now = 0
+    const { hub } = createHub({
+      now: () => now,
+      streamIdleTtlMs: 10
+    })
+    const first = hub.subscribe({ kind: 'run', runId: 'run-1' })
+    first.close()
+    hub.publish(
+      'sessions.status.changed',
+      { sessionId: 'run-1', status: 'generating', version: 1 },
+      { kind: 'run', runId: 'run-1' }
+    )
+    now = 11
+
+    const recreated = hub.subscribe(
+      { kind: 'run', runId: 'run-1' },
+      { afterCursor: first.initialCursor }
+    )
+
+    expect(recreated.recoveryReason).toBe('cursor_expired')
+    expect(recreated.initialCursor).toBe('test-epoch_2:0')
+  })
+
+  it('expires a cursor when the global retention budget evicts its event', () => {
+    const { hub } = createHub({ maxTotalRetainedBytes: 1024 })
+    const first = hub.subscribe({ kind: 'run', runId: 'run-1' })
+    first.close()
+    hub.publish(
+      'chat.stream.failed',
+      {
+        requestId: 'request-1',
+        sessionId: 'run-1',
+        messageId: 'message-1',
+        failedAt: 1,
+        error: 'x'.repeat(600)
+      },
+      { kind: 'run', runId: 'run-1' }
+    )
+    const second = hub.subscribe({ kind: 'run', runId: 'run-2' })
+    second.close()
+    hub.publish(
+      'chat.stream.failed',
+      {
+        requestId: 'request-2',
+        sessionId: 'run-2',
+        messageId: 'message-2',
+        failedAt: 2,
+        error: 'y'.repeat(600)
+      },
+      { kind: 'run', runId: 'run-2' }
+    )
+
+    const replay = hub.subscribe(
+      { kind: 'run', runId: 'run-1' },
+      { afterCursor: first.initialCursor }
+    )
+
+    expect(replay.recoveryReason).toBe('cursor_expired')
+    expect(replay.initialCursor).toBe('test-epoch_1:1')
+    const retained = hub.subscribe(
+      { kind: 'run', runId: 'run-2' },
+      { afterCursor: second.initialCursor }
+    )
+    expect(retained.recoveryReason).toBeNull()
+  })
+
+  it('replays only the latest retained snapshot for a message', async () => {
+    const { hub } = createHub()
+    const live = hub.subscribe({ kind: 'run', runId: 'run-1' })
+    hub.publish(
+      'chat.stream.updated',
+      {
+        kind: 'snapshot',
+        requestId: 'request-1',
+        sessionId: 'run-1',
+        messageId: 'message-1',
+        updatedAt: 1,
+        blocks: []
+      },
+      { kind: 'run', runId: 'run-1' }
+    )
+    const first = await nextEvent(live.events)
+    live.close()
+    hub.publish(
+      'chat.stream.updated',
+      {
+        kind: 'snapshot',
+        requestId: 'request-1',
+        sessionId: 'run-1',
+        messageId: 'message-1',
+        updatedAt: 2,
+        blocks: []
+      },
+      { kind: 'run', runId: 'run-1' }
+    )
+
+    const replay = hub.subscribe({ kind: 'run', runId: 'run-1' }, { afterCursor: first.cursor })
+
+    expect(replay.recoveryReason).toBeNull()
+    await expect(nextEvent(replay.events)).resolves.toMatchObject({
+      sequence: 2,
+      data: { messageId: 'message-1', updatedAt: 2 }
+    })
   })
 
   it('terminates a slow subscriber instead of growing its queue', async () => {

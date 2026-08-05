@@ -353,9 +353,9 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch:1' })
+    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:1' })
     expect(emitted.map((entry) => entry.event)).toEqual(['runs.snapshot', 'chat.stream.completed'])
-    expect(emitted[0].context).toEqual({ runId: 'run-1', cursor: 'test-epoch:0' })
+    expect(emitted[0].context).toEqual({ runId: 'run-1', cursor: 'test-epoch_1:0' })
   })
 
   it('does not terminate a root run watcher when a descendant session completes', async () => {
@@ -406,7 +406,7 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch:2' })
+    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
     expect(emitted).toEqual(['runs.snapshot', 'chat.stream.completed', 'chat.stream.completed'])
   })
 
@@ -423,11 +423,11 @@ describe('CliRunService', () => {
         new AbortController().signal,
         emit
       )
-    ).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch:0' })
+    ).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:0' })
     expect(emit).toHaveBeenCalledWith(
       'runs.snapshot',
       expect.objectContaining({ recoveryReason: 'cursor_missing' }),
-      { runId: 'run-1', cursor: 'test-epoch:0' }
+      { runId: 'run-1', cursor: 'test-epoch_1:0' }
     )
   })
 
@@ -450,7 +450,7 @@ describe('CliRunService', () => {
     await snapshotReady
     controller.abort()
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch:0' })
+    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:0' })
     expect(turn.cancelGeneration).not.toHaveBeenCalled()
   })
 

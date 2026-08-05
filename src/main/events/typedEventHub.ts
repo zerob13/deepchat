@@ -66,19 +66,29 @@ export type TypedEventHubOptions = Readonly<{
   maxSubscribers?: number
   maxRetainedEvents?: number
   maxRetainedBytes?: number
+  maxTotalRetainedBytes?: number
   maxSubscriberEvents?: number
   maxSubscriberBytes?: number
+  streamIdleTtlMs?: number
   log?: Pick<Console, 'warn'>
 }>
 
 type StreamState = {
   target: TypedEventStreamTarget
+  cursorEpoch: string
   sequence: number
-  retained: TypedEventRecord[]
+  retained: RetainedEvent[]
   retainedBytes: number
   subscribers: Set<EventSubscriber>
   lastUsedAt: number
 }
+
+type RetainedEvent = Readonly<{
+  record: TypedEventRecord
+  bytes: number
+  order: number
+  coalescingKey: string | null
+}>
 
 type PendingNext = Readonly<{
   resolve(value: IteratorResult<TypedEventRecord>): void
@@ -89,8 +99,11 @@ const DEFAULT_MAX_STREAMS = 128
 const DEFAULT_MAX_SUBSCRIBERS = 64
 const DEFAULT_MAX_RETAINED_EVENTS = 256
 const DEFAULT_MAX_RETAINED_BYTES = 4 * 1024 * 1024
+const DEFAULT_MAX_TOTAL_RETAINED_BYTES = 32 * 1024 * 1024
 const DEFAULT_MAX_SUBSCRIBER_EVENTS = 64
 const DEFAULT_MAX_SUBSCRIBER_BYTES = 1024 * 1024
+const DEFAULT_STREAM_IDLE_TTL_MS = 30 * 60_000
+const MAX_STREAM_SWEEP_INTERVAL_MS = 60_000
 
 function targetKey(target: TypedEventStreamTarget): string {
   const field = (value: string): string => `${value.length}:${value}`
@@ -110,6 +123,13 @@ function recordSize(record: TypedEventRecord): number {
   return Buffer.byteLength(JSON.stringify(record), 'utf8')
 }
 
+function retainedEventCoalescingKey(record: TypedEventRecord): string | null {
+  if (record.event !== 'chat.stream.updated') return null
+  if (!record.data || typeof record.data !== 'object' || Array.isArray(record.data)) return null
+  const messageId = record.data.messageId
+  return typeof messageId === 'string' ? `${record.event}:${messageId}` : null
+}
+
 class EventSubscriber implements AsyncIterator<TypedEventRecord>, AsyncIterable<TypedEventRecord> {
   private readonly queue: Array<{ record: TypedEventRecord; bytes: number }> = []
   private queuedBytes = 0
@@ -118,12 +138,11 @@ class EventSubscriber implements AsyncIterator<TypedEventRecord>, AsyncIterable<
   private failure: Error | null = null
 
   constructor(
-    initialRecords: readonly TypedEventRecord[],
+    initialRecords: readonly RetainedEvent[],
     private readonly limits: { maxEvents: number; maxBytes: number },
     private readonly onClose: () => void
   ) {
-    for (const record of initialRecords) {
-      const bytes = recordSize(record)
+    for (const { record, bytes } of initialRecords) {
       this.queue.push({ record, bytes })
       this.queuedBytes += bytes
     }
@@ -154,9 +173,8 @@ class EventSubscriber implements AsyncIterator<TypedEventRecord>, AsyncIterable<
     return Promise.resolve({ value: undefined, done: true })
   }
 
-  enqueue(record: TypedEventRecord): void {
+  enqueue(record: TypedEventRecord, bytes: number): void {
     if (this.closed || this.failure) return
-    const bytes = recordSize(record)
     if (bytes > this.limits.maxBytes) {
       this.fail(new TypedEventHubOverflowError('Event exceeds the subscriber byte limit'))
       return
@@ -209,11 +227,17 @@ export class TypedEventHub {
   private readonly maxSubscribers: number
   private readonly maxRetainedEvents: number
   private readonly maxRetainedBytes: number
+  private readonly maxTotalRetainedBytes: number
   private readonly maxSubscriberEvents: number
   private readonly maxSubscriberBytes: number
+  private readonly streamIdleTtlMs: number
+  private readonly streamSweepTimer: NodeJS.Timeout
   private readonly log: Pick<Console, 'warn'>
   private readonly streams = new Map<string, StreamState>()
   private subscriberCount = 0
+  private totalRetainedBytes = 0
+  private streamIncarnation = 0
+  private retentionOrder = 0
 
   constructor(private readonly options: TypedEventHubOptions) {
     this.epoch = options.epoch ?? randomUUID()
@@ -222,9 +246,16 @@ export class TypedEventHub {
     this.maxSubscribers = options.maxSubscribers ?? DEFAULT_MAX_SUBSCRIBERS
     this.maxRetainedEvents = options.maxRetainedEvents ?? DEFAULT_MAX_RETAINED_EVENTS
     this.maxRetainedBytes = options.maxRetainedBytes ?? DEFAULT_MAX_RETAINED_BYTES
+    this.maxTotalRetainedBytes = options.maxTotalRetainedBytes ?? DEFAULT_MAX_TOTAL_RETAINED_BYTES
     this.maxSubscriberEvents = options.maxSubscriberEvents ?? DEFAULT_MAX_SUBSCRIBER_EVENTS
     this.maxSubscriberBytes = options.maxSubscriberBytes ?? DEFAULT_MAX_SUBSCRIBER_BYTES
+    this.streamIdleTtlMs = options.streamIdleTtlMs ?? DEFAULT_STREAM_IDLE_TTL_MS
     this.log = options.log ?? console
+    this.streamSweepTimer = setInterval(
+      () => this.pruneExpiredStreams(),
+      Math.max(1_000, Math.min(this.streamIdleTtlMs, MAX_STREAM_SWEEP_INTERVAL_MS))
+    )
+    this.streamSweepTimer.unref()
   }
 
   publish(name: DeepchatEventName, payload: unknown, target: TypedEventTarget): void {
@@ -245,27 +276,18 @@ export class TypedEventHub {
     const record: TypedEventRecord = {
       target,
       sequence: state.sequence,
-      cursor: this.cursor(state.sequence),
+      cursor: this.cursor(state, state.sequence),
       timestamp: state.lastUsedAt,
       event: name,
       data
     }
     const bytes = recordSize(record)
 
-    if (bytes <= this.maxRetainedBytes) {
-      state.retained.push(record)
-      state.retainedBytes += bytes
-      while (
-        state.retained.length > this.maxRetainedEvents ||
-        state.retainedBytes > this.maxRetainedBytes
-      ) {
-        const removed = state.retained.shift()
-        if (!removed) break
-        state.retainedBytes -= recordSize(removed)
-      }
+    if (bytes <= this.maxRetainedBytes && bytes <= this.maxTotalRetainedBytes) {
+      this.retain(state, record, bytes)
     }
 
-    for (const subscriber of Array.from(state.subscribers)) subscriber.enqueue(record)
+    for (const subscriber of Array.from(state.subscribers)) subscriber.enqueue(record, bytes)
   }
 
   subscribe(
@@ -278,7 +300,7 @@ export class TypedEventHub {
     let initialRecords =
       recovery.sequence === null
         ? []
-        : state.retained.filter((item) => item.sequence > recovery.sequence!)
+        : state.retained.filter((item) => item.record.sequence > recovery.sequence!)
     if (!this.recordsFitSubscriber(initialRecords)) {
       recovery.reason = 'cursor_expired'
       recovery.sequence = null
@@ -308,7 +330,7 @@ export class TypedEventHub {
     }
 
     return {
-      initialCursor: this.cursor(state.sequence),
+      initialCursor: this.cursor(state, state.sequence),
       recoveryReason: recovery.reason,
       events: subscriber,
       close: () => subscriber.close()
@@ -316,10 +338,12 @@ export class TypedEventHub {
   }
 
   close(): void {
+    clearInterval(this.streamSweepTimer)
     for (const state of this.streams.values()) {
       for (const subscriber of Array.from(state.subscribers)) subscriber.close()
     }
     this.streams.clear()
+    this.totalRetainedBytes = 0
   }
 
   private deliver(
@@ -336,11 +360,12 @@ export class TypedEventHub {
     }
   }
 
-  private cursor(sequence: number): string {
-    return `${this.epoch}:${sequence}`
+  private cursor(state: StreamState, sequence: number): string {
+    return `${state.cursorEpoch}:${sequence}`
   }
 
   private getOrCreateStream(target: TypedEventStreamTarget): StreamState {
+    this.pruneExpiredStreams()
     const key = targetKey(target)
     const existing = this.streams.get(key)
     if (existing) return existing
@@ -348,6 +373,7 @@ export class TypedEventHub {
     this.trimStreamCapacity(1)
     const state: StreamState = {
       target,
+      cursorEpoch: `${this.epoch}_${++this.streamIncarnation}`,
       sequence: 0,
       retained: [],
       retainedBytes: 0,
@@ -367,25 +393,91 @@ export class TypedEventHub {
     const epoch = separator > 0 ? cursor.slice(0, separator) : ''
     const rawSequence = separator > 0 ? cursor.slice(separator + 1) : ''
     const sequence = /^(?:0|[1-9][0-9]*)$/.test(rawSequence) ? Number(rawSequence) : Number.NaN
-    if (epoch !== this.epoch) return { reason: 'server_restarted', sequence: null }
+    if (epoch !== state.cursorEpoch) {
+      const sameHub = epoch === this.epoch || epoch.startsWith(`${this.epoch}_`)
+      return { reason: sameHub ? 'cursor_expired' : 'server_restarted', sequence: null }
+    }
     if (!Number.isSafeInteger(sequence) || sequence < 0) {
       return { reason: 'cursor_expired', sequence: null }
     }
     if (sequence > state.sequence) return { reason: 'cursor_ahead', sequence: null }
 
-    const oldestSequence = state.retained[0]?.sequence ?? state.sequence + 1
+    const oldestSequence = state.retained[0]?.record.sequence ?? state.sequence + 1
     if (sequence < oldestSequence - 1) return { reason: 'cursor_expired', sequence: null }
     return { reason: null, sequence }
   }
 
-  private recordsFitSubscriber(records: readonly TypedEventRecord[]): boolean {
+  private recordsFitSubscriber(records: readonly RetainedEvent[]): boolean {
     if (records.length > this.maxSubscriberEvents) return false
     let bytes = 0
     for (const record of records) {
-      bytes += recordSize(record)
+      bytes += record.bytes
       if (bytes > this.maxSubscriberBytes) return false
     }
     return true
+  }
+
+  private retain(state: StreamState, record: TypedEventRecord, bytes: number): void {
+    const coalescingKey = retainedEventCoalescingKey(record)
+    if (coalescingKey) {
+      const supersededIndex = state.retained.findIndex(
+        (item) => item.coalescingKey === coalescingKey
+      )
+      if (supersededIndex >= 0) this.removeRetainedAt(state, supersededIndex)
+    }
+
+    state.retained.push({
+      record,
+      bytes,
+      order: ++this.retentionOrder,
+      coalescingKey
+    })
+    state.retainedBytes += bytes
+    this.totalRetainedBytes += bytes
+    while (
+      state.retained.length > this.maxRetainedEvents ||
+      state.retainedBytes > this.maxRetainedBytes
+    ) {
+      this.removeRetainedAt(state, 0)
+    }
+    this.trimTotalRetainedBytes()
+  }
+
+  private trimTotalRetainedBytes(): void {
+    while (this.totalRetainedBytes > this.maxTotalRetainedBytes) {
+      let candidate: StreamState | undefined
+      let oldestOrder = Number.POSITIVE_INFINITY
+      for (const state of this.streams.values()) {
+        const order = state.retained[0]?.order
+        if (order !== undefined && order < oldestOrder) {
+          candidate = state
+          oldestOrder = order
+        }
+      }
+      if (!candidate) break
+      this.removeRetainedAt(candidate, 0)
+    }
+  }
+
+  private removeRetainedAt(state: StreamState, index: number): void {
+    const [removed] = state.retained.splice(index, 1)
+    if (!removed) return
+    state.retainedBytes -= removed.bytes
+    this.totalRetainedBytes -= removed.bytes
+  }
+
+  private pruneExpiredStreams(): void {
+    const expirationThreshold = this.now() - this.streamIdleTtlMs
+    for (const [key, state] of this.streams) {
+      if (state.subscribers.size === 0 && state.lastUsedAt < expirationThreshold) {
+        this.removeStream(key, state)
+      }
+    }
+  }
+
+  private removeStream(key: string, state: StreamState): void {
+    if (!this.streams.delete(key)) return
+    this.totalRetainedBytes -= state.retainedBytes
   }
 
   private trimStreamCapacity(additionalStreams = 0): void {
@@ -393,8 +485,13 @@ export class TypedEventHub {
       const candidate = Array.from(this.streams.entries())
         .filter(([, state]) => state.subscribers.size === 0)
         .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt)[0]
-      if (!candidate) return
-      this.streams.delete(candidate[0])
+      if (!candidate) {
+        if (additionalStreams > 0) {
+          throw new TypedEventHubCapacityError('Event stream capacity is exhausted')
+        }
+        return
+      }
+      this.removeStream(candidate[0], candidate[1])
     }
   }
 }

@@ -507,7 +507,10 @@ events are never broadcast to all windows.
 
 Each subscriber has a bounded queue. Slow clients receive a terminal overflow error and disconnect;
 main does not accumulate unbounded events. Request streams preserve per-request order. Cross-request
-global ordering is not promised.
+global ordering is not promised. Retention is bounded both per stream and globally, inactive streams
+expire after 30 minutes, and superseded full message snapshots are coalesced in recovery history
+without changing live delivery. Cursors include a per-stream incarnation so an evicted and recreated
+stream cannot accept a cursor from its prior history; recovery falls back to the durable run snapshot.
 
 Raw and media requests are cancelled when their connection/request aborts unless an operation
 explicitly supports detachment. `sessions.runDetached` first creates a detached session through the
