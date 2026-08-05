@@ -30,6 +30,7 @@ const agentCaller: CliRouteCaller = {
   kind: 'cli',
   principal: 'agent',
   connectionId: 'connection-agent',
+  tokenId: 'token-id-run-1',
   conversationId: 'run-1',
   expiresAt: 10_000,
   scopes: ['runs:read', 'runs:cancel']

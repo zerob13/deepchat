@@ -24,6 +24,7 @@ const agentCaller: CliRouteCaller = {
   kind: 'cli',
   principal: 'agent',
   connectionId: 'agent-connection',
+  tokenId: 'token-id-conversation-1',
   conversationId: 'conversation-1',
   expiresAt: Date.now() + 60_000,
   scopes: ['settings:write']

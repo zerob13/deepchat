@@ -1,4 +1,11 @@
 export { CliServer, type CliServerDependencies } from './server'
+export {
+  AgentCliTokenAuthority,
+  type AgentCliRequestBeginResult,
+  type AgentCliRequestGrant,
+  type AgentCliTokenClaims,
+  type IssuedAgentCliToken
+} from './agentTokenAuthority'
 export { CliAuditLog, type CliAuditLogOptions } from './auditLog'
 export { ArtifactSpool, type ArtifactSpoolOptions } from './artifactSpool'
 export { createArtifactRoutes } from './artifactRoutes'

@@ -20,7 +20,12 @@ import {
   type LocalControlUploadBinding
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
-import { CliServer, type AgentCliToken, type CliUploadedInputFile } from '@/cli/server'
+import { CliServer, type CliUploadedInputFile } from '@/cli/server'
+import {
+  AgentCliTokenAuthority,
+  type AgentCliRequestBeginResult,
+  type AgentCliTokenClaims
+} from '@/cli/agentTokenAuthority'
 import type { CliRequestAdmission, CliRequestPolicyInput } from '@/cli/policy'
 import type { CliSurfaceEntry } from '@/cli/surface'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
@@ -31,6 +36,17 @@ type RpcResult = Readonly<{
   connection: string | undefined
   body: LocalControlRpcResponse
 }>
+
+function grantAgentRequest(claims: AgentCliTokenClaims): AgentCliRequestBeginResult {
+  return {
+    status: 'granted',
+    grant: {
+      claims,
+      signal: new AbortController().signal,
+      consumeBytes: () => true
+    }
+  }
+}
 
 const servers: CliServer[] = []
 const temporaryDirectories: string[] = []
@@ -208,7 +224,7 @@ function createUploadSurface(maxBodyBytes: number): ReadonlyMap<string, CliSurfa
 
 async function createTestServer(
   options: {
-    resolveAgentToken?: (token: string) => AgentCliToken | null
+    beginAgentRequest?: (token: string) => AgentCliRequestBeginResult
     dispatchOutput?: (method: string) => unknown
     streamOutput?: Readonly<{
       events: readonly JsonValue[]
@@ -275,7 +291,7 @@ async function createTestServer(
           }
         }
       : {}),
-    resolveAgentToken: options.resolveAgentToken,
+    beginAgentRequest: options.beginAgentRequest,
     dispatchUpload,
     ...(options.authorize ? { authorize } : {}),
     surface: options.surface,
@@ -526,14 +542,15 @@ describe('CLI local transport', () => {
     const agentToken = 'a'.repeat(43)
     const { descriptor, userDataPath, dispatchUpload } = await createTestServer({
       surface: createUploadSurface(16),
-      resolveAgentToken: (token) =>
+      beginAgentRequest: (token) =>
         token === agentToken
-          ? {
+          ? grantAgentRequest({
+              tokenId: 'token-id-conversation-1',
               conversationId: 'conversation-1',
               expiresAt: Date.now() + 60_000,
               scopes: ['system:read']
-            }
-          : null
+            })
+          : { status: 'invalid' }
     })
 
     const response = await uploadRequest(descriptor, {
@@ -594,14 +611,15 @@ describe('CLI local transport', () => {
     let expiresAt = Date.now() - 1
     const agentToken = 'g'.repeat(43)
     const { descriptor, dispatch } = await createTestServer({
-      resolveAgentToken: (token) =>
+      beginAgentRequest: (token) =>
         token === agentToken
-          ? {
+          ? grantAgentRequest({
+              tokenId: 'token-id-conversation-1',
               conversationId: 'conversation-1',
               expiresAt,
               scopes
-            }
-          : null
+            })
+          : { status: 'invalid' }
     })
 
     const expired = await rpcRequest(descriptor, { token: agentToken })
@@ -623,8 +641,87 @@ describe('CLI local transport', () => {
     expect(dispatch.mock.calls[0]?.[2]).toMatchObject({
       kind: 'cli',
       principal: 'agent',
+      tokenId: 'token-id-conversation-1',
       conversationId: 'conversation-1',
       scopes: ['system:read']
+    })
+  })
+
+  it('enforces Agent token call quotas before dispatch', async () => {
+    const agentToken = 'h'.repeat(43)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => 'token-id-conversation-1'
+    })
+    authority.issue({
+      conversationId: 'conversation-1',
+      scopes: ['system:read'],
+      maxCalls: 1,
+      maxBytes: 16 * 1024
+    })
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (token) => authority.beginRequest(token)
+    })
+
+    const allowed = await rpcRequest(descriptor, { token: agentToken })
+    const exhausted = await rpcRequest(descriptor, { token: agentToken })
+
+    expect(allowed).toMatchObject({ status: 200, body: { ok: true } })
+    expect(exhausted).toMatchObject({
+      status: 429,
+      body: { ok: false, error: { code: 'rate_limited' } }
+    })
+    expect(dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('stops reading when an Agent token byte quota is exhausted', async () => {
+    const agentToken = 'i'.repeat(43)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => 'token-id-conversation-1'
+    })
+    authority.issue({
+      conversationId: 'conversation-1',
+      scopes: ['system:read'],
+      maxCalls: 2,
+      maxBytes: 1
+    })
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (token) => authority.beginRequest(token)
+    })
+
+    const exhausted = await rpcRequest(descriptor, { token: agentToken })
+
+    expect(exhausted).toMatchObject({
+      status: 429,
+      body: { ok: false, error: { code: 'rate_limited' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('cancels an active Agent request when its conversation token is revoked', async () => {
+    const agentToken = 'j'.repeat(43)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => 'token-id-conversation-1'
+    })
+    authority.issue({
+      conversationId: 'conversation-1',
+      scopes: ['system:read'],
+      maxBytes: 16 * 1024
+    })
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (token) => authority.beginRequest(token),
+      dispatchOutput: () => new Promise<never>(() => undefined)
+    })
+
+    const response = rpcRequest(descriptor, { token: agentToken })
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce())
+    authority.revokeConversation('conversation-1')
+
+    await expect(response).resolves.toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: 'authentication_failed' } }
     })
   })
 

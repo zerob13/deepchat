@@ -38,6 +38,7 @@ describe('route caller context', () => {
         kind: 'cli',
         principal: 'agent',
         connectionId: 'connection-2',
+        tokenId: 'token-id-session-1',
         scopes: ['models:invoke'],
         conversationId: 'session-1',
         expiresAt: Date.now() + 60_000

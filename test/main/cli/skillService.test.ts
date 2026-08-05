@@ -274,6 +274,7 @@ describe('CLI Skill service', () => {
     const agentCaller: CliRouteCaller = {
       ...caller,
       principal: 'agent',
+      tokenId: 'token-id-conversation-1',
       conversationId: 'conversation-1',
       expiresAt: Date.now() + 60_000
     }

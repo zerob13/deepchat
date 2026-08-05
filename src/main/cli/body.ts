@@ -30,6 +30,7 @@ export type BoundedBodyOptions = Readonly<{
   memoryThresholdBytes: number
   tempDirectory: string
   requireContentLength: boolean
+  consumeBytes?: (bytes: number) => void
 }>
 
 export function readDeclaredBodyLength(request: IncomingMessage): number | null {
@@ -135,6 +136,7 @@ export async function readBoundedRequestBody(
           httpStatus: 413
         })
       }
+      options.consumeBytes?.(chunk.length)
 
       sha256.update(chunk)
 

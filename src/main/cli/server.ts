@@ -53,6 +53,7 @@ import { CLI_SURFACE_V1 } from './surface'
 import type { CliSurfaceEntry } from './surface'
 import type { CliRuntimeStatus } from './routes'
 import type { ArtifactSpool } from './artifactSpool'
+import type { AgentCliRequestBeginResult, AgentCliRequestGrant } from './agentTokenAuthority'
 
 const MAX_HEADER_BYTES = 8 * 1024
 const MAX_CONNECTIONS = 64
@@ -65,13 +66,16 @@ const emptyAdmission: CliRequestAdmission = Object.freeze({ release: () => undef
 
 const AgentCliTokenSchema = z
   .object({
+    tokenId: z
+      .string()
+      .min(16)
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+$/),
     conversationId: z.string().min(1).max(128),
     expiresAt: TimestampMsSchema.max(Number.MAX_SAFE_INTEGER),
     scopes: LocalControlScopesSchema
   })
   .strict()
-
-export type AgentCliToken = z.infer<typeof AgentCliTokenSchema>
 
 export type CliStreamEmitter = (
   event: string,
@@ -110,13 +114,21 @@ export type CliServerDependencies = Readonly<{
   ): Promise<unknown>
   authorize?(input: CliRequestPolicyInput): Promise<CliRequestAdmission>
   surface?: ReadonlyMap<string, CliSurfaceEntry>
-  resolveAgentToken?(token: string): AgentCliToken | null
+  beginAgentRequest?(token: string): AgentCliRequestBeginResult
   artifactSpool?: ArtifactSpool
   now?: () => number
   platform?: NodeJS.Platform
   pid?: number
   log?: Pick<Console, 'warn' | 'error'>
 }>
+
+type AuthenticationResult =
+  | Readonly<{
+      ok: true
+      caller: CliRouteCaller
+      agentGrant?: AgentCliRequestGrant
+    }>
+  | Readonly<{ ok: false; quotaExhausted: boolean }>
 
 function hashToken(token: string): Buffer {
   return createHash('sha256').update(token).digest()
@@ -459,27 +471,42 @@ export class CliServer {
     })
   }
 
-  private authenticate(request: IncomingMessage, connectionId: string): CliRouteCaller | null {
+  private authenticate(request: IncomingMessage, connectionId: string): AuthenticationResult {
     const token = readBearerToken(request)
-    if (!token) return null
+    if (!token) return { ok: false, quotaExhausted: false }
     if (this.token && tokensEqual(token, this.token)) {
       return {
-        kind: 'cli',
-        principal: 'human',
-        connectionId,
-        scopes: LOCAL_CONTROL_SCOPES
+        ok: true,
+        caller: {
+          kind: 'cli',
+          principal: 'human',
+          connectionId,
+          scopes: LOCAL_CONTROL_SCOPES
+        }
       }
     }
 
-    const agent = AgentCliTokenSchema.safeParse(this.dependencies.resolveAgentToken?.(token))
-    if (!agent.success || agent.data.expiresAt <= this.now()) return null
+    const beginResult = this.dependencies.beginAgentRequest?.(token)
+    if (beginResult && beginResult.status !== 'granted') {
+      return { ok: false, quotaExhausted: beginResult.status === 'quota-exhausted' }
+    }
+    const grant = beginResult?.status === 'granted' ? beginResult.grant : undefined
+    const agent = AgentCliTokenSchema.safeParse(grant?.claims)
+    if (!agent.success || agent.data.expiresAt <= this.now()) {
+      return { ok: false, quotaExhausted: false }
+    }
     return {
-      kind: 'cli',
-      principal: 'agent',
-      connectionId,
-      scopes: agent.data.scopes,
-      conversationId: agent.data.conversationId,
-      expiresAt: agent.data.expiresAt
+      ok: true,
+      caller: {
+        kind: 'cli',
+        principal: 'agent',
+        connectionId,
+        scopes: agent.data.scopes,
+        tokenId: agent.data.tokenId,
+        conversationId: agent.data.conversationId,
+        expiresAt: agent.data.expiresAt
+      },
+      ...(grant ? { agentGrant: grant } : {})
     }
   }
 
@@ -516,18 +543,23 @@ export class CliServer {
       return
     }
 
-    const caller = this.authenticate(request, connectionId)
-    if (!caller) {
+    const authentication = this.authenticate(request, connectionId)
+    if (!authentication.ok) {
       this.sendFailure(
         response,
-        401,
+        authentication.quotaExhausted ? 429 : 401,
         UNKNOWN_REQUEST_ID,
-        new CliRequestError('authentication_failed', 'Authentication failed', {
-          httpStatus: 401
-        })
+        authentication.quotaExhausted
+          ? new CliRequestError('rate_limited', 'Agent CLI token quota is exhausted', {
+              httpStatus: 429
+            })
+          : new CliRequestError('authentication_failed', 'Authentication failed', {
+              httpStatus: 401
+            })
       )
       return
     }
+    const { caller, agentGrant } = authentication
     if (isArtifactRequest) {
       await this.handleArtifactDownload(request, response, caller)
       return
@@ -576,7 +608,17 @@ export class CliServer {
     const abort = () => {
       abortRequest(controller, new CliRequestError('cancelled', 'Request was cancelled'))
     }
+    const abortRevokedAgentRequest = () => {
+      abortRequest(
+        controller,
+        new CliRequestError('authentication_failed', 'Agent CLI token is no longer valid', {
+          httpStatus: 401
+        })
+      )
+    }
     request.once('aborted', abort)
+    agentGrant?.signal.addEventListener('abort', abortRevokedAgentRequest, { once: true })
+    if (agentGrant?.signal.aborted) abortRevokedAgentRequest()
     response.once('close', () => {
       if (!response.writableEnded) abort()
     })
@@ -595,7 +637,10 @@ export class CliServer {
           maxBytes: maxBodyBytes,
           memoryThresholdBytes: Math.min(maxBodyBytes, MAX_IN_MEMORY_BODY_BYTES),
           tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
-          requireContentLength: true
+          requireContentLength: true,
+          ...(agentGrant
+            ? { consumeBytes: (bytes: number) => this.consumeAgentBytes(agentGrant, bytes) }
+            : {})
         })
         bodySize = body.size
         rawRequest = await parseBoundedJsonBody(body)
@@ -690,7 +735,8 @@ export class CliServer {
             input,
             caller,
             requestId,
-            controller.signal
+            controller.signal,
+            agentGrant
           )
           return
         }
@@ -706,7 +752,10 @@ export class CliServer {
             maxBytes: entry.limits.maxBodyBytes,
             memoryThresholdBytes: 0,
             tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
-            requireContentLength: false
+            requireContentLength: false,
+            ...(agentGrant
+              ? { consumeBytes: (bytes: number) => this.consumeAgentBytes(agentGrant, bytes) }
+              : {})
           })
           try {
             if (
@@ -746,7 +795,7 @@ export class CliServer {
         throw requestAbortError(controller.signal)
       }
       const result = this.parseRouteOutput(entry, rawOutput, routeMethod)
-      this.sendJson(response, 200, createLocalControlSuccess(requestId, result))
+      this.sendJson(response, 200, createLocalControlSuccess(requestId, result), agentGrant)
     } catch (error) {
       if (error instanceof CliRequestError) {
         this.sendFailure(response, error.httpStatus, requestId, error)
@@ -763,6 +812,7 @@ export class CliServer {
       }
     } finally {
       request.off('aborted', abort)
+      agentGrant?.signal.removeEventListener('abort', abortRevokedAgentRequest)
       this.requestControllers.delete(controller)
       this.pendingRequests = Math.max(0, this.pendingRequests - 1)
       const remaining = (this.pendingByConnection.get(connectionId) ?? 1) - 1
@@ -812,7 +862,8 @@ export class CliServer {
     input: unknown,
     caller: CliRouteCaller,
     requestId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    agentGrant?: AgentCliRequestGrant
   ): Promise<void> {
     const dispatchStream = this.dependencies.dispatchStream
     if (!dispatchStream) {
@@ -847,7 +898,7 @@ export class CliServer {
         })
       }
       sequence += 1
-      await this.writeStreamRecord(response, parsed.data, signal)
+      await this.writeStreamRecord(response, parsed.data, signal, agentGrant)
     }
 
     try {
@@ -856,7 +907,12 @@ export class CliServer {
       )
       if (signal.aborted) throw requestAbortError(signal)
       const result = this.parseRouteOutput(entry, rawOutput, entry.contract.name)
-      await this.writeStreamRecord(response, createLocalControlSuccess(requestId, result), signal)
+      await this.writeStreamRecord(
+        response,
+        createLocalControlSuccess(requestId, result),
+        signal,
+        agentGrant
+      )
     } catch (error) {
       const failure = signal.aborted
         ? requestAbortError(signal)
@@ -883,7 +939,8 @@ export class CliServer {
   private async writeStreamRecord(
     response: ServerResponse,
     record: LocalControlStreamRecord,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    agentGrant?: AgentCliRequestGrant
   ): Promise<void> {
     if (signal?.aborted) throw requestAbortError(signal)
     const serialized = Buffer.from(`${JSON.stringify(record)}\n`, 'utf8')
@@ -892,6 +949,7 @@ export class CliServer {
         httpStatus: 500
       })
     }
+    if (agentGrant) this.consumeAgentBytes(agentGrant, serialized.length)
     if (response.destroyed || response.writableEnded) {
       throw new CliRequestError('cancelled', 'Stream connection is closed')
     }
@@ -1068,7 +1126,12 @@ export class CliServer {
     this.sendJson(response, status, this.createFailureRecord(requestId, error))
   }
 
-  private sendJson(response: ServerResponse, status: number, body: JsonValue): void {
+  private sendJson(
+    response: ServerResponse,
+    status: number,
+    body: JsonValue,
+    agentGrant?: AgentCliRequestGrant
+  ): void {
     if (response.destroyed || response.writableEnded) return
     let responseStatus = status
     let serialized = Buffer.from(JSON.stringify(body), 'utf8')
@@ -1088,6 +1151,22 @@ export class CliServer {
         'utf8'
       )
     }
+    if (responseStatus < 400 && agentGrant && !agentGrant.consumeBytes(serialized.length)) {
+      responseStatus = 429
+      serialized = Buffer.from(
+        JSON.stringify(
+          createLocalControlFailure(
+            isRecord(body) ? toSafeRequestId(body.id) : UNKNOWN_REQUEST_ID,
+            {
+              code: 'rate_limited',
+              message: 'Agent CLI token byte quota is exhausted',
+              retriable: false
+            }
+          )
+        ),
+        'utf8'
+      )
+    }
     response.statusCode = responseStatus
     if (responseStatus >= 400) {
       response.shouldKeepAlive = false
@@ -1096,5 +1175,12 @@ export class CliServer {
     response.setHeader('Content-Type', 'application/json; charset=utf-8')
     response.setHeader('Content-Length', serialized.length)
     response.end(serialized)
+  }
+
+  private consumeAgentBytes(grant: AgentCliRequestGrant, bytes: number): void {
+    if (grant.consumeBytes(bytes)) return
+    throw new CliRequestError('rate_limited', 'Agent CLI token byte quota is exhausted', {
+      httpStatus: 429
+    })
   }
 }

@@ -214,6 +214,7 @@ import {
 } from '@/routes'
 import { createNodeScheduler } from '@/routes/scheduler'
 import {
+  AgentCliTokenAuthority,
   ArtifactSpool,
   CliAudioTranscriptionService,
   CliAuditLog,
@@ -410,8 +411,10 @@ export async function createMainProcessControl(dependencies: {
     resolveSessionRunId: (sessionId) => resolveSessionRunId(sessionId),
     getBoundRendererIds: (sessionId) => resolveBoundRendererIds(sessionId)
   })
+  const agentCliTokenAuthority = new AgentCliTokenAuthority()
   const artifactSpool = new ArtifactSpool({
     directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
+    consumeAgentBytes: (tokenId, bytes) => agentCliTokenAuthority.consumeBytes(tokenId, bytes),
     log: logger
   })
   const cliAuditLog = new CliAuditLog({
@@ -467,6 +470,7 @@ export async function createMainProcessControl(dependencies: {
       if (!cliRequestPolicy) throw new Error('CLI request policy is not ready')
       return await cliRequestPolicy.authorize(input)
     },
+    beginAgentRequest: (token) => agentCliTokenAuthority.beginRequest(token),
     artifactSpool,
     log: logger
   })
@@ -1275,6 +1279,7 @@ export async function createMainProcessControl(dependencies: {
   }
   sessionPermissionPort = {
     clearSessionPermissions: (sessionId) => {
+      agentCliTokenAuthority.revokeConversation(sessionId)
       commandPermissionService.clearConversation(sessionId)
       filePermissionService.clearConversation(sessionId)
       settingsPermissionService.clearConversation(sessionId)
@@ -2074,6 +2079,7 @@ export async function createMainProcessControl(dependencies: {
   }
 
   async function destroy(): Promise<void> {
+    await runDestroyStep('agentCliTokenAuthority.clear', () => agentCliTokenAuthority.clear())
     await runDestroyStep('cliServer.stop', () => cliServer.stop())
     await runDestroyStep('typedEventHub.close', () => typedEventHub.close())
     await runDestroyStep('cliMutationGuard.clear', () => cliMutationGuard.clear())

@@ -19,6 +19,7 @@ const agentCaller = (conversationId: string): AgentCliRouteCaller => ({
   kind: 'cli',
   principal: 'agent',
   connectionId: `agent-${conversationId}`,
+  tokenId: `token-id-${conversationId}`,
   conversationId,
   expiresAt: Date.now() + 60_000,
   scopes: ['artifacts:read']
@@ -30,7 +31,7 @@ async function createSpool(
   const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-artifact-spool-'))
   temporaryDirectories.push(root)
   const directory = path.join(root, 'artifacts')
-  const spool = new ArtifactSpool({ directory, ...options })
+  const spool = new ArtifactSpool({ directory, consumeAgentBytes: () => true, ...options })
   spools.push(spool)
   return { spool, directory }
 }
@@ -150,6 +151,31 @@ describe('ArtifactSpool', () => {
       code: 'permission_denied'
     })
     await expect(spool.describe(metadata.id, humanCaller)).resolves.toEqual(metadata)
+  })
+
+  it('stops and removes an Agent artifact when its token byte quota is exhausted', async () => {
+    let remainingBytes = 5
+    const { spool, directory } = await createSpool({
+      consumeAgentBytes: (_tokenId, bytes) => {
+        if (bytes > remainingBytes) return false
+        remainingBytes -= bytes
+        return true
+      }
+    })
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      yield Buffer.from('1234')
+      yield Buffer.from('5678')
+    }
+
+    await expect(
+      spool.write({
+        caller: agentCaller('conversation-a'),
+        requestId: 'request-quota',
+        mimeType: 'application/octet-stream',
+        data: chunks()
+      })
+    ).rejects.toMatchObject({ code: 'rate_limited' })
+    expect(await readdir(directory)).toEqual([])
   })
 
   it('accounts in-flight writes before enforcing aggregate quotas', async () => {

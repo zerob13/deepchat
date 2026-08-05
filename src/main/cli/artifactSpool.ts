@@ -86,6 +86,7 @@ type OpenArtifactHandle = Readonly<{
 export type ArtifactSpoolOptions = Readonly<{
   directory: string
   limits?: Partial<ArtifactSpoolLimits>
+  consumeAgentBytes?: (tokenId: string, bytes: number) => boolean
   now?: () => number
   createId?: () => string
   cleanupIntervalMs?: number
@@ -345,6 +346,14 @@ export class ArtifactSpool {
                 httpStatus: 413
               }
             )
+          }
+          if (
+            input.caller.principal === 'agent' &&
+            !this.options.consumeAgentBytes?.(input.caller.tokenId, chunk.byteLength)
+          ) {
+            throw new CliRequestError('rate_limited', 'Agent CLI token byte quota is exhausted', {
+              httpStatus: 429
+            })
           }
           this.reserveBytes(ownerQuotaKey, requestQuotaKey, connectionQuotaKey, chunk.byteLength)
           reservedSize += chunk.byteLength

@@ -18,6 +18,7 @@ export type AgentCliRouteCaller = Readonly<{
   kind: 'cli'
   principal: 'agent'
   connectionId: string
+  tokenId: string
   scopes: readonly LocalControlScope[]
   conversationId: string
   expiresAt: number
