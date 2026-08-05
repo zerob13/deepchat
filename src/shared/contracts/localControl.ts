@@ -1,9 +1,11 @@
 import { z } from 'zod'
-import { JsonValueSchema, TimestampMsSchema, type JsonValue } from './common'
+import { JsonValueSchema, TimestampMsSchema, type JsonValue } from './json'
 
 export const LOCAL_CONTROL_PROTOCOL_VERSION = 1 as const
 export const LOCAL_CONTROL_SURFACE_VERSION = 1 as const
 export const LOCAL_CONTROL_DESCRIPTOR_FILENAME = 'local-control.json'
+export const LOCAL_CONTROL_RPC_PATH = '/v1/rpc'
+export const LOCAL_CONTROL_AGENT_TOKEN_ENV = 'DEEPCHAT_CLI_AGENT_TOKEN'
 
 export const LOCAL_CONTROL_EFFECTS = [
   'read',
@@ -63,6 +65,12 @@ export const LocalControlScopesSchema = z
 
 export const LocalControlPrincipalSchema = z.enum(['human', 'agent'])
 
+export const LocalControlTokenSchema = z
+  .string()
+  .min(43)
+  .max(256)
+  .regex(/^[A-Za-z0-9_-]+$/)
+
 export const LocalControlEndpointSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('unix'),
@@ -93,11 +101,7 @@ export const LocalControlDescriptorSchema = z
     appVersion: z.string().min(1).max(128),
     endpoint: LocalControlEndpointSchema,
     pid: z.number().int().positive().max(2_147_483_647),
-    token: z
-      .string()
-      .min(43)
-      .max(256)
-      .regex(/^[A-Za-z0-9_-]+$/),
+    token: LocalControlTokenSchema,
     startedAt: TimestampMsSchema
   })
   .strict()

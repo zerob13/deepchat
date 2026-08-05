@@ -128,8 +128,10 @@ approval scopes, and removes the descriptor/socket; mutable services and databas
 
 ### Endpoint
 
-- POSIX: an application-owned Unix domain socket below the DeepChat user-data directory. After
-  bind, its mode is verified as `0600`.
+- POSIX: an application-owned Unix domain socket below the DeepChat user-data directory. If that
+  would exceed the platform socket-path limit, main uses a deterministic per-user, per-profile
+  private runtime directory and keeps discovery in user data. After bind, socket type, ownership,
+  and `0600` mode are verified.
 - Windows: a per-start random named-pipe name. The descriptor is protected with an owner-only ACL;
   the random endpoint and bearer token provide defense in depth where Node does not expose a
   portable pipe-DACL API.
@@ -521,12 +523,15 @@ Human-friendly output goes to stdout, diagnostics to stderr, and machine modes a
 - SIGINT cancels once, waits a bounded grace period, then exits;
 - no ANSI/progress UI appears in machine modes.
 
-Exit codes are stable: success, usage, unavailable/version mismatch, authentication/authorization,
-approval denied/timeout, domain failure, timeout/cancel, and internal/protocol failure are distinct.
+Exit codes are stable: `0` success, `2` usage, `3` unavailable/version mismatch, `4`
+authentication/authorization, `5` approval denied/timeout, `6` domain failure, `7` timeout/cancel,
+and `8` internal/protocol failure.
 
-The packaged CLI uses the bundled Node runtime and ships as an application resource. Installation is
-opt-in and places a small launcher in the platform's user command location. It does not install an npm
-package or copy credentials. Upgrades replace app-owned resources while keeping the launcher stable.
+The packaged CLI source lives in `src/cli`; main-side transport adapters live in `src/main/cli`.
+The built standalone entry and launchers use the bundled Node runtime and ship outside `app.asar` as
+application resources. Installation is opt-in and places a small launcher in the platform's user
+command location. It does not install an npm package or copy credentials. Upgrades replace app-owned
+resources while keeping the launcher stable.
 
 ## Agent Token and Bundled Skill
 

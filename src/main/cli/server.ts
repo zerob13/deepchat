@@ -7,9 +7,11 @@ import { JsonValueSchema, TimestampMsSchema, type JsonValue } from '@shared/cont
 import {
   LOCAL_CONTROL_DESCRIPTOR_FILENAME,
   LOCAL_CONTROL_PROTOCOL_VERSION,
+  LOCAL_CONTROL_RPC_PATH,
   LOCAL_CONTROL_SCOPES,
   LOCAL_CONTROL_SURFACE_VERSION,
   LocalControlScopesSchema,
+  LocalControlTokenSchema,
   LocalControlRpcRequestSchema,
   createLocalControlFailure,
   createLocalControlSuccess,
@@ -74,8 +76,10 @@ function tokensEqual(left: string, right: string): boolean {
 function readBearerToken(request: IncomingMessage): string | null {
   const authorization = request.headers.authorization
   if (typeof authorization !== 'string') return null
-  const match = /^Bearer ([A-Za-z0-9_-]{43,256})$/.exec(authorization)
-  return match?.[1] ?? null
+  const match = /^Bearer (\S+)$/.exec(authorization)
+  if (!match) return null
+  const token = LocalControlTokenSchema.safeParse(match[1])
+  return token.success ? token.data : null
 }
 
 function requestContentTypeIsJson(request: IncomingMessage): boolean {
@@ -378,7 +382,7 @@ export class CliServer {
     response.setHeader('X-Content-Type-Options', 'nosniff')
 
     const connectionId = this.connectionIds.get(request.socket) ?? randomUUID()
-    if (request.method !== 'POST' || request.url !== '/v1/rpc') {
+    if (request.method !== 'POST' || request.url !== LOCAL_CONTROL_RPC_PATH) {
       this.sendFailure(
         response,
         404,

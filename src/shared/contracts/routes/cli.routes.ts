@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { defineRouteContract } from '../common'
+import { defineRouteContract } from '../contract'
 import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_SURFACE_VERSION,

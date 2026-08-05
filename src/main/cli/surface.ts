@@ -1,4 +1,4 @@
-import type { RouteContract } from '@shared/contracts/common'
+import type { RouteContract } from '@shared/contracts/contract'
 import {
   cliCapabilitiesRoute,
   cliDoctorRoute,

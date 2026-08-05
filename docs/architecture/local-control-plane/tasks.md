@@ -23,9 +23,9 @@
 - [x] Implement atomic private descriptor creation, token rotation, and stale cleanup.
 - [x] Implement UDS/named-pipe HTTP server lifecycle and authentication.
 - [x] Implement fixed/chunked body bounds, spill-to-disk, abort handling, and cleanup.
-- [ ] Implement the bundled thin CLI, two-token grammar, version negotiation, output modes, signals,
+- [x] Implement the bundled thin CLI, two-token grammar, version negotiation, output modes, signals,
   fail-closed Agent-token selection, timeouts, and exit codes.
-- [ ] Add descriptor, transport, auth, body-boundary, parser, and shutdown tests.
+- [x] Add descriptor, transport, auth, body-boundary, parser, and shutdown tests.
 
 ## Compute and Artifacts
 
@@ -73,7 +73,7 @@
 
 ## Packaging and Agent Use
 
-- [ ] Package the CLI with the bundled Node runtime on all supported targets.
+- [x] Package the CLI with the bundled Node runtime on all supported targets.
 - [ ] Add opt-in, reversible platform launcher/PATH integration.
 - [ ] Add in-memory scoped Agent token issuance, expiry, revocation, and quotas.
 - [ ] Harden shell permission checks for redirection and compound syntax before Agent enablement.
