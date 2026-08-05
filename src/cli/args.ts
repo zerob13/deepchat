@@ -15,13 +15,27 @@ import {
   audioTranscribeArtifactRoute,
   audioTranscribeUploadRoute
 } from '@shared/contracts/routes/audio.routes'
-import { modelsInvokeRoute } from '@shared/contracts/routes/models.routes'
+import {
+  modelsGetPublicConfigRoute,
+  modelsInvokeRoute,
+  modelsListRuntimeRoute,
+  modelsResetConfigRoute,
+  modelsSetPublicConfigRoute,
+  modelsSetStatusRoute
+} from '@shared/contracts/routes/models.routes'
 import {
   imagesGenerateRoute,
   speechGenerateRoute,
   videosGenerateRoute
 } from '@shared/contracts/routes/media.routes'
-import { providersListPublicRoute } from '@shared/contracts/routes/providers.routes'
+import {
+  providersAddPublicRoute,
+  providersListPublicRoute,
+  providersRemoveRoute,
+  providersSetCredentialRoute,
+  providersTestPublicConnectionRoute,
+  providersUpdatePublicRoute
+} from '@shared/contracts/routes/providers.routes'
 import {
   OCR_EXTRACTION_MAX_INPUT_BYTES,
   ocrClearCacheRoute,
@@ -68,6 +82,16 @@ export type CliRpcContract =
   | typeof ocrExtractArtifactRoute
   | typeof ocrClearCacheRoute
   | typeof providersListPublicRoute
+  | typeof providersTestPublicConnectionRoute
+  | typeof providersAddPublicRoute
+  | typeof providersUpdatePublicRoute
+  | typeof providersSetCredentialRoute
+  | typeof providersRemoveRoute
+  | typeof modelsListRuntimeRoute
+  | typeof modelsGetPublicConfigRoute
+  | typeof modelsSetStatusRoute
+  | typeof modelsSetPublicConfigRoute
+  | typeof modelsResetConfigRoute
   | typeof settingsGetPublicRoute
   | typeof settingsUpdatePublicRoute
 
@@ -106,6 +130,18 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['ocr extract', ocrExtractUploadRoute],
   ['ocr clear-cache', ocrClearCacheRoute],
   ['provider list', providersListPublicRoute],
+  ['provider test', providersTestPublicConnectionRoute],
+  ['provider add', providersAddPublicRoute],
+  ['provider update', providersUpdatePublicRoute],
+  ['provider set-credential', providersSetCredentialRoute],
+  ['provider clear-credential', providersSetCredentialRoute],
+  ['provider remove', providersRemoveRoute],
+  ['model list', modelsListRuntimeRoute],
+  ['model config-get', modelsGetPublicConfigRoute],
+  ['model enable', modelsSetStatusRoute],
+  ['model disable', modelsSetStatusRoute],
+  ['model config-set', modelsSetPublicConfigRoute],
+  ['model config-reset', modelsResetConfigRoute],
   ['settings get', settingsGetPublicRoute],
   ['settings set', settingsUpdatePublicRoute]
 ])
@@ -202,6 +238,10 @@ const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
   voice: stringOption,
   speed: (value) => parseNumberInRange(value, '--speed', 0.25, 4),
   instructions: stringOption,
+  name: stringOption,
+  'api-type': stringOption,
+  'base-url': stringOption,
+  enabled: (value) => parseBoolean(value, '--enabled'),
   key: stringOption,
   keys: stringOption,
   value: settingValueOption,
@@ -259,6 +299,18 @@ const COMMAND_DOMAIN_OPTIONS = new Map<string, ReadonlySet<string>>([
   ['ocr status', new Set()],
   ['ocr clear-cache', new Set()],
   ['provider list', new Set(['enabled-only'])],
+  ['provider test', new Set(['provider', 'model'])],
+  ['provider add', new Set(['name', 'api-type', 'base-url', 'enabled'])],
+  ['provider update', new Set(['provider', 'name', 'api-type', 'base-url', 'enabled'])],
+  ['provider set-credential', new Set(['provider', 'stdin'])],
+  ['provider clear-credential', new Set(['provider'])],
+  ['provider remove', new Set(['provider'])],
+  ['model list', new Set(['provider'])],
+  ['model config-get', new Set(['provider', 'model'])],
+  ['model enable', new Set(['provider', 'model'])],
+  ['model disable', new Set(['provider', 'model'])],
+  ['model config-set', new Set(['provider', 'model', 'stdin'])],
+  ['model config-reset', new Set(['provider', 'model'])],
   ['settings get', new Set(['keys'])],
   ['settings set', new Set(['key', 'value'])]
 ])
@@ -489,6 +541,10 @@ export function parseCliArguments(
   const settingKey = getString('key')
   const settingKeys = getString('keys')
   const settingValue = domainValues.get('value')
+  const providerName = getString('name')
+  const providerApiType = getString('api-type')
+  const providerBaseUrl = getString('base-url')
+  const providerEnabled = getBoolean('enabled')
   const parsedSettingKeys = settingKeys
     ?.split(',')
     .map((key) => key.trim())
@@ -520,6 +576,17 @@ export function parseCliArguments(
   const isOcrExtract = commandKey === 'ocr extract'
   const isMediaGenerate = isImageGenerate || isVideoGenerate || isSpeechGenerate
   const isProviderList = commandKey === 'provider list'
+  const isProviderTest = commandKey === 'provider test'
+  const isProviderAdd = commandKey === 'provider add'
+  const isProviderUpdate = commandKey === 'provider update'
+  const isProviderSetCredential = commandKey === 'provider set-credential'
+  const isProviderClearCredential = commandKey === 'provider clear-credential'
+  const isProviderRemove = commandKey === 'provider remove'
+  const isModelList = commandKey === 'model list'
+  const isModelConfigGet = commandKey === 'model config-get'
+  const isModelStatus = commandKey === 'model enable' || commandKey === 'model disable'
+  const isModelConfigSet = commandKey === 'model config-set'
+  const isModelConfigReset = commandKey === 'model config-reset'
   const isSettingsGet = commandKey === 'settings get'
   const isSettingsSet = commandKey === 'settings set'
   const allowedDomainOptions = COMMAND_DOMAIN_OPTIONS.get(commandKey) ?? new Set<string>()
@@ -577,9 +644,83 @@ export function parseCliArguments(
   if (!helpRequested && isSettingsGet && settingKeys !== undefined && !parsedSettingKeys?.length) {
     throw new CliUsageError('--keys must contain at least one setting key')
   }
+  if (!helpRequested && isProviderAdd && (!providerName || !providerApiType || !providerBaseUrl)) {
+    throw new CliUsageError('deepchat provider add requires --name, --api-type, and --base-url')
+  }
+  if (
+    !helpRequested &&
+    isProviderUpdate &&
+    (!providerId ||
+      (providerName === undefined &&
+        providerApiType === undefined &&
+        providerBaseUrl === undefined &&
+        providerEnabled === undefined))
+  ) {
+    throw new CliUsageError('deepchat provider update requires --provider and at least one update')
+  }
+  if (
+    !helpRequested &&
+    (isProviderTest ||
+      isProviderSetCredential ||
+      isProviderClearCredential ||
+      isProviderRemove ||
+      isModelList) &&
+    !providerId
+  ) {
+    throw new CliUsageError(`deepchat ${domain} ${verb} requires --provider`)
+  }
+  if (!helpRequested && isProviderSetCredential && !readStdin) {
+    throw new CliUsageError('deepchat provider set-credential requires --stdin')
+  }
+  if (
+    !helpRequested &&
+    (isModelConfigGet || isModelStatus || isModelConfigSet || isModelConfigReset) &&
+    (!providerId || !modelId)
+  ) {
+    throw new CliUsageError(`deepchat model ${verb} requires --provider and --model`)
+  }
+  if (!helpRequested && isModelConfigSet && !readStdin) {
+    throw new CliUsageError('deepchat model config-set requires --stdin')
+  }
 
   let params: JsonValue = artifactId ? { id: artifactId } : {}
   if (isProviderList) params = { enabledOnly }
+  if (isProviderTest && providerId) {
+    params = { providerId, ...(modelId ? { modelId } : {}) }
+  }
+  if (isProviderAdd && providerName && providerApiType && providerBaseUrl) {
+    params = {
+      name: providerName,
+      apiType: providerApiType,
+      baseUrl: providerBaseUrl,
+      ...(providerEnabled !== undefined ? { enabled: providerEnabled } : {})
+    }
+  }
+  if (isProviderUpdate && providerId) {
+    params = {
+      providerId,
+      updates: {
+        ...(providerName !== undefined ? { name: providerName } : {}),
+        ...(providerApiType !== undefined ? { apiType: providerApiType } : {}),
+        ...(providerBaseUrl !== undefined ? { baseUrl: providerBaseUrl } : {}),
+        ...(providerEnabled !== undefined ? { enabled: providerEnabled } : {})
+      }
+    }
+  }
+  if (isProviderSetCredential && providerId) {
+    params = { providerId, action: 'set', kind: 'api-key' }
+  }
+  if (isProviderClearCredential && providerId) {
+    params = { providerId, action: 'clear', kind: 'api-key' }
+  }
+  if (isProviderRemove && providerId) params = { providerId }
+  if (isModelList && providerId) params = { providerId }
+  if (isModelConfigGet && providerId && modelId) params = { providerId, modelId }
+  if (isModelStatus && providerId && modelId) {
+    params = { providerId, modelId, enabled: commandKey === 'model enable' }
+  }
+  if (isModelConfigSet && providerId && modelId) params = { providerId, modelId }
+  if (isModelConfigReset && providerId && modelId) params = { providerId, modelId }
   if (isSettingsGet) {
     params = parsedSettingKeys ? { keys: parsedSettingKeys } : {}
   }
@@ -729,12 +870,24 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
                 : command.domain === 'ocr' && command.verb === 'extract'
                   ? ' (--file <path>|--artifact <id>)'
                   : command.domain === 'provider'
-                    ? ' [--enabled-only]'
-                    : command.domain === 'settings' && command.verb === 'get'
-                      ? ' [--keys <key,key>]'
-                      : command.domain === 'settings'
-                        ? ' --key <key> --value <json-scalar>'
-                        : ''
+                    ? command.verb === 'list'
+                      ? ' [--enabled-only]'
+                      : command.verb === 'add'
+                        ? ' --name <name> --api-type <type> --base-url <url> [--enabled <bool>]'
+                        : command.verb === 'update'
+                          ? ' --provider <id> [--name <name>] [--api-type <type>] [--base-url <url>] [--enabled <bool>]'
+                          : command.verb === 'set-credential'
+                            ? ' --provider <id> --stdin'
+                            : ` --provider <id>${command.verb === 'test' ? ' [--model <id>]' : ''}`
+                    : command.domain === 'model' && command.verb !== 'invoke'
+                      ? command.verb === 'list'
+                        ? ' --provider <id>'
+                        : ` --provider <id> --model <id>${command.verb === 'config-set' ? ' --stdin' : ''}`
+                      : command.domain === 'settings' && command.verb === 'get'
+                        ? ' [--keys <key,key>]'
+                        : command.domain === 'settings'
+                          ? ' --key <key> --value <json-scalar>'
+                          : ''
     const commandKey = `${command.domain} ${command.verb}`
     const optionLines =
       commandKey === 'model invoke'
@@ -807,6 +960,18 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  ocr extract          Extract text from an image or PDF',
     '  ocr clear-cache      Clear derived OCR cache entries',
     '  provider list        List redacted providers and models',
+    '  provider test        Test a provider connection',
+    '  provider add         Add a credential-free custom provider',
+    '  provider update      Update allowlisted provider fields',
+    '  provider set-credential  Read and store an API key from stdin',
+    '  provider clear-credential  Clear a stored API key',
+    '  provider remove      Remove a custom provider',
+    '  model list           List runtime models for a provider',
+    '  model enable         Enable one model',
+    '  model disable        Disable one model',
+    '  model config-get     Read effective model configuration',
+    '  model config-set     Read full model configuration JSON from stdin',
+    '  model config-reset   Reset user model configuration',
     '  settings get         Read allowlisted public settings',
     '  settings set         Update one allowlisted public setting',
     '  help commands        Show this help',

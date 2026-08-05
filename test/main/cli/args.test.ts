@@ -186,6 +186,78 @@ describe('CLI argument grammar', () => {
     )
   })
 
+  it('parses provider administration without accepting credentials in argv', () => {
+    expect(
+      parseCliArguments(
+        [
+          'provider',
+          'add',
+          '--name',
+          'Local API',
+          '--api-type',
+          'openai-completions',
+          '--base-url',
+          'http://localhost:8080/v1',
+          '--enabled',
+          'false'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      contract: { name: 'providers.addPublic' },
+      params: {
+        name: 'Local API',
+        apiType: 'openai-completions',
+        baseUrl: 'http://localhost:8080/v1',
+        enabled: false
+      }
+    })
+    expect(
+      parseCliArguments(['provider', 'set-credential', '--provider', 'provider-1', '--stdin'], {})
+    ).toMatchObject({
+      contract: { name: 'providers.setCredential' },
+      params: { providerId: 'provider-1', action: 'set', kind: 'api-key' },
+      readStdin: true
+    })
+    expect(parseCliArguments(['provider', 'test', '--provider', 'provider-1'], {})).toMatchObject({
+      contract: { name: 'providers.testPublicConnection' }
+    })
+    expect(() =>
+      parseCliArguments(
+        ['provider', 'set-credential', '--provider', 'provider-1', '--value', 'secret'],
+        {}
+      )
+    ).toThrow('--value is not valid')
+    expect(() => parseCliArguments(['provider', 'update', '--provider', 'provider-1'], {})).toThrow(
+      'at least one update'
+    )
+  })
+
+  it('parses model administration with full config supplied only through stdin', () => {
+    expect(
+      parseCliArguments(['model', 'enable', '--provider', 'provider-1', '--model', 'model-1'], {})
+    ).toMatchObject({
+      contract: { name: 'models.setStatus' },
+      params: { providerId: 'provider-1', modelId: 'model-1', enabled: true }
+    })
+    expect(
+      parseCliArguments(
+        ['model', 'config-set', '--provider', 'provider-1', '--model', 'model-1', '--stdin'],
+        {}
+      )
+    ).toMatchObject({
+      contract: { name: 'models.setPublicConfig' },
+      params: { providerId: 'provider-1', modelId: 'model-1' },
+      readStdin: true
+    })
+    expect(() =>
+      parseCliArguments(
+        ['model', 'config-set', '--provider', 'provider-1', '--model', 'model-1'],
+        {}
+      )
+    ).toThrow('requires --stdin')
+  })
+
   it('maps image and video options without exposing file output paths', () => {
     expect(
       parseCliArguments(

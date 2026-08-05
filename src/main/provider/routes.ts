@@ -72,6 +72,7 @@ import {
 import type { ProviderImportService } from './providerImportService'
 import { ProviderService, type ProviderQueryScheduler } from './providerService'
 import type { ProviderRuntime } from '.'
+import { CliRequestError } from '@/cli/errors'
 
 export function createProviderRoutes(deps: {
   providerSettings: ProviderSettingsPort
@@ -295,8 +296,19 @@ export function createProviderRoutes(deps: {
     ],
     [
       providersRemoveRoute.name,
-      async (rawInput) => {
+      async (rawInput, context) => {
         const input = providersRemoveRoute.input.parse(rawInput)
+        if (context.caller.kind === 'cli') {
+          const provider = providerSettings.getProviderById(input.providerId)
+          if (!provider) {
+            throw new CliRequestError('not_found', 'Provider was not found', { httpStatus: 404 })
+          }
+          if (provider.custom !== true) {
+            throw new CliRequestError('conflict', 'Built-in providers cannot be removed', {
+              httpStatus: 409
+            })
+          }
+        }
         providerRuntime.removeProviderAtomic(input.providerId)
         const result = providersRemoveRoute.output.parse({ removed: true })
         recordActivity({
@@ -534,8 +546,14 @@ export function createProviderRoutes(deps: {
     ],
     [
       modelsSetStatusRoute.name,
-      async (rawInput) => {
+      async (rawInput, context) => {
         const input = modelsSetStatusRoute.input.parse(rawInput)
+        if (
+          context.caller.kind === 'cli' &&
+          !providerSettings.isKnownModel(input.providerId, input.modelId)
+        ) {
+          throw new CliRequestError('not_found', 'Model was not found', { httpStatus: 404 })
+        }
         await providerRuntime.updateModelStatus(input.providerId, input.modelId, input.enabled)
         const result = modelsSetStatusRoute.output.parse(input)
         recordActivity({

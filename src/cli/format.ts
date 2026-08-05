@@ -78,13 +78,52 @@ export function formatHumanResult(
       const result = contract.output.parse(value)
       return result.providers
         .flatMap((provider) => [
-          `${provider.id}  ${provider.enabled ? 'enabled' : 'disabled'}  ${provider.name}`,
+          `${provider.id}  ${provider.enabled ? 'enabled' : 'disabled'}  ${provider.storedCredentialConfigured ? 'credential-stored' : 'no-stored-credential'}  ${provider.name}`,
           ...provider.models.map(
             (model) =>
               `  ${model.id}  ${model.enabled ? 'enabled' : 'disabled'}  ${model.type ?? 'chat'}`
           )
         ])
         .join('\n')
+    }
+    case 'providers.testPublicConnection': {
+      const result = contract.output.parse(value)
+      return result.isOk
+        ? 'Provider connection succeeded'
+        : `Provider connection failed: ${result.errorMsg}`
+    }
+    case 'providers.addPublic':
+    case 'providers.updatePublic': {
+      const result = contract.output.parse(value)
+      return `${result.provider.id}  ${result.provider.enabled ? 'enabled' : 'disabled'}  ${result.provider.name}`
+    }
+    case 'providers.setCredential': {
+      const result = contract.output.parse(value)
+      return result.action === 'set'
+        ? `Stored ${result.kind} credential for ${result.providerId}`
+        : `Cleared ${result.kind} credential for ${result.providerId}`
+    }
+    case 'providers.remove': {
+      const result = contract.output.parse(value)
+      return result.removed ? 'Provider removed' : 'Provider was not found'
+    }
+    case 'models.listRuntime': {
+      const result = contract.output.parse(value)
+      return result.models
+        .map((model) => `${model.id}  ${model.enabled ? 'enabled' : 'disabled'}  ${model.name}`)
+        .join('\n')
+    }
+    case 'models.getPublicConfig':
+    case 'models.setPublicConfig': {
+      return JSON.stringify(contract.output.parse(value).config, null, 2)
+    }
+    case 'models.setStatus': {
+      const result = contract.output.parse(value)
+      return `${result.modelId} ${result.enabled ? 'enabled' : 'disabled'}`
+    }
+    case 'models.resetConfig': {
+      contract.output.parse(value)
+      return 'Model configuration reset'
     }
     case 'settings.getPublic': {
       const result = contract.output.parse(value)

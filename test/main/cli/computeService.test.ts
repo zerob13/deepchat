@@ -172,6 +172,7 @@ describe('CLI compute service', () => {
         apiType: 'openai-compatible',
         enabled: true,
         custom: true,
+        storedCredentialConfigured: true,
         models: [
           {
             id: 'model-1',

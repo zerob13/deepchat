@@ -495,4 +495,93 @@ describe('bundled CLI client', () => {
     expect(stderr.read()).toBe('')
     expect(invokeUpload).not.toHaveBeenCalled()
   })
+
+  it('reads provider credentials from bounded stdin instead of argv', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const invokeRpc = vi.fn(async (invocation) =>
+      LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: {
+          providerId: 'provider-1',
+          action: 'set',
+          kind: 'api-key',
+          storedApiKeyConfigured: true
+        }
+      })
+    )
+
+    await expect(
+      runCli(['provider', 'set-credential', '--provider', 'provider-1', '--stdin'], {
+        env: {},
+        stdin: Readable.from([' super-secret \n']),
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeRpc
+      })
+    ).resolves.toBe(0)
+
+    expect(invokeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'providers.setCredential',
+        params: {
+          providerId: 'provider-1',
+          action: 'set',
+          kind: 'api-key',
+          value: ' super-secret '
+        }
+      })
+    )
+    expect(stdout.read()).toBe('Stored api-key credential for provider-1\n')
+    expect(stdout.read()).not.toContain('super-secret')
+    expect(stderr.read()).toBe('')
+  })
+
+  it('parses model configuration JSON from stdin before invoking the typed route', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const config = {
+      maxTokens: 4096,
+      contextLength: 32768,
+      vision: false,
+      functionCall: true,
+      reasoning: true,
+      type: 'chat'
+    }
+    const invokeRpc = vi.fn(async (invocation) =>
+      LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: { config }
+      })
+    )
+
+    await expect(
+      runCli(['model', 'config-set', '--provider', 'provider-1', '--model', 'model-1', '--stdin'], {
+        env: {},
+        stdin: Readable.from([JSON.stringify(config)]),
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeRpc
+      })
+    ).resolves.toBe(0)
+
+    expect(invokeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'models.setPublicConfig',
+        params: { providerId: 'provider-1', modelId: 'model-1', config }
+      })
+    )
+    expect(JSON.parse(stdout.read())).toEqual(config)
+    expect(stderr.read()).toBe('')
+  })
 })

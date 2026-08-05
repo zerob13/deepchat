@@ -1,5 +1,5 @@
 import type { RouteContract } from '@shared/contracts/contract'
-import type { JsonValue } from '@shared/contracts/json'
+import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
 import {
   AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
   OCR_EXTRACTION_MAX_INPUT_BYTES,
@@ -13,12 +13,22 @@ import {
   cliStatusRoute,
   cliVersionRoute,
   imagesGenerateRoute,
+  modelsGetPublicConfigRoute,
   modelsInvokeRoute,
+  modelsListRuntimeRoute,
+  modelsResetConfigRoute,
+  modelsSetPublicConfigRoute,
+  modelsSetStatusRoute,
   ocrClearCacheRoute,
   ocrExtractArtifactRoute,
   ocrExtractUploadRoute,
   ocrGetRuntimeStatusRoute,
+  providersAddPublicRoute,
   providersListPublicRoute,
+  providersRemoveRoute,
+  providersSetCredentialRoute,
+  providersTestPublicConnectionRoute,
+  providersUpdatePublicRoute,
   speechGenerateRoute,
   settingsGetPublicRoute,
   settingsUpdatePublicRoute,
@@ -116,6 +126,25 @@ function stringArrayField(input: unknown, field: string): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === 'string')
     : []
+}
+
+function objectFieldKeys(input: unknown, field: string): string[] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+  const value = (input as Record<string, unknown>)[field]
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.keys(value).sort()
+    : []
+}
+
+function jsonObjectField(input: unknown, field: string): Record<string, JsonValue> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
+  const parsed = JsonValueSchema.safeParse((input as Record<string, unknown>)[field])
+  return parsed.success &&
+    parsed.data &&
+    typeof parsed.data === 'object' &&
+    !Array.isArray(parsed.data)
+    ? parsed.data
+    : {}
 }
 
 export function listCliSurfaceEffects(entry: CliSurfaceEntry): readonly LocalControlEffect[] {
@@ -299,6 +328,125 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['providers:read'],
     transport: 'rpc',
     approval: 'never',
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: providersTestPublicConnectionRoute,
+    effect: 'compute',
+    callers: ['human'],
+    scopes: ['providers:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId']),
+    limits: { maxBodyBytes: 16 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
+  },
+  {
+    contract: providersAddPublicRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['providers:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['name', 'apiType', 'enabled']),
+    approvalDisplay: (input) => selectAuditFields(input, ['name', 'apiType', 'baseUrl', 'enabled']),
+    limits: { maxBodyBytes: 16 * 1024, timeoutMs: 30_000 }
+  },
+  {
+    contract: providersUpdatePublicRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['providers:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => ({
+      ...selectAuditFields(input, ['providerId']),
+      fields: objectFieldKeys(input, 'updates')
+    }),
+    approvalDisplay: (input) => ({
+      ...selectAuditFields(input, ['providerId']),
+      updates: jsonObjectField(input, 'updates')
+    }),
+    limits: { maxBodyBytes: 16 * 1024, timeoutMs: 30_000 }
+  },
+  {
+    contract: providersSetCredentialRoute,
+    effect: 'credential',
+    callers: ['human'],
+    scopes: ['providers:credential'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'action', 'kind']),
+    approvalDisplay: (input) => selectAuditFields(input, ['providerId', 'action', 'kind']),
+    limits: { maxBodyBytes: 128 * 1024, timeoutMs: 30_000 }
+  },
+  {
+    contract: providersRemoveRoute,
+    effect: 'destructive',
+    callers: ['human'],
+    scopes: ['providers:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['providerId']),
+    approvalDisplay: (input) => selectAuditFields(input, ['providerId']),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: modelsListRuntimeRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['models:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['providerId']),
+    limits: { maxBodyBytes: 16 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
+  },
+  {
+    contract: modelsGetPublicConfigRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['models:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId']),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: modelsSetStatusRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['providers:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId', 'enabled']),
+    approvalDisplay: (input) => selectAuditFields(input, ['providerId', 'modelId', 'enabled']),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: modelsSetPublicConfigRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['providers:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => ({
+      ...selectAuditFields(input, ['providerId', 'modelId']),
+      fields: objectFieldKeys(input, 'config')
+    }),
+    approvalDisplay: (input) => ({
+      ...selectAuditFields(input, ['providerId', 'modelId']),
+      config: jsonObjectField(input, 'config')
+    }),
+    limits: { maxBodyBytes: 64 * 1024, timeoutMs: 30_000 }
+  },
+  {
+    contract: modelsResetConfigRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['providers:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId']),
+    approvalDisplay: (input) => selectAuditFields(input, ['providerId', 'modelId']),
     limits: DIAGNOSTIC_LIMITS
   },
   {

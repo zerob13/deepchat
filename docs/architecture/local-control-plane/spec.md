@@ -243,7 +243,7 @@ confirmation flag.
 | 5. Offline OCR | `ocr.getRuntimeStatus`, `ocr.extractUpload`, `ocr.extractArtifact`, `ocr.clearCache`; `deepchat ocr …` | read / compute / local-maintenance | H; scoped A uses owned inputs and cannot clear | never | bounded text/metrics JSON |
 | 6. Full Agent run | `sessions.runDetached`; `deepchat agent run` | compute | H only | never | durable run ID + targeted JSONL |
 | 7. Settings | `settings.getPublic`, `settings.updatePublic`; `deepchat settings …` | read or key-derived mutation | H; scoped A for allowlisted keys | policy by effect | redacted JSON |
-| 8. Provider/model administration | `providers.listPublic`, `providers.testConnection`, `providers.addPublic`, `providers.updatePublic`, `providers.remove`, `providers.setCredential`, `models.listRuntime`, `models.setStatus`, `models.getConfig`, `models.setConfig`, `models.resetConfig`; `deepchat provider …`, `deepchat model config …` | read / execution-config / credential / destructive | H; A is read-only | policy for mutations | redacted JSON |
+| 8. Provider/model administration | `providers.listPublic`, `providers.testPublicConnection`, `providers.addPublic`, `providers.updatePublic`, `providers.remove`, `providers.setCredential`, `models.listRuntime`, `models.setStatus`, `models.getPublicConfig`, `models.setPublicConfig`, `models.resetConfig`; `deepchat provider …`, `deepchat model config …` | read / execution-config / credential / destructive | H; A is read-only | policy for mutations | redacted JSON |
 | 9. Skills | `skills.listPublic`, `skills.setDisabled`, `skills.installFromUrl`, `skills.installUpload`, `skills.uninstall`; `deepchat skill …` | read / supply-chain / destructive | H; scoped A may request allowlisted mutations | policy for mutations | JSON |
 | 10. MCP | `mcp.listPublic`, `mcp.addPublic`, `mcp.updatePublic`, `mcp.remove`, `mcp.setServerEnabled`, `mcp.startServer`, `mcp.stopServer`; `deepchat mcp …` | read / security-config / supply-chain / destructive | H; scoped A may request allowlisted non-credential mutations | policy for mutations | redacted JSON/events |
 | 11. Runs, events, artifacts | `runs.get`, `runs.cancel`, `events.subscribe`, `artifacts.describe`, `artifacts.read`, `artifacts.delete`; `deepchat run …` | read / local-maintenance | H owns all; A may inspect/pass owned IDs but cannot read bytes, delete, or cancel unrelated work | never | JSONL or binary artifact for H; metadata for A |
@@ -254,6 +254,12 @@ confirmation flag.
 Surface names and contracts are frozen by `surfaceVersion`. Additive entries require an advertised
 capability and surface-version change policy; removal or semantic incompatibility requires a new
 surface major. App and protocol versions are reported independently.
+
+Provider creation and updates accept only allowlisted adapter fields and credential-free HTTP(S)
+base URLs. V1 `providers.setCredential` handles API keys only, read from bounded stdin; OAuth flows
+and structured AWS/Vertex credentials remain on their existing typed renderer flows instead of
+accepting a generic credential object. Public model-config contracts reject unknown fields and omit
+main-owned identity fields even though the legacy renderer contract remains intentionally loose.
 
 ## Caller Model and Route Migration
 

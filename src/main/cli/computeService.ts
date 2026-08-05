@@ -38,6 +38,7 @@ import {
 import { CliRequestError } from './errors'
 import { resolveGeneratedMedia, type GeneratedMediaKind } from './mediaOutput'
 import { artifactExtensionForMimeType, type ArtifactSpool } from './artifactSpool'
+import { toPublicProviderSummary } from './providerModelAdminRoutes'
 
 const MAX_STREAM_DELTA_CHARACTERS = 1024 * 1024
 const MAX_MODEL_STREAM_EVENTS = 10_000
@@ -172,11 +173,7 @@ export class CliComputeService {
         .filter((model) => !enabledOnly || model.enabled)
 
       return PublicProviderSchema.parse({
-        id: provider.id,
-        name: provider.name || provider.id,
-        apiType: provider.apiType,
-        enabled: provider.enable,
-        custom: provider.custom === true,
+        ...toPublicProviderSummary(provider),
         models
       })
     })

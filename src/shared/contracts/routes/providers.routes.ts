@@ -14,6 +14,34 @@ import {
 } from '../domainSchemas'
 import { PROVIDER_IMPORT_CUSTOM_API_TYPES, PROVIDER_IMPORT_SOURCE_IDS } from '../../providerImport'
 
+export const PROVIDER_CREDENTIAL_MAX_BYTES = 64 * 1024
+
+const StoredProviderCredentialSchema = z
+  .string()
+  .min(1)
+  .max(PROVIDER_CREDENTIAL_MAX_BYTES)
+  .refine((value) => value.trim().length > 0, { message: 'Credential must not be blank' })
+  .refine((value) => new TextEncoder().encode(value).byteLength <= PROVIDER_CREDENTIAL_MAX_BYTES, {
+    message: 'Credential exceeds its UTF-8 byte limit'
+  })
+
+const PublicProviderApiTypeSchema = z.enum(PROVIDER_IMPORT_CUSTOM_API_TYPES)
+const PublicProviderBaseUrlSchema = z
+  .url()
+  .max(4096)
+  .superRefine((value, context) => {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      context.addIssue({ code: 'custom', message: 'Provider URL must use HTTP or HTTPS' })
+    }
+    if (url.username || url.password || url.search || url.hash) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Provider URL must not contain credentials, query parameters, or a fragment'
+      })
+    }
+  })
+
 export const PublicProviderModelSchema = z
   .object({
     id: z.string().min(1).max(256),
@@ -38,6 +66,7 @@ export const PublicProviderSchema = z
     apiType: z.string().min(1).max(128),
     enabled: z.boolean(),
     custom: z.boolean(),
+    storedCredentialConfigured: z.boolean(),
     models: z.array(PublicProviderModelSchema).max(10_000)
   })
   .strict()
@@ -48,8 +77,79 @@ export const providersListPublicRoute = defineRouteContract({
   output: z.object({ providers: z.array(PublicProviderSchema).max(1_000) }).strict()
 })
 
+export const PublicProviderSummarySchema = PublicProviderSchema.omit({ models: true })
+
+export const providersAddPublicRoute = defineRouteContract({
+  name: 'providers.addPublic',
+  input: z
+    .object({
+      name: z.string().trim().min(1).max(256),
+      apiType: PublicProviderApiTypeSchema,
+      baseUrl: PublicProviderBaseUrlSchema,
+      enabled: z.boolean().optional().default(true)
+    })
+    .strict(),
+  output: z.object({ provider: PublicProviderSummarySchema }).strict()
+})
+
+export const providersUpdatePublicRoute = defineRouteContract({
+  name: 'providers.updatePublic',
+  input: z
+    .object({
+      providerId: EntityIdSchema.max(128),
+      updates: z
+        .object({
+          name: z.string().trim().min(1).max(256).optional(),
+          apiType: PublicProviderApiTypeSchema.optional(),
+          baseUrl: PublicProviderBaseUrlSchema.optional(),
+          enabled: z.boolean().optional()
+        })
+        .strict()
+        .refine((updates) => Object.keys(updates).length > 0, {
+          message: 'At least one provider update is required'
+        })
+    })
+    .strict(),
+  output: z
+    .object({
+      provider: PublicProviderSummarySchema,
+      requiresRebuild: z.boolean()
+    })
+    .strict()
+})
+
+export const providersSetCredentialRoute = defineRouteContract({
+  name: 'providers.setCredential',
+  input: z.discriminatedUnion('action', [
+    z
+      .object({
+        providerId: EntityIdSchema.max(128),
+        action: z.literal('set'),
+        kind: z.literal('api-key'),
+        value: StoredProviderCredentialSchema
+      })
+      .strict(),
+    z
+      .object({
+        providerId: EntityIdSchema.max(128),
+        action: z.literal('clear'),
+        kind: z.literal('api-key')
+      })
+      .strict()
+  ]),
+  output: z
+    .object({
+      providerId: EntityIdSchema.max(128),
+      action: z.enum(['set', 'clear']),
+      kind: z.literal('api-key'),
+      storedApiKeyConfigured: z.boolean()
+    })
+    .strict()
+})
+
 export type PublicProvider = z.infer<typeof PublicProviderSchema>
 export type PublicProviderModel = z.infer<typeof PublicProviderModelSchema>
+export type PublicProviderSummary = z.infer<typeof PublicProviderSummarySchema>
 
 const ProviderImportSourceIdSchema = z.enum(PROVIDER_IMPORT_SOURCE_IDS)
 const ProviderImportCustomApiTypeSchema = z.enum(PROVIDER_IMPORT_CUSTOM_API_TYPES)
@@ -84,6 +184,12 @@ export const providersTestConnectionRoute = defineRouteContract({
     isOk: z.boolean(),
     errorMsg: z.string().nullable()
   })
+})
+
+export const providersTestPublicConnectionRoute = defineRouteContract({
+  name: 'providers.testPublicConnection',
+  input: providersTestConnectionRoute.input,
+  output: providersTestConnectionRoute.output
 })
 
 export const providersListRoute = defineRouteContract({

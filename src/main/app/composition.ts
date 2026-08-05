@@ -224,6 +224,7 @@ import {
   CliServer,
   createArtifactRoutes,
   createCliComputeRoutes,
+  createCliProviderModelAdminRoutes,
   createCliRoutes
 } from '@/cli'
 import { AcpRegistryMigrationService } from '@/agent/acp/catalog/acpRegistryMigrationService'
@@ -2130,6 +2131,7 @@ export async function createMainProcessControl(dependencies: {
   }
 
   function registerRoutes(): void {
+    const providerQueryScheduler = createNodeScheduler()
     const providerRoutes = createProviderRoutes({
       providerSettings,
       providerRuntime,
@@ -2141,7 +2143,7 @@ export async function createMainProcessControl(dependencies: {
         updateProvidersBatch: (batchUpdate) => providerRuntime.updateProvidersBatch(batchUpdate)
       }),
       oauthService,
-      scheduler: createNodeScheduler(),
+      scheduler: providerQueryScheduler,
       recordSettingsActivity: (input) => settingsDatabase.recordSettingsActivity(input)
     })
     const toolRoutes = createToolRoutes(toolService)
@@ -2383,6 +2385,16 @@ export async function createMainProcessControl(dependencies: {
     })
     const artifactRoutes = createArtifactRoutes(artifactSpool)
     const cliComputeRoutes = createCliComputeRoutes(cliComputeService)
+    const cliProviderModelAdminRoutes = createCliProviderModelAdminRoutes({
+      providerSettings,
+      providerRuntime,
+      scheduler: providerQueryScheduler,
+      recordSettingsActivity: (input) => {
+        void settingsDatabase.recordSettingsActivity(input).catch((error) => {
+          console.warn('[SettingsActivity] Failed to record CLI provider activity:', error)
+        })
+      }
+    })
     routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
@@ -2420,7 +2432,8 @@ export async function createMainProcessControl(dependencies: {
         approvalRoutes,
         cliRoutes,
         artifactRoutes,
-        cliComputeRoutes
+        cliComputeRoutes,
+        cliProviderModelAdminRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator

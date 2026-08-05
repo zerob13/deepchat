@@ -271,6 +271,7 @@ import {
   modelsExportConfigsRoute,
   modelsGetCapabilitiesRoute,
   modelsGetConfigRoute,
+  modelsGetPublicConfigRoute,
   modelsGetProviderCatalogRoute,
   modelsGetProviderConfigsRoute,
   modelsHasUserConfigRoute,
@@ -281,6 +282,7 @@ import {
   modelsResetConfigRoute,
   modelsSetBatchStatusRoute,
   modelsSetConfigRoute,
+  modelsSetPublicConfigRoute,
   modelsSetStatusRoute,
   modelsTranscribeAudioRoute,
   modelsUpdateCustomRoute
@@ -360,6 +362,7 @@ import {
   cronJobsUpsertRoute
 } from './routes/cronJobs.routes'
 import {
+  providersAddPublicRoute,
   providersAddRoute,
   providersGetAcpProcessConfigOptionsRoute,
   providersGetEmbeddingDimensionsRoute,
@@ -379,10 +382,13 @@ import {
   providersRemoveRoute,
   providersReorderRoute,
   providersRunAcpDebugActionRoute,
+  providersSetCredentialRoute,
   providersSetByIdRoute,
   providersSyncModelScopeMcpServersRoute,
   providersTestConnectionRoute,
+  providersTestPublicConnectionRoute,
   providersUpdateRateLimitRoute,
+  providersUpdatePublicRoute,
   providersUpdateRoute,
   providersWarmupAcpProcessRoute
 } from './routes/providers.routes'
@@ -928,6 +934,9 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
   [providersListRoute.name]: providersListRoute,
   [providersListSummariesRoute.name]: providersListSummariesRoute,
   [providersListPublicRoute.name]: providersListPublicRoute,
+  [providersAddPublicRoute.name]: providersAddPublicRoute,
+  [providersUpdatePublicRoute.name]: providersUpdatePublicRoute,
+  [providersSetCredentialRoute.name]: providersSetCredentialRoute,
   [providersListDefaultsRoute.name]: providersListDefaultsRoute,
   [providersSetByIdRoute.name]: providersSetByIdRoute,
   [providersUpdateRoute.name]: providersUpdateRoute,
@@ -936,6 +945,7 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
   [providersReorderRoute.name]: providersReorderRoute,
   [providersListModelsRoute.name]: providersListModelsRoute,
   [providersTestConnectionRoute.name]: providersTestConnectionRoute,
+  [providersTestPublicConnectionRoute.name]: providersTestPublicConnectionRoute,
   [providersGetRateLimitStatusRoute.name]: providersGetRateLimitStatusRoute,
   [providersGetKeyStatusRoute.name]: providersGetKeyStatusRoute,
   [providersUpdateRateLimitRoute.name]: providersUpdateRateLimitRoute,
@@ -964,7 +974,9 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
   [modelsRemoveCustomRoute.name]: modelsRemoveCustomRoute,
   [modelsUpdateCustomRoute.name]: modelsUpdateCustomRoute,
   [modelsGetConfigRoute.name]: modelsGetConfigRoute,
+  [modelsGetPublicConfigRoute.name]: modelsGetPublicConfigRoute,
   [modelsSetConfigRoute.name]: modelsSetConfigRoute,
+  [modelsSetPublicConfigRoute.name]: modelsSetPublicConfigRoute,
   [modelsResetConfigRoute.name]: modelsResetConfigRoute,
   [modelsGetProviderConfigsRoute.name]: modelsGetProviderConfigsRoute,
   [modelsHasUserConfigRoute.name]: modelsHasUserConfigRoute,

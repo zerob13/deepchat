@@ -193,6 +193,42 @@ export const modelsGetConfigRoute = defineRouteContract({
   })
 })
 
+export const PublicModelConfigSchema = ModelConfigSchema.omit({
+  conversationId: true,
+  ownedBy: true
+})
+  .extend({
+    maxTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    contextLength: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    maxCompletionTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
+  })
+  .strip()
+
+const PublicModelConfigInputSchema = PublicModelConfigSchema.omit({ isUserDefined: true }).strict()
+
+export const modelsGetPublicConfigRoute = defineRouteContract({
+  name: 'models.getPublicConfig',
+  input: z
+    .object({
+      modelId: z.string().min(1),
+      providerId: EntityIdSchema
+    })
+    .strict(),
+  output: z.object({ config: PublicModelConfigSchema }).strict()
+})
+
+export const modelsSetPublicConfigRoute = defineRouteContract({
+  name: 'models.setPublicConfig',
+  input: z
+    .object({
+      modelId: z.string().min(1),
+      providerId: EntityIdSchema,
+      config: PublicModelConfigInputSchema
+    })
+    .strict(),
+  output: modelsGetPublicConfigRoute.output
+})
+
 export const modelsSetConfigRoute = defineRouteContract({
   name: 'models.setConfig',
   input: z.object({
