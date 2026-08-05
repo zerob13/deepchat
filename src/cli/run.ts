@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import {
+  LOCAL_CONTROL_AGENT_TOKEN_ENV,
   createLocalControlFailure,
   type LocalControlDescriptor,
   type LocalControlRpcResponse
 } from '@shared/contracts/localControl'
+import { artifactsDescribeRoute } from '@shared/contracts/routes/artifacts.routes'
 import { parseCliArguments, formatCliHelp, inferCliOutputMode, type CliOutputMode } from './args'
 import {
   loadLocalControlDescriptor,
@@ -19,6 +21,7 @@ import {
 } from './errors'
 import { formatHumanResult, serializeMachineResponse } from './format'
 import { invokeLocalControlRpc, type CliRpcInvocation } from './transport'
+import { downloadArtifact } from './artifacts'
 
 const SIGNAL_GRACE_MS = 1_000
 
@@ -139,12 +142,24 @@ export async function runCli(
     })
     if (controller.signal.aborted) throw controller.signal.reason
     const token = selectLocalControlToken(descriptor, env)
+    if (
+      parsed.operation === 'download' &&
+      Object.prototype.hasOwnProperty.call(env, LOCAL_CONTROL_AGENT_TOKEN_ENV)
+    ) {
+      throw new CliClientError(
+        'permission_denied',
+        'Agent callers cannot download artifact bytes or use --out',
+        CLI_EXIT_CODES.authorization
+      )
+    }
+    const invocationContract =
+      parsed.operation === 'download' ? artifactsDescribeRoute : parsed.contract
     const response = await (dependencies.invokeRpc ?? invokeLocalControlRpc)({
       descriptor,
       token,
       id: requestId,
-      method: parsed.contract.name,
-      params: {},
+      method: invocationContract.name,
+      params: parsed.params,
       signal: controller.signal
     })
 
@@ -165,8 +180,28 @@ export async function runCli(
         CLI_EXIT_CODES.internal
       )
     }
+    if (parsed.operation === 'download') {
+      if (!parsed.outputPath || !('artifact' in result.data)) {
+        throw new CliClientError(
+          'internal_error',
+          'Artifact download command has no validated output target',
+          CLI_EXIT_CODES.internal
+        )
+      }
+      await downloadArtifact({
+        descriptor,
+        token,
+        metadata: result.data.artifact,
+        outputPath: parsed.outputPath,
+        overwrite: parsed.overwrite,
+        signal: controller.signal
+      })
+    }
     if (parsed.outputMode === 'text') {
-      writeText(stdout, formatHumanResult(parsed.contract, response.result))
+      writeText(
+        stdout,
+        formatHumanResult(parsed.contract, response.result, { outputPath: parsed.outputPath })
+      )
     } else {
       writeText(stdout, serializeMachineResponse(response))
     }

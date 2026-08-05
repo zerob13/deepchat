@@ -253,6 +253,46 @@ describe('CLI local transport', () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
+  it('rejects request bodies on artifact download endpoints', async () => {
+    const { descriptor } = await createTestServer()
+    const body = await new Promise<LocalControlRpcResponse>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          socketPath:
+            descriptor.endpoint.kind === 'unix'
+              ? descriptor.endpoint.path
+              : descriptor.endpoint.name,
+          path: '/v1/artifacts/abcdefghijklmnop',
+          method: 'GET',
+          headers: {
+            authorization: `Bearer ${descriptor.token}`,
+            'content-length': 1
+          }
+        },
+        (response) => {
+          const chunks: Buffer[] = []
+          response.on('data', (chunk: Buffer) => chunks.push(chunk))
+          response.once('error', reject)
+          response.once('end', () => {
+            try {
+              resolve(
+                LocalControlRpcResponseSchema.parse(
+                  JSON.parse(Buffer.concat(chunks).toString('utf8'))
+                )
+              )
+            } catch (error) {
+              reject(error)
+            }
+          })
+        }
+      )
+      request.once('error', reject)
+      request.end('x')
+    })
+
+    expect(body).toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+
   it('applies agent expiry and scopes independently of the bearer token', async () => {
     let scopes: readonly LocalControlScope[] = ['models:read']
     let expiresAt = Date.now() - 1

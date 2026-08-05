@@ -9,7 +9,7 @@ import {
   LocalControlScopeSchema
 } from '../localControl'
 
-export const LocalControlTransportSchema = z.enum(['rpc', 'stream', 'upload'])
+export const LocalControlTransportSchema = z.enum(['rpc', 'stream', 'upload', 'download'])
 export const LocalControlApprovalModeSchema = z.enum(['never', 'policy'])
 
 export const LocalControlCapabilitySchema = z

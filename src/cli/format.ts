@@ -14,7 +14,11 @@ function formatDuration(milliseconds: number): string {
     .join(' ')
 }
 
-export function formatHumanResult(contract: CliRpcContract, value: JsonValue): string {
+export function formatHumanResult(
+  contract: CliRpcContract,
+  value: JsonValue,
+  context: { outputPath?: string } = {}
+): string {
   switch (contract.name) {
     case 'cli.status': {
       const result = contract.output.parse(value)
@@ -53,6 +57,22 @@ export function formatHumanResult(contract: CliRpcContract, value: JsonValue): s
           (check) => `[${check.status.toUpperCase()}] ${check.id}: ${check.message}`
         )
       ].join('\n')
+    }
+    case 'artifacts.describe': {
+      const { artifact } = contract.output.parse(value)
+      return [
+        `${artifact.id}  ${artifact.mimeType}  ${artifact.size} bytes`,
+        `SHA-256: ${artifact.sha256}`,
+        `Expires: ${new Date(artifact.expiresAt).toISOString()}`
+      ].join('\n')
+    }
+    case 'artifacts.read': {
+      const { artifact } = contract.output.parse(value)
+      return `Saved ${artifact.size} bytes to ${context.outputPath ?? artifact.filename}`
+    }
+    case 'artifacts.delete': {
+      contract.output.parse(value)
+      return 'Artifact deleted'
     }
   }
 }

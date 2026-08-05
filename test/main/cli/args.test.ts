@@ -59,4 +59,28 @@ describe('CLI argument grammar', () => {
     })
     expect(() => parseCliArguments(['--help'], {})).toThrow('deepchat <domain> <verb>')
   })
+
+  it('parses artifact ownership commands without accepting output flags on metadata operations', () => {
+    const id = 'artifact_identifier_123'
+
+    expect(
+      parseCliArguments(['artifact', 'get', '--id', id, '--out', './image.png', '--overwrite'], {})
+    ).toMatchObject({
+      operation: 'download',
+      params: { id },
+      outputPath: './image.png',
+      overwrite: true
+    })
+    expect(parseCliArguments(['artifact', 'describe', `--id=${id}`], {})).toMatchObject({
+      operation: 'rpc',
+      params: { id }
+    })
+    expect(() =>
+      parseCliArguments(['artifact', 'delete', '--id', id, '--out', './invalid'], {})
+    ).toThrow('only valid for deepchat artifact get')
+    expect(() => parseCliArguments(['artifact', 'get', '--id', id], {})).toThrow('requires --out')
+    expect(() =>
+      parseCliArguments(['artifact', 'get', '--id', id, '--out', '--overwrite'], {})
+    ).toThrow('Missing value for --out')
+  })
 })

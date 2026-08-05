@@ -2,10 +2,13 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { z } from 'zod'
+import { ArtifactIdSchema, artifactsReadRoute } from '@shared/contracts/routes'
 import { JsonValueSchema, TimestampMsSchema, type JsonValue } from '@shared/contracts/common'
 import {
   LOCAL_CONTROL_DESCRIPTOR_FILENAME,
+  LOCAL_CONTROL_ARTIFACT_PATH_PREFIX,
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_RPC_PATH,
   LOCAL_CONTROL_SCOPES,
@@ -30,7 +33,9 @@ import {
 } from './descriptor'
 import { CliRequestError } from './errors'
 import { CLI_SURFACE_V1, getCliSurfaceEntry } from './surface'
+import type { CliSurfaceEntry } from './surface'
 import type { CliRuntimeStatus } from './routes'
+import type { ArtifactSpool } from './artifactSpool'
 
 const MAX_HEADER_BYTES = 8 * 1024
 const MAX_CONNECTIONS = 64
@@ -59,6 +64,7 @@ export type CliServerDependencies = Readonly<{
     signal: AbortSignal
   ): Promise<unknown>
   resolveAgentToken?(token: string): AgentCliToken | null
+  artifactSpool?: ArtifactSpool
   now?: () => number
   platform?: NodeJS.Platform
   pid?: number
@@ -105,6 +111,16 @@ function toSafeRequestId(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function artifactContentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]|["\\]/g, '_')
+  const wellFormedFilename = Buffer.from(filename, 'utf8').toString('utf8')
+  const encoded = encodeURIComponent(wellFormedFilename).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`
 }
 
 function requestAbortError(signal: AbortSignal): CliRequestError {
@@ -382,7 +398,10 @@ export class CliServer {
     response.setHeader('X-Content-Type-Options', 'nosniff')
 
     const connectionId = this.connectionIds.get(request.socket) ?? randomUUID()
-    if (request.method !== 'POST' || request.url !== LOCAL_CONTROL_RPC_PATH) {
+    const isRpcRequest = request.method === 'POST' && request.url === LOCAL_CONTROL_RPC_PATH
+    const isArtifactRequest =
+      request.method === 'GET' && request.url?.startsWith(LOCAL_CONTROL_ARTIFACT_PATH_PREFIX)
+    if (!isRpcRequest && !isArtifactRequest) {
       this.sendFailure(
         response,
         404,
@@ -415,6 +434,10 @@ export class CliServer {
           httpStatus: 401
         })
       )
+      return
+    }
+    if (isArtifactRequest) {
+      await this.handleArtifactDownload(request, response, caller)
       return
     }
     if (!requestContentTypeIsJson(request)) {
@@ -500,16 +523,7 @@ export class CliServer {
           httpStatus: 413
         })
       }
-      if (!entry.callers.includes(caller.principal)) {
-        throw new CliRequestError('permission_denied', 'Caller is not allowed for method', {
-          httpStatus: 403
-        })
-      }
-      if (!entry.scopes.every((scope) => caller.scopes.includes(scope))) {
-        throw new CliRequestError('permission_denied', 'Required scope is missing', {
-          httpStatus: 403
-        })
-      }
+      this.assertSurfaceAccess(entry, caller)
 
       const parsedInput = entry.contract.input.safeParse(rpcRequest.params)
       if (!parsedInput.success) {
@@ -569,6 +583,142 @@ export class CliServer {
       const remaining = (this.pendingByConnection.get(connectionId) ?? 1) - 1
       if (remaining > 0) this.pendingByConnection.set(connectionId, remaining)
       else this.pendingByConnection.delete(connectionId)
+    }
+  }
+
+  private assertSurfaceAccess(entry: CliSurfaceEntry, caller: CliRouteCaller): void {
+    if (!entry.callers.includes(caller.principal)) {
+      throw new CliRequestError('permission_denied', 'Caller is not allowed for method', {
+        httpStatus: 403
+      })
+    }
+    if (!entry.scopes.every((scope) => caller.scopes.includes(scope))) {
+      throw new CliRequestError('permission_denied', 'Required scope is missing', {
+        httpStatus: 403
+      })
+    }
+  }
+
+  private async handleArtifactDownload(
+    request: IncomingMessage,
+    response: ServerResponse,
+    caller: CliRouteCaller
+  ): Promise<void> {
+    const rawId = request.url?.slice(LOCAL_CONTROL_ARTIFACT_PATH_PREFIX.length) ?? ''
+    const parsedId = ArtifactIdSchema.safeParse(rawId)
+    const entry = getCliSurfaceEntry(artifactsReadRoute.name)
+    if (!parsedId.success || !entry || entry.transport !== 'download') {
+      this.sendFailure(
+        response,
+        404,
+        UNKNOWN_REQUEST_ID,
+        new CliRequestError('not_found', 'Artifact endpoint was not found', { httpStatus: 404 })
+      )
+      return
+    }
+    const contentLength = request.headers['content-length']
+    if (
+      request.headers['transfer-encoding'] !== undefined ||
+      (contentLength !== undefined && contentLength !== '0')
+    ) {
+      this.sendFailure(
+        response,
+        400,
+        UNKNOWN_REQUEST_ID,
+        new CliRequestError('invalid_request', 'Artifact downloads do not accept a request body')
+      )
+      return
+    }
+
+    const connectionPending = this.pendingByConnection.get(caller.connectionId) ?? 0
+    if (
+      this.pendingRequests >= MAX_PENDING_REQUESTS ||
+      connectionPending >= MAX_PENDING_PER_CONNECTION
+    ) {
+      this.sendFailure(
+        response,
+        429,
+        UNKNOWN_REQUEST_ID,
+        new CliRequestError('rate_limited', 'Too many pending local-control requests', {
+          httpStatus: 429,
+          retriable: true
+        })
+      )
+      return
+    }
+
+    this.pendingRequests += 1
+    this.pendingByConnection.set(caller.connectionId, connectionPending + 1)
+    const controller = new AbortController()
+    this.requestControllers.add(controller)
+    const abort = () => {
+      abortRequest(controller, new CliRequestError('cancelled', 'Request was cancelled'))
+    }
+    const abortOnIncompleteResponse = () => {
+      if (!response.writableEnded) abort()
+    }
+    request.once('aborted', abort)
+    response.once('close', abortOnIncompleteResponse)
+    const timeout = setTimeout(() => {
+      abortRequest(
+        controller,
+        new CliRequestError('timeout', 'Request timed out', {
+          httpStatus: 504,
+          retriable: true
+        })
+      )
+    }, entry.limits.timeoutMs)
+    timeout.unref()
+
+    try {
+      this.assertSurfaceAccess(entry, caller)
+      if (!this.dependencies.artifactSpool) {
+        throw new CliRequestError('unavailable', 'Artifact service is unavailable', {
+          httpStatus: 503,
+          retriable: true
+        })
+      }
+      const artifact = await this.dependencies.artifactSpool.openRead(parsedId.data, caller)
+      if (controller.signal.aborted) {
+        artifact.stream.destroy()
+        throw requestAbortError(controller.signal)
+      }
+      response.statusCode = 200
+      response.setHeader('Content-Type', artifact.metadata.mimeType)
+      response.setHeader('Content-Length', artifact.metadata.size)
+      response.setHeader(
+        'Content-Disposition',
+        artifactContentDisposition(artifact.metadata.filename)
+      )
+      response.setHeader('X-DeepChat-Artifact-Id', artifact.metadata.id)
+      response.setHeader('X-Content-SHA256', artifact.metadata.sha256)
+      await pipeline(artifact.stream, response, { signal: controller.signal })
+    } catch (error) {
+      const failure = controller.signal.aborted ? requestAbortError(controller.signal) : error
+      if (failure instanceof CliRequestError && !response.headersSent) {
+        this.sendFailure(response, failure.httpStatus, UNKNOWN_REQUEST_ID, failure)
+        return
+      }
+      if (!response.headersSent) {
+        this.log.warn('[CLI] Artifact download failed', failure)
+        this.sendFailure(
+          response,
+          500,
+          UNKNOWN_REQUEST_ID,
+          new CliRequestError('internal_error', 'Artifact download failed', { httpStatus: 500 })
+        )
+        return
+      }
+      if (!response.destroyed) response.destroy()
+    } finally {
+      clearTimeout(timeout)
+      request.off('aborted', abort)
+      response.off('close', abortOnIncompleteResponse)
+      this.requestControllers.delete(controller)
+      this.pendingRequests = Math.max(0, this.pendingRequests - 1)
+      const remaining = (this.pendingByConnection.get(caller.connectionId) ?? 1) - 1
+      if (remaining > 0) this.pendingByConnection.set(caller.connectionId, remaining)
+      else this.pendingByConnection.delete(caller.connectionId)
     }
   }
 

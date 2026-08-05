@@ -5,6 +5,7 @@ export const LOCAL_CONTROL_PROTOCOL_VERSION = 1 as const
 export const LOCAL_CONTROL_SURFACE_VERSION = 1 as const
 export const LOCAL_CONTROL_DESCRIPTOR_FILENAME = 'local-control.json'
 export const LOCAL_CONTROL_RPC_PATH = '/v1/rpc'
+export const LOCAL_CONTROL_ARTIFACT_PATH_PREFIX = '/v1/artifacts/'
 export const LOCAL_CONTROL_AGENT_TOKEN_ENV = 'DEEPCHAT_CLI_AGENT_TOKEN'
 
 export const LOCAL_CONTROL_EFFECTS = [

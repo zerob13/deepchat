@@ -207,7 +207,7 @@ import {
   type RouteDispatcher
 } from '@/routes'
 import { createNodeScheduler } from '@/routes/scheduler'
-import { CliServer, createCliRoutes } from '@/cli'
+import { ArtifactSpool, CliServer, createArtifactRoutes, createCliRoutes } from '@/cli'
 import { AcpRegistryMigrationService } from '@/agent/acp/catalog/acpRegistryMigrationService'
 import { killTerminal } from '@/agent/acp/launch/acpInitHelper'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
@@ -357,6 +357,10 @@ export async function createMainProcessControl(dependencies: {
     dependencies.onWindowCreated,
     startupWorkloadCoordinator
   )
+  const artifactSpool = new ArtifactSpool({
+    directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
+    log: logger
+  })
   const cliServer = new CliServer({
     userDataPath: app.getPath('userData'),
     appVersion: app.getVersion(),
@@ -367,6 +371,7 @@ export async function createMainProcessControl(dependencies: {
       signal.throwIfAborted()
       return output
     },
+    artifactSpool,
     log: logger
   })
   const semanticNotificationScheduler = new TimeoutNotificationScheduler()
@@ -1873,6 +1878,7 @@ export async function createMainProcessControl(dependencies: {
 
   async function destroy(): Promise<void> {
     await runDestroyStep('cliServer.stop', () => cliServer.stop())
+    await runDestroyStep('artifactSpool.close', () => artifactSpool.close())
     await runDestroyStep('providerCatalog.unsubscribe', () => unsubscribeProviderDbCatalog())
     await runDestroyStep('liveDelegationService.stop', () => liveDelegationService.stop())
     await runDestroyStep('cronJobs.destroy', () => cronJobs.destroy())
@@ -2236,6 +2242,7 @@ export async function createMainProcessControl(dependencies: {
       hasTrustedRenderer: () =>
         windowPresenter.getAllWindows().some((window) => !window.isDestroyed())
     })
+    const artifactRoutes = createArtifactRoutes(artifactSpool)
     routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
@@ -2270,7 +2277,8 @@ export async function createMainProcessControl(dependencies: {
         notificationRoutes,
         appSettingsRoutes,
         appRoutes,
-        cliRoutes
+        cliRoutes,
+        artifactRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator
@@ -2660,6 +2668,7 @@ export async function createMainProcessControl(dependencies: {
   memoryService.startBackgroundMaintenance()
   appLifecycleState = 'running'
   try {
+    await artifactSpool.initialize()
     await cliServer.start()
   } catch (error) {
     logger.error('[CLI] Failed to start local control server', error)

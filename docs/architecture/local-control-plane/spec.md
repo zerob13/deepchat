@@ -463,8 +463,9 @@ The spool is output-only and intentionally smaller than a general asset store:
 - per-artifact, per-request, per-connection, and aggregate byte/count limits;
 - streaming writes with hash/size accounting and atomic publication;
 - ownership checks on describe/read/delete and no path exposure;
-- TTL cleanup, disconnect cleanup for non-detached output, startup cleanup after crashes, and shutdown
-  cleanup;
+- TTL cleanup, request-failure cleanup for unpublished output, startup cleanup after crashes, and
+  shutdown cleanup; published artifacts survive their creating HTTP connection because download uses
+  a separate request;
 - bounded streaming download with backpressure.
 
 Input uploads use a separate private temporary-body utility and never become spool artifacts unless a

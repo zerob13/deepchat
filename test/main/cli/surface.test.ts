@@ -6,7 +6,15 @@ describe('CLI surface V1', () => {
   it('contains only explicit canonical route contracts', () => {
     const methods = Array.from(CLI_SURFACE_V1.keys()).sort()
 
-    expect(methods).toEqual(['cli.capabilities', 'cli.doctor', 'cli.status', 'cli.version'])
+    expect(methods).toEqual([
+      'artifacts.delete',
+      'artifacts.describe',
+      'artifacts.read',
+      'cli.capabilities',
+      'cli.doctor',
+      'cli.status',
+      'cli.version'
+    ])
     for (const [method, entry] of CLI_SURFACE_V1) {
       expect(entry.contract).toBe(
         DEEPCHAT_ROUTE_CATALOG[method as keyof typeof DEEPCHAT_ROUTE_CATALOG]
@@ -22,19 +30,16 @@ describe('CLI surface V1', () => {
 
   it('publishes stable sorted capability metadata', () => {
     expect(listCliSurfaceCapabilities()).toEqual([
+      expect.objectContaining({ method: 'artifacts.delete', effect: 'local-maintenance' }),
+      expect.objectContaining({ method: 'artifacts.describe', effect: 'read' }),
+      expect.objectContaining({ method: 'artifacts.read', effect: 'read', transport: 'download' }),
       expect.objectContaining({ method: 'cli.capabilities', effect: 'read' }),
       expect.objectContaining({ method: 'cli.doctor', effect: 'read' }),
       expect.objectContaining({ method: 'cli.status', effect: 'read' }),
       expect.objectContaining({ method: 'cli.version', effect: 'read' })
     ])
     expect(
-      listCliSurfaceCapabilities().every(
-        (capability) =>
-          capability.callers.join(',') === 'human,agent' &&
-          capability.scopes.join(',') === 'system:read' &&
-          capability.transport === 'rpc' &&
-          capability.approval === 'never'
-      )
+      listCliSurfaceCapabilities().every((capability) => capability.approval === 'never')
     ).toBe(true)
   })
 })

@@ -4,6 +4,13 @@ import {
   cliStatusRoute,
   cliVersionRoute
 } from '@shared/contracts/routes/cli.routes'
+import {
+  ArtifactIdSchema,
+  artifactsDeleteRoute,
+  artifactsDescribeRoute,
+  artifactsReadRoute
+} from '@shared/contracts/routes/artifacts.routes'
+import type { JsonValue } from '@shared/contracts/json'
 import { CliUsageError } from './errors'
 
 export const CLI_OUTPUT_ENV = 'DEEPCHAT_CLI_OUTPUT'
@@ -17,6 +24,11 @@ export type CliRpcContract =
   | typeof cliVersionRoute
   | typeof cliCapabilitiesRoute
   | typeof cliDoctorRoute
+  | typeof artifactsDescribeRoute
+  | typeof artifactsReadRoute
+  | typeof artifactsDeleteRoute
+
+export type CliCommandOperation = 'rpc' | 'download'
 
 export type ParsedCliArguments = Readonly<{
   domain: string
@@ -25,13 +37,20 @@ export type ParsedCliArguments = Readonly<{
   outputMode: CliOutputMode
   timeoutMs: number
   helpRequested: boolean
+  operation: CliCommandOperation
+  params: JsonValue
+  outputPath?: string
+  overwrite: boolean
 }>
 
 const COMMANDS = new Map<string, CliRpcContract>([
   ['system status', cliStatusRoute],
   ['system version', cliVersionRoute],
   ['system capabilities', cliCapabilitiesRoute],
-  ['system doctor', cliDoctorRoute]
+  ['system doctor', cliDoctorRoute],
+  ['artifact describe', artifactsDescribeRoute],
+  ['artifact get', artifactsReadRoute],
+  ['artifact delete', artifactsDeleteRoute]
 ])
 
 function parseOutputMode(value: string | undefined): CliOutputMode {
@@ -90,6 +109,26 @@ export function parseCliArguments(
     : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
   let helpRequested = false
+  let artifactId: string | undefined
+  let outputPath: string | undefined
+  let overwrite = false
+
+  const readOptionValue = (
+    argument: string,
+    index: number
+  ): { value: string; nextIndex: number } => {
+    const equalsIndex = argument.indexOf('=')
+    if (equalsIndex >= 0) {
+      const value = argument.slice(equalsIndex + 1)
+      if (!value) throw new CliUsageError(`Missing value for ${argument.slice(0, equalsIndex)}`)
+      return { value, nextIndex: index }
+    }
+    const value = argv[index + 1]
+    if (!value || value.startsWith('--')) {
+      throw new CliUsageError(`Missing value for ${argument}`)
+    }
+    return { value, nextIndex: index + 1 }
+  }
 
   for (let index = 2; index < argv.length; index += 1) {
     const argument = argv[index]
@@ -122,7 +161,46 @@ export function parseCliArguments(
       timeoutSeen = true
       continue
     }
+    if (argument === '--id' || argument.startsWith('--id=')) {
+      if (artifactId !== undefined) throw new CliUsageError('--id may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      const parsedId = ArtifactIdSchema.safeParse(parsedOption.value)
+      if (!parsedId.success) throw new CliUsageError('--id is not a valid artifact identifier')
+      artifactId = parsedId.data
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--out' || argument.startsWith('--out=')) {
+      if (outputPath !== undefined) throw new CliUsageError('--out may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      outputPath = parsedOption.value
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--overwrite') {
+      if (overwrite) throw new CliUsageError('--overwrite may be specified only once')
+      overwrite = true
+      continue
+    }
     throw new CliUsageError(`Unknown option after ${domain} ${verb}: ${argument}`)
+  }
+
+  const isArtifactCommand = domain === 'artifact'
+  if (!helpRequested && isArtifactCommand && !artifactId) {
+    throw new CliUsageError(`deepchat ${domain} ${verb} requires --id <artifact-id>`)
+  }
+  if (!helpRequested && commandKey === 'artifact get' && !outputPath) {
+    throw new CliUsageError('deepchat artifact get requires --out <path>')
+  }
+  if (!isArtifactCommand && (artifactId !== undefined || outputPath !== undefined || overwrite)) {
+    throw new CliUsageError(`Artifact options are not valid for deepchat ${domain} ${verb}`)
+  }
+  if (
+    isArtifactCommand &&
+    commandKey !== 'artifact get' &&
+    (outputPath !== undefined || overwrite)
+  ) {
+    throw new CliUsageError(`--out and --overwrite are only valid for deepchat artifact get`)
   }
 
   return {
@@ -131,14 +209,24 @@ export function parseCliArguments(
     contract,
     outputMode,
     timeoutMs,
-    helpRequested: helpRequested || isHelpCommand
+    helpRequested: helpRequested || isHelpCommand,
+    operation: commandKey === 'artifact get' ? 'download' : 'rpc',
+    params: artifactId ? { id: artifactId } : {},
+    ...(outputPath ? { outputPath } : {}),
+    overwrite
   }
 }
 
 export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'verb'>): string {
   if (command && command.domain !== 'help') {
+    const commandOptions =
+      command.domain === 'artifact'
+        ? command.verb === 'get'
+          ? ' --id <artifact-id> --out <path> [--overwrite]'
+          : ' --id <artifact-id>'
+        : ''
     return [
-      `Usage: deepchat ${command.domain} ${command.verb} [--json|--jsonl] [--timeout <ms>]`,
+      `Usage: deepchat ${command.domain} ${command.verb}${commandOptions} [--json|--jsonl] [--timeout <ms>]`,
       '',
       'Global flags must follow the domain and verb.'
     ].join('\n')
@@ -152,6 +240,9 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  system version       Show app and protocol versions',
     '  system capabilities  List the exposed CLI surface',
     '  system doctor        Run local transport diagnostics',
+    '  artifact describe    Show owned artifact metadata',
+    '  artifact get         Download an owned artifact',
+    '  artifact delete      Delete an owned artifact',
     '  help commands        Show this help',
     '',
     'Options (after domain and verb):',

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { runCli } from './run'
 
 export { parseCliArguments, formatCliHelp } from './args'
+export { downloadArtifact } from './artifacts'
 export { loadLocalControlDescriptor, resolveCliUserDataPath } from './discovery'
 export { CLI_EXIT_CODES } from './errors'
 export { runCli } from './run'

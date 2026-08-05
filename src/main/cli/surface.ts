@@ -1,5 +1,8 @@
 import type { RouteContract } from '@shared/contracts/contract'
 import {
+  artifactsDeleteRoute,
+  artifactsDescribeRoute,
+  artifactsReadRoute,
   cliCapabilitiesRoute,
   cliDoctorRoute,
   cliStatusRoute,
@@ -12,7 +15,7 @@ import type {
   LocalControlScope
 } from '@shared/contracts/localControl'
 
-export type LocalControlTransport = 'rpc' | 'stream' | 'upload'
+export type LocalControlTransport = 'rpc' | 'stream' | 'upload' | 'download'
 export type LocalControlApprovalMode = 'never' | 'policy'
 
 export type CliRouteLimits = Readonly<{
@@ -46,6 +49,33 @@ const diagnosticEntry = (contract: RouteContract): CliSurfaceEntry => ({
 })
 
 const CLI_SURFACE_V1_ENTRIES = [
+  {
+    contract: artifactsDescribeRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['artifacts:read'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: artifactsReadRoute,
+    effect: 'read',
+    callers: ['human'],
+    scopes: ['artifacts:read'],
+    transport: 'download',
+    approval: 'never',
+    limits: { maxBodyBytes: 1, timeoutMs: 5 * 60_000 }
+  },
+  {
+    contract: artifactsDeleteRoute,
+    effect: 'local-maintenance',
+    callers: ['human'],
+    scopes: ['artifacts:manage'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: DIAGNOSTIC_LIMITS
+  },
   diagnosticEntry(cliStatusRoute),
   diagnosticEntry(cliVersionRoute),
   diagnosticEntry(cliCapabilitiesRoute),

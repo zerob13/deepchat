@@ -1,5 +1,10 @@
 import type { z } from 'zod'
 import type { RouteContract } from './common'
+import {
+  artifactsDeleteRoute,
+  artifactsDescribeRoute,
+  artifactsReadRoute
+} from './routes/artifacts.routes'
 import { acpTerminalInputRoute, acpTerminalKillRoute } from './routes/acp-terminal.routes'
 import {
   browserAttachCurrentWindowRoute,
@@ -560,6 +565,7 @@ import {
 } from './routes/orchestration.routes'
 
 export * from './routes/browser.routes'
+export * from './routes/artifacts.routes'
 export * from './routes/computerUse.routes'
 export * from './routes/acp-terminal.routes'
 export * from './routes/chat.routes'
@@ -940,6 +946,9 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
 } satisfies Record<string, RouteContract>
 
 const DEEPCHAT_ROUTE_CATALOG_PART_5 = {
+  [artifactsDescribeRoute.name]: artifactsDescribeRoute,
+  [artifactsReadRoute.name]: artifactsReadRoute,
+  [artifactsDeleteRoute.name]: artifactsDeleteRoute,
   [cliStatusRoute.name]: cliStatusRoute,
   [cliVersionRoute.name]: cliVersionRoute,
   [cliCapabilitiesRoute.name]: cliCapabilitiesRoute,
