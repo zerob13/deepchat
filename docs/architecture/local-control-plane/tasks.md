@@ -81,7 +81,7 @@
 - [ ] Keep `deepchat` out of `SAFE_COMMANDS`, enforce domain/verb-first grammar, and deny Agent
   artifact-byte/output-path access.
 - [ ] Add the bundled CLI Skill without exposing the human descriptor.
-- [ ] Add packaged diagnostics/compute/artifact/OCR/Agent-policy smoke coverage.
+- [x] Add bundled diagnostics/compute/artifact/OCR/Agent-policy and desktop-shutdown smoke coverage.
 
 ## Validation and Delivery
 

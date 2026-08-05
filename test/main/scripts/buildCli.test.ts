@@ -13,6 +13,24 @@ import {
 
 const execFileAsync = promisify(execFile)
 
+async function runGeneratedLauncher(outputDirectory: string) {
+  const environment = {
+    ...process.env,
+    PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter)
+  }
+  if (process.platform === 'win32') {
+    const launcherPath = path.join(outputDirectory, 'deepchat.cmd')
+    return await execFileAsync(
+      process.env.ComSpec ?? 'cmd.exe',
+      ['/d', '/s', '/c', `"${launcherPath}" help commands`],
+      { env: environment }
+    )
+  }
+  return await execFileAsync(path.join(outputDirectory, 'deepchat'), ['help', 'commands'], {
+    env: environment
+  })
+}
+
 describe('CLI bundle', () => {
   it('builds a standalone Node entry and explicit bundled-runtime launchers', async () => {
     const outputDirectory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-build-'))
@@ -21,10 +39,7 @@ describe('CLI bundle', () => {
       const entryPath = path.join(outputDirectory, 'deepchat.mjs')
       const source = await readFile(entryPath, 'utf8')
       const result = await execFileAsync(process.execPath, [entryPath, 'help', 'commands'])
-      const launcherResult = await execFileAsync(path.join(outputDirectory, 'deepchat'), [
-        'help',
-        'commands'
-      ])
+      const launcherResult = await runGeneratedLauncher(outputDirectory)
 
       expect(source.startsWith('#!/usr/bin/env node')).toBe(true)
       expect(source).not.toMatch(/from\s+["']zod["']/)
