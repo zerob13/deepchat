@@ -2169,8 +2169,8 @@ export async function createMainProcessControl(dependencies: {
     const appRoutes = createAppRoutes({
       logging: loggingService,
       rendererPerformance: rendererPerformanceLogService,
-      isMainWindowContext: (context) =>
-        windowPresenter.mainWindow?.webContents.id === context.webContentsId,
+      isMainWindowContext: (caller) =>
+        windowPresenter.mainWindow?.webContents.id === caller.webContentsId,
       agentSettings,
       projects: projectService,
       databaseSecurity: databaseSecurityService,

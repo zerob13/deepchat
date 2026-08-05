@@ -9,11 +9,11 @@
 - [x] Specify `CLI_SURFACE_V1`, the ten-file `RouteCaller` migration, and `ApprovalBroker` adapters.
 - [x] Specify transport, discovery, artifact, event, CLI grammar, packaging, and Agent-token contracts.
 - [x] Complete the severity-ranked architecture-document review and resolve its findings.
-- [ ] Commit the accepted SDD locally.
+- [x] Commit the accepted SDD locally.
 
 ## Typed Foundation
 
-- [ ] Add `RouteCaller` and migrate renderer-dependent integrations without behavior change.
+- [x] Add `RouteCaller` and migrate renderer-dependent integrations without behavior change.
 - [ ] Add canonical local-control contracts and redacted public DTOs.
 - [ ] Define and test the deny-by-default versioned surface registry.
 - [ ] Add local-control error codes, request/result envelopes, and route limits.

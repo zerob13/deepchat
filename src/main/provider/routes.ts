@@ -64,7 +64,11 @@ import {
   providersWarmupAcpProcessRoute,
   type SettingsActivityInput
 } from '@shared/contracts/routes'
-import { createRouteMap, type DeepchatRouteMap } from '@/routes/routeRegistry'
+import {
+  createRouteMap,
+  requireRendererCaller,
+  type DeepchatRouteMap
+} from '@/routes/routeRegistry'
 import type { ProviderImportService } from './providerImportService'
 import { ProviderService, type ProviderQueryScheduler } from './providerService'
 import type { ProviderRuntime } from '.'
@@ -369,10 +373,11 @@ export function createProviderRoutes(deps: {
       providersRunAcpDebugActionRoute.name,
       async (rawInput, context) => {
         const input = providersRunAcpDebugActionRoute.input.parse(rawInput)
+        const caller = requireRendererCaller(context)
         return providersRunAcpDebugActionRoute.output.parse({
           result: await acpProviderAdminPort.runAcpDebugAction({
             ...input,
-            webContentsId: context.webContentsId
+            webContentsId: caller.webContentsId
           })
         })
       }

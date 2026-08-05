@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createRendererRouteContext } from '@/routes/routeRegistry'
 import { createProviderRoutes } from '@/provider/routes'
 import {
   modelsGetCapabilitiesRoute,
@@ -10,7 +11,7 @@ import {
 } from '@shared/contracts/routes'
 import { ModelType } from '@shared/model'
 
-const context = { webContentsId: 42, windowId: 7 }
+const context = createRendererRouteContext(42, 7)
 
 function createRoutes(deps: {
   providerSettings: Record<string, unknown>

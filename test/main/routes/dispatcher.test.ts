@@ -30,6 +30,7 @@ import {
   decodeMemoryPageCursor
 } from '@shared/contracts/routes'
 import { createRouteDispatcher, dispatchDeepchatRoute } from '@/routes'
+import { createRendererRouteContext } from '@/routes/routeRegistry'
 import { createNodeScheduler } from '@/routes/scheduler'
 import { ProviderImportService } from '@/provider/providerImportService'
 import { createProviderRoutes } from '@/provider/routes'
@@ -1845,7 +1846,7 @@ function createRuntime() {
 describe('dispatchDeepchatRoute', () => {
   it('routes database imports through the App maintenance owner', async () => {
     const { runtime, appDatabaseMaintenance } = createRuntime()
-    const context = { webContentsId: 42, windowId: 7 }
+    const context = createRendererRouteContext(42, 7)
 
     await dispatchDeepchatRoute(
       runtime,
@@ -1861,7 +1862,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('routes database security migrations through the App maintenance owner', async () => {
     const { runtime, appDatabaseMaintenance } = createRuntime()
-    const context = { webContentsId: 42, windowId: 7 }
+    const context = createRendererRouteContext(42, 7)
 
     await dispatchDeepchatRoute(
       runtime,
@@ -1897,7 +1898,7 @@ describe('dispatchDeepchatRoute', () => {
     })
 
     await expect(
-      dispatchDeepchatRoute(runtime, 'sessions.list', {}, { webContentsId: 42, windowId: 7 })
+      dispatchDeepchatRoute(runtime, 'sessions.list', {}, createRendererRouteContext(42, 7))
     ).rejects.toThrow('maintenance')
 
     expect(sessionProjectionPort.listSessions).not.toHaveBeenCalled()
@@ -1911,10 +1912,12 @@ describe('dispatchDeepchatRoute', () => {
       disabledAgentTools: ['read']
     }
 
-    const result = await dispatchDeepchatRoute(runtime, 'tools.listDefinitions', input, {
-      webContentsId: 42,
-      windowId: 7
-    })
+    const result = await dispatchDeepchatRoute(
+      runtime,
+      'tools.listDefinitions',
+      input,
+      createRendererRouteContext(42, 7)
+    )
 
     expect(result).toMatchObject({
       tools: [{ source: 'agent', function: { name: 'read' } }]
@@ -1925,10 +1928,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches Cron Jobs routes through the runtime service', async () => {
     const { runtime, cronJobs } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const listResult = await dispatchDeepchatRoute(runtime, 'cronJobs.list', {}, context)
     const upsertResult = await dispatchDeepchatRoute(
@@ -2109,10 +2109,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('reconciles Cron Jobs after agent mutation routes', async () => {
     const { runtime, cronJobs } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     await dispatchDeepchatRoute(
       runtime,
@@ -2140,10 +2137,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'startup.getBootstrap',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(projectPresenter.ensureDefaultWorkspace).toHaveBeenCalledTimes(1)
@@ -2160,10 +2154,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         keys: ['fontSizeLevel', 'fontFamily']
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(result).toEqual({
@@ -2182,10 +2173,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'settings.listSystemFonts',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(fontSettings.getSystemFonts).toHaveBeenCalledTimes(1)
@@ -2228,7 +2216,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.listAuditEvents',
       { agentId: 'deepchat' },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(listByAgent).toHaveBeenCalledWith(
@@ -2273,7 +2261,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.listAuditEvents',
         { agentId: 'deleted' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ events: [] })
     await expect(
@@ -2281,7 +2269,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.listAuditEvents',
         { agentId: 'acp-agent' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ events: [] })
     expect(listByAgent).not.toHaveBeenCalled()
@@ -2324,7 +2312,7 @@ describe('dispatchDeepchatRoute', () => {
       deleteDirectiveResult
     }
 
-    const context = { webContentsId: 42, windowId: 7 }
+    const context = createRendererRouteContext(42, 7)
     const listed = await dispatchDeepchatRoute(
       runtime,
       'memory.listDirectives',
@@ -2405,7 +2393,7 @@ describe('dispatchDeepchatRoute', () => {
       rejectDirectiveResult,
       deleteDirectiveResult
     }
-    const context = { webContentsId: 42, windowId: 7 }
+    const context = createRendererRouteContext(42, 7)
 
     await expect(
       dispatchDeepchatRoute(
@@ -2466,7 +2454,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.getHealth',
         { agentId: 'other' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ health: createEmptyMemoryHealth() })
     expect(getHealth).not.toHaveBeenCalled()
@@ -2477,7 +2465,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.getHealth',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ health })
     expect(getHealth).toHaveBeenCalledWith('deepchat')
@@ -2553,7 +2541,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.getLifecycle',
         { agentId: 'other', memoryId: 'm1' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ lifecycle: null })
     expect(getLifecycle).not.toHaveBeenCalled()
@@ -2564,7 +2552,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.getLifecycle',
         { agentId: 'deepchat', memoryId: 'm1' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ lifecycle })
     expect(getLifecycle).toHaveBeenCalledWith('deepchat', 'm1')
@@ -2574,7 +2562,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.getArchiveCandidateLifecyclePreview',
         { agentId: 'other' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ preview: createEmptyArchiveCandidateLifecyclePreview() })
     expect(getArchiveCandidateLifecyclePreview).not.toHaveBeenCalled()
@@ -2585,7 +2573,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.getArchiveCandidateLifecyclePreview',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ preview })
     expect(getArchiveCandidateLifecyclePreview).toHaveBeenCalledWith('deepchat')
@@ -2599,7 +2587,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.listAuditEvents',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ events: [] })
   })
@@ -2635,7 +2623,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.listViewManifests',
       { agentId: 'a', sessionId: 's1', messageId: 'msg-old', limit: 1 },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(listSessions).not.toHaveBeenCalled()
@@ -2680,7 +2668,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.listViewManifests',
       { agentId: 'deepchat', sessionId: 's1', messageId: 'msg-1', limit: 1 },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(result).toEqual({
@@ -2723,7 +2711,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.getSourceSpan',
       { agentId: 'deepchat', memoryId: 'memory-1' },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(getEffectiveMessageSourceSpan).toHaveBeenCalledWith('s1', [2, 3])
@@ -2805,7 +2793,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.getByIds',
       { agentId: 'other', memoryIds: ['m1'] },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
     expect(guarded).toEqual({ memories: [] })
     expect(getByIds).not.toHaveBeenCalled()
@@ -2814,7 +2802,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.getByIds',
       { agentId: 'deepchat', memoryIds: ['m2', 'm1'] },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(getByIds).toHaveBeenCalledWith('deepchat', ['m2', 'm1'])
@@ -2846,7 +2834,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.archive',
         { agentId: 'other', memoryId: 'm1' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ action: 'rejected', reason: 'unavailable' })
     expect(archiveUserMemory).not.toHaveBeenCalled()
@@ -2856,7 +2844,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.archive',
         { agentId: 'deepchat', memoryId: 'm1' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ action: 'applied' })
     expect(archiveUserMemory).toHaveBeenCalledWith('deepchat', 'm1')
@@ -2874,7 +2862,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.reindex',
         { agentId: 'other' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ started: false })
     expect(canReindex).not.toHaveBeenCalled()
@@ -2886,7 +2874,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.reindex',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ started: false })
     expect(canReindex).toHaveBeenCalledWith('deepchat')
@@ -2899,7 +2887,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.reindex',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ started: false })
     expect(reindexEmbeddings).toHaveBeenCalledTimes(1)
@@ -2911,7 +2899,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.reindex',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ started: true })
     expect(reindexEmbeddings).toHaveBeenCalledTimes(2)
@@ -2922,7 +2910,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.reindex',
         { agentId: 'deepchat' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ started: false })
     expect(reindexEmbeddings).toHaveBeenCalledTimes(2)
@@ -2940,7 +2928,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.listViewManifests',
         { agentId: 'deleted' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ manifests: [] })
     await expect(
@@ -2948,7 +2936,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.listViewManifests',
         { agentId: 'acp-agent' },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ manifests: [] })
     expect(listMemoryViewManifestsByAgent).not.toHaveBeenCalled()
@@ -2998,7 +2986,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.page',
       { agentId: 'deepchat', limit: 25 },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(pageMemories).toHaveBeenCalledWith('deepchat', null, 25)
@@ -3022,7 +3010,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'memory.page',
         { agentId: 'external-agent', limit: 25 },
-        { webContentsId: 42, windowId: 7 }
+        createRendererRouteContext(42, 7)
       )
     ).resolves.toEqual({ items: [], nextCursor: null })
     expect(pageMemories).not.toHaveBeenCalled()
@@ -3061,7 +3049,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'memory.listViewManifests',
       { agentId: 'a', limit: 100 },
-      { webContentsId: 42, windowId: 7 }
+      createRendererRouteContext(42, 7)
     )
 
     expect(listSessions).not.toHaveBeenCalled()
@@ -3077,10 +3065,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches ACP terminal command routes through the terminal helper', async () => {
     const { runtime } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const inputResult = await dispatchDeepchatRoute(
       runtime,
@@ -3098,10 +3083,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches shortcut routes through ShortcutPresenter', async () => {
     const { runtime, shortcutPresenter } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const registerResult = await dispatchDeepchatRoute(runtime, 'shortcut.register', {}, context)
     const unregisterResult = await dispatchDeepchatRoute(
@@ -3145,10 +3127,7 @@ describe('dispatchDeepchatRoute', () => {
           { key: 'ocrBackend', value: 'cpu' }
         ]
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(desktopSettings.setFontSizeLevel).toHaveBeenCalledWith(4)
@@ -3217,10 +3196,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'config.getKnowledgeConfigs',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const setResult = await dispatchDeepchatRoute(
       runtime,
@@ -3228,10 +3204,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         configs: nextConfigs
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(getResult).toEqual({
@@ -3248,10 +3221,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches knowledge file routes through KnowledgeService', async () => {
     const { runtime, knowledgeService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const supportedResult = await dispatchDeepchatRoute(
       runtime,
@@ -3372,10 +3342,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches skill sync routes through SkillSyncService', async () => {
     const { runtime, skillSyncService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
     const scanResult = await dispatchDeepchatRoute(
       runtime,
       'skillSync.scanExternalTools',
@@ -3418,10 +3385,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches GitHub Copilot OAuth routes through OAuthService', async () => {
     const { runtime, oauthService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const loginResult = await dispatchDeepchatRoute(
       runtime,
@@ -3444,10 +3408,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches OpenAI Codex OAuth routes through OAuthService', async () => {
     const { runtime, oauthService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const statusResult = await dispatchDeepchatRoute(
       runtime,
@@ -3486,10 +3447,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches database schema repair through MainDatabase', async () => {
     const { runtime, sqlitePresenter } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const repairResult = await dispatchDeepchatRoute(
       runtime,
@@ -3510,10 +3468,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches NowledgeMem routes through ConversationExporter', async () => {
     const { runtime, exporter } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const getResult = await dispatchDeepchatRoute(runtime, 'nowledgeMem.getConfig', {}, context)
     const updateResult = await dispatchDeepchatRoute(
@@ -3576,10 +3531,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches scoped skill script requests through SkillService', async () => {
     const { runtime, skillService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
     ;(skillService as any).listSkillScriptsForAgent = vi.fn().mockResolvedValue([])
 
     const result = await dispatchDeepchatRoute(
@@ -3598,10 +3550,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches Agent Skill import source discovery', async () => {
     const { runtime, skillSyncService, providerSettings } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const result = await dispatchDeepchatRoute(
       runtime,
@@ -3626,10 +3575,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches skill file reads through SkillService', async () => {
     const { runtime, skillService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const result = await dispatchDeepchatRoute(
       runtime,
@@ -3646,10 +3592,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches MCP Router marketplace routes through McpService', async () => {
     const { runtime, mcpService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const listResult = await dispatchDeepchatRoute(
       runtime,
@@ -3722,7 +3665,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('returns typed MCP add results and records only persisted additions', async () => {
     const { runtime, mcpService, sqlitePresenter } = createRuntime()
-    const context = { webContentsId: 42, windowId: 7 }
+    const context = createRendererRouteContext(42, 7)
     const config = {
       type: 'stdio',
       command: 'node',
@@ -3754,7 +3697,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches NPM registry routes through McpService', async () => {
     const { runtime, mcpService } = createRuntime()
-    const context = { webContentsId: 42, windowId: 7 }
+    const context = createRendererRouteContext(42, 7)
 
     await dispatchDeepchatRoute(runtime, 'mcp.getNpmRegistryStatus', {}, context)
     await dispatchDeepchatRoute(runtime, 'mcp.refreshNpmRegistry', {}, context)
@@ -3781,10 +3724,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches remote control routes through RemoteService', async () => {
     const { runtime, remoteService } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     await dispatchDeepchatRoute(runtime, 'remoteControl.listChannels', {}, context)
     await dispatchDeepchatRoute(
@@ -3932,10 +3872,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches DeepChat agent config routes through AgentSettings', async () => {
     const { runtime, providerSettings } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const listResult = await dispatchDeepchatRoute(
       runtime,
@@ -4027,10 +3964,7 @@ describe('dispatchDeepchatRoute', () => {
       skillSettings,
       testHookCommand
     } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const initialProxy = await dispatchDeepchatRoute(
       runtime,
@@ -4212,10 +4146,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches ACP config routes through AgentSettings', async () => {
     const { runtime, providerSettings } = createRuntime()
-    const context = {
-      webContentsId: 42,
-      windowId: 7
-    }
+    const context = createRendererRouteContext(42, 7)
 
     const setEnabledResult = await dispatchDeepchatRoute(
       runtime,
@@ -4336,10 +4267,7 @@ describe('dispatchDeepchatRoute', () => {
         agentId: 'deepchat',
         message: 'hello world'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionLifecyclePort.createSession).toHaveBeenCalledWith(
@@ -4362,10 +4290,7 @@ describe('dispatchDeepchatRoute', () => {
         sessionId: 'session-1',
         content: 'follow up'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionTurnPort.sendMessage).toHaveBeenCalledWith('session-1', 'follow up', {
@@ -4379,10 +4304,7 @@ describe('dispatchDeepchatRoute', () => {
         sessionId: 'session-1',
         content: 'refine the active answer'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionTurnPort.steerActiveTurn).toHaveBeenCalledWith(
@@ -4397,10 +4319,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionTurnPort.compactSession).toHaveBeenCalledWith('session-1')
@@ -4421,10 +4340,7 @@ describe('dispatchDeepchatRoute', () => {
         messageId: 'message-1',
         attachmentFallbackPolicy: 'send_without_image_content'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionTurnPort.retryMessage).toHaveBeenCalledWith('session-1', 'message-1', {
@@ -4446,7 +4362,7 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'sessions.retryMessage',
       { sessionId: 'session-1', messageId: 'message-1' },
-      { webContentsId: 88, windowId: 3 }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionTurnPort.retryMessage).toHaveBeenLastCalledWith('session-1', 'message-1')
@@ -4491,7 +4407,7 @@ describe('dispatchDeepchatRoute', () => {
         },
         submissionId: 'submission-1'
       },
-      { webContentsId: 88, windowId: 3 }
+      createRendererRouteContext(88, 3)
     )
     await started
 
@@ -4500,7 +4416,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'chat.cancelSubmission',
         { submissionId: 'submission-1' },
-        { webContentsId: 99, windowId: 4 }
+        createRendererRouteContext(99, 4)
       )
     ).resolves.toEqual({ cancelled: false })
     expect(acceptanceSignal?.aborted).toBe(false)
@@ -4510,7 +4426,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'chat.cancelSubmission',
         { submissionId: 'submission-1' },
-        { webContentsId: 88, windowId: 3 }
+        createRendererRouteContext(88, 3)
       )
     ).resolves.toEqual({ cancelled: true })
     await expect(pendingSend).rejects.toMatchObject({ name: 'AbortError' })
@@ -4521,7 +4437,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'chat.cancelSubmission',
         { submissionId: 'submission-1' },
-        { webContentsId: 88, windowId: 3 }
+        createRendererRouteContext(88, 3)
       )
     ).resolves.toEqual({ cancelled: false })
   })
@@ -4562,7 +4478,7 @@ describe('dispatchDeepchatRoute', () => {
         },
         submissionId: 'steer-submission-1'
       },
-      { webContentsId: 88, windowId: 3 }
+      createRendererRouteContext(88, 3)
     )
     await started
 
@@ -4571,7 +4487,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'chat.cancelSubmission',
         { submissionId: 'steer-submission-1' },
-        { webContentsId: 99, windowId: 4 }
+        createRendererRouteContext(99, 4)
       )
     ).resolves.toEqual({ cancelled: false })
     expect(acceptanceSignal?.aborted).toBe(false)
@@ -4581,7 +4497,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'chat.cancelSubmission',
         { submissionId: 'steer-submission-1' },
-        { webContentsId: 88, windowId: 3 }
+        createRendererRouteContext(88, 3)
       )
     ).resolves.toEqual({ cancelled: true })
     await expect(pendingSteer).rejects.toMatchObject({ name: 'AbortError' })
@@ -4592,7 +4508,7 @@ describe('dispatchDeepchatRoute', () => {
         runtime,
         'chat.cancelSubmission',
         { submissionId: 'steer-submission-1' },
-        { webContentsId: 88, windowId: 3 }
+        createRendererRouteContext(88, 3)
       )
     ).resolves.toEqual({ cancelled: false })
   })
@@ -4609,10 +4525,7 @@ describe('dispatchDeepchatRoute', () => {
           timeout: 5000
         }
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const getResult = await dispatchDeepchatRoute(
@@ -4621,10 +4534,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionAssignmentPort.updateSessionGenerationSettings).toHaveBeenCalledWith(
@@ -4656,10 +4566,7 @@ describe('dispatchDeepchatRoute', () => {
 
   it('dispatches dashboard maintenance routes through explicit owners', async () => {
     const { runtime, providerSettings, usageStatsService, rtkRuntimeService } = createRuntime()
-    const context = {
-      webContentsId: 88,
-      windowId: 3
-    }
+    const context = createRendererRouteContext(88, 3)
 
     const agentsResult = await dispatchDeepchatRoute(runtime, 'sessions.getAgents', {}, context)
     const dashboardResult = await dispatchDeepchatRoute(
@@ -4698,7 +4605,7 @@ describe('dispatchDeepchatRoute', () => {
       agentSessionExportService,
       providerSettings
     } = createRuntime()
-    const context = { webContentsId: 88, windowId: 3 }
+    const context = createRendererRouteContext(88, 3)
 
     await dispatchDeepchatRoute(
       runtime,
@@ -4779,10 +4686,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         providerId: 'openai'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const checkResult = await dispatchDeepchatRoute(
@@ -4792,10 +4696,7 @@ describe('dispatchDeepchatRoute', () => {
         providerId: 'openai',
         modelId: 'gpt-5.4'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const keyStatusResult = await dispatchDeepchatRoute(
@@ -4804,10 +4705,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         providerId: 'openai'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const rateLimitStatusResult = await dispatchDeepchatRoute(
@@ -4816,10 +4714,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         providerId: 'openai'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const updateRateLimitResult = await dispatchDeepchatRoute(
@@ -4830,10 +4725,7 @@ describe('dispatchDeepchatRoute', () => {
         enabled: true,
         qpsLimit: 2
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const embeddingDimensionsResult = await dispatchDeepchatRoute(
@@ -4843,10 +4735,7 @@ describe('dispatchDeepchatRoute', () => {
         providerId: 'openai',
         modelId: 'text-embedding-3-small'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const modelScopeSyncResult = await dispatchDeepchatRoute(
@@ -4859,10 +4748,7 @@ describe('dispatchDeepchatRoute', () => {
           page_size: 50
         }
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const acpDebugResult = await dispatchDeepchatRoute(
@@ -4874,23 +4760,20 @@ describe('dispatchDeepchatRoute', () => {
         action: 'initialize',
         payload: {}
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const acpWarmupResult = await dispatchDeepchatRoute(
       runtime,
       'providers.warmupAcpProcess',
       { agentId: 'codex-acp', workdir: '/repo' },
-      { webContentsId: 88, windowId: 3 }
+      createRendererRouteContext(88, 3)
     )
     const acpConfigResult = await dispatchDeepchatRoute(
       runtime,
       'providers.getAcpProcessConfigOptions',
       { agentId: 'codex-acp', workdir: '/repo' },
-      { webContentsId: 88, windowId: 3 }
+      createRendererRouteContext(88, 3)
     )
 
     const interactionResult = await dispatchDeepchatRoute(
@@ -4905,10 +4788,7 @@ describe('dispatchDeepchatRoute', () => {
           granted: true
         }
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(providerSettings.getProviderModels).toHaveBeenCalledWith('openai')
@@ -5051,30 +4931,21 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const deactivateResult = await dispatchDeepchatRoute(
       runtime,
       'sessions.deactivate',
       {},
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     const activeResult = await dispatchDeepchatRoute(
       runtime,
       'sessions.getActive',
       {},
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(desktopSessionBinding.activate).toHaveBeenCalledWith(88, 'session-1')
@@ -5099,10 +4970,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         requestId: 'message-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(sessionProjectionPort.getMessage).toHaveBeenCalledWith('message-1')
@@ -5118,30 +4986,21 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'window.getCurrentState',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const minimizedState = await dispatchDeepchatRoute(
       runtime,
       'window.minimizeCurrent',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const maximizedState = await dispatchDeepchatRoute(
       runtime,
       'window.toggleMaximizeCurrent',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const previewResult = await dispatchDeepchatRoute(
@@ -5150,70 +5009,49 @@ describe('dispatchDeepchatRoute', () => {
       {
         filePath: 'C:/workspace/README.md'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const closeFloatingResult = await dispatchDeepchatRoute(
       runtime,
       'window.closeFloatingCurrent',
       {},
-      {
-        webContentsId: 444,
-        windowId: 7
-      }
+      createRendererRouteContext(444, 7)
     )
 
     const closeResult = await dispatchDeepchatRoute(
       runtime,
       'window.closeCurrent',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const closeSettingsResult = await dispatchDeepchatRoute(
       runtime,
       'window.closeSettings',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const focusMainResult = await dispatchDeepchatRoute(
       runtime,
       'window.focusMain',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const notifySettingsReadyResult = await dispatchDeepchatRoute(
       runtime,
       'window.notifySettingsReady',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const pendingProviderInstallResult = await dispatchDeepchatRoute(
       runtime,
       'window.consumePendingSettingsProviderInstall',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const requeueProviderInstallResult = await dispatchDeepchatRoute(
@@ -5222,20 +5060,14 @@ describe('dispatchDeepchatRoute', () => {
       {
         preview: pendingProviderInstallResult.preview
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const startGuidedOnboardingResult = await dispatchDeepchatRoute(
       runtime,
       'window.startGuidedOnboarding',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(initialState).toEqual({
@@ -5317,28 +5149,19 @@ describe('dispatchDeepchatRoute', () => {
       runtime,
       'device.getAppVersion',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const deviceInfo = await dispatchDeepchatRoute(
       runtime,
       'device.getInfo',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const directorySelection = await dispatchDeepchatRoute(
       runtime,
       'device.selectDirectory',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const fileSelection = await dispatchDeepchatRoute(
       runtime,
@@ -5346,19 +5169,13 @@ describe('dispatchDeepchatRoute', () => {
       {
         filters: [{ name: 'ZIP Files', extensions: ['zip'] }]
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const restartResult = await dispatchDeepchatRoute(
       runtime,
       'device.restartApp',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const resetDataResult = await dispatchDeepchatRoute(
       runtime,
@@ -5366,10 +5183,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         resetType: 'chat'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const sanitizeResult = await dispatchDeepchatRoute(
       runtime,
@@ -5377,10 +5191,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         svgContent: '<svg unsafe="1" />'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const recentProjects = await dispatchDeepchatRoute(
@@ -5389,19 +5200,13 @@ describe('dispatchDeepchatRoute', () => {
       {
         limit: 5
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const environments = await dispatchDeepchatRoute(
       runtime,
       'project.listEnvironments',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const reorderEnvironmentsResult = await dispatchDeepchatRoute(
       runtime,
@@ -5409,10 +5214,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         paths: ['C:/workspace', 'C:/other']
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const archiveEnvironmentResult = await dispatchDeepchatRoute(
       runtime,
@@ -5420,10 +5222,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: 'C:/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const restoreEnvironmentResult = await dispatchDeepchatRoute(
       runtime,
@@ -5431,10 +5230,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: 'C:/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const removeEnvironmentResult = await dispatchDeepchatRoute(
       runtime,
@@ -5442,10 +5238,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: 'C:/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const openDirectoryResult = await dispatchDeepchatRoute(
       runtime,
@@ -5453,10 +5246,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: 'C:/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const pathExistsResult = await dispatchDeepchatRoute(
       runtime,
@@ -5464,19 +5254,13 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: 'C:/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const selectedDirectory = await dispatchDeepchatRoute(
       runtime,
       'project.selectDirectory',
       {},
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const mimeType = await dispatchDeepchatRoute(
@@ -5485,10 +5269,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace/demo.txt'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const preparedFile = await dispatchDeepchatRoute(
       runtime,
@@ -5497,10 +5278,7 @@ describe('dispatchDeepchatRoute', () => {
         path: '/workspace/demo.txt',
         mimeType: 'text/plain'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const preparedDirectory = await dispatchDeepchatRoute(
       runtime,
@@ -5508,10 +5286,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const readFile = await dispatchDeepchatRoute(
       runtime,
@@ -5519,10 +5294,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace/demo.txt'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const isDirectory = await dispatchDeepchatRoute(
       runtime,
@@ -5530,10 +5302,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const imagePath = await dispatchDeepchatRoute(
       runtime,
@@ -5542,10 +5311,7 @@ describe('dispatchDeepchatRoute', () => {
         name: 'capture.png',
         content: 'data:image/png;base64,abc'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     const registerWorkspace = await dispatchDeepchatRoute(
@@ -5555,10 +5321,7 @@ describe('dispatchDeepchatRoute', () => {
         workspacePath: '/workspace',
         mode: 'workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const registerWorkdir = await dispatchDeepchatRoute(
       runtime,
@@ -5567,10 +5330,7 @@ describe('dispatchDeepchatRoute', () => {
         workspacePath: '/workspace',
         mode: 'workdir'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const readDirectory = await dispatchDeepchatRoute(
       runtime,
@@ -5578,10 +5338,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const preview = await dispatchDeepchatRoute(
       runtime,
@@ -5589,10 +5346,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace/src/app.ts'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const gitStatus = await dispatchDeepchatRoute(
       runtime,
@@ -5600,10 +5354,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         workspacePath: '/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const gitDiff = await dispatchDeepchatRoute(
       runtime,
@@ -5612,10 +5363,7 @@ describe('dispatchDeepchatRoute', () => {
         workspacePath: '/workspace',
         filePath: '/workspace/src/app.ts'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const resolution = await dispatchDeepchatRoute(
       runtime,
@@ -5625,10 +5373,7 @@ describe('dispatchDeepchatRoute', () => {
         href: './docs/guide.md',
         sourceFilePath: '/workspace/README.md'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const searchResult = await dispatchDeepchatRoute(
       runtime,
@@ -5637,10 +5382,7 @@ describe('dispatchDeepchatRoute', () => {
         workspacePath: '/workspace',
         query: 'app'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const openFileResult = await dispatchDeepchatRoute(
       runtime,
@@ -5648,10 +5390,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace/src/app.ts'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const revealResult = await dispatchDeepchatRoute(
       runtime,
@@ -5659,10 +5398,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         path: '/workspace/src/app.ts'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const unwatchResult = await dispatchDeepchatRoute(
       runtime,
@@ -5670,10 +5406,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         workspacePath: '/workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
     const unregisterResult = await dispatchDeepchatRoute(
       runtime,
@@ -5682,10 +5415,7 @@ describe('dispatchDeepchatRoute', () => {
         workspacePath: '/workspace',
         mode: 'workspace'
       },
-      {
-        webContentsId: 42,
-        windowId: 7
-      }
+      createRendererRouteContext(42, 7)
     )
 
     expect(deviceService.getAppVersion).toHaveBeenCalledTimes(1)
@@ -5857,10 +5587,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const loadResult = await dispatchDeepchatRoute(
       runtime,
@@ -5870,10 +5597,7 @@ describe('dispatchDeepchatRoute', () => {
         url: 'https://example.com/docs',
         timeoutMs: 5000
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const attachResult = await dispatchDeepchatRoute(
       runtime,
@@ -5881,10 +5605,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const updateResult = await dispatchDeepchatRoute(
       runtime,
@@ -5899,10 +5620,7 @@ describe('dispatchDeepchatRoute', () => {
         },
         visible: true
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const backResult = await dispatchDeepchatRoute(
       runtime,
@@ -5910,10 +5628,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const detachResult = await dispatchDeepchatRoute(
       runtime,
@@ -5921,10 +5636,7 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const destroyResult = await dispatchDeepchatRoute(
       runtime,
@@ -5932,19 +5644,13 @@ describe('dispatchDeepchatRoute', () => {
       {
         sessionId: 'session-1'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const clearSandboxResult = await dispatchDeepchatRoute(
       runtime,
       'browser.clearSandboxData',
       {},
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(statusResult).toEqual({
@@ -5998,7 +5704,7 @@ describe('dispatchDeepchatRoute', () => {
   it('scopes Computer Use preview routes to the active sender session', async () => {
     const { runtime, computerUsePreviewPresenter, desktopSessionBinding, yoBrowserPresenter } =
       createRuntime()
-    const context = { webContentsId: 88, windowId: 3 }
+    const context = createRendererRouteContext(88, 3)
     desktopSessionBinding.getActiveId.mockReturnValue('session-1')
 
     const eligible = await dispatchDeepchatRoute(
@@ -6069,10 +5775,7 @@ describe('dispatchDeepchatRoute', () => {
           height: 80
         }
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
     const stitchResult = await dispatchDeepchatRoute(
       runtime,
@@ -6087,10 +5790,7 @@ describe('dispatchDeepchatRoute', () => {
           }
         }
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(tabPresenter.captureTabArea).toHaveBeenCalledWith(88, {
@@ -6127,10 +5827,7 @@ describe('dispatchDeepchatRoute', () => {
         routeName: 'settings-display',
         section: 'fonts'
       },
-      {
-        webContentsId: 88,
-        windowId: 3
-      }
+      createRendererRouteContext(88, 3)
     )
 
     expect(windowPresenter.createSettingsWindow).toHaveBeenCalledWith({
