@@ -240,6 +240,8 @@ import {
 } from './startupMigrations/sessionDataMigrations'
 import { activateAppOnMac } from '@/lib/activateApp'
 import { SessionRuntimeEvents } from '@/session/runtimeEvents'
+import { TypedEventHub } from '@/events/typedEventHub'
+import { SessionEventRouter } from '@/events/sessionEventRouter'
 import { createMemoryProviderBindings } from './memoryProviderBindings'
 import {
   EpisodeRegistry,
@@ -385,6 +387,27 @@ export async function createMainProcessControl(dependencies: {
     dependencies.onWindowCreated,
     startupWorkloadCoordinator
   )
+  // No CLI sessions can exist before AppSessionService is ready, so startup events retain the
+  // renderer compatibility path. The installed resolver below fails closed for missing sessions.
+  let resolveSessionRunId = (_sessionId: string): string | null | undefined => null
+  let resolveBoundRendererIds = (_sessionId: string): readonly number[] => []
+  const typedEventHub = new TypedEventHub({
+    renderer: {
+      broadcast: (envelope) => windowPresenter.sendToAllWindows(DEEPCHAT_EVENT_CHANNEL, envelope),
+      send: (webContentsId, envelope) =>
+        (windowPresenter as WindowPresenter).sendToWebContents(
+          webContentsId,
+          DEEPCHAT_EVENT_CHANNEL,
+          envelope
+        )
+    },
+    log: logger
+  })
+  const sessionEventRouter = new SessionEventRouter({
+    hub: typedEventHub,
+    resolveSessionRunId: (sessionId) => resolveSessionRunId(sessionId),
+    getBoundRendererIds: (sessionId) => resolveBoundRendererIds(sessionId)
+  })
   const artifactSpool = new ArtifactSpool({
     directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
     log: logger
@@ -487,10 +510,7 @@ export async function createMainProcessControl(dependencies: {
     }
   }
   const publishDeepchatEvent = (name: DeepchatEventName, payload: unknown): void => {
-    windowPresenter.sendToAllWindows(
-      DEEPCHAT_EVENT_CHANNEL,
-      createDeepchatEventEnvelope(name, payload)
-    )
+    sessionEventRouter.publish(name, payload)
   }
   dependencies.mcpAppSandboxRegistry.setConsentPublisher((windowId, payload) => {
     windowPresenter.sendToWindow(
@@ -553,6 +573,18 @@ export async function createMainProcessControl(dependencies: {
   appSessionService = new AppSessionService(projectDatabase, sessionData.database, () =>
     projectService.notifyEnvironmentProjectionChanged()
   )
+  resolveSessionRunId = (sessionId) => {
+    const visited = new Set<string>()
+    let currentSessionId: string | null = sessionId
+    while (currentSessionId && visited.size < 32 && !visited.has(currentSessionId)) {
+      visited.add(currentSessionId)
+      const session = appSessionService.get(currentSessionId)
+      if (!session) return undefined
+      if (session.metadata?.source === 'cli_run') return session.id
+      currentSessionId = session.parentSessionId ?? null
+    }
+    return currentSessionId ? undefined : null
+  }
   sessionDataMigrationSQLite = {
     get appSettingsTable() {
       return settingsDatabase.appSettingsTable
@@ -1467,6 +1499,8 @@ export async function createMainProcessControl(dependencies: {
     ui: sessionUiPort
   })
   desktopSessionBinding = new DesktopSessionBinding(sessionQuery)
+  resolveBoundRendererIds = (sessionId) =>
+    desktopSessionBinding.getWebContentsIdsForSession(sessionId)
   tabPresenter = new TabPresenter(windowPresenter, desktopSessionBinding, () =>
     deeplinkService.processStartupUrl()
   )
@@ -2027,6 +2061,7 @@ export async function createMainProcessControl(dependencies: {
 
   async function destroy(): Promise<void> {
     await runDestroyStep('cliServer.stop', () => cliServer.stop())
+    await runDestroyStep('typedEventHub.close', () => typedEventHub.close())
     await runDestroyStep('cliMutationGuard.clear', () => cliMutationGuard.clear())
     await runDestroyStep('cliAuditLog.close', () => cliAuditLog.close())
     await runDestroyStep('artifactSpool.close', () => artifactSpool.close())

@@ -1,0 +1,140 @@
+import { sessionsUpdatedEvent, type DeepchatEventName } from '@shared/contracts/events'
+import type { TypedEventHub } from './typedEventHub'
+
+const RUN_STREAM_EVENTS = new Set<DeepchatEventName>([
+  'chat.stream.updated',
+  'chat.stream.completed',
+  'chat.stream.failed',
+  'chat.plan.updated',
+  'sessions.status.changed',
+  'sessions.compaction.changed',
+  'sessions.acp.modes.ready',
+  'sessions.acp.commands.ready',
+  'sessions.acp.configOptions.ready'
+])
+
+type SessionEventRouterOptions = Readonly<{
+  hub: TypedEventHub
+  // string: CLI run root; null: known renderer session; undefined: unknown/deleted session.
+  resolveSessionRunId(sessionId: string): string | null | undefined
+  getBoundRendererIds(sessionId: string): readonly number[]
+}>
+
+const MAX_OWNERSHIP_CACHE_ENTRIES = 4_096
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function sessionIdsForEvent(name: DeepchatEventName, payload: unknown): string[] {
+  if (!isRecord(payload)) return []
+  if (name === 'sessions.updated') {
+    return Array.isArray(payload.sessionIds)
+      ? payload.sessionIds.filter((value): value is string => typeof value === 'string')
+      : []
+  }
+  if (typeof payload.sessionId === 'string') return [payload.sessionId]
+  if (typeof payload.conversationId === 'string') return [payload.conversationId]
+  return []
+}
+
+export class SessionEventRouter {
+  private readonly ownershipCache = new Map<string, string | null | undefined>()
+
+  constructor(private readonly options: SessionEventRouterOptions) {}
+
+  publish(name: DeepchatEventName, payload: unknown): void {
+    const sessionIds = sessionIdsForEvent(name, payload)
+    const ownership = sessionIds.map((sessionId) => ({
+      sessionId,
+      runId: this.resolveSessionRunId(sessionId)
+    }))
+    const cliRunOwnership = ownership.flatMap(({ sessionId, runId }) => {
+      return runId ? [{ sessionId, runId }] : []
+    })
+    const unknownSessionIds = ownership.flatMap(({ sessionId, runId }) =>
+      runId === undefined ? [sessionId] : []
+    )
+    if (cliRunOwnership.length === 0 && unknownSessionIds.length === 0) {
+      this.options.hub.publish(name, payload, { kind: 'renderer-all' })
+      return
+    }
+
+    if (name === 'sessions.updated') {
+      this.publishSessionsUpdated(
+        sessionsUpdatedEvent.payload.parse(payload),
+        cliRunOwnership.map(({ sessionId }) => sessionId),
+        unknownSessionIds
+      )
+      return
+    }
+
+    if (cliRunOwnership.length === 0) return
+
+    if (RUN_STREAM_EVENTS.has(name)) {
+      for (const runId of new Set(cliRunOwnership.map((ownership) => ownership.runId))) {
+        this.options.hub.publish(name, payload, { kind: 'run', runId })
+      }
+    }
+    this.publishToBoundRenderers(
+      name,
+      payload,
+      cliRunOwnership.map(({ sessionId }) => sessionId)
+    )
+  }
+
+  private resolveSessionRunId(sessionId: string): string | null | undefined {
+    if (this.ownershipCache.has(sessionId)) {
+      const cached = this.ownershipCache.get(sessionId)
+      this.ownershipCache.delete(sessionId)
+      this.ownershipCache.set(sessionId, cached)
+      return cached
+    }
+
+    const runId = this.options.resolveSessionRunId(sessionId)
+    this.ownershipCache.set(sessionId, runId)
+    while (this.ownershipCache.size > MAX_OWNERSHIP_CACHE_ENTRIES) {
+      const oldest = this.ownershipCache.keys().next().value
+      if (oldest === undefined) break
+      this.ownershipCache.delete(oldest)
+    }
+    return runId
+  }
+
+  private publishSessionsUpdated(
+    payload: ReturnType<typeof sessionsUpdatedEvent.payload.parse>,
+    cliRunSessionIds: readonly string[],
+    unknownSessionIds: readonly string[]
+  ): void {
+    const cliRunIds = new Set(cliRunSessionIds)
+    const unknownIds = new Set(unknownSessionIds)
+    const rendererSessionIds = payload.sessionIds.filter(
+      (sessionId) => !cliRunIds.has(sessionId) && !unknownIds.has(sessionId)
+    )
+    if (rendererSessionIds.length > 0) {
+      this.options.hub.publish(
+        'sessions.updated',
+        { ...payload, sessionIds: rendererSessionIds },
+        { kind: 'renderer-all' }
+      )
+    }
+    for (const sessionId of cliRunIds) {
+      this.publishToBoundRenderers('sessions.updated', { ...payload, sessionIds: [sessionId] }, [
+        sessionId
+      ])
+    }
+  }
+
+  private publishToBoundRenderers(
+    name: DeepchatEventName,
+    payload: unknown,
+    sessionIds: readonly string[]
+  ): void {
+    const rendererIds = new Set(
+      sessionIds.flatMap((sessionId) => [...this.options.getBoundRendererIds(sessionId)])
+    )
+    for (const webContentsId of rendererIds) {
+      this.options.hub.publish(name, payload, { kind: 'renderer', webContentsId })
+    }
+  }
+}

@@ -395,12 +395,17 @@ export const SessionWithStateSchema = z.object({
   updatedAt: TimestampMsSchema,
   revision: RevisionSchema.optional(),
   metadata: z
-    .object({
-      source: z.literal('cron_job'),
-      cronJobId: EntityIdSchema,
-      cronJobRunId: EntityIdSchema,
-      scheduledAt: TimestampMsSchema
-    })
+    .discriminatedUnion('source', [
+      z.object({
+        source: z.literal('cron_job'),
+        cronJobId: EntityIdSchema,
+        cronJobRunId: EntityIdSchema,
+        scheduledAt: TimestampMsSchema
+      }),
+      z.object({
+        source: z.literal('cli_run')
+      })
+    ])
     .nullable()
     .optional(),
   status: SessionStatusSchema,
