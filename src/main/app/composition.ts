@@ -200,8 +200,14 @@ import { createAgentRoutes } from '@/agent/routes'
 import { createPromptRoutes } from '@/agent/promptRoutes'
 import { AgentSessionExportService } from '../exporter/agentSessionExporter'
 import { createInMemoryServerFactory } from '../mcp/inMemoryServers/builder'
-import { createRouteDispatcher, registerDeepchatRoutes } from '@/routes'
+import {
+  createRouteDispatcher,
+  dispatchDeepchatRoute,
+  registerDeepchatRoutes,
+  type RouteDispatcher
+} from '@/routes'
 import { createNodeScheduler } from '@/routes/scheduler'
+import { CliServer, createCliRoutes } from '@/cli'
 import { AcpRegistryMigrationService } from '@/agent/acp/catalog/acpRegistryMigrationService'
 import { killTerminal } from '@/agent/acp/launch/acpInitHelper'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
@@ -330,6 +336,7 @@ export async function createMainProcessControl(dependencies: {
   let liveDelegationService: LiveDelegationService
   let acpAsLlmProviderSessionControl: AcpAsLlmProviderSessionControlPort
   let acpAsLlmProviderPermission: AcpAsLlmProviderPermissionPort
+  let routeDispatcher: RouteDispatcher | undefined
   let hasInitialized = false
   let databaseMaintenanceState: 'running' | 'maintenance' | 'failed' = 'running'
   let appLifecycleState: 'starting' | 'running' | 'stopping' | 'stopped' = 'starting'
@@ -350,6 +357,18 @@ export async function createMainProcessControl(dependencies: {
     dependencies.onWindowCreated,
     startupWorkloadCoordinator
   )
+  const cliServer = new CliServer({
+    userDataPath: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    dispatch: async (method, input, caller, signal) => {
+      if (!routeDispatcher) throw new Error('CLI route dispatcher is not ready')
+      signal.throwIfAborted()
+      const output = await dispatchDeepchatRoute(routeDispatcher, method, input, { caller })
+      signal.throwIfAborted()
+      return output
+    },
+    log: logger
+  })
   const semanticNotificationScheduler = new TimeoutNotificationScheduler()
   const semanticNotificationEpisodes = new EpisodeRegistry(
     systemNotificationClock,
@@ -1853,6 +1872,7 @@ export async function createMainProcessControl(dependencies: {
   }
 
   async function destroy(): Promise<void> {
+    await runDestroyStep('cliServer.stop', () => cliServer.stop())
     await runDestroyStep('providerCatalog.unsubscribe', () => unsubscribeProviderDbCatalog())
     await runDestroyStep('liveDelegationService.stop', () => liveDelegationService.stop())
     await runDestroyStep('cronJobs.destroy', () => cronJobs.destroy())
@@ -2210,7 +2230,13 @@ export async function createMainProcessControl(dependencies: {
       },
       splash: dependencies.splash
     })
-    const routeDispatcher = createRouteDispatcher({
+    const cliRoutes = createCliRoutes({
+      appVersion: app.getVersion(),
+      getStatus: () => cliServer.getStatus(),
+      hasTrustedRenderer: () =>
+        windowPresenter.getAllWindows().some((window) => !window.isDestroyed())
+    })
+    routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
       },
@@ -2243,7 +2269,8 @@ export async function createMainProcessControl(dependencies: {
         hookRoutes,
         notificationRoutes,
         appSettingsRoutes,
-        appRoutes
+        appRoutes,
+        cliRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator
@@ -2632,6 +2659,11 @@ export async function createMainProcessControl(dependencies: {
   cronJobs.start()
   memoryService.startBackgroundMaintenance()
   appLifecycleState = 'running'
+  try {
+    await cliServer.start()
+  } catch (error) {
+    logger.error('[CLI] Failed to start local control server', error)
+  }
   init(dependencies.startupRunId)
   scheduleBackgroundWork()
   return control

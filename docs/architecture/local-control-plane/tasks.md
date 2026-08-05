@@ -15,14 +15,14 @@
 
 - [x] Add `RouteCaller` and migrate renderer-dependent integrations without behavior change.
 - [ ] Add canonical local-control contracts and redacted public DTOs.
-- [ ] Define and test the deny-by-default versioned surface registry.
-- [ ] Add local-control error codes, request/result envelopes, and route limits.
+- [x] Define and test the deny-by-default versioned surface registry.
+- [x] Add local-control error codes, request/result envelopes, and route limits.
 
 ## Local Transport and CLI
 
-- [ ] Implement atomic private descriptor creation, token rotation, and stale cleanup.
-- [ ] Implement UDS/named-pipe HTTP server lifecycle and authentication.
-- [ ] Implement fixed/chunked body bounds, spill-to-disk, abort handling, and cleanup.
+- [x] Implement atomic private descriptor creation, token rotation, and stale cleanup.
+- [x] Implement UDS/named-pipe HTTP server lifecycle and authentication.
+- [x] Implement fixed/chunked body bounds, spill-to-disk, abort handling, and cleanup.
 - [ ] Implement the bundled thin CLI, two-token grammar, version negotiation, output modes, signals,
   fail-closed Agent-token selection, timeouts, and exit codes.
 - [ ] Add descriptor, transport, auth, body-boundary, parser, and shutdown tests.

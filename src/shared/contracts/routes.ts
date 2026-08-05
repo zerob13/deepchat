@@ -75,6 +75,12 @@ import {
   memoryUpdateRoute
 } from './routes/memory.routes'
 import {
+  cliCapabilitiesRoute,
+  cliDoctorRoute,
+  cliStatusRoute,
+  cliVersionRoute
+} from './routes/cli.routes'
+import {
   configAddCustomPromptRoute,
   configAddManualAcpAgentRoute,
   configAddSystemPromptRoute,
@@ -564,6 +570,7 @@ export * from './routes/dialog.routes'
 export * from './routes/device.routes'
 export * from './routes/file.routes'
 export * from './routes/knowledge.routes'
+export * from './routes/cli.routes'
 export * from './routes/mcp.routes'
 export * from './routes/memory.routes'
 export * from './routes/models.routes'
@@ -933,6 +940,10 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
 } satisfies Record<string, RouteContract>
 
 const DEEPCHAT_ROUTE_CATALOG_PART_5 = {
+  [cliStatusRoute.name]: cliStatusRoute,
+  [cliVersionRoute.name]: cliVersionRoute,
+  [cliCapabilitiesRoute.name]: cliCapabilitiesRoute,
+  [cliDoctorRoute.name]: cliDoctorRoute,
   [chatCancelSubmissionRoute.name]: chatCancelSubmissionRoute,
   [chatSendMessageRoute.name]: chatSendMessageRoute,
   [chatSteerActiveTurnRoute.name]: chatSteerActiveTurnRoute,

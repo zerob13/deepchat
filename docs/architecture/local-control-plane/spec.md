@@ -100,7 +100,7 @@ flowchart LR
   Human["Human or benchmark"] --> CLI["Bundled deepchat CLI"]
   Agent["DeepChat Agent shell"] --> Gate["CommandPermissionService"]
   Gate --> CLI
-  CLI -->|"HTTP over UDS or named pipe"| Server["LocalControlServer in main"]
+  CLI -->|"HTTP over UDS or named pipe"| Server["CliServer in main"]
   Server --> Auth["Connection authentication and caller scopes"]
   Auth --> Surface["Versioned CLI_SURFACE"]
   Surface --> Policy["Effect policy and quotas"]
@@ -119,7 +119,7 @@ flowchart LR
   Events --> CLI
 ```
 
-`LocalControlServer`, `ArtifactSpool`, and the CLI process are lifecycle clients of the existing main
+`CliServer`, `ArtifactSpool`, and the CLI process are lifecycle clients of the existing main
 composition. The server starts only after its route dependencies are ready. Shutdown first stops
 accepting connections, aborts in-flight non-detached requests, closes event subscribers, cancels CLI
 approval scopes, and removes the descriptor/socket; mutable services and databases close afterward.
