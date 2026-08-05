@@ -87,7 +87,7 @@ deepchat image generate --help
 | 9 | Model 管理 | `model list/enable/disable/config-get/config-set/config-reset` | 运行时列表与严格公共配置分离 |
 | 10 | Skill 管理 | `skill list/install/enable/disable/remove` | ZIP/HTTPS 安装有边界与供应链批准 |
 | 11 | MCP 管理 | `mcp list/add/update/enable/disable/start/stop/remove` | 仅公开管理面，不暴露 raw MCP tool tunnel |
-| 12 | Artifact 管理 | `artifact describe/get/delete` | ownership、TTL、hash、配额与 no-overwrite |
+| 12 | Artifact 管理 | `artifact describe/get/delete` | ownership、TTL、hash、配额与跨文件系统 no-overwrite |
 | 13 | 诊断和 benchmark 输出 | `system ...`, JSON/JSONL、stdin、timeout | 外部 harness 负责数据集、重复、打分和冷启动 |
 | 14 | Agent scoped CLI | bundled `deepchat-cli` Skill | main 签发短期、按调用和字节限额的 token，不暴露 human descriptor |
 

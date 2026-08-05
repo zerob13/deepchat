@@ -478,8 +478,10 @@ Human and Agent file flows are deliberately different:
   never an arbitrary source path.
 - Agent input: only DeepChat-owned attachment/artifact IDs or a main-resolved file-grant ID are
   accepted. The main process canonicalizes and validates a grant; the CLI cannot mint one.
-- Human output: the CLI downloads an owned artifact and writes `--out` with no-overwrite semantics by
-  default. Replacement requires explicit `--overwrite`.
+- Human output: the CLI downloads an owned artifact into a verified temporary file beside `--out`.
+  No-overwrite publication uses an atomic hardlink when supported and an exclusive copy plus `fsync`
+  on filesystems without hardlinks; neither path replaces an existing destination. Replacement
+  requires explicit `--overwrite`.
 - Agent output: main returns artifact IDs and metadata only. Artifact byte download, stdout byte
   export, deletion, and `--out` are rejected for Agent callers; IDs may be passed to another scoped
   operation.

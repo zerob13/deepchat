@@ -8,10 +8,12 @@ import {
   type LocalControlDescriptor
 } from '@shared/contracts/localControl'
 import type { ArtifactMetadata } from '@shared/contracts/routes/artifacts.routes'
+import { isHardlinkUnavailableError } from '@shared/utils/filesystem'
 import { CLI_EXIT_CODES, CliClientError, exitCodeForRemoteError } from './errors'
 import { CLI_VERSION } from './transport'
 
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024
+const PORTABLE_COPY_BUFFER_BYTES = 64 * 1024
 
 export type ArtifactDownloadInput = Readonly<{
   descriptor: LocalControlDescriptor
@@ -187,25 +189,58 @@ async function receiveArtifact(input: ArtifactDownloadInput, handle: FileHandle)
   })
 }
 
-async function publishDownload(
+function outputAlreadyExists(outputPath: string): CliClientError {
+  return new CliClientError(
+    'conflict',
+    `Output already exists: ${outputPath}`,
+    CLI_EXIT_CODES.domain
+  )
+}
+
+async function copyDownloadExclusive(tempPath: string, outputPath: string): Promise<void> {
+  let output: FileHandle | undefined
+  let source: FileHandle | undefined
+  try {
+    output = await open(outputPath, 'wx', 0o600)
+    source = await open(tempPath, 'r')
+    const buffer = Buffer.allocUnsafe(PORTABLE_COPY_BUFFER_BYTES)
+    let position = 0
+    while (true) {
+      const { bytesRead } = await source.read(buffer, 0, buffer.length, position)
+      if (bytesRead === 0) break
+      position += await writeAll(output, buffer.subarray(0, bytesRead), position)
+    }
+    await output.sync()
+    await source.close()
+    source = undefined
+    await output.close()
+    output = undefined
+  } catch (error) {
+    await source?.close().catch(() => undefined)
+    await output?.close().catch(() => undefined)
+    if (output) await unlink(outputPath).catch(() => undefined)
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw outputAlreadyExists(outputPath)
+    throw error
+  }
+}
+
+export async function publishArtifactDownload(
   tempPath: string,
   outputPath: string,
-  overwrite: boolean
+  overwrite: boolean,
+  linkFile: typeof link = link
 ): Promise<void> {
   if (!overwrite) {
     try {
-      await link(tempPath, outputPath)
+      await linkFile(tempPath, outputPath)
       return
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new CliClientError(
-          'conflict',
-          `Output already exists: ${outputPath}`,
-          CLI_EXIT_CODES.domain
-        )
-      }
-      throw error
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST') throw outputAlreadyExists(outputPath)
+      if (!isHardlinkUnavailableError(error)) throw error
     }
+    await copyDownloadExclusive(tempPath, outputPath)
+    return
   }
 
   await rename(tempPath, outputPath)
@@ -236,7 +271,7 @@ export async function downloadArtifact(input: ArtifactDownloadInput): Promise<st
     })
     await handle.close()
     handleOpen = false
-    await publishDownload(tempPath, outputPath, input.overwrite).catch((error) => {
+    await publishArtifactDownload(tempPath, outputPath, input.overwrite).catch((error) => {
       if (error instanceof CliClientError) throw error
       throw new CliClientError(
         'conflict',

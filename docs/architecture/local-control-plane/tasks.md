@@ -34,7 +34,8 @@
 - [x] Add image and video standalone generation surfaces.
 - [x] Add formal standalone speech generation and typed audio output.
 - [x] Add upload and owned-artifact transcription inputs.
-- [x] Implement output-only `ArtifactSpool` ownership, quotas, expiry, and cleanup.
+- [x] Implement output-only `ArtifactSpool` ownership, quotas, expiry, cleanup, and portable
+  no-overwrite downloads on filesystems without hardlinks.
 - [x] Add stream, media, speech, transcription, artifact, and quota tests.
 
 ## OCR

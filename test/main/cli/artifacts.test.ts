@@ -12,6 +12,7 @@ import { ArtifactSpool } from '@/cli/artifactSpool'
 import { createArtifactRoutes } from '@/cli/artifactRoutes'
 import { CliServer } from '@/cli/server'
 import type { CliRouteCaller, HumanCliRouteCaller } from '@/routes/routeRegistry'
+import { publishArtifactDownload } from '../../../src/cli/artifacts'
 import { runCli } from '../../../src/cli/run'
 
 const servers: CliServer[] = []
@@ -92,6 +93,30 @@ afterEach(async () => {
 })
 
 describe('artifact CLI', () => {
+  it('publishes without overwrite when the destination filesystem rejects hardlinks', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-artifact-output-'))
+    temporaryDirectories.push(directory)
+    const sourcePath = path.join(directory, '.source.tmp')
+    const outputPath = path.join(directory, 'output.bin')
+    const portableOutput = Buffer.from(
+      Array.from({ length: 128 * 1024 + 17 }, (_, index) => index % 251)
+    )
+    await writeFile(sourcePath, portableOutput)
+    const unsupportedLink = vi.fn(async () => {
+      throw Object.assign(new Error('hardlinks are unavailable'), { code: 'EPERM' })
+    })
+
+    await publishArtifactDownload(sourcePath, outputPath, false, unsupportedLink)
+    expect(await readFile(outputPath)).toEqual(portableOutput)
+
+    const replacementPath = path.join(directory, '.replacement.tmp')
+    await writeFile(replacementPath, 'replacement')
+    await expect(
+      publishArtifactDownload(replacementPath, outputPath, false, unsupportedLink)
+    ).rejects.toMatchObject({ code: 'conflict' })
+    expect(await readFile(outputPath)).toEqual(portableOutput)
+  })
+
   it('downloads verified bytes and emits the canonical machine envelope', async () => {
     const { userDataPath, spool } = await createHarness()
     const artifact = await spool.write({

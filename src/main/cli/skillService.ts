@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { link, unlink } from 'node:fs/promises'
+import { constants, copyFile, link, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import {
   PUBLIC_SKILL_LIST_MAX_ITEMS,
@@ -14,6 +14,7 @@ import {
 } from '@shared/contracts/routes'
 import type { SkillInstallResult, SkillServicePort } from '@shared/types/skill'
 import type { UnifiedSkillItem } from '@shared/types/skillManagement'
+import { isHardlinkUnavailableError } from '@shared/utils/filesystem'
 import { BUILTIN_SKILL_AGENT_ID } from '@/skill/agentSkillRoots'
 import {
   createRouteMap,
@@ -75,9 +76,22 @@ async function removeFileIfPresent(filePath: string): Promise<void> {
   }
 }
 
-async function retainUploadFile(uploadPath: string): Promise<Readonly<{ path: string }>> {
+export async function retainUploadFile(
+  uploadPath: string,
+  linkFile: typeof link = link
+): Promise<Readonly<{ path: string }>> {
   const retainedPath = path.join(path.dirname(uploadPath), `body-${randomUUID()}.tmp`)
-  await link(uploadPath, retainedPath)
+  try {
+    await linkFile(uploadPath, retainedPath)
+  } catch (error) {
+    if (!isHardlinkUnavailableError(error)) throw error
+    try {
+      await copyFile(uploadPath, retainedPath, constants.COPYFILE_EXCL)
+    } catch (copyError) {
+      await removeFileIfPresent(retainedPath).catch(() => undefined)
+      throw copyError
+    }
+  }
   return { path: retainedPath }
 }
 

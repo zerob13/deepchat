@@ -11,7 +11,7 @@ import {
 } from '@shared/contracts/routes'
 import type { SkillServicePort } from '@shared/types/skill'
 import type { UnifiedSkillItem } from '@shared/types/skillManagement'
-import { CliSkillService } from '@/cli/skillService'
+import { CliSkillService, retainUploadFile } from '@/cli/skillService'
 import type { CliRouteCaller, RouteContext } from '@/routes/routeRegistry'
 
 const caller: CliRouteCaller = {
@@ -105,6 +105,22 @@ function createHarness(catalog: UnifiedSkillItem[] = [skill()]) {
 }
 
 describe('CLI Skill service', () => {
+  it('retains uploads on filesystems without hardlink support', async () => {
+    const tempDirectory = await mkdtemp(path.join(tmpdir(), 'deepchat-cli-skill-retain-'))
+    const uploadPath = path.join(tempDirectory, 'body-upload.tmp')
+    await writeFile(uploadPath, 'archive-bytes')
+
+    try {
+      const retained = await retainUploadFile(uploadPath, async () => {
+        throw Object.assign(new Error('hardlinks are unavailable'), { code: 'EPERM' })
+      })
+      expect(retained.path).not.toBe(uploadPath)
+      await expect(readFile(retained.path, 'utf8')).resolves.toBe('archive-bytes')
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true })
+    }
+  })
+
   it('accepts signed HTTPS URLs but rejects credentials, fragments, and unsafe filenames', () => {
     expect(
       skillsInstallPublicUrlRoute.input.safeParse({
