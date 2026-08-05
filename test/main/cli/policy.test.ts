@@ -137,6 +137,92 @@ describe('CliRequestPolicy', () => {
     expect(harness.auditRecords.at(-1)?.outcome).toBe('misconfigured')
   })
 
+  it('resolves input-dependent effects and rejects undeclared resolver output', async () => {
+    const harness = createHarness()
+    const dynamicEntry = {
+      ...entry('read', 'policy'),
+      effect: {
+        possible: ['preference-write', 'security-config'],
+        resolve: (input: unknown) =>
+          (input as { secure?: boolean }).secure ? 'security-config' : 'preference-write'
+      }
+    } satisfies CliSurfaceEntry
+
+    await expect(
+      harness.policy.authorize({
+        entry: dynamicEntry,
+        input: { secure: false },
+        caller: humanCaller,
+        requestId: 'request-preference',
+        signal: new AbortController().signal
+      })
+    ).resolves.toBeDefined()
+    expect(harness.authorize).not.toHaveBeenCalled()
+    await expect(
+      harness.policy.authorize({
+        entry: dynamicEntry,
+        input: { secure: true },
+        caller: humanCaller,
+        requestId: 'request-security',
+        signal: new AbortController().signal
+      })
+    ).resolves.toBeDefined()
+    expect(harness.authorize).toHaveBeenCalledOnce()
+    expect(harness.auditRecords.map((record) => record.effect)).toEqual([
+      'preference-write',
+      'security-config'
+    ])
+
+    await expect(
+      harness.policy.authorize({
+        entry: {
+          ...dynamicEntry,
+          effect: { possible: ['read'], resolve: () => 'destructive' }
+        },
+        input: {},
+        caller: humanCaller,
+        requestId: 'request-invalid-effect',
+        signal: new AbortController().signal
+      })
+    ).rejects.toMatchObject({ code: 'internal_error' })
+  })
+
+  it('applies input-level agent restrictions before requesting approval', async () => {
+    const harness = createHarness({ allowlisted: true })
+
+    await expect(
+      harness.policy.authorize({
+        entry: { ...entry('preference-write', 'policy'), agentInputAllowed: () => false },
+        input: {},
+        caller: agentCaller,
+        requestId: 'request-agent-input',
+        signal: new AbortController().signal
+      })
+    ).rejects.toMatchObject({ code: 'permission_denied' })
+    expect(harness.authorize).not.toHaveBeenCalled()
+    expect(harness.auditRecords.at(-1)?.outcome).toBe('denied')
+  })
+
+  it('fails closed when an input-level agent policy throws', async () => {
+    const harness = createHarness({ allowlisted: true })
+
+    await expect(
+      harness.policy.authorize({
+        entry: {
+          ...entry('preference-write', 'policy'),
+          agentInputAllowed: () => {
+            throw new Error('broken policy')
+          }
+        },
+        input: {},
+        caller: agentCaller,
+        requestId: 'request-agent-policy-error',
+        signal: new AbortController().signal
+      })
+    ).rejects.toMatchObject({ code: 'internal_error' })
+    expect(harness.authorize).not.toHaveBeenCalled()
+  })
+
   it('audits and denies callers or scopes excluded by the surface entry', async () => {
     const harness = createHarness()
     await expect(

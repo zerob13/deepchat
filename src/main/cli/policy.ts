@@ -4,7 +4,7 @@ import { hashApprovalArguments } from '@/approval'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { CliRequestError } from './errors'
 import type { CliMutationGuard } from './mutationGuard'
-import type { CliSurfaceEntry } from './surface'
+import { resolveCliSurfaceEffect, type CliSurfaceEntry } from './surface'
 
 const DEFAULT_AGENT_COMPUTE_LIMIT = 2
 const DEFAULT_AGENT_COMPUTE_STARTS_PER_MINUTE = 20
@@ -118,6 +118,18 @@ export class CliRequestPolicy {
   }
 
   async authorize(input: CliRequestPolicyInput): Promise<CliRequestAdmission> {
+    let effect: LocalControlEffect
+    let agentInputAllowed = true
+    try {
+      effect = resolveCliSurfaceEffect(input.entry, input.input)
+      if (input.caller.principal === 'agent') {
+        agentInputAllowed = input.entry.agentInputAllowed?.(input.input) ?? true
+      }
+    } catch {
+      throw new CliRequestError('internal_error', 'CLI effect policy is misconfigured', {
+        httpStatus: 500
+      })
+    }
     const redactedArgumentsHash = hashApprovalArguments({
       operation: input.entry.contract.name,
       arguments: auditProjection(input.entry, input.input)
@@ -134,7 +146,7 @@ export class CliRequestPolicy {
           ? { conversationId: input.caller.conversationId }
           : {}),
         operation: input.entry.contract.name,
-        effect: input.entry.effect,
+        effect,
         outcome,
         requestId: input.requestId,
         ...(approvalRequestId ? { approvalRequestId } : {}),
@@ -144,7 +156,8 @@ export class CliRequestPolicy {
 
     if (
       !input.entry.callers.includes(input.caller.principal) ||
-      !input.entry.scopes.every((scope) => input.caller.scopes.includes(scope))
+      !input.entry.scopes.every((scope) => input.caller.scopes.includes(scope)) ||
+      !agentInputAllowed
     ) {
       await audit('denied')
       throw new CliRequestError('permission_denied', 'Caller lacks access to this operation', {
@@ -153,7 +166,7 @@ export class CliRequestPolicy {
     }
 
     const effectDecision = resolveEffectDecision(
-      input.entry.effect,
+      effect,
       input.caller,
       input.entry.contract.name,
       this.agentApprovalOperations
@@ -176,7 +189,7 @@ export class CliRequestPolicy {
       try {
         const approval = await this.options.mutationGuard.authorize({
           operation: input.entry.contract.name,
-          effect: input.entry.effect,
+          effect,
           principal: input.caller.principal,
           connectionId: input.caller.connectionId,
           clientRequestId: input.requestId,
@@ -194,7 +207,7 @@ export class CliRequestPolicy {
 
     let admission: CliRequestAdmission
     try {
-      admission = this.admitCompute(input)
+      admission = this.admitCompute(input, effect)
     } catch (error) {
       if (error instanceof CliRequestError && error.code === 'rate_limited') {
         await audit('rate-limited')
@@ -210,8 +223,11 @@ export class CliRequestPolicy {
     }
   }
 
-  private admitCompute(input: CliRequestPolicyInput): CliRequestAdmission {
-    if (input.entry.effect !== 'compute' || input.caller.principal !== 'agent') {
+  private admitCompute(
+    input: CliRequestPolicyInput,
+    effect: LocalControlEffect
+  ): CliRequestAdmission {
+    if (effect !== 'compute' || input.caller.principal !== 'agent') {
       return emptyRelease()
     }
 

@@ -15,7 +15,7 @@ export const LocalControlApprovalModeSchema = z.enum(['never', 'policy'])
 export const LocalControlCapabilitySchema = z
   .object({
     method: LocalControlMethodSchema,
-    effect: LocalControlEffectSchema,
+    possibleEffects: z.array(LocalControlEffectSchema).min(1),
     callers: z.array(LocalControlPrincipalSchema).min(1).max(2),
     scopes: z.array(LocalControlScopeSchema).min(1),
     transport: LocalControlTransportSchema,

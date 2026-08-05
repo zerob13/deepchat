@@ -154,6 +154,38 @@ describe('CLI argument grammar', () => {
     })
   })
 
+  it('parses allowlisted settings reads and one scalar update', () => {
+    expect(
+      parseCliArguments(['settings', 'get', '--keys', 'fontSizeLevel, privacyModeEnabled'], {})
+    ).toMatchObject({
+      contract: { name: 'settings.getPublic' },
+      params: { keys: ['fontSizeLevel', 'privacyModeEnabled'] }
+    })
+    expect(
+      parseCliArguments(['settings', 'set', '--key', 'fontSizeLevel', '--value', '3'], {})
+    ).toMatchObject({
+      contract: { name: 'settings.updatePublic' },
+      params: { changes: [{ key: 'fontSizeLevel', value: 3 }] }
+    })
+    expect(
+      parseCliArguments(['settings', 'set', '--key', 'fontFamily', '--value', 'Berkeley Mono'], {})
+    ).toMatchObject({
+      params: { changes: [{ key: 'fontFamily', value: 'Berkeley Mono' }] }
+    })
+    expect(
+      parseCliArguments(['settings', 'set', '--key', 'fontSizeLevel', '--value', '3e0'], {})
+    ).toMatchObject({
+      params: { changes: [{ key: 'fontSizeLevel', value: 3 }] }
+    })
+
+    expect(() => parseCliArguments(['settings', 'get', '--keys', ','], {})).toThrow(
+      'at least one setting key'
+    )
+    expect(() => parseCliArguments(['settings', 'set', '--key', 'loggingEnabled'], {})).toThrow(
+      'requires --key and --value'
+    )
+  })
+
   it('maps image and video options without exposing file output paths', () => {
     expect(
       parseCliArguments(

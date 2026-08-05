@@ -29,7 +29,11 @@ import {
   ocrExtractUploadRoute,
   ocrGetRuntimeStatusRoute
 } from '@shared/contracts/routes/ocr.routes'
-import type { JsonValue } from '@shared/contracts/json'
+import {
+  settingsGetPublicRoute,
+  settingsUpdatePublicRoute
+} from '@shared/contracts/routes/settings.routes'
+import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
 import { LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS } from '@shared/contracts/localControl'
 import {
   ATTACHMENT_PDF_OCR_MAX_TOKENS,
@@ -64,6 +68,8 @@ export type CliRpcContract =
   | typeof ocrExtractArtifactRoute
   | typeof ocrClearCacheRoute
   | typeof providersListPublicRoute
+  | typeof settingsGetPublicRoute
+  | typeof settingsUpdatePublicRoute
 
 export type CliCommandOperation = 'rpc' | 'stream' | 'upload' | 'download'
 
@@ -99,7 +105,9 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['ocr status', ocrGetRuntimeStatusRoute],
   ['ocr extract', ocrExtractUploadRoute],
   ['ocr clear-cache', ocrClearCacheRoute],
-  ['provider list', providersListPublicRoute]
+  ['provider list', providersListPublicRoute],
+  ['settings get', settingsGetPublicRoute],
+  ['settings set', settingsUpdatePublicRoute]
 ])
 
 function parseBoolean(value: string, source: string): boolean {
@@ -128,10 +136,32 @@ function parseNumberInRange(
   return parsed
 }
 
-type DomainOptionValue = string | number | boolean
+type DomainOptionValue = JsonValue
 type DomainValueParser = (value: string) => DomainOptionValue
 
 const stringOption: DomainValueParser = (value) => value
+const settingValueOption: DomainValueParser = (value) => {
+  const candidate =
+    value === 'true' ||
+    value === 'false' ||
+    value === 'null' ||
+    /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/.test(value) ||
+    value.startsWith('"')
+      ? (() => {
+          try {
+            return JSON.parse(value) as unknown
+          } catch {
+            throw new CliUsageError('--value contains invalid JSON')
+          }
+        })()
+      : value
+  const parsed = JsonValueSchema.safeParse(candidate)
+  if (!parsed.success) throw new CliUsageError('--value must be a JSON scalar')
+  if (parsed.data !== null && typeof parsed.data === 'object') {
+    throw new CliUsageError('--value must be a JSON scalar')
+  }
+  return parsed.data
+}
 const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
   id: (value) => {
     const parsed = ArtifactIdSchema.safeParse(value)
@@ -172,6 +202,9 @@ const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
   voice: stringOption,
   speed: (value) => parseNumberInRange(value, '--speed', 0.25, 4),
   instructions: stringOption,
+  key: stringOption,
+  keys: stringOption,
+  value: settingValueOption,
   backend: stringOption,
   'page-count': (value) =>
     parseNumberInRange(value, '--page-count', 1, PDF_PAGE_COUNT_SANITY_LIMIT, true)
@@ -225,7 +258,9 @@ const COMMAND_DOMAIN_OPTIONS = new Map<string, ReadonlySet<string>>([
   ['ocr extract', new Set(['file', 'artifact', 'mime', 'backend', 'page-count', 'max-tokens'])],
   ['ocr status', new Set()],
   ['ocr clear-cache', new Set()],
-  ['provider list', new Set(['enabled-only'])]
+  ['provider list', new Set(['enabled-only'])],
+  ['settings get', new Set(['keys'])],
+  ['settings set', new Set(['key', 'value'])]
 ])
 
 const AUDIO_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -451,6 +486,13 @@ export function parseCliArguments(
   const instructions = getString('instructions')
   const backend = getString('backend')
   const sourcePageCountHint = getNumber('page-count')
+  const settingKey = getString('key')
+  const settingKeys = getString('keys')
+  const settingValue = domainValues.get('value')
+  const parsedSettingKeys = settingKeys
+    ?.split(',')
+    .map((key) => key.trim())
+    .filter(Boolean)
 
   const isArtifactCommand = domain === 'artifact'
   if (!helpRequested && isArtifactCommand && !artifactId) {
@@ -478,6 +520,8 @@ export function parseCliArguments(
   const isOcrExtract = commandKey === 'ocr extract'
   const isMediaGenerate = isImageGenerate || isVideoGenerate || isSpeechGenerate
   const isProviderList = commandKey === 'provider list'
+  const isSettingsGet = commandKey === 'settings get'
+  const isSettingsSet = commandKey === 'settings set'
   const allowedDomainOptions = COMMAND_DOMAIN_OPTIONS.get(commandKey) ?? new Set<string>()
   const invalidDomainOption = Array.from(domainOptions).find(
     (option) => !allowedDomainOptions.has(option)
@@ -527,9 +571,21 @@ export function parseCliArguments(
   if (isOcrExtract && maxTokens !== undefined && maxTokens > ATTACHMENT_PDF_OCR_MAX_TOKENS) {
     throw new CliUsageError(`--max-tokens must not exceed ${ATTACHMENT_PDF_OCR_MAX_TOKENS}`)
   }
+  if (!helpRequested && isSettingsSet && (!settingKey || !domainOptions.has('value'))) {
+    throw new CliUsageError('deepchat settings set requires --key and --value')
+  }
+  if (!helpRequested && isSettingsGet && settingKeys !== undefined && !parsedSettingKeys?.length) {
+    throw new CliUsageError('--keys must contain at least one setting key')
+  }
 
   let params: JsonValue = artifactId ? { id: artifactId } : {}
   if (isProviderList) params = { enabledOnly }
+  if (isSettingsGet) {
+    params = parsedSettingKeys ? { keys: parsedSettingKeys } : {}
+  }
+  if (isSettingsSet && settingKey && domainOptions.has('value')) {
+    params = { changes: [{ key: settingKey, value: settingValue ?? null }] }
+  }
   if (isModelInvoke && providerId && modelId) {
     params = {
       providerId,
@@ -674,7 +730,11 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
                   ? ' (--file <path>|--artifact <id>)'
                   : command.domain === 'provider'
                     ? ' [--enabled-only]'
-                    : ''
+                    : command.domain === 'settings' && command.verb === 'get'
+                      ? ' [--keys <key,key>]'
+                      : command.domain === 'settings'
+                        ? ' --key <key> --value <json-scalar>'
+                        : ''
     const commandKey = `${command.domain} ${command.verb}`
     const optionLines =
       commandKey === 'model invoke'
@@ -747,6 +807,8 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  ocr extract          Extract text from an image or PDF',
     '  ocr clear-cache      Clear derived OCR cache entries',
     '  provider list        List redacted providers and models',
+    '  settings get         Read allowlisted public settings',
+    '  settings set         Update one allowlisted public setting',
     '  help commands        Show this help',
     '',
     'Options (after domain and verb):',

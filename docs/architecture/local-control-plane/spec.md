@@ -208,7 +208,9 @@ by renderer IPC. A surface entry adds only transport and policy metadata:
 ```ts
 type CliSurfaceEntry = {
   contract: RouteContract<string, ZodType, ZodType>
-  effect: CliEffect | ((input: unknown) => CliEffect)
+  effect:
+    | CliEffect
+    | { possible: readonly CliEffect[]; resolve(input: unknown): CliEffect }
   callers: readonly CliPrincipal[]
   requiredScopes: readonly CliScope[]
   transport: 'rpc' | 'stream' | 'upload'

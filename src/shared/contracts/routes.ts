@@ -407,8 +407,10 @@ import {
 } from './routes/plugins.routes'
 import {
   settingsActivityListRoute,
+  settingsGetPublicRoute,
   settingsGetSnapshotRoute,
   settingsListSystemFontsRoute,
+  settingsUpdatePublicRoute,
   settingsUpdateRoute
 } from './routes/settings.routes'
 import {
@@ -861,8 +863,10 @@ const DEEPCHAT_ROUTE_CATALOG_PART_3 = {
   [configGetAwsBedrockCredentialRoute.name]: configGetAwsBedrockCredentialRoute,
   [configSetAwsBedrockCredentialRoute.name]: configSetAwsBedrockCredentialRoute,
   [settingsGetSnapshotRoute.name]: settingsGetSnapshotRoute,
+  [settingsGetPublicRoute.name]: settingsGetPublicRoute,
   [settingsListSystemFontsRoute.name]: settingsListSystemFontsRoute,
   [settingsUpdateRoute.name]: settingsUpdateRoute,
+  [settingsUpdatePublicRoute.name]: settingsUpdatePublicRoute,
   [settingsActivityListRoute.name]: settingsActivityListRoute,
   [startupGetBootstrapRoute.name]: startupGetBootstrapRoute,
   [performanceRecordRendererRoute.name]: performanceRecordRendererRoute

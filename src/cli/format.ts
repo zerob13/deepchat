@@ -45,7 +45,7 @@ export function formatHumanResult(
         `CLI surface ${result.surfaceVersion} (${result.capabilities.length} methods)`,
         ...result.capabilities.map(
           (capability) =>
-            `${capability.method}  ${capability.effect}  ${capability.callers.join(',')}  ${capability.transport}`
+            `${capability.method}  ${capability.possibleEffects.join(',')}  ${capability.callers.join(',')}  ${capability.transport}`
         )
       ].join('\n')
     }
@@ -84,6 +84,18 @@ export function formatHumanResult(
               `  ${model.id}  ${model.enabled ? 'enabled' : 'disabled'}  ${model.type ?? 'chat'}`
           )
         ])
+        .join('\n')
+    }
+    case 'settings.getPublic': {
+      const result = contract.output.parse(value)
+      return Object.entries(result.values)
+        .map(([key, setting]) => `${key} = ${JSON.stringify(setting)}`)
+        .join('\n')
+    }
+    case 'settings.updatePublic': {
+      const result = contract.output.parse(value)
+      return result.changedKeys
+        .map((key) => `${key} = ${JSON.stringify(result.values[key])}`)
         .join('\n')
     }
     case 'models.invoke': {

@@ -56,7 +56,7 @@
 
 ## Administration Surface
 
-- [ ] Add public/redacted settings reads and allowlisted per-effect updates.
+- [x] Add public/redacted settings reads and allowlisted per-effect updates.
 - [ ] Add public/redacted provider/model reads and separated credential mutations.
 - [ ] Add reviewed Skill list/enable/install/uninstall operations.
 - [ ] Add reviewed MCP list/add/update/remove/enable/start/stop operations.

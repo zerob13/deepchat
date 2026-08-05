@@ -20,6 +20,8 @@ import {
   ocrGetRuntimeStatusRoute,
   providersListPublicRoute,
   speechGenerateRoute,
+  settingsGetPublicRoute,
+  settingsUpdatePublicRoute,
   videosGenerateRoute,
   type CliCapability
 } from '@shared/contracts/routes'
@@ -32,6 +34,12 @@ import {
 
 export type LocalControlTransport = 'rpc' | 'stream' | 'upload' | 'download'
 export type LocalControlApprovalMode = 'never' | 'policy'
+export type CliSurfaceEffect =
+  | LocalControlEffect
+  | Readonly<{
+      possible: readonly LocalControlEffect[]
+      resolve(input: unknown): LocalControlEffect
+    }>
 
 export type CliRouteLimits = Readonly<{
   maxBodyBytes: number
@@ -40,15 +48,91 @@ export type CliRouteLimits = Readonly<{
 
 export type CliSurfaceEntry = Readonly<{
   contract: RouteContract
-  effect: LocalControlEffect
+  effect: CliSurfaceEffect
   callers: readonly LocalControlPrincipal[]
   scopes: readonly LocalControlScope[]
   transport: LocalControlTransport
   approval: LocalControlApprovalMode
   auditProjection?: (input: unknown) => JsonValue
   approvalDisplay?: (input: unknown) => JsonValue
+  agentInputAllowed?: (input: unknown) => boolean
   limits: CliRouteLimits
 }>
+
+const PREFERENCE_SETTING_KEYS = new Set([
+  'fontSizeLevel',
+  'fontFamily',
+  'codeFontFamily',
+  'artifactsEffectEnabled',
+  'autoScrollEnabled',
+  'notificationsEnabled',
+  'copyWithCotEnabled'
+])
+
+const EXECUTION_SETTING_KEYS = new Set([
+  'autoCompactionEnabled',
+  'autoCompactionTriggerThreshold',
+  'autoCompactionRetainRecentPairs',
+  'ocrAutoExtractForNonVisionModels',
+  'ocrBackend'
+])
+
+function settingChangeKeys(input: unknown): string[] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+  const changes = (input as Record<string, unknown>).changes
+  if (!Array.isArray(changes)) return []
+  return changes.flatMap((change) => {
+    if (!change || typeof change !== 'object' || Array.isArray(change)) return []
+    const key = (change as Record<string, unknown>).key
+    return typeof key === 'string' ? [key] : []
+  })
+}
+
+function settingChangesForDisplay(input: unknown): JsonValue {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+  const changes = (input as Record<string, unknown>).changes
+  if (!Array.isArray(changes)) return []
+  return changes.flatMap((change) => {
+    if (!change || typeof change !== 'object' || Array.isArray(change)) return []
+    const { key, value } = change as Record<string, unknown>
+    if (
+      typeof key !== 'string' ||
+      !(
+        value === null ||
+        typeof value === 'string' ||
+        (typeof value === 'number' && Number.isFinite(value)) ||
+        typeof value === 'boolean'
+      )
+    ) {
+      return []
+    }
+    return [{ key, value }]
+  })
+}
+
+function stringArrayField(input: unknown, field: string): string[] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+  const value = (input as Record<string, unknown>)[field]
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : []
+}
+
+export function listCliSurfaceEffects(entry: CliSurfaceEntry): readonly LocalControlEffect[] {
+  return typeof entry.effect === 'string' ? [entry.effect] : entry.effect.possible
+}
+
+export function resolveCliSurfaceEffect(
+  entry: CliSurfaceEntry,
+  input: unknown
+): LocalControlEffect {
+  if (typeof entry.effect === 'string') return entry.effect
+  const resolved = entry.effect.resolve(input)
+  if (!entry.effect.possible.includes(resolved)) {
+    throw new Error(`CLI surface effect resolver returned an undeclared effect: ${resolved}`)
+  }
+  return resolved
+}
 
 function selectAuditFields(input: unknown, fields: readonly string[]): Record<string, JsonValue> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {}
@@ -218,6 +302,37 @@ const CLI_SURFACE_V1_ENTRIES = [
     limits: DIAGNOSTIC_LIMITS
   },
   {
+    contract: settingsGetPublicRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['settings:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => ({ keys: stringArrayField(input, 'keys') }),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: settingsUpdatePublicRoute,
+    effect: {
+      possible: ['preference-write', 'execution-config', 'security-config'],
+      resolve: (input) => {
+        const keys = settingChangeKeys(input)
+        if (keys.every((key) => PREFERENCE_SETTING_KEYS.has(key))) return 'preference-write'
+        if (keys.every((key) => EXECUTION_SETTING_KEYS.has(key))) return 'execution-config'
+        return 'security-config'
+      }
+    },
+    callers: ['human', 'agent'],
+    scopes: ['settings:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => ({ keys: settingChangeKeys(input) }),
+    approvalDisplay: (input) => ({ changes: settingChangesForDisplay(input) }),
+    agentInputAllowed: (input) =>
+      settingChangeKeys(input).every((key) => PREFERENCE_SETTING_KEYS.has(key)),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
     contract: artifactsDescribeRoute,
     effect: 'read',
     callers: ['human', 'agent'],
@@ -275,7 +390,7 @@ export function getCliSurfaceEntry(method: string): CliSurfaceEntry | undefined 
 export function listCliSurfaceCapabilities(): CliCapability[] {
   return Array.from(CLI_SURFACE_V1.values(), (entry) => ({
     method: entry.contract.name,
-    effect: entry.effect,
+    possibleEffects: [...listCliSurfaceEffects(entry)],
     callers: [...entry.callers],
     scopes: [...entry.scopes],
     transport: entry.transport,

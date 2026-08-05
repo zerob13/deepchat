@@ -2166,6 +2166,22 @@ describe('dispatchDeepchatRoute', () => {
     })
   })
 
+  it('exposes the same allowlisted settings through the public route', async () => {
+    const { runtime } = createRuntime()
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'settings.getPublic',
+        { keys: ['fontSizeLevel', 'privacyModeEnabled'] },
+        createRendererRouteContext(42, 7)
+      )
+    ).resolves.toEqual({
+      version: expect.any(Number),
+      values: { fontSizeLevel: 2, privacyModeEnabled: false }
+    })
+  })
+
   it('lists system fonts through the settings handler adapter', async () => {
     const { runtime, fontSettings } = createRuntime()
 
@@ -3166,6 +3182,38 @@ describe('dispatchDeepchatRoute', () => {
         ocrBackend: 'cpu'
       }
     })
+  })
+
+  it('limits each public settings mutation to one typed change', async () => {
+    const { runtime, settings } = createRuntime()
+    const context = createRendererRouteContext(42, 7)
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'settings.updatePublic',
+        { changes: [{ key: 'fontSizeLevel', value: 3 }] },
+        context
+      )
+    ).resolves.toMatchObject({
+      changedKeys: ['fontSizeLevel'],
+      values: { fontSizeLevel: 3 }
+    })
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'settings.updatePublic',
+        {
+          changes: [
+            { key: 'fontSizeLevel', value: 4 },
+            { key: 'privacyModeEnabled', value: true }
+          ]
+        },
+        context
+      )
+    ).rejects.toThrow()
+    expect(settings.fontSizeLevel).toBe(3)
+    expect(settings.privacyModeEnabled).toBe(false)
   })
 
   it('dispatches built-in knowledge config routes through KnowledgeSettings', async () => {

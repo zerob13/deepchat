@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { DEEPCHAT_ROUTE_CATALOG } from '@shared/contracts/routes'
-import { CLI_SURFACE_V1, getCliSurfaceEntry, listCliSurfaceCapabilities } from '@/cli/surface'
+import {
+  CLI_SURFACE_V1,
+  getCliSurfaceEntry,
+  listCliSurfaceCapabilities,
+  resolveCliSurfaceEffect
+} from '@/cli/surface'
 
 describe('CLI surface V1', () => {
   it('contains only explicit canonical route contracts', () => {
@@ -23,6 +28,8 @@ describe('CLI surface V1', () => {
       'ocr.extractUpload',
       'ocr.getRuntimeStatus',
       'providers.listPublic',
+      'settings.getPublic',
+      'settings.updatePublic',
       'speech.generate',
       'videos.generate'
     ])
@@ -40,72 +47,113 @@ describe('CLI surface V1', () => {
     expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
   })
 
+  it('classifies public setting changes from their validated key', () => {
+    const entry = getCliSurfaceEntry('settings.updatePublic')!
+
+    expect(
+      resolveCliSurfaceEffect(entry, {
+        changes: [{ key: 'fontSizeLevel', value: 3 }]
+      })
+    ).toBe('preference-write')
+    expect(
+      resolveCliSurfaceEffect(entry, {
+        changes: [{ key: 'loggingEnabled', value: true }]
+      })
+    ).toBe('security-config')
+    expect(
+      resolveCliSurfaceEffect(entry, {
+        changes: [{ key: 'ocrBackend', value: 'cpu' }]
+      })
+    ).toBe('execution-config')
+    expect(
+      entry.agentInputAllowed?.({ changes: [{ key: 'privacyModeEnabled', value: true }] })
+    ).toBe(false)
+    expect(
+      entry.approvalDisplay?.({ changes: [{ key: 'privacyModeEnabled', value: true }] })
+    ).toEqual({ changes: [{ key: 'privacyModeEnabled', value: true }] })
+  })
+
   it('publishes stable sorted capability metadata', () => {
     expect(listCliSurfaceCapabilities()).toEqual([
-      expect.objectContaining({ method: 'artifacts.delete', effect: 'local-maintenance' }),
-      expect.objectContaining({ method: 'artifacts.describe', effect: 'read' }),
-      expect.objectContaining({ method: 'artifacts.read', effect: 'read', transport: 'download' }),
+      expect.objectContaining({
+        method: 'artifacts.delete',
+        possibleEffects: ['local-maintenance']
+      }),
+      expect.objectContaining({ method: 'artifacts.describe', possibleEffects: ['read'] }),
+      expect.objectContaining({
+        method: 'artifacts.read',
+        possibleEffects: ['read'],
+        transport: 'download'
+      }),
       expect.objectContaining({
         method: 'audio.transcribeArtifact',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'rpc',
         callers: ['human', 'agent'],
         scopes: ['audio:transcribe', 'artifacts:read']
       }),
       expect.objectContaining({
         method: 'audio.transcribeUpload',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'upload',
         callers: ['human']
       }),
-      expect.objectContaining({ method: 'cli.capabilities', effect: 'read' }),
-      expect.objectContaining({ method: 'cli.doctor', effect: 'read' }),
-      expect.objectContaining({ method: 'cli.status', effect: 'read' }),
-      expect.objectContaining({ method: 'cli.version', effect: 'read' }),
+      expect.objectContaining({ method: 'cli.capabilities', possibleEffects: ['read'] }),
+      expect.objectContaining({ method: 'cli.doctor', possibleEffects: ['read'] }),
+      expect.objectContaining({ method: 'cli.status', possibleEffects: ['read'] }),
+      expect.objectContaining({ method: 'cli.version', possibleEffects: ['read'] }),
       expect.objectContaining({
         method: 'images.generate',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'stream'
       }),
       expect.objectContaining({
         method: 'models.invoke',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'stream'
       }),
       expect.objectContaining({
         method: 'ocr.clearCache',
-        effect: 'local-maintenance',
+        possibleEffects: ['local-maintenance'],
         approval: 'never',
         callers: ['human']
       }),
       expect.objectContaining({
         method: 'ocr.extractArtifact',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'rpc',
         callers: ['human', 'agent'],
         scopes: ['ocr:extract', 'artifacts:read']
       }),
       expect.objectContaining({
         method: 'ocr.extractUpload',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'upload',
         callers: ['human']
       }),
-      expect.objectContaining({ method: 'ocr.getRuntimeStatus', effect: 'read' }),
-      expect.objectContaining({ method: 'providers.listPublic', effect: 'read' }),
+      expect.objectContaining({ method: 'ocr.getRuntimeStatus', possibleEffects: ['read'] }),
+      expect.objectContaining({ method: 'providers.listPublic', possibleEffects: ['read'] }),
+      expect.objectContaining({ method: 'settings.getPublic', possibleEffects: ['read'] }),
+      expect.objectContaining({
+        method: 'settings.updatePublic',
+        possibleEffects: ['preference-write', 'execution-config', 'security-config'],
+        approval: 'policy'
+      }),
       expect.objectContaining({
         method: 'speech.generate',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'stream'
       }),
       expect.objectContaining({
         method: 'videos.generate',
-        effect: 'compute',
+        possibleEffects: ['compute'],
         transport: 'stream'
       })
     ])
     expect(
-      listCliSurfaceCapabilities().every((capability) => capability.approval === 'never')
+      listCliSurfaceCapabilities()
+        .filter((capability) => capability.method !== 'settings.updatePublic')
+        .every((capability) => capability.approval === 'never')
     ).toBe(true)
   })
 })
