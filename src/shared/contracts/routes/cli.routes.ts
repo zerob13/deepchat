@@ -38,6 +38,7 @@ export const CliLauncherStatusSchema = z
   .object({
     state: CliLauncherStateSchema,
     reason: CliLauncherReasonSchema.nullable(),
+    owned: z.boolean(),
     commandPath: z.string().nullable(),
     shellConfigPath: z.string().nullable()
   })

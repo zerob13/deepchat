@@ -303,6 +303,7 @@ export class CliLauncherService {
       return {
         state: 'unavailable',
         reason: 'unsupported-platform',
+        owned: false,
         commandPath: null,
         shellConfigPath: null
       }
@@ -313,6 +314,7 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'ownership-marker-invalid',
+        owned: false,
         commandPath,
         shellConfigPath: null
       }
@@ -323,6 +325,7 @@ export class CliLauncherService {
         return {
           state: 'conflict',
           reason: 'unowned-command',
+          owned: false,
           commandPath,
           shellConfigPath: null
         }
@@ -331,6 +334,7 @@ export class CliLauncherService {
         return {
           state: 'unavailable',
           reason: 'path-unavailable',
+          owned: false,
           commandPath,
           shellConfigPath: null
         }
@@ -339,6 +343,7 @@ export class CliLauncherService {
       return {
         state: source ? 'not-installed' : 'unavailable',
         reason: source ? null : 'source-missing',
+        owned: false,
         commandPath,
         shellConfigPath: null
       }
@@ -350,6 +355,7 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'ownership-marker-invalid',
+        owned: false,
         commandPath,
         shellConfigPath: null
       }
@@ -370,6 +376,7 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'shell-config-modified',
+        owned: true,
         commandPath,
         shellConfigPath: profile.path
       }
@@ -380,32 +387,9 @@ export class CliLauncherService {
       return {
         state: 'conflict',
         reason: 'command-modified',
+        owned: true,
         commandPath,
         shellConfigPath: profile?.path ?? null
-      }
-    }
-    if (commandState === 'missing') {
-      return {
-        state: 'needs-repair',
-        reason: 'command-missing',
-        commandPath,
-        shellConfigPath: profile?.path ?? null
-      }
-    }
-    if (profile?.blockState === 'missing') {
-      return {
-        state: 'needs-repair',
-        reason: 'shell-config-missing',
-        commandPath,
-        shellConfigPath: profile.path
-      }
-    }
-    if (this.platform === 'win32' && !this.isCommandDirectoryOnPath()) {
-      return {
-        state: 'needs-repair',
-        reason: 'path-unavailable',
-        commandPath,
-        shellConfigPath: null
       }
     }
 
@@ -414,8 +398,36 @@ export class CliLauncherService {
       return {
         state: 'unavailable',
         reason: 'source-missing',
+        owned: true,
         commandPath,
         shellConfigPath: profile?.path ?? null
+      }
+    }
+    if (commandState === 'missing') {
+      return {
+        state: 'needs-repair',
+        reason: 'command-missing',
+        owned: true,
+        commandPath,
+        shellConfigPath: profile?.path ?? null
+      }
+    }
+    if (profile?.blockState === 'missing') {
+      return {
+        state: 'needs-repair',
+        reason: 'shell-config-missing',
+        owned: true,
+        commandPath,
+        shellConfigPath: profile.path
+      }
+    }
+    if (this.platform === 'win32' && !this.isCommandDirectoryOnPath()) {
+      return {
+        state: 'needs-repair',
+        reason: 'path-unavailable',
+        owned: true,
+        commandPath,
+        shellConfigPath: null
       }
     }
     const current = this.markerForSource(
@@ -431,6 +443,7 @@ export class CliLauncherService {
     return {
       state: stale ? 'stale' : 'installed',
       reason: stale ? 'upgrade-required' : null,
+      owned: true,
       commandPath,
       shellConfigPath: profile?.path ?? null
     }

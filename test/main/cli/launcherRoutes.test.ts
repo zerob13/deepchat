@@ -5,6 +5,7 @@ import { createCliLauncherRoutes } from '@/cli/launcherRoutes'
 const installedStatus = {
   state: 'installed' as const,
   reason: null,
+  owned: true,
   commandPath: '/home/user/.local/bin/deepchat',
   shellConfigPath: '/home/user/.zprofile'
 }
@@ -42,5 +43,19 @@ describe('createCliLauncherRoutes', () => {
         }
       )
     ).rejects.toThrow('renderer caller')
+    await expect(
+      setInstalled(
+        { installed: false },
+        {
+          caller: {
+            kind: 'cli',
+            principal: 'human',
+            connectionId: 'connection-1',
+            scopes: ['system:write']
+          }
+        }
+      )
+    ).rejects.toThrow('renderer caller')
+    expect(launcher.setInstalled).toHaveBeenCalledTimes(1)
   })
 })

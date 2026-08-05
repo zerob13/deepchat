@@ -60,11 +60,13 @@ describe('CliLauncherService', () => {
 
     await expect(fixture.service.getStatus()).resolves.toMatchObject({
       state: 'not-installed',
+      owned: false,
       commandPath,
       shellConfigPath: null
     })
     await expect(fixture.service.setInstalled(true)).resolves.toMatchObject({
       state: 'installed',
+      owned: true,
       commandPath,
       shellConfigPath: profilePath
     })
@@ -90,7 +92,8 @@ describe('CliLauncherService', () => {
     ).toBe(0o600)
 
     await expect(fixture.service.setInstalled(false)).resolves.toMatchObject({
-      state: 'not-installed'
+      state: 'not-installed',
+      owned: false
     })
     await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await readFile(profilePath, 'utf8')).toBe('export EDITOR=vim\n')
@@ -144,7 +147,8 @@ describe('CliLauncherService', () => {
 
     await expect(fixture.service.getStatus()).resolves.toMatchObject({
       state: 'conflict',
-      reason: 'unowned-command'
+      reason: 'unowned-command',
+      owned: false
     })
     await expect(fixture.service.setInstalled(true)).rejects.toThrow('without an ownership marker')
     expect(await readFile(commandPath, 'utf8')).toBe('foreign')
@@ -167,7 +171,8 @@ describe('CliLauncherService', () => {
 
     await expect(fixture.service.getStatus()).resolves.toMatchObject({
       state: 'conflict',
-      reason: 'command-modified'
+      reason: 'command-modified',
+      owned: true
     })
     await expect(fixture.service.setInstalled(false)).rejects.toThrow('unowned')
     expect(await readlink(commandPath)).toBe('/tmp/not-deepchat')
@@ -195,7 +200,8 @@ describe('CliLauncherService', () => {
 
     await expect(fixture.service.getStatus()).resolves.toMatchObject({
       state: 'needs-repair',
-      reason: 'command-missing'
+      reason: 'command-missing',
+      owned: true
     })
     await fixture.service.reconcileOwnedLauncher()
     await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -283,7 +289,8 @@ describe('CliLauncherService', () => {
 
     await expect(fixture.service.getStatus()).resolves.toMatchObject({
       state: 'unavailable',
-      reason: 'source-missing'
+      reason: 'source-missing',
+      owned: false
     })
     await expect(fixture.service.setInstalled(true)).rejects.toThrow('unavailable')
   })
@@ -295,11 +302,32 @@ describe('CliLauncherService', () => {
     await fixture.service.setInstalled(true)
     fixture.setCliDirectory(null)
 
+    await expect(fixture.service.getStatus()).resolves.toMatchObject({
+      state: 'unavailable',
+      reason: 'source-missing',
+      owned: true
+    })
+
     await expect(fixture.service.setInstalled(false)).resolves.toMatchObject({
       state: 'unavailable',
-      reason: 'source-missing'
+      reason: 'source-missing',
+      owned: false
     })
     await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(lstat(profilePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('does not offer repair when owned files and the packaged source are both missing', async () => {
+    const fixture = await createFixture()
+    const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
+    await fixture.service.setInstalled(true)
+    await rm(commandPath)
+    fixture.setCliDirectory(null)
+
+    await expect(fixture.service.getStatus()).resolves.toMatchObject({
+      state: 'unavailable',
+      reason: 'source-missing',
+      owned: true
+    })
   })
 })

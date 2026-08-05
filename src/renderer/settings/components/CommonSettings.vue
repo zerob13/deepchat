@@ -14,6 +14,7 @@
         :model-value="launchAtLoginEnabled"
         @update:model-value="handleLaunchAtLoginChange"
       />
+      <CliLauncherSettingsSection />
       <SettingToggleRow
         id="auto-scroll-switch"
         icon="lucide:arrow-down"
@@ -45,6 +46,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useUiSettingsStore } from '@/stores/uiSettingsStore'
 import ProxySettingsSection from './common/ProxySettingsSection.vue'
+import CliLauncherSettingsSection from './common/CliLauncherSettingsSection.vue'
 import LoggingSettingsSection from './common/LoggingSettingsSection.vue'
 import SettingToggleRow from './common/SettingToggleRow.vue'
 import UploadFileSettingsSection from './common/UploadFileSettingsSection.vue'
