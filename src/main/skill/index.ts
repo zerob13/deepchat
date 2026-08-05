@@ -67,6 +67,7 @@ import {
 } from './agentSkillRoots'
 
 const execFileAsync = promisify(execFile)
+const READ_ONLY_BUNDLED_SKILL_NAMES = new Set(['deepchat-cli'])
 
 /**
  * Skill system configuration constants
@@ -271,6 +272,7 @@ export class SkillService implements SkillServicePort {
   private draftsRoot: string
   private metadataCache: Map<string, SkillMetadata> = new Map()
   private contentCache: Map<string, SkillContent> = new Map()
+  private readOnlyBundledSkills: SkillMetadata[] = []
   private scopedCatalogs: Map<string, ScopedSkillCatalog> = new Map()
   private deletedAgentScopes: Set<string> = new Set()
   private activeAgentScopeOperations: Map<string, number> = new Map()
@@ -600,6 +602,7 @@ export class SkillService implements SkillServicePort {
 
     for (const metadata of [
       ...discoveredSkills,
+      ...this.readOnlyBundledSkills,
       ...(await this.discoverPluginSkillsOnMainThread())
     ]) {
       if (this.metadataCache.has(metadata.name)) {
@@ -913,6 +916,7 @@ export class SkillService implements SkillServicePort {
 
       for (const metadata of [
         ...discoveredSkills,
+        ...this.readOnlyBundledSkills,
         ...(await this.discoverPluginSkillsOnMainThread())
       ]) {
         if (!discoveredByName.has(metadata.name)) {
@@ -990,6 +994,22 @@ export class SkillService implements SkillServicePort {
       }
     }
 
+    return discovered
+  }
+
+  private async discoverReadOnlyBundledSkills(): Promise<SkillMetadata[]> {
+    const builtinDir = this.resolveBuiltinSkillsDir()
+    if (!builtinDir) return []
+
+    const discovered: SkillMetadata[] = []
+    for (const name of READ_ONLY_BUNDLED_SKILL_NAMES) {
+      const skillPath = path.join(builtinDir, name, 'SKILL.md')
+      if (!(await this.pathExists(skillPath))) continue
+      const metadata = await this.parseSkillMetadata(skillPath, name, undefined, builtinDir)
+      if (metadata && this.supportsCurrentPlatform(metadata.platforms)) {
+        discovered.push({ ...metadata, readOnly: true })
+      }
+    }
     return discovered
   }
 
@@ -1376,12 +1396,12 @@ export class SkillService implements SkillServicePort {
       return {
         ...skill,
         agentId: normalizedAgentId,
-        canonicalPath: item.canonicalPath || skill.skillRoot,
-        sourceType: item.source.type,
+        canonicalPath: skill.readOnly ? skill.skillRoot : item.canonicalPath || skill.skillRoot,
+        sourceType: skill.readOnly ? 'builtin' : item.source.type,
         disabled: item.disabled,
         deepchatDisabled: item.disabled,
         agentLinks: item.agentLinks ?? {},
-        mutable: !skill.ownerPluginId
+        mutable: !skill.ownerPluginId && !skill.readOnly
       }
     })
   }
@@ -2028,12 +2048,14 @@ export class SkillService implements SkillServicePort {
   async installBuiltinSkills(): Promise<void> {
     const builtinDir = this.resolveBuiltinSkillsDir()
     if (!builtinDir || !fs.existsSync(builtinDir)) {
+      this.readOnlyBundledSkills = []
       return
     }
 
     const entries = fs.readdirSync(builtinDir, { withFileTypes: true })
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
+      if (READ_ONLY_BUNDLED_SKILL_NAMES.has(entry.name)) continue
       const skillDir = path.join(builtinDir, entry.name)
       const skillMdPath = path.join(skillDir, 'SKILL.md')
       if (!fs.existsSync(skillMdPath)) continue
@@ -2054,6 +2076,7 @@ export class SkillService implements SkillServicePort {
         console.warn('[SkillService] Failed to install builtin skill:', result.error)
       }
     }
+    this.readOnlyBundledSkills = await this.discoverReadOnlyBundledSkills()
   }
 
   private supportsCurrentPlatform(platforms?: string[]): boolean {
@@ -3458,6 +3481,8 @@ export class SkillService implements SkillServicePort {
       }
 
       this.cleanupUninstalledSkillState(name, normalizedAgentId)
+      const bundledFallback = this.readOnlyBundledSkills.find((skill) => skill.name === name)
+      if (bundledFallback) metadataCache.set(name, bundledFallback)
 
       this.publishEvent('skills.catalog.changed', {
         reason: 'uninstalled',
@@ -3554,6 +3579,9 @@ export class SkillService implements SkillServicePort {
   }
 
   private assertMutableSkillOwnership(agentId: string, metadata: SkillMetadata): void {
+    if (metadata.readOnly) {
+      throw new Error('Read-only bundled Skills cannot be modified as Agent-owned files')
+    }
     if (metadata.ownerPluginId) {
       throw new Error('Plugin-owned Skills cannot be modified as Agent-owned files')
     }
@@ -4576,6 +4604,7 @@ export class SkillService implements SkillServicePort {
     await this.stopWatching()
     this.metadataCache.clear()
     this.contentCache.clear()
+    this.readOnlyBundledSkills = []
     this.scopedCatalogs.clear()
     this.deletedAgentScopes.clear()
     this.activeAgentScopeOperations.clear()

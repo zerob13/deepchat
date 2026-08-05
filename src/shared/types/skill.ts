@@ -37,6 +37,8 @@ export interface SkillMetadata {
   allowedTools?: string[]
   /** Plugin owner id when the skill is contributed by a plugin */
   ownerPluginId?: string
+  /** DeepChat-owned resource exposed read-only without copying into an Agent Skill root */
+  readOnly?: boolean
 }
 
 /**
