@@ -89,7 +89,7 @@
 - [x] Run format and i18n validation.
 - [x] Run lint and typecheck.
 - [x] Run the full test suite and production build.
-- [ ] Complete current-platform unsigned packaging with the pinned bundled runtimes.
+- [x] Complete current-platform unsigned packaging with the pinned bundled runtimes.
 - [x] Run packaged CLI smoke where local prerequisites allow.
 - [x] Complete a severity-ranked review before every commit and resolve findings.
 - [x] Commit all V1 work locally with behavior-specific messages.
@@ -107,10 +107,17 @@ Recorded on 2026-08-05 using macOS arm64, Node 24.14.1, and pnpm 10.33.4:
   `out/cli/deepchat.mjs` generation. The provider catalog fetch failed closed to the committed
   snapshot; the ACP registry refresh succeeded without a tracked diff.
 - `pnpm run format:check`, `pnpm run i18n`, `pnpm run lint`, and `pnpm run typecheck`: passed.
-- `pnpm run build:unpack`: application build, native rebuild, and Electron extraction completed,
-  but afterPack correctly rejected the missing pinned `runtime/node/bin/node`. Both the standard
-  runtime installer and a direct network probe failed during TLS setup against the upstream runtime
-  hosts, so a complete unsigned package remains an environment-blocked validation item.
-- The partially assembled app contains `deepchat`, `deepchat.cmd`, and `deepchat.mjs`; the POSIX
-  launcher retains its executable bit. Running that packaged launcher against an isolated
-  stopped-desktop profile produced the versioned `unavailable` error envelope and exit code `3`.
+- `pnpm run installRuntime:mac:arm64`: installed the pinned uv 0.9.18, Node 24.14.1, and
+  rtk 0.43.0 runtimes with the local HTTP/SOCKS proxy configured. The installed Node executable
+  matched the manifest SHA-256 and reported the pinned version.
+- `pnpm run build:unpack`: passed the application build, native rebuild, Electron extraction, and
+  unsigned macOS arm64 packaging. The completed app contains `deepchat`, `deepchat.cmd`,
+  `deepchat.mjs`, and the executable bundled Node runtime under `app.asar.unpacked`; the POSIX
+  launcher retains its executable bit. Code signing and notarization were skipped as expected for
+  this local unsigned build.
+- The completed packaged launcher returned the versioned `unavailable` envelope and exit code `3`
+  against an isolated stopped-desktop profile. With the unpacked app running against another
+  isolated profile, packaged `system status`, `system version`, `system capabilities`, and
+  `system doctor` commands all exited `0`; doctor reported healthy transport, descriptor,
+  46-method V1 surface, and renderer approval checks. App shutdown ran `cliServer.stop`, removed
+  the descriptor and socket, left no packaged app process, and restored launcher exit code `3`.
