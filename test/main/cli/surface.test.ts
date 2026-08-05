@@ -22,6 +22,13 @@ describe('CLI surface V1', () => {
       'cli.status',
       'cli.version',
       'images.generate',
+      'mcp.addPublic',
+      'mcp.listPublic',
+      'mcp.removePublic',
+      'mcp.setPublicStatus',
+      'mcp.startPublic',
+      'mcp.stopPublic',
+      'mcp.updatePublic',
       'models.getPublicConfig',
       'models.invoke',
       'models.listRuntime',
@@ -58,6 +65,8 @@ describe('CLI surface V1', () => {
   it('denies methods that are not explicitly listed', () => {
     expect(getCliSurfaceEntry('settings.getSnapshot')).toBeUndefined()
     expect(getCliSurfaceEntry('mcp.callTool')).toBeUndefined()
+    expect(getCliSurfaceEntry('mcp.getServers')).toBeUndefined()
+    expect(getCliSurfaceEntry('mcp.credentials.set')).toBeUndefined()
     expect(getCliSurfaceEntry('databaseSecurity.disable')).toBeUndefined()
     expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
   })
@@ -155,6 +164,77 @@ describe('CLI surface V1', () => {
     )
   })
 
+  it('keeps MCP secret values and command arguments out of bounded metadata', () => {
+    const entry = getCliSurfaceEntry('mcp.addPublic')!
+    const input = {
+      serverName: 'private-server',
+      config: {
+        type: 'http',
+        baseUrl: 'https://mcp.example/private/path',
+        description: 'description'.repeat(2_000),
+        args: ['--token', 'argument-secret'],
+        environment: { PRIVATE_TOKEN: 'environment-secret' },
+        headers: { Authorization: 'header-secret' },
+        authorization: {
+          mode: 'client_credentials',
+          clientId: 'private-client-id'
+        }
+      }
+    }
+
+    const approval = entry.approvalDisplay?.(input)
+    const audit = entry.auditProjection?.(input)
+    const serialized = JSON.stringify({ approval, audit })
+    expect(approval).toMatchObject({
+      serverName: 'private-server',
+      config: {
+        type: 'http',
+        argumentCount: 2,
+        endpoint: { origin: 'https://mcp.example', pathPresent: true },
+        environment: { count: 1, names: ['PRIVATE_TOKEN'] },
+        headers: { count: 1, names: ['Authorization'] },
+        authorization: { mode: 'client_credentials' }
+      }
+    })
+    for (const secret of [
+      'argument-secret',
+      'environment-secret',
+      'header-secret',
+      'private-client-id',
+      '/private/path'
+    ]) {
+      expect(serialized).not.toContain(secret)
+    }
+    expect(Buffer.byteLength(JSON.stringify(approval), 'utf8')).toBeLessThan(16 * 1024)
+    expect(resolveCliSurfaceEffect(entry, input)).toBe('credential')
+    expect(
+      resolveCliSurfaceEffect(entry, {
+        serverName: 'public-server',
+        config: { type: 'stdio', command: 'npx', environment: {} }
+      })
+    ).toBe('supply-chain')
+  })
+
+  it('gives every approval route enough server time for renderer confirmation', () => {
+    for (const capability of listCliSurfaceCapabilities()) {
+      if (capability.approval !== 'policy') continue
+      expect(capability.timeoutMs, capability.method).toBeGreaterThanOrEqual(2 * 60_000)
+    }
+  })
+
+  it('classifies MCP updates by their highest-impact field', () => {
+    const entry = getCliSurfaceEntry('mcp.updatePublic')!
+
+    expect(resolveCliSurfaceEffect(entry, { updates: { description: 'renamed' } })).toBe(
+      'execution-config'
+    )
+    expect(resolveCliSurfaceEffect(entry, { updates: { authorization: null } })).toBe(
+      'security-config'
+    )
+    expect(resolveCliSurfaceEffect(entry, { updates: { command: 'npx' } })).toBe('supply-chain')
+    expect(resolveCliSurfaceEffect(entry, { updates: { headers: {} } })).toBe('credential')
+  })
+
   it('publishes stable sorted capability metadata', () => {
     expect(listCliSurfaceCapabilities()).toEqual([
       expect.objectContaining({
@@ -188,6 +268,38 @@ describe('CLI surface V1', () => {
         method: 'images.generate',
         possibleEffects: ['compute'],
         transport: 'stream'
+      }),
+      expect.objectContaining({
+        method: 'mcp.addPublic',
+        possibleEffects: ['supply-chain', 'credential'],
+        callers: ['human'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({ method: 'mcp.listPublic', possibleEffects: ['read'] }),
+      expect.objectContaining({
+        method: 'mcp.removePublic',
+        possibleEffects: ['destructive'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'mcp.setPublicStatus',
+        possibleEffects: ['execution-config'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'mcp.startPublic',
+        possibleEffects: ['execution-config'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'mcp.stopPublic',
+        possibleEffects: ['execution-config'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'mcp.updatePublic',
+        possibleEffects: ['execution-config', 'security-config', 'supply-chain', 'credential'],
+        approval: 'policy'
       }),
       expect.objectContaining({ method: 'models.getPublicConfig', possibleEffects: ['read'] }),
       expect.objectContaining({
@@ -305,6 +417,12 @@ describe('CLI surface V1', () => {
         .filter((capability) => capability.approval === 'policy')
         .map((capability) => capability.method)
     ).toEqual([
+      'mcp.addPublic',
+      'mcp.removePublic',
+      'mcp.setPublicStatus',
+      'mcp.startPublic',
+      'mcp.stopPublic',
+      'mcp.updatePublic',
       'models.resetConfig',
       'models.setPublicConfig',
       'models.setStatus',

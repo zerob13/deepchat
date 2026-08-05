@@ -225,6 +225,7 @@ import {
   CliSkillService,
   createArtifactRoutes,
   createCliComputeRoutes,
+  createCliMcpAdminRoutes,
   createCliProviderModelAdminRoutes,
   createCliRoutes
 } from '@/cli'
@@ -2411,6 +2412,15 @@ export async function createMainProcessControl(dependencies: {
       }
     })
     const cliSkillRoutes = cliSkillService.createRoutes()
+    const cliMcpAdminRoutes = createCliMcpAdminRoutes({
+      mcp: mcpService,
+      recordSettingsActivity: (input) => {
+        void settingsDatabase.recordSettingsActivity(input).catch((error) => {
+          console.warn('[SettingsActivity] Failed to record CLI MCP activity:', error)
+        })
+      },
+      log: logger
+    })
     routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
@@ -2450,7 +2460,8 @@ export async function createMainProcessControl(dependencies: {
         artifactRoutes,
         cliComputeRoutes,
         cliProviderModelAdminRoutes,
-        cliSkillRoutes
+        cliSkillRoutes,
+        cliMcpAdminRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator

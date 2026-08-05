@@ -22,6 +22,7 @@ import {
   type RouteCaller
 } from '@/routes/routeRegistry'
 import { CliRequestError } from './errors'
+import { compareStableText, sanitizePublicStringList, sanitizePublicText } from './publicText'
 import type { CliUploadedInputFile } from './server'
 
 const PUBLIC_SKILL_DESCRIPTION_BYTES = 1024
@@ -30,8 +31,6 @@ const PUBLIC_SKILL_PLATFORM_BYTES = 64
 const PUBLIC_SKILL_TOOL_BYTES = 128
 const PUBLIC_SKILL_PLATFORMS = 32
 const PUBLIC_SKILL_TOOLS = 32
-const PUBLIC_TEXT_SCAN_FACTOR = 16
-const PUBLIC_LIST_SCAN_FACTOR = 16
 
 type PublicSkillPort = Pick<
   SkillServicePort,
@@ -68,9 +67,6 @@ function requireHumanCliCaller(
   }
 }
 
-type SanitizedText = Readonly<{ value: string; truncated: boolean }>
-type SanitizedList = Readonly<{ values: string[]; truncated: boolean }>
-
 async function removeFileIfPresent(filePath: string): Promise<void> {
   try {
     await unlink(filePath)
@@ -83,95 +79,6 @@ async function retainUploadFile(uploadPath: string): Promise<Readonly<{ path: st
   const retainedPath = path.join(path.dirname(uploadPath), `body-${randomUUID()}.tmp`)
   await link(uploadPath, retainedPath)
   return { path: retainedPath }
-}
-
-function compareStableText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
-function isPublicTextControl(codePoint: number): boolean {
-  return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)
-}
-
-function isDirectionalControl(codePoint: number): boolean {
-  return (
-    codePoint === 0x061c ||
-    codePoint === 0x200e ||
-    codePoint === 0x200f ||
-    (codePoint >= 0x202a && codePoint <= 0x202e) ||
-    (codePoint >= 0x2066 && codePoint <= 0x2069)
-  )
-}
-
-function sanitizePublicText(value: unknown, maxBytes: number): SanitizedText {
-  if (typeof value !== 'string') return { value: '', truncated: false }
-  const output: string[] = []
-  let bytes = 0
-  let consumedCodeUnits = 0
-  let pendingSpace = false
-  let truncated = false
-  const maxScannedCodeUnits = maxBytes * PUBLIC_TEXT_SCAN_FACTOR
-
-  for (const character of value) {
-    consumedCodeUnits += character.length
-    if (consumedCodeUnits > maxScannedCodeUnits) {
-      truncated = true
-      break
-    }
-    const codePoint = character.codePointAt(0)!
-    if (isDirectionalControl(codePoint)) continue
-    if (isPublicTextControl(codePoint) || character.trim() === '') {
-      pendingSpace = output.length > 0
-      continue
-    }
-
-    if (pendingSpace) {
-      if (bytes + 1 > maxBytes) {
-        truncated = true
-        break
-      }
-      output.push(' ')
-      bytes += 1
-      pendingSpace = false
-    }
-    const characterBytes = Buffer.byteLength(character, 'utf8')
-    if (bytes + characterBytes > maxBytes) {
-      truncated = true
-      break
-    }
-    output.push(character)
-    bytes += characterBytes
-  }
-  return {
-    value: output.join(''),
-    truncated: truncated || consumedCodeUnits < value.length
-  }
-}
-
-function sanitizePublicStringList(
-  value: unknown,
-  maxItems: number,
-  maxBytes: number
-): SanitizedList {
-  if (!Array.isArray(value)) return { values: [], truncated: false }
-  let itemTruncated = false
-  const maxScannedItems = maxItems * PUBLIC_LIST_SCAN_FACTOR
-  const scannedValues = value.slice(0, maxScannedItems)
-  const values = Array.from(
-    new Set(
-      scannedValues
-        .map((entry) => {
-          const sanitized = sanitizePublicText(entry, maxBytes)
-          itemTruncated ||= sanitized.truncated
-          return sanitized.value
-        })
-        .filter((entry) => entry.length > 0)
-    )
-  ).sort(compareStableText)
-  return {
-    values: values.slice(0, maxItems),
-    truncated: itemTruncated || value.length > scannedValues.length || values.length > maxItems
-  }
 }
 
 function toPublicSkill(skill: UnifiedSkillItem): PublicSkill {

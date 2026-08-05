@@ -8,6 +8,7 @@ export {
   type CliAudioTranscriptionServiceOptions
 } from './audioTranscriptionService'
 export { CliOcrService, type CliOcrServiceOptions } from './ocrService'
+export { createCliMcpAdminRoutes, type CliMcpAdminDependencies } from './mcpAdminRoutes'
 export { CliSkillService, type CliSkillServiceOptions } from './skillService'
 export { createCliRoutes, type CliRuntimeStatus } from './routes'
 export {

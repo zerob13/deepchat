@@ -584,4 +584,97 @@ describe('bundled CLI client', () => {
     expect(JSON.parse(stdout.read())).toEqual(config)
     expect(stderr.read()).toBe('')
   })
+
+  it('injects bounded MCP configuration JSON under the typed route field', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const config = {
+      type: 'stdio',
+      command: 'npx',
+      args: ['server-package'],
+      environment: { SERVER_TOKEN: 'private-value' }
+    }
+    const invokeRpc = vi.fn(async (invocation) =>
+      LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: {
+          server: {
+            name: 'local-server',
+            type: 'stdio',
+            enabled: false,
+            running: false,
+            managedBy: 'user',
+            editable: true,
+            removable: true,
+            description: '',
+            commandName: 'npx',
+            endpoint: null,
+            argumentCount: 1,
+            environmentEntryCount: 1,
+            headerEntryCount: 0,
+            authorizationMode: null,
+            metadataTruncated: false
+          }
+        }
+      })
+    )
+
+    await expect(
+      runCli(['mcp', 'add', '--name', 'local-server', '--stdin'], {
+        env: {},
+        stdin: Readable.from([JSON.stringify(config)]),
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeRpc
+      })
+    ).resolves.toBe(0)
+
+    expect(invokeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'mcp.addPublic',
+        params: {
+          serverName: 'local-server',
+          config: {
+            ...config,
+            description: '',
+            icon: '',
+            inheritEnv: 'minimal'
+          }
+        }
+      })
+    )
+    expect(stdout.read()).toBe('local-server added; disabled; runtime stopped\n')
+    expect(stdout.read()).not.toContain('private-value')
+    expect(stderr.read()).toBe('')
+  })
+
+  it('rejects non-object MCP stdin before transport invocation', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const invokeRpc = vi.fn()
+
+    await expect(
+      runCli(['mcp', 'update', '--name', 'local-server', '--stdin', '--json'], {
+        env: {},
+        stdin: Readable.from(['[]']),
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeRpc
+      })
+    ).resolves.toBe(2)
+
+    expect(LocalControlRpcResponseSchema.parse(JSON.parse(stdout.read()))).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_request' }
+    })
+    expect(stderr.read()).toBe('')
+    expect(invokeRpc).not.toHaveBeenCalled()
+  })
 })

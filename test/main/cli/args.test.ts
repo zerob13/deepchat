@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CLI_OUTPUT_ENV,
   CLI_TIMEOUT_ENV,
+  DEFAULT_COMPUTE_TIMEOUT_MS,
+  DEFAULT_MUTATION_TIMEOUT_MS,
   formatCliHelp,
   parseCliArguments
 } from '../../../src/cli/args'
@@ -623,5 +625,72 @@ describe('CLI argument grammar', () => {
       '--file <archive>|--url <https-url>'
     )
     expect(formatCliHelp()).toContain('skill remove')
+  })
+
+  it('parses public MCP administration without accepting inline configuration', () => {
+    expect(parseCliArguments(['mcp', 'list'], {})).toMatchObject({
+      operation: 'rpc',
+      contract: { name: 'mcp.listPublic' },
+      params: {}
+    })
+    expect(
+      parseCliArguments(['mcp', 'add', '--name', 'local-server', '--stdin'], {})
+    ).toMatchObject({
+      contract: { name: 'mcp.addPublic' },
+      params: { serverName: 'local-server' },
+      readStdin: true,
+      timeoutMs: DEFAULT_MUTATION_TIMEOUT_MS
+    })
+    expect(
+      parseCliArguments(['mcp', 'update', '--name=local-server', '--stdin'], {})
+    ).toMatchObject({
+      contract: { name: 'mcp.updatePublic' },
+      params: { serverName: 'local-server' },
+      readStdin: true
+    })
+    expect(parseCliArguments(['mcp', 'disable', '--name', 'local-server'], {})).toMatchObject({
+      contract: { name: 'mcp.setPublicStatus' },
+      params: { serverName: 'local-server', enabled: false }
+    })
+    expect(parseCliArguments(['mcp', 'start', '--name', 'local-server'], {})).toMatchObject({
+      contract: { name: 'mcp.startPublic' },
+      params: { serverName: 'local-server' }
+    })
+    expect(parseCliArguments(['mcp', 'stop', '--name', 'local-server'], {})).toMatchObject({
+      contract: { name: 'mcp.stopPublic' },
+      params: { serverName: 'local-server' }
+    })
+    expect(parseCliArguments(['mcp', 'remove', '--name', 'local-server'], {})).toMatchObject({
+      contract: { name: 'mcp.removePublic' },
+      params: { serverName: 'local-server' }
+    })
+
+    expect(() => parseCliArguments(['mcp', 'add', '--name', 'local-server'], {})).toThrow(
+      'requires --stdin'
+    )
+    expect(() => parseCliArguments(['mcp', 'update', '--stdin'], {})).toThrow('requires --name')
+    expect(() => parseCliArguments(['mcp', 'list', '--name', 'unexpected'], {})).toThrow(
+      '--name is not valid'
+    )
+  })
+
+  it('leaves enough time for approvals and large artifact delivery by default', () => {
+    expect(
+      parseCliArguments(['provider', 'remove', '--provider', 'provider-1'], {}).timeoutMs
+    ).toBe(DEFAULT_MUTATION_TIMEOUT_MS)
+    expect(parseCliArguments(['skill', 'enable', '--name', 'skill-1'], {}).timeoutMs).toBe(
+      DEFAULT_MUTATION_TIMEOUT_MS
+    )
+    expect(
+      parseCliArguments(
+        ['artifact', 'get', '--id', 'artifact_identifier_123', '--out', './output.bin'],
+        {}
+      ).timeoutMs
+    ).toBe(DEFAULT_COMPUTE_TIMEOUT_MS)
+  })
+
+  it('keeps MCP commands discoverable', () => {
+    expect(formatCliHelp({ domain: 'mcp', verb: 'add' })).toContain('--name <name> --stdin')
+    expect(formatCliHelp()).toContain('mcp remove')
   })
 })

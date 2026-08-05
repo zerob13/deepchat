@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { JsonValue } from '@shared/contracts/json'
+import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_AGENT_TOKEN_ENV,
   createLocalControlFailure,
@@ -9,6 +9,7 @@ import {
 import { artifactsDescribeRoute } from '@shared/contracts/routes/artifacts.routes'
 import { MediaGenerationEventSchema } from '@shared/contracts/routes/media.routes'
 import { ModelInvokeEventSchema } from '@shared/contracts/routes/models.routes'
+import { PUBLIC_MCP_CONFIG_MAX_BYTES } from '@shared/contracts/routes/mcp.routes'
 import { PROVIDER_CREDENTIAL_MAX_BYTES } from '@shared/contracts/routes/providers.routes'
 import { parseCliArguments, formatCliHelp, inferCliOutputMode, type CliOutputMode } from './args'
 import {
@@ -60,6 +61,33 @@ export type CliRunDependencies = Readonly<{
 
 function writeText(output: WritableOutput, value: string): void {
   output.write(value.endsWith('\n') ? value : `${value}\n`)
+}
+
+function parseStdinJsonObject(input: string, label: string): Record<string, JsonValue> {
+  let candidate: unknown
+  try {
+    candidate = JSON.parse(input) as unknown
+  } catch {
+    throw new CliClientError(
+      'invalid_request',
+      `${label} stdin must be valid JSON`,
+      CLI_EXIT_CODES.usage
+    )
+  }
+  const parsed = JsonValueSchema.safeParse(candidate)
+  if (
+    !parsed.success ||
+    !parsed.data ||
+    typeof parsed.data !== 'object' ||
+    Array.isArray(parsed.data)
+  ) {
+    throw new CliClientError(
+      'invalid_request',
+      `${label} stdin must be a JSON object`,
+      CLI_EXIT_CODES.usage
+    )
+  }
+  return parsed.data
 }
 
 function writeClientError(
@@ -178,7 +206,9 @@ export async function runCli(
         controller.signal,
         parsed.contract.name === 'providers.setCredential'
           ? PROVIDER_CREDENTIAL_MAX_BYTES
-          : undefined
+          : parsed.contract.name === 'mcp.addPublic' || parsed.contract.name === 'mcp.updatePublic'
+            ? PUBLIC_MCP_CONFIG_MAX_BYTES
+            : undefined
       )
       if (!params || typeof params !== 'object' || Array.isArray(params)) {
         throw new CliClientError(
@@ -204,24 +234,15 @@ export async function runCli(
           params = { ...params, value: input.replace(/(?:\r\n|\n)$/, '') }
           break
         case 'models.setPublicConfig': {
-          let config: unknown
-          try {
-            config = JSON.parse(input) as unknown
-          } catch {
-            throw new CliClientError(
-              'invalid_request',
-              'Model configuration stdin must be valid JSON',
-              CLI_EXIT_CODES.usage
-            )
-          }
-          if (!config || typeof config !== 'object' || Array.isArray(config)) {
-            throw new CliClientError(
-              'invalid_request',
-              'Model configuration stdin must be a JSON object',
-              CLI_EXIT_CODES.usage
-            )
-          }
-          params = { ...params, config: config as JsonValue }
+          params = { ...params, config: parseStdinJsonObject(input, 'Model configuration') }
+          break
+        }
+        case 'mcp.addPublic': {
+          params = { ...params, config: parseStdinJsonObject(input, 'MCP configuration') }
+          break
+        }
+        case 'mcp.updatePublic': {
+          params = { ...params, updates: parseStdinJsonObject(input, 'MCP update') }
           break
         }
         default:

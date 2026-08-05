@@ -29,6 +29,15 @@ import {
   videosGenerateRoute
 } from '@shared/contracts/routes/media.routes'
 import {
+  mcpAddPublicRoute,
+  mcpListPublicRoute,
+  mcpRemovePublicRoute,
+  mcpSetPublicStatusRoute,
+  mcpStartPublicRoute,
+  mcpStopPublicRoute,
+  mcpUpdatePublicRoute
+} from '@shared/contracts/routes/mcp.routes'
+import {
   providersAddPublicRoute,
   providersListPublicRoute,
   providersRemoveRoute,
@@ -69,6 +78,7 @@ export const CLI_TIMEOUT_ENV = 'DEEPCHAT_CLI_TIMEOUT_MS'
 export const DEFAULT_CLI_TIMEOUT_MS = 30_000
 export const MAX_CLI_TIMEOUT_MS = LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
 export const DEFAULT_COMPUTE_TIMEOUT_MS = MAX_CLI_TIMEOUT_MS
+export const DEFAULT_MUTATION_TIMEOUT_MS = 10 * 60_000
 
 export type CliOutputMode = 'text' | 'json' | 'jsonl'
 export type CliRpcContract =
@@ -107,6 +117,13 @@ export type CliRpcContract =
   | typeof skillsInstallUploadRoute
   | typeof skillsSetPublicStatusRoute
   | typeof skillsUninstallPublicRoute
+  | typeof mcpListPublicRoute
+  | typeof mcpAddPublicRoute
+  | typeof mcpUpdatePublicRoute
+  | typeof mcpRemovePublicRoute
+  | typeof mcpSetPublicStatusRoute
+  | typeof mcpStartPublicRoute
+  | typeof mcpStopPublicRoute
 
 export type CliCommandOperation = 'rpc' | 'stream' | 'upload' | 'download'
 
@@ -161,7 +178,50 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['skill install', skillsInstallPublicUrlRoute],
   ['skill enable', skillsSetPublicStatusRoute],
   ['skill disable', skillsSetPublicStatusRoute],
-  ['skill remove', skillsUninstallPublicRoute]
+  ['skill remove', skillsUninstallPublicRoute],
+  ['mcp list', mcpListPublicRoute],
+  ['mcp add', mcpAddPublicRoute],
+  ['mcp update', mcpUpdatePublicRoute],
+  ['mcp enable', mcpSetPublicStatusRoute],
+  ['mcp disable', mcpSetPublicStatusRoute],
+  ['mcp start', mcpStartPublicRoute],
+  ['mcp stop', mcpStopPublicRoute],
+  ['mcp remove', mcpRemovePublicRoute]
+])
+
+const LONG_RUNNING_COMMANDS = new Set([
+  'artifact get',
+  'model invoke',
+  'image generate',
+  'video generate',
+  'audio speak',
+  'audio transcribe',
+  'ocr extract',
+  'ocr clear-cache',
+  'skill install'
+])
+
+const APPROVED_MUTATION_COMMANDS = new Set([
+  'provider add',
+  'provider update',
+  'provider set-credential',
+  'provider clear-credential',
+  'provider remove',
+  'model enable',
+  'model disable',
+  'model config-set',
+  'model config-reset',
+  'settings set',
+  'skill enable',
+  'skill disable',
+  'skill remove',
+  'mcp add',
+  'mcp update',
+  'mcp enable',
+  'mcp disable',
+  'mcp start',
+  'mcp stop',
+  'mcp remove'
 ])
 
 function parseBoolean(value: string, source: string): boolean {
@@ -337,7 +397,15 @@ const COMMAND_DOMAIN_OPTIONS = new Map<string, ReadonlySet<string>>([
   ['skill install', new Set(['agent', 'file', 'url', 'overwrite'])],
   ['skill enable', new Set(['agent', 'name'])],
   ['skill disable', new Set(['agent', 'name'])],
-  ['skill remove', new Set(['agent', 'name'])]
+  ['skill remove', new Set(['agent', 'name'])],
+  ['mcp list', new Set()],
+  ['mcp add', new Set(['name', 'stdin'])],
+  ['mcp update', new Set(['name', 'stdin'])],
+  ['mcp enable', new Set(['name'])],
+  ['mcp disable', new Set(['name'])],
+  ['mcp start', new Set(['name'])],
+  ['mcp stop', new Set(['name'])],
+  ['mcp remove', new Set(['name'])]
 ])
 
 const AUDIO_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -431,16 +499,11 @@ export function parseCliArguments(
   let explicitOutputMode: CliOutputMode | undefined
   let timeoutMs = env[CLI_TIMEOUT_ENV]
     ? parseTimeout(env[CLI_TIMEOUT_ENV], CLI_TIMEOUT_ENV)
-    : commandKey === 'model invoke' ||
-        commandKey === 'image generate' ||
-        commandKey === 'video generate' ||
-        commandKey === 'audio speak' ||
-        commandKey === 'audio transcribe' ||
-        commandKey === 'ocr extract' ||
-        commandKey === 'ocr clear-cache' ||
-        commandKey === 'skill install'
+    : LONG_RUNNING_COMMANDS.has(commandKey)
       ? DEFAULT_COMPUTE_TIMEOUT_MS
-      : DEFAULT_CLI_TIMEOUT_MS
+      : APPROVED_MUTATION_COMMANDS.has(commandKey)
+        ? DEFAULT_MUTATION_TIMEOUT_MS
+        : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
   let helpRequested = false
   const domainOptions = new Set<string>()
@@ -574,6 +637,7 @@ export function parseCliArguments(
   const skillAgentId = getString('agent')
   const skillUrl = getString('url')
   const skillName = getString('name')
+  const mcpServerName = getString('name')
   const parsedSettingKeys = settingKeys
     ?.split(',')
     .map((key) => key.trim())
@@ -625,6 +689,12 @@ export function parseCliArguments(
   const isSkillList = commandKey === 'skill list'
   const isSkillStatus = commandKey === 'skill enable' || commandKey === 'skill disable'
   const isSkillRemove = commandKey === 'skill remove'
+  const isMcpList = commandKey === 'mcp list'
+  const isMcpAdd = commandKey === 'mcp add'
+  const isMcpUpdate = commandKey === 'mcp update'
+  const isMcpStatus = commandKey === 'mcp enable' || commandKey === 'mcp disable'
+  const isMcpRuntime = commandKey === 'mcp start' || commandKey === 'mcp stop'
+  const isMcpRemove = commandKey === 'mcp remove'
   const allowedDomainOptions = COMMAND_DOMAIN_OPTIONS.get(commandKey) ?? new Set<string>()
   const invalidDomainOption = Array.from(domainOptions).find(
     (option) => !allowedDomainOptions.has(option)
@@ -724,6 +794,16 @@ export function parseCliArguments(
   if (!helpRequested && (isSkillStatus || isSkillRemove) && !skillName) {
     throw new CliUsageError(`deepchat skill ${verb} requires --name`)
   }
+  if (
+    !helpRequested &&
+    (isMcpAdd || isMcpUpdate || isMcpStatus || isMcpRuntime || isMcpRemove) &&
+    !mcpServerName
+  ) {
+    throw new CliUsageError(`deepchat mcp ${verb} requires --name`)
+  }
+  if (!helpRequested && (isMcpAdd || isMcpUpdate) && !readStdin) {
+    throw new CliUsageError(`deepchat mcp ${verb} requires --stdin`)
+  }
 
   let params: JsonValue = artifactId ? { id: artifactId } : {}
   if (isProviderList) params = { enabledOnly }
@@ -797,6 +877,12 @@ export function parseCliArguments(
   if (isSkillRemove && skillName) {
     params = { ...(skillAgentId ? { agentId: skillAgentId } : {}), name: skillName }
   }
+  if (isMcpList) params = {}
+  if ((isMcpAdd || isMcpUpdate) && mcpServerName) params = { serverName: mcpServerName }
+  if (isMcpStatus && mcpServerName) {
+    params = { serverName: mcpServerName, enabled: commandKey === 'mcp enable' }
+  }
+  if ((isMcpRuntime || isMcpRemove) && mcpServerName) params = { serverName: mcpServerName }
   if (isModelInvoke && providerId && modelId) {
     params = {
       providerId,
@@ -964,7 +1050,13 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
                               : command.verb === 'install'
                                 ? ' (--file <archive>|--url <https-url>) [--agent <id>] [--overwrite]'
                                 : ' --name <name> [--agent <id>]'
-                            : ''
+                            : command.domain === 'mcp'
+                              ? command.verb === 'list'
+                                ? ''
+                                : command.verb === 'add' || command.verb === 'update'
+                                  ? ' --name <name> --stdin'
+                                  : ' --name <name>'
+                              : ''
     const commandKey = `${command.domain} ${command.verb}`
     const optionLines =
       commandKey === 'model invoke'
@@ -1056,6 +1148,14 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  skill enable         Enable one Skill',
     '  skill disable        Disable one Skill',
     '  skill remove         Remove one mutable Skill',
+    '  mcp list             List redacted MCP server summaries',
+    '  mcp add              Read a new MCP server configuration from stdin',
+    '  mcp update           Read an MCP server update from stdin',
+    '  mcp enable           Enable and start one MCP server',
+    '  mcp disable          Disable and stop one MCP server',
+    '  mcp start            Start one configured MCP server',
+    '  mcp stop             Stop one configured MCP server',
+    '  mcp remove           Remove one MCP server',
     '  help commands        Show this help',
     '',
     'Options (after domain and verb):',

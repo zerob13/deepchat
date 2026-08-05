@@ -3,6 +3,7 @@ import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
 import {
   AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
   OCR_EXTRACTION_MAX_INPUT_BYTES,
+  PUBLIC_MCP_CONFIG_MAX_BYTES,
   artifactsDeleteRoute,
   artifactsDescribeRoute,
   artifactsReadRoute,
@@ -19,6 +20,13 @@ import {
   modelsResetConfigRoute,
   modelsSetPublicConfigRoute,
   modelsSetStatusRoute,
+  mcpAddPublicRoute,
+  mcpListPublicRoute,
+  mcpRemovePublicRoute,
+  mcpSetPublicStatusRoute,
+  mcpStartPublicRoute,
+  mcpStopPublicRoute,
+  mcpUpdatePublicRoute,
   ocrClearCacheRoute,
   ocrExtractArtifactRoute,
   ocrExtractUploadRoute,
@@ -47,6 +55,7 @@ import {
   type LocalControlPrincipal,
   type LocalControlScope
 } from '@shared/contracts/localControl'
+import { sanitizePublicText } from './publicText'
 
 export type LocalControlTransport = 'rpc' | 'stream' | 'upload' | 'download'
 export type LocalControlApprovalMode = 'never' | 'policy'
@@ -202,6 +211,86 @@ function skillUrlDisplay(input: unknown): JsonValue {
     }
   } catch {
     return selected
+  }
+}
+
+function mcpConfigProjection(input: unknown, field: 'config' | 'updates'): JsonValue {
+  const config = jsonObjectField(input, field)
+  const projection: Record<string, JsonValue> = {
+    fields: Object.keys(config).sort()
+  }
+  if (typeof config.type === 'string') projection.type = config.type
+  if (typeof config.description === 'string') {
+    const description = sanitizePublicText(config.description, 512)
+    projection.description = description.value
+    projection.descriptionTruncated = description.truncated
+  }
+  if (typeof config.command === 'string') {
+    const commandName = config.command.split(/[\\/]/).at(-1) ?? ''
+    projection.commandName = sanitizePublicText(commandName, 256).value
+  }
+  if (Array.isArray(config.args)) projection.argumentCount = config.args.length
+  if (typeof config.inheritEnv === 'string') projection.inheritEnv = config.inheritEnv
+  if (config.environment && typeof config.environment === 'object') {
+    projection.environment = mcpKeySummary(config.environment)
+  }
+  if (config.headers && typeof config.headers === 'object') {
+    projection.headers = mcpKeySummary(config.headers)
+  }
+  if (typeof config.baseUrl === 'string') projection.endpoint = mcpUrlSummary(config.baseUrl)
+  if (typeof config.customNpmRegistry === 'string') {
+    projection.npmRegistry = mcpUrlSummary(config.customNpmRegistry)
+  } else if (config.customNpmRegistry === null) {
+    projection.npmRegistry = null
+  }
+  if (config.authorization && typeof config.authorization === 'object') {
+    projection.authorization = selectAuditFields(config.authorization, ['mode'])
+  } else if (config.authorization === null) {
+    projection.authorization = null
+  }
+  return {
+    ...selectAuditFields(input, ['serverName']),
+    [field]: projection
+  }
+}
+
+function mcpConfigAudit(input: unknown, field: 'config' | 'updates'): JsonValue {
+  const config = jsonObjectField(input, field)
+  return {
+    ...selectAuditFields(input, ['serverName']),
+    fields: Object.keys(config).sort(),
+    environment:
+      config.environment && typeof config.environment === 'object'
+        ? mcpKeySummary(config.environment)
+        : { count: 0, names: [], truncated: false },
+    headers:
+      config.headers && typeof config.headers === 'object'
+        ? mcpKeySummary(config.headers)
+        : { count: 0, names: [], truncated: false }
+  }
+}
+
+function mcpKeySummary(value: object): JsonValue {
+  const keys = Object.keys(value).sort()
+  const names = keys.slice(0, 16).map((key) => sanitizePublicText(key, 128).value)
+  return {
+    count: keys.length,
+    names,
+    truncated: keys.length > names.length
+  }
+}
+
+function mcpUrlSummary(value: string): JsonValue {
+  try {
+    const url = new URL(value)
+    const origin = sanitizePublicText(url.origin, 1024)
+    return {
+      origin: origin.value,
+      pathPresent: url.pathname !== '/',
+      truncated: origin.truncated
+    }
+  } catch {
+    return { valid: false }
   }
 }
 
@@ -378,7 +467,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'policy',
     auditProjection: (input) => selectAuditFields(input, ['name', 'apiType', 'enabled']),
     approvalDisplay: (input) => selectAuditFields(input, ['name', 'apiType', 'baseUrl', 'enabled']),
-    limits: { maxBodyBytes: 16 * 1024, timeoutMs: 30_000 }
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: providersUpdatePublicRoute,
@@ -395,7 +484,7 @@ const CLI_SURFACE_V1_ENTRIES = [
       ...selectAuditFields(input, ['providerId']),
       updates: jsonObjectField(input, 'updates')
     }),
-    limits: { maxBodyBytes: 16 * 1024, timeoutMs: 30_000 }
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: providersSetCredentialRoute,
@@ -406,7 +495,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'policy',
     auditProjection: (input) => selectAuditFields(input, ['providerId', 'action', 'kind']),
     approvalDisplay: (input) => selectAuditFields(input, ['providerId', 'action', 'kind']),
-    limits: { maxBodyBytes: 128 * 1024, timeoutMs: 30_000 }
+    limits: { maxBodyBytes: 128 * 1024, timeoutMs: APPROVED_MUTATION_LIMITS.timeoutMs }
   },
   {
     contract: providersRemoveRoute,
@@ -417,7 +506,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'policy',
     auditProjection: (input) => selectAuditFields(input, ['providerId']),
     approvalDisplay: (input) => selectAuditFields(input, ['providerId']),
-    limits: DIAGNOSTIC_LIMITS
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: modelsListRuntimeRoute,
@@ -448,7 +537,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'policy',
     auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId', 'enabled']),
     approvalDisplay: (input) => selectAuditFields(input, ['providerId', 'modelId', 'enabled']),
-    limits: DIAGNOSTIC_LIMITS
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: modelsSetPublicConfigRoute,
@@ -465,7 +554,7 @@ const CLI_SURFACE_V1_ENTRIES = [
       ...selectAuditFields(input, ['providerId', 'modelId']),
       config: jsonObjectField(input, 'config')
     }),
-    limits: { maxBodyBytes: 64 * 1024, timeoutMs: 30_000 }
+    limits: { maxBodyBytes: 64 * 1024, timeoutMs: APPROVED_MUTATION_LIMITS.timeoutMs }
   },
   {
     contract: modelsResetConfigRoute,
@@ -476,7 +565,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'policy',
     auditProjection: (input) => selectAuditFields(input, ['providerId', 'modelId']),
     approvalDisplay: (input) => selectAuditFields(input, ['providerId', 'modelId']),
-    limits: DIAGNOSTIC_LIMITS
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: settingsGetPublicRoute,
@@ -507,7 +596,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     approvalDisplay: (input) => ({ changes: settingChangesForDisplay(input) }),
     agentInputAllowed: (input) =>
       settingChangeKeys(input).every((key) => PREFERENCE_SETTING_KEYS.has(key)),
-    limits: DIAGNOSTIC_LIMITS
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: skillsListPublicRoute,
@@ -564,6 +653,116 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'policy',
     auditProjection: (input) => selectAuditFields(input, ['agentId', 'name']),
     approvalDisplay: (input) => selectAuditFields(input, ['agentId', 'name']),
+    limits: APPROVED_MUTATION_LIMITS
+  },
+  {
+    contract: mcpListPublicRoute,
+    effect: 'read',
+    callers: ['human'],
+    scopes: ['mcp:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: () => ({}),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: mcpAddPublicRoute,
+    effect: {
+      possible: ['supply-chain', 'credential'],
+      resolve: (input) => {
+        const config = jsonObjectField(input, 'config')
+        const environment = config.environment
+        const headers = config.headers
+        return (environment &&
+          typeof environment === 'object' &&
+          Object.keys(environment).length > 0) ||
+          (headers && typeof headers === 'object' && Object.keys(headers).length > 0)
+          ? 'credential'
+          : 'supply-chain'
+      }
+    },
+    callers: ['human'],
+    scopes: ['mcp:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => mcpConfigAudit(input, 'config'),
+    approvalDisplay: (input) => mcpConfigProjection(input, 'config'),
+    limits: {
+      maxBodyBytes: PUBLIC_MCP_CONFIG_MAX_BYTES + 64 * 1024,
+      timeoutMs: 5 * 60_000
+    }
+  },
+  {
+    contract: mcpUpdatePublicRoute,
+    effect: {
+      possible: ['execution-config', 'security-config', 'supply-chain', 'credential'],
+      resolve: (input) => {
+        const fields = new Set(objectFieldKeys(input, 'updates'))
+        if (fields.has('environment') || fields.has('headers')) return 'credential'
+        if (
+          ['command', 'args', 'type', 'baseUrl', 'customNpmRegistry'].some((field) =>
+            fields.has(field)
+          )
+        ) {
+          return 'supply-chain'
+        }
+        if (fields.has('authorization') || fields.has('inheritEnv')) return 'security-config'
+        return 'execution-config'
+      }
+    },
+    callers: ['human'],
+    scopes: ['mcp:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => mcpConfigAudit(input, 'updates'),
+    approvalDisplay: (input) => mcpConfigProjection(input, 'updates'),
+    limits: {
+      maxBodyBytes: PUBLIC_MCP_CONFIG_MAX_BYTES + 64 * 1024,
+      timeoutMs: 5 * 60_000
+    }
+  },
+  {
+    contract: mcpRemovePublicRoute,
+    effect: 'destructive',
+    callers: ['human'],
+    scopes: ['mcp:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['serverName']),
+    approvalDisplay: (input) => selectAuditFields(input, ['serverName']),
+    limits: APPROVED_MUTATION_LIMITS
+  },
+  {
+    contract: mcpSetPublicStatusRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['mcp:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['serverName', 'enabled']),
+    approvalDisplay: (input) => selectAuditFields(input, ['serverName', 'enabled']),
+    limits: APPROVED_MUTATION_LIMITS
+  },
+  {
+    contract: mcpStartPublicRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['mcp:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['serverName']),
+    approvalDisplay: (input) => selectAuditFields(input, ['serverName']),
+    limits: APPROVED_MUTATION_LIMITS
+  },
+  {
+    contract: mcpStopPublicRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['mcp:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['serverName']),
+    approvalDisplay: (input) => selectAuditFields(input, ['serverName']),
     limits: APPROVED_MUTATION_LIMITS
   },
   {

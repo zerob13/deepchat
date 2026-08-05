@@ -14,6 +14,10 @@ function formatDuration(milliseconds: number): string {
     .join(' ')
 }
 
+function formatMcpRuntime(running: boolean | null): string {
+  return running === null ? 'unknown' : running ? 'running' : 'stopped'
+}
+
 export function formatHumanResult(
   contract: CliRpcContract,
   value: JsonValue,
@@ -159,6 +163,40 @@ export function formatHumanResult(
     case 'skills.uninstallPublic': {
       const result = contract.output.parse(value)
       return `${result.name} removed from ${result.agentId}`
+    }
+    case 'mcp.listPublic': {
+      const result = contract.output.parse(value)
+      return [
+        ...result.servers.map(
+          (server) =>
+            `${server.name}  ${server.type}  ${server.enabled ? 'enabled' : 'disabled'}  ${server.running === null ? 'runtime-unknown' : server.running ? 'running' : 'stopped'}  ${server.managedBy}${server.metadataTruncated ? '  metadata-truncated' : ''}  ${server.description}`
+        ),
+        ...(result.truncated ? ['MCP server list truncated'] : [])
+      ].join('\n')
+    }
+    case 'mcp.addPublic': {
+      const result = contract.output.parse(value)
+      return `${result.server.name} added; ${result.server.enabled ? 'enabled' : 'disabled'}; runtime ${formatMcpRuntime(result.server.running)}`
+    }
+    case 'mcp.updatePublic': {
+      const result = contract.output.parse(value)
+      return `${result.server.name} updated; runtime ${formatMcpRuntime(result.server.running)}`
+    }
+    case 'mcp.removePublic': {
+      const result = contract.output.parse(value)
+      return `${result.serverName} removed`
+    }
+    case 'mcp.setPublicStatus': {
+      const result = contract.output.parse(value)
+      return `${result.server.name} ${result.server.enabled ? 'enabled' : 'disabled'}; runtime ${formatMcpRuntime(result.server.running)}`
+    }
+    case 'mcp.startPublic': {
+      const result = contract.output.parse(value)
+      return `${result.server.name} start requested; runtime ${formatMcpRuntime(result.server.running)}`
+    }
+    case 'mcp.stopPublic': {
+      const result = contract.output.parse(value)
+      return `${result.server.name} stop requested; runtime ${formatMcpRuntime(result.server.running)}`
     }
     case 'models.invoke': {
       return contract.output.parse(value).text
