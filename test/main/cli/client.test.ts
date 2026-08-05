@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeepchatRouteName } from '@shared/contracts/routes'
 import type { JsonValue } from '@shared/contracts/json'
@@ -40,6 +41,7 @@ async function createClientServer(
   userDataPath: string
   server: CliServer
   dispatch: ReturnType<typeof vi.fn>
+  dispatchStream: ReturnType<typeof vi.fn>
 }> {
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-client-'))
   temporaryDirectories.push(userDataPath)
@@ -57,35 +59,40 @@ async function createClientServer(
       return await route(input, { caller })
     }
   )
+  const dispatchStream = vi.fn(
+    async (
+      method: string,
+      _input: unknown,
+      _caller: CliRouteCaller,
+      _requestId: string,
+      _signal: AbortSignal,
+      emit: (event: string, data: JsonValue) => Promise<void>
+    ) => {
+      if (options.hangStream) return await new Promise<never>(() => undefined)
+      for (const event of options.stream?.events ?? []) await emit(method, event)
+      return options.stream?.result
+    }
+  )
   server = new CliServer({
     userDataPath,
     appVersion: '9.8.7',
     dispatch,
     ...(options.stream || options.hangStream
       ? {
-          dispatchStream: async (
-            method: string,
-            _input: unknown,
-            _caller: CliRouteCaller,
-            _signal: AbortSignal,
-            emit: (event: string, data: JsonValue) => Promise<void>
-          ) => {
-            if (options.hangStream) return await new Promise<never>(() => undefined)
-            for (const event of options.stream?.events ?? []) await emit(method, event)
-            return options.stream?.result
-          }
+          dispatchStream
         }
       : {}),
     log: { warn: vi.fn(), error: vi.fn() }
   })
   servers.push(server)
   await server.start()
-  return { userDataPath, server, dispatch }
+  return { userDataPath, server, dispatch, dispatchStream }
 }
 
 function runWithCapturedOutput(
   argv: readonly string[],
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  stdin?: NodeJS.ReadableStream
 ): {
   result: Promise<number>
   stdout: ReturnType<typeof captureOutput>
@@ -100,6 +107,7 @@ function runWithCapturedOutput(
       env,
       stdout: stdout.stream,
       stderr: stderr.stream,
+      ...(stdin ? { stdin } : {}),
       signalHost: signalHost as unknown as NodeJS.Process,
       randomId: () => 'request-1',
       forceExit: vi.fn()
@@ -309,5 +317,86 @@ describe('bundled CLI client', () => {
       }
     )
     await vi.waitFor(() => expect(server.getStatus().pendingRequests).toBe(0))
+  })
+
+  it('maps media stdin and renders artifact retrieval instructions', async () => {
+    const artifact = {
+      id: 'artifact_identifier_123',
+      requestId: 'request-1',
+      owner: 'human',
+      mimeType: 'image/png',
+      size: 5,
+      sha256: 'a'.repeat(64),
+      filename: 'generated-image-1.png',
+      createdAt: 1_000,
+      expiresAt: 2_000
+    } as const
+    const stream = {
+      events: [
+        { type: 'started', providerId: 'provider-1', modelId: 'image-1' },
+        { type: 'artifact', index: 0, artifact }
+      ],
+      result: {
+        providerId: 'provider-1',
+        modelId: 'image-1',
+        artifacts: [artifact],
+        durationMs: 25
+      }
+    } as const
+    const { userDataPath, dispatchStream } = await createClientServer({ stream })
+    const invocation = runWithCapturedOutput(
+      ['image', 'generate', '--provider', 'provider-1', '--model', 'image-1', '--stdin'],
+      { DEEPCHAT_E2E_USER_DATA_DIR: userDataPath },
+      Readable.from(['a lighthouse'])
+    )
+
+    await expect(invocation.result).resolves.toBe(0)
+    expect(invocation.stdout.read()).toContain('Generated 1 image artifact in 25ms')
+    expect(invocation.stdout.read()).toContain(
+      'deepchat artifact get --id artifact_identifier_123 --out generated-image-1.png'
+    )
+    expect(dispatchStream).toHaveBeenCalledWith(
+      'images.generate',
+      {
+        providerId: 'provider-1',
+        modelId: 'image-1',
+        prompt: 'a lighthouse'
+      },
+      expect.objectContaining({ principal: 'human' }),
+      'request-1',
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
+  })
+
+  it('rejects invalid media events before emitting JSONL records', async () => {
+    const stream = {
+      events: [{ type: 'artifact', index: -1, artifact: {} }],
+      result: {}
+    } as const
+    const { userDataPath } = await createClientServer({ stream })
+    const invocation = runWithCapturedOutput(
+      [
+        'audio',
+        'speak',
+        '--provider',
+        'provider-1',
+        '--model',
+        'tts-1',
+        '--text',
+        'hello',
+        '--jsonl'
+      ],
+      { DEEPCHAT_E2E_USER_DATA_DIR: userDataPath }
+    )
+
+    await expect(invocation.result).resolves.toBe(8)
+    const records = invocation.stdout
+      .read()
+      .trimEnd()
+      .split('\n')
+      .map((line) => LocalControlRpcResponseSchema.parse(JSON.parse(line)))
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ ok: false, error: { code: 'internal_error' } })
   })
 })

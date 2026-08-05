@@ -140,6 +140,7 @@ async function createTestServer(
             method: string,
             _input: unknown,
             _caller: CliRouteCaller,
+            _requestId: string,
             _signal: AbortSignal,
             emit: (event: string, data: JsonValue) => Promise<void>
           ) => {

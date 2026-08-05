@@ -6,6 +6,7 @@ import {
   type LocalControlRpcResponse
 } from '@shared/contracts/localControl'
 import { artifactsDescribeRoute } from '@shared/contracts/routes/artifacts.routes'
+import { MediaGenerationEventSchema } from '@shared/contracts/routes/media.routes'
 import { ModelInvokeEventSchema } from '@shared/contracts/routes/models.routes'
 import { parseCliArguments, formatCliHelp, inferCliOutputMode, type CliOutputMode } from './args'
 import {
@@ -77,6 +78,22 @@ function writeClientError(
       })
     )
   )
+}
+
+function validateStreamEvent(method: string, data: unknown): void {
+  const parsed =
+    method === 'models.invoke'
+      ? ModelInvokeEventSchema.safeParse(data)
+      : method === 'images.generate' || method === 'videos.generate' || method === 'speech.generate'
+        ? MediaGenerationEventSchema.safeParse(data)
+        : null
+  if (!parsed?.success) {
+    throw new CliClientError(
+      'internal_error',
+      'DeepChat emitted an invalid stream event',
+      CLI_EXIT_CODES.internal
+    )
+  }
 }
 
 export async function runCli(
@@ -151,7 +168,7 @@ export async function runCli(
   try {
     let params = parsed.params
     if (parsed.readStdin) {
-      const prompt = await readBoundedUtf8Stdin(stdin, controller.signal)
+      const input = await readBoundedUtf8Stdin(stdin, controller.signal)
       if (!params || typeof params !== 'object' || Array.isArray(params)) {
         throw new CliClientError(
           'internal_error',
@@ -159,8 +176,26 @@ export async function runCli(
           CLI_EXIT_CODES.internal
         )
       }
-      const messages = Array.isArray(params.messages) ? params.messages : []
-      params = { ...params, messages: [...messages, { role: 'user', content: prompt }] }
+      switch (parsed.contract.name) {
+        case 'models.invoke': {
+          const messages = Array.isArray(params.messages) ? params.messages : []
+          params = { ...params, messages: [...messages, { role: 'user', content: input }] }
+          break
+        }
+        case 'images.generate':
+        case 'videos.generate':
+          params = { ...params, prompt: input }
+          break
+        case 'speech.generate':
+          params = { ...params, text: input }
+          break
+        default:
+          throw new CliClientError(
+            'internal_error',
+            'CLI command does not accept standard input',
+            CLI_EXIT_CODES.internal
+          )
+      }
     }
     const validatedInput = parsed.contract.input.safeParse(params)
     if (!validatedInput.success) {
@@ -206,23 +241,17 @@ export async function runCli(
           CLI_EXIT_CODES.internal
         )
       }
+      validateStreamEvent(parsed.contract.name, event.data)
       if (parsed.outputMode === 'jsonl') {
         writeText(stdout, JSON.stringify(event))
         return
       }
       if (parsed.outputMode !== 'text' || parsed.contract.name !== 'models.invoke') return
-      const parsedEvent = ModelInvokeEventSchema.safeParse(event.data)
-      if (!parsedEvent.success) {
-        throw new CliClientError(
-          'internal_error',
-          'DeepChat emitted an invalid model event',
-          CLI_EXIT_CODES.internal
-        )
-      }
-      if (parsedEvent.data.type === 'text_delta' && parsedEvent.data.text) {
-        stdout.write(parsedEvent.data.text)
+      const parsedEvent = ModelInvokeEventSchema.parse(event.data)
+      if (parsedEvent.type === 'text_delta' && parsedEvent.text) {
+        stdout.write(parsedEvent.text)
         streamedText = true
-        streamedTextEndsWithNewline = parsedEvent.data.text.endsWith('\n')
+        streamedTextEndsWithNewline = parsedEvent.text.endsWith('\n')
       }
     }
     const response =
@@ -265,7 +294,11 @@ export async function runCli(
         signal: controller.signal
       })
     }
-    if (parsed.operation === 'stream' && parsed.outputMode === 'text') {
+    if (
+      parsed.operation === 'stream' &&
+      parsed.contract.name === 'models.invoke' &&
+      parsed.outputMode === 'text'
+    ) {
       if (!streamedText || !streamedTextEndsWithNewline) stdout.write('\n')
     } else if (parsed.outputMode === 'text') {
       writeText(

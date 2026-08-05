@@ -1,17 +1,32 @@
 import {
   MODEL_INVOKE_MAX_OUTPUT_CHARACTERS,
+  MediaGenerationEventSchema,
   ModelInvokeEventSchema,
   PublicProviderSchema,
+  imagesGenerateRoute,
   modelsInvokeRoute,
   providersListPublicRoute,
+  speechGenerateRoute,
+  videosGenerateRoute,
+  type ImageGenerationInput,
+  type ImageGenerationOutput,
+  type ArtifactMetadata,
+  type MediaGenerationEvent,
   type ModelInvokeEvent,
   type ModelInvokeInput,
   type ModelInvokeOutput,
-  type PublicProvider
+  type PublicProvider,
+  type SpeechGenerationInput,
+  type SpeechGenerationOutput,
+  type VideoGenerationInput,
+  type VideoGenerationOutput
 } from '@shared/contracts/routes'
 import type { JsonValue } from '@shared/contracts/json'
-import { ModelType } from '@shared/model'
+import { ApiEndpointType, ModelType } from '@shared/model'
 import type { LLMCoreStreamEvent, ProviderRoundStopReason } from '@shared/types/core/llm-events'
+import type { ModelConfig } from '@shared/types/provider'
+import { isVideoGenerationModelConfig } from '@shared/videoGenerationSettings'
+import { isTtsModelConfig, isTtsModelId } from '@shared/ttsSettings'
 import type { ProviderSettingsPort } from '@/provider/settings'
 import type { ProviderRuntime } from '@/provider'
 import {
@@ -21,6 +36,8 @@ import {
   type RouteCaller
 } from '@/routes/routeRegistry'
 import { CliRequestError } from './errors'
+import { resolveGeneratedMedia, type GeneratedMediaKind } from './mediaOutput'
+import { artifactExtensionForMimeType, type ArtifactSpool } from './artifactSpool'
 
 const MAX_STREAM_DELTA_CHARACTERS = 1024 * 1024
 const MAX_MODEL_STREAM_EVENTS = 10_000
@@ -41,11 +58,20 @@ type ComputeProviderSettings = Pick<
   | 'getModelConfig'
 >
 
-type ComputeProviderRuntime = Pick<ProviderRuntime, 'executeWithRateLimit' | 'streamChat'>
+type ComputeProviderRuntime = Pick<
+  ProviderRuntime,
+  | 'executeWithRateLimit'
+  | 'streamChat'
+  | 'generateImageStandalone'
+  | 'generateVideoStandalone'
+  | 'generateSpeechStandalone'
+>
 
 export type CliComputeServiceOptions = Readonly<{
   providerSettings: ComputeProviderSettings
   providerRuntime: ComputeProviderRuntime
+  artifactSpool?: ArtifactSpool
+  mediaCacheDirectory?: string
   now?: () => number
   log?: Pick<Console, 'warn'>
 }>
@@ -159,16 +185,57 @@ export class CliComputeService {
   async dispatchStream(
     method: string,
     rawInput: unknown,
-    _caller: CliRouteCaller,
+    caller: CliRouteCaller,
+    requestId: string,
     signal: AbortSignal,
     emit: ComputeEmitter
   ): Promise<unknown> {
-    if (method !== modelsInvokeRoute.name) {
-      throw new CliRequestError('not_found', 'Streaming method is not implemented', {
-        httpStatus: 404
-      })
+    switch (method) {
+      case modelsInvokeRoute.name:
+        return await this.invokeModel(modelsInvokeRoute.input.parse(rawInput), signal, emit)
+      case imagesGenerateRoute.name:
+        return await this.generateImages(
+          imagesGenerateRoute.input.parse(rawInput),
+          caller,
+          requestId,
+          signal,
+          emit
+        )
+      case videosGenerateRoute.name:
+        return await this.generateVideos(
+          videosGenerateRoute.input.parse(rawInput),
+          caller,
+          requestId,
+          signal,
+          emit
+        )
+      case speechGenerateRoute.name:
+        return await this.generateSpeech(
+          speechGenerateRoute.input.parse(rawInput),
+          caller,
+          requestId,
+          signal,
+          emit
+        )
+      default:
+        throw new CliRequestError('not_found', 'Streaming method is not implemented', {
+          httpStatus: 404
+        })
     }
-    return await this.invokeModel(modelsInvokeRoute.input.parse(rawInput), signal, emit)
+  }
+
+  private requireAvailableModel(providerId: string, modelId: string): ModelConfig {
+    const provider = this.options.providerSettings.getProviderById(providerId)
+    if (!provider?.enable) {
+      throw new CliRequestError('not_found', 'Provider is not available', { httpStatus: 404 })
+    }
+    if (!this.options.providerSettings.isKnownModel(providerId, modelId)) {
+      throw new CliRequestError('not_found', 'Model is not available', { httpStatus: 404 })
+    }
+    if (!this.options.providerSettings.getModelStatus(providerId, modelId)) {
+      throw new CliRequestError('conflict', 'Model is disabled', { httpStatus: 409 })
+    }
+    return this.options.providerSettings.getModelConfig(modelId, providerId)
   }
 
   private async invokeModel(
@@ -190,21 +257,7 @@ export class CliComputeService {
     }
     try {
       signal.throwIfAborted()
-      const provider = this.options.providerSettings.getProviderById(input.providerId)
-      if (!provider?.enable) {
-        throw new CliRequestError('not_found', 'Provider is not available', { httpStatus: 404 })
-      }
-      if (!this.options.providerSettings.isKnownModel(input.providerId, input.modelId)) {
-        throw new CliRequestError('not_found', 'Model is not available', { httpStatus: 404 })
-      }
-      if (!this.options.providerSettings.getModelStatus(input.providerId, input.modelId)) {
-        throw new CliRequestError('conflict', 'Model is disabled', { httpStatus: 409 })
-      }
-
-      const modelConfig = this.options.providerSettings.getModelConfig(
-        input.modelId,
-        input.providerId
-      )
+      const modelConfig = this.requireAvailableModel(input.providerId, input.modelId)
       if (modelConfig.type !== ModelType.Chat) {
         throw new CliRequestError('conflict', 'Model is not configured for raw text invocation', {
           httpStatus: 409
@@ -355,6 +408,271 @@ export class CliComputeService {
         retriable: true
       })
     }
+  }
+
+  private async generateImages(
+    input: ImageGenerationInput,
+    caller: CliRouteCaller,
+    requestId: string,
+    signal: AbortSignal,
+    emit: ComputeEmitter
+  ): Promise<ImageGenerationOutput> {
+    const startedAt = this.now()
+    try {
+      const modelConfig = this.requireAvailableModel(input.providerId, input.modelId)
+      if (
+        modelConfig.type !== ModelType.ImageGeneration &&
+        modelConfig.apiEndpoint !== ApiEndpointType.Image &&
+        modelConfig.endpointType !== 'image-generation'
+      ) {
+        throw new CliRequestError('conflict', 'Model is not configured for image generation', {
+          httpStatus: 409
+        })
+      }
+      await this.emitMediaStarted(imagesGenerateRoute.name, input, emit)
+      const result = await this.options.providerRuntime.generateImageStandalone(
+        input.providerId,
+        input.prompt,
+        input.modelId,
+        input.options,
+        { signal }
+      )
+      this.requireMatchingMediaIdentity(result, input)
+      const artifacts = await this.persistMedia(
+        imagesGenerateRoute.name,
+        result.images,
+        'image',
+        8,
+        caller,
+        requestId,
+        signal,
+        emit
+      )
+      return imagesGenerateRoute.output.parse({
+        providerId: input.providerId,
+        modelId: input.modelId,
+        artifacts,
+        ...(input.options ? { requestedOptions: input.options } : {}),
+        durationMs: Math.max(0, this.now() - startedAt)
+      })
+    } catch (error) {
+      throw this.normalizeMediaFailure(error, input, signal, 'Image generation failed')
+    }
+  }
+
+  private async generateVideos(
+    input: VideoGenerationInput,
+    caller: CliRouteCaller,
+    requestId: string,
+    signal: AbortSignal,
+    emit: ComputeEmitter
+  ): Promise<VideoGenerationOutput> {
+    const startedAt = this.now()
+    try {
+      const modelConfig = this.requireAvailableModel(input.providerId, input.modelId)
+      if (!isVideoGenerationModelConfig(modelConfig, input.modelId)) {
+        throw new CliRequestError('conflict', 'Model is not configured for video generation', {
+          httpStatus: 409
+        })
+      }
+      await this.emitMediaStarted(videosGenerateRoute.name, input, emit)
+      const result = await this.options.providerRuntime.generateVideoStandalone(
+        input.providerId,
+        input.prompt,
+        input.modelId,
+        input.options,
+        { signal }
+      )
+      this.requireMatchingMediaIdentity(result, input)
+      const artifacts = await this.persistMedia(
+        videosGenerateRoute.name,
+        result.videos,
+        'video',
+        4,
+        caller,
+        requestId,
+        signal,
+        emit
+      )
+      return videosGenerateRoute.output.parse({
+        providerId: input.providerId,
+        modelId: input.modelId,
+        artifacts,
+        ...(input.options ? { requestedOptions: input.options } : {}),
+        durationMs: Math.max(0, this.now() - startedAt)
+      })
+    } catch (error) {
+      throw this.normalizeMediaFailure(error, input, signal, 'Video generation failed')
+    }
+  }
+
+  private async generateSpeech(
+    input: SpeechGenerationInput,
+    caller: CliRouteCaller,
+    requestId: string,
+    signal: AbortSignal,
+    emit: ComputeEmitter
+  ): Promise<SpeechGenerationOutput> {
+    const startedAt = this.now()
+    try {
+      const modelConfig = this.requireAvailableModel(input.providerId, input.modelId)
+      if (!isTtsModelConfig(modelConfig) && !isTtsModelId(input.modelId)) {
+        throw new CliRequestError('conflict', 'Model is not configured for speech generation', {
+          httpStatus: 409
+        })
+      }
+      await this.emitMediaStarted(speechGenerateRoute.name, input, emit)
+      const result = await this.options.providerRuntime.generateSpeechStandalone(
+        input.providerId,
+        input.text,
+        input.modelId,
+        input.options,
+        { signal }
+      )
+      this.requireMatchingMediaIdentity(result, input)
+      const artifacts = await this.persistMedia(
+        speechGenerateRoute.name,
+        [result.audio],
+        'audio',
+        1,
+        caller,
+        requestId,
+        signal,
+        emit
+      )
+      return speechGenerateRoute.output.parse({
+        providerId: input.providerId,
+        modelId: input.modelId,
+        artifacts,
+        ...(input.options ? { requestedOptions: input.options } : {}),
+        durationMs: Math.max(0, this.now() - startedAt)
+      })
+    } catch (error) {
+      throw this.normalizeMediaFailure(error, input, signal, 'Speech generation failed')
+    }
+  }
+
+  private async emitMediaStarted(
+    method: string,
+    input: { providerId: string; modelId: string },
+    emit: ComputeEmitter
+  ): Promise<void> {
+    await emit(
+      method,
+      MediaGenerationEventSchema.parse({
+        type: 'started',
+        providerId: input.providerId,
+        modelId: input.modelId
+      })
+    )
+  }
+
+  private requireMatchingMediaIdentity(
+    result: { providerId: string; modelId: string },
+    input: { providerId: string; modelId: string }
+  ): void {
+    if (result.providerId !== input.providerId || result.modelId !== input.modelId) {
+      throw new CliRequestError('unavailable', 'Provider returned inconsistent media output', {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+  }
+
+  private async persistMedia(
+    method: string,
+    outputs: readonly { data: string; mimeType: string }[],
+    kind: GeneratedMediaKind,
+    maxOutputs: number,
+    caller: CliRouteCaller,
+    requestId: string,
+    signal: AbortSignal,
+    emit: ComputeEmitter
+  ) {
+    const artifactSpool = this.options.artifactSpool
+    const mediaCacheDirectory = this.options.mediaCacheDirectory
+    if (!artifactSpool || !mediaCacheDirectory) {
+      throw new CliRequestError('unavailable', 'Media artifact service is unavailable', {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+    if (outputs.length === 0) {
+      throw new CliRequestError('unavailable', `Provider returned no ${kind} output`, {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+    if (outputs.length > maxOutputs) {
+      throw new CliRequestError('result_too_large', `Provider returned too many ${kind} outputs`, {
+        httpStatus: 413
+      })
+    }
+
+    const artifacts: ArtifactMetadata[] = []
+    try {
+      for (const [index, output] of outputs.entries()) {
+        signal.throwIfAborted()
+        const resolved = await resolveGeneratedMedia(
+          output.data,
+          output.mimeType,
+          kind,
+          mediaCacheDirectory
+        )
+        try {
+          const artifact = await artifactSpool.write({
+            caller,
+            requestId,
+            mimeType: resolved.mimeType,
+            suggestedFilename: `generated-${kind}-${index + 1}${artifactExtensionForMimeType(resolved.mimeType)}`,
+            data: resolved.data,
+            signal
+          })
+          if (artifact.size !== resolved.expectedBytes) {
+            await artifactSpool.discard(artifact.id)
+            throw new CliRequestError('unavailable', 'Generated media changed while being stored', {
+              httpStatus: 503,
+              retriable: true
+            })
+          }
+          artifacts.push(artifact)
+        } finally {
+          await resolved.dispose?.()
+        }
+      }
+      for (const [index, artifact] of artifacts.entries()) {
+        const event: MediaGenerationEvent = MediaGenerationEventSchema.parse({
+          type: 'artifact',
+          index,
+          artifact
+        })
+        await emit(method, event)
+      }
+      return artifacts
+    } catch (error) {
+      await Promise.allSettled(artifacts.map((artifact) => artifactSpool.discard(artifact.id)))
+      throw error
+    }
+  }
+
+  private normalizeMediaFailure(
+    error: unknown,
+    input: { providerId: string; modelId: string },
+    signal: AbortSignal,
+    message: string
+  ): CliRequestError {
+    if (error instanceof CliRequestError) return error
+    if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      return new CliRequestError('cancelled', 'Media generation was cancelled', {
+        retriable: true
+      })
+    }
+    this.log.warn('[CLI] Media generation failed', {
+      providerId: input.providerId,
+      modelId: input.modelId,
+      failure: { name: error instanceof Error ? error.name : typeof error }
+    })
+    return new CliRequestError('unavailable', message, { httpStatus: 503, retriable: true })
   }
 }
 

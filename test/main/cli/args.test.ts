@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CLI_OUTPUT_ENV, CLI_TIMEOUT_ENV, parseCliArguments } from '../../../src/cli/args'
+import {
+  CLI_OUTPUT_ENV,
+  CLI_TIMEOUT_ENV,
+  formatCliHelp,
+  parseCliArguments
+} from '../../../src/cli/args'
 
 describe('CLI argument grammar', () => {
   it('maps the two-token command prefix to a canonical route', () => {
@@ -147,5 +152,183 @@ describe('CLI argument grammar', () => {
     expect(parseCliArguments(['provider', 'list', '--enabled-only'], {})).toMatchObject({
       params: { enabledOnly: true }
     })
+  })
+
+  it('maps image and video options without exposing file output paths', () => {
+    expect(
+      parseCliArguments(
+        [
+          'image',
+          'generate',
+          '--provider',
+          'provider-1',
+          '--model',
+          'image-1',
+          '--prompt',
+          'a lighthouse',
+          '--size',
+          '1024x1024',
+          '--quality',
+          'high',
+          '--format',
+          'webp',
+          '--compression',
+          '80',
+          '--background',
+          'opaque',
+          '--moderation',
+          'auto'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'stream',
+      timeoutMs: 1_800_000,
+      params: {
+        providerId: 'provider-1',
+        modelId: 'image-1',
+        prompt: 'a lighthouse',
+        options: {
+          size: '1024x1024',
+          quality: 'high',
+          outputFormat: 'webp',
+          outputCompression: 80,
+          background: 'opaque',
+          moderation: 'auto'
+        }
+      }
+    })
+
+    expect(
+      parseCliArguments(
+        [
+          'video',
+          'generate',
+          '--provider=provider-1',
+          '--model=video-1',
+          '--stdin',
+          '--seconds=8',
+          '--ratio=16:9',
+          '--duration',
+          '-1',
+          '--resolution=1080p',
+          '--watermark=false',
+          '--audio=true'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'stream',
+      readStdin: true,
+      params: {
+        providerId: 'provider-1',
+        modelId: 'video-1',
+        options: {
+          seconds: '8',
+          ratio: '16:9',
+          duration: -1,
+          resolution: '1080p',
+          watermark: false,
+          generateAudio: true
+        }
+      }
+    })
+
+    expect(() =>
+      parseCliArguments(
+        [
+          'image',
+          'generate',
+          '--provider',
+          'provider-1',
+          '--model',
+          'image-1',
+          '--prompt',
+          'hello',
+          '--out',
+          './image.png'
+        ],
+        {}
+      )
+    ).toThrow('Artifact options are not valid')
+  })
+
+  it('maps speech input and rejects ambiguous or cross-domain media flags', () => {
+    expect(
+      parseCliArguments(
+        [
+          'audio',
+          'speak',
+          '--provider',
+          'provider-1',
+          '--model',
+          'tts-1',
+          '--text',
+          'hello',
+          '--voice',
+          'alloy',
+          '--format',
+          'wav',
+          '--speed',
+          '1.25',
+          '--instructions',
+          'Speak softly'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'stream',
+      params: {
+        providerId: 'provider-1',
+        modelId: 'tts-1',
+        text: 'hello',
+        options: {
+          voice: 'alloy',
+          responseFormat: 'wav',
+          speed: 1.25,
+          instructions: 'Speak softly'
+        }
+      }
+    })
+
+    expect(() =>
+      parseCliArguments(
+        [
+          'audio',
+          'speak',
+          '--provider',
+          'provider-1',
+          '--model',
+          'tts-1',
+          '--text',
+          'hello',
+          '--stdin'
+        ],
+        {}
+      )
+    ).toThrow('exactly one of --text or --stdin')
+    expect(() =>
+      parseCliArguments(
+        [
+          'video',
+          'generate',
+          '--provider',
+          'provider-1',
+          '--model',
+          'video-1',
+          '--prompt',
+          'hello',
+          '--voice',
+          'alloy'
+        ],
+        {}
+      )
+    ).toThrow('--voice is not valid for deepchat video generate')
+  })
+
+  it('keeps media-specific options discoverable from command help', () => {
+    expect(formatCliHelp({ domain: 'image', verb: 'generate' })).toContain('--compression <n>')
+    expect(formatCliHelp({ domain: 'video', verb: 'generate' })).toContain('--watermark <bool>')
+    expect(formatCliHelp({ domain: 'audio', verb: 'speak' })).toContain('--voice <value>')
   })
 })

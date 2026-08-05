@@ -75,6 +75,7 @@ export type CliServerDependencies = Readonly<{
     method: string,
     input: unknown,
     caller: CliRouteCaller,
+    requestId: string,
     signal: AbortSignal,
     emit: CliStreamEmitter
   ): Promise<unknown>
@@ -680,7 +681,7 @@ export class CliServer {
 
     try {
       const rawOutput = await runAbortable(signal, async () =>
-        dispatchStream(entry.contract.name, input, caller, signal, emit)
+        dispatchStream(entry.contract.name, input, caller, requestId, signal, emit)
       )
       if (signal.aborted) throw requestAbortError(signal)
       const result = this.parseRouteOutput(entry, rawOutput, entry.contract.name)

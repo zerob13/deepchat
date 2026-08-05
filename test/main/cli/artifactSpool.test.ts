@@ -97,6 +97,44 @@ describe('ArtifactSpool', () => {
     expect(await collect(opened.stream)).toEqual(Buffer.from('generated-video'))
   })
 
+  it('removes partial output and releases quota when a write is cancelled', async () => {
+    const { spool, directory } = await createSpool({
+      limits: {
+        maxArtifactBytes: 8,
+        maxRequestBytes: 8,
+        maxConnectionBytes: 8,
+        maxOwnerBytes: 8,
+        maxTotalBytes: 8
+      }
+    })
+    const controller = new AbortController()
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      yield Buffer.from('part')
+      controller.abort()
+      yield Buffer.from('more')
+    }
+
+    await expect(
+      spool.write({
+        caller: humanCaller,
+        requestId: 'request-cancelled',
+        mimeType: 'application/octet-stream',
+        data: chunks(),
+        signal: controller.signal
+      })
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    expect(await readdir(directory)).toEqual([])
+
+    await expect(
+      spool.write({
+        caller: humanCaller,
+        requestId: 'request-after-cancel',
+        mimeType: 'application/octet-stream',
+        data: Buffer.alloc(8)
+      })
+    ).resolves.toMatchObject({ size: 8 })
+  })
+
   it('isolates Agent artifacts by conversation while allowing human recovery', async () => {
     const { spool } = await createSpool()
     const owner = agentCaller('conversation-a')
@@ -229,6 +267,24 @@ describe('ArtifactSpool', () => {
     await expect(spool.describe(metadata.id, humanCaller)).rejects.toMatchObject({
       code: 'not_found'
     })
+  })
+
+  it('defers internal discard until active reads finish and blocks new readers', async () => {
+    const { spool, directory } = await createSpool()
+    const metadata = await spool.write({
+      caller: humanCaller,
+      requestId: 'request-discard',
+      mimeType: 'application/octet-stream',
+      data: Buffer.alloc(64 * 1024, 1)
+    })
+    const opened = await spool.openRead(metadata.id, humanCaller)
+
+    await expect(spool.discard(metadata.id)).resolves.toBeUndefined()
+    await expect(spool.openRead(metadata.id, humanCaller)).rejects.toMatchObject({
+      code: 'not_found'
+    })
+    expect(await collect(opened.stream)).toHaveLength(metadata.size)
+    await expect.poll(async () => readdir(directory)).toEqual([])
   })
 
   it('cleans only spool-owned crash remnants during initialization', async () => {

@@ -7,8 +7,11 @@ import {
   cliDoctorRoute,
   cliStatusRoute,
   cliVersionRoute,
+  imagesGenerateRoute,
   modelsInvokeRoute,
   providersListPublicRoute,
+  speechGenerateRoute,
+  videosGenerateRoute,
   type CliCapability
 } from '@shared/contracts/routes'
 import {
@@ -51,6 +54,19 @@ const diagnosticEntry = (contract: RouteContract): CliSurfaceEntry => ({
   limits: DIAGNOSTIC_LIMITS
 })
 
+const mediaEntry = (contract: RouteContract): CliSurfaceEntry => ({
+  contract,
+  effect: 'compute',
+  callers: ['human', 'agent'],
+  scopes: ['media:generate'],
+  transport: 'stream',
+  approval: 'never',
+  limits: {
+    maxBodyBytes: 512 * 1024,
+    timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+  }
+})
+
 const CLI_SURFACE_V1_ENTRIES = [
   {
     contract: modelsInvokeRoute,
@@ -61,6 +77,9 @@ const CLI_SURFACE_V1_ENTRIES = [
     approval: 'never',
     limits: { maxBodyBytes: 5 * 1024 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
   },
+  mediaEntry(imagesGenerateRoute),
+  mediaEntry(videosGenerateRoute),
+  mediaEntry(speechGenerateRoute),
   {
     contract: providersListPublicRoute,
     effect: 'read',

@@ -86,6 +86,11 @@ import {
   cliVersionRoute
 } from './routes/cli.routes'
 import {
+  imagesGenerateRoute,
+  speechGenerateRoute,
+  videosGenerateRoute
+} from './routes/media.routes'
+import {
   configAddCustomPromptRoute,
   configAddManualAcpAgentRoute,
   configAddSystemPromptRoute,
@@ -581,6 +586,7 @@ export * from './routes/knowledge.routes'
 export * from './routes/cli.routes'
 export * from './routes/mcp.routes'
 export * from './routes/memory.routes'
+export * from './routes/media.routes'
 export * from './routes/models.routes'
 export * from './routes/notification.routes'
 export * from './routes/nowledgeMem.routes'
@@ -932,6 +938,9 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
   [providersImportApplyRoute.name]: providersImportApplyRoute,
   [modelsGetProviderCatalogRoute.name]: modelsGetProviderCatalogRoute,
   [modelsInvokeRoute.name]: modelsInvokeRoute,
+  [imagesGenerateRoute.name]: imagesGenerateRoute,
+  [videosGenerateRoute.name]: videosGenerateRoute,
+  [speechGenerateRoute.name]: speechGenerateRoute,
   [modelsListRuntimeRoute.name]: modelsListRuntimeRoute,
   [modelsSetBatchStatusRoute.name]: modelsSetBatchStatusRoute,
   [modelsSetStatusRoute.name]: modelsSetStatusRoute,

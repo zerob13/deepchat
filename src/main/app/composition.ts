@@ -379,10 +379,10 @@ export async function createMainProcessControl(dependencies: {
       signal.throwIfAborted()
       return output
     },
-    dispatchStream: async (method, input, caller, signal, emit) => {
+    dispatchStream: async (method, input, caller, requestId, signal, emit) => {
       if (!cliComputeService) throw new Error('CLI compute service is not ready')
       assertRouteAllowedDuringDatabaseMaintenance(method)
-      return await cliComputeService.dispatchStream(method, input, caller, signal, emit)
+      return await cliComputeService.dispatchStream(method, input, caller, requestId, signal, emit)
     },
     artifactSpool,
     log: logger
@@ -638,6 +638,8 @@ export async function createMainProcessControl(dependencies: {
   cliComputeService = new CliComputeService({
     providerSettings,
     providerRuntime,
+    artifactSpool,
+    mediaCacheDirectory: path.join(app.getPath('userData'), 'images'),
     log: logger
   })
   const agentDefaults = new DeepChatDefaults({

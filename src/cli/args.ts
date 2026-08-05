@@ -11,6 +11,11 @@ import {
   artifactsReadRoute
 } from '@shared/contracts/routes/artifacts.routes'
 import { modelsInvokeRoute } from '@shared/contracts/routes/models.routes'
+import {
+  imagesGenerateRoute,
+  speechGenerateRoute,
+  videosGenerateRoute
+} from '@shared/contracts/routes/media.routes'
 import { providersListPublicRoute } from '@shared/contracts/routes/providers.routes'
 import type { JsonValue } from '@shared/contracts/json'
 import { LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS } from '@shared/contracts/localControl'
@@ -20,7 +25,7 @@ export const CLI_OUTPUT_ENV = 'DEEPCHAT_CLI_OUTPUT'
 export const CLI_TIMEOUT_ENV = 'DEEPCHAT_CLI_TIMEOUT_MS'
 export const DEFAULT_CLI_TIMEOUT_MS = 30_000
 export const MAX_CLI_TIMEOUT_MS = LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
-export const DEFAULT_MODEL_INVOKE_TIMEOUT_MS = MAX_CLI_TIMEOUT_MS
+export const DEFAULT_COMPUTE_TIMEOUT_MS = MAX_CLI_TIMEOUT_MS
 
 export type CliOutputMode = 'text' | 'json' | 'jsonl'
 export type CliRpcContract =
@@ -32,6 +37,9 @@ export type CliRpcContract =
   | typeof artifactsReadRoute
   | typeof artifactsDeleteRoute
   | typeof modelsInvokeRoute
+  | typeof imagesGenerateRoute
+  | typeof videosGenerateRoute
+  | typeof speechGenerateRoute
   | typeof providersListPublicRoute
 
 export type CliCommandOperation = 'rpc' | 'stream' | 'download'
@@ -59,7 +67,118 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['artifact get', artifactsReadRoute],
   ['artifact delete', artifactsDeleteRoute],
   ['model invoke', modelsInvokeRoute],
+  ['image generate', imagesGenerateRoute],
+  ['video generate', videosGenerateRoute],
+  ['audio speak', speechGenerateRoute],
   ['provider list', providersListPublicRoute]
+])
+
+function parseBoolean(value: string, source: string): boolean {
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new CliUsageError(`${source} must be true or false`)
+}
+
+function parseNumberInRange(
+  value: string,
+  source: string,
+  minimum: number,
+  maximum: number,
+  integer = false
+): number {
+  const parsed = Number(value)
+  if (
+    !Number.isFinite(parsed) ||
+    (integer && !Number.isSafeInteger(parsed)) ||
+    parsed < minimum ||
+    parsed > maximum
+  ) {
+    const qualifier = integer ? 'an integer' : 'a number'
+    throw new CliUsageError(`${source} must be ${qualifier} between ${minimum} and ${maximum}`)
+  }
+  return parsed
+}
+
+type DomainOptionValue = string | number | boolean
+type DomainValueParser = (value: string) => DomainOptionValue
+
+const stringOption: DomainValueParser = (value) => value
+const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
+  id: (value) => {
+    const parsed = ArtifactIdSchema.safeParse(value)
+    if (!parsed.success) throw new CliUsageError('--id is not a valid artifact identifier')
+    return parsed.data
+  },
+  out: stringOption,
+  provider: stringOption,
+  model: stringOption,
+  prompt: stringOption,
+  text: stringOption,
+  system: stringOption,
+  temperature: (value) => parseNumberInRange(value, '--temperature', 0, 2),
+  'max-tokens': (value) => parseNumberInRange(value, '--max-tokens', 1, 1_000_000, true),
+  size: stringOption,
+  quality: stringOption,
+  format: stringOption,
+  compression: (value) => parseNumberInRange(value, '--compression', 0, 100, true),
+  background: stringOption,
+  moderation: stringOption,
+  seconds: stringOption,
+  ratio: stringOption,
+  duration: (value) => parseNumberInRange(value, '--duration', -1, 3_600, true),
+  resolution: stringOption,
+  watermark: (value) => parseBoolean(value, '--watermark'),
+  audio: (value) => parseBoolean(value, '--audio'),
+  voice: stringOption,
+  speed: (value) => parseNumberInRange(value, '--speed', 0.25, 4),
+  instructions: stringOption
+}
+
+const FLAG_DOMAIN_OPTIONS = new Set(['overwrite', 'stdin', 'enabled-only'])
+const COMMAND_DOMAIN_OPTIONS = new Map<string, ReadonlySet<string>>([
+  ['artifact describe', new Set(['id'])],
+  ['artifact get', new Set(['id', 'out', 'overwrite'])],
+  ['artifact delete', new Set(['id'])],
+  [
+    'model invoke',
+    new Set(['provider', 'model', 'prompt', 'system', 'temperature', 'max-tokens', 'stdin'])
+  ],
+  [
+    'image generate',
+    new Set([
+      'provider',
+      'model',
+      'prompt',
+      'stdin',
+      'size',
+      'quality',
+      'format',
+      'compression',
+      'background',
+      'moderation'
+    ])
+  ],
+  [
+    'video generate',
+    new Set([
+      'provider',
+      'model',
+      'prompt',
+      'stdin',
+      'seconds',
+      'size',
+      'ratio',
+      'duration',
+      'resolution',
+      'watermark',
+      'audio'
+    ])
+  ],
+  [
+    'audio speak',
+    new Set(['provider', 'model', 'text', 'stdin', 'voice', 'format', 'speed', 'instructions'])
+  ],
+  ['provider list', new Set(['enabled-only'])]
 ])
 
 function parseOutputMode(value: string | undefined): CliOutputMode {
@@ -115,23 +234,16 @@ export function parseCliArguments(
   let explicitOutputMode: CliOutputMode | undefined
   let timeoutMs = env[CLI_TIMEOUT_ENV]
     ? parseTimeout(env[CLI_TIMEOUT_ENV], CLI_TIMEOUT_ENV)
-    : commandKey === 'model invoke'
-      ? DEFAULT_MODEL_INVOKE_TIMEOUT_MS
+    : commandKey === 'model invoke' ||
+        commandKey === 'image generate' ||
+        commandKey === 'video generate' ||
+        commandKey === 'audio speak'
+      ? DEFAULT_COMPUTE_TIMEOUT_MS
       : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
   let helpRequested = false
-  let artifactId: string | undefined
-  let outputPath: string | undefined
-  let overwrite = false
-  let providerId: string | undefined
-  let modelId: string | undefined
-  let prompt: string | undefined
-  let systemPrompt: string | undefined
-  let temperature: number | undefined
-  let maxTokens: number | undefined
-  let readStdin = false
-  let enabledOnly = false
   const domainOptions = new Set<string>()
+  const domainValues = new Map<string, DomainOptionValue>()
 
   const readOptionValue = (
     argument: string,
@@ -181,101 +293,71 @@ export function parseCliArguments(
       timeoutSeen = true
       continue
     }
-    if (argument === '--id' || argument.startsWith('--id=')) {
-      domainOptions.add('id')
-      if (artifactId !== undefined) throw new CliUsageError('--id may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      const parsedId = ArtifactIdSchema.safeParse(parsedOption.value)
-      if (!parsedId.success) throw new CliUsageError('--id is not a valid artifact identifier')
-      artifactId = parsedId.data
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--out' || argument.startsWith('--out=')) {
-      domainOptions.add('out')
-      if (outputPath !== undefined) throw new CliUsageError('--out may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      outputPath = parsedOption.value
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--overwrite') {
-      domainOptions.add('overwrite')
-      if (overwrite) throw new CliUsageError('--overwrite may be specified only once')
-      overwrite = true
-      continue
-    }
-    if (argument === '--provider' || argument.startsWith('--provider=')) {
-      domainOptions.add('provider')
-      if (providerId !== undefined) throw new CliUsageError('--provider may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      providerId = parsedOption.value
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--model' || argument.startsWith('--model=')) {
-      domainOptions.add('model')
-      if (modelId !== undefined) throw new CliUsageError('--model may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      modelId = parsedOption.value
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--prompt' || argument.startsWith('--prompt=')) {
-      domainOptions.add('prompt')
-      if (prompt !== undefined) throw new CliUsageError('--prompt may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      prompt = parsedOption.value
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--system' || argument.startsWith('--system=')) {
-      domainOptions.add('system')
-      if (systemPrompt !== undefined) throw new CliUsageError('--system may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      systemPrompt = parsedOption.value
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--temperature' || argument.startsWith('--temperature=')) {
-      domainOptions.add('temperature')
-      if (temperature !== undefined) {
-        throw new CliUsageError('--temperature may be specified only once')
+    if (argument.startsWith('--')) {
+      const equalsIndex = argument.indexOf('=')
+      const optionName = argument.slice(2, equalsIndex >= 0 ? equalsIndex : undefined)
+      if (FLAG_DOMAIN_OPTIONS.has(optionName) && equalsIndex < 0) {
+        if (domainOptions.has(optionName)) {
+          throw new CliUsageError(`--${optionName} may be specified only once`)
+        }
+        domainOptions.add(optionName)
+        domainValues.set(optionName, true)
+        continue
       }
-      const parsedOption = readOptionValue(argument, index)
-      temperature = Number(parsedOption.value)
-      if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
-        throw new CliUsageError('--temperature must be a number between 0 and 2')
+      const parseValue = VALUE_DOMAIN_OPTIONS[optionName]
+      if (parseValue) {
+        if (domainOptions.has(optionName)) {
+          throw new CliUsageError(`--${optionName} may be specified only once`)
+        }
+        const parsedOption = readOptionValue(argument, index)
+        domainOptions.add(optionName)
+        domainValues.set(optionName, parseValue(parsedOption.value))
+        index = parsedOption.nextIndex
+        continue
       }
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--max-tokens' || argument.startsWith('--max-tokens=')) {
-      domainOptions.add('max-tokens')
-      if (maxTokens !== undefined)
-        throw new CliUsageError('--max-tokens may be specified only once')
-      const parsedOption = readOptionValue(argument, index)
-      maxTokens = Number(parsedOption.value)
-      if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 1_000_000) {
-        throw new CliUsageError('--max-tokens must be an integer between 1 and 1000000')
-      }
-      index = parsedOption.nextIndex
-      continue
-    }
-    if (argument === '--stdin') {
-      domainOptions.add('stdin')
-      if (readStdin) throw new CliUsageError('--stdin may be specified only once')
-      readStdin = true
-      continue
-    }
-    if (argument === '--enabled-only') {
-      domainOptions.add('enabled-only')
-      if (enabledOnly) throw new CliUsageError('--enabled-only may be specified only once')
-      enabledOnly = true
-      continue
     }
     throw new CliUsageError(`Unknown option after ${domain} ${verb}: ${argument}`)
   }
+
+  const getString = (name: string): string | undefined => {
+    const value = domainValues.get(name)
+    return typeof value === 'string' ? value : undefined
+  }
+  const getNumber = (name: string): number | undefined => {
+    const value = domainValues.get(name)
+    return typeof value === 'number' ? value : undefined
+  }
+  const getBoolean = (name: string): boolean | undefined => {
+    const value = domainValues.get(name)
+    return typeof value === 'boolean' ? value : undefined
+  }
+  const artifactId = getString('id')
+  const outputPath = getString('out')
+  const overwrite = getBoolean('overwrite') ?? false
+  const providerId = getString('provider')
+  const modelId = getString('model')
+  const prompt = getString('prompt')
+  const textInput = getString('text')
+  const systemPrompt = getString('system')
+  const temperature = getNumber('temperature')
+  const maxTokens = getNumber('max-tokens')
+  const readStdin = getBoolean('stdin') ?? false
+  const enabledOnly = getBoolean('enabled-only') ?? false
+  const size = getString('size')
+  const quality = getString('quality')
+  const format = getString('format')
+  const compression = getNumber('compression')
+  const background = getString('background')
+  const moderation = getString('moderation')
+  const seconds = getString('seconds')
+  const ratio = getString('ratio')
+  const duration = getNumber('duration')
+  const resolution = getString('resolution')
+  const watermark = getBoolean('watermark')
+  const generateAudio = getBoolean('audio')
+  const voice = getString('voice')
+  const speed = getNumber('speed')
+  const instructions = getString('instructions')
 
   const isArtifactCommand = domain === 'artifact'
   if (!helpRequested && isArtifactCommand && !artifactId) {
@@ -296,14 +378,12 @@ export function parseCliArguments(
   }
 
   const isModelInvoke = commandKey === 'model invoke'
+  const isImageGenerate = commandKey === 'image generate'
+  const isVideoGenerate = commandKey === 'video generate'
+  const isSpeechGenerate = commandKey === 'audio speak'
+  const isMediaGenerate = isImageGenerate || isVideoGenerate || isSpeechGenerate
   const isProviderList = commandKey === 'provider list'
-  const allowedDomainOptions = isArtifactCommand
-    ? new Set(['id', 'out', 'overwrite'])
-    : isModelInvoke
-      ? new Set(['provider', 'model', 'prompt', 'system', 'temperature', 'max-tokens', 'stdin'])
-      : isProviderList
-        ? new Set(['enabled-only'])
-        : new Set<string>()
+  const allowedDomainOptions = COMMAND_DOMAIN_OPTIONS.get(commandKey) ?? new Set<string>()
   const invalidDomainOption = Array.from(domainOptions).find(
     (option) => !allowedDomainOptions.has(option)
   )
@@ -315,6 +395,21 @@ export function parseCliArguments(
   }
   if (!helpRequested && isModelInvoke && (prompt !== undefined) === readStdin) {
     throw new CliUsageError('deepchat model invoke requires exactly one of --prompt or --stdin')
+  }
+  if (!helpRequested && isMediaGenerate && (!providerId || !modelId)) {
+    throw new CliUsageError(`deepchat ${domain} ${verb} requires --provider and --model`)
+  }
+  if (
+    !helpRequested &&
+    (isImageGenerate || isVideoGenerate) &&
+    (prompt !== undefined) === readStdin
+  ) {
+    throw new CliUsageError(
+      `deepchat ${domain} ${verb} requires exactly one of --prompt or --stdin`
+    )
+  }
+  if (!helpRequested && isSpeechGenerate && (textInput !== undefined) === readStdin) {
+    throw new CliUsageError('deepchat audio speak requires exactly one of --text or --stdin')
   }
 
   let params: JsonValue = artifactId ? { id: artifactId } : {}
@@ -331,6 +426,53 @@ export function parseCliArguments(
       ...(maxTokens !== undefined ? { maxTokens } : {})
     }
   }
+  if (isImageGenerate && providerId && modelId) {
+    const options = {
+      ...(size !== undefined ? { size } : {}),
+      ...(quality !== undefined ? { quality } : {}),
+      ...(format !== undefined ? { outputFormat: format } : {}),
+      ...(compression !== undefined ? { outputCompression: compression } : {}),
+      ...(background !== undefined ? { background } : {}),
+      ...(moderation !== undefined ? { moderation } : {})
+    }
+    params = {
+      providerId,
+      modelId,
+      ...(prompt !== undefined ? { prompt } : {}),
+      ...(Object.keys(options).length > 0 ? { options } : {})
+    }
+  }
+  if (isVideoGenerate && providerId && modelId) {
+    const options = {
+      ...(seconds !== undefined ? { seconds } : {}),
+      ...(size !== undefined ? { size } : {}),
+      ...(ratio !== undefined ? { ratio } : {}),
+      ...(duration !== undefined ? { duration } : {}),
+      ...(resolution !== undefined ? { resolution } : {}),
+      ...(watermark !== undefined ? { watermark } : {}),
+      ...(generateAudio !== undefined ? { generateAudio } : {})
+    }
+    params = {
+      providerId,
+      modelId,
+      ...(prompt !== undefined ? { prompt } : {}),
+      ...(Object.keys(options).length > 0 ? { options } : {})
+    }
+  }
+  if (isSpeechGenerate && providerId && modelId) {
+    const options = {
+      ...(voice !== undefined ? { voice } : {}),
+      ...(format !== undefined ? { responseFormat: format } : {}),
+      ...(speed !== undefined ? { speed } : {}),
+      ...(instructions !== undefined ? { instructions } : {})
+    }
+    params = {
+      providerId,
+      modelId,
+      ...(textInput !== undefined ? { text: textInput } : {}),
+      ...(Object.keys(options).length > 0 ? { options } : {})
+    }
+  }
 
   return {
     domain,
@@ -339,7 +481,12 @@ export function parseCliArguments(
     outputMode,
     timeoutMs,
     helpRequested: helpRequested || isHelpCommand,
-    operation: commandKey === 'artifact get' ? 'download' : isModelInvoke ? 'stream' : 'rpc',
+    operation:
+      commandKey === 'artifact get'
+        ? 'download'
+        : isModelInvoke || isMediaGenerate
+          ? 'stream'
+          : 'rpc',
     params,
     ...(outputPath ? { outputPath } : {}),
     overwrite,
@@ -356,13 +503,53 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
           : ' --id <artifact-id>'
         : command.domain === 'model'
           ? ' --provider <id> --model <id> (--prompt <text>|--stdin)'
-          : command.domain === 'provider'
-            ? ' [--enabled-only]'
-            : ''
+          : command.domain === 'image' || command.domain === 'video'
+            ? ' --provider <id> --model <id> (--prompt <text>|--stdin)'
+            : command.domain === 'audio'
+              ? ' --provider <id> --model <id> (--text <text>|--stdin)'
+              : command.domain === 'provider'
+                ? ' [--enabled-only]'
+                : ''
+    const commandKey = `${command.domain} ${command.verb}`
+    const optionLines =
+      commandKey === 'model invoke'
+        ? [
+            '  --system <text>       Add a system message',
+            '  --temperature <n>     Set sampling temperature (0..2)',
+            '  --max-tokens <n>      Set the output-token limit'
+          ]
+        : commandKey === 'image generate'
+          ? [
+              '  --size <value>       Set output dimensions',
+              '  --quality <value>    Set low, medium, high, or auto quality',
+              '  --format <value>     Set png, jpeg, or webp output',
+              '  --compression <n>    Set jpeg/webp compression (0..100)',
+              '  --background <value> Set auto or opaque background',
+              '  --moderation <value> Set auto or low moderation'
+            ]
+          : commandKey === 'video generate'
+            ? [
+                '  --seconds <value>    Set provider-specific clip seconds',
+                '  --size <value>       Set provider-specific dimensions',
+                '  --ratio <value>      Set aspect ratio',
+                '  --duration <n>       Set duration (-1..3600)',
+                '  --resolution <value> Set output resolution',
+                '  --watermark <bool>   Enable or disable watermarking',
+                '  --audio <bool>       Enable or disable generated audio'
+              ]
+            : commandKey === 'audio speak'
+              ? [
+                  '  --voice <value>      Select a voice',
+                  '  --format <value>     Set mp3, opus, aac, flac, wav, or pcm',
+                  '  --speed <n>          Set playback speed (0.25..4)',
+                  '  --instructions <text> Add provider-supported speech guidance'
+                ]
+              : []
     return [
       `Usage: deepchat ${command.domain} ${command.verb}${commandOptions} [--json|--jsonl] [--timeout <ms>]`,
       '',
-      'Global flags must follow the domain and verb.'
+      'Global flags must follow the domain and verb.',
+      ...(optionLines.length > 0 ? ['', 'Command options:', ...optionLines] : [])
     ].join('\n')
   }
 
@@ -378,6 +565,9 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  artifact get         Download an owned artifact',
     '  artifact delete      Delete an owned artifact',
     '  model invoke         Stream a raw text-model invocation',
+    '  image generate       Generate image artifacts',
+    '  video generate       Generate video artifacts',
+    '  audio speak          Generate a speech artifact',
     '  provider list        List redacted providers and models',
     '  help commands        Show this help',
     '',
@@ -385,6 +575,8 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  --json               Emit one JSON result envelope',
     '  --jsonl              Emit JSONL records',
     '  --timeout <ms>       Set request timeout',
-    '  --help               Show command usage'
+    '  --help               Show command usage and options',
+    '',
+    'Run deepchat <domain> <verb> --help for command-specific options.'
   ].join('\n')
 }

@@ -89,6 +89,24 @@ export function formatHumanResult(
     case 'models.invoke': {
       return contract.output.parse(value).text
     }
+    case 'images.generate':
+    case 'videos.generate':
+    case 'speech.generate': {
+      const result = contract.output.parse(value)
+      const noun =
+        contract.name === 'images.generate'
+          ? 'image'
+          : contract.name === 'videos.generate'
+            ? 'video'
+            : 'audio'
+      return [
+        `Generated ${result.artifacts.length} ${noun} artifact${result.artifacts.length === 1 ? '' : 's'} in ${formatDuration(result.durationMs)}`,
+        ...result.artifacts.flatMap((artifact) => [
+          `${artifact.id}  ${artifact.mimeType}  ${artifact.size} bytes  ${artifact.filename}`,
+          `  Download: deepchat artifact get --id ${artifact.id} --out ${artifact.filename}`
+        ])
+      ].join('\n')
+    }
   }
 }
 

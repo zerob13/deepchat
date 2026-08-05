@@ -64,6 +64,7 @@ export type ArtifactWriteInput = Readonly<{
   suggestedFilename?: string
   data: Uint8Array | AsyncIterable<Uint8Array>
   ttlMs?: number
+  signal?: AbortSignal
 }>
 
 export type OpenArtifact = Readonly<{
@@ -98,7 +99,7 @@ function normalizeMimeType(value: string): string {
   return ArtifactMetadataSchema.shape.mimeType.parse(value.trim().toLowerCase())
 }
 
-function extensionForMimeType(mimeType: string): string {
+export function artifactExtensionForMimeType(mimeType: string): string {
   switch (mimeType.split(';', 1)[0]) {
     case 'image/png':
       return '.png'
@@ -108,6 +109,8 @@ function extensionForMimeType(mimeType: string): string {
       return '.webp'
     case 'image/gif':
       return '.gif'
+    case 'image/avif':
+      return '.avif'
     case 'video/mp4':
       return '.mp4'
     case 'video/webm':
@@ -122,6 +125,8 @@ function extensionForMimeType(mimeType: string): string {
       return '.aac'
     case 'audio/flac':
       return '.flac'
+    case 'audio/pcm':
+      return '.pcm'
     default:
       return '.bin'
   }
@@ -141,7 +146,7 @@ function normalizeFilename(value: string | undefined, mimeType: string): string 
   }
   return normalized && normalized !== '.' && normalized !== '..'
     ? normalized
-    : `artifact${extensionForMimeType(mimeType)}`
+    : `artifact${artifactExtensionForMimeType(mimeType)}`
 }
 
 function positiveInteger(value: number, name: string): number {
@@ -164,6 +169,12 @@ async function writeAll(handle: FileHandle, bytes: Uint8Array, position: number)
     offset += bytesWritten
   }
   return position + bytes.byteLength
+}
+
+function throwIfArtifactWriteCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new CliRequestError('cancelled', 'Artifact output was cancelled')
+  }
 }
 
 async function* artifactChunks(
@@ -282,6 +293,7 @@ export class ArtifactSpool {
   }
 
   private async writeInternal(input: ArtifactWriteInput): Promise<ArtifactMetadata> {
+    throwIfArtifactWriteCancelled(input.signal)
     await this.initialize()
     const owner = ownerForCaller(input.caller)
     const ownerQuotaKey = ownerKey(owner)
@@ -312,6 +324,7 @@ export class ArtifactSpool {
         const hash = createHash('sha256')
         let position = 0
         for await (const chunk of artifactChunks(input.data)) {
+          throwIfArtifactWriteCancelled(input.signal)
           if (chunk.byteLength === 0) continue
           if (chunk.byteLength > this.limits.maxArtifactBytes - size) {
             throw new CliRequestError(
@@ -328,10 +341,12 @@ export class ArtifactSpool {
           size += chunk.byteLength
           hash.update(chunk)
         }
+        throwIfArtifactWriteCancelled(input.signal)
         if (size === 0) {
           throw new CliRequestError('invalid_request', 'Artifact output is empty')
         }
         await handle.sync()
+        throwIfArtifactWriteCancelled(input.signal)
         const createdAt = this.now()
         if (createdAt > Number.MAX_SAFE_INTEGER - ttlMs) {
           throw new Error('Artifact expiry is outside the supported range')
@@ -350,11 +365,15 @@ export class ArtifactSpool {
       } finally {
         await handle.close()
       }
+      throwIfArtifactWriteCancelled(input.signal)
       if (process.platform !== 'win32') await chmod(tempPath, 0o600)
+      throwIfArtifactWriteCancelled(input.signal)
       await link(tempPath, finalPath)
       published = true
+      throwIfArtifactWriteCancelled(input.signal)
       await unlink(tempPath)
       tempPath = ''
+      throwIfArtifactWriteCancelled(input.signal)
       this.artifacts.set(id, {
         metadata,
         filePath: finalPath,
@@ -444,6 +463,12 @@ export class ArtifactSpool {
     await this.initialize()
     const artifact = await this.getAuthorizedArtifact(id, caller)
     await this.removeStoredArtifact(artifact, 'reject')
+  }
+
+  async discard(id: string): Promise<void> {
+    await this.initialize()
+    const artifact = this.artifacts.get(id)
+    if (artifact) await this.removeStoredArtifact(artifact)
   }
 
   async cleanupExpired(): Promise<void> {
@@ -615,7 +640,7 @@ export class ArtifactSpool {
 
   private async getAuthorizedArtifact(id: string, caller: CliRouteCaller): Promise<StoredArtifact> {
     const artifact = this.artifacts.get(id)
-    if (!artifact || this.removalPromises.has(id)) {
+    if (!artifact || this.pendingRemovalIds.has(id) || this.removalPromises.has(id)) {
       throw new CliRequestError('not_found', 'Artifact was not found', { httpStatus: 404 })
     }
     if (artifact.metadata.expiresAt <= this.now()) {
@@ -632,7 +657,11 @@ export class ArtifactSpool {
 
   private acquireRead(artifact: StoredArtifact): () => void {
     const id = artifact.metadata.id
-    if (this.artifacts.get(id) !== artifact || this.removalPromises.has(id)) {
+    if (
+      this.artifacts.get(id) !== artifact ||
+      this.pendingRemovalIds.has(id) ||
+      this.removalPromises.has(id)
+    ) {
       throw new CliRequestError('not_found', 'Artifact was not found', { httpStatus: 404 })
     }
     this.activeReads.set(id, (this.activeReads.get(id) ?? 0) + 1)
