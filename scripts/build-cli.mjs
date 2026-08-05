@@ -22,11 +22,34 @@ while [ -L "$script_path" ]; do
   esac
 done
 script_dir=$(CDPATH= cd -P -- "$(dirname -- "$script_path")" && pwd)
-exec "$script_dir/../runtime/node/bin/node" "$script_dir/deepchat.mjs" "$@"
+runtime_node="$script_dir/../runtime/node/bin/node"
+if [ ! -x "$runtime_node" ]; then
+  runtime_node="$script_dir/../../runtime/node/bin/node"
+fi
+if [ -x "$runtime_node" ]; then
+  exec "$runtime_node" "$script_dir/deepchat.mjs" "$@"
+fi
+if command -v node >/dev/null 2>&1; then
+  exec node "$script_dir/deepchat.mjs" "$@"
+fi
+echo "DeepChat CLI requires the bundled Node.js runtime or node on PATH." >&2
+exit 127
 `
 
 export const WINDOWS_LAUNCHER = `@echo off\r
-"%~dp0..\\runtime\\node\\node.exe" "%~dp0deepchat.mjs" %*\r
+set "runtime_node=%~dp0..\\runtime\\node\\node.exe"\r
+if not exist "%runtime_node%" set "runtime_node=%~dp0..\\..\\runtime\\node\\node.exe"\r
+if exist "%runtime_node%" goto bundled_runtime\r
+where node >nul 2>&1\r
+if errorlevel 1 goto missing_runtime\r
+node "%~dp0deepchat.mjs" %*\r
+exit /b %errorlevel%\r
+:bundled_runtime\r
+"%runtime_node%" "%~dp0deepchat.mjs" %*\r
+exit /b %errorlevel%\r
+:missing_runtime\r
+echo DeepChat CLI requires the bundled Node.js runtime or node on PATH. 1>&2\r
+exit /b 127\r
 `
 
 export async function buildCli(options = {}) {

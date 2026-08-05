@@ -6,6 +6,11 @@ export {
   type AgentCliTokenClaims,
   type IssuedAgentCliToken
 } from './agentTokenAuthority'
+export {
+  AgentCliCommandAccess,
+  resolveBundledCliDirectory,
+  type AgentCliCommandAccessOptions
+} from './agentCommandAccess'
 export { CliAuditLog, type CliAuditLogOptions } from './auditLog'
 export { ArtifactSpool, type ArtifactSpoolOptions } from './artifactSpool'
 export { createArtifactRoutes } from './artifactRoutes'

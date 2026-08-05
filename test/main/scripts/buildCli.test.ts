@@ -21,17 +21,24 @@ describe('CLI bundle', () => {
       const entryPath = path.join(outputDirectory, 'deepchat.mjs')
       const source = await readFile(entryPath, 'utf8')
       const result = await execFileAsync(process.execPath, [entryPath, 'help', 'commands'])
+      const launcherResult = await execFileAsync(path.join(outputDirectory, 'deepchat'), [
+        'help',
+        'commands'
+      ])
 
       expect(source.startsWith('#!/usr/bin/env node')).toBe(true)
       expect(source).not.toMatch(/from\s+["']zod["']/)
       expect(result.stdout).toContain('deepchat <domain> <verb>')
+      expect(launcherResult.stdout).toContain('deepchat <domain> <verb>')
       expect((await stat(path.join(outputDirectory, 'deepchat'))).mode & 0o111).toBe(0o111)
       expect(await readFile(path.join(outputDirectory, 'deepchat'), 'utf8')).toBe(POSIX_LAUNCHER)
       expect(await readFile(path.join(outputDirectory, 'deepchat.cmd'), 'utf8')).toBe(
         WINDOWS_LAUNCHER
       )
       expect(POSIX_LAUNCHER).toContain('../runtime/node/bin/node')
+      expect(POSIX_LAUNCHER).toContain('../../runtime/node/bin/node')
       expect(WINDOWS_LAUNCHER).toContain('..\\runtime\\node\\node.exe')
+      expect(WINDOWS_LAUNCHER).toContain('..\\..\\runtime\\node\\node.exe')
     } finally {
       await rm(outputDirectory, { recursive: true })
     }

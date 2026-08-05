@@ -214,6 +214,7 @@ import {
 } from '@/routes'
 import { createNodeScheduler } from '@/routes/scheduler'
 import {
+  AgentCliCommandAccess,
   AgentCliTokenAuthority,
   ArtifactSpool,
   CliAudioTranscriptionService,
@@ -229,7 +230,8 @@ import {
   createCliComputeRoutes,
   createCliMcpAdminRoutes,
   createCliProviderModelAdminRoutes,
-  createCliRoutes
+  createCliRoutes,
+  resolveBundledCliDirectory
 } from '@/cli'
 import { AcpRegistryMigrationService } from '@/agent/acp/catalog/acpRegistryMigrationService'
 import { killTerminal } from '@/agent/acp/launch/acpInitHelper'
@@ -766,6 +768,16 @@ export async function createMainProcessControl(dependencies: {
   acpAsLlmProviderSessionControl = providerRuntime
   acpAsLlmProviderPermission = providerRuntime
   const commandPermissionHandler = new CommandPermissionService()
+  const agentCliCommandAccess = new AgentCliCommandAccess({
+    tokenAuthority: agentCliTokenAuthority,
+    commandPermission: commandPermissionHandler,
+    resolveCliDirectory: () =>
+      resolveBundledCliDirectory({
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        isPackaged: app.isPackaged
+      })
+  })
   commandPermissionService = commandPermissionHandler
   filePermissionService = new FilePermissionService()
   settingsPermissionService = new SettingsPermissionService()
@@ -1230,6 +1242,7 @@ export async function createMainProcessControl(dependencies: {
     skillSettings,
     desktopSettings,
     commandPermissionHandler,
+    commandEnvironment: agentCliCommandAccess,
     permissionBroker: toolPermissionBroker,
     liveDelegationConsent,
     agentTools: agentToolDependencies,

@@ -34,10 +34,12 @@ describe('AgentCliTokenAuthority', () => {
     expect(first.status).toBe('granted')
     if (first.status !== 'granted') throw new Error('Expected grant')
     expect(first.grant.consumeBytes(3)).toBe(true)
+    first.grant.release()
     const second = authority.beginRequest(issued.token)
     expect(second.status).toBe('granted')
     if (second.status !== 'granted') throw new Error('Expected grant')
     expect(second.grant.consumeBytes(3)).toBe(false)
+    second.grant.release()
     expect(authority.beginRequest(issued.token)).toEqual({ status: 'quota-exhausted' })
 
     now = 2_000
@@ -85,6 +87,28 @@ describe('AgentCliTokenAuthority', () => {
     expect(() => authority.issue({ conversationId: 'conversation-3' })).toThrow(
       AgentCliTokenCapacityError
     )
+  })
+
+  it('reclaims completed exhausted grants before enforcing global capacity', () => {
+    const generatedTokens = [token('a'), token('b')]
+    let tokenId = 0
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => generatedTokens.shift()!,
+      createTokenId: () => `token-id-${String((tokenId += 1)).padStart(8, '0')}`,
+      maxTokens: 1
+    })
+    const first = authority.issue({ conversationId: 'conversation-1', maxCalls: 1 })
+    const active = authority.beginRequest(first.token)
+    if (active.status !== 'granted') throw new Error('Expected grant')
+
+    expect(() => authority.issue({ conversationId: 'conversation-2' })).toThrow(
+      AgentCliTokenCapacityError
+    )
+    active.grant.release()
+    const second = authority.issue({ conversationId: 'conversation-2' })
+
+    expect(authority.beginRequest(first.token)).toEqual({ status: 'invalid' })
+    expect(authority.beginRequest(second.token).status).toBe('granted')
   })
 
   it('never stores an invalid or duplicate generated token', () => {

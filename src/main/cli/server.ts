@@ -493,6 +493,7 @@ export class CliServer {
     const grant = beginResult?.status === 'granted' ? beginResult.grant : undefined
     const agent = AgentCliTokenSchema.safeParse(grant?.claims)
     if (!agent.success || agent.data.expiresAt <= this.now()) {
+      grant?.release()
       return { ok: false, quotaExhausted: false }
     }
     return {
@@ -560,6 +561,16 @@ export class CliServer {
       return
     }
     const { caller, agentGrant } = authentication
+    if (agentGrant) {
+      let released = false
+      const releaseAgentGrant = () => {
+        if (released) return
+        released = true
+        agentGrant.release()
+      }
+      response.once('finish', releaseAgentGrant)
+      response.once('close', releaseAgentGrant)
+    }
     if (isArtifactRequest) {
       await this.handleArtifactDownload(request, response, caller)
       return

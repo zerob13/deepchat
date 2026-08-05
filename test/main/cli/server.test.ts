@@ -37,13 +37,17 @@ type RpcResult = Readonly<{
   body: LocalControlRpcResponse
 }>
 
-function grantAgentRequest(claims: AgentCliTokenClaims): AgentCliRequestBeginResult {
+function grantAgentRequest(
+  claims: AgentCliTokenClaims,
+  release: () => void = () => undefined
+): AgentCliRequestBeginResult {
   return {
     status: 'granted',
     grant: {
       claims,
       signal: new AbortController().signal,
-      consumeBytes: () => true
+      consumeBytes: () => true,
+      release
     }
   }
 }
@@ -609,16 +613,20 @@ describe('CLI local transport', () => {
   it('applies agent expiry and scopes independently of the bearer token', async () => {
     let scopes: readonly LocalControlScope[] = ['models:read']
     let expiresAt = Date.now() - 1
+    const release = vi.fn()
     const agentToken = 'g'.repeat(43)
     const { descriptor, dispatch } = await createTestServer({
       beginAgentRequest: (token) =>
         token === agentToken
-          ? grantAgentRequest({
-              tokenId: 'token-id-conversation-1',
-              conversationId: 'conversation-1',
-              expiresAt,
-              scopes
-            })
+          ? grantAgentRequest(
+              {
+                tokenId: 'token-id-conversation-1',
+                conversationId: 'conversation-1',
+                expiresAt,
+                scopes
+              },
+              release
+            )
           : { status: 'invalid' }
     })
 
@@ -637,6 +645,7 @@ describe('CLI local transport', () => {
       body: { ok: false, error: { code: 'permission_denied' } }
     })
     expect(allowed).toMatchObject({ status: 200, body: { ok: true } })
+    expect(release).toHaveBeenCalledTimes(3)
     expect(dispatch).toHaveBeenCalledOnce()
     expect(dispatch.mock.calls[0]?.[2]).toMatchObject({
       kind: 'cli',

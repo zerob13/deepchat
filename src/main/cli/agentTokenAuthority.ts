@@ -53,6 +53,7 @@ export type AgentCliRequestGrant = Readonly<{
   claims: AgentCliTokenClaims
   signal: AbortSignal
   consumeBytes(bytes: number): boolean
+  release(): void
 }>
 
 export type AgentCliRequestBeginResult =
@@ -74,6 +75,7 @@ type TokenRecord = {
   maxBytes: number
   usedCalls: number
   usedBytes: number
+  activeRequests: number
   issuedAt: number
   controller: AbortController
   expiryTimer: NodeJS.Timeout
@@ -162,7 +164,7 @@ export class AgentCliTokenAuthority {
     if (issuedAt > Number.MAX_SAFE_INTEGER - ttlMs) {
       throw new Error('Agent CLI token expiry is outside the supported range')
     }
-    this.pruneExpired(issuedAt)
+    this.pruneRetired(issuedAt)
     const replacesConversationToken =
       (this.digestsByConversation.get(conversationId)?.size ?? 0) >= this.maxTokensPerConversation
     if (this.recordsByDigest.size >= this.maxTokens && !replacesConversationToken) {
@@ -192,6 +194,7 @@ export class AgentCliTokenAuthority {
       maxBytes,
       usedCalls: 0,
       usedBytes: 0,
+      activeRequests: 0,
       issuedAt,
       controller,
       expiryTimer
@@ -220,12 +223,19 @@ export class AgentCliTokenAuthority {
     }
 
     record.usedCalls += 1
+    record.activeRequests += 1
+    let released = false
     return {
       status: 'granted',
       grant: {
         claims: record.claims,
         signal: record.controller.signal,
-        consumeBytes: (bytes) => this.consumeRecordBytes(record, bytes)
+        consumeBytes: (bytes) => this.consumeRecordBytes(record, bytes),
+        release: () => {
+          if (released) return
+          released = true
+          record.activeRequests = Math.max(0, record.activeRequests - 1)
+        }
       }
     }
   }
@@ -250,7 +260,7 @@ export class AgentCliTokenAuthority {
   }
 
   snapshot(): Readonly<{ tokens: number; conversations: number }> {
-    this.pruneExpired(this.now())
+    this.pruneRetired(this.now())
     return {
       tokens: this.recordsByDigest.size,
       conversations: this.digestsByConversation.size
@@ -305,13 +315,25 @@ export class AgentCliTokenAuthority {
     if (oldest) this.removeRecord(oldest.digest, 'replaced')
   }
 
-  private pruneExpired(now: number): void {
+  private pruneRetired(now: number): void {
     for (const record of this.recordsByDigest.values()) {
-      if (record.claims.expiresAt <= now) this.removeRecord(record.digest, 'expired')
+      if (record.claims.expiresAt <= now) {
+        this.removeRecord(record.digest, 'expired')
+        continue
+      }
+      if (
+        record.activeRequests === 0 &&
+        (record.usedCalls >= record.maxCalls || record.usedBytes >= record.maxBytes)
+      ) {
+        this.removeRecord(record.digest, 'exhausted')
+      }
     }
   }
 
-  private removeRecord(digest: string, reason: 'expired' | 'replaced' | 'revoked'): void {
+  private removeRecord(
+    digest: string,
+    reason: 'expired' | 'exhausted' | 'replaced' | 'revoked'
+  ): void {
     const record = this.recordsByDigest.get(digest)
     if (!record) return
     this.recordsByDigest.delete(digest)

@@ -125,6 +125,80 @@ describe('AgentBashHandler', () => {
     expect(result.output).toContain('Exit Code: 2')
   })
 
+  it('creates a scoped command environment only after command approval', async () => {
+    const permissionService = new CommandPermissionService()
+    permissionService.approve('conv-1', 'deepchat model', false)
+    const commandEnvironment = {
+      createEnvironment: vi.fn(() => ({
+        DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token',
+        PATH: '/bundled/cli'
+      }))
+    }
+    const handler = new AgentBashHandler(
+      ['/workspace'],
+      { get: () => undefined },
+      permissionService,
+      commandEnvironment
+    )
+    const prepareCommand = vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat model invoke --prompt hello',
+      command: 'deepchat model invoke --prompt hello',
+      env: { DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token', PATH: '/bundled/cli' },
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    vi.spyOn(handler as never, 'runShellProcess' as never).mockResolvedValue({
+      kind: 'completed',
+      output: 'ok',
+      exitCode: 0,
+      timedOut: false,
+      offloaded: false
+    })
+
+    await handler.executeCommand(
+      {
+        command: 'deepchat model invoke --prompt hello',
+        description: 'Invoke model'
+      },
+      { conversationId: 'conv-1' }
+    )
+
+    expect(commandEnvironment.createEnvironment).toHaveBeenCalledWith(
+      'conv-1',
+      'deepchat model invoke --prompt hello'
+    )
+    expect(prepareCommand).toHaveBeenCalledWith(
+      'deepchat model invoke --prompt hello',
+      {
+        DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token',
+        PATH: '/bundled/cli'
+      },
+      true
+    )
+  })
+
+  it('does not issue a scoped environment while command approval is pending', async () => {
+    const commandEnvironment = { createEnvironment: vi.fn(() => ({})) }
+    const handler = new AgentBashHandler(
+      ['/workspace'],
+      { get: () => undefined },
+      new CommandPermissionService(),
+      commandEnvironment
+    )
+
+    await expect(
+      handler.executeCommand(
+        {
+          command: 'deepchat model invoke --prompt hello',
+          description: 'Invoke model'
+        },
+        { conversationId: 'conv-1' }
+      )
+    ).rejects.toMatchObject({ name: 'Error', message: 'Command permission required' })
+    expect(commandEnvironment.createEnvironment).not.toHaveBeenCalled()
+  })
+
   it('does not fall back when the rewritten command times out', async () => {
     const handler = new AgentBashHandler(
       ['/workspace'],

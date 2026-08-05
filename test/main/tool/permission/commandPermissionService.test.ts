@@ -86,6 +86,13 @@ describe('CommandPermissionService', () => {
     expect(result.signature).toMatch(/^shell:[a-f0-9]{64}$/)
   })
 
+  it('exposes shell-control classification to trusted command adapters', () => {
+    const service = new CommandPermissionService()
+
+    expect(service.hasShellControlSyntax('deepchat model invoke')).toBe(false)
+    expect(service.hasShellControlSyntax('deepchat model invoke > output.txt')).toBe(true)
+  })
+
   it('does not let a broad command approval authorize a redirected command', () => {
     const service = new CommandPermissionService()
     service.approve('conv-1', 'deepchat model', false)

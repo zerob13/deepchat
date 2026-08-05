@@ -235,6 +235,10 @@ export class CommandPermissionService {
     return { level: 'medium', suggestion: SUGGESTION_KEYS.medium }
   }
 
+  hasShellControlSyntax(command: string): boolean {
+    return hasShellControlSyntax(command)
+  }
+
   extractBaseCommand(command: string): string {
     const tokens = this.tokenize(command)
     if (tokens.length === 0) return ''

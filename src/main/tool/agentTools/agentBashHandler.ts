@@ -50,6 +50,10 @@ export interface ExecuteCommandOptions {
   allowExternalCwd?: boolean
 }
 
+export interface AgentCommandEnvironmentPort {
+  createEnvironment(conversationId: string, command: string): Record<string, string> | undefined
+}
+
 interface PreparedCommand {
   originalCommand: string
   command: string
@@ -58,6 +62,11 @@ interface PreparedCommand {
   rtkApplied: boolean
   rtkMode: 'rewrite' | 'direct' | 'bypass'
   rtkFallbackReason?: string
+}
+
+interface ResolvedCommandEnvironment {
+  env?: Record<string, string>
+  preserveCommand: boolean
 }
 
 interface CompletedShellProcessResult {
@@ -84,7 +93,8 @@ export class AgentBashHandler {
   constructor(
     allowedDirectories: string[],
     settings: Pick<SettingsStore, 'get'>,
-    commandPermissionHandler: CommandPermissionService
+    commandPermissionHandler: CommandPermissionService,
+    private readonly commandEnvironment?: AgentCommandEnvironmentPort
   ) {
     if (allowedDirectories.length === 0) {
       throw new Error('At least one allowed directory must be provided')
@@ -139,7 +149,12 @@ export class AgentBashHandler {
 
     let result: ShellProcessResult
 
-    const prepared = await this.prepareCommand(command, options.env)
+    const resolvedEnvironment = this.resolveCommandEnvironment(command, options)
+    const prepared = await this.prepareCommand(
+      command,
+      resolvedEnvironment.env,
+      resolvedEnvironment.preserveCommand
+    )
 
     result = await this.runShellProcess(
       prepared.command,
@@ -576,7 +591,12 @@ export class AgentBashHandler {
       )
     }
 
-    const prepared = await this.prepareCommand(command, options.env)
+    const resolvedEnvironment = this.resolveCommandEnvironment(command, options)
+    const prepared = await this.prepareCommand(
+      command,
+      resolvedEnvironment.env,
+      resolvedEnvironment.preserveCommand
+    )
 
     const result = await backgroundExecSessionManager.start(conversationId, prepared.command, cwd, {
       timeout: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
@@ -603,13 +623,14 @@ export class AgentBashHandler {
 
   private async prepareCommand(
     command: string,
-    env?: Record<string, string>
+    env?: Record<string, string>,
+    preserveCommand = false
   ): Promise<PreparedCommand> {
     const baseEnv = env ?? {}
     const prepared = await rtkRuntimeService.prepareShellCommand(
       command,
       baseEnv,
-      this.settings.get<boolean>(RTK_ENABLED_SETTING_KEY) !== false
+      !preserveCommand && this.settings.get<boolean>(RTK_ENABLED_SETTING_KEY) !== false
     )
     return {
       originalCommand: prepared.originalCommand,
@@ -618,7 +639,23 @@ export class AgentBashHandler {
       rewritten: prepared.rewritten,
       rtkApplied: prepared.rtkApplied,
       rtkMode: prepared.rtkMode,
-      rtkFallbackReason: prepared.rtkFallbackReason
+      rtkFallbackReason: preserveCommand
+        ? 'RTK rewrite bypassed for scoped command authority'
+        : prepared.rtkFallbackReason
+    }
+  }
+
+  private resolveCommandEnvironment(
+    command: string,
+    options: ExecuteCommandOptions
+  ): ResolvedCommandEnvironment {
+    const scopedEnvironment = options.conversationId
+      ? this.commandEnvironment?.createEnvironment(options.conversationId, command)
+      : undefined
+    if (!scopedEnvironment) return { env: options.env, preserveCommand: false }
+    return {
+      env: { ...options.env, ...scopedEnvironment },
+      preserveCommand: true
     }
   }
 
