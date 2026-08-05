@@ -8,6 +8,7 @@ import type { DeepchatRouteName } from '@shared/contracts/routes'
 import type { JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_AGENT_TOKEN_ENV,
+  LocalControlEventEnvelopeSchema,
   LocalControlRpcResponseSchema,
   type LocalControlDescriptor
 } from '@shared/contracts/localControl'
@@ -299,6 +300,253 @@ describe('bundled CLI client', () => {
     expect(records).toHaveLength(4)
     expect(records.slice(0, 3).map((record) => record.sequence)).toEqual([0, 1, 2])
     expect(records[3]).toMatchObject({ ok: true, result: { text: 'Hello' } })
+  })
+
+  it('starts a durable Agent run with bounded stdin and prints its recovery identity', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const invokeRpc = vi.fn(async (invocation) =>
+      LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: {
+          runId: 'run-1',
+          sessionId: 'run-1',
+          status: 'generating',
+          requestId: 'agent-request-1',
+          messageId: 'message-1',
+          createdAt: 1_000
+        }
+      })
+    )
+
+    await expect(
+      runCli(['agent', 'run', '--stdin', '--provider', 'provider-1', '--model', 'model-1'], {
+        env: {},
+        stdin: Readable.from(['Run the benchmark']),
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeRpc
+      })
+    ).resolves.toBe(0)
+
+    expect(invokeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'sessions.runDetached',
+        params: {
+          prompt: 'Run the benchmark',
+          providerId: 'provider-1',
+          modelId: 'model-1'
+        }
+      })
+    )
+    expect(stdout.read()).toContain('Run run-1 started (generating)')
+    expect(stdout.read()).toContain('deepchat run watch --run run-1')
+    expect(stderr.read()).toBe('')
+  })
+
+  it('validates targeted run events and preserves their resume cursors in JSONL', async () => {
+    const stdout = captureOutput()
+    const stderr = captureOutput()
+    const invokeStream = vi.fn(async (invocation, onEvent) => {
+      await onEvent(
+        LocalControlEventEnvelopeSchema.parse({
+          protocolVersion: 1,
+          surfaceVersion: 1,
+          sequence: 0,
+          timestamp: 1_000,
+          requestId: invocation.id,
+          runId: 'run-1',
+          cursor: 'epoch-1:7',
+          event: 'sessions.status.changed',
+          data: {
+            sessionId: 'run-1',
+            status: 'idle',
+            version: 2,
+            internalSecret: 'do-not-publish'
+          }
+        })
+      )
+      return LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: { runId: 'run-1', lastCursor: 'epoch-1:7' }
+      })
+    })
+
+    await expect(
+      runCli(['run', 'watch', '--run', 'run-1', '--jsonl'], {
+        env: {},
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeStream
+      })
+    ).resolves.toBe(0)
+
+    const records = stdout
+      .read()
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(records).toHaveLength(2)
+    expect(records[0]).toMatchObject({
+      event: 'sessions.status.changed',
+      runId: 'run-1',
+      cursor: 'epoch-1:7'
+    })
+    expect(records[1]).toMatchObject({
+      ok: true,
+      result: { runId: 'run-1', lastCursor: 'epoch-1:7' }
+    })
+    expect(stdout.read()).not.toContain('do-not-publish')
+    expect(stderr.read()).toBe('')
+  })
+
+  it('rejects untargeted run stream records before writing attacker-controlled data', async () => {
+    const stdout = captureOutput()
+    const invokeStream = vi.fn(async (invocation, onEvent) => {
+      await onEvent(
+        LocalControlEventEnvelopeSchema.parse({
+          protocolVersion: 1,
+          surfaceVersion: 1,
+          sequence: 0,
+          timestamp: 1_000,
+          requestId: invocation.id,
+          event: 'chat.stream.failed',
+          data: {
+            requestId: 'agent-request-1',
+            sessionId: 'other-run',
+            messageId: 'message-1',
+            failedAt: 1_000,
+            error: 'untrusted'
+          }
+        })
+      )
+      throw new Error('unreachable')
+    })
+
+    await expect(
+      runCli(['run', 'watch', '--run', 'run-1', '--jsonl'], {
+        env: {},
+        stdout: stdout.stream,
+        stderr: captureOutput().stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeStream
+      })
+    ).resolves.toBe(8)
+
+    const records = stdout.read().trimEnd().split('\n')
+    expect(records).toHaveLength(1)
+    expect(LocalControlRpcResponseSchema.parse(JSON.parse(records[0]))).toMatchObject({
+      ok: false,
+      error: { code: 'internal_error' }
+    })
+    expect(stdout.read()).not.toContain('untrusted')
+  })
+
+  it('keeps typed internal events outside the public run stream allowlist', async () => {
+    const stdout = captureOutput()
+    const invokeStream = vi.fn(async (invocation, onEvent) => {
+      await onEvent(
+        LocalControlEventEnvelopeSchema.parse({
+          protocolVersion: 1,
+          surfaceVersion: 1,
+          sequence: 0,
+          timestamp: 1_000,
+          requestId: invocation.id,
+          runId: 'run-1',
+          cursor: 'epoch-1:8',
+          event: 'approvals.closed',
+          data: {
+            requestId: 'approval-request-1234',
+            reason: 'approved'
+          }
+        })
+      )
+      throw new Error('unreachable')
+    })
+
+    await expect(
+      runCli(['run', 'watch', '--run', 'run-1', '--jsonl'], {
+        env: {},
+        stdout: stdout.stream,
+        stderr: captureOutput().stream,
+        randomId: () => 'request-1',
+        loadDescriptor: async () => testDescriptor,
+        invokeStream
+      })
+    ).resolves.toBe(8)
+
+    const response = LocalControlRpcResponseSchema.parse(JSON.parse(stdout.read()))
+    expect(response).toMatchObject({ ok: false, error: { code: 'internal_error' } })
+    expect(stdout.read()).not.toContain('approvals.closed')
+  })
+
+  it('neutralizes terminal control characters in human model output', async () => {
+    const stdout = captureOutput()
+    const invokeStream = vi.fn(async (invocation, onEvent) => {
+      await onEvent(
+        LocalControlEventEnvelopeSchema.parse({
+          protocolVersion: 1,
+          surfaceVersion: 1,
+          sequence: 0,
+          timestamp: 1_000,
+          requestId: invocation.id,
+          event: 'models.invoke',
+          data: { type: 'text_delta', text: '\u001b]52;c;c2VjcmV0\u0007safe\r\u202e' }
+        })
+      )
+      return LocalControlRpcResponseSchema.parse({
+        protocolVersion: 1,
+        surfaceVersion: 1,
+        id: invocation.id,
+        ok: true,
+        result: {
+          providerId: 'provider-1',
+          modelId: 'model-1',
+          text: 'safe',
+          finishReason: 'complete',
+          durationMs: 10,
+          ttftMs: 1
+        }
+      })
+    })
+
+    await expect(
+      runCli(
+        ['model', 'invoke', '--provider', 'provider-1', '--model', 'model-1', '--prompt', 'hello'],
+        {
+          env: {},
+          stdout: stdout.stream,
+          stderr: captureOutput().stream,
+          randomId: () => 'request-1',
+          loadDescriptor: async () => testDescriptor,
+          invokeStream
+        }
+      )
+    ).resolves.toBe(0)
+
+    expect(stdout.read()).toContain('safe')
+    expect(
+      Array.from(stdout.read()).some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0
+        return (
+          codePoint === 0x0d ||
+          (codePoint <= 0x1f && codePoint !== 0x09 && codePoint !== 0x0a) ||
+          (codePoint >= 0x7f && codePoint <= 0x9f) ||
+          (codePoint >= 0x202a && codePoint <= 0x202e)
+        )
+      })
+    ).toBe(false)
   })
 
   it('cancels a stream promptly even when its provider ignores the signal', async () => {

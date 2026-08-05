@@ -65,6 +65,11 @@ describe('CLI argument grammar', () => {
       helpRequested: true
     })
     expect(() => parseCliArguments(['--help'], {})).toThrow('deepchat <domain> <verb>')
+    expect(formatCliHelp({ domain: 'agent', verb: 'run' })).toContain('--max-turns <n>')
+    expect(formatCliHelp({ domain: 'run', verb: 'watch' })).toContain('--cursor <event-cursor>')
+    expect(formatCliHelp({ domain: 'model', verb: 'list' })).toContain(
+      'deepchat model list --provider <id>'
+    )
   })
 
   it('parses artifact ownership commands without accepting output flags on metadata operations', () => {
@@ -139,6 +144,112 @@ describe('CLI argument grammar', () => {
         {}
       )
     ).toThrow('exactly one of --prompt or --stdin')
+  })
+
+  it('parses bounded durable Agent creation options', () => {
+    expect(
+      parseCliArguments(
+        [
+          'agent',
+          'run',
+          '--prompt',
+          'Run the benchmark',
+          '--agent',
+          'deepchat',
+          '--provider',
+          'provider-1',
+          '--model',
+          'model-1',
+          '--system',
+          'Be concise',
+          '--title',
+          'Benchmark run',
+          '--project-dir',
+          '/tmp/project',
+          '--skills',
+          'bench,reporting',
+          '--disable-tools',
+          'dangerous-tool',
+          '--max-turns',
+          '8'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      contract: { name: 'sessions.runDetached' },
+      operation: 'rpc',
+      timeoutMs: DEFAULT_COMPUTE_TIMEOUT_MS,
+      params: {
+        prompt: 'Run the benchmark',
+        agentId: 'deepchat',
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        systemPrompt: 'Be concise',
+        title: 'Benchmark run',
+        projectDir: '/tmp/project',
+        activeSkills: ['bench', 'reporting'],
+        disabledAgentTools: ['dangerous-tool'],
+        maxTurns: 8
+      }
+    })
+    expect(parseCliArguments(['agent', 'run', '--stdin'], {})).toMatchObject({
+      readStdin: true,
+      params: {}
+    })
+    expect(() => parseCliArguments(['agent', 'run', '--prompt', 'hello', '--stdin'], {})).toThrow(
+      'exactly one of --prompt or --stdin'
+    )
+    expect(() =>
+      parseCliArguments(['agent', 'run', '--prompt', 'hello', '--skills', 'bench,bench'], {})
+    ).toThrow('duplicate identifiers')
+  })
+
+  it('keeps run identity and message/event cursors in separate typed options', () => {
+    expect(
+      parseCliArguments(
+        [
+          'run',
+          'get',
+          '--run',
+          'run-1',
+          '--cursor',
+          '{"orderSeq":42,"id":"message-42"}',
+          '--limit',
+          '25'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      contract: { name: 'runs.get' },
+      operation: 'rpc',
+      params: {
+        runId: 'run-1',
+        cursor: { orderSeq: 42, id: 'message-42' },
+        limit: 25
+      }
+    })
+    expect(
+      parseCliArguments(
+        ['run', 'watch', '--run', 'run-1', '--cursor', 'epoch-1:42', '--limit', '10'],
+        {}
+      )
+    ).toMatchObject({
+      contract: { name: 'events.subscribe' },
+      operation: 'stream',
+      timeoutMs: DEFAULT_COMPUTE_TIMEOUT_MS,
+      params: { runId: 'run-1', cursor: 'epoch-1:42', messageLimit: 10 }
+    })
+    expect(parseCliArguments(['run', 'cancel', '--run', 'run-1'], {})).toMatchObject({
+      contract: { name: 'runs.cancel' },
+      params: { runId: 'run-1' }
+    })
+    expect(() => parseCliArguments(['run', 'get'], {})).toThrow('requires --run')
+    expect(() =>
+      parseCliArguments(['run', 'get', '--run', 'run-1', '--cursor', 'epoch-1:42'], {})
+    ).toThrow('JSON message cursor')
+    expect(() =>
+      parseCliArguments(['run', 'watch', '--run', 'run-1', '--cursor', '{"orderSeq":1}'], {})
+    ).toThrow('valid event cursor')
   })
 
   it('keeps model flags after the two-token capability signature', () => {

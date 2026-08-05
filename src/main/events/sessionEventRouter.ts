@@ -1,17 +1,11 @@
-import { sessionsUpdatedEvent, type DeepchatEventName } from '@shared/contracts/events'
+import {
+  SESSION_RUN_STREAM_EVENT_NAMES,
+  sessionsUpdatedEvent,
+  type DeepchatEventName
+} from '@shared/contracts/events'
 import type { TypedEventHub } from './typedEventHub'
 
-const RUN_STREAM_EVENTS = new Set<DeepchatEventName>([
-  'chat.stream.updated',
-  'chat.stream.completed',
-  'chat.stream.failed',
-  'chat.plan.updated',
-  'sessions.status.changed',
-  'sessions.compaction.changed',
-  'sessions.acp.modes.ready',
-  'sessions.acp.commands.ready',
-  'sessions.acp.configOptions.ready'
-])
+const RUN_STREAM_EVENTS = new Set<DeepchatEventName>(SESSION_RUN_STREAM_EVENT_NAMES)
 
 type SessionEventRouterOptions = Readonly<{
   hub: TypedEventHub

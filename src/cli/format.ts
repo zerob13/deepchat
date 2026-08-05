@@ -78,6 +78,38 @@ export function formatHumanResult(
       contract.output.parse(value)
       return 'Artifact deleted'
     }
+    case 'sessions.runDetached': {
+      const result = contract.output.parse(value)
+      return [
+        `Run ${result.runId} started (${result.status})`,
+        `Session: ${result.sessionId}`,
+        `Watch: deepchat run watch --run ${result.runId}`
+      ].join('\n')
+    }
+    case 'runs.get': {
+      const result = contract.output.parse(value)
+      return [
+        `Run ${result.runId} (${result.status})`,
+        `Agent: ${result.agentId}`,
+        `Model: ${result.providerId}/${result.modelId}`,
+        ...result.messages.flatMap((message) => [
+          '',
+          `[${message.role}]${message.textTruncated ? ' (truncated)' : ''}`,
+          message.text
+        ]),
+        ...(result.nextCursor ? ['', `Next cursor: ${JSON.stringify(result.nextCursor)}`] : [])
+      ].join('\n')
+    }
+    case 'runs.cancel': {
+      const result = contract.output.parse(value)
+      return result.cancelRequested
+        ? `Cancellation requested for ${result.runId} (${result.status})`
+        : `Run ${result.runId} was already ${result.status}`
+    }
+    case 'events.subscribe': {
+      const result = contract.output.parse(value)
+      return `Run ${result.runId} stream ended at ${result.lastCursor}`
+    }
     case 'providers.listPublic': {
       const result = contract.output.parse(value)
       return result.providers

@@ -72,3 +72,26 @@ export const runsSnapshotEvent = defineEventContract({
     })
     .strict()
 })
+
+export const SESSION_RUN_STREAM_EVENT_NAMES = [
+  'chat.stream.updated',
+  'chat.stream.completed',
+  'chat.stream.failed',
+  'chat.plan.updated',
+  'sessions.status.changed',
+  'sessions.compaction.changed',
+  'sessions.acp.modes.ready',
+  'sessions.acp.commands.ready',
+  'sessions.acp.configOptions.ready'
+] as const
+
+export const RUN_STREAM_EVENT_NAMES = [
+  runsCreatedEvent.name,
+  runsTurnAcceptedEvent.name,
+  runsTurnFailedEvent.name,
+  runsCancelRequestedEvent.name,
+  runsSnapshotEvent.name,
+  ...SESSION_RUN_STREAM_EVENT_NAMES
+] as const
+
+export const RunStreamEventNameSchema = z.enum(RUN_STREAM_EVENT_NAMES)

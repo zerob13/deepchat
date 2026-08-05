@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
+import { getDeepchatEventContract, RunStreamEventNameSchema } from '@shared/contracts/events'
 import {
   LOCAL_CONTROL_AGENT_TOKEN_ENV,
   createLocalControlFailure,
@@ -11,6 +12,10 @@ import { MediaGenerationEventSchema } from '@shared/contracts/routes/media.route
 import { ModelInvokeEventSchema } from '@shared/contracts/routes/models.routes'
 import { PUBLIC_MCP_CONFIG_MAX_BYTES } from '@shared/contracts/routes/mcp.routes'
 import { PROVIDER_CREDENTIAL_MAX_BYTES } from '@shared/contracts/routes/providers.routes'
+import {
+  RUN_PROMPT_MAX_CHARACTERS,
+  sessionsRunDetachedRoute
+} from '@shared/contracts/routes/runs.routes'
 import { parseCliArguments, formatCliHelp, inferCliOutputMode, type CliOutputMode } from './args'
 import {
   loadLocalControlDescriptor,
@@ -63,6 +68,52 @@ function writeText(output: WritableOutput, value: string): void {
   output.write(value.endsWith('\n') ? value : `${value}\n`)
 }
 
+function sanitizeTerminalText(value: string): string {
+  const output: string[] = []
+  let start = 0
+  let offset = 0
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0
+    const isUnsafeControl =
+      codePoint === 0x0d ||
+      (codePoint <= 0x1f && codePoint !== 0x09 && codePoint !== 0x0a) ||
+      (codePoint >= 0x7f && codePoint <= 0x9f)
+    const isBidiControl =
+      codePoint === 0x061c ||
+      codePoint === 0x200e ||
+      codePoint === 0x200f ||
+      (codePoint >= 0x202a && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069)
+    if (isUnsafeControl || isBidiControl) {
+      if (offset > start) output.push(value.slice(start, offset))
+      start = offset + character.length
+    }
+    offset += character.length
+  }
+  if (start === 0) return value
+  if (start < value.length) output.push(value.slice(start))
+  return output.join('')
+}
+
+function writeHumanText(output: WritableOutput, value: string): void {
+  writeText(output, sanitizeTerminalText(value))
+}
+
+function runEventPayloadMatchesTarget(
+  event: Parameters<CliStreamEventHandler>[0],
+  data: JsonValue,
+  expectedRunId: string | undefined
+): boolean {
+  if (!event.event.startsWith('runs.')) return true
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+  if (event.event === 'runs.snapshot') {
+    const run = data.run
+    if (!run || typeof run !== 'object' || Array.isArray(run)) return false
+    return data.cursor === event.cursor && run.runId === expectedRunId
+  }
+  return data.runId === expectedRunId
+}
+
 function parseStdinJsonObject(input: string, label: string): Record<string, JsonValue> {
   let candidate: unknown
   try {
@@ -98,7 +149,7 @@ function writeClientError(
   stderr: WritableOutput
 ): void {
   if (outputMode === 'text') {
-    writeText(stderr, `${error.code}: ${error.message}`)
+    writeHumanText(stderr, `${error.code}: ${error.message}`)
     return
   }
   writeText(
@@ -113,13 +164,27 @@ function writeClientError(
   )
 }
 
-function validateStreamEvent(method: string, data: unknown): void {
+function parseStreamEventData(
+  method: string,
+  event: Parameters<CliStreamEventHandler>[0],
+  expectedRunId?: string
+): JsonValue {
+  const runEventName =
+    method === 'events.subscribe' ? RunStreamEventNameSchema.safeParse(event.event) : null
   const parsed =
-    method === 'models.invoke'
-      ? ModelInvokeEventSchema.safeParse(data)
-      : method === 'images.generate' || method === 'videos.generate' || method === 'speech.generate'
-        ? MediaGenerationEventSchema.safeParse(data)
+    method === 'events.subscribe'
+      ? event.runId === expectedRunId && typeof event.cursor === 'string' && runEventName?.success
+        ? getDeepchatEventContract(runEventName.data).payload.safeParse(event.data)
         : null
+      : event.event !== method
+        ? null
+        : method === 'models.invoke'
+          ? ModelInvokeEventSchema.safeParse(event.data)
+          : method === 'images.generate' ||
+              method === 'videos.generate' ||
+              method === 'speech.generate'
+            ? MediaGenerationEventSchema.safeParse(event.data)
+            : null
   if (!parsed?.success) {
     throw new CliClientError(
       'internal_error',
@@ -127,6 +192,25 @@ function validateStreamEvent(method: string, data: unknown): void {
       CLI_EXIT_CODES.internal
     )
   }
+  const data = JsonValueSchema.safeParse(parsed.data)
+  if (!data.success) {
+    throw new CliClientError(
+      'internal_error',
+      'DeepChat emitted a non-JSON stream event',
+      CLI_EXIT_CODES.internal
+    )
+  }
+  if (
+    method === 'events.subscribe' &&
+    !runEventPayloadMatchesTarget(event, data.data, expectedRunId)
+  ) {
+    throw new CliClientError(
+      'internal_error',
+      'DeepChat emitted an event for another run',
+      CLI_EXIT_CODES.internal
+    )
+  }
+  return data.data
 }
 
 export async function runCli(
@@ -147,8 +231,8 @@ export async function runCli(
     const message = error instanceof CliUsageError ? error.message : 'Invalid CLI arguments'
     const outputMode = inferCliOutputMode(argv, env)
     if (outputMode === 'text') {
-      writeText(stderr, message)
-      writeText(stderr, 'Run: deepchat help commands')
+      writeHumanText(stderr, message)
+      writeHumanText(stderr, 'Run: deepchat help commands')
     } else {
       writeClientError(
         new CliClientError('invalid_request', message, CLI_EXIT_CODES.usage),
@@ -206,9 +290,12 @@ export async function runCli(
         controller.signal,
         parsed.contract.name === 'providers.setCredential'
           ? PROVIDER_CREDENTIAL_MAX_BYTES
-          : parsed.contract.name === 'mcp.addPublic' || parsed.contract.name === 'mcp.updatePublic'
-            ? PUBLIC_MCP_CONFIG_MAX_BYTES
-            : undefined
+          : parsed.contract.name === sessionsRunDetachedRoute.name
+            ? RUN_PROMPT_MAX_CHARACTERS * 4
+            : parsed.contract.name === 'mcp.addPublic' ||
+                parsed.contract.name === 'mcp.updatePublic'
+              ? PUBLIC_MCP_CONFIG_MAX_BYTES
+              : undefined
       )
       if (!params || typeof params !== 'object' || Array.isArray(params)) {
         throw new CliClientError(
@@ -229,6 +316,9 @@ export async function runCli(
           break
         case 'speech.generate':
           params = { ...params, text: input }
+          break
+        case 'sessions.runDetached':
+          params = { ...params, prompt: input }
           break
         case 'providers.setCredential':
           params = { ...params, value: input.replace(/(?:\r\n|\n)$/, '') }
@@ -299,25 +389,29 @@ export async function runCli(
     }
     let streamedText = false
     let streamedTextEndsWithNewline = false
+    const contractName = parsed.contract.name
+    const expectedRunId =
+      contractName === 'events.subscribe' &&
+      validatedInput.data &&
+      typeof validatedInput.data === 'object' &&
+      'runId' in validatedInput.data &&
+      typeof validatedInput.data.runId === 'string'
+        ? validatedInput.data.runId
+        : undefined
     const onStreamEvent: CliStreamEventHandler = async (event) => {
-      if (event.event !== parsed.contract?.name) {
-        throw new CliClientError(
-          'internal_error',
-          'DeepChat emitted an event for another method',
-          CLI_EXIT_CODES.internal
-        )
-      }
-      validateStreamEvent(parsed.contract.name, event.data)
+      const canonicalData = parseStreamEventData(contractName, event, expectedRunId)
       if (parsed.outputMode === 'jsonl') {
-        writeText(stdout, JSON.stringify(event))
+        writeText(stdout, JSON.stringify({ ...event, data: canonicalData }))
         return
       }
-      if (parsed.outputMode !== 'text' || parsed.contract.name !== 'models.invoke') return
-      const parsedEvent = ModelInvokeEventSchema.parse(event.data)
+      if (parsed.outputMode !== 'text' || contractName !== 'models.invoke') return
+      const parsedEvent = ModelInvokeEventSchema.parse(canonicalData)
       if (parsedEvent.type === 'text_delta' && parsedEvent.text) {
-        stdout.write(parsedEvent.text)
+        const safeText = sanitizeTerminalText(parsedEvent.text)
+        if (!safeText) return
+        stdout.write(safeText)
         streamedText = true
-        streamedTextEndsWithNewline = parsedEvent.text.endsWith('\n')
+        streamedTextEndsWithNewline = safeText.endsWith('\n')
       }
     }
     let response: LocalControlRpcResponse
@@ -346,7 +440,7 @@ export async function runCli(
     if (!response.ok) {
       if (streamedText && !streamedTextEndsWithNewline) stdout.write('\n')
       if (parsed.outputMode === 'text') {
-        writeText(stderr, `${response.error.code}: ${response.error.message}`)
+        writeHumanText(stderr, `${response.error.code}: ${response.error.message}`)
       } else {
         writeText(stdout, serializeMachineResponse(response))
       }
@@ -385,7 +479,7 @@ export async function runCli(
     ) {
       if (!streamedText || !streamedTextEndsWithNewline) stdout.write('\n')
     } else if (parsed.outputMode === 'text') {
-      writeText(
+      writeHumanText(
         stdout,
         formatHumanResult(parsed.contract, response.result, { outputPath: parsed.outputPath })
       )
