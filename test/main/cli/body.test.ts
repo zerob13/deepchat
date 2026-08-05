@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseBoundedJsonBody, readBoundedRequestBody } from '@/cli/body'
+import { parseBoundedJsonBody, parseBoundedJsonBytes, readBoundedRequestBody } from '@/cli/body'
 import { CliRequestError } from '@/cli/errors'
 
 const temporaryDirectories: string[] = []
@@ -122,5 +122,15 @@ describe('bounded CLI request bodies', () => {
       })
     ).rejects.toMatchObject({ code: 'invalid_request' })
     expect(cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('applies the same UTF-8 and shape limits to header JSON', () => {
+    expect(parseBoundedJsonBytes(Buffer.from('{"value":42}'))).toEqual({ value: 42 })
+    expect(() => parseBoundedJsonBytes(Buffer.from([0xc3, 0x28]))).toThrowError(
+      expect.objectContaining({ code: 'invalid_request' })
+    )
+    expect(() => parseBoundedJsonBytes(Buffer.from('{"constructor":true}'))).toThrowError(
+      expect.objectContaining({ code: 'invalid_request' })
+    )
   })
 })

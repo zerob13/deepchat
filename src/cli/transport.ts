@@ -1,9 +1,14 @@
-import { request as httpRequest, type IncomingHttpHeaders } from 'node:http'
+import { constants as fsConstants } from 'node:fs'
+import { lstat, open } from 'node:fs/promises'
+import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage } from 'node:http'
 import {
   LOCAL_CONTROL_RPC_PATH,
   LOCAL_CONTROL_STREAM_PATH,
+  LOCAL_CONTROL_UPLOAD_PATH,
+  LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
   LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES,
   LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES,
+  LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES,
   LocalControlEventEnvelopeSchema,
   LocalControlRpcRequestSchema,
   LocalControlRpcResponseSchema,
@@ -26,6 +31,12 @@ export type CliRpcInvocation = Readonly<{
   params: JsonValue
   signal: AbortSignal
 }>
+
+export type CliUploadInvocation = CliRpcInvocation &
+  Readonly<{
+    filePath: string
+    maxBytes: number
+  }>
 
 export type CliStreamEventHandler = (event: LocalControlEventEnvelope) => void | Promise<void>
 
@@ -77,6 +88,71 @@ function createInvocationBody(invocation: CliRpcInvocation): Buffer {
   )
 }
 
+async function readJsonResponse(
+  response: IncomingMessage,
+  expectedRequestId: string,
+  signal: AbortSignal
+): Promise<LocalControlRpcResponse> {
+  try {
+    const contentTypes = response.headersDistinct['content-type']
+    const contentType = contentTypes?.[0] ?? response.headers['content-type']
+    const [mediaType, ...parameters] =
+      typeof contentType === 'string'
+        ? contentType.split(';').map((part) => part.trim().toLowerCase())
+        : []
+    if (
+      (contentTypes && contentTypes.length !== 1) ||
+      mediaType !== 'application/json' ||
+      !parameters.every((parameter) => parameter === 'charset=utf-8')
+    ) {
+      throw protocolFailure('DeepChat returned a non-JSON response')
+    }
+    if (response.headers['content-encoding'] !== undefined) {
+      throw protocolFailure('Compressed local responses are not supported')
+    }
+
+    const expectedLength = declaredResponseLength(
+      response.headers,
+      response.headersDistinct['content-length']
+    )
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const rawChunk of response) {
+      const chunk = Buffer.from(rawChunk)
+      size += chunk.length
+      if (size > LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES) {
+        throw protocolFailure('DeepChat response exceeds the CLI byte limit')
+      }
+      chunks.push(chunk)
+    }
+    if (expectedLength !== null && expectedLength !== size) {
+      throw protocolFailure('DeepChat response length did not match')
+    }
+
+    let parsed: LocalControlRpcResponse
+    try {
+      parsed = LocalControlRpcResponseSchema.parse(
+        JSON.parse(Buffer.concat(chunks, size).toString('utf8'))
+      )
+    } catch {
+      throw protocolFailure('DeepChat returned an invalid response envelope')
+    }
+    const isHttpSuccess = (response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 300
+    if (parsed.ok !== isHttpSuccess) {
+      throw protocolFailure('DeepChat HTTP status and response envelope disagree')
+    }
+    if (parsed.id !== expectedRequestId && !(!parsed.ok && parsed.id === 'unknown')) {
+      throw protocolFailure('DeepChat response ID did not match the request')
+    }
+    return parsed
+  } catch (error) {
+    if (!response.destroyed) response.destroy()
+    if (signal.aborted) throw abortReason(signal)
+    if (error instanceof CliClientError) throw error
+    throw transportFailure(error instanceof Error ? error.message : 'Local response failed')
+  }
+}
+
 export async function invokeLocalControlRpc(
   invocation: CliRpcInvocation
 ): Promise<LocalControlRpcResponse> {
@@ -109,82 +185,10 @@ export async function invokeLocalControlRpc(
     })
 
     request.once('response', (response) => {
-      const contentTypes = response.headersDistinct['content-type']
-      const contentType = contentTypes?.[0] ?? response.headers['content-type']
-      const [mediaType, ...parameters] =
-        typeof contentType === 'string'
-          ? contentType.split(';').map((part) => part.trim().toLowerCase())
-          : []
-      if (
-        (contentTypes && contentTypes.length !== 1) ||
-        mediaType !== 'application/json' ||
-        !parameters.every((parameter) => parameter === 'charset=utf-8')
-      ) {
-        response.resume()
-        finish(() => reject(protocolFailure('DeepChat returned a non-JSON response')))
-        return
-      }
-      if (response.headers['content-encoding'] !== undefined) {
-        response.resume()
-        finish(() => reject(protocolFailure('Compressed local responses are not supported')))
-        return
-      }
-
-      let expectedLength: number | null
-      try {
-        expectedLength = declaredResponseLength(
-          response.headers,
-          response.headersDistinct['content-length']
-        )
-      } catch (error) {
-        response.destroy()
-        finish(() => reject(error))
-        return
-      }
-
-      const chunks: Buffer[] = []
-      let size = 0
-      response.on('data', (rawChunk: Buffer | string) => {
-        if (settled) return
-        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk)
-        size += chunk.length
-        if (size > LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES) {
-          response.destroy()
-          finish(() => reject(protocolFailure('DeepChat response exceeds the CLI byte limit')))
-          return
-        }
-        chunks.push(chunk)
-      })
-      response.once('error', (error) => finish(() => reject(transportFailure(error.message))))
-      response.once('end', () => {
-        if (settled) return
-        if (expectedLength !== null && expectedLength !== size) {
-          finish(() => reject(protocolFailure('DeepChat response length did not match')))
-          return
-        }
-        try {
-          const parsed = LocalControlRpcResponseSchema.parse(
-            JSON.parse(Buffer.concat(chunks, size).toString('utf8'))
-          )
-          const isHttpSuccess =
-            (response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 300
-          if (parsed.ok !== isHttpSuccess) {
-            throw protocolFailure('DeepChat HTTP status and response envelope disagree')
-          }
-          if (parsed.id !== invocation.id && !(!parsed.ok && parsed.id === 'unknown')) {
-            throw protocolFailure('DeepChat response ID did not match the request')
-          }
-          finish(() => resolve(parsed))
-        } catch (error) {
-          finish(() =>
-            reject(
-              error instanceof CliClientError
-                ? error
-                : protocolFailure('DeepChat returned an invalid response envelope')
-            )
-          )
-        }
-      })
+      void readJsonResponse(response, invocation.id, invocation.signal).then(
+        (result) => finish(() => resolve(result)),
+        (error: unknown) => finish(() => reject(error))
+      )
     })
     request.once('error', (error: NodeJS.ErrnoException) => {
       if (invocation.signal.aborted) {
@@ -199,6 +203,135 @@ export async function invokeLocalControlRpc(
     })
     request.end(body)
   })
+}
+
+function uploadFileError(message: string, code: 'invalid_request' | 'body_too_large') {
+  return new CliClientError(
+    code,
+    message,
+    code === 'invalid_request' ? CLI_EXIT_CODES.usage : CLI_EXIT_CODES.domain
+  )
+}
+
+export async function invokeLocalControlUpload(
+  invocation: CliUploadInvocation
+): Promise<LocalControlRpcResponse> {
+  if (invocation.signal.aborted) throw abortReason(invocation.signal)
+  if (!Number.isSafeInteger(invocation.maxBytes) || invocation.maxBytes <= 0) {
+    throw protocolFailure('CLI upload limit is invalid')
+  }
+
+  const envelope = createInvocationBody(invocation).toString('base64url')
+  if (Buffer.byteLength(envelope, 'ascii') > LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES) {
+    throw uploadFileError('Upload metadata exceeds the CLI byte limit', 'invalid_request')
+  }
+
+  let pathStat
+  try {
+    pathStat = await lstat(invocation.filePath)
+  } catch {
+    throw uploadFileError('Upload source is unavailable', 'invalid_request')
+  }
+  if (!pathStat.isFile() || pathStat.isSymbolicLink()) {
+    throw uploadFileError('Upload source must be a regular non-symlink file', 'invalid_request')
+  }
+  if (pathStat.size <= 0) {
+    throw uploadFileError('Upload source is empty', 'invalid_request')
+  }
+  if (!Number.isSafeInteger(pathStat.size) || pathStat.size > invocation.maxBytes) {
+    throw uploadFileError('Upload source exceeds the command byte limit', 'body_too_large')
+  }
+
+  const openFlags =
+    process.platform === 'win32'
+      ? fsConstants.O_RDONLY
+      : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+  let handle
+  try {
+    handle = await open(invocation.filePath, openFlags)
+  } catch {
+    throw uploadFileError('Upload source could not be opened safely', 'invalid_request')
+  }
+
+  try {
+    const openedStat = await handle.stat()
+    if (
+      !openedStat.isFile() ||
+      openedStat.size !== pathStat.size ||
+      openedStat.dev !== pathStat.dev ||
+      openedStat.ino !== pathStat.ino
+    ) {
+      throw uploadFileError('Upload source changed before it could be read', 'invalid_request')
+    }
+
+    const uploadStream = handle.createReadStream({
+      autoClose: false,
+      start: 0,
+      end: openedStat.size - 1,
+      signal: invocation.signal
+    })
+    try {
+      return await new Promise<LocalControlRpcResponse>((resolve, reject) => {
+        let settled = false
+        let responseReceived = false
+        const finish = (callback: () => void) => {
+          if (settled) return
+          settled = true
+          callback()
+        }
+        const request = httpRequest({
+          socketPath:
+            invocation.descriptor.endpoint.kind === 'unix'
+              ? invocation.descriptor.endpoint.path
+              : invocation.descriptor.endpoint.name,
+          path: LOCAL_CONTROL_UPLOAD_PATH,
+          method: 'POST',
+          agent: false,
+          signal: invocation.signal,
+          headers: {
+            authorization: `Bearer ${invocation.token}`,
+            'content-type': 'application/octet-stream',
+            'content-length': openedStat.size,
+            [LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]: envelope,
+            connection: 'close',
+            'user-agent': `DeepChat-CLI/${CLI_VERSION}`
+          }
+        })
+
+        request.once('response', (response) => {
+          responseReceived = true
+          void readJsonResponse(response, invocation.id, invocation.signal).then(
+            (result) => finish(() => resolve(result)),
+            (error: unknown) => finish(() => reject(error))
+          )
+        })
+        request.once('error', (error: NodeJS.ErrnoException) => {
+          if (responseReceived) return
+          if (invocation.signal.aborted) {
+            finish(() => reject(abortReason(invocation.signal)))
+            return
+          }
+          const message =
+            error.code === 'ENOENT' || error.code === 'ECONNREFUSED' || error.code === 'EPIPE'
+              ? 'DeepChat local control server is unavailable'
+              : `Cannot connect to DeepChat: ${error.message}`
+          finish(() => reject(transportFailure(message)))
+        })
+        uploadStream.once('error', (error) => {
+          if (responseReceived) return
+          request.destroy(error)
+          if (!invocation.signal.aborted) {
+            finish(() => reject(transportFailure('Upload source could not be read')))
+          }
+        })
+        uploadStream.pipe(request)
+      })
+    } finally {
+      uploadStream.destroy()
+    }
+  } finally {
+    await handle.close().catch(() => undefined)
+  }
 }
 
 export async function invokeLocalControlStream(

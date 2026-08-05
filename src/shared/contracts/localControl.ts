@@ -9,6 +9,9 @@ export const LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES = 20 * 1024 * 1024
 export const LOCAL_CONTROL_DESCRIPTOR_FILENAME = 'local-control.json'
 export const LOCAL_CONTROL_RPC_PATH = '/v1/rpc'
 export const LOCAL_CONTROL_STREAM_PATH = '/v1/stream'
+export const LOCAL_CONTROL_UPLOAD_PATH = '/v1/upload'
+export const LOCAL_CONTROL_UPLOAD_REQUEST_HEADER = 'x-deepchat-upload-request'
+export const LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES = 4 * 1024
 export const LOCAL_CONTROL_ARTIFACT_PATH_PREFIX = '/v1/artifacts/'
 export const LOCAL_CONTROL_AGENT_TOKEN_ENV = 'DEEPCHAT_CLI_AGENT_TOKEN'
 

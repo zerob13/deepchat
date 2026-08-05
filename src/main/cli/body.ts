@@ -222,24 +222,28 @@ function assertBoundedJsonShape(value: unknown): void {
   }
 }
 
+export function parseBoundedJsonBytes(bytes: Uint8Array): unknown {
+  let text: string
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw new CliRequestError('invalid_request', 'Request body is not valid UTF-8')
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text) as unknown
+  } catch {
+    throw new CliRequestError('invalid_request', 'Request body is not valid JSON')
+  }
+  assertBoundedJsonShape(parsed)
+  return parsed
+}
+
 export async function parseBoundedJsonBody(body: BoundedRequestBody): Promise<unknown> {
   try {
     const bytes = body.kind === 'memory' ? body.bytes : await readFile(body.path)
-    let text: string
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-    } catch {
-      throw new CliRequestError('invalid_request', 'Request body is not valid UTF-8')
-    }
-
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(text) as unknown
-    } catch {
-      throw new CliRequestError('invalid_request', 'Request body is not valid JSON')
-    }
-    assertBoundedJsonShape(parsed)
-    return parsed
+    return parseBoundedJsonBytes(bytes)
   } finally {
     await body.cleanup()
   }

@@ -1,22 +1,25 @@
 import { request as httpRequest } from 'node:http'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DeepchatRouteName } from '@shared/contracts/routes'
+import { cliVersionRoute, type DeepchatRouteName } from '@shared/contracts/routes'
 import type { JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_SCOPES,
   LOCAL_CONTROL_SURFACE_VERSION,
+  LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
   LocalControlDescriptorSchema,
+  LocalControlRpcRequestSchema,
   LocalControlRpcResponseSchema,
   type LocalControlDescriptor,
   type LocalControlRpcResponse,
   type LocalControlScope
 } from '@shared/contracts/localControl'
 import { createCliRoutes } from '@/cli/routes'
-import { CliServer, type AgentCliToken } from '@/cli/server'
+import { CliServer, type AgentCliToken, type CliUploadedInputFile } from '@/cli/server'
+import type { CliSurfaceEntry } from '@/cli/surface'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { invokeLocalControlStream } from '../../../src/cli/transport'
 
@@ -104,16 +107,115 @@ function rpcRequest(
   })
 }
 
+function uploadRequest(
+  descriptor: LocalControlDescriptor,
+  input: {
+    token?: string
+    body: Buffer
+    includeContentLength?: boolean
+  }
+): Promise<RpcResult> {
+  const envelope = Buffer.from(
+    JSON.stringify(
+      LocalControlRpcRequestSchema.parse({
+        protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+        surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION,
+        id: 'request-upload',
+        method: cliVersionRoute.name,
+        params: {}
+      })
+    )
+  ).toString('base64url')
+  const headers: Record<string, string | number> = {
+    authorization: `Bearer ${input.token ?? descriptor.token}`,
+    'content-type': 'application/octet-stream',
+    [LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]: envelope
+  }
+  if (input.includeContentLength !== false) headers['content-length'] = input.body.length
+
+  return new Promise<RpcResult>((resolve, reject) => {
+    let responseReceived = false
+    const request = httpRequest(
+      {
+        socketPath:
+          descriptor.endpoint.kind === 'unix' ? descriptor.endpoint.path : descriptor.endpoint.name,
+        path: '/v1/upload',
+        method: 'POST',
+        headers
+      },
+      (response) => {
+        responseReceived = true
+        const chunks: Buffer[] = []
+        response.on('data', (chunk: Buffer) => chunks.push(chunk))
+        response.once('error', reject)
+        response.once('end', () => {
+          try {
+            resolve({
+              status: response.statusCode ?? 0,
+              connection:
+                typeof response.headers.connection === 'string'
+                  ? response.headers.connection
+                  : undefined,
+              body: LocalControlRpcResponseSchema.parse(
+                JSON.parse(Buffer.concat(chunks).toString('utf8'))
+              )
+            })
+          } catch (error) {
+            reject(error)
+          }
+        })
+      }
+    )
+    request.once('error', (error) => {
+      if (!responseReceived) reject(error)
+    })
+    if (input.includeContentLength === false) {
+      const midpoint = Math.max(1, Math.floor(input.body.length / 2))
+      request.write(input.body.subarray(0, midpoint))
+      request.end(input.body.subarray(midpoint))
+    } else {
+      request.end(input.body)
+    }
+  })
+}
+
+function createUploadSurface(maxBodyBytes: number): ReadonlyMap<string, CliSurfaceEntry> {
+  return new Map([
+    [
+      cliVersionRoute.name,
+      {
+        contract: cliVersionRoute,
+        effect: 'compute',
+        callers: ['human'],
+        scopes: ['system:read'],
+        transport: 'upload',
+        approval: 'never',
+        limits: { maxBodyBytes, timeoutMs: 5_000 }
+      } satisfies CliSurfaceEntry
+    ]
+  ])
+}
+
 async function createTestServer(
   options: {
     resolveAgentToken?: (token: string) => AgentCliToken | null
     dispatchOutput?: (method: string) => unknown
     streamOutput?: Readonly<{ events: readonly JsonValue[]; result: unknown }>
+    surface?: ReadonlyMap<string, CliSurfaceEntry>
+    dispatchUpload?: (
+      method: string,
+      input: unknown,
+      upload: CliUploadedInputFile,
+      caller: CliRouteCaller,
+      signal: AbortSignal
+    ) => Promise<unknown>
   } = {}
 ): Promise<{
+  userDataPath: string
   server: CliServer
   descriptor: LocalControlDescriptor
   dispatch: ReturnType<typeof vi.fn>
+  dispatchUpload: ReturnType<typeof vi.fn>
 }> {
   const userDataPath = await createTemporaryDirectory()
   let server: CliServer
@@ -130,6 +232,7 @@ async function createTestServer(
       return await route(input, { caller })
     }
   )
+  const dispatchUpload = vi.fn(options.dispatchUpload ?? (async () => ({})))
   server = new CliServer({
     userDataPath,
     appVersion: '1.2.3',
@@ -150,11 +253,13 @@ async function createTestServer(
         }
       : {}),
     resolveAgentToken: options.resolveAgentToken,
+    dispatchUpload,
+    surface: options.surface,
     log: { warn: vi.fn(), error: vi.fn() }
   })
   servers.push(server)
   const descriptor = await server.start()
-  return { server, descriptor, dispatch }
+  return { userDataPath, server, descriptor, dispatch, dispatchUpload }
 }
 
 afterEach(async () => {
@@ -269,6 +374,76 @@ describe('CLI local transport', () => {
       body: { ok: false, error: { code: 'invalid_request' } }
     })
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('validates upload policy before spilling and cleans the private input file', async () => {
+    let uploadedPath = ''
+    let uploadedBytes = Buffer.alloc(0)
+    const { descriptor, userDataPath, dispatchUpload } = await createTestServer({
+      surface: createUploadSurface(16),
+      dispatchUpload: async (_method, _input, upload) => {
+        uploadedPath = upload.path
+        uploadedBytes = await readFile(upload.path)
+        return {
+          appVersion: '1.2.3',
+          protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+          surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION
+        }
+      }
+    })
+
+    const response = await uploadRequest(descriptor, { body: Buffer.from('audio-input') })
+
+    expect(response).toMatchObject({ status: 200, body: { ok: true } })
+    expect(uploadedBytes).toEqual(Buffer.from('audio-input'))
+    expect(dispatchUpload).toHaveBeenCalledOnce()
+    await expect(stat(uploadedPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
+  })
+
+  it('bounds chunked uploads cumulatively and removes partial spill files', async () => {
+    const { descriptor, userDataPath, dispatchUpload } = await createTestServer({
+      surface: createUploadSurface(8)
+    })
+
+    const response = await uploadRequest(descriptor, {
+      body: Buffer.from('123456789'),
+      includeContentLength: false
+    })
+
+    expect(response).toMatchObject({
+      status: 413,
+      body: { ok: false, error: { code: 'body_too_large' } }
+    })
+    expect(dispatchUpload).not.toHaveBeenCalled()
+    expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
+  })
+
+  it('denies Agent upload callers before reading their body', async () => {
+    const agentToken = 'a'.repeat(43)
+    const { descriptor, userDataPath, dispatchUpload } = await createTestServer({
+      surface: createUploadSurface(16),
+      resolveAgentToken: (token) =>
+        token === agentToken
+          ? {
+              conversationId: 'conversation-1',
+              expiresAt: Date.now() + 60_000,
+              scopes: ['system:read']
+            }
+          : null
+    })
+
+    const response = await uploadRequest(descriptor, {
+      token: agentToken,
+      body: Buffer.from('audio-input')
+    })
+
+    expect(response).toMatchObject({
+      status: 403,
+      body: { ok: false, error: { code: 'permission_denied' } }
+    })
+    expect(dispatchUpload).not.toHaveBeenCalled()
+    expect(await readdir(path.join(userDataPath, 'local-control', 'tmp'))).toEqual([])
   })
 
   it('rejects request bodies on artifact download endpoints', async () => {

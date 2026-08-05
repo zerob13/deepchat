@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:net'
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -64,6 +64,21 @@ describe.skipIf(process.platform === 'win32')('CLI discovery descriptor', () => 
 
     await cleanupLocalControlLayout(layout, descriptor.token)
     await expect(stat(layout.descriptorPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('removes only owned request-body remnants from the private temp directory', async () => {
+    const userDataPath = await createTemporaryDirectory()
+    const layout = createLocalControlLayout(userDataPath, 'darwin')
+    await prepareLocalControlLayout(layout, 'darwin')
+    await writeFile(
+      path.join(layout.tempDirectory, 'body-123e4567-e89b-42d3-a456-426614174000.tmp'),
+      'partial'
+    )
+    await writeFile(path.join(layout.tempDirectory, 'keep.tmp'), 'foreign')
+
+    await prepareLocalControlLayout(layout, 'darwin')
+
+    expect(await readdir(layout.tempDirectory)).toEqual(['keep.tmp'])
   })
 
   it('refuses a non-socket endpoint without deleting discovery state', async () => {

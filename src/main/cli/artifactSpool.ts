@@ -72,6 +72,17 @@ export type OpenArtifact = Readonly<{
   stream: ReadStream
 }>
 
+export type ArtifactInputFile = Readonly<{
+  metadata: ArtifactMetadata
+  path: string
+}>
+
+type OpenArtifactHandle = Readonly<{
+  artifact: StoredArtifact
+  handle: FileHandle
+  release: () => void
+}>
+
 export type ArtifactSpoolOptions = Readonly<{
   directory: string
   limits?: Partial<ArtifactSpoolLimits>
@@ -399,63 +410,42 @@ export class ArtifactSpool {
   }
 
   async openRead(id: string, caller: CliRouteCaller): Promise<OpenArtifact> {
-    await this.initialize()
-    const artifact = await this.getAuthorizedArtifact(id, caller)
-    const releaseRead = this.acquireRead(artifact)
+    const opened = await this.openAuthorizedHandle(id, caller)
     try {
-      const fileStat = await lstat(artifact.filePath).catch(() => null)
-      if (
-        !fileStat?.isFile() ||
-        fileStat.isSymbolicLink() ||
-        fileStat.size !== artifact.metadata.size
-      ) {
-        await this.removeStoredArtifact(artifact).catch((error) => {
-          this.log.warn('[CLI] Failed to remove invalid artifact', error)
-        })
-        throw new CliRequestError('unavailable', 'Artifact data is unavailable', {
-          httpStatus: 410
-        })
-      }
-      const handle = await open(artifact.filePath, 'r').catch(async () => {
-        await this.removeStoredArtifact(artifact).catch((error) => {
-          this.log.warn('[CLI] Failed to remove unavailable artifact', error)
-        })
-        throw new CliRequestError('unavailable', 'Artifact data is unavailable', {
-          httpStatus: 410
-        })
-      })
-      const openedStat = await handle.stat().catch(() => null)
-      if (
-        !openedStat?.isFile() ||
-        openedStat.size !== artifact.metadata.size ||
-        openedStat.dev !== fileStat.dev ||
-        openedStat.ino !== fileStat.ino
-      ) {
-        await handle.close().catch(() => undefined)
-        await this.removeStoredArtifact(artifact).catch((error) => {
-          this.log.warn('[CLI] Failed to remove changed artifact', error)
-        })
-        throw new CliRequestError('unavailable', 'Artifact data changed before it could be read', {
-          httpStatus: 410
-        })
-      }
       let stream: ReadStream
       try {
-        stream = handle.createReadStream({ autoClose: true })
+        stream = opened.handle.createReadStream({ autoClose: true })
       } catch (error) {
-        await handle.close().catch(() => undefined)
+        await opened.handle.close().catch(() => undefined)
         throw error
       }
       this.openReadStreams.add(stream)
       stream.once('close', () => {
         this.openReadStreams.delete(stream)
-        releaseRead()
+        opened.release()
       })
       if (this.closing) stream.destroy()
-      return { metadata: artifact.metadata, stream }
+      return { metadata: opened.artifact.metadata, stream }
     } catch (error) {
-      releaseRead()
+      opened.release()
       throw error
+    }
+  }
+
+  async withFile<T>(
+    id: string,
+    caller: CliRouteCaller,
+    operation: (file: ArtifactInputFile) => Promise<T>
+  ): Promise<T> {
+    const opened = await this.openAuthorizedHandle(id, caller)
+    try {
+      return await operation({
+        metadata: opened.artifact.metadata,
+        path: opened.artifact.filePath
+      })
+    } finally {
+      await opened.handle.close().catch(() => undefined)
+      opened.release()
     }
   }
 
@@ -655,6 +645,61 @@ export class ArtifactSpool {
     return artifact
   }
 
+  private async openAuthorizedHandle(
+    id: string,
+    caller: CliRouteCaller
+  ): Promise<OpenArtifactHandle> {
+    await this.initialize()
+    const artifact = await this.getAuthorizedArtifact(id, caller)
+    const release = this.acquireRead(artifact)
+    try {
+      const fileStat = await lstat(artifact.filePath).catch(() => null)
+      if (
+        !fileStat?.isFile() ||
+        fileStat.isSymbolicLink() ||
+        fileStat.size !== artifact.metadata.size
+      ) {
+        await this.removeStoredArtifact(artifact).catch((error) => {
+          this.log.warn('[CLI] Failed to remove invalid artifact', error)
+        })
+        throw new CliRequestError('unavailable', 'Artifact data is unavailable', {
+          httpStatus: 410
+        })
+      }
+      const handle = await open(artifact.filePath, 'r').catch(async () => {
+        await this.removeStoredArtifact(artifact).catch((error) => {
+          this.log.warn('[CLI] Failed to remove unavailable artifact', error)
+        })
+        throw new CliRequestError('unavailable', 'Artifact data is unavailable', {
+          httpStatus: 410
+        })
+      })
+      const openedStat = await handle.stat().catch(() => null)
+      if (
+        !openedStat?.isFile() ||
+        openedStat.size !== artifact.metadata.size ||
+        openedStat.dev !== fileStat.dev ||
+        openedStat.ino !== fileStat.ino
+      ) {
+        await handle.close().catch(() => undefined)
+        await this.removeStoredArtifact(artifact).catch((error) => {
+          this.log.warn('[CLI] Failed to remove changed artifact', error)
+        })
+        throw new CliRequestError('unavailable', 'Artifact data changed before it could be read', {
+          httpStatus: 410
+        })
+      }
+      if (this.closing) {
+        await handle.close().catch(() => undefined)
+        throw new CliRequestError('unavailable', 'Artifact spool is closed', { httpStatus: 503 })
+      }
+      return { artifact, handle, release }
+    } catch (error) {
+      release()
+      throw error
+    }
+  }
+
   private acquireRead(artifact: StoredArtifact): () => void {
     const id = artifact.metadata.id
     if (
@@ -700,7 +745,7 @@ export class ArtifactSpool {
     if (existingRemoval) return await existingRemoval
     if ((this.activeReads.get(id) ?? 0) > 0) {
       if (activeReadBehavior === 'reject') {
-        throw new CliRequestError('conflict', 'Artifact is currently being downloaded', {
+        throw new CliRequestError('conflict', 'Artifact is currently in use', {
           httpStatus: 409,
           retriable: true
         })

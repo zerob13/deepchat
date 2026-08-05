@@ -14,8 +14,11 @@ import {
   LOCAL_CONTROL_SCOPES,
   LOCAL_CONTROL_STREAM_PATH,
   LOCAL_CONTROL_SURFACE_VERSION,
+  LOCAL_CONTROL_UPLOAD_PATH,
+  LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
   LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES,
   LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES,
+  LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES,
   LocalControlEventEnvelopeSchema,
   LocalControlScopesSchema,
   LocalControlTokenSchema,
@@ -26,7 +29,7 @@ import {
   type LocalControlStreamRecord
 } from '@shared/contracts/localControl'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
-import { parseBoundedJsonBody, readBoundedRequestBody } from './body'
+import { parseBoundedJsonBody, parseBoundedJsonBytes, readBoundedRequestBody } from './body'
 import {
   cleanupLocalControlLayout,
   createLocalControlLayout,
@@ -37,7 +40,7 @@ import {
   type CliControlLayout
 } from './descriptor'
 import { CliRequestError } from './errors'
-import { CLI_SURFACE_V1, getCliSurfaceEntry } from './surface'
+import { CLI_SURFACE_V1 } from './surface'
 import type { CliSurfaceEntry } from './surface'
 import type { CliRuntimeStatus } from './routes'
 import type { ArtifactSpool } from './artifactSpool'
@@ -62,6 +65,11 @@ export type AgentCliToken = z.infer<typeof AgentCliTokenSchema>
 
 export type CliStreamEmitter = (event: string, data: JsonValue) => Promise<void>
 
+export type CliUploadedInputFile = Readonly<{
+  path: string
+  size: number
+}>
+
 export type CliServerDependencies = Readonly<{
   userDataPath: string
   appVersion: string
@@ -79,6 +87,14 @@ export type CliServerDependencies = Readonly<{
     signal: AbortSignal,
     emit: CliStreamEmitter
   ): Promise<unknown>
+  dispatchUpload?(
+    method: string,
+    input: unknown,
+    upload: CliUploadedInputFile,
+    caller: CliRouteCaller,
+    signal: AbortSignal
+  ): Promise<unknown>
+  surface?: ReadonlyMap<string, CliSurfaceEntry>
   resolveAgentToken?(token: string): AgentCliToken | null
   artifactSpool?: ArtifactSpool
   now?: () => number
@@ -95,9 +111,16 @@ function tokensEqual(left: string, right: string): boolean {
   return timingSafeEqual(hashToken(left), hashToken(right))
 }
 
+function readSingularRequestHeader(request: IncomingMessage, name: string): string | null {
+  const distinctValues = request.headersDistinct[name]
+  if (distinctValues && distinctValues.length !== 1) return null
+  const value = distinctValues?.[0] ?? request.headers[name]
+  return typeof value === 'string' ? value : null
+}
+
 function readBearerToken(request: IncomingMessage): string | null {
-  const authorization = request.headers.authorization
-  if (typeof authorization !== 'string') return null
+  const authorization = readSingularRequestHeader(request, 'authorization')
+  if (!authorization) return null
   const match = /^Bearer (\S+)$/.exec(authorization)
   if (!match) return null
   const token = LocalControlTokenSchema.safeParse(match[1])
@@ -105,16 +128,47 @@ function readBearerToken(request: IncomingMessage): string | null {
 }
 
 function requestContentTypeIsJson(request: IncomingMessage): boolean {
-  const contentType = request.headers['content-type']
-  if (typeof contentType !== 'string') return false
+  const contentType = readSingularRequestHeader(request, 'content-type')
+  if (!contentType) return false
   const [mediaType, ...parameters] = contentType.split(';').map((part) => part.trim().toLowerCase())
   if (mediaType !== 'application/json') return false
   return parameters.every((parameter) => parameter === 'charset=utf-8')
 }
 
-function getMaxBodyBytes(transport: 'rpc' | 'stream'): number {
+function requestContentTypeIsBinary(request: IncomingMessage): boolean {
+  const contentType = readSingularRequestHeader(request, 'content-type')
+  if (!contentType) return false
+  return contentType.trim().toLowerCase() === 'application/octet-stream'
+}
+
+function parseUploadRequestHeader(request: IncomingMessage): unknown {
+  const distinctValues = request.headersDistinct[LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]
+  if (distinctValues && distinctValues.length !== 1) {
+    throw new CliRequestError('invalid_request', 'Upload request header must be singular')
+  }
+  const rawValue = distinctValues?.[0] ?? request.headers[LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]
+  if (
+    typeof rawValue !== 'string' ||
+    rawValue.length === 0 ||
+    Buffer.byteLength(rawValue, 'ascii') > LOCAL_CONTROL_MAX_UPLOAD_REQUEST_HEADER_BYTES ||
+    !/^[A-Za-z0-9_-]+$/.test(rawValue)
+  ) {
+    throw new CliRequestError('invalid_request', 'Upload request header is invalid')
+  }
+
+  const decoded = Buffer.from(rawValue, 'base64url')
+  if (decoded.toString('base64url') !== rawValue) {
+    throw new CliRequestError('invalid_request', 'Upload request header is not canonical')
+  }
+  return parseBoundedJsonBytes(decoded)
+}
+
+function getMaxBodyBytes(
+  surface: ReadonlyMap<string, CliSurfaceEntry>,
+  transport: 'rpc' | 'stream'
+): number {
   let maxBytes = 1
-  for (const entry of CLI_SURFACE_V1.values()) {
+  for (const entry of surface.values()) {
     if (entry.transport === transport) maxBytes = Math.max(maxBytes, entry.limits.maxBodyBytes)
   }
   return maxBytes
@@ -177,6 +231,7 @@ export class CliServer {
   private readonly platform: NodeJS.Platform
   private readonly pid: number
   private readonly log: Pick<Console, 'warn' | 'error'>
+  private readonly surface: ReadonlyMap<string, CliSurfaceEntry>
   private readonly sockets = new Set<Socket>()
   private readonly connectionIds = new WeakMap<Socket, string>()
   private readonly pendingByConnection = new Map<string, number>()
@@ -195,6 +250,7 @@ export class CliServer {
     this.platform = dependencies.platform ?? process.platform
     this.pid = dependencies.pid ?? process.pid
     this.log = dependencies.log ?? console
+    this.surface = new Map(dependencies.surface ?? CLI_SURFACE_V1)
   }
 
   getStatus(): CliRuntimeStatus {
@@ -416,9 +472,10 @@ export class CliServer {
     const connectionId = this.connectionIds.get(request.socket) ?? randomUUID()
     const isRpcRequest = request.method === 'POST' && request.url === LOCAL_CONTROL_RPC_PATH
     const isStreamRequest = request.method === 'POST' && request.url === LOCAL_CONTROL_STREAM_PATH
+    const isUploadRequest = request.method === 'POST' && request.url === LOCAL_CONTROL_UPLOAD_PATH
     const isArtifactRequest =
       request.method === 'GET' && request.url?.startsWith(LOCAL_CONTROL_ARTIFACT_PATH_PREFIX)
-    if (!isRpcRequest && !isStreamRequest && !isArtifactRequest) {
+    if (!isRpcRequest && !isStreamRequest && !isUploadRequest && !isArtifactRequest) {
       this.sendFailure(
         response,
         404,
@@ -457,15 +514,22 @@ export class CliServer {
       await this.handleArtifactDownload(request, response, caller)
       return
     }
-    const requestTransport = isStreamRequest ? 'stream' : 'rpc'
-    if (!requestContentTypeIsJson(request)) {
+    const requestTransport = isUploadRequest ? 'upload' : isStreamRequest ? 'stream' : 'rpc'
+    if (
+      (requestTransport === 'upload' && !requestContentTypeIsBinary(request)) ||
+      (requestTransport !== 'upload' && !requestContentTypeIsJson(request))
+    ) {
       this.sendFailure(
         response,
         415,
         UNKNOWN_REQUEST_ID,
-        new CliRequestError('invalid_request', 'Content-Type must be application/json', {
-          httpStatus: 415
-        })
+        new CliRequestError(
+          'invalid_request',
+          requestTransport === 'upload'
+            ? 'Content-Type must be application/octet-stream'
+            : 'Content-Type must be application/json',
+          { httpStatus: 415 }
+        )
       )
       return
     }
@@ -502,14 +566,21 @@ export class CliServer {
     let requestId = UNKNOWN_REQUEST_ID
     let routeMethod = 'unknown'
     try {
-      const body = await readBoundedRequestBody(request, {
-        maxBytes: getMaxBodyBytes(requestTransport),
-        memoryThresholdBytes: Math.min(getMaxBodyBytes(requestTransport), MAX_IN_MEMORY_BODY_BYTES),
-        tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
-        requireContentLength: true
-      })
-      const bodySize = body.size
-      const rawRequest = await parseBoundedJsonBody(body)
+      let bodySize = 0
+      let rawRequest: unknown
+      if (requestTransport === 'upload') {
+        rawRequest = parseUploadRequestHeader(request)
+      } else {
+        const maxBodyBytes = getMaxBodyBytes(this.surface, requestTransport)
+        const body = await readBoundedRequestBody(request, {
+          maxBytes: maxBodyBytes,
+          memoryThresholdBytes: Math.min(maxBodyBytes, MAX_IN_MEMORY_BODY_BYTES),
+          tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
+          requireContentLength: true
+        })
+        bodySize = body.size
+        rawRequest = await parseBoundedJsonBody(body)
+      }
       if (isRecord(rawRequest)) requestId = toSafeRequestId(rawRequest.id)
       if (
         isRecord(rawRequest) &&
@@ -530,13 +601,13 @@ export class CliServer {
       const rpcRequest = parsedRequest.data
       requestId = rpcRequest.id
       routeMethod = rpcRequest.method
-      const entry = getCliSurfaceEntry(rpcRequest.method)
+      const entry = this.surface.get(rpcRequest.method)
       if (!entry || entry.transport !== requestTransport) {
         throw new CliRequestError('not_found', 'Method is not exposed by CLI surface V1', {
           httpStatus: 404
         })
       }
-      if (bodySize > entry.limits.maxBodyBytes) {
+      if (requestTransport !== 'upload' && bodySize > entry.limits.maxBodyBytes) {
         throw new CliRequestError('body_too_large', 'Request body exceeds method limit', {
           httpStatus: 413
         })
@@ -571,9 +642,44 @@ export class CliServer {
           )
           return
         }
-        rawOutput = await runAbortable(controller.signal, async () =>
-          this.dependencies.dispatch(entry.contract.name, input, caller, controller.signal)
-        )
+        if (requestTransport === 'upload') {
+          const dispatchUpload = this.dependencies.dispatchUpload
+          if (!dispatchUpload) {
+            throw new CliRequestError('unavailable', 'Upload service is unavailable', {
+              httpStatus: 503,
+              retriable: true
+            })
+          }
+          const uploadBody = await readBoundedRequestBody(request, {
+            maxBytes: entry.limits.maxBodyBytes,
+            memoryThresholdBytes: 0,
+            tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
+            requireContentLength: false
+          })
+          try {
+            if (uploadBody.size === 0) {
+              throw new CliRequestError('invalid_request', 'Upload body is empty')
+            }
+            if (uploadBody.kind !== 'file') {
+              throw new CliRequestError('internal_error', 'Upload body was not persisted', {
+                httpStatus: 500
+              })
+            }
+            rawOutput = await dispatchUpload(
+              entry.contract.name,
+              input,
+              { path: uploadBody.path, size: uploadBody.size },
+              caller,
+              controller.signal
+            )
+          } finally {
+            await uploadBody.cleanup()
+          }
+        } else {
+          rawOutput = await runAbortable(controller.signal, async () =>
+            this.dependencies.dispatch(entry.contract.name, input, caller, controller.signal)
+          )
+        }
       } finally {
         clearTimeout(timeout)
       }
@@ -762,7 +868,7 @@ export class CliServer {
   ): Promise<void> {
     const rawId = request.url?.slice(LOCAL_CONTROL_ARTIFACT_PATH_PREFIX.length) ?? ''
     const parsedId = ArtifactIdSchema.safeParse(rawId)
-    const entry = getCliSurfaceEntry(artifactsReadRoute.name)
+    const entry = this.surface.get(artifactsReadRoute.name)
     if (!parsedId.success || !entry || entry.transport !== 'download') {
       this.sendFailure(
         response,

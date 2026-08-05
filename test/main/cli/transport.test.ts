@@ -1,19 +1,28 @@
 import { randomUUID } from 'node:crypto'
-import { rm } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer, type RequestListener, type Server } from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_SURFACE_VERSION,
+  LOCAL_CONTROL_UPLOAD_REQUEST_HEADER,
+  LocalControlRpcRequestSchema,
   createLocalControlSuccess,
   type LocalControlDescriptor,
   type LocalControlEndpoint,
   type LocalControlEventEnvelope
 } from '@shared/contracts/localControl'
-import { invokeLocalControlRpc, invokeLocalControlStream } from '../../../src/cli/transport'
+import {
+  invokeLocalControlRpc,
+  invokeLocalControlStream,
+  invokeLocalControlUpload
+} from '../../../src/cli/transport'
 
 const servers: Server[] = []
 const socketPaths: string[] = []
+const temporaryDirectories: string[] = []
 
 function createEndpoint(): LocalControlEndpoint {
   if (process.platform === 'win32') {
@@ -86,6 +95,9 @@ afterEach(async () => {
     )
   )
   await Promise.all(socketPaths.splice(0).map((socketPath) => rm(socketPath, { force: true })))
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true }))
+  )
 })
 
 describe('CLI response transport', () => {
@@ -125,6 +137,25 @@ describe('CLI response transport', () => {
       code: 'internal_error',
       exitCode: 8
     })
+  })
+
+  it('preserves cancellation after JSON response headers arrive', async () => {
+    const descriptor = await listen((_request, response) => {
+      response.setHeader('content-type', 'application/json; charset=utf-8')
+      response.flushHeaders()
+    })
+    const controller = new AbortController()
+    const result = invokeLocalControlRpc({
+      descriptor,
+      token: descriptor.token,
+      id: 'request-1',
+      method: 'cli.version',
+      params: {},
+      signal: controller.signal
+    })
+    controller.abort(new Error('cancelled-by-test'))
+
+    await expect(result).rejects.toMatchObject({ message: 'cancelled-by-test' })
   })
 
   it('consumes ordered NDJSON events before the terminal envelope', async () => {
@@ -184,4 +215,78 @@ describe('CLI response transport', () => {
       exitCode: 8
     })
   })
+
+  it('uploads a stable regular-file snapshot with a typed envelope header', async () => {
+    let receivedBody = Buffer.alloc(0)
+    let receivedEnvelope: unknown
+    const descriptor = await listen((request, response) => {
+      const rawEnvelope = request.headers[LOCAL_CONTROL_UPLOAD_REQUEST_HEADER]
+      receivedEnvelope = LocalControlRpcRequestSchema.parse(
+        JSON.parse(Buffer.from(String(rawEnvelope), 'base64url').toString('utf8'))
+      )
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => chunks.push(chunk))
+      request.once('end', () => {
+        receivedBody = Buffer.concat(chunks)
+        response.setHeader('content-type', 'application/json; charset=utf-8')
+        response.end(JSON.stringify(createLocalControlSuccess('request-1', { accepted: true })))
+      })
+    })
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-upload-'))
+    temporaryDirectories.push(directory)
+    const filePath = path.join(directory, 'sample.wav')
+    await writeFile(filePath, 'audio-bytes')
+
+    const result = await invokeLocalControlUpload({
+      descriptor,
+      token: descriptor.token,
+      id: 'request-1',
+      method: 'audio.transcribeUpload',
+      params: { mimeType: 'audio/wav', filename: 'sample.wav' },
+      signal: new AbortController().signal,
+      filePath,
+      maxBytes: 64
+    })
+
+    expect(result).toMatchObject({ ok: true, result: { accepted: true } })
+    expect(receivedEnvelope).toMatchObject({
+      id: 'request-1',
+      method: 'audio.transcribeUpload',
+      params: { filename: 'sample.wav' }
+    })
+    expect(receivedBody).toEqual(Buffer.from('audio-bytes'))
+  })
+
+  it.runIf(process.platform !== 'win32')(
+    'rejects symlink upload sources before connecting',
+    async () => {
+      const directory = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-upload-link-'))
+      temporaryDirectories.push(directory)
+      const targetPath = path.join(directory, 'target.wav')
+      const linkPath = path.join(directory, 'link.wav')
+      await writeFile(targetPath, 'audio-bytes')
+      await symlink(targetPath, linkPath)
+
+      await expect(
+        invokeLocalControlUpload({
+          descriptor: {
+            protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+            surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION,
+            appVersion: '1.2.3',
+            endpoint: { kind: 'unix', path: '/tmp/unused-deepchat.sock' },
+            pid: process.pid,
+            token: 't'.repeat(43),
+            startedAt: Date.now()
+          },
+          token: 't'.repeat(43),
+          id: 'request-1',
+          method: 'audio.transcribeUpload',
+          params: {},
+          signal: new AbortController().signal,
+          filePath: linkPath,
+          maxBytes: 64
+        })
+      ).rejects.toMatchObject({ code: 'invalid_request', exitCode: 2 })
+    }
+  )
 })

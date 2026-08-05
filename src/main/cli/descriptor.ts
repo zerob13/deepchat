@@ -1,6 +1,16 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { chmod, lstat, mkdir, open, readFile, rename, rmdir, unlink } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rmdir,
+  unlink
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -15,6 +25,8 @@ import {
 
 const execFileAsync = promisify(execFile)
 const MAX_POSIX_SOCKET_PATH_BYTES = 100
+const OWNED_TEMP_FILE_PATTERN =
+  /^body-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/
 
 export type CliControlLayout = Readonly<{
   controlDirectory: string
@@ -128,6 +140,12 @@ export async function prepareLocalControlLayout(
     await preparePrivatePosixDirectory(layout.tempDirectory)
     if (layout.endpointDirectory !== layout.controlDirectory) {
       await preparePrivatePosixDirectory(layout.endpointDirectory)
+    }
+  }
+
+  for (const entry of await readdir(layout.tempDirectory, { withFileTypes: true })) {
+    if (OWNED_TEMP_FILE_PATTERN.test(entry.name) && (entry.isFile() || entry.isSymbolicLink())) {
+      await unlink(path.join(layout.tempDirectory, entry.name))
     }
   }
 

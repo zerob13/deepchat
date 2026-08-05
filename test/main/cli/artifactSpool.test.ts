@@ -269,6 +269,31 @@ describe('ArtifactSpool', () => {
     })
   })
 
+  it('leases an owned file for domain input without exposing its path in metadata', async () => {
+    const { spool } = await createSpool()
+    const owner = agentCaller('conversation-a')
+    const metadata = await spool.write({
+      caller: owner,
+      requestId: 'request-input',
+      mimeType: 'audio/wav',
+      data: Buffer.from('audio-input')
+    })
+
+    const bytes = await spool.withFile(metadata.id, owner, async (file) => {
+      expect(file.metadata).not.toHaveProperty('path')
+      await expect(spool.delete(metadata.id, humanCaller)).rejects.toMatchObject({
+        code: 'conflict'
+      })
+      return await readFile(file.path)
+    })
+
+    expect(bytes).toEqual(Buffer.from('audio-input'))
+    await expect(
+      spool.withFile(metadata.id, agentCaller('conversation-b'), async () => undefined)
+    ).rejects.toMatchObject({ code: 'permission_denied' })
+    await expect(spool.delete(metadata.id, humanCaller)).resolves.toBeUndefined()
+  })
+
   it('defers internal discard until active reads finish and blocks new readers', async () => {
     const { spool, directory } = await createSpool()
     const metadata = await spool.write({
