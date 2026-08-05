@@ -9,6 +9,105 @@ import {
 } from '../domainSchemas'
 import { CapabilitySnapshotQuerySchema } from '../../types/model-capabilities'
 
+export const MODEL_INVOKE_MAX_TOTAL_INPUT_CHARACTERS = 4 * 1024 * 1024
+export const MODEL_INVOKE_MAX_OUTPUT_CHARACTERS = 3 * 1024 * 1024
+
+export const ModelInvokeUsageSchema = z
+  .object({
+    promptTokens: z.number().int().nonnegative(),
+    completionTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative(),
+    cachedTokens: z.number().int().nonnegative().optional(),
+    cacheWriteTokens: z.number().int().nonnegative().optional()
+  })
+  .strict()
+
+export const ModelInvokeEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text_delta'), text: z.string().max(1024 * 1024) }).strict(),
+  z.object({ type: z.literal('reasoning_delta'), text: z.string().max(1024 * 1024) }).strict(),
+  z.object({ type: z.literal('usage'), usage: ModelInvokeUsageSchema }).strict(),
+  z
+    .object({
+      type: z.literal('rate_limit'),
+      providerId: EntityIdSchema.max(128),
+      qpsLimit: z.number().nonnegative(),
+      currentQps: z.number().nonnegative(),
+      queueLength: z.number().int().nonnegative(),
+      estimatedWaitTimeMs: z.number().nonnegative().optional()
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('stop'),
+      reason: z.enum(['tool_use', 'max_tokens', 'max_turn_requests', 'error', 'complete'])
+    })
+    .strict()
+])
+
+const ModelInvokeMessageSchema = z
+  .object({
+    role: z.enum(['system', 'user', 'assistant']),
+    content: z
+      .string()
+      .min(1)
+      .max(1024 * 1024)
+  })
+  .strict()
+
+export const modelsInvokeRoute = defineRouteContract({
+  name: 'models.invoke',
+  input: z
+    .object({
+      providerId: EntityIdSchema.max(128),
+      modelId: z.string().min(1).max(256),
+      messages: z.array(ModelInvokeMessageSchema).min(1).max(128),
+      temperature: z.number().min(0).max(2).optional(),
+      maxTokens: z.number().int().min(1).max(1_000_000).optional()
+    })
+    .strict()
+    .superRefine((input, context) => {
+      const totalCharacters = input.messages.reduce(
+        (total, message) => total + message.content.length,
+        0
+      )
+      if (totalCharacters > MODEL_INVOKE_MAX_TOTAL_INPUT_CHARACTERS) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Model invocation input exceeds the total character limit',
+          path: ['messages']
+        })
+      }
+    }),
+  output: z
+    .object({
+      providerId: EntityIdSchema.max(128),
+      modelId: z.string().min(1).max(256),
+      text: z.string().max(MODEL_INVOKE_MAX_OUTPUT_CHARACTERS),
+      reasoning: z.string().max(MODEL_INVOKE_MAX_OUTPUT_CHARACTERS).optional(),
+      usage: ModelInvokeUsageSchema.optional(),
+      finishReason: z.enum(['tool_use', 'max_tokens', 'max_turn_requests', 'error', 'complete']),
+      durationMs: z.number().int().nonnegative(),
+      ttftMs: z.number().int().nonnegative().nullable()
+    })
+    .strict()
+    .superRefine((output, context) => {
+      if (
+        output.text.length + (output.reasoning?.length ?? 0) >
+        MODEL_INVOKE_MAX_OUTPUT_CHARACTERS
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Model invocation output exceeds the total character limit',
+          path: ['text']
+        })
+      }
+    })
+})
+
+export type ModelInvokeInput = z.infer<typeof modelsInvokeRoute.input>
+export type ModelInvokeOutput = z.infer<typeof modelsInvokeRoute.output>
+export type ModelInvokeEvent = z.infer<typeof ModelInvokeEventSchema>
+
 export const modelsGetProviderCatalogRoute = defineRouteContract({
   name: 'models.getProviderCatalog',
   input: z.object({

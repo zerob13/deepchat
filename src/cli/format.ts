@@ -74,6 +74,21 @@ export function formatHumanResult(
       contract.output.parse(value)
       return 'Artifact deleted'
     }
+    case 'providers.listPublic': {
+      const result = contract.output.parse(value)
+      return result.providers
+        .flatMap((provider) => [
+          `${provider.id}  ${provider.enabled ? 'enabled' : 'disabled'}  ${provider.name}`,
+          ...provider.models.map(
+            (model) =>
+              `  ${model.id}  ${model.enabled ? 'enabled' : 'disabled'}  ${model.type ?? 'chat'}`
+          )
+        ])
+        .join('\n')
+    }
+    case 'models.invoke': {
+      return contract.output.parse(value).text
+    }
   }
 }
 

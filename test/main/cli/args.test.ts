@@ -83,4 +83,69 @@ describe('CLI argument grammar', () => {
       parseCliArguments(['artifact', 'get', '--id', id, '--out', '--overwrite'], {})
     ).toThrow('Missing value for --out')
   })
+
+  it('parses raw model input without allowing an ambiguous prompt source', () => {
+    expect(
+      parseCliArguments(
+        [
+          'model',
+          'invoke',
+          '--provider',
+          'provider-1',
+          '--model',
+          'model-1',
+          '--system',
+          'Be concise',
+          '--stdin',
+          '--temperature=0.2',
+          '--max-tokens',
+          '256'
+        ],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'stream',
+      readStdin: true,
+      timeoutMs: 1_800_000,
+      params: {
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        messages: [{ role: 'system', content: 'Be concise' }],
+        temperature: 0.2,
+        maxTokens: 256
+      }
+    })
+
+    expect(() =>
+      parseCliArguments(
+        [
+          'model',
+          'invoke',
+          '--provider',
+          'provider-1',
+          '--model',
+          'model-1',
+          '--prompt',
+          'hello',
+          '--stdin'
+        ],
+        {}
+      )
+    ).toThrow('exactly one of --prompt or --stdin')
+  })
+
+  it('keeps model flags after the two-token capability signature', () => {
+    expect(() =>
+      parseCliArguments(
+        ['--json', 'model', 'invoke', '--provider', 'provider-1', '--model', 'model-1'],
+        {}
+      )
+    ).toThrow('deepchat <domain> <verb>')
+    expect(() => parseCliArguments(['provider', 'list', '--provider', 'provider-1'], {})).toThrow(
+      'not valid for deepchat provider list'
+    )
+    expect(parseCliArguments(['provider', 'list', '--enabled-only'], {})).toMatchObject({
+      params: { enabledOnly: true }
+    })
+  })
 })

@@ -6,6 +6,7 @@ import {
   type LocalControlRpcResponse
 } from '@shared/contracts/localControl'
 import { artifactsDescribeRoute } from '@shared/contracts/routes/artifacts.routes'
+import { ModelInvokeEventSchema } from '@shared/contracts/routes/models.routes'
 import { parseCliArguments, formatCliHelp, inferCliOutputMode, type CliOutputMode } from './args'
 import {
   loadLocalControlDescriptor,
@@ -20,8 +21,14 @@ import {
   type CliExitCode
 } from './errors'
 import { formatHumanResult, serializeMachineResponse } from './format'
-import { invokeLocalControlRpc, type CliRpcInvocation } from './transport'
+import {
+  invokeLocalControlRpc,
+  invokeLocalControlStream,
+  type CliRpcInvocation,
+  type CliStreamEventHandler
+} from './transport'
 import { downloadArtifact } from './artifacts'
+import { readBoundedUtf8Stdin } from './stdin'
 
 const SIGNAL_GRACE_MS = 1_000
 
@@ -33,10 +40,15 @@ export type CliRunDependencies = Readonly<{
   discovery?: Omit<CliDiscoveryOptions, 'env'>
   stdout?: WritableOutput
   stderr?: WritableOutput
+  stdin?: NodeJS.ReadableStream
   signalHost?: SignalHost
   randomId?: () => string
   loadDescriptor?: (options: CliDiscoveryOptions) => Promise<LocalControlDescriptor>
   invokeRpc?: (invocation: CliRpcInvocation) => Promise<LocalControlRpcResponse>
+  invokeStream?: (
+    invocation: CliRpcInvocation,
+    onEvent: CliStreamEventHandler
+  ) => Promise<LocalControlRpcResponse>
   forceExit?: (code: number) => void
 }>
 
@@ -74,6 +86,7 @@ export async function runCli(
   const env = dependencies.env ?? process.env
   const stdout = dependencies.stdout ?? process.stdout
   const stderr = dependencies.stderr ?? process.stderr
+  const stdin = dependencies.stdin ?? process.stdin
   const signalHost = dependencies.signalHost ?? process
   const requestId = (dependencies.randomId ?? randomUUID)()
 
@@ -136,6 +149,27 @@ export async function runCli(
   }, parsed.timeoutMs)
 
   try {
+    let params = parsed.params
+    if (parsed.readStdin) {
+      const prompt = await readBoundedUtf8Stdin(stdin, controller.signal)
+      if (!params || typeof params !== 'object' || Array.isArray(params)) {
+        throw new CliClientError(
+          'internal_error',
+          'CLI command has invalid input parameters',
+          CLI_EXIT_CODES.internal
+        )
+      }
+      const messages = Array.isArray(params.messages) ? params.messages : []
+      params = { ...params, messages: [...messages, { role: 'user', content: prompt }] }
+    }
+    const validatedInput = parsed.contract.input.safeParse(params)
+    if (!validatedInput.success) {
+      throw new CliClientError(
+        'invalid_request',
+        'CLI input does not match the command contract',
+        CLI_EXIT_CODES.usage
+      )
+    }
     const descriptor = await (dependencies.loadDescriptor ?? loadLocalControlDescriptor)({
       ...dependencies.discovery,
       env
@@ -154,16 +188,50 @@ export async function runCli(
     }
     const invocationContract =
       parsed.operation === 'download' ? artifactsDescribeRoute : parsed.contract
-    const response = await (dependencies.invokeRpc ?? invokeLocalControlRpc)({
+    const invocation: CliRpcInvocation = {
       descriptor,
       token,
       id: requestId,
       method: invocationContract.name,
-      params: parsed.params,
+      params: validatedInput.data,
       signal: controller.signal
-    })
+    }
+    let streamedText = false
+    let streamedTextEndsWithNewline = false
+    const onStreamEvent: CliStreamEventHandler = async (event) => {
+      if (event.event !== parsed.contract?.name) {
+        throw new CliClientError(
+          'internal_error',
+          'DeepChat emitted an event for another method',
+          CLI_EXIT_CODES.internal
+        )
+      }
+      if (parsed.outputMode === 'jsonl') {
+        writeText(stdout, JSON.stringify(event))
+        return
+      }
+      if (parsed.outputMode !== 'text' || parsed.contract.name !== 'models.invoke') return
+      const parsedEvent = ModelInvokeEventSchema.safeParse(event.data)
+      if (!parsedEvent.success) {
+        throw new CliClientError(
+          'internal_error',
+          'DeepChat emitted an invalid model event',
+          CLI_EXIT_CODES.internal
+        )
+      }
+      if (parsedEvent.data.type === 'text_delta' && parsedEvent.data.text) {
+        stdout.write(parsedEvent.data.text)
+        streamedText = true
+        streamedTextEndsWithNewline = parsedEvent.data.text.endsWith('\n')
+      }
+    }
+    const response =
+      parsed.operation === 'stream'
+        ? await (dependencies.invokeStream ?? invokeLocalControlStream)(invocation, onStreamEvent)
+        : await (dependencies.invokeRpc ?? invokeLocalControlRpc)(invocation)
 
     if (!response.ok) {
+      if (streamedText && !streamedTextEndsWithNewline) stdout.write('\n')
       if (parsed.outputMode === 'text') {
         writeText(stderr, `${response.error.code}: ${response.error.message}`)
       } else {
@@ -197,7 +265,9 @@ export async function runCli(
         signal: controller.signal
       })
     }
-    if (parsed.outputMode === 'text') {
+    if (parsed.operation === 'stream' && parsed.outputMode === 'text') {
+      if (!streamedText || !streamedTextEndsWithNewline) stdout.write('\n')
+    } else if (parsed.outputMode === 'text') {
       writeText(
         stdout,
         formatHumanResult(parsed.contract, response.result, { outputPath: parsed.outputPath })

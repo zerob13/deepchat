@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeepchatRouteName } from '@shared/contracts/routes'
+import type { JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_SCOPES,
@@ -17,6 +18,7 @@ import {
 import { createCliRoutes } from '@/cli/routes'
 import { CliServer, type AgentCliToken } from '@/cli/server'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
+import { invokeLocalControlStream } from '../../../src/cli/transport'
 
 type RpcResult = Readonly<{
   status: number
@@ -106,6 +108,7 @@ async function createTestServer(
   options: {
     resolveAgentToken?: (token: string) => AgentCliToken | null
     dispatchOutput?: (method: string) => unknown
+    streamOutput?: Readonly<{ events: readonly JsonValue[]; result: unknown }>
   } = {}
 ): Promise<{
   server: CliServer
@@ -131,6 +134,20 @@ async function createTestServer(
     userDataPath,
     appVersion: '1.2.3',
     dispatch,
+    ...(options.streamOutput
+      ? {
+          dispatchStream: async (
+            method: string,
+            _input: unknown,
+            _caller: CliRouteCaller,
+            _signal: AbortSignal,
+            emit: (event: string, data: JsonValue) => Promise<void>
+          ) => {
+            for (const event of options.streamOutput?.events ?? []) await emit(method, event)
+            return options.streamOutput?.result
+          }
+        }
+      : {}),
     resolveAgentToken: options.resolveAgentToken,
     log: { warn: vi.fn(), error: vi.fn() }
   })
@@ -330,5 +347,48 @@ describe('CLI local transport', () => {
       conversationId: 'conversation-1',
       scopes: ['system:read']
     })
+  })
+
+  it('streams typed events and one terminal route result', async () => {
+    const { server, descriptor } = await createTestServer({
+      streamOutput: {
+        events: [
+          { type: 'text_delta', text: 'hello' },
+          { type: 'stop', reason: 'complete' }
+        ],
+        result: {
+          providerId: 'provider-1',
+          modelId: 'model-1',
+          text: 'hello',
+          finishReason: 'complete',
+          durationMs: 10,
+          ttftMs: 1
+        }
+      }
+    })
+    const events: JsonValue[] = []
+
+    const result = await invokeLocalControlStream(
+      {
+        descriptor,
+        token: descriptor.token,
+        id: 'request-stream-1',
+        method: 'models.invoke',
+        params: {
+          providerId: 'provider-1',
+          modelId: 'model-1',
+          messages: [{ role: 'user', content: 'hello' }]
+        },
+        signal: new AbortController().signal
+      },
+      async (event) => events.push(event.data)
+    )
+
+    expect(events).toEqual([
+      { type: 'text_delta', text: 'hello' },
+      { type: 'stop', reason: 'complete' }
+    ])
+    expect(result).toMatchObject({ ok: true, result: { text: 'hello' } })
+    expect(server.getStatus().pendingRequests).toBe(0)
   })
 })

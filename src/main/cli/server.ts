@@ -12,13 +12,18 @@ import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
   LOCAL_CONTROL_RPC_PATH,
   LOCAL_CONTROL_SCOPES,
+  LOCAL_CONTROL_STREAM_PATH,
   LOCAL_CONTROL_SURFACE_VERSION,
+  LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES,
+  LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES,
+  LocalControlEventEnvelopeSchema,
   LocalControlScopesSchema,
   LocalControlTokenSchema,
   LocalControlRpcRequestSchema,
   createLocalControlFailure,
   createLocalControlSuccess,
-  type LocalControlDescriptor
+  type LocalControlDescriptor,
+  type LocalControlStreamRecord
 } from '@shared/contracts/localControl'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { parseBoundedJsonBody, readBoundedRequestBody } from './body'
@@ -41,6 +46,7 @@ const MAX_HEADER_BYTES = 8 * 1024
 const MAX_CONNECTIONS = 64
 const MAX_PENDING_REQUESTS = 64
 const MAX_PENDING_PER_CONNECTION = 8
+const MAX_IN_MEMORY_BODY_BYTES = 256 * 1024
 const SHUTDOWN_GRACE_MS = 2_000
 const UNKNOWN_REQUEST_ID = 'unknown'
 
@@ -54,6 +60,8 @@ const AgentCliTokenSchema = z
 
 export type AgentCliToken = z.infer<typeof AgentCliTokenSchema>
 
+export type CliStreamEmitter = (event: string, data: JsonValue) => Promise<void>
+
 export type CliServerDependencies = Readonly<{
   userDataPath: string
   appVersion: string
@@ -62,6 +70,13 @@ export type CliServerDependencies = Readonly<{
     input: unknown,
     caller: CliRouteCaller,
     signal: AbortSignal
+  ): Promise<unknown>
+  dispatchStream?(
+    method: string,
+    input: unknown,
+    caller: CliRouteCaller,
+    signal: AbortSignal,
+    emit: CliStreamEmitter
   ): Promise<unknown>
   resolveAgentToken?(token: string): AgentCliToken | null
   artifactSpool?: ArtifactSpool
@@ -96,10 +111,10 @@ function requestContentTypeIsJson(request: IncomingMessage): boolean {
   return parameters.every((parameter) => parameter === 'charset=utf-8')
 }
 
-function getMaxRpcBodyBytes(): number {
+function getMaxBodyBytes(transport: 'rpc' | 'stream'): number {
   let maxBytes = 1
   for (const entry of CLI_SURFACE_V1.values()) {
-    if (entry.transport === 'rpc') maxBytes = Math.max(maxBytes, entry.limits.maxBodyBytes)
+    if (entry.transport === transport) maxBytes = Math.max(maxBytes, entry.limits.maxBodyBytes)
   }
   return maxBytes
 }
@@ -399,9 +414,10 @@ export class CliServer {
 
     const connectionId = this.connectionIds.get(request.socket) ?? randomUUID()
     const isRpcRequest = request.method === 'POST' && request.url === LOCAL_CONTROL_RPC_PATH
+    const isStreamRequest = request.method === 'POST' && request.url === LOCAL_CONTROL_STREAM_PATH
     const isArtifactRequest =
       request.method === 'GET' && request.url?.startsWith(LOCAL_CONTROL_ARTIFACT_PATH_PREFIX)
-    if (!isRpcRequest && !isArtifactRequest) {
+    if (!isRpcRequest && !isStreamRequest && !isArtifactRequest) {
       this.sendFailure(
         response,
         404,
@@ -440,6 +456,7 @@ export class CliServer {
       await this.handleArtifactDownload(request, response, caller)
       return
     }
+    const requestTransport = isStreamRequest ? 'stream' : 'rpc'
     if (!requestContentTypeIsJson(request)) {
       this.sendFailure(
         response,
@@ -485,8 +502,8 @@ export class CliServer {
     let routeMethod = 'unknown'
     try {
       const body = await readBoundedRequestBody(request, {
-        maxBytes: getMaxRpcBodyBytes(),
-        memoryThresholdBytes: getMaxRpcBodyBytes(),
+        maxBytes: getMaxBodyBytes(requestTransport),
+        memoryThresholdBytes: Math.min(getMaxBodyBytes(requestTransport), MAX_IN_MEMORY_BODY_BYTES),
         tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
         requireContentLength: true
       })
@@ -513,7 +530,7 @@ export class CliServer {
       requestId = rpcRequest.id
       routeMethod = rpcRequest.method
       const entry = getCliSurfaceEntry(rpcRequest.method)
-      if (!entry || entry.transport !== 'rpc') {
+      if (!entry || entry.transport !== requestTransport) {
         throw new CliRequestError('not_found', 'Method is not exposed by CLI surface V1', {
           httpStatus: 404
         })
@@ -534,13 +551,25 @@ export class CliServer {
         abortRequest(
           controller,
           new CliRequestError('timeout', 'Request timed out', {
-            httpStatus: 504
+            httpStatus: 504,
+            retriable: true
           })
         )
       }, entry.limits.timeoutMs)
       timeout.unref()
       let rawOutput: unknown
       try {
+        if (requestTransport === 'stream') {
+          await this.dispatchStreamResponse(
+            response,
+            entry,
+            input,
+            caller,
+            requestId,
+            controller.signal
+          )
+          return
+        }
         rawOutput = await runAbortable(controller.signal, async () =>
           this.dependencies.dispatch(entry.contract.name, input, caller, controller.signal)
         )
@@ -550,17 +579,7 @@ export class CliServer {
       if (controller.signal.aborted) {
         throw requestAbortError(controller.signal)
       }
-      const parsedOutput = entry.contract.output.safeParse(rawOutput)
-      const parsedResult = parsedOutput.success
-        ? JsonValueSchema.safeParse(parsedOutput.data)
-        : { success: false as const }
-      if (!parsedOutput.success || !parsedResult.success) {
-        this.log.error('[CLI] Route returned invalid output', { method: routeMethod })
-        throw new CliRequestError('internal_error', 'Route returned an invalid result', {
-          httpStatus: 500
-        })
-      }
-      const result = parsedResult.data as JsonValue
+      const result = this.parseRouteOutput(entry, rawOutput, routeMethod)
       this.sendJson(response, 200, createLocalControlSuccess(requestId, result))
     } catch (error) {
       if (error instanceof CliRequestError) {
@@ -597,6 +616,142 @@ export class CliServer {
         httpStatus: 403
       })
     }
+  }
+
+  private parseRouteOutput(
+    entry: CliSurfaceEntry,
+    rawOutput: unknown,
+    routeMethod: string
+  ): JsonValue {
+    const parsedOutput = entry.contract.output.safeParse(rawOutput)
+    const parsedResult = parsedOutput.success
+      ? JsonValueSchema.safeParse(parsedOutput.data)
+      : { success: false as const }
+    if (!parsedOutput.success || !parsedResult.success) {
+      this.log.error('[CLI] Route returned invalid output', { method: routeMethod })
+      throw new CliRequestError('internal_error', 'Route returned an invalid result', {
+        httpStatus: 500
+      })
+    }
+    return parsedResult.data as JsonValue
+  }
+
+  private async dispatchStreamResponse(
+    response: ServerResponse,
+    entry: CliSurfaceEntry,
+    input: unknown,
+    caller: CliRouteCaller,
+    requestId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    const dispatchStream = this.dependencies.dispatchStream
+    if (!dispatchStream) {
+      throw new CliRequestError('unavailable', 'Streaming service is unavailable', {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+
+    response.statusCode = 200
+    response.shouldKeepAlive = false
+    response.setHeader('Connection', 'close')
+    response.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+    response.flushHeaders()
+    let sequence = 0
+    const emit: CliStreamEmitter = async (event, data) => {
+      if (signal.aborted) throw requestAbortError(signal)
+      const parsed = LocalControlEventEnvelopeSchema.safeParse({
+        protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+        surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION,
+        sequence,
+        timestamp: this.now(),
+        requestId,
+        event,
+        data
+      })
+      if (!parsed.success) {
+        throw new CliRequestError('internal_error', 'Stream emitted an invalid event', {
+          httpStatus: 500
+        })
+      }
+      sequence += 1
+      await this.writeStreamRecord(response, parsed.data, signal)
+    }
+
+    try {
+      const rawOutput = await runAbortable(signal, async () =>
+        dispatchStream(entry.contract.name, input, caller, signal, emit)
+      )
+      if (signal.aborted) throw requestAbortError(signal)
+      const result = this.parseRouteOutput(entry, rawOutput, entry.contract.name)
+      await this.writeStreamRecord(response, createLocalControlSuccess(requestId, result), signal)
+    } catch (error) {
+      const failure = signal.aborted
+        ? requestAbortError(signal)
+        : error instanceof CliRequestError
+          ? error
+          : new CliRequestError('internal_error', 'Streaming operation failed', {
+              httpStatus: 500
+            })
+      if (!(error instanceof CliRequestError) && !signal.aborted) {
+        this.log.warn('[CLI] Stream dispatch failed', { method: entry.contract.name }, error)
+      }
+      if (!response.destroyed && !response.writableEnded) {
+        await this.writeStreamRecord(response, this.createFailureRecord(requestId, failure)).catch(
+          () => {
+            if (!response.destroyed) response.destroy()
+          }
+        )
+      }
+    } finally {
+      if (!response.destroyed && !response.writableEnded) response.end()
+    }
+  }
+
+  private async writeStreamRecord(
+    response: ServerResponse,
+    record: LocalControlStreamRecord,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (signal?.aborted) throw requestAbortError(signal)
+    const serialized = Buffer.from(`${JSON.stringify(record)}\n`, 'utf8')
+    if (serialized.length > LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES) {
+      throw new CliRequestError('internal_error', 'Stream record exceeds its byte limit', {
+        httpStatus: 500
+      })
+    }
+    if (response.destroyed || response.writableEnded) {
+      throw new CliRequestError('cancelled', 'Stream connection is closed')
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: Error) => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        response.off('error', onError)
+        response.off('close', onClose)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onAbort = () => finish(requestAbortError(signal!))
+      const onError = (error: Error) => finish(error)
+      const onClose = () => finish(new CliRequestError('cancelled', 'Stream connection is closed'))
+      signal?.addEventListener('abort', onAbort, { once: true })
+      response.once('error', onError)
+      response.once('close', onClose)
+      response.write(serialized, (error) => finish(error ?? undefined))
+    })
+  }
+
+  private createFailureRecord(requestId: string, error: CliRequestError) {
+    return createLocalControlFailure(requestId, {
+      code: error.code,
+      message: (error.message || 'Local-control request failed').slice(0, 4096),
+      retriable: error.retriable,
+      ...(error.options.details ? { details: error.options.details } : {})
+    })
   }
 
   private async handleArtifactDownload(
@@ -728,23 +883,31 @@ export class CliServer {
     requestId: string,
     error: CliRequestError
   ): void {
-    this.sendJson(
-      response,
-      status,
-      createLocalControlFailure(requestId, {
-        code: error.code,
-        message: error.message,
-        retriable: error.retriable,
-        ...(error.options.details ? { details: error.options.details } : {})
-      })
-    )
+    this.sendJson(response, status, this.createFailureRecord(requestId, error))
   }
 
   private sendJson(response: ServerResponse, status: number, body: JsonValue): void {
     if (response.destroyed || response.writableEnded) return
-    const serialized = Buffer.from(JSON.stringify(body), 'utf8')
-    response.statusCode = status
-    if (status >= 400) {
+    let responseStatus = status
+    let serialized = Buffer.from(JSON.stringify(body), 'utf8')
+    if (serialized.length > LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES) {
+      responseStatus = 500
+      serialized = Buffer.from(
+        JSON.stringify(
+          createLocalControlFailure(
+            isRecord(body) ? toSafeRequestId(body.id) : UNKNOWN_REQUEST_ID,
+            {
+              code: 'result_too_large',
+              message: 'Local-control response exceeds its byte limit',
+              retriable: false
+            }
+          )
+        ),
+        'utf8'
+      )
+    }
+    response.statusCode = responseStatus
+    if (responseStatus >= 400) {
       response.shouldKeepAlive = false
       response.setHeader('Connection', 'close')
     }

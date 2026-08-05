@@ -7,12 +7,15 @@ import {
   cliDoctorRoute,
   cliStatusRoute,
   cliVersionRoute,
+  modelsInvokeRoute,
+  providersListPublicRoute,
   type CliCapability
 } from '@shared/contracts/routes'
-import type {
-  LocalControlEffect,
-  LocalControlPrincipal,
-  LocalControlScope
+import {
+  LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS,
+  type LocalControlEffect,
+  type LocalControlPrincipal,
+  type LocalControlScope
 } from '@shared/contracts/localControl'
 
 export type LocalControlTransport = 'rpc' | 'stream' | 'upload' | 'download'
@@ -49,6 +52,24 @@ const diagnosticEntry = (contract: RouteContract): CliSurfaceEntry => ({
 })
 
 const CLI_SURFACE_V1_ENTRIES = [
+  {
+    contract: modelsInvokeRoute,
+    effect: 'compute',
+    callers: ['human', 'agent'],
+    scopes: ['models:invoke'],
+    transport: 'stream',
+    approval: 'never',
+    limits: { maxBodyBytes: 5 * 1024 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
+  },
+  {
+    contract: providersListPublicRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['providers:read'],
+    transport: 'rpc',
+    approval: 'never',
+    limits: DIAGNOSTIC_LIMITS
+  },
   {
     contract: artifactsDescribeRoute,
     effect: 'read',

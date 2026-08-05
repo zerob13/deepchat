@@ -10,13 +10,17 @@ import {
   artifactsDescribeRoute,
   artifactsReadRoute
 } from '@shared/contracts/routes/artifacts.routes'
+import { modelsInvokeRoute } from '@shared/contracts/routes/models.routes'
+import { providersListPublicRoute } from '@shared/contracts/routes/providers.routes'
 import type { JsonValue } from '@shared/contracts/json'
+import { LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS } from '@shared/contracts/localControl'
 import { CliUsageError } from './errors'
 
 export const CLI_OUTPUT_ENV = 'DEEPCHAT_CLI_OUTPUT'
 export const CLI_TIMEOUT_ENV = 'DEEPCHAT_CLI_TIMEOUT_MS'
 export const DEFAULT_CLI_TIMEOUT_MS = 30_000
-export const MAX_CLI_TIMEOUT_MS = 30 * 60_000
+export const MAX_CLI_TIMEOUT_MS = LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+export const DEFAULT_MODEL_INVOKE_TIMEOUT_MS = MAX_CLI_TIMEOUT_MS
 
 export type CliOutputMode = 'text' | 'json' | 'jsonl'
 export type CliRpcContract =
@@ -27,8 +31,10 @@ export type CliRpcContract =
   | typeof artifactsDescribeRoute
   | typeof artifactsReadRoute
   | typeof artifactsDeleteRoute
+  | typeof modelsInvokeRoute
+  | typeof providersListPublicRoute
 
-export type CliCommandOperation = 'rpc' | 'download'
+export type CliCommandOperation = 'rpc' | 'stream' | 'download'
 
 export type ParsedCliArguments = Readonly<{
   domain: string
@@ -41,6 +47,7 @@ export type ParsedCliArguments = Readonly<{
   params: JsonValue
   outputPath?: string
   overwrite: boolean
+  readStdin: boolean
 }>
 
 const COMMANDS = new Map<string, CliRpcContract>([
@@ -50,7 +57,9 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['system doctor', cliDoctorRoute],
   ['artifact describe', artifactsDescribeRoute],
   ['artifact get', artifactsReadRoute],
-  ['artifact delete', artifactsDeleteRoute]
+  ['artifact delete', artifactsDeleteRoute],
+  ['model invoke', modelsInvokeRoute],
+  ['provider list', providersListPublicRoute]
 ])
 
 function parseOutputMode(value: string | undefined): CliOutputMode {
@@ -106,12 +115,23 @@ export function parseCliArguments(
   let explicitOutputMode: CliOutputMode | undefined
   let timeoutMs = env[CLI_TIMEOUT_ENV]
     ? parseTimeout(env[CLI_TIMEOUT_ENV], CLI_TIMEOUT_ENV)
-    : DEFAULT_CLI_TIMEOUT_MS
+    : commandKey === 'model invoke'
+      ? DEFAULT_MODEL_INVOKE_TIMEOUT_MS
+      : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
   let helpRequested = false
   let artifactId: string | undefined
   let outputPath: string | undefined
   let overwrite = false
+  let providerId: string | undefined
+  let modelId: string | undefined
+  let prompt: string | undefined
+  let systemPrompt: string | undefined
+  let temperature: number | undefined
+  let maxTokens: number | undefined
+  let readStdin = false
+  let enabledOnly = false
+  const domainOptions = new Set<string>()
 
   const readOptionValue = (
     argument: string,
@@ -162,6 +182,7 @@ export function parseCliArguments(
       continue
     }
     if (argument === '--id' || argument.startsWith('--id=')) {
+      domainOptions.add('id')
       if (artifactId !== undefined) throw new CliUsageError('--id may be specified only once')
       const parsedOption = readOptionValue(argument, index)
       const parsedId = ArtifactIdSchema.safeParse(parsedOption.value)
@@ -171,6 +192,7 @@ export function parseCliArguments(
       continue
     }
     if (argument === '--out' || argument.startsWith('--out=')) {
+      domainOptions.add('out')
       if (outputPath !== undefined) throw new CliUsageError('--out may be specified only once')
       const parsedOption = readOptionValue(argument, index)
       outputPath = parsedOption.value
@@ -178,8 +200,78 @@ export function parseCliArguments(
       continue
     }
     if (argument === '--overwrite') {
+      domainOptions.add('overwrite')
       if (overwrite) throw new CliUsageError('--overwrite may be specified only once')
       overwrite = true
+      continue
+    }
+    if (argument === '--provider' || argument.startsWith('--provider=')) {
+      domainOptions.add('provider')
+      if (providerId !== undefined) throw new CliUsageError('--provider may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      providerId = parsedOption.value
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--model' || argument.startsWith('--model=')) {
+      domainOptions.add('model')
+      if (modelId !== undefined) throw new CliUsageError('--model may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      modelId = parsedOption.value
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--prompt' || argument.startsWith('--prompt=')) {
+      domainOptions.add('prompt')
+      if (prompt !== undefined) throw new CliUsageError('--prompt may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      prompt = parsedOption.value
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--system' || argument.startsWith('--system=')) {
+      domainOptions.add('system')
+      if (systemPrompt !== undefined) throw new CliUsageError('--system may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      systemPrompt = parsedOption.value
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--temperature' || argument.startsWith('--temperature=')) {
+      domainOptions.add('temperature')
+      if (temperature !== undefined) {
+        throw new CliUsageError('--temperature may be specified only once')
+      }
+      const parsedOption = readOptionValue(argument, index)
+      temperature = Number(parsedOption.value)
+      if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+        throw new CliUsageError('--temperature must be a number between 0 and 2')
+      }
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--max-tokens' || argument.startsWith('--max-tokens=')) {
+      domainOptions.add('max-tokens')
+      if (maxTokens !== undefined)
+        throw new CliUsageError('--max-tokens may be specified only once')
+      const parsedOption = readOptionValue(argument, index)
+      maxTokens = Number(parsedOption.value)
+      if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 1_000_000) {
+        throw new CliUsageError('--max-tokens must be an integer between 1 and 1000000')
+      }
+      index = parsedOption.nextIndex
+      continue
+    }
+    if (argument === '--stdin') {
+      domainOptions.add('stdin')
+      if (readStdin) throw new CliUsageError('--stdin may be specified only once')
+      readStdin = true
+      continue
+    }
+    if (argument === '--enabled-only') {
+      domainOptions.add('enabled-only')
+      if (enabledOnly) throw new CliUsageError('--enabled-only may be specified only once')
+      enabledOnly = true
       continue
     }
     throw new CliUsageError(`Unknown option after ${domain} ${verb}: ${argument}`)
@@ -203,6 +295,43 @@ export function parseCliArguments(
     throw new CliUsageError(`--out and --overwrite are only valid for deepchat artifact get`)
   }
 
+  const isModelInvoke = commandKey === 'model invoke'
+  const isProviderList = commandKey === 'provider list'
+  const allowedDomainOptions = isArtifactCommand
+    ? new Set(['id', 'out', 'overwrite'])
+    : isModelInvoke
+      ? new Set(['provider', 'model', 'prompt', 'system', 'temperature', 'max-tokens', 'stdin'])
+      : isProviderList
+        ? new Set(['enabled-only'])
+        : new Set<string>()
+  const invalidDomainOption = Array.from(domainOptions).find(
+    (option) => !allowedDomainOptions.has(option)
+  )
+  if (invalidDomainOption) {
+    throw new CliUsageError(`--${invalidDomainOption} is not valid for deepchat ${domain} ${verb}`)
+  }
+  if (!helpRequested && isModelInvoke && (!providerId || !modelId)) {
+    throw new CliUsageError('deepchat model invoke requires --provider and --model')
+  }
+  if (!helpRequested && isModelInvoke && (prompt !== undefined) === readStdin) {
+    throw new CliUsageError('deepchat model invoke requires exactly one of --prompt or --stdin')
+  }
+
+  let params: JsonValue = artifactId ? { id: artifactId } : {}
+  if (isProviderList) params = { enabledOnly }
+  if (isModelInvoke && providerId && modelId) {
+    params = {
+      providerId,
+      modelId,
+      messages: [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        ...(prompt !== undefined ? [{ role: 'user', content: prompt }] : [])
+      ],
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(maxTokens !== undefined ? { maxTokens } : {})
+    }
+  }
+
   return {
     domain,
     verb,
@@ -210,10 +339,11 @@ export function parseCliArguments(
     outputMode,
     timeoutMs,
     helpRequested: helpRequested || isHelpCommand,
-    operation: commandKey === 'artifact get' ? 'download' : 'rpc',
-    params: artifactId ? { id: artifactId } : {},
+    operation: commandKey === 'artifact get' ? 'download' : isModelInvoke ? 'stream' : 'rpc',
+    params,
     ...(outputPath ? { outputPath } : {}),
-    overwrite
+    overwrite,
+    readStdin
   }
 }
 
@@ -224,7 +354,11 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
         ? command.verb === 'get'
           ? ' --id <artifact-id> --out <path> [--overwrite]'
           : ' --id <artifact-id>'
-        : ''
+        : command.domain === 'model'
+          ? ' --provider <id> --model <id> (--prompt <text>|--stdin)'
+          : command.domain === 'provider'
+            ? ' [--enabled-only]'
+            : ''
     return [
       `Usage: deepchat ${command.domain} ${command.verb}${commandOptions} [--json|--jsonl] [--timeout <ms>]`,
       '',
@@ -243,6 +377,8 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  artifact describe    Show owned artifact metadata',
     '  artifact get         Download an owned artifact',
     '  artifact delete      Delete an owned artifact',
+    '  model invoke         Stream a raw text-model invocation',
+    '  provider list        List redacted providers and models',
     '  help commands        Show this help',
     '',
     'Options (after domain and verb):',

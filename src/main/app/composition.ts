@@ -207,7 +207,14 @@ import {
   type RouteDispatcher
 } from '@/routes'
 import { createNodeScheduler } from '@/routes/scheduler'
-import { ArtifactSpool, CliServer, createArtifactRoutes, createCliRoutes } from '@/cli'
+import {
+  ArtifactSpool,
+  CliComputeService,
+  CliServer,
+  createArtifactRoutes,
+  createCliComputeRoutes,
+  createCliRoutes
+} from '@/cli'
 import { AcpRegistryMigrationService } from '@/agent/acp/catalog/acpRegistryMigrationService'
 import { killTerminal } from '@/agent/acp/launch/acpInitHelper'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
@@ -337,6 +344,7 @@ export async function createMainProcessControl(dependencies: {
   let acpAsLlmProviderSessionControl: AcpAsLlmProviderSessionControlPort
   let acpAsLlmProviderPermission: AcpAsLlmProviderPermissionPort
   let routeDispatcher: RouteDispatcher | undefined
+  let cliComputeService: CliComputeService
   let hasInitialized = false
   let databaseMaintenanceState: 'running' | 'maintenance' | 'failed' = 'running'
   let appLifecycleState: 'starting' | 'running' | 'stopping' | 'stopped' = 'starting'
@@ -370,6 +378,11 @@ export async function createMainProcessControl(dependencies: {
       const output = await dispatchDeepchatRoute(routeDispatcher, method, input, { caller })
       signal.throwIfAborted()
       return output
+    },
+    dispatchStream: async (method, input, caller, signal, emit) => {
+      if (!cliComputeService) throw new Error('CLI compute service is not ready')
+      assertRouteAllowedDuringDatabaseMaintenance(method)
+      return await cliComputeService.dispatchStream(method, input, caller, signal, emit)
     },
     artifactSpool,
     log: logger
@@ -622,6 +635,11 @@ export async function createMainProcessControl(dependencies: {
     acpSessionPersistence,
     publishDeepchatEvent
   )
+  cliComputeService = new CliComputeService({
+    providerSettings,
+    providerRuntime,
+    log: logger
+  })
   const agentDefaults = new DeepChatDefaults({
     settings: dependencies.settingsStore,
     publishSettingChanged: (key, value) =>
@@ -2243,6 +2261,7 @@ export async function createMainProcessControl(dependencies: {
         windowPresenter.getAllWindows().some((window) => !window.isDestroyed())
     })
     const artifactRoutes = createArtifactRoutes(artifactSpool)
+    const cliComputeRoutes = createCliComputeRoutes(cliComputeService)
     routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
@@ -2278,7 +2297,8 @@ export async function createMainProcessControl(dependencies: {
         appSettingsRoutes,
         appRoutes,
         cliRoutes,
-        artifactRoutes
+        artifactRoutes,
+        cliComputeRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator

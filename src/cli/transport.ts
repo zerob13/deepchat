@@ -1,15 +1,19 @@
 import { request as httpRequest, type IncomingHttpHeaders } from 'node:http'
 import {
   LOCAL_CONTROL_RPC_PATH,
+  LOCAL_CONTROL_STREAM_PATH,
+  LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES,
+  LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES,
+  LocalControlEventEnvelopeSchema,
   LocalControlRpcRequestSchema,
   LocalControlRpcResponseSchema,
+  LocalControlStreamRecordSchema,
   type LocalControlDescriptor,
+  type LocalControlEventEnvelope,
   type LocalControlRpcResponse
 } from '@shared/contracts/localControl'
 import type { JsonValue } from '@shared/contracts/json'
 import { CLI_EXIT_CODES, CliClientError } from './errors'
-
-const MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 export const CLI_VERSION =
   typeof __DEEPCHAT_CLI_VERSION__ === 'string' ? __DEEPCHAT_CLI_VERSION__ : 'development'
@@ -22,6 +26,8 @@ export type CliRpcInvocation = Readonly<{
   params: JsonValue
   signal: AbortSignal
 }>
+
+export type CliStreamEventHandler = (event: LocalControlEventEnvelope) => void | Promise<void>
 
 function transportFailure(message: string, retriable = true): CliClientError {
   return new CliClientError('unavailable', message, CLI_EXIT_CODES.unavailable, retriable)
@@ -44,7 +50,7 @@ function declaredResponseLength(
     throw protocolFailure('DeepChat returned an invalid Content-Length')
   }
   const length = Number(raw)
-  if (!Number.isSafeInteger(length) || length > MAX_RESPONSE_BYTES) {
+  if (!Number.isSafeInteger(length) || length > LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES) {
     throw protocolFailure('DeepChat response exceeds the CLI byte limit')
   }
   return length
@@ -56,11 +62,8 @@ function abortReason(signal: AbortSignal): Error {
     : new CliClientError('cancelled', 'CLI request was cancelled', CLI_EXIT_CODES.cancelled)
 }
 
-export async function invokeLocalControlRpc(
-  invocation: CliRpcInvocation
-): Promise<LocalControlRpcResponse> {
-  if (invocation.signal.aborted) throw abortReason(invocation.signal)
-  const body = Buffer.from(
+function createInvocationBody(invocation: CliRpcInvocation): Buffer {
+  return Buffer.from(
     JSON.stringify(
       LocalControlRpcRequestSchema.parse({
         protocolVersion: invocation.descriptor.protocolVersion,
@@ -72,6 +75,13 @@ export async function invokeLocalControlRpc(
     ),
     'utf8'
   )
+}
+
+export async function invokeLocalControlRpc(
+  invocation: CliRpcInvocation
+): Promise<LocalControlRpcResponse> {
+  if (invocation.signal.aborted) throw abortReason(invocation.signal)
+  const body = createInvocationBody(invocation)
 
   return await new Promise<LocalControlRpcResponse>((resolve, reject) => {
     let settled = false
@@ -138,7 +148,7 @@ export async function invokeLocalControlRpc(
         if (settled) return
         const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk)
         size += chunk.length
-        if (size > MAX_RESPONSE_BYTES) {
+        if (size > LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES) {
           response.destroy()
           finish(() => reject(protocolFailure('DeepChat response exceeds the CLI byte limit')))
           return
@@ -177,6 +187,191 @@ export async function invokeLocalControlRpc(
       })
     })
     request.once('error', (error: NodeJS.ErrnoException) => {
+      if (invocation.signal.aborted) {
+        finish(() => reject(abortReason(invocation.signal)))
+        return
+      }
+      const message =
+        error.code === 'ENOENT' || error.code === 'ECONNREFUSED' || error.code === 'EPIPE'
+          ? 'DeepChat local control server is unavailable'
+          : `Cannot connect to DeepChat: ${error.message}`
+      finish(() => reject(transportFailure(message)))
+    })
+    request.end(body)
+  })
+}
+
+export async function invokeLocalControlStream(
+  invocation: CliRpcInvocation,
+  onEvent: CliStreamEventHandler
+): Promise<LocalControlRpcResponse> {
+  if (invocation.signal.aborted) throw abortReason(invocation.signal)
+  const body = createInvocationBody(invocation)
+
+  return await new Promise<LocalControlRpcResponse>((resolve, reject) => {
+    let settled = false
+    let responseReceived = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      callback()
+    }
+    const request = httpRequest({
+      socketPath:
+        invocation.descriptor.endpoint.kind === 'unix'
+          ? invocation.descriptor.endpoint.path
+          : invocation.descriptor.endpoint.name,
+      path: LOCAL_CONTROL_STREAM_PATH,
+      method: 'POST',
+      agent: false,
+      signal: invocation.signal,
+      headers: {
+        authorization: `Bearer ${invocation.token}`,
+        'content-type': 'application/json',
+        'content-length': body.length,
+        connection: 'close',
+        'user-agent': `DeepChat-CLI/${CLI_VERSION}`
+      }
+    })
+
+    request.once('response', (response) => {
+      responseReceived = true
+      void (async () => {
+        const contentTypes = response.headersDistinct['content-type']
+        const contentType = contentTypes?.[0] ?? response.headers['content-type']
+        const [mediaType, ...parameters] =
+          typeof contentType === 'string'
+            ? contentType.split(';').map((part) => part.trim().toLowerCase())
+            : []
+        if (contentTypes && contentTypes.length !== 1) {
+          throw protocolFailure('DeepChat returned multiple Content-Type headers')
+        }
+        if (response.headers['content-encoding'] !== undefined) {
+          throw protocolFailure('Compressed local responses are not supported')
+        }
+
+        const isHttpSuccess = (response.statusCode ?? 0) >= 200 && (response.statusCode ?? 0) < 300
+        if (!isHttpSuccess) {
+          if (
+            mediaType !== 'application/json' ||
+            !parameters.every((parameter) => parameter === 'charset=utf-8')
+          ) {
+            throw protocolFailure('DeepChat returned a non-JSON error response')
+          }
+          const expectedLength = declaredResponseLength(
+            response.headers,
+            response.headersDistinct['content-length']
+          )
+          const chunks: Buffer[] = []
+          let size = 0
+          for await (const rawChunk of response) {
+            const chunk = Buffer.from(rawChunk)
+            size += chunk.length
+            if (size > LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES) {
+              throw protocolFailure('DeepChat response exceeds the CLI byte limit')
+            }
+            chunks.push(chunk)
+          }
+          if (expectedLength !== null && expectedLength !== size) {
+            throw protocolFailure('DeepChat response length did not match')
+          }
+          const parsed = LocalControlRpcResponseSchema.parse(
+            JSON.parse(Buffer.concat(chunks, size).toString('utf8'))
+          )
+          if (parsed.ok) {
+            throw protocolFailure('DeepChat HTTP status and response envelope disagree')
+          }
+          if (parsed.id !== invocation.id && parsed.id !== 'unknown') {
+            throw protocolFailure('DeepChat response ID did not match the request')
+          }
+          return parsed
+        }
+
+        if (
+          mediaType !== 'application/x-ndjson' ||
+          !parameters.every((parameter) => parameter === 'charset=utf-8')
+        ) {
+          throw protocolFailure('DeepChat returned a non-NDJSON stream')
+        }
+
+        let pendingChunks: Buffer[] = []
+        let pendingLength = 0
+        let expectedSequence = 0
+        let terminal: LocalControlRpcResponse | undefined
+        const consumeLine = async (line: Buffer): Promise<void> => {
+          if (line.length === 0) throw protocolFailure('DeepChat returned an empty stream record')
+          let parsed
+          try {
+            parsed = LocalControlStreamRecordSchema.parse(JSON.parse(line.toString('utf8')))
+          } catch {
+            throw protocolFailure('DeepChat returned an invalid stream record')
+          }
+          if ('ok' in parsed) {
+            if (terminal) throw protocolFailure('DeepChat returned multiple terminal records')
+            if (parsed.id !== invocation.id) {
+              throw protocolFailure('DeepChat stream result ID did not match the request')
+            }
+            terminal = parsed
+            return
+          }
+          if (terminal)
+            throw protocolFailure('DeepChat returned an event after the terminal record')
+          const event = LocalControlEventEnvelopeSchema.parse(parsed)
+          if (event.requestId !== invocation.id || event.sequence !== expectedSequence) {
+            throw protocolFailure('DeepChat stream event identity or order did not match')
+          }
+          expectedSequence += 1
+          await onEvent(event)
+        }
+
+        for await (const rawChunk of response) {
+          const chunk = Buffer.from(rawChunk)
+          let offset = 0
+          while (offset < chunk.length) {
+            const newlineIndex = chunk.indexOf(0x0a, offset)
+            const end = newlineIndex >= 0 ? newlineIndex : chunk.length
+            if (end > offset) {
+              const segment = chunk.subarray(offset, end)
+              pendingChunks.push(segment)
+              pendingLength += segment.length
+            }
+            if (pendingLength > LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES) {
+              throw protocolFailure('DeepChat stream record exceeds the CLI byte limit')
+            }
+            if (newlineIndex < 0) break
+            const line =
+              pendingChunks.length === 1
+                ? pendingChunks[0]
+                : Buffer.concat(pendingChunks, pendingLength)
+            await consumeLine(line)
+            pendingChunks = []
+            pendingLength = 0
+            offset = newlineIndex + 1
+          }
+        }
+        if (pendingLength !== 0) {
+          throw protocolFailure('DeepChat stream ended with an incomplete record')
+        }
+        if (!terminal) throw protocolFailure('DeepChat stream ended without a terminal record')
+        return terminal
+      })().then(
+        (result) => finish(() => resolve(result)),
+        (error: unknown) => {
+          response.destroy()
+          finish(() =>
+            reject(
+              invocation.signal.aborted
+                ? abortReason(invocation.signal)
+                : error instanceof CliClientError
+                  ? error
+                  : protocolFailure('DeepChat stream transport failed')
+            )
+          )
+        }
+      )
+    })
+    request.once('error', (error: NodeJS.ErrnoException) => {
+      if (responseReceived) return
       if (invocation.signal.aborted) {
         finish(() => reject(abortReason(invocation.signal)))
         return

@@ -13,7 +13,9 @@ describe('CLI surface V1', () => {
       'cli.capabilities',
       'cli.doctor',
       'cli.status',
-      'cli.version'
+      'cli.version',
+      'models.invoke',
+      'providers.listPublic'
     ])
     for (const [method, entry] of CLI_SURFACE_V1) {
       expect(entry.contract).toBe(
@@ -36,7 +38,13 @@ describe('CLI surface V1', () => {
       expect.objectContaining({ method: 'cli.capabilities', effect: 'read' }),
       expect.objectContaining({ method: 'cli.doctor', effect: 'read' }),
       expect.objectContaining({ method: 'cli.status', effect: 'read' }),
-      expect.objectContaining({ method: 'cli.version', effect: 'read' })
+      expect.objectContaining({ method: 'cli.version', effect: 'read' }),
+      expect.objectContaining({
+        method: 'models.invoke',
+        effect: 'compute',
+        transport: 'stream'
+      }),
+      expect.objectContaining({ method: 'providers.listPublic', effect: 'read' })
     ])
     expect(
       listCliSurfaceCapabilities().every((capability) => capability.approval === 'never')

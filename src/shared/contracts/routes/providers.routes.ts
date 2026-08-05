@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { EntityIdSchema, ProviderModelSummarySchema, defineRouteContract } from '../common'
+import { ModelType } from '../../model'
 import {
   AcpDebugActionSchema,
   AcpDebugRunResultSchema,
@@ -12,6 +13,43 @@ import {
   ProviderRateLimitStatusSchema
 } from '../domainSchemas'
 import { PROVIDER_IMPORT_CUSTOM_API_TYPES, PROVIDER_IMPORT_SOURCE_IDS } from '../../providerImport'
+
+export const PublicProviderModelSchema = z
+  .object({
+    id: z.string().min(1).max(256),
+    name: z.string().max(256),
+    group: z.string().max(128),
+    enabled: z.boolean(),
+    custom: z.boolean(),
+    vision: z.boolean(),
+    functionCall: z.boolean(),
+    reasoning: z.boolean(),
+    enableSearch: z.boolean(),
+    type: z.enum(ModelType).optional(),
+    contextLength: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    maxTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
+  })
+  .strict()
+
+export const PublicProviderSchema = z
+  .object({
+    id: EntityIdSchema.max(128),
+    name: z.string().min(1).max(256),
+    apiType: z.string().min(1).max(128),
+    enabled: z.boolean(),
+    custom: z.boolean(),
+    models: z.array(PublicProviderModelSchema).max(10_000)
+  })
+  .strict()
+
+export const providersListPublicRoute = defineRouteContract({
+  name: 'providers.listPublic',
+  input: z.object({ enabledOnly: z.boolean().optional() }).strict().default({}),
+  output: z.object({ providers: z.array(PublicProviderSchema).max(1_000) }).strict()
+})
+
+export type PublicProvider = z.infer<typeof PublicProviderSchema>
+export type PublicProviderModel = z.infer<typeof PublicProviderModelSchema>
 
 const ProviderImportSourceIdSchema = z.enum(PROVIDER_IMPORT_SOURCE_IDS)
 const ProviderImportCustomApiTypeSchema = z.enum(PROVIDER_IMPORT_CUSTOM_API_TYPES)

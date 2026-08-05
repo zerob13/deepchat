@@ -29,9 +29,9 @@
 
 ## Compute and Artifacts
 
-- [ ] Add raw `models.invoke` over `coreStream` with no Agent/session/tool side effects.
+- [x] Add raw `models.invoke` over `coreStream` with no Agent/session/tool side effects.
 - [ ] Add image and video standalone generation surfaces.
-- [ ] Add formal standalone speech generation and typed audio output.
+- [x] Add formal standalone speech generation and typed audio output.
 - [ ] Add upload and owned-artifact transcription inputs.
 - [x] Implement output-only `ArtifactSpool` ownership, quotas, expiry, and cleanup.
 - [ ] Add stream, media, speech, transcription, artifact, and quota tests.

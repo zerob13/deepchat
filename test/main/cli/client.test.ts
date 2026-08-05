@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DeepchatRouteName } from '@shared/contracts/routes'
+import type { JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_AGENT_TOKEN_ENV,
   LocalControlRpcResponseSchema
@@ -29,8 +30,15 @@ function captureOutput(): { stream: NodeJS.WriteStream; read(): string } {
   }
 }
 
-async function createClientServer(options: { hang?: boolean } = {}): Promise<{
+async function createClientServer(
+  options: {
+    hang?: boolean
+    hangStream?: boolean
+    stream?: Readonly<{ events: readonly JsonValue[]; result: unknown }>
+  } = {}
+): Promise<{
   userDataPath: string
+  server: CliServer
   dispatch: ReturnType<typeof vi.fn>
 }> {
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-client-'))
@@ -53,11 +61,26 @@ async function createClientServer(options: { hang?: boolean } = {}): Promise<{
     userDataPath,
     appVersion: '9.8.7',
     dispatch,
+    ...(options.stream || options.hangStream
+      ? {
+          dispatchStream: async (
+            method: string,
+            _input: unknown,
+            _caller: CliRouteCaller,
+            _signal: AbortSignal,
+            emit: (event: string, data: JsonValue) => Promise<void>
+          ) => {
+            if (options.hangStream) return await new Promise<never>(() => undefined)
+            for (const event of options.stream?.events ?? []) await emit(method, event)
+            return options.stream?.result
+          }
+        }
+      : {}),
     log: { warn: vi.fn(), error: vi.fn() }
   })
   servers.push(server)
   await server.start()
-  return { userDataPath, dispatch }
+  return { userDataPath, server, dispatch }
 }
 
 function runWithCapturedOutput(
@@ -206,5 +229,85 @@ describe('bundled CLI client', () => {
         error: { code: 'cancelled' }
       }
     )
+  })
+
+  it('renders streamed model text once and preserves JSONL event records', async () => {
+    const stream = {
+      events: [
+        { type: 'text_delta', text: 'Hel' },
+        { type: 'text_delta', text: 'lo' },
+        { type: 'stop', reason: 'complete' }
+      ],
+      result: {
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        text: 'Hello',
+        finishReason: 'complete',
+        durationMs: 10,
+        ttftMs: 1
+      }
+    } as const
+    const { userDataPath } = await createClientServer({ stream })
+    const environment = { DEEPCHAT_E2E_USER_DATA_DIR: userDataPath }
+
+    const textInvocation = runWithCapturedOutput(
+      ['model', 'invoke', '--provider', 'provider-1', '--model', 'model-1', '--prompt', 'hello'],
+      environment
+    )
+    await expect(textInvocation.result).resolves.toBe(0)
+    expect(textInvocation.stdout.read()).toBe('Hello\n')
+
+    const jsonlInvocation = runWithCapturedOutput(
+      [
+        'model',
+        'invoke',
+        '--provider',
+        'provider-1',
+        '--model',
+        'model-1',
+        '--prompt',
+        'hello',
+        '--jsonl'
+      ],
+      environment
+    )
+    await expect(jsonlInvocation.result).resolves.toBe(0)
+    const records = jsonlInvocation.stdout
+      .read()
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(records).toHaveLength(4)
+    expect(records.slice(0, 3).map((record) => record.sequence)).toEqual([0, 1, 2])
+    expect(records[3]).toMatchObject({ ok: true, result: { text: 'Hello' } })
+  })
+
+  it('cancels a stream promptly even when its provider ignores the signal', async () => {
+    const { userDataPath, server } = await createClientServer({ hangStream: true })
+    const invocation = runWithCapturedOutput(
+      [
+        'model',
+        'invoke',
+        '--provider',
+        'provider-1',
+        '--model',
+        'model-1',
+        '--prompt',
+        'hello',
+        '--json',
+        '--timeout',
+        '10'
+      ],
+      { DEEPCHAT_E2E_USER_DATA_DIR: userDataPath }
+    )
+
+    await expect(invocation.result).resolves.toBe(7)
+    expect(LocalControlRpcResponseSchema.parse(JSON.parse(invocation.stdout.read()))).toMatchObject(
+      {
+        ok: false,
+        error: { code: 'timeout' }
+      }
+    )
+    await vi.waitFor(() => expect(server.getStatus().pendingRequests).toBe(0))
   })
 })

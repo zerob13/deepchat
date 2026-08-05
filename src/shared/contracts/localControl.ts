@@ -3,8 +3,12 @@ import { JsonValueSchema, TimestampMsSchema, type JsonValue } from './json'
 
 export const LOCAL_CONTROL_PROTOCOL_VERSION = 1 as const
 export const LOCAL_CONTROL_SURFACE_VERSION = 1 as const
+export const LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS = 30 * 60_000
+export const LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES = 16 * 1024 * 1024
+export const LOCAL_CONTROL_MAX_STREAM_RECORD_BYTES = 20 * 1024 * 1024
 export const LOCAL_CONTROL_DESCRIPTOR_FILENAME = 'local-control.json'
 export const LOCAL_CONTROL_RPC_PATH = '/v1/rpc'
+export const LOCAL_CONTROL_STREAM_PATH = '/v1/stream'
 export const LOCAL_CONTROL_ARTIFACT_PATH_PREFIX = '/v1/artifacts/'
 export const LOCAL_CONTROL_AGENT_TOKEN_ENV = 'DEEPCHAT_CLI_AGENT_TOKEN'
 
@@ -140,6 +144,7 @@ export const LOCAL_CONTROL_ERROR_CODES = [
   'conflict',
   'rate_limited',
   'body_too_large',
+  'result_too_large',
   'unavailable',
   'cancelled',
   'timeout',
@@ -191,6 +196,11 @@ export const LocalControlEventEnvelopeSchema = z
   })
   .strict()
 
+export const LocalControlStreamRecordSchema = z.union([
+  LocalControlEventEnvelopeSchema,
+  LocalControlRpcResponseSchema
+])
+
 export type LocalControlEffect = z.infer<typeof LocalControlEffectSchema>
 export type LocalControlScope = z.infer<typeof LocalControlScopeSchema>
 export type LocalControlPrincipal = z.infer<typeof LocalControlPrincipalSchema>
@@ -201,6 +211,7 @@ export type LocalControlErrorCode = z.infer<typeof LocalControlErrorCodeSchema>
 export type LocalControlError = z.infer<typeof LocalControlErrorSchema>
 export type LocalControlRpcResponse = z.infer<typeof LocalControlRpcResponseSchema>
 export type LocalControlEventEnvelope = z.infer<typeof LocalControlEventEnvelopeSchema>
+export type LocalControlStreamRecord = z.infer<typeof LocalControlStreamRecordSchema>
 
 export function createLocalControlSuccess(id: string, result: JsonValue): LocalControlRpcResponse {
   return LocalControlRpcResponseSchema.parse({

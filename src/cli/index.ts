@@ -5,10 +5,11 @@ import { runCli } from './run'
 
 export { parseCliArguments, formatCliHelp } from './args'
 export { downloadArtifact } from './artifacts'
+export { readBoundedUtf8Stdin } from './stdin'
 export { loadLocalControlDescriptor, resolveCliUserDataPath } from './discovery'
 export { CLI_EXIT_CODES } from './errors'
 export { runCli } from './run'
-export { CLI_VERSION, invokeLocalControlRpc } from './transport'
+export { CLI_VERSION, invokeLocalControlRpc, invokeLocalControlStream } from './transport'
 
 function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
