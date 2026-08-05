@@ -38,6 +38,7 @@ import {
   providersTestPublicConnectionRoute,
   providersUpdatePublicRoute,
   speechGenerateRoute,
+  sessionsRunDetachedRoute,
   settingsGetPublicRoute,
   settingsUpdatePublicRoute,
   skillsInstallPublicUrlRoute,
@@ -46,6 +47,9 @@ import {
   skillsSetPublicStatusRoute,
   skillsUninstallPublicRoute,
   videosGenerateRoute,
+  eventsSubscribeRoute,
+  runsCancelRoute,
+  runsGetRoute,
   type CliCapability
 } from '@shared/contracts/routes'
 import { SKILL_ARCHIVE_MAX_INPUT_BYTES } from '@shared/types/skill'
@@ -304,6 +308,11 @@ const APPROVED_MUTATION_LIMITS = {
   timeoutMs: 5 * 60_000
 } as const satisfies CliRouteLimits
 
+const RUN_CONTROL_LIMITS = {
+  maxBodyBytes: 16 * 1024,
+  timeoutMs: 30_000
+} as const satisfies CliRouteLimits
+
 const diagnosticEntry = (contract: RouteContract): CliSurfaceEntry => ({
   contract,
   effect: 'read',
@@ -434,6 +443,68 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['ocr:manage'],
     transport: 'rpc',
     approval: 'never',
+    limits: {
+      maxBodyBytes: 16 * 1024,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
+  {
+    contract: sessionsRunDetachedRoute,
+    effect: 'compute',
+    callers: ['human'],
+    scopes: ['sessions:run'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => {
+      const source =
+        input && typeof input === 'object' && !Array.isArray(input)
+          ? (input as Record<string, unknown>)
+          : {}
+      const selected = selectAuditFields(input, ['agentId', 'providerId', 'modelId', 'maxTurns'])
+      return {
+        ...selected,
+        promptCharacters: typeof source.prompt === 'string' ? source.prompt.length : 0,
+        systemPromptPresent: typeof source.systemPrompt === 'string'
+      }
+    },
+    // Covers worst-case JSON escaping for both bounded prompt fields and all option lists.
+    limits: { maxBodyBytes: 5 * 1024 * 1024, timeoutMs: 5 * 60_000 }
+  },
+  {
+    contract: runsGetRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['runs:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['runId', 'limit']),
+    limits: RUN_CONTROL_LIMITS
+  },
+  {
+    contract: runsCancelRoute,
+    effect: 'local-maintenance',
+    callers: ['human', 'agent'],
+    scopes: ['runs:cancel'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['runId']),
+    limits: RUN_CONTROL_LIMITS
+  },
+  {
+    contract: eventsSubscribeRoute,
+    effect: 'read',
+    callers: ['human', 'agent'],
+    scopes: ['runs:read'],
+    transport: 'stream',
+    approval: 'never',
+    auditProjection: (input) => ({
+      ...selectAuditFields(input, ['runId', 'messageLimit']),
+      cursorPresent:
+        Boolean(input) &&
+        typeof input === 'object' &&
+        !Array.isArray(input) &&
+        typeof (input as Record<string, unknown>).cursor === 'string'
+    }),
     limits: {
       maxBodyBytes: 16 * 1024,
       timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS

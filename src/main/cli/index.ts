@@ -10,6 +10,7 @@ export {
 export { CliOcrService, type CliOcrServiceOptions } from './ocrService'
 export { createCliMcpAdminRoutes, type CliMcpAdminDependencies } from './mcpAdminRoutes'
 export { CliSkillService, type CliSkillServiceOptions } from './skillService'
+export { CliRunService, type CliRunServiceOptions } from './runService'
 export { createCliRoutes, type CliRuntimeStatus } from './routes'
 export {
   createCliProviderModelAdminRoutes,

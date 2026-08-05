@@ -21,6 +21,7 @@ describe('CLI surface V1', () => {
       'cli.doctor',
       'cli.status',
       'cli.version',
+      'events.subscribe',
       'images.generate',
       'mcp.addPublic',
       'mcp.listPublic',
@@ -45,6 +46,9 @@ describe('CLI surface V1', () => {
       'providers.setCredential',
       'providers.testPublicConnection',
       'providers.updatePublic',
+      'runs.cancel',
+      'runs.get',
+      'sessions.runDetached',
       'settings.getPublic',
       'settings.updatePublic',
       'skills.installPublicUrl',
@@ -265,6 +269,13 @@ describe('CLI surface V1', () => {
       expect.objectContaining({ method: 'cli.status', possibleEffects: ['read'] }),
       expect.objectContaining({ method: 'cli.version', possibleEffects: ['read'] }),
       expect.objectContaining({
+        method: 'events.subscribe',
+        possibleEffects: ['read'],
+        transport: 'stream',
+        callers: ['human', 'agent'],
+        scopes: ['runs:read']
+      }),
+      expect.objectContaining({
         method: 'images.generate',
         possibleEffects: ['compute'],
         transport: 'stream'
@@ -368,6 +379,24 @@ describe('CLI surface V1', () => {
         method: 'providers.updatePublic',
         possibleEffects: ['execution-config'],
         approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'runs.cancel',
+        possibleEffects: ['local-maintenance'],
+        callers: ['human', 'agent'],
+        scopes: ['runs:cancel']
+      }),
+      expect.objectContaining({
+        method: 'runs.get',
+        possibleEffects: ['read'],
+        callers: ['human', 'agent'],
+        scopes: ['runs:read']
+      }),
+      expect.objectContaining({
+        method: 'sessions.runDetached',
+        possibleEffects: ['compute'],
+        callers: ['human'],
+        scopes: ['sessions:run']
       }),
       expect.objectContaining({ method: 'settings.getPublic', possibleEffects: ['read'] }),
       expect.objectContaining({

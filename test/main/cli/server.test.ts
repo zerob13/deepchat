@@ -210,7 +210,11 @@ async function createTestServer(
   options: {
     resolveAgentToken?: (token: string) => AgentCliToken | null
     dispatchOutput?: (method: string) => unknown
-    streamOutput?: Readonly<{ events: readonly JsonValue[]; result: unknown }>
+    streamOutput?: Readonly<{
+      events: readonly JsonValue[]
+      contexts?: readonly (Readonly<{ runId?: string; cursor?: string }> | undefined)[]
+      result: unknown
+    }>
     surface?: ReadonlyMap<string, CliSurfaceEntry>
     dispatchUpload?: (
       method: string,
@@ -258,9 +262,15 @@ async function createTestServer(
             _caller: CliRouteCaller,
             _requestId: string,
             _signal: AbortSignal,
-            emit: (event: string, data: JsonValue) => Promise<void>
+            emit: (
+              event: string,
+              data: JsonValue,
+              context?: Readonly<{ runId?: string; cursor?: string }>
+            ) => Promise<void>
           ) => {
-            for (const event of options.streamOutput?.events ?? []) await emit(method, event)
+            for (const [index, event] of (options.streamOutput?.events ?? []).entries()) {
+              await emit(method, event, options.streamOutput?.contexts?.[index])
+            }
             return options.streamOutput?.result
           }
         }
@@ -625,6 +635,10 @@ describe('CLI local transport', () => {
           { type: 'text_delta', text: 'hello' },
           { type: 'stop', reason: 'complete' }
         ],
+        contexts: [
+          { runId: 'run-1', cursor: 'epoch-1:1' },
+          { runId: 'run-1', cursor: 'epoch-1:2' }
+        ],
         result: {
           providerId: 'provider-1',
           modelId: 'model-1',
@@ -635,7 +649,11 @@ describe('CLI local transport', () => {
         }
       }
     })
-    const events: JsonValue[] = []
+    const events: Array<{
+      data: JsonValue
+      runId?: string
+      cursor?: string
+    }> = []
 
     const result = await invokeLocalControlStream(
       {
@@ -650,12 +668,25 @@ describe('CLI local transport', () => {
         },
         signal: new AbortController().signal
       },
-      async (event) => events.push(event.data)
+      async (event) =>
+        events.push({
+          data: event.data,
+          ...(event.runId ? { runId: event.runId } : {}),
+          ...(event.cursor ? { cursor: event.cursor } : {})
+        })
     )
 
     expect(events).toEqual([
-      { type: 'text_delta', text: 'hello' },
-      { type: 'stop', reason: 'complete' }
+      {
+        data: { type: 'text_delta', text: 'hello' },
+        runId: 'run-1',
+        cursor: 'epoch-1:1'
+      },
+      {
+        data: { type: 'stop', reason: 'complete' },
+        runId: 'run-1',
+        cursor: 'epoch-1:2'
+      }
     ])
     expect(result).toMatchObject({ ok: true, result: { text: 'hello' } })
     expect(server.getStatus().pendingRequests).toBe(0)

@@ -140,6 +140,13 @@ import {
   workspaceWatchStatusChangedEvent
 } from './events/workspace.events'
 import { liveDelegationChangedEvent } from './events/orchestration.events'
+import {
+  runsCancelRequestedEvent,
+  runsCreatedEvent,
+  runsSnapshotEvent,
+  runsTurnAcceptedEvent,
+  runsTurnFailedEvent
+} from './events/runs.events'
 
 export * from './events/browser.events'
 export * from './events/computerUse.events'
@@ -160,6 +167,7 @@ export * from './events/notification.events'
 export * from './events/oauth.events'
 export * from './events/orchestration.events'
 export * from './events/providers.events'
+export * from './events/runs.events'
 export * from './events/settings.events'
 export * from './events/startup.events'
 export * from './events/sessions.events'
@@ -212,6 +220,11 @@ export const DEEPCHAT_EVENT_CATALOG = {
   [sessionsAcpModesReadyEvent.name]: sessionsAcpModesReadyEvent,
   [sessionsAcpCommandsReadyEvent.name]: sessionsAcpCommandsReadyEvent,
   [sessionsAcpConfigOptionsReadyEvent.name]: sessionsAcpConfigOptionsReadyEvent,
+  [runsCreatedEvent.name]: runsCreatedEvent,
+  [runsTurnAcceptedEvent.name]: runsTurnAcceptedEvent,
+  [runsTurnFailedEvent.name]: runsTurnFailedEvent,
+  [runsCancelRequestedEvent.name]: runsCancelRequestedEvent,
+  [runsSnapshotEvent.name]: runsSnapshotEvent,
   [configLanguageChangedEvent.name]: configLanguageChangedEvent,
   [configThemeChangedEvent.name]: configThemeChangedEvent,
   [configSystemThemeChangedEvent.name]: configSystemThemeChangedEvent,

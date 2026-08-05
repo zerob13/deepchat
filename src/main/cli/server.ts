@@ -73,7 +73,11 @@ const AgentCliTokenSchema = z
 
 export type AgentCliToken = z.infer<typeof AgentCliTokenSchema>
 
-export type CliStreamEmitter = (event: string, data: JsonValue) => Promise<void>
+export type CliStreamEmitter = (
+  event: string,
+  data: JsonValue,
+  context?: Readonly<{ runId?: string; cursor?: string }>
+) => Promise<void>
 
 export type CliUploadedInputFile = Readonly<{
   path: string
@@ -824,7 +828,7 @@ export class CliServer {
     response.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
     response.flushHeaders()
     let sequence = 0
-    const emit: CliStreamEmitter = async (event, data) => {
+    const emit: CliStreamEmitter = async (event, data, context) => {
       if (signal.aborted) throw requestAbortError(signal)
       const parsed = LocalControlEventEnvelopeSchema.safeParse({
         protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
@@ -832,6 +836,8 @@ export class CliServer {
         sequence,
         timestamp: this.now(),
         requestId,
+        ...(context?.runId ? { runId: context.runId } : {}),
+        ...(context?.cursor ? { cursor: context.cursor } : {}),
         event,
         data
       })

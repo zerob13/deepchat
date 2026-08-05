@@ -61,11 +61,7 @@ export class SessionEventRouter {
     }
 
     if (name === 'sessions.updated') {
-      this.publishSessionsUpdated(
-        sessionsUpdatedEvent.payload.parse(payload),
-        cliRunOwnership.map(({ sessionId }) => sessionId),
-        unknownSessionIds
-      )
+      this.publishSessionsUpdated(sessionsUpdatedEvent.payload.parse(payload), unknownSessionIds)
       return
     }
 
@@ -103,25 +99,16 @@ export class SessionEventRouter {
 
   private publishSessionsUpdated(
     payload: ReturnType<typeof sessionsUpdatedEvent.payload.parse>,
-    cliRunSessionIds: readonly string[],
     unknownSessionIds: readonly string[]
   ): void {
-    const cliRunIds = new Set(cliRunSessionIds)
     const unknownIds = new Set(unknownSessionIds)
-    const rendererSessionIds = payload.sessionIds.filter(
-      (sessionId) => !cliRunIds.has(sessionId) && !unknownIds.has(sessionId)
-    )
-    if (rendererSessionIds.length > 0) {
+    const knownSessionIds = payload.sessionIds.filter((sessionId) => !unknownIds.has(sessionId))
+    if (knownSessionIds.length > 0) {
       this.options.hub.publish(
         'sessions.updated',
-        { ...payload, sessionIds: rendererSessionIds },
+        { ...payload, sessionIds: knownSessionIds },
         { kind: 'renderer-all' }
       )
-    }
-    for (const sessionId of cliRunIds) {
-      this.publishToBoundRenderers('sessions.updated', { ...payload, sessionIds: [sessionId] }, [
-        sessionId
-      ])
     }
   }
 

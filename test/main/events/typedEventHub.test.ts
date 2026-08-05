@@ -169,7 +169,7 @@ describe('SessionEventRouter', () => {
     })
   })
 
-  it('filters CLI run IDs from mixed session-list notifications', () => {
+  it('keeps CLI runs discoverable without broadcasting their transcript content', () => {
     const { hub, broadcast, send } = createHub()
     const router = new SessionEventRouter({
       hub,
@@ -184,12 +184,9 @@ describe('SessionEventRouter', () => {
 
     expect(broadcast).toHaveBeenCalledWith({
       name: 'sessions.updated',
-      payload: { sessionIds: ['normal'], reason: 'updated' }
+      payload: { sessionIds: ['normal', 'cli-run'], reason: 'updated' }
     })
-    expect(send).toHaveBeenCalledWith(9, {
-      name: 'sessions.updated',
-      payload: { sessionIds: ['cli-run'], reason: 'updated' }
-    })
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('suppresses full transcript notifications from CLI event streams', async () => {

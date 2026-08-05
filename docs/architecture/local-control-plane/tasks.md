@@ -65,11 +65,11 @@
 
 ## Events and Agent Runs
 
-- [ ] Add explicit renderer/connection/request/run Event Hub targets.
-- [ ] Add bounded queues, ordering, overflow, disconnect, and recovery semantics.
-- [ ] Compose detached session creation with initial-turn execution.
-- [ ] Add owned status, event streaming, result recovery, and idempotent cancellation.
-- [ ] Add event-isolation, backpressure, detached-recovery, recursion-denial, and cancellation tests.
+- [x] Add explicit renderer/connection/request/run Event Hub targets.
+- [x] Add bounded queues, ordering, overflow, disconnect, and recovery semantics.
+- [x] Compose detached session creation with initial-turn execution.
+- [x] Add owned status, event streaming, result recovery, and idempotent cancellation.
+- [x] Add event-isolation, backpressure, detached-recovery, recursion-denial, and cancellation tests.
 
 ## Packaging and Agent Use
 

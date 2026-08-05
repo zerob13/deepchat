@@ -121,6 +121,12 @@ const LocalControlRequestIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9._:-]+$/)
 
+export const LocalControlEventCursorSchema = z
+  .string()
+  .min(3)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+:(?:0|[1-9][0-9]*)$/)
+
 export const LocalControlMethodSchema = z
   .string()
   .min(3)
@@ -206,6 +212,7 @@ export const LocalControlEventEnvelopeSchema = z
     timestamp: TimestampMsSchema,
     requestId: LocalControlRequestIdSchema.optional(),
     runId: z.string().min(1).max(128).optional(),
+    cursor: LocalControlEventCursorSchema.optional(),
     event: z.string().min(1).max(128),
     data: JsonValueSchema
   })

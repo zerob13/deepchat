@@ -434,6 +434,12 @@ import {
 import { startupGetBootstrapRoute } from './routes/startup.routes'
 import { performanceRecordRendererRoute } from './routes/performance.routes'
 import {
+  eventsSubscribeRoute,
+  runsCancelRoute,
+  runsGetRoute,
+  sessionsRunDetachedRoute
+} from './routes/runs.routes'
+import {
   sessionsActivateRoute,
   sessionsClearMessagesRoute,
   sessionsCompactRoute,
@@ -626,6 +632,7 @@ export * from './routes/plugins.routes'
 export * from './routes/performance.routes'
 export * from './routes/providers.routes'
 export * from './routes/project.routes'
+export * from './routes/runs.routes'
 export * from './routes/remote-control.routes'
 export * from './routes/cronJobs.routes'
 export * from './routes/settings.routes'
@@ -999,6 +1006,10 @@ const DEEPCHAT_ROUTE_CATALOG_PART_4 = {
 } satisfies Record<string, RouteContract>
 
 const DEEPCHAT_ROUTE_CATALOG_PART_5 = {
+  [sessionsRunDetachedRoute.name]: sessionsRunDetachedRoute,
+  [runsGetRoute.name]: runsGetRoute,
+  [runsCancelRoute.name]: runsCancelRoute,
+  [eventsSubscribeRoute.name]: eventsSubscribeRoute,
   [artifactsDescribeRoute.name]: artifactsDescribeRoute,
   [artifactsReadRoute.name]: artifactsReadRoute,
   [artifactsDeleteRoute.name]: artifactsDeleteRoute,

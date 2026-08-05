@@ -221,6 +221,7 @@ import {
   CliMutationGuard,
   CliOcrService,
   CliRequestPolicy,
+  CliRunService,
   CliServer,
   CliSkillService,
   createArtifactRoutes,
@@ -367,6 +368,7 @@ export async function createMainProcessControl(dependencies: {
   let cliSkillService: CliSkillService
   let cliMutationGuard: CliMutationGuard
   let cliRequestPolicy: CliRequestPolicy
+  let cliRunService: CliRunService
   let hasInitialized = false
   let databaseMaintenanceState: 'running' | 'maintenance' | 'failed' = 'running'
   let appLifecycleState: 'starting' | 'running' | 'stopping' | 'stopped' = 'starting'
@@ -434,6 +436,10 @@ export async function createMainProcessControl(dependencies: {
       return output
     },
     dispatchStream: async (method, input, caller, requestId, signal, emit) => {
+      if (cliRunService?.handlesStream(method)) {
+        assertRouteAllowedDuringDatabaseMaintenance(method)
+        return await cliRunService.dispatchStream(method, input, caller, signal, emit)
+      }
       if (!cliComputeService) throw new Error('CLI compute service is not ready')
       assertRouteAllowedDuringDatabaseMaintenance(method)
       return await cliComputeService.dispatchStream(method, input, caller, requestId, signal, emit)
@@ -1651,6 +1657,14 @@ export async function createMainProcessControl(dependencies: {
     permissions: sessionPermissionPort,
     agentLifecycle
   })
+  cliRunService = new CliRunService({
+    lifecycle: sessionLifecycle,
+    turn: sessionTurn,
+    projection: sessionQuery,
+    sessions: appSessionService,
+    eventHub: typedEventHub,
+    log: logger
+  })
   sessionHistorySearch = new SessionHistorySearch(sessionData.database, appSessionService)
   agentSessionExportService = new AgentSessionExportService({
     agentManager: agentManager,
@@ -2456,6 +2470,7 @@ export async function createMainProcessControl(dependencies: {
       },
       log: logger
     })
+    const cliRunRoutes = cliRunService.createRoutes()
     routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
@@ -2496,7 +2511,8 @@ export async function createMainProcessControl(dependencies: {
         cliComputeRoutes,
         cliProviderModelAdminRoutes,
         cliSkillRoutes,
-        cliMcpAdminRoutes
+        cliMcpAdminRoutes,
+        cliRunRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator
