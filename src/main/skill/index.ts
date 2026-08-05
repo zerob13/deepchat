@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import matter from 'gray-matter'
 import type { SkillSettingsPort } from './settings'
 import { extractSkillArchive } from './archive'
+import { downloadSkillArchive } from './archiveDownload'
 import {
   createWatcherRequestId,
   type IFileWatcherService,
@@ -2207,9 +2208,12 @@ export class SkillService implements SkillServicePort {
   ): Promise<SkillInstallResult> {
     const normalizedAgentId = await this.requireAgentScope(agentId)
     const finishOperation = this.beginAgentScopeOperation(normalizedAgentId)
-    const tempZipPath = path.join(app.getPath('temp'), `deepchat-skill-${Date.now()}.zip`)
+    const tempZipPath = path.join(app.getPath('temp'), `deepchat-skill-${randomUUID()}.zip`)
     try {
-      await this.downloadSkillZip(url, tempZipPath)
+      await downloadSkillArchive(url, tempZipPath, {
+        maxBytes: SKILL_CONFIG.ZIP_MAX_SIZE,
+        timeoutMs: SKILL_CONFIG.DOWNLOAD_TIMEOUT
+      })
       const result = await this.installFromZipForAgent(normalizedAgentId, tempZipPath, options)
       if (result.success && result.skillName) {
         this.updateSkillManagementItem(
@@ -3045,50 +3049,6 @@ export class SkillService implements SkillServicePort {
     }
 
     return null
-  }
-
-  private async downloadSkillZip(url: string, destPath: string): Promise<void> {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), SKILL_CONFIG.DOWNLOAD_TIMEOUT)
-
-    try {
-      const response = await fetch(url, { signal: controller.signal })
-      if (!response.ok) {
-        throw new Error(`Failed to download skill zip: ${response.status} ${response.statusText}`)
-      }
-
-      // Check Content-Length to prevent memory exhaustion
-      const contentLength = response.headers.get('content-length')
-      if (contentLength && parseInt(contentLength) > SKILL_CONFIG.ZIP_MAX_SIZE) {
-        throw new Error(
-          `File too large: ${contentLength} bytes (max: ${SKILL_CONFIG.ZIP_MAX_SIZE})`
-        )
-      }
-
-      // Validate Content-Type
-      const contentType = response.headers.get('content-type')
-      if (
-        contentType &&
-        !contentType.includes('application/zip') &&
-        !contentType.includes('application/octet-stream') &&
-        !contentType.includes('application/x-zip')
-      ) {
-        throw new Error(`Expected ZIP file but got: ${contentType}`)
-      }
-
-      const buffer = new Uint8Array(await response.arrayBuffer())
-
-      // Double-check actual size after download
-      if (buffer.length > SKILL_CONFIG.ZIP_MAX_SIZE) {
-        throw new Error(
-          `Downloaded file too large: ${buffer.length} bytes (max: ${SKILL_CONFIG.ZIP_MAX_SIZE})`
-        )
-      }
-
-      fs.writeFileSync(destPath, Buffer.from(buffer))
-    } finally {
-      clearTimeout(timeoutId)
-    }
   }
 
   private async cloneGitSkillRepo(repoUrl: string): Promise<string> {
