@@ -53,7 +53,8 @@
 5. Expose redacted provider/model reads and separated configuration/credential mutations.
 6. Expose reviewed Skill list/enable/install/uninstall adapters without arbitrary Agent paths.
 7. Expose reviewed MCP list/add/update/remove/enable/start/stop adapters without raw tool calls or
-   secret-bearing output.
+   secret-bearing output. Agent access is limited to redacted list and a bounded, fully reviewable,
+   disabled HTTPS remote add; updates remain human-only because they can restart a running server.
 8. Add policy-matrix, approval-state, redaction, compatibility, and administration tests.
 
 ## Stage D: Typed Events and Detached Agent Runs

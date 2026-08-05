@@ -5,7 +5,7 @@ import type { LocalControlEffect } from '@shared/contracts/localControl'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { CliRequestPolicy, type CliPolicyAuditRecord } from '@/cli/policy'
 import type { CliMutationGuard } from '@/cli/mutationGuard'
-import type { CliSurfaceEntry } from '@/cli/surface'
+import { getCliSurfaceEntry, type CliSurfaceEntry } from '@/cli/surface'
 
 const testRoute = defineRouteContract({
   name: 'settings.testMutation',
@@ -30,7 +30,11 @@ const agentCaller: CliRouteCaller = {
   scopes: ['settings:write']
 }
 
-function entry(effect: LocalControlEffect, approval: 'never' | 'policy' = 'never') {
+function entry(
+  effect: LocalControlEffect,
+  approval: 'never' | 'policy' = 'never',
+  agentPolicy?: CliSurfaceEntry['agentPolicy']
+) {
   return {
     contract: testRoute,
     effect,
@@ -38,6 +42,7 @@ function entry(effect: LocalControlEffect, approval: 'never' | 'policy' = 'never
     scopes: ['settings:write'],
     transport: 'rpc',
     approval,
+    ...(agentPolicy ? { agentPolicy } : {}),
     auditProjection: () => ({ target: 'safe-setting' }),
     ...(approval === 'policy' ? { approvalDisplay: () => ({ target: 'safe-setting' }) } : {}),
     limits: { maxBodyBytes: 1024, timeoutMs: 5_000 }
@@ -58,7 +63,6 @@ function createHarness(
   const policy = new CliRequestPolicy({
     mutationGuard,
     audit: options.audit ?? ((record) => auditRecords.push(record)),
-    agentApprovalOperations: options.allowlisted ? new Set([testRoute.name]) : new Set(),
     agentComputeLimit: options.agentComputeLimit,
     agentComputeStartsPerMinute: options.agentComputeStartsPerMinute
   })
@@ -68,7 +72,7 @@ function createHarness(
     approval: 'never' | 'policy' = 'never'
   ) =>
     policy.authorize({
-      entry: entry(effect, approval),
+      entry: entry(effect, approval, options.allowlisted ? 'approval' : undefined),
       input: { secret: 'must-not-appear-in-audit' },
       caller,
       requestId: 'request-1',
@@ -117,6 +121,22 @@ describe('CliRequestPolicy', () => {
     expect(harness.auditRecords.map((record) => record.outcome)).toEqual(['denied', 'denied'])
   })
 
+  it('allows only explicitly opted-in Agent maintenance operations', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.policy.authorize({
+        entry: entry('local-maintenance', 'never', 'allow'),
+        input: {},
+        caller: agentCaller,
+        requestId: 'request-agent-maintenance',
+        signal: new AbortController().signal
+      })
+    ).resolves.toBeDefined()
+    expect(harness.authorize).not.toHaveBeenCalled()
+    expect(harness.auditRecords.at(-1)?.outcome).toBe('allowed')
+  })
+
   it('requires an explicit operation allowlist before an agent may request approval', async () => {
     const denied = createHarness()
     await expect(denied.invoke('supply-chain', agentCaller, 'policy')).rejects.toMatchObject({
@@ -126,6 +146,103 @@ describe('CliRequestPolicy', () => {
     const allowed = createHarness({ allowlisted: true })
     await expect(allowed.invoke('supply-chain', agentCaller, 'policy')).resolves.toBeDefined()
     expect(allowed.authorize).toHaveBeenCalledOnce()
+    await expect(allowed.invoke('execution-config', agentCaller, 'policy')).rejects.toMatchObject({
+      code: 'permission_denied'
+    })
+    await expect(allowed.invoke('credential', agentCaller, 'policy')).rejects.toMatchObject({
+      code: 'permission_denied'
+    })
+    expect(allowed.authorize).toHaveBeenCalledOnce()
+  })
+
+  it('applies concrete Agent surface policies without widening denied effects', async () => {
+    const harness = createHarness()
+    const authorize = (input: {
+      entry: CliSurfaceEntry
+      params: unknown
+      caller: CliRouteCaller
+      requestId: string
+    }) =>
+      harness.policy.authorize({
+        entry: input.entry,
+        input: input.params,
+        caller: input.caller,
+        requestId: input.requestId,
+        signal: new AbortController().signal
+      })
+    const settingEntry = getCliSurfaceEntry('settings.updatePublic')!
+
+    await expect(
+      authorize({
+        entry: settingEntry,
+        params: { changes: [{ key: 'fontSizeLevel', value: 3 }] },
+        caller: agentCaller,
+        requestId: 'request-setting-preference'
+      })
+    ).resolves.toBeDefined()
+    await expect(
+      authorize({
+        entry: settingEntry,
+        params: { changes: [{ key: 'loggingEnabled', value: true }] },
+        caller: agentCaller,
+        requestId: 'request-setting-security'
+      })
+    ).rejects.toMatchObject({ code: 'permission_denied' })
+
+    const mcpCaller: CliRouteCaller = { ...agentCaller, scopes: ['mcp:write'] }
+    const mcpEntry = getCliSurfaceEntry('mcp.addPublic')!
+    await expect(
+      authorize({
+        entry: mcpEntry,
+        params: {
+          serverName: 'safe-server',
+          config: {
+            type: 'http',
+            description: '',
+            icon: '',
+            baseUrl: 'https://mcp.example/api',
+            headers: {}
+          }
+        },
+        caller: mcpCaller,
+        requestId: 'request-mcp-supply-chain'
+      })
+    ).resolves.toBeDefined()
+    await expect(
+      authorize({
+        entry: mcpEntry,
+        params: {
+          serverName: 'credential-server',
+          config: {
+            type: 'http',
+            baseUrl: 'https://mcp.example/api',
+            headers: { Authorization: 'Bearer secret' }
+          }
+        },
+        caller: mcpCaller,
+        requestId: 'request-mcp-credential'
+      })
+    ).rejects.toMatchObject({ code: 'permission_denied' })
+
+    await expect(
+      authorize({
+        entry: getCliSurfaceEntry('mcp.updatePublic')!,
+        params: { serverName: 'safe-server', updates: { description: 'renamed' } },
+        caller: mcpCaller,
+        requestId: 'request-mcp-update'
+      })
+    ).rejects.toMatchObject({ code: 'permission_denied' })
+
+    const runCaller: CliRouteCaller = { ...agentCaller, scopes: ['runs:cancel'] }
+    await expect(
+      authorize({
+        entry: getCliSurfaceEntry('runs.cancel')!,
+        params: { runId: 'conversation-1' },
+        caller: runCaller,
+        requestId: 'request-run-cancel'
+      })
+    ).resolves.toBeDefined()
+    expect(harness.authorize).toHaveBeenCalledTimes(2)
   })
 
   it('fails closed when an approval effect lacks approval surface metadata', async () => {

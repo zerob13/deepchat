@@ -16,7 +16,12 @@ import {
   type SettingsActivityInput
 } from '@shared/contracts/routes'
 import type { MCPServerConfig, McpServicePort } from '@shared/types/mcp'
-import { createRouteMap, type DeepchatRouteMap, type RouteCaller } from '@/routes/routeRegistry'
+import {
+  createRouteMap,
+  type CliRouteCaller,
+  type DeepchatRouteMap,
+  type RouteCaller
+} from '@/routes/routeRegistry'
 import { CliRequestError } from './errors'
 import { compareStableText, sanitizePublicText } from './publicText'
 
@@ -41,8 +46,19 @@ export type CliMcpAdminDependencies = Readonly<{
   log?: Pick<Console, 'warn'>
 }>
 
-function requireHumanCliCaller(caller: RouteCaller): void {
-  if (caller.kind !== 'cli' || caller.principal !== 'human') {
+function requireCliCaller(caller: RouteCaller): asserts caller is CliRouteCaller {
+  if (caller.kind !== 'cli') {
+    throw new CliRequestError('permission_denied', 'MCP administration requires a CLI caller', {
+      httpStatus: 403
+    })
+  }
+}
+
+function requireHumanCliCaller(
+  caller: RouteCaller
+): asserts caller is CliRouteCaller & { principal: 'human' } {
+  requireCliCaller(caller)
+  if (caller.principal !== 'human') {
     throw new CliRequestError(
       'permission_denied',
       'MCP administration requires a human CLI caller',
@@ -345,7 +361,7 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
     [
       mcpListPublicRoute.name,
       async (rawInput, context) => {
-        requireHumanCliCaller(context.caller)
+        requireCliCaller(context.caller)
         mcpListPublicRoute.input.parse(rawInput)
         const entries = Object.entries(await loadServers())
         const selected = entries
@@ -367,7 +383,7 @@ export function createCliMcpAdminRoutes(dependencies: CliMcpAdminDependencies): 
     [
       mcpAddPublicRoute.name,
       async (rawInput, context) => {
-        requireHumanCliCaller(context.caller)
+        requireCliCaller(context.caller)
         const input = mcpAddPublicRoute.input.parse(rawInput)
         let result: Awaited<ReturnType<PublicMcpPort['addMcpServer']>>
         try {

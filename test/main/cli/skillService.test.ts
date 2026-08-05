@@ -269,7 +269,7 @@ describe('CLI Skill service', () => {
     }
   })
 
-  it('rejects Skill mutations from Agent callers', async () => {
+  it('allows policy-authorized Agent URL installs but rejects upload and execution mutations', async () => {
     const harness = createHarness()
     const agentCaller: CliRouteCaller = {
       ...caller,
@@ -280,7 +280,18 @@ describe('CLI Skill service', () => {
     }
 
     await expect(
-      harness.invoke(skillsInstallPublicUrlRoute.name, {}, { caller: agentCaller })
+      harness.invoke(
+        skillsInstallPublicUrlRoute.name,
+        { url: 'https://skills.example/archive.zip' },
+        { caller: agentCaller }
+      )
+    ).resolves.toMatchObject({ name: 'installed-skill', installed: true })
+    await expect(
+      harness.invoke(
+        skillsSetPublicStatusRoute.name,
+        { name: 'safe-skill', enabled: false },
+        { caller: agentCaller }
+      )
     ).rejects.toMatchObject({ code: 'permission_denied' })
     await expect(
       harness.service.dispatchUpload(

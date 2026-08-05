@@ -50,7 +50,6 @@ export type CliRequestAdmission = Readonly<{
 export type CliRequestPolicyOptions = Readonly<{
   mutationGuard: CliMutationGuard
   audit(record: CliPolicyAuditRecord): void | Promise<void>
-  agentApprovalOperations?: ReadonlySet<string>
   agentComputeLimit?: number
   agentComputeStartsPerMinute?: number
   now?: () => number
@@ -61,8 +60,7 @@ type EffectDecision = 'allow' | 'deny' | 'approval'
 function resolveEffectDecision(
   effect: LocalControlEffect,
   caller: CliRouteCaller,
-  operation: string,
-  agentApprovalOperations: ReadonlySet<string>
+  agentPolicy: CliSurfaceEntry['agentPolicy']
 ): EffectDecision {
   if (caller.principal === 'human') {
     return effect === 'read' ||
@@ -74,9 +72,10 @@ function resolveEffectDecision(
   }
 
   if (effect === 'read' || effect === 'compute') return 'allow'
+  if (effect === 'local-maintenance' && agentPolicy === 'allow') return 'allow'
   if (
     (effect === 'preference-write' || effect === 'security-config' || effect === 'supply-chain') &&
-    agentApprovalOperations.has(operation)
+    agentPolicy === 'approval'
   ) {
     return 'approval'
   }
@@ -98,7 +97,6 @@ function auditProjection(entry: CliSurfaceEntry, input: unknown): JsonValue {
 
 export class CliRequestPolicy {
   private readonly now: () => number
-  private readonly agentApprovalOperations: ReadonlySet<string>
   private readonly agentComputeLimit: number
   private readonly agentComputeStartsPerMinute: number
   private readonly activeAgentCompute = new Map<string, number>()
@@ -107,7 +105,6 @@ export class CliRequestPolicy {
 
   constructor(private readonly options: CliRequestPolicyOptions) {
     this.now = options.now ?? Date.now
-    this.agentApprovalOperations = new Set(options.agentApprovalOperations ?? [])
     this.agentComputeLimit = positiveInteger(
       options.agentComputeLimit ?? DEFAULT_AGENT_COMPUTE_LIMIT,
       'agentComputeLimit'
@@ -177,12 +174,7 @@ export class CliRequestPolicy {
       })
     }
 
-    const effectDecision = resolveEffectDecision(
-      effect,
-      input.caller,
-      input.entry.contract.name,
-      this.agentApprovalOperations
-    )
+    const effectDecision = resolveEffectDecision(effect, input.caller, input.entry.agentPolicy)
     if (effectDecision === 'deny') {
       await audit('denied')
       throw new CliRequestError('permission_denied', 'Operation is denied for this caller', {
@@ -199,7 +191,7 @@ export class CliRequestPolicy {
       }
       let approvalRequestId: string
       try {
-        const routeDisplayData = input.entry.approvalDisplay(input.input)
+        const routeDisplayData = input.entry.approvalDisplay(input.input, input.caller)
         const approvalDisplayData =
           input.transportBinding !== undefined
             ? { request: routeDisplayData, transport: input.transportBinding }

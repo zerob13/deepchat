@@ -245,7 +245,7 @@ confirmation flag.
 | 7. Settings | `settings.getPublic`, `settings.updatePublic`; `deepchat settings …` | read or key-derived mutation | H; scoped A for allowlisted keys | policy by effect | redacted JSON |
 | 8. Provider/model administration | `providers.listPublic`, `providers.testPublicConnection`, `providers.addPublic`, `providers.updatePublic`, `providers.remove`, `providers.setCredential`, `models.listRuntime`, `models.setStatus`, `models.getPublicConfig`, `models.setPublicConfig`, `models.resetConfig`; `deepchat provider …`, `deepchat model config …` | read / execution-config / credential / destructive | H; A is read-only | policy for mutations | redacted JSON |
 | 9. Skills | `skills.listPublic`, `skills.setPublicStatus`, `skills.installPublicUrl`, `skills.installUpload`, `skills.uninstallPublic`; `deepchat skill …` | read / execution-config / supply-chain / destructive | H; scoped A may request allowlisted mutations | policy for mutations | JSON |
-| 10. MCP | `mcp.listPublic`, `mcp.addPublic`, `mcp.updatePublic`, `mcp.removePublic`, `mcp.setPublicStatus`, `mcp.startPublic`, `mcp.stopPublic`; `deepchat mcp …` | read / execution-config / security-config / supply-chain / credential / destructive | H; scoped A may request allowlisted non-credential mutations | policy for mutations | redacted JSON/events |
+| 10. MCP | `mcp.listPublic`, `mcp.addPublic`, `mcp.updatePublic`, `mcp.removePublic`, `mcp.setPublicStatus`, `mcp.startPublic`, `mcp.stopPublic`; `deepchat mcp …` | read / execution-config / security-config / supply-chain / credential / destructive | H; scoped A may list and request one reviewed disabled non-credential add | policy for mutations | redacted JSON/events |
 | 11. Runs, events, artifacts | `runs.get`, `runs.cancel`, `events.subscribe`, `artifacts.describe`, `artifacts.read`, `artifacts.delete`; `deepchat run …` | read / local-maintenance | H owns all; A may inspect/pass owned IDs but cannot read bytes, delete, or cancel unrelated work | never | JSONL or binary artifact for H; metadata for A |
 | 12. CLI diagnostics | `cli.status`, `cli.version`, `cli.capabilities`, `cli.doctor`; top-level commands | read | H, A | never | stable JSON/text |
 | 13. Benchmark automation | client-side stable modes over compute methods; `--json`, `--jsonl`, stdin, timeout, cancel | inherited | H, scoped A | inherited | reproducible result envelope |
@@ -330,6 +330,17 @@ Authorization is `approvalPolicy(effect, caller, operation)`, not `isWrite`.
 
 Per-invocation provider/model selection is compute input, not an execution-config mutation. Benchmark
 harnesses must use those per-call fields rather than changing global defaults.
+
+Agent Skill installation accepts only a query-free HTTPS URL with no embedded credentials or
+fragment. Human CLI may still use a signed URL; its query remains bound to the approval arguments but
+is represented only as `queryPresent` in display and audit projections.
+
+An Agent MCP add is limited to an unauthenticated HTTPS remote endpoint, always stores the server
+disabled, and requires a bounded, complete renderer view of its endpoint and public metadata. Agent
+input rejects stdio commands, headers, authorization bindings, non-HTTPS endpoints, and
+configurations larger than the approval UI can safely review. MCP update remains human-only because
+the current MCP service immediately restarts a running server after any update; treating it as a
+passive configuration mutation would hide an execution side effect.
 
 Every policy decision is audited with timestamp, caller kind, connection/conversation scope,
 operation, effect, outcome, request ID, and redacted argument hash. Tokens, secrets, raw prompts,

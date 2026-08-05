@@ -349,7 +349,7 @@ describe('CLI MCP administration routes', () => {
     ).rejects.toMatchObject({ code: 'invalid_request' })
   })
 
-  it('blocks plugin and in-memory mutations and rejects non-human callers', async () => {
+  it('allows policy-gated Agent adapters but keeps runtime and destructive mutations human-only', async () => {
     const harness = createHarness({
       plugin: stdioConfig({ ownerPluginId: 'plugin-1' }),
       builtin: stdioConfig({ type: 'inmemory', command: '', args: [], env: {} })
@@ -377,6 +377,26 @@ describe('CLI MCP administration routes', () => {
       conversationId: 'conversation-1',
       expiresAt: Date.now() + 60_000
     }
+    await expect(
+      harness.invoke(mcpListPublicRoute.name, {}, { caller: agentCaller })
+    ).resolves.toMatchObject({ truncated: false })
+    await expect(
+      harness.invoke(
+        mcpAddPublicRoute.name,
+        {
+          serverName: 'agent-server',
+          config: { type: 'http', baseUrl: 'https://mcp.example/agent' }
+        },
+        { caller: agentCaller }
+      )
+    ).resolves.toMatchObject({ server: { name: 'agent-server', enabled: false } })
+    await expect(
+      harness.invoke(
+        mcpUpdatePublicRoute.name,
+        { serverName: 'agent-server', updates: { command: 'pnpm' } },
+        { caller: agentCaller }
+      )
+    ).rejects.toMatchObject({ code: 'permission_denied' })
     await expect(
       harness.invoke(mcpRemovePublicRoute.name, { serverName: 'plugin' }, { caller: agentCaller })
     ).rejects.toMatchObject({ code: 'permission_denied' })

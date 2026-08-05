@@ -79,25 +79,23 @@ deepchat skill list --json
 deepchat mcp list --json
 ```
 
-Only perform a mutation when it directly satisfies the user's request. Supported examples include:
+Agent callers may request renderer approval for preference-only settings, query-free HTTPS Skill
+installation, and adding a new disabled HTTPS remote MCP configuration. Only perform one when it
+directly satisfies the user's request:
 
 ```text
 deepchat settings set --key <public-key> --value <json-scalar> --json
-deepchat model enable --provider <provider-id> --model <model-id> --json
-deepchat model disable --provider <provider-id> --model <model-id> --json
-deepchat skill enable --name <skill-name> --json
-deepchat skill disable --name <skill-name> --json
-deepchat skill remove --name <skill-name> --json
-deepchat mcp enable --name <server-name> --json
-deepchat mcp disable --name <server-name> --json
-deepchat mcp start --name <server-name> --json
-deepchat mcp stop --name <server-name> --json
-deepchat mcp remove --name <server-name> --json
+deepchat skill install --url <https-url> --json
+deepchat mcp add --name <server-name> --stdin --json
 ```
 
-Credential writes, local Skill archives, and MCP JSON installation require stdin or local-file input
-and are intentionally unavailable through Agent shell execution. Ask the user to complete those
-operations through the DeepChat UI or a human terminal.
+The Agent setting allowlist is limited to presentation preferences such as font size/family,
+artifact effects, auto-scroll, notifications, and copy-with-reasoning. Agent Skill URLs cannot carry
+credentials, query parameters, or fragments. The main process classifies MCP input before approval
+and rejects stdio commands, non-HTTPS endpoints, headers, authorization bindings, or configurations
+too large to review safely. Provider/model configuration, credential writes, local Skill archives,
+Skill enable/disable/removal, MCP update/runtime control/removal, and every destructive operation
+require the DeepChat UI or a human terminal.
 
 ## Benchmark discipline
 
@@ -105,7 +103,7 @@ operations through the DeepChat UI or a human terminal.
   benchmark.
 - Record structured output, exit status, wall time, and errors. Preserve failed samples.
 - For OCR, distinguish cache hit, cache miss with warm runtime, cold runtime after app restart, and
-  offline availability. `ocr clear-cache` warms resources before clearing, so the next extraction is
-  not a cold-runtime sample.
+  offline availability. `ocr clear-cache` initializes the resource graph but does not start the OCR
+  helper, so classify the next extraction from its reported pre-extraction runtime state.
 - Run samples sequentially unless the benchmark explicitly measures concurrency; Agent compute is
   rate-limited and bounded by the main process.

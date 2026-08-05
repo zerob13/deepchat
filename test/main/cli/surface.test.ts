@@ -7,6 +7,9 @@ import {
   resolveCliSurfaceEffect
 } from '@/cli/surface'
 
+const humanApprovalCaller = { principal: 'human' } as const
+const agentApprovalCaller = { principal: 'agent' } as const
+
 describe('CLI surface V1', () => {
   it('contains only explicit canonical route contracts', () => {
     const methods = Array.from(CLI_SURFACE_V1.keys()).sort()
@@ -75,6 +78,26 @@ describe('CLI surface V1', () => {
     expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
   })
 
+  it('keeps Agent mutation policy as an explicit operation opt-in', () => {
+    const policies = Array.from(CLI_SURFACE_V1, ([method, entry]) => ({ method, entry })).filter(
+      ({ entry }) => entry.agentPolicy !== undefined
+    )
+
+    expect(
+      policies
+        .filter(({ entry }) => entry.agentPolicy === 'approval')
+        .map(({ method }) => method)
+        .sort()
+    ).toEqual(['mcp.addPublic', 'settings.updatePublic', 'skills.installPublicUrl'])
+    expect(
+      policies.filter(({ entry }) => entry.agentPolicy === 'allow').map(({ method }) => method)
+    ).toEqual(['runs.cancel'])
+    for (const { entry } of policies) {
+      expect(entry.callers).toContain('agent')
+      if (entry.agentPolicy === 'approval') expect(entry.approval).toBe('policy')
+    }
+  })
+
   it('classifies public setting changes from their validated key', () => {
     const entry = getCliSurfaceEntry('settings.updatePublic')!
 
@@ -97,7 +120,10 @@ describe('CLI surface V1', () => {
       entry.agentInputAllowed?.({ changes: [{ key: 'privacyModeEnabled', value: true }] })
     ).toBe(false)
     expect(
-      entry.approvalDisplay?.({ changes: [{ key: 'privacyModeEnabled', value: true }] })
+      entry.approvalDisplay?.(
+        { changes: [{ key: 'privacyModeEnabled', value: true }] },
+        humanApprovalCaller
+      )
     ).toEqual({ changes: [{ key: 'privacyModeEnabled', value: true }] })
   })
 
@@ -115,12 +141,14 @@ describe('CLI surface V1', () => {
       action: 'set',
       kind: 'api-key'
     })
-    expect(entry.approvalDisplay?.(input)).toEqual({
+    expect(entry.approvalDisplay?.(input, humanApprovalCaller)).toEqual({
       providerId: 'provider-1',
       action: 'set',
       kind: 'api-key'
     })
-    expect(JSON.stringify(entry.approvalDisplay?.(input))).not.toContain('super-secret')
+    expect(JSON.stringify(entry.approvalDisplay?.(input, humanApprovalCaller))).not.toContain(
+      'super-secret'
+    )
   })
 
   it('shows safe mutation values in approvals while keeping audits structural', () => {
@@ -133,7 +161,9 @@ describe('CLI surface V1', () => {
       providerId: 'provider-1',
       fields: ['baseUrl', 'enabled']
     })
-    expect(providerEntry.approvalDisplay?.(providerInput)).toEqual(providerInput)
+    expect(providerEntry.approvalDisplay?.(providerInput, humanApprovalCaller)).toEqual(
+      providerInput
+    )
 
     const modelEntry = getCliSurfaceEntry('models.setPublicConfig')!
     const modelInput = {
@@ -141,7 +171,7 @@ describe('CLI surface V1', () => {
       modelId: 'model-1',
       config: { maxTokens: 4096, contextLength: 32768 }
     }
-    expect(modelEntry.approvalDisplay?.(modelInput)).toEqual(modelInput)
+    expect(modelEntry.approvalDisplay?.(modelInput, humanApprovalCaller)).toEqual(modelInput)
   })
 
   it('keeps signed Skill URL secrets out of approval and audit projections', () => {
@@ -152,7 +182,7 @@ describe('CLI surface V1', () => {
       overwrite: true
     }
 
-    expect(entry.approvalDisplay?.(input)).toEqual({
+    expect(entry.approvalDisplay?.(input, humanApprovalCaller)).toEqual({
       agentId: 'deepchat',
       overwrite: true,
       origin: 'https://skills.example',
@@ -160,6 +190,13 @@ describe('CLI surface V1', () => {
       queryPresent: true
     })
     expect(JSON.stringify(entry.auditProjection?.(input))).not.toContain('private-token')
+    expect(entry.agentInputAllowed?.(input)).toBe(false)
+    expect(
+      entry.agentInputAllowed?.({
+        ...input,
+        url: 'https://skills.example/archive.zip'
+      })
+    ).toBe(true)
     expect(getCliSurfaceEntry('skills.setPublicStatus')?.limits.timeoutMs).toBeGreaterThanOrEqual(
       2 * 60_000
     )
@@ -186,7 +223,7 @@ describe('CLI surface V1', () => {
       }
     }
 
-    const approval = entry.approvalDisplay?.(input)
+    const approval = entry.approvalDisplay?.(input, humanApprovalCaller)
     const audit = entry.auditProjection?.(input)
     const serialized = JSON.stringify({ approval, audit })
     expect(approval).toMatchObject({
@@ -217,6 +254,81 @@ describe('CLI surface V1', () => {
         config: { type: 'stdio', command: 'npx', environment: {} }
       })
     ).toBe('supply-chain')
+    expect(
+      resolveCliSurfaceEffect(entry, {
+        serverName: 'authorized-server',
+        config: {
+          type: 'http',
+          baseUrl: 'https://mcp.example/api',
+          headers: {},
+          authorization: { mode: 'interactive' }
+        }
+      })
+    ).toBe('security-config')
+  })
+
+  it('limits Agent MCP additions to disabled reviewable remote configurations', () => {
+    const entry = getCliSurfaceEntry('mcp.addPublic')!
+    const input = {
+      serverName: 'reviewable-server',
+      config: {
+        type: 'http',
+        description: 'Reviewable remote server',
+        icon: 'cloud',
+        baseUrl: 'https://mcp.example/api',
+        headers: {}
+      }
+    }
+
+    expect(entry.agentInputAllowed?.(input)).toBe(true)
+    expect(entry.approvalDisplay?.(input, agentApprovalCaller)).toMatchObject({
+      serverName: 'reviewable-server',
+      config: {
+        description: 'Reviewable remote server',
+        icon: 'cloud',
+        endpointUrl: 'https://mcp.example/api'
+      }
+    })
+    expect(entry.auditProjection?.(input)).not.toEqual(
+      expect.objectContaining({ command: expect.anything(), arguments: expect.anything() })
+    )
+
+    expect(
+      entry.agentInputAllowed?.({
+        ...input,
+        config: { ...input.config, headers: { Authorization: 'secret' } }
+      })
+    ).toBe(false)
+    expect(
+      entry.agentInputAllowed?.({
+        serverName: 'stdio-server',
+        config: {
+          type: 'stdio',
+          command: 'npx',
+          args: ['@example/mcp-server'],
+          environment: {},
+          inheritEnv: 'minimal'
+        }
+      })
+    ).toBe(false)
+    expect(
+      entry.agentInputAllowed?.({
+        serverName: 'authorized-server',
+        config: {
+          type: 'http',
+          baseUrl: 'https://mcp.example/api',
+          headers: {},
+          authorization: { mode: 'interactive' }
+        }
+      })
+    ).toBe(false)
+    expect(
+      entry.agentInputAllowed?.({
+        ...input,
+        config: { ...input.config, description: 'x'.repeat(16 * 1024) }
+      })
+    ).toBe(false)
+    expect(getCliSurfaceEntry('mcp.updatePublic')?.callers).toEqual(['human'])
   })
 
   it('gives every approval route enough server time for renderer confirmation', () => {
@@ -282,11 +394,15 @@ describe('CLI surface V1', () => {
       }),
       expect.objectContaining({
         method: 'mcp.addPublic',
-        possibleEffects: ['supply-chain', 'credential'],
-        callers: ['human'],
+        possibleEffects: ['security-config', 'supply-chain', 'credential'],
+        callers: ['human', 'agent'],
         approval: 'policy'
       }),
-      expect.objectContaining({ method: 'mcp.listPublic', possibleEffects: ['read'] }),
+      expect.objectContaining({
+        method: 'mcp.listPublic',
+        possibleEffects: ['read'],
+        callers: ['human', 'agent']
+      }),
       expect.objectContaining({
         method: 'mcp.removePublic',
         possibleEffects: ['destructive'],
@@ -310,6 +426,7 @@ describe('CLI surface V1', () => {
       expect.objectContaining({
         method: 'mcp.updatePublic',
         possibleEffects: ['execution-config', 'security-config', 'supply-chain', 'credential'],
+        callers: ['human'],
         approval: 'policy'
       }),
       expect.objectContaining({ method: 'models.getPublicConfig', possibleEffects: ['read'] }),
@@ -407,7 +524,7 @@ describe('CLI surface V1', () => {
       expect.objectContaining({
         method: 'skills.installPublicUrl',
         possibleEffects: ['supply-chain'],
-        callers: ['human'],
+        callers: ['human', 'agent'],
         approval: 'policy'
       }),
       expect.objectContaining({
@@ -417,7 +534,11 @@ describe('CLI surface V1', () => {
         transport: 'upload',
         approval: 'policy'
       }),
-      expect.objectContaining({ method: 'skills.listPublic', possibleEffects: ['read'] }),
+      expect.objectContaining({
+        method: 'skills.listPublic',
+        possibleEffects: ['read'],
+        callers: ['human', 'agent']
+      }),
       expect.objectContaining({
         method: 'skills.setPublicStatus',
         possibleEffects: ['execution-config'],

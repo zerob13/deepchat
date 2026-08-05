@@ -143,7 +143,7 @@ export class CliSkillService {
       [
         skillsInstallPublicUrlRoute.name,
         async (rawInput, context) => {
-          requireHumanCliCaller(context.caller)
+          requireCliCaller(context.caller)
           const input = skillsInstallPublicUrlRoute.input.parse(rawInput)
           await this.requireAgent(input.agentId)
           let result: SkillInstallResult

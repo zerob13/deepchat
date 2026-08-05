@@ -82,11 +82,18 @@ export type CliSurfaceEntry = Readonly<{
   scopes: readonly LocalControlScope[]
   transport: LocalControlTransport
   approval: LocalControlApprovalMode
+  // Agent mutations fail closed unless the operation explicitly opts into a narrow policy path.
+  agentPolicy?: 'allow' | 'approval'
   auditProjection?: (input: unknown) => JsonValue
-  approvalDisplay?: (input: unknown) => JsonValue
+  approvalDisplay?: (
+    input: unknown,
+    caller: Readonly<{ principal: LocalControlPrincipal }>
+  ) => JsonValue
   agentInputAllowed?: (input: unknown) => boolean
   limits: CliRouteLimits
 }>
+
+const AGENT_MCP_APPROVAL_MAX_REVIEW_BYTES = 16 * 1024
 
 const PREFERENCE_SETTING_KEYS = new Set([
   'fontSizeLevel',
@@ -218,17 +225,46 @@ function skillUrlDisplay(input: unknown): JsonValue {
   }
 }
 
-function mcpConfigProjection(input: unknown, field: 'config' | 'updates'): JsonValue {
+function agentSkillUrlInputAllowed(input: unknown): boolean {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const rawUrl = (input as Record<string, unknown>).url
+  if (typeof rawUrl !== 'string') return false
+  try {
+    const url = new URL(rawUrl)
+    return (
+      url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      !containsDirectionalControl(rawUrl)
+    )
+  } catch {
+    return false
+  }
+}
+
+function mcpConfigProjection(
+  input: unknown,
+  field: 'config' | 'updates',
+  includeReviewableValues = false
+): JsonValue {
   const config = jsonObjectField(input, field)
   const projection: Record<string, JsonValue> = {
     fields: Object.keys(config).sort()
   }
   if (typeof config.type === 'string') projection.type = config.type
   if (typeof config.description === 'string') {
-    const description = sanitizePublicText(config.description, 512)
-    projection.description = description.value
-    projection.descriptionTruncated = description.truncated
+    if (includeReviewableValues) {
+      projection.description = config.description
+      projection.descriptionTruncated = false
+    } else {
+      const description = sanitizePublicText(config.description, 512)
+      projection.description = description.value
+      projection.descriptionTruncated = description.truncated
+    }
   }
+  if (includeReviewableValues && typeof config.icon === 'string') projection.icon = config.icon
   if (typeof config.command === 'string') {
     const commandName = config.command.split(/[\\/]/).at(-1) ?? ''
     projection.commandName = sanitizePublicText(commandName, 256).value
@@ -241,7 +277,10 @@ function mcpConfigProjection(input: unknown, field: 'config' | 'updates'): JsonV
   if (config.headers && typeof config.headers === 'object') {
     projection.headers = mcpKeySummary(config.headers)
   }
-  if (typeof config.baseUrl === 'string') projection.endpoint = mcpUrlSummary(config.baseUrl)
+  if (typeof config.baseUrl === 'string') {
+    projection.endpoint = mcpUrlSummary(config.baseUrl)
+    if (includeReviewableValues) projection.endpointUrl = config.baseUrl
+  }
   if (typeof config.customNpmRegistry === 'string') {
     projection.npmRegistry = mcpUrlSummary(config.customNpmRegistry)
   } else if (config.customNpmRegistry === null) {
@@ -256,6 +295,49 @@ function mcpConfigProjection(input: unknown, field: 'config' | 'updates'): JsonV
     ...selectAuditFields(input, ['serverName']),
     [field]: projection
   }
+}
+
+function containsDirectionalControl(value: string): boolean {
+  return /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value)
+}
+
+function agentMcpAddInputAllowed(input: unknown): boolean {
+  const config = jsonObjectField(input, 'config')
+  const headers = jsonObjectField(config, 'headers')
+  if (
+    (config.type !== 'sse' && config.type !== 'http') ||
+    Object.keys(headers).length > 0 ||
+    config.authorization !== undefined ||
+    typeof config.baseUrl !== 'string'
+  ) {
+    return false
+  }
+
+  let endpoint: URL
+  try {
+    endpoint = new URL(config.baseUrl)
+  } catch {
+    return false
+  }
+  if (
+    endpoint.protocol !== 'https:' ||
+    [config.baseUrl, config.description, config.icon].some(
+      (value) => typeof value === 'string' && containsDirectionalControl(value)
+    )
+  ) {
+    return false
+  }
+
+  const reviewableValues: JsonValue = {
+    type: config.type,
+    description: config.description ?? '',
+    icon: config.icon ?? '',
+    endpointUrl: config.baseUrl
+  }
+  return (
+    Buffer.byteLength(JSON.stringify(reviewableValues), 'utf8') <=
+    AGENT_MCP_APPROVAL_MAX_REVIEW_BYTES
+  )
 }
 
 function mcpConfigAudit(input: unknown, field: 'config' | 'updates'): JsonValue {
@@ -487,6 +569,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['runs:cancel'],
     transport: 'rpc',
     approval: 'never',
+    agentPolicy: 'allow',
     auditProjection: (input) => selectAuditFields(input, ['runId']),
     limits: RUN_CONTROL_LIMITS
   },
@@ -663,6 +746,7 @@ const CLI_SURFACE_V1_ENTRIES = [
     scopes: ['settings:write'],
     transport: 'rpc',
     approval: 'policy',
+    agentPolicy: 'approval',
     auditProjection: (input) => ({ keys: settingChangeKeys(input) }),
     approvalDisplay: (input) => ({ changes: settingChangesForDisplay(input) }),
     agentInputAllowed: (input) =>
@@ -672,7 +756,7 @@ const CLI_SURFACE_V1_ENTRIES = [
   {
     contract: skillsListPublicRoute,
     effect: 'read',
-    callers: ['human'],
+    callers: ['human', 'agent'],
     scopes: ['skills:read'],
     transport: 'rpc',
     approval: 'never',
@@ -682,12 +766,14 @@ const CLI_SURFACE_V1_ENTRIES = [
   {
     contract: skillsInstallPublicUrlRoute,
     effect: 'supply-chain',
-    callers: ['human'],
+    callers: ['human', 'agent'],
     scopes: ['skills:write'],
     transport: 'rpc',
     approval: 'policy',
+    agentPolicy: 'approval',
     auditProjection: skillUrlDisplay,
     approvalDisplay: skillUrlDisplay,
+    agentInputAllowed: agentSkillUrlInputAllowed,
     limits: { maxBodyBytes: 16 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
   },
   {
@@ -729,7 +815,7 @@ const CLI_SURFACE_V1_ENTRIES = [
   {
     contract: mcpListPublicRoute,
     effect: 'read',
-    callers: ['human'],
+    callers: ['human', 'agent'],
     scopes: ['mcp:read'],
     transport: 'rpc',
     approval: 'never',
@@ -739,25 +825,29 @@ const CLI_SURFACE_V1_ENTRIES = [
   {
     contract: mcpAddPublicRoute,
     effect: {
-      possible: ['supply-chain', 'credential'],
+      possible: ['security-config', 'supply-chain', 'credential'],
       resolve: (input) => {
         const config = jsonObjectField(input, 'config')
         const environment = config.environment
         const headers = config.headers
-        return (environment &&
-          typeof environment === 'object' &&
-          Object.keys(environment).length > 0) ||
+        if (
+          (environment && typeof environment === 'object' && Object.keys(environment).length > 0) ||
           (headers && typeof headers === 'object' && Object.keys(headers).length > 0)
-          ? 'credential'
-          : 'supply-chain'
+        ) {
+          return 'credential'
+        }
+        return config.authorization !== undefined ? 'security-config' : 'supply-chain'
       }
     },
-    callers: ['human'],
+    callers: ['human', 'agent'],
     scopes: ['mcp:write'],
     transport: 'rpc',
     approval: 'policy',
+    agentPolicy: 'approval',
     auditProjection: (input) => mcpConfigAudit(input, 'config'),
-    approvalDisplay: (input) => mcpConfigProjection(input, 'config'),
+    approvalDisplay: (input, caller) =>
+      mcpConfigProjection(input, 'config', caller.principal === 'agent'),
+    agentInputAllowed: agentMcpAddInputAllowed,
     limits: {
       maxBodyBytes: PUBLIC_MCP_CONFIG_MAX_BYTES + 64 * 1024,
       timeoutMs: 5 * 60_000
@@ -879,6 +969,26 @@ function createSurfaceRegistry(
   for (const entry of entries) {
     if (registry.has(entry.contract.name)) {
       throw new Error(`Duplicate CLI surface method: ${entry.contract.name}`)
+    }
+    if (entry.agentPolicy && !entry.callers.includes('agent')) {
+      throw new Error(`Invalid Agent policy surface: ${entry.contract.name}`)
+    }
+    const effects = listCliSurfaceEffects(entry)
+    if (entry.agentPolicy === 'allow' && effects.some((effect) => effect !== 'local-maintenance')) {
+      throw new Error(`Invalid Agent allow surface: ${entry.contract.name}`)
+    }
+    if (
+      entry.agentPolicy === 'approval' &&
+      (entry.approval !== 'policy' ||
+        entry.approvalDisplay === undefined ||
+        !effects.some(
+          (effect) =>
+            effect === 'preference-write' ||
+            effect === 'security-config' ||
+            effect === 'supply-chain'
+        ))
+    ) {
+      throw new Error(`Invalid Agent approval surface: ${entry.contract.name}`)
     }
     registry.set(entry.contract.name, entry)
   }
