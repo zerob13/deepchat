@@ -222,6 +222,7 @@ import {
   CliOcrService,
   CliRequestPolicy,
   CliServer,
+  CliSkillService,
   createArtifactRoutes,
   createCliComputeRoutes,
   createCliProviderModelAdminRoutes,
@@ -360,6 +361,7 @@ export async function createMainProcessControl(dependencies: {
   let cliComputeService: CliComputeService
   let cliAudioTranscriptionService: CliAudioTranscriptionService
   let cliOcrService: CliOcrService
+  let cliSkillService: CliSkillService
   let cliMutationGuard: CliMutationGuard
   let cliRequestPolicy: CliRequestPolicy
   let hasInitialized = false
@@ -425,6 +427,9 @@ export async function createMainProcessControl(dependencies: {
       }
       if (cliOcrService?.handlesUpload(method)) {
         return await cliOcrService.dispatchUpload(method, input, upload, caller, signal)
+      }
+      if (cliSkillService?.handlesUpload(method)) {
+        return await cliSkillService.dispatchUpload(method, input, upload, caller, signal)
       }
       throw new Error(`CLI upload service is not ready for ${method}`)
     },
@@ -998,6 +1003,16 @@ export async function createMainProcessControl(dependencies: {
         }))
     }
   )
+  cliSkillService = new CliSkillService({
+    skills: skillService,
+    agentExists: async (agentId) => (await agentSettings.getAgent(agentId))?.type === 'deepchat',
+    recordSettingsActivity: (input) => {
+      void settingsDatabase.recordSettingsActivity(input).catch((error) => {
+        console.warn('[SettingsActivity] Failed to record CLI Skill activity:', error)
+      })
+    },
+    log: logger
+  })
 
   const agentInvocationAdmission = new AgentInvocationAdmission()
   const agentToolDependencies: AgentToolDependencies = {
@@ -2395,6 +2410,7 @@ export async function createMainProcessControl(dependencies: {
         })
       }
     })
+    const cliSkillRoutes = cliSkillService.createRoutes()
     routeDispatcher = createRouteDispatcher({
       appDatabaseMaintenance: {
         assertRouteAllowed: (routeName) => assertRouteAllowedDuringDatabaseMaintenance(routeName)
@@ -2433,7 +2449,8 @@ export async function createMainProcessControl(dependencies: {
         cliRoutes,
         artifactRoutes,
         cliComputeRoutes,
-        cliProviderModelAdminRoutes
+        cliProviderModelAdminRoutes,
+        cliSkillRoutes
       ],
       settingsWindow: windowPresenter,
       startupWorkloadCoordinator

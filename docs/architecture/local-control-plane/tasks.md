@@ -58,7 +58,7 @@
 
 - [x] Add public/redacted settings reads and allowlisted per-effect updates.
 - [x] Add public/redacted provider/model reads and separated credential mutations.
-- [ ] Add reviewed Skill list/enable/install/uninstall operations.
+- [x] Add reviewed Skill list/enable/install/uninstall operations.
 - [ ] Add reviewed MCP list/add/update/remove/enable/start/stop operations.
 - [ ] Prove raw MCP calls, arbitrary internal routes, secret reads, and Agent destructive operations are
   unreachable.

@@ -43,7 +43,8 @@ import {
   SkillScriptDescriptor,
   SkillScriptRuntime,
   SkillViewResult,
-  SkillLinkedFile
+  SkillLinkedFile,
+  SKILL_ARCHIVE_MAX_INPUT_BYTES
 } from '@shared/types/skill'
 import type {
   AgentSkillManagementState,
@@ -75,7 +76,7 @@ export const SKILL_CONFIG = {
   SKILL_FILE_MAX_SIZE: 5 * 1024 * 1024, // 5MB
 
   /** Maximum compressed ZIP input size (bytes) */
-  ZIP_MAX_SIZE: 200 * 1024 * 1024, // 200MB
+  ZIP_MAX_SIZE: SKILL_ARCHIVE_MAX_INPUT_BYTES,
 
   /** Download timeout (milliseconds) - prevents hanging connections */
   DOWNLOAD_TIMEOUT: 30 * 1000, // 30 seconds

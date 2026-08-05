@@ -32,9 +32,15 @@ import {
   speechGenerateRoute,
   settingsGetPublicRoute,
   settingsUpdatePublicRoute,
+  skillsInstallPublicUrlRoute,
+  skillsInstallUploadRoute,
+  skillsListPublicRoute,
+  skillsSetPublicStatusRoute,
+  skillsUninstallPublicRoute,
   videosGenerateRoute,
   type CliCapability
 } from '@shared/contracts/routes'
+import { SKILL_ARCHIVE_MAX_INPUT_BYTES } from '@shared/types/skill'
 import {
   LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS,
   type LocalControlEffect,
@@ -181,9 +187,32 @@ function selectAuditFields(input: unknown, fields: readonly string[]): Record<st
   return selected
 }
 
+function skillUrlDisplay(input: unknown): JsonValue {
+  const selected = selectAuditFields(input, ['agentId', 'overwrite'])
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return selected
+  const rawUrl = (input as Record<string, unknown>).url
+  if (typeof rawUrl !== 'string') return selected
+  try {
+    const url = new URL(rawUrl)
+    return {
+      ...selected,
+      origin: url.origin,
+      path: url.pathname,
+      queryPresent: url.search.length > 0
+    }
+  } catch {
+    return selected
+  }
+}
+
 const DIAGNOSTIC_LIMITS = {
   maxBodyBytes: 16 * 1024,
   timeoutMs: 5_000
+} as const satisfies CliRouteLimits
+
+const APPROVED_MUTATION_LIMITS = {
+  maxBodyBytes: 16 * 1024,
+  timeoutMs: 5 * 60_000
 } as const satisfies CliRouteLimits
 
 const diagnosticEntry = (contract: RouteContract): CliSurfaceEntry => ({
@@ -479,6 +508,63 @@ const CLI_SURFACE_V1_ENTRIES = [
     agentInputAllowed: (input) =>
       settingChangeKeys(input).every((key) => PREFERENCE_SETTING_KEYS.has(key)),
     limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: skillsListPublicRoute,
+    effect: 'read',
+    callers: ['human'],
+    scopes: ['skills:read'],
+    transport: 'rpc',
+    approval: 'never',
+    auditProjection: (input) => selectAuditFields(input, ['agentId']),
+    limits: DIAGNOSTIC_LIMITS
+  },
+  {
+    contract: skillsInstallPublicUrlRoute,
+    effect: 'supply-chain',
+    callers: ['human'],
+    scopes: ['skills:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: skillUrlDisplay,
+    approvalDisplay: skillUrlDisplay,
+    limits: { maxBodyBytes: 16 * 1024, timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS }
+  },
+  {
+    contract: skillsInstallUploadRoute,
+    effect: 'supply-chain',
+    callers: ['human'],
+    scopes: ['skills:write'],
+    transport: 'upload',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['agentId', 'filename', 'overwrite']),
+    approvalDisplay: (input) => selectAuditFields(input, ['agentId', 'filename', 'overwrite']),
+    limits: {
+      maxBodyBytes: SKILL_ARCHIVE_MAX_INPUT_BYTES,
+      timeoutMs: LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS
+    }
+  },
+  {
+    contract: skillsSetPublicStatusRoute,
+    effect: 'execution-config',
+    callers: ['human'],
+    scopes: ['skills:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['agentId', 'name', 'enabled']),
+    approvalDisplay: (input) => selectAuditFields(input, ['agentId', 'name', 'enabled']),
+    limits: APPROVED_MUTATION_LIMITS
+  },
+  {
+    contract: skillsUninstallPublicRoute,
+    effect: 'destructive',
+    callers: ['human'],
+    scopes: ['skills:write'],
+    transport: 'rpc',
+    approval: 'policy',
+    auditProjection: (input) => selectAuditFields(input, ['agentId', 'name']),
+    approvalDisplay: (input) => selectAuditFields(input, ['agentId', 'name']),
+    limits: APPROVED_MUTATION_LIMITS
   },
   {
     contract: artifactsDescribeRoute,

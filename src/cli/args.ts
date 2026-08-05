@@ -47,12 +47,20 @@ import {
   settingsGetPublicRoute,
   settingsUpdatePublicRoute
 } from '@shared/contracts/routes/settings.routes'
+import {
+  skillsInstallPublicUrlRoute,
+  skillsInstallUploadRoute,
+  skillsListPublicRoute,
+  skillsSetPublicStatusRoute,
+  skillsUninstallPublicRoute
+} from '@shared/contracts/routes/skills.routes'
 import { JsonValueSchema, type JsonValue } from '@shared/contracts/json'
 import { LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS } from '@shared/contracts/localControl'
 import {
   ATTACHMENT_PDF_OCR_MAX_TOKENS,
   PDF_PAGE_COUNT_SANITY_LIMIT
 } from '@shared/types/attachment'
+import { SKILL_ARCHIVE_MAX_INPUT_BYTES } from '@shared/types/skill'
 import path from 'node:path'
 import { CliUsageError } from './errors'
 
@@ -94,6 +102,11 @@ export type CliRpcContract =
   | typeof modelsResetConfigRoute
   | typeof settingsGetPublicRoute
   | typeof settingsUpdatePublicRoute
+  | typeof skillsListPublicRoute
+  | typeof skillsInstallPublicUrlRoute
+  | typeof skillsInstallUploadRoute
+  | typeof skillsSetPublicStatusRoute
+  | typeof skillsUninstallPublicRoute
 
 export type CliCommandOperation = 'rpc' | 'stream' | 'upload' | 'download'
 
@@ -143,7 +156,12 @@ const COMMANDS = new Map<string, CliRpcContract>([
   ['model config-set', modelsSetPublicConfigRoute],
   ['model config-reset', modelsResetConfigRoute],
   ['settings get', settingsGetPublicRoute],
-  ['settings set', settingsUpdatePublicRoute]
+  ['settings set', settingsUpdatePublicRoute],
+  ['skill list', skillsListPublicRoute],
+  ['skill install', skillsInstallPublicUrlRoute],
+  ['skill enable', skillsSetPublicStatusRoute],
+  ['skill disable', skillsSetPublicStatusRoute],
+  ['skill remove', skillsUninstallPublicRoute]
 ])
 
 function parseBoolean(value: string, source: string): boolean {
@@ -238,6 +256,8 @@ const VALUE_DOMAIN_OPTIONS: Readonly<Record<string, DomainValueParser>> = {
   voice: stringOption,
   speed: (value) => parseNumberInRange(value, '--speed', 0.25, 4),
   instructions: stringOption,
+  agent: stringOption,
+  url: stringOption,
   name: stringOption,
   'api-type': stringOption,
   'base-url': stringOption,
@@ -312,7 +332,12 @@ const COMMAND_DOMAIN_OPTIONS = new Map<string, ReadonlySet<string>>([
   ['model config-set', new Set(['provider', 'model', 'stdin'])],
   ['model config-reset', new Set(['provider', 'model'])],
   ['settings get', new Set(['keys'])],
-  ['settings set', new Set(['key', 'value'])]
+  ['settings set', new Set(['key', 'value'])],
+  ['skill list', new Set(['agent'])],
+  ['skill install', new Set(['agent', 'file', 'url', 'overwrite'])],
+  ['skill enable', new Set(['agent', 'name'])],
+  ['skill disable', new Set(['agent', 'name'])],
+  ['skill remove', new Set(['agent', 'name'])]
 ])
 
 const AUDIO_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
@@ -412,7 +437,8 @@ export function parseCliArguments(
         commandKey === 'audio speak' ||
         commandKey === 'audio transcribe' ||
         commandKey === 'ocr extract' ||
-        commandKey === 'ocr clear-cache'
+        commandKey === 'ocr clear-cache' ||
+        commandKey === 'skill install'
       ? DEFAULT_COMPUTE_TIMEOUT_MS
       : DEFAULT_CLI_TIMEOUT_MS
   let timeoutSeen = false
@@ -545,20 +571,27 @@ export function parseCliArguments(
   const providerApiType = getString('api-type')
   const providerBaseUrl = getString('base-url')
   const providerEnabled = getBoolean('enabled')
+  const skillAgentId = getString('agent')
+  const skillUrl = getString('url')
+  const skillName = getString('name')
   const parsedSettingKeys = settingKeys
     ?.split(',')
     .map((key) => key.trim())
     .filter(Boolean)
 
   const isArtifactCommand = domain === 'artifact'
+  const isSkillInstall = commandKey === 'skill install'
   if (!helpRequested && isArtifactCommand && !artifactId) {
     throw new CliUsageError(`deepchat ${domain} ${verb} requires --id <artifact-id>`)
   }
   if (!helpRequested && commandKey === 'artifact get' && !outputPath) {
     throw new CliUsageError('deepchat artifact get requires --out <path>')
   }
-  if (!isArtifactCommand && (artifactId !== undefined || outputPath !== undefined || overwrite)) {
+  if (!isArtifactCommand && (artifactId !== undefined || outputPath !== undefined)) {
     throw new CliUsageError(`Artifact options are not valid for deepchat ${domain} ${verb}`)
+  }
+  if (overwrite && commandKey !== 'artifact get' && !isSkillInstall) {
+    throw new CliUsageError(`--overwrite is not valid for deepchat ${domain} ${verb}`)
   }
   if (
     isArtifactCommand &&
@@ -589,6 +622,9 @@ export function parseCliArguments(
   const isModelConfigReset = commandKey === 'model config-reset'
   const isSettingsGet = commandKey === 'settings get'
   const isSettingsSet = commandKey === 'settings set'
+  const isSkillList = commandKey === 'skill list'
+  const isSkillStatus = commandKey === 'skill enable' || commandKey === 'skill disable'
+  const isSkillRemove = commandKey === 'skill remove'
   const allowedDomainOptions = COMMAND_DOMAIN_OPTIONS.get(commandKey) ?? new Set<string>()
   const invalidDomainOption = Array.from(domainOptions).find(
     (option) => !allowedDomainOptions.has(option)
@@ -682,6 +718,12 @@ export function parseCliArguments(
   if (!helpRequested && isModelConfigSet && !readStdin) {
     throw new CliUsageError('deepchat model config-set requires --stdin')
   }
+  if (!helpRequested && isSkillInstall && (inputPath !== undefined) === (skillUrl !== undefined)) {
+    throw new CliUsageError('deepchat skill install requires exactly one of --file or --url')
+  }
+  if (!helpRequested && (isSkillStatus || isSkillRemove) && !skillName) {
+    throw new CliUsageError(`deepchat skill ${verb} requires --name`)
+  }
 
   let params: JsonValue = artifactId ? { id: artifactId } : {}
   if (isProviderList) params = { enabledOnly }
@@ -726,6 +768,34 @@ export function parseCliArguments(
   }
   if (isSettingsSet && settingKey && domainOptions.has('value')) {
     params = { changes: [{ key: settingKey, value: settingValue ?? null }] }
+  }
+  if (isSkillList) params = skillAgentId ? { agentId: skillAgentId } : {}
+  if (isSkillInstall) {
+    if (inputPath) {
+      contract = skillsInstallUploadRoute
+      params = {
+        ...(skillAgentId ? { agentId: skillAgentId } : {}),
+        filename: path.basename(inputPath),
+        overwrite
+      }
+    } else if (skillUrl) {
+      contract = skillsInstallPublicUrlRoute
+      params = {
+        ...(skillAgentId ? { agentId: skillAgentId } : {}),
+        url: skillUrl,
+        overwrite
+      }
+    }
+  }
+  if (isSkillStatus && skillName) {
+    params = {
+      ...(skillAgentId ? { agentId: skillAgentId } : {}),
+      name: skillName,
+      enabled: commandKey === 'skill enable'
+    }
+  }
+  if (isSkillRemove && skillName) {
+    params = { ...(skillAgentId ? { agentId: skillAgentId } : {}), name: skillName }
   }
   if (isModelInvoke && providerId && modelId) {
     params = {
@@ -835,7 +905,7 @@ export function parseCliArguments(
     operation:
       commandKey === 'artifact get'
         ? 'download'
-        : inputPath && (isAudioTranscribe || isOcrExtract)
+        : inputPath && (isAudioTranscribe || isOcrExtract || isSkillInstall)
           ? 'upload'
           : isModelInvoke || isMediaGenerate
             ? 'stream'
@@ -846,6 +916,7 @@ export function parseCliArguments(
       ? { uploadMaxBytes: AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES }
       : {}),
     ...(isOcrExtract && inputPath ? { uploadMaxBytes: OCR_EXTRACTION_MAX_INPUT_BYTES } : {}),
+    ...(isSkillInstall && inputPath ? { uploadMaxBytes: SKILL_ARCHIVE_MAX_INPUT_BYTES } : {}),
     ...(outputPath ? { outputPath } : {}),
     overwrite,
     readStdin
@@ -887,7 +958,13 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
                         ? ' [--keys <key,key>]'
                         : command.domain === 'settings'
                           ? ' --key <key> --value <json-scalar>'
-                          : ''
+                          : command.domain === 'skill'
+                            ? command.verb === 'list'
+                              ? ' [--agent <id>]'
+                              : command.verb === 'install'
+                                ? ' (--file <archive>|--url <https-url>) [--agent <id>] [--overwrite]'
+                                : ' --name <name> [--agent <id>]'
+                            : ''
     const commandKey = `${command.domain} ${command.verb}`
     const optionLines =
       commandKey === 'model invoke'
@@ -974,6 +1051,11 @@ export function formatCliHelp(command?: Pick<ParsedCliArguments, 'domain' | 'ver
     '  model config-reset   Reset user model configuration',
     '  settings get         Read allowlisted public settings',
     '  settings set         Update one allowlisted public setting',
+    '  skill list           List redacted Skills for one Agent',
+    '  skill install        Install a Skill from a ZIP file or HTTPS URL',
+    '  skill enable         Enable one Skill',
+    '  skill disable        Disable one Skill',
+    '  skill remove         Remove one mutable Skill',
     '  help commands        Show this help',
     '',
     'Options (after domain and verb):',

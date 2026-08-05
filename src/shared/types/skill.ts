@@ -12,6 +12,8 @@ import type {
   UnifiedSkillItem
 } from './skillManagement'
 
+export const SKILL_ARCHIVE_MAX_INPUT_BYTES = 200 * 1024 * 1024
+
 /**
  * Skill metadata extracted from SKILL.md frontmatter.
  * Always kept in memory for quick access and semantic matching.

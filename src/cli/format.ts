@@ -137,6 +137,29 @@ export function formatHumanResult(
         .map((key) => `${key} = ${JSON.stringify(result.values[key])}`)
         .join('\n')
     }
+    case 'skills.listPublic': {
+      const result = contract.output.parse(value)
+      return [
+        ...result.skills.map(
+          (skill) =>
+            `${skill.name}  ${skill.enabled ? 'enabled' : 'disabled'}  ${skill.managedBy}  ${skill.sourceType}${skill.metadataTruncated ? '  metadata-truncated' : ''}  ${skill.description}`
+        ),
+        ...(result.truncated ? ['Skill list truncated; use --agent to narrow the scope'] : [])
+      ].join('\n')
+    }
+    case 'skills.installPublicUrl':
+    case 'skills.installUpload': {
+      const result = contract.output.parse(value)
+      return `${result.name} installed for ${result.agentId}`
+    }
+    case 'skills.setPublicStatus': {
+      const result = contract.output.parse(value)
+      return `${result.name} ${result.enabled ? 'enabled' : 'disabled'} for ${result.agentId}`
+    }
+    case 'skills.uninstallPublic': {
+      const result = contract.output.parse(value)
+      return `${result.name} removed from ${result.agentId}`
+    }
     case 'models.invoke': {
       return contract.output.parse(value).text
     }

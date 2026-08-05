@@ -564,4 +564,64 @@ describe('CLI argument grammar', () => {
     expect(formatCliHelp({ domain: 'ocr', verb: 'extract' })).toContain('--page-count <n>')
     expect(formatCliHelp()).toContain('ocr clear-cache')
   })
+
+  it('parses public Skill management without exposing arbitrary paths', () => {
+    expect(parseCliArguments(['skill', 'list'], {})).toMatchObject({
+      operation: 'rpc',
+      contract: { name: 'skills.listPublic' },
+      params: {}
+    })
+    expect(
+      parseCliArguments(
+        ['skill', 'install', '--file', './safe-skill.zip', '--agent', 'agent-1', '--overwrite'],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'upload',
+      contract: { name: 'skills.installUpload' },
+      inputPath: './safe-skill.zip',
+      uploadMaxBytes: 200 * 1024 * 1024,
+      params: {
+        agentId: 'agent-1',
+        filename: 'safe-skill.zip',
+        overwrite: true
+      }
+    })
+    expect(
+      parseCliArguments(
+        ['skill', 'install', '--url', 'https://skills.example/archive.zip?signature=private'],
+        {}
+      )
+    ).toMatchObject({
+      operation: 'rpc',
+      contract: { name: 'skills.installPublicUrl' },
+      params: {
+        url: 'https://skills.example/archive.zip?signature=private',
+        overwrite: false
+      }
+    })
+    expect(parseCliArguments(['skill', 'disable', '--name', 'safe-skill'], {})).toMatchObject({
+      contract: { name: 'skills.setPublicStatus' },
+      params: { name: 'safe-skill', enabled: false }
+    })
+    expect(parseCliArguments(['skill', 'remove', '--name', 'safe-skill'], {})).toMatchObject({
+      contract: { name: 'skills.uninstallPublic' },
+      params: { name: 'safe-skill' }
+    })
+
+    expect(() =>
+      parseCliArguments(['skill', 'install', '--file', 'a.zip', '--url', 'https://x'], {})
+    ).toThrow('exactly one of --file or --url')
+    expect(() => parseCliArguments(['skill', 'enable'], {})).toThrow('requires --name')
+    expect(() => parseCliArguments(['skill', 'list', '--overwrite'], {})).toThrow(
+      '--overwrite is not valid'
+    )
+  })
+
+  it('keeps Skill commands discoverable', () => {
+    expect(formatCliHelp({ domain: 'skill', verb: 'install' })).toContain(
+      '--file <archive>|--url <https-url>'
+    )
+    expect(formatCliHelp()).toContain('skill remove')
+  })
 })

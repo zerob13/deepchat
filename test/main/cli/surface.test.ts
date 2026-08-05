@@ -40,6 +40,11 @@ describe('CLI surface V1', () => {
       'providers.updatePublic',
       'settings.getPublic',
       'settings.updatePublic',
+      'skills.installPublicUrl',
+      'skills.installUpload',
+      'skills.listPublic',
+      'skills.setPublicStatus',
+      'skills.uninstallPublic',
       'speech.generate',
       'videos.generate'
     ])
@@ -124,6 +129,30 @@ describe('CLI surface V1', () => {
       config: { maxTokens: 4096, contextLength: 32768 }
     }
     expect(modelEntry.approvalDisplay?.(modelInput)).toEqual(modelInput)
+  })
+
+  it('keeps signed Skill URL secrets out of approval and audit projections', () => {
+    const entry = getCliSurfaceEntry('skills.installPublicUrl')!
+    const input = {
+      agentId: 'deepchat',
+      url: 'https://skills.example/archive.zip?signature=private-token',
+      overwrite: true
+    }
+
+    expect(entry.approvalDisplay?.(input)).toEqual({
+      agentId: 'deepchat',
+      overwrite: true,
+      origin: 'https://skills.example',
+      path: '/archive.zip',
+      queryPresent: true
+    })
+    expect(JSON.stringify(entry.auditProjection?.(input))).not.toContain('private-token')
+    expect(getCliSurfaceEntry('skills.setPublicStatus')?.limits.timeoutMs).toBeGreaterThanOrEqual(
+      2 * 60_000
+    )
+    expect(getCliSurfaceEntry('skills.uninstallPublic')?.limits.timeoutMs).toBeGreaterThanOrEqual(
+      2 * 60_000
+    )
   })
 
   it('publishes stable sorted capability metadata', () => {
@@ -235,6 +264,32 @@ describe('CLI surface V1', () => {
         approval: 'policy'
       }),
       expect.objectContaining({
+        method: 'skills.installPublicUrl',
+        possibleEffects: ['supply-chain'],
+        callers: ['human'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'skills.installUpload',
+        possibleEffects: ['supply-chain'],
+        callers: ['human'],
+        transport: 'upload',
+        approval: 'policy'
+      }),
+      expect.objectContaining({ method: 'skills.listPublic', possibleEffects: ['read'] }),
+      expect.objectContaining({
+        method: 'skills.setPublicStatus',
+        possibleEffects: ['execution-config'],
+        callers: ['human'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
+        method: 'skills.uninstallPublic',
+        possibleEffects: ['destructive'],
+        callers: ['human'],
+        approval: 'policy'
+      }),
+      expect.objectContaining({
         method: 'speech.generate',
         possibleEffects: ['compute'],
         transport: 'stream'
@@ -257,7 +312,11 @@ describe('CLI surface V1', () => {
       'providers.remove',
       'providers.setCredential',
       'providers.updatePublic',
-      'settings.updatePublic'
+      'settings.updatePublic',
+      'skills.installPublicUrl',
+      'skills.installUpload',
+      'skills.setPublicStatus',
+      'skills.uninstallPublic'
     ])
   })
 })

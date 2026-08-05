@@ -8,6 +8,7 @@ export {
   type CliAudioTranscriptionServiceOptions
 } from './audioTranscriptionService'
 export { CliOcrService, type CliOcrServiceOptions } from './ocrService'
+export { CliSkillService, type CliSkillServiceOptions } from './skillService'
 export { createCliRoutes, type CliRuntimeStatus } from './routes'
 export {
   createCliProviderModelAdminRoutes,
