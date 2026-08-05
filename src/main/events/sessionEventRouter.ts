@@ -33,12 +33,15 @@ function sessionIdsForEvent(name: DeepchatEventName, payload: unknown): string[]
 }
 
 export class SessionEventRouter {
-  private readonly ownershipCache = new Map<string, string | null | undefined>()
+  private readonly ownershipCache = new Map<string, string | null>()
 
   constructor(private readonly options: SessionEventRouterOptions) {}
 
   publish(name: DeepchatEventName, payload: unknown): void {
     const sessionIds = sessionIdsForEvent(name, payload)
+    if (name === 'sessions.updated') {
+      for (const sessionId of sessionIds) this.ownershipCache.delete(sessionId)
+    }
     const ownership = sessionIds.map((sessionId) => ({
       sessionId,
       runId: this.resolveSessionRunId(sessionId)
@@ -75,13 +78,14 @@ export class SessionEventRouter {
 
   private resolveSessionRunId(sessionId: string): string | null | undefined {
     if (this.ownershipCache.has(sessionId)) {
-      const cached = this.ownershipCache.get(sessionId)
+      const cached = this.ownershipCache.get(sessionId)!
       this.ownershipCache.delete(sessionId)
       this.ownershipCache.set(sessionId, cached)
       return cached
     }
 
     const runId = this.options.resolveSessionRunId(sessionId)
+    if (runId === undefined) return undefined
     this.ownershipCache.set(sessionId, runId)
     while (this.ownershipCache.size > MAX_OWNERSHIP_CACHE_ENTRIES) {
       const oldest = this.ownershipCache.keys().next().value
@@ -95,6 +99,10 @@ export class SessionEventRouter {
     payload: ReturnType<typeof sessionsUpdatedEvent.payload.parse>,
     unknownSessionIds: readonly string[]
   ): void {
+    if (payload.reason === 'deleted') {
+      this.options.hub.publish('sessions.updated', payload, { kind: 'renderer-all' })
+      return
+    }
     const unknownIds = new Set(unknownSessionIds)
     const knownSessionIds = payload.sessionIds.filter((sessionId) => !unknownIds.has(sessionId))
     if (knownSessionIds.length > 0) {

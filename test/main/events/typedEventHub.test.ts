@@ -248,7 +248,7 @@ describe('SessionEventRouter', () => {
     })
   })
 
-  it('fails closed for late events from an unknown or deleted session', () => {
+  it('drops late content events after session ownership can no longer be resolved', () => {
     const { hub, broadcast, send } = createHub()
     const router = new SessionEventRouter({
       hub,
@@ -266,5 +266,57 @@ describe('SessionEventRouter', () => {
 
     expect(broadcast).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('broadcasts deletion invalidations after the session row is gone', () => {
+    const { hub, broadcast, send } = createHub()
+    const router = new SessionEventRouter({
+      hub,
+      resolveSessionRunId: () => undefined,
+      getBoundRendererIds: () => []
+    })
+
+    router.publish('sessions.updated', {
+      sessionIds: ['deleted-session'],
+      reason: 'deleted'
+    })
+
+    expect(broadcast).toHaveBeenCalledWith({
+      name: 'sessions.updated',
+      payload: { sessionIds: ['deleted-session'], reason: 'deleted' }
+    })
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('retries unknown ownership and invalidates cached ownership on session updates', async () => {
+    const { hub, broadcast } = createHub()
+    let runId: string | null | undefined
+    const resolveSessionRunId = vi.fn(() => runId)
+    const router = new SessionEventRouter({
+      hub,
+      resolveSessionRunId,
+      getBoundRendererIds: () => []
+    })
+    const subscription = hub.subscribe({ kind: 'run', runId: 'cli-run' })
+    const streamEvent = {
+      requestId: 'request-1',
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      completedAt: 123
+    }
+
+    router.publish('chat.stream.completed', streamEvent)
+    runId = null
+    router.publish('chat.stream.completed', streamEvent)
+    runId = 'cli-run'
+    router.publish('sessions.updated', { sessionIds: ['session-1'], reason: 'updated' })
+    router.publish('chat.stream.completed', streamEvent)
+
+    expect(resolveSessionRunId).toHaveBeenCalledTimes(3)
+    expect(broadcast).toHaveBeenCalledTimes(2)
+    await expect(nextEvent(subscription.events)).resolves.toMatchObject({
+      target: { kind: 'run', runId: 'cli-run' },
+      event: 'chat.stream.completed'
+    })
   })
 })
