@@ -12,6 +12,37 @@ import {
 export const LocalControlTransportSchema = z.enum(['rpc', 'stream', 'upload', 'download'])
 export const LocalControlApprovalModeSchema = z.enum(['never', 'policy'])
 
+export const CliLauncherStateSchema = z.enum([
+  'not-installed',
+  'installed',
+  'stale',
+  'needs-repair',
+  'conflict',
+  'unavailable'
+])
+
+export const CliLauncherReasonSchema = z.enum([
+  'unsupported-platform',
+  'source-missing',
+  'path-unavailable',
+  'ownership-marker-invalid',
+  'unowned-command',
+  'command-modified',
+  'command-missing',
+  'shell-config-modified',
+  'shell-config-missing',
+  'upgrade-required'
+])
+
+export const CliLauncherStatusSchema = z
+  .object({
+    state: CliLauncherStateSchema,
+    reason: CliLauncherReasonSchema.nullable(),
+    commandPath: z.string().nullable(),
+    shellConfigPath: z.string().nullable()
+  })
+  .strict()
+
 export const LocalControlCapabilitySchema = z
   .object({
     method: LocalControlMethodSchema,
@@ -76,4 +107,19 @@ export const cliDoctorRoute = defineRouteContract({
   })
 })
 
+export const cliGetLauncherStatusRoute = defineRouteContract({
+  name: 'cli.getLauncherStatus',
+  input: z.object({}).default({}),
+  output: CliLauncherStatusSchema
+})
+
+export const cliSetLauncherInstalledRoute = defineRouteContract({
+  name: 'cli.setLauncherInstalled',
+  input: z.object({ installed: z.boolean() }).strict(),
+  output: CliLauncherStatusSchema
+})
+
 export type CliCapability = z.infer<typeof LocalControlCapabilitySchema>
+export type CliLauncherState = z.infer<typeof CliLauncherStateSchema>
+export type CliLauncherReason = z.infer<typeof CliLauncherReasonSchema>
+export type CliLauncherStatus = z.infer<typeof CliLauncherStatusSchema>

@@ -25,6 +25,14 @@ export { CliSkillService, type CliSkillServiceOptions } from './skillService'
 export { CliRunService, type CliRunServiceOptions } from './runService'
 export { createCliRoutes, type CliRuntimeStatus } from './routes'
 export {
+  CliLauncherService,
+  type CliLauncherReason,
+  type CliLauncherServiceOptions,
+  type CliLauncherState,
+  type CliLauncherStatus
+} from './launcherService'
+export { createCliLauncherRoutes } from './launcherRoutes'
+export {
   createCliProviderModelAdminRoutes,
   type CliProviderModelAdminDependencies
 } from './providerModelAdminRoutes'

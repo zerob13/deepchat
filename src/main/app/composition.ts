@@ -220,6 +220,7 @@ import {
   CliAudioTranscriptionService,
   CliAuditLog,
   CliComputeService,
+  CliLauncherService,
   CliMutationGuard,
   CliOcrService,
   CliRequestPolicy,
@@ -229,6 +230,7 @@ import {
   createArtifactRoutes,
   createCliComputeRoutes,
   createCliMcpAdminRoutes,
+  createCliLauncherRoutes,
   createCliProviderModelAdminRoutes,
   createCliRoutes,
   resolveBundledCliDirectory
@@ -768,15 +770,24 @@ export async function createMainProcessControl(dependencies: {
   acpAsLlmProviderSessionControl = providerRuntime
   acpAsLlmProviderPermission = providerRuntime
   const commandPermissionHandler = new CommandPermissionService()
+  const resolveCliDirectory = () =>
+    resolveBundledCliDirectory({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged
+    })
+  const cliLauncherService = new CliLauncherService({
+    homeDirectory: app.getPath('home'),
+    userDataDirectory: app.getPath('userData'),
+    environmentPath: process.env.PATH,
+    shell: process.env.SHELL,
+    localAppDataDirectory: process.env.LOCALAPPDATA,
+    resolveCliDirectory
+  })
   const agentCliCommandAccess = new AgentCliCommandAccess({
     tokenAuthority: agentCliTokenAuthority,
     commandPermission: commandPermissionHandler,
-    resolveCliDirectory: () =>
-      resolveBundledCliDirectory({
-        appPath: app.getAppPath(),
-        resourcesPath: process.resourcesPath,
-        isPackaged: app.isPackaged
-      })
+    resolveCliDirectory
   })
   commandPermissionService = commandPermissionHandler
   filePermissionService = new FilePermissionService()
@@ -2464,6 +2475,7 @@ export async function createMainProcessControl(dependencies: {
           (target) => target.kind === 'main'
         )
     })
+    const cliLauncherRoutes = createCliLauncherRoutes(cliLauncherService)
     const approvalRoutes = createApprovalRoutes({
       resolve: (input, caller) => cliMutationGuard.resolve(input, caller)
     })
@@ -2526,6 +2538,7 @@ export async function createMainProcessControl(dependencies: {
         appRoutes,
         approvalRoutes,
         cliRoutes,
+        cliLauncherRoutes,
         artifactRoutes,
         cliComputeRoutes,
         cliProviderModelAdminRoutes,
@@ -2830,6 +2843,17 @@ export async function createMainProcessControl(dependencies: {
   async function resetApplicationData(
     resetType: 'chat' | 'knowledge' | 'config' | 'all'
   ): Promise<void> {
+    if (resetType === 'all') {
+      const launcherStatus = await cliLauncherService.getStatus()
+      if (launcherStatus.state === 'conflict' && launcherStatus.reason !== 'unowned-command') {
+        throw new Error(
+          'Cannot reset application data while the owned DeepChat CLI launcher is inconsistent'
+        )
+      }
+      if (launcherStatus.reason !== 'unowned-command') {
+        await cliLauncherService.setInstalled(false)
+      }
+    }
     await stop()
     await deviceService.resetDataByType(resetType)
   }
@@ -2925,6 +2949,11 @@ export async function createMainProcessControl(dependencies: {
     await cliServer.start()
   } catch (error) {
     logger.error('[CLI] Failed to start local control server', error)
+  }
+  try {
+    await cliLauncherService.reconcileOwnedLauncher()
+  } catch (error) {
+    logger.warn('[CLI] Failed to refresh the owned command launcher', error)
   }
   init(dependencies.startupRunId)
   scheduleBackgroundWork()
