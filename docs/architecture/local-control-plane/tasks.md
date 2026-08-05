@@ -72,7 +72,8 @@
   disconnect, and incarnation-safe recovery semantics.
 - [x] Compose detached session creation with initial-turn execution.
 - [x] Add owned status, event streaming, result recovery, and idempotent cancellation.
-- [x] Add event-isolation, backpressure, detached-recovery, recursion-denial, and cancellation tests.
+- [x] Add event-isolation, backpressure, detached-recovery, startup-error redaction,
+  recursion-denial, and cancellation tests.
 
 ## Packaging and Agent Use
 

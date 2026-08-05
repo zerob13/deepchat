@@ -84,6 +84,7 @@ function createHarness(
   turn: CliRunServiceOptions['turn']
   projection: CliRunServiceOptions['projection']
   sessions: CliRunServiceOptions['sessions']
+  log: { warn: ReturnType<typeof vi.fn> }
 } {
   const session = overrides.session ?? baseSession
   const lifecycle = {
@@ -106,6 +107,7 @@ function createHarness(
       overrides.storedSession === undefined ? (session as SessionRecord) : overrides.storedSession
     )
   }
+  const log = { warn: vi.fn() }
   const hub = new TypedEventHub({
     renderer: { broadcast: vi.fn(), send: vi.fn() },
     epoch: 'test-epoch',
@@ -119,13 +121,14 @@ function createHarness(
       sessions,
       eventHub: hub,
       now: () => 200,
-      log: { warn: vi.fn() }
+      log
     }),
     hub,
     lifecycle,
     turn,
     projection,
-    sessions
+    sessions,
+    log
   }
 }
 
@@ -204,14 +207,28 @@ describe('CliRunService', () => {
   })
 
   it('returns the durable run identity when initial turn startup fails', async () => {
-    const { service, turn } = createHarness()
-    vi.mocked(turn.sendMessage).mockRejectedValueOnce(new Error('provider unavailable'))
+    const { service, turn, hub, log } = createHarness()
+    const events = hub.subscribe({ kind: 'run', runId: 'run-1' })
+    const privateFailure = 'EACCES /Users/private/provider.json?token=secret'
+    vi.mocked(turn.sendMessage).mockRejectedValueOnce(new Error(privateFailure))
 
-    await expect(
-      invokeRoute(service, sessionsRunDetachedRoute.name, { prompt: 'hello' })
-    ).rejects.toMatchObject({
+    const failure = await invokeRoute(service, sessionsRunDetachedRoute.name, {
+      prompt: 'hello'
+    }).catch((error: unknown) => error)
+    expect(failure).toMatchObject({
       code: 'conflict',
+      message: 'Detached Agent run could not start',
       options: { details: { runId: 'run-1', sessionId: 'run-1' } }
+    })
+    await expect(nextEvent(events.events)).resolves.toMatchObject({ event: 'runs.created' })
+    await expect(nextEvent(events.events)).resolves.toMatchObject({
+      event: 'runs.turn.failed',
+      data: { error: 'Detached Agent run could not start' }
+    })
+    expect(JSON.stringify(failure)).not.toContain(privateFailure)
+    expect(log.warn).toHaveBeenCalledWith('[CLI] Failed to start detached Agent run', {
+      runId: 'run-1',
+      failure: { name: 'Error' }
     })
   })
 

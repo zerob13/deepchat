@@ -538,7 +538,9 @@ Raw and media requests are cancelled when their connection/request aborts unless
 explicitly supports detachment. `sessions.runDetached` first creates a detached session through the
 existing lifecycle, then starts the initial turn. It returns a durable run/session identity before
 streaming. Disconnect does not destroy a detached run; status/messages can be recovered from session
-state and event cursors. `runs.cancel` is idempotent and ownership checked.
+state and event cursors. If initial-turn startup fails, the response and run event retain that durable
+identity but expose only a stable failure message; upstream error text is excluded from public output
+and logs. `runs.cancel` is idempotent and ownership checked.
 
 `events.subscribe` is human-only in V1. An Agent can own only its currently executing conversation,
 so waiting on that run from its bash tool would deadlock the run on itself. Agent callers may use the

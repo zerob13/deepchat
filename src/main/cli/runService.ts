@@ -41,8 +41,8 @@ import { CliRequestError } from './errors'
 import type { CliStreamEmitter } from './server'
 
 const DEFAULT_MESSAGE_LIMIT = 50
-const MAX_PUBLIC_ERROR_CHARACTERS = 4_096
 const RUN_SNAPSHOT_MESSAGE_BUDGET_BYTES = 8 * 1024 * 1024
+const RUN_START_FAILURE_MESSAGE = 'Detached Agent run could not start'
 
 type RunLifecyclePort = Readonly<{
   createDetachedSession(input: CreateDetachedSessionInput): Promise<SessionWithState>
@@ -153,12 +153,6 @@ function projectMessagePage(
   return { messages, nextCursor: hasMore ? nextCursor : null, hasMore }
 }
 
-function publicErrorMessage(error: unknown): string {
-  const message =
-    error instanceof Error && error.message.trim() ? error.message.trim() : 'Unknown error'
-  return message.slice(0, MAX_PUBLIC_ERROR_CHARACTERS)
-}
-
 export class CliRunService {
   private readonly now: () => number
   private readonly log: Pick<Console, 'warn'>
@@ -262,19 +256,21 @@ export class CliRunService {
         input.maxTurns ? { maxProviderRounds: input.maxTurns } : undefined
       )
     } catch (error) {
-      const message = publicErrorMessage(error)
-      this.log.warn('[CLI] Failed to start detached Agent run', { runId, error })
+      this.log.warn('[CLI] Failed to start detached Agent run', {
+        runId,
+        failure: { name: error instanceof Error ? error.name : typeof error }
+      })
       this.options.eventHub.publish(
         runsTurnFailedEvent.name,
         {
           runId,
           sessionId: session.id,
           failedAt: this.now(),
-          error: message
+          error: RUN_START_FAILURE_MESSAGE
         },
         { kind: 'run', runId }
       )
-      throw new CliRequestError('conflict', `Detached Agent run could not start: ${message}`, {
+      throw new CliRequestError('conflict', RUN_START_FAILURE_MESSAGE, {
         httpStatus: 409,
         details: { runId, sessionId: session.id }
       })
