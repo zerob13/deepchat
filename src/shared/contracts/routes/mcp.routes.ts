@@ -93,6 +93,8 @@ const MCPServerConfigUpdateSchema: z.ZodType<Partial<MCPServerConfig>> =
 
 // Leave room for the route envelope inside ApprovalBroker's 1 MiB argument binding.
 export const PUBLIC_MCP_CONFIG_MAX_BYTES = 768 * 1024
+export const PUBLIC_MCP_DESCRIPTION_MAX_CHARACTERS = 16 * 1024
+export const PUBLIC_MCP_ICON_MAX_CHARACTERS = 128
 export const PUBLIC_MCP_LIST_MAX_ITEMS = 512
 
 function isSafePublicMcpDisplayText(value: string): boolean {
@@ -140,10 +142,13 @@ export const PublicMcpServerNameSchema = z
     { message: 'MCP server name conflicts with an object property' }
   )
 
-const PublicMcpDescriptionSchema = z.string().max(16 * 1024)
-const PublicMcpIconSchema = z.string().max(128).refine(isSafePublicMcpDisplayText, {
-  message: 'MCP server icon contains unsafe display characters'
-})
+const PublicMcpDescriptionSchema = z.string().max(PUBLIC_MCP_DESCRIPTION_MAX_CHARACTERS)
+const PublicMcpIconSchema = z
+  .string()
+  .max(PUBLIC_MCP_ICON_MAX_CHARACTERS)
+  .refine(isSafePublicMcpDisplayText, {
+    message: 'MCP server icon contains unsafe display characters'
+  })
 const PublicMcpCommandSchema = z
   .string()
   .trim()

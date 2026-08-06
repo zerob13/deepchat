@@ -22,7 +22,14 @@ function isDirectionalControl(codePoint: number): boolean {
   )
 }
 
-export function stripC0AndC1Controls(value: string): string {
+export function stripC0AndC1Controls(value: string, maxCodeUnits: number): string {
+  if (!Number.isSafeInteger(maxCodeUnits) || maxCodeUnits < 0) {
+    throw new RangeError('Public text scan limit must be a non-negative safe integer')
+  }
+  if (value.length > maxCodeUnits) {
+    throw new RangeError('Public text exceeds its scan limit')
+  }
+
   const output: string[] = []
   for (const character of value) {
     if (!isPublicTextControl(character.codePointAt(0)!)) output.push(character)

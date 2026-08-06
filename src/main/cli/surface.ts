@@ -4,6 +4,8 @@ import {
   AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
   OCR_EXTRACTION_MAX_INPUT_BYTES,
   PUBLIC_MCP_CONFIG_MAX_BYTES,
+  PUBLIC_MCP_DESCRIPTION_MAX_CHARACTERS,
+  PUBLIC_MCP_ICON_MAX_CHARACTERS,
   artifactsDeleteRoute,
   artifactsDescribeRoute,
   artifactsReadRoute,
@@ -256,7 +258,10 @@ function mcpConfigProjection(
   if (typeof config.type === 'string') projection.type = config.type
   if (typeof config.description === 'string') {
     if (includeReviewableValues) {
-      projection.description = stripC0AndC1Controls(config.description)
+      projection.description = stripC0AndC1Controls(
+        config.description,
+        PUBLIC_MCP_DESCRIPTION_MAX_CHARACTERS
+      )
       projection.descriptionTruncated = false
     } else {
       const description = sanitizePublicText(config.description, 512)
@@ -265,7 +270,7 @@ function mcpConfigProjection(
     }
   }
   if (includeReviewableValues && typeof config.icon === 'string') {
-    projection.icon = stripC0AndC1Controls(config.icon)
+    projection.icon = stripC0AndC1Controls(config.icon, PUBLIC_MCP_ICON_MAX_CHARACTERS)
   }
   if (typeof config.command === 'string') {
     const commandName = config.command.split(/[\\/]/).at(-1) ?? ''
