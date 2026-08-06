@@ -17,6 +17,9 @@
         :is-capturing="isCapturingValue"
         :is-read-only="isReadOnly"
         :disable-markdown-virtualization="shouldDisableMarkdownVirtualization"
+        :class="{ 'message-row-entrance': shouldAnimateEntrance(item) }"
+        :data-entrance-feedback="shouldAnimateEntrance(item) || undefined"
+        @animationend="onEntranceAnimationEnd(item, $event)"
         @retry="onRetry"
         @delete="onDelete"
         @fork="onFork"
@@ -45,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, unref } from 'vue'
+import { computed, onMounted, ref, unref, watch } from 'vue'
 import MessageBlockAction from '@/components/message/MessageBlockAction.vue'
 import { useMessageCapture } from '@/composables/message/useMessageCapture'
 import {
@@ -101,6 +104,55 @@ const shouldDisableMarkdownVirtualization = computed(
   () => props.disableMarkdownVirtualization || isCapturingValue.value
 )
 const allRenderedMessages = computed(() => props.messages)
+const seenMessageIds = new Set<string>()
+const animatingMessageIds = ref(new Set<string>())
+
+const resetEntranceTracking = (messages: MessageListItem[]) => {
+  seenMessageIds.clear()
+  animatingMessageIds.value.clear()
+  for (const message of messages) {
+    seenMessageIds.add(message.id)
+  }
+}
+
+onMounted(() => resetEntranceTracking(props.messages))
+
+watch(
+  () => props.conversationId,
+  () => resetEntranceTracking(props.messages)
+)
+
+watch(
+  () => props.messages,
+  (messages, previousMessages) => {
+    if (!previousMessages) return
+
+    const isAppend =
+      messages.length >= previousMessages.length &&
+      previousMessages.every((message, index) => messages[index]?.id === message.id)
+    if (!isAppend) {
+      resetEntranceTracking(messages)
+      return
+    }
+
+    for (const message of messages.slice(previousMessages.length)) {
+      if (seenMessageIds.has(message.id)) continue
+
+      seenMessageIds.add(message.id)
+      if (message.role === 'user' && message.id !== props.streamingMessageId) {
+        animatingMessageIds.value.add(message.id)
+      }
+    }
+  }
+)
+
+const shouldAnimateEntrance = (item: MessageListItem) => animatingMessageIds.value.has(item.id)
+
+const onEntranceAnimationEnd = (item: MessageListItem, event: AnimationEvent) => {
+  if (event.target === event.currentTarget) {
+    animatingMessageIds.value.delete(item.id)
+  }
+}
 
 const onRetry = (messageId: string) => emit('retry', messageId)
 const onDelete = (messageId: string) => emit('delete', messageId)
@@ -140,3 +192,27 @@ const handleCopyImage = async (
   await captureMessage({ messageId, parentId: resolvedParentId, fromTop, modelInfo })
 }
 </script>
+
+<style scoped>
+.message-row-entrance {
+  animation: message-row-in 140ms var(--dc-ease-out-soft);
+}
+
+@keyframes message-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row-entrance {
+    animation: none;
+  }
+}
+</style>

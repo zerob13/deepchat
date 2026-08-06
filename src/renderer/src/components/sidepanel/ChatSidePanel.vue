@@ -85,24 +85,32 @@
         />
       </div>
 
-      <WorkspacePanel
-        v-if="sidepanelStore.activeTab === 'workspace'"
-        :session-id="props.sessionId"
-        :workspace-path="props.workspacePath"
-        :is-fullscreen="isWorkspaceFullscreenActive"
-        @toggle-fullscreen="toggleWorkspaceFullscreen"
-        @insert-file-reference="handleWorkspaceInsertFileReference"
-      />
-      <BrowserPanel
-        v-else-if="sidepanelStore.activeTab === 'browser'"
-        :session-id="props.sessionId"
-        :is-fullscreen="isBrowserFullscreenActive"
-        @toggle-fullscreen="toggleBrowserFullscreen"
-      />
+      <Transition
+        name="panel-content"
+        mode="out-in"
+        @before-leave="panelContentLeaving = true"
+        @after-leave="panelContentLeaving = false"
+        @leave-cancelled="panelContentLeaving = false"
+      >
+        <WorkspacePanel
+          v-if="sidepanelStore.activeTab === 'workspace'"
+          :session-id="props.sessionId"
+          :workspace-path="props.workspacePath"
+          :is-fullscreen="isWorkspaceFullscreenActive"
+          @toggle-fullscreen="toggleWorkspaceFullscreen"
+          @insert-file-reference="handleWorkspaceInsertFileReference"
+        />
+        <BrowserPanel
+          v-else-if="sidepanelStore.activeTab === 'browser'"
+          :session-id="props.sessionId"
+          :is-fullscreen="isBrowserFullscreenActive"
+          @toggle-fullscreen="toggleBrowserFullscreen"
+        />
+      </Transition>
       <div
+        v-show="sidepanelStore.activeTab === 'mcp-app' && !panelContentLeaving"
         id="mcp-app-sidepanel-outlet"
         data-testid="mcp-app-sidepanel-outlet"
-        v-show="sidepanelStore.activeTab === 'mcp-app'"
         class="min-h-0 flex-1"
       />
     </aside>
@@ -141,6 +149,7 @@ const shouldShow = computed(() => sidepanelStore.open && Boolean(props.sessionId
 const layoutWidth = ref(shouldShow.value ? sidepanelStore.width : 0)
 const panelVisible = ref(shouldShow.value)
 const isResizing = ref(false)
+const panelContentLeaving = ref(false)
 const isWorkspaceFullscreen = ref(false)
 const isBrowserFullscreen = ref(false)
 const fullscreenMotionState = ref<'expanding' | 'collapsing' | null>(null)
@@ -397,7 +406,7 @@ onBeforeUnmount(() => {
   backface-visibility: hidden;
   transform: translateZ(0);
   transition-duration: var(--dc-motion-default);
-  transition-property: transform, opacity, box-shadow, border-radius;
+  transition-property: transform, opacity;
   transition-timing-function: var(--dc-ease-out-express);
   will-change: transform, opacity;
 }
@@ -414,6 +423,16 @@ onBeforeUnmount(() => {
   transition: none;
 }
 
+.panel-content-enter-active,
+.panel-content-leave-active {
+  transition: opacity var(--dc-motion-fast) var(--dc-ease-out-soft);
+}
+
+.panel-content-enter-from,
+.panel-content-leave-to {
+  opacity: 0;
+}
+
 @keyframes workspace-panel-fullscreen-enter {
   from {
     opacity: 0.94;
@@ -428,18 +447,23 @@ onBeforeUnmount(() => {
 
 @keyframes workspace-panel-fullscreen-exit {
   from {
-    opacity: 0.96;
-    transform: translateZ(0) scale(1.01);
+    opacity: 1;
+    transform: translateZ(0) scale(1);
   }
 
   to {
-    opacity: 1;
-    transform: translateZ(0) scale(1);
+    opacity: 0.94;
+    transform: translateZ(0) scale(0.985);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .chat-side-panel-surface {
+    transition: none;
+  }
+
+  .panel-content-enter-active,
+  .panel-content-leave-active {
     transition: none;
   }
 

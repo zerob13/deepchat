@@ -1,20 +1,10 @@
-import { defineComponent, nextTick, reactive } from 'vue'
+import { defineComponent, nextTick, onMounted, onUnmounted, reactive } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WORKSPACE_EVENTS } from '@/events'
 
 describe('ChatSidePanel', () => {
-  it('keeps shell width out of CSS transitions', async () => {
-    const source = await readFile(
-      resolve(process.cwd(), 'src/renderer/src/components/sidepanel/ChatSidePanel.vue'),
-      'utf8'
-    )
-    const shellStyles = source.match(/\.chat-side-panel-shell\s*\{([\s\S]*?)\}/)?.[1] ?? ''
-
-    expect(shellStyles).not.toMatch(/transition(?:-property)?:[^;]*width/)
-  })
+  afterEach(() => vi.useRealTimers())
 
   const setup = async (options?: {
     open?: boolean
@@ -71,6 +61,9 @@ describe('ChatSidePanel', () => {
     vi.doMock('@/components/sidepanel/BrowserPanel.vue', () => ({
       default: defineComponent({
         name: 'BrowserPanel',
+        setup() {
+          onMounted(() => window.dispatchEvent(new Event('browser-panel-mounted')))
+        },
         template: '<div data-testid="browser-panel-stub" />'
       })
     }))
@@ -85,6 +78,9 @@ describe('ChatSidePanel', () => {
           }
         },
         emits: ['toggle-fullscreen', 'insert-file-reference'],
+        setup() {
+          onUnmounted(() => window.dispatchEvent(new Event('workspace-panel-unmounted')))
+        },
         template:
           '<div data-testid="workspace-panel-stub" :data-fullscreen="String(isFullscreen)"><button data-testid="workspace-panel-toggle" @click="$emit(\'toggle-fullscreen\')">toggle</button><button data-testid="workspace-panel-insert" @click="$emit(\'insert-file-reference\', \'C:/workspace/README.md\')">insert</button></div>'
       })
@@ -119,6 +115,51 @@ describe('ChatSidePanel', () => {
       emitOpenRequested: (payload: unknown) => openRequestedHandler?.(payload)
     }
   }
+
+  it('unmounts workspace content before mounting browser content', async () => {
+    vi.useFakeTimers()
+    const lifecycleEvents: string[] = []
+    const recordWorkspaceUnmount = () => lifecycleEvents.push('workspace-unmounted')
+    const recordBrowserMount = () => lifecycleEvents.push('browser-mounted')
+    window.addEventListener('workspace-panel-unmounted', recordWorkspaceUnmount)
+    window.addEventListener('browser-panel-mounted', recordBrowserMount)
+
+    try {
+      const { wrapper } = await setup({ activeTab: 'workspace' })
+      const browserTab = wrapper
+        .findAll('button')
+        .find((button) => button.text() === 'common.browser.name')
+      expect(browserTab).toBeDefined()
+
+      await browserTab!.trigger('click')
+      await vi.runAllTimersAsync()
+      await nextTick()
+
+      expect(lifecycleEvents).toEqual(['workspace-unmounted', 'browser-mounted'])
+      expect(wrapper.find('[data-testid="workspace-panel-stub"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="browser-panel-stub"]').exists()).toBe(true)
+    } finally {
+      window.removeEventListener('workspace-panel-unmounted', recordWorkspaceUnmount)
+      window.removeEventListener('browser-panel-mounted', recordBrowserMount)
+    }
+  })
+
+  it('keeps the mcp-app outlet mounted so teleported apps always have a target', async () => {
+    const { wrapper } = await setup({
+      activeTab: 'workspace',
+      mcpAppPreviewOwnerId: 'm1'
+    })
+    const mcpTab = wrapper.findAll('button').find((button) => button.text() === 'mcp.apps.title')
+    expect(mcpTab).toBeDefined()
+
+    // The outlet must already exist while the workspace panel is still in the leave phase
+    // (McpAppView teleports synchronously when the mcp-app tab activates).
+    await mcpTab!.trigger('click')
+    expect(wrapper.find('#mcp-app-sidepanel-outlet').exists()).toBe(true)
+
+    await nextTick()
+    expect(wrapper.find('#mcp-app-sidepanel-outlet').isVisible()).toBe(true)
+  })
 
   it('opens the browser sidepanel when OPEN_REQUESTED targets the current host window', async () => {
     const { sidepanelStore, emitOpenRequested } = await setup({

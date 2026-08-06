@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
-import { defineComponent, reactive, ref } from 'vue'
+import { defineComponent, nextTick, reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
 vi.mock('pinia', async () => vi.importActual<typeof import('pinia')>('pinia'))
@@ -18,6 +18,11 @@ type SetupOptions = {
   loadingMore?: boolean
   error?: string | null
   nextPages?: Array<{ items: Array<{ id: string }>; hasMore: boolean }>
+  onLoadNextPage?: (sessionStore: {
+    loadingMore: boolean
+    sessions: Array<{ id: string }>
+    hasMore: boolean
+  }) => Promise<void>
   pinnedSessions?: Array<{ id: string; title: string; status: string; isPinned?: boolean }>
   groups?: Array<{
     id: string
@@ -175,6 +180,11 @@ const setup = async (options: SetupOptions = {}) => {
     loadingMore: options.loadingMore ?? false,
     error: options.error ?? null,
     loadNextPage: vi.fn(async () => {
+      if (options.onLoadNextPage) {
+        await options.onLoadNextPage(sessionStore)
+        return
+      }
+
       const nextPage = (options.nextPages ?? []).shift()
       if (!nextPage) {
         sessionStore.hasMore = false
@@ -572,7 +582,8 @@ describe('WindowSideBar agent switch', () => {
         ]
       })
 
-      expect(wrapper.get('[data-testid="window-sidebar"]').classes()).toContain('w-12')
+      const sidebar = wrapper.get('[data-testid="window-sidebar"]')
+      expect(sidebar.classes()).toContain('w-12')
 
       await wrapper
         .get('[data-testid="sidebar-agent-button"][data-agent-id="acp-a"]')
@@ -2058,6 +2069,52 @@ describe('WindowSideBar agent switch', () => {
 
     wrapper.unmount()
   })
+})
+
+describe('WindowSideBar session row transitions', () => {
+  it(
+    'renders rows loaded during pagination',
+    async () => {
+      let resolvePage: (() => void) | undefined
+      const pageLoaded = new Promise<void>((resolve) => {
+        resolvePage = resolve
+      })
+      const groups = reactive([
+        {
+          id: 'common.time.today',
+          label: 'common.time.today',
+          labelKey: 'common.time.today',
+          sessions: [{ id: 'session-1', title: 'Existing', status: 'none' }]
+        }
+      ])
+      const { wrapper } = await setup({
+        sessions: [{ id: 'session-1' }],
+        hasMore: true,
+        groups,
+        onLoadNextPage: async (sessionStore) => {
+          sessionStore.loadingMore = true
+          await pageLoaded
+          sessionStore.sessions = [...sessionStore.sessions, { id: 'session-2' }]
+          groups[0].sessions.push({ id: 'session-2', title: 'Loaded', status: 'none' })
+          sessionStore.loadingMore = false
+          sessionStore.hasMore = false
+        }
+      })
+      setSidebarListSize(wrapper, { scrollHeight: 0, clientHeight: 0 })
+
+      await flushSidebarFillFrame()
+      await wrapper.vm.$nextTick()
+
+      resolvePage?.()
+      await flushPromises()
+      await nextTick()
+
+      expect(wrapper.text()).toContain('Loaded')
+
+      wrapper.unmount()
+    },
+    TEST_TIMEOUT_MS
+  )
 })
 
 describe('WindowSideBar viewport auto-fill', () => {
