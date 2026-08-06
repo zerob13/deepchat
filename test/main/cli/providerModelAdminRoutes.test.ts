@@ -233,6 +233,28 @@ describe('CLI provider administration routes', () => {
     ).toBe(false)
   })
 
+  it('returns validation failures for malformed provider URLs', () => {
+    const addResult = providersAddPublicRoute.input.safeParse({
+      name: 'Provider',
+      apiType: 'openai',
+      baseUrl: 'not-a-url'
+    })
+    const updateResult = providersUpdatePublicRoute.input.safeParse({
+      providerId: 'provider-1',
+      updates: { baseUrl: 'not-a-url' }
+    })
+
+    expect(addResult.success).toBe(false)
+    expect(updateResult.success).toBe(false)
+    expect(
+      providersAddPublicRoute.input.safeParse({
+        name: 'Local provider',
+        apiType: 'openai',
+        baseUrl: 'http://localhost:11434'
+      }).success
+    ).toBe(true)
+  })
+
   it('uses strict public model config input and strips main-owned identity fields', async () => {
     const provider: LLM_PROVIDER = {
       id: 'provider-1',
