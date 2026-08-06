@@ -25,7 +25,12 @@ import type {
   ToolCallResult,
   ToolDispatchCollaborators
 } from './types'
-import type { ChatMessage, ChatMessageProviderOptions } from '@shared/types/core/chat-message'
+import type {
+  ChatMessage,
+  ChatMessageProviderOptions,
+  ChatMessageProviderReplay,
+  ChatMessageProviderReplayProjector
+} from '@shared/types/core/chat-message'
 import { nanoid } from 'nanoid'
 import type {
   DeepChatLoopNotificationObserver,
@@ -37,10 +42,10 @@ import type {
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
+import { cloneBlocksForRenderer } from '@/session/clientMessageProjection'
 import { buildTerminalErrorBlocks } from '@/session/data/transcript'
 import { finalizeTrailingPendingNarrativeBlocks } from './accumulator'
 import type { EchoHandle } from './echo'
-import { cloneBlocksForRenderer } from './echo'
 import {
   insertBlocksAfterToolCall,
   prepareToolImagePreviewPresentation
@@ -54,6 +59,7 @@ import {
 import { extractToolCallImagePreviews } from '@/lib/toolCallImagePreviews'
 import { selectToolBatchExecutionMode } from './toolExecutionPolicy'
 import { resolveToolPermissionMode } from '@/tool/permission/permissionMode'
+import { segmentAssistantBlocksByProviderReplay } from './providerReplaySegments'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
 
@@ -375,6 +381,112 @@ function extractReasoningProviderOptions(
   }
 
   return undefined
+}
+
+function extractProviderReplay(
+  block: AssistantMessageBlock,
+  projector: ChatMessageProviderReplayProjector | undefined
+): ChatMessageProviderReplay | null {
+  if (block.type !== 'search' || !projector) {
+    return null
+  }
+  const payload = block.extra?.providerReplayJson
+  if (typeof payload !== 'string') {
+    return null
+  }
+  const replay = projector(payload)
+  if (!replay) {
+    return null
+  }
+  if (typeof block.id !== 'string' || !block.id.trim() || block.id !== replay.markerId) {
+    console.warn('[DeepChatDispatch] Ignoring provider replay block with mismatched marker ID.')
+    return null
+  }
+  return replay
+}
+
+function mapToolCallToChatMessage(
+  toolCall: ToolCallResult
+): NonNullable<ChatMessage['tool_calls']>[number] {
+  return {
+    id: toolCall.id,
+    type: 'function',
+    function: { name: toolCall.name, arguments: toolCall.arguments },
+    ...(toolCall.providerOptions ? { provider_options: toolCall.providerOptions } : {})
+  }
+}
+
+function buildReplayAwareToolRoundMessages(
+  blocks: AssistantMessageBlock[],
+  toolCalls: ToolCallResult[],
+  interleavedReasoning: InterleavedReasoningConfig,
+  providerReplayProjector: ChatMessageProviderReplayProjector | undefined
+): ChatMessage[] | null {
+  const replaySegments = segmentAssistantBlocksByProviderReplay(blocks, (block) =>
+    extractProviderReplay(block, providerReplayProjector)
+  )
+  if (replaySegments.every((segment) => segment.replayAfter === null)) {
+    return null
+  }
+
+  const toolCallBlockIndexes = new Map<string, number>()
+  blocks.forEach((block, index) => {
+    const toolCallId = block.type === 'tool_call' ? block.tool_call?.id : undefined
+    if (toolCallId && !toolCallBlockIndexes.has(toolCallId)) {
+      toolCallBlockIndexes.set(toolCallId, index)
+    }
+  })
+
+  const buildSegment = (start: number, end: number, includeUnmatchedToolCalls: boolean) => {
+    const segmentBlocks = blocks.slice(start, end)
+    const segmentToolCalls = toolCalls.filter((toolCall) => {
+      const blockIndex = toolCallBlockIndexes.get(toolCall.id)
+      return blockIndex === undefined
+        ? includeUnmatchedToolCalls
+        : blockIndex >= start && blockIndex < end
+    })
+    const content = extractAssistantContent(segmentBlocks) ?? extractTextFromBlocks(segmentBlocks)
+    const reasoning = extractReasoningFromBlocks(segmentBlocks)
+    const preserveReasoning =
+      interleavedReasoning.preserveReasoningContent &&
+      (Boolean(reasoning) || interleavedReasoning.preserveEmptyReasoningContent === true)
+
+    if (!content && segmentToolCalls.length === 0 && !preserveReasoning) {
+      return null
+    }
+
+    const message: ChatMessage = {
+      role: 'assistant',
+      content,
+      ...(segmentToolCalls.length > 0
+        ? { tool_calls: segmentToolCalls.map(mapToolCallToChatMessage) }
+        : {})
+    }
+    if (preserveReasoning) {
+      message.reasoning_content = reasoning
+      const reasoningProviderOptions = extractReasoningProviderOptions(segmentBlocks)
+      if (reasoningProviderOptions) {
+        message.reasoning_provider_options = reasoningProviderOptions
+      }
+    }
+    return message
+  }
+
+  const messages: ChatMessage[] = []
+  replaySegments.forEach((segment, index) => {
+    const segmentMessage = buildSegment(
+      segment.startIndex,
+      segment.endIndex,
+      index === replaySegments.length - 1
+    )
+    if (segmentMessage) {
+      messages.push(segmentMessage)
+    }
+    if (segment.replayAfter) {
+      messages.push({ role: 'assistant', provider_replay: segment.replayAfter })
+    }
+  })
+  return messages
 }
 
 function toolResponseToText(content: string | MCPContentItem[]): string {
@@ -1691,6 +1803,7 @@ export interface SettleToolBatchParams {
   contextLength: number
   maxTokens: number
   rendererFlushHandle: RendererFlushHandle
+  providerReplayProjector?: ChatMessageProviderReplayProjector
   collaborators?: ToolDispatchCollaborators
   providerId?: string
 }
@@ -1714,6 +1827,7 @@ export async function settleToolBatch(
     contextLength,
     maxTokens,
     rendererFlushHandle,
+    providerReplayProjector,
     collaborators,
     providerId
   } = params
@@ -1746,12 +1860,7 @@ export async function settleToolBatch(
   const assistantMessage: ChatMessage = {
     role: 'assistant',
     content: assistantContent,
-    tool_calls: toolCalls.map((tc) => ({
-      id: tc.id,
-      type: 'function' as const,
-      function: { name: tc.name, arguments: tc.arguments },
-      ...(tc.providerOptions ? { provider_options: tc.providerOptions } : {})
-    }))
+    tool_calls: toolCalls.map(mapToolCallToChatMessage)
   }
 
   const reasoning = extractReasoningFromBlocks(iterationBlocks)
@@ -1783,7 +1892,13 @@ export async function settleToolBatch(
     }
   }
 
-  conversation.push(assistantMessage)
+  const replayAwareMessages = buildReplayAwareToolRoundMessages(
+    iterationBlocks,
+    toolCalls,
+    interleavedReasoning,
+    providerReplayProjector
+  )
+  conversation.push(...(replayAwareMessages ?? [assistantMessage]))
 
   let executed = 0
   let toolsChanged = false

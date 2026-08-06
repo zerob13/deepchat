@@ -76,6 +76,11 @@
                 :usage="currentMessage.usage"
                 @toggle-collapse="handleCollapseToggle"
               />
+              <MessageBlockSearch
+                v-else-if="isProviderSearchBlock(item.block)"
+                :block="item.block"
+                :thread-id="currentThreadId"
+              />
               <MessageBlockToolCall
                 v-else-if="item.block.type === 'tool_call' && !isInternalToolCall(item.block)"
                 :block="item.block"
@@ -231,7 +236,8 @@ import MessageBlockImage from './MessageBlockImage.vue'
 import MessageBlockAudio from './MessageBlockAudio.vue'
 import MessageBlockVideo from './MessageBlockVideo.vue'
 import MessageBlockActivityGroup from './MessageBlockActivityGroup.vue'
-import { buildAssistantRenderItems } from './messageActivityGroups'
+import MessageBlockSearch from './MessageBlockSearch.vue'
+import { buildAssistantRenderItems, isProviderSearchBlock } from './messageActivityGroups'
 
 import {
   Dialog,

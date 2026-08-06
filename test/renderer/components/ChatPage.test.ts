@@ -2542,6 +2542,9 @@ describe('ChatPage', () => {
     expect(sessionClient.deleteMessage).not.toHaveBeenCalled()
     expect(wrapper.find('.alert-dialog-stub').exists()).toBe(true)
     expect(wrapper.text()).toContain('dialog.deleteMessage.title')
+    expect(wrapper.text()).toContain('dialog.deleteMessage.confirm')
+    expect(wrapper.text()).toContain('dialog.cancel')
+    expect(wrapper.text()).not.toContain("t('dialog.deleteMessage.confirm')")
 
     await wrapper.findComponent({ name: 'AlertDialogAsyncAction' }).trigger('click')
     await flushPromises()

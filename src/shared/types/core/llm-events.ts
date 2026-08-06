@@ -2,6 +2,7 @@
 
 import type { ChatMessageProviderOptions } from './chat-message'
 import type { AgentPlanItem, AgentPlanTerminalReason } from '../agent-plan'
+import type { SearchResult } from './search'
 
 export type StreamEventType =
   | 'text'
@@ -15,6 +16,8 @@ export type StreamEventType =
   | 'stop'
   | 'image_data'
   | 'rate_limit'
+  | 'provider_search'
+  | 'provider_url_source'
   | 'plan'
 
 export interface TextStreamEvent {
@@ -117,6 +120,38 @@ export interface RateLimitStreamEvent {
   }
 }
 
+export type ProviderSearchAction = {
+  type: 'search' | 'open_page' | 'find_in_page'
+  target: string
+  url?: string
+}
+
+export type ProviderSearchPayload = {
+  id: string
+  action: ProviderSearchAction
+  label: string
+  provider: string
+  results: SearchResult[]
+  providerReplayJson: string
+}
+
+export interface ProviderSearchStreamEvent {
+  type: 'provider_search'
+  provider_search: ProviderSearchPayload
+}
+
+export type ProviderUrlSourcePayload = {
+  searchId: string
+  title: string
+  url: string
+  rank: number
+}
+
+export interface ProviderUrlSourceStreamEvent {
+  type: 'provider_url_source'
+  provider_url_source: ProviderUrlSourcePayload
+}
+
 export interface PlanStreamEvent {
   type: 'plan'
   plan: AgentPlanItem[]
@@ -138,12 +173,15 @@ export type LLMCoreStreamEvent =
   | StopStreamEvent
   | ImageDataStreamEvent
   | RateLimitStreamEvent
+  | ProviderSearchStreamEvent
+  | ProviderUrlSourceStreamEvent
   | PlanStreamEvent
 
 export type {
   ChatMessage,
   ChatMessageContent,
   ChatMessageProviderOptions,
+  ChatMessageProviderReplay,
   ChatMessageRole,
   ChatMessageToolCall
 } from './chat-message'
@@ -249,6 +287,16 @@ export const createStreamEvent = {
   }): RateLimitStreamEvent => ({
     type: 'rate_limit',
     rate_limit
+  }),
+  providerSearch: (provider_search: ProviderSearchPayload): ProviderSearchStreamEvent => ({
+    type: 'provider_search',
+    provider_search
+  }),
+  providerUrlSource: (
+    provider_url_source: ProviderUrlSourcePayload
+  ): ProviderUrlSourceStreamEvent => ({
+    type: 'provider_url_source',
+    provider_url_source
   })
 }
 

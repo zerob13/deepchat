@@ -35,6 +35,8 @@ export type AiSdkProviderKind =
   | 'vertex'
   | 'aws-bedrock'
 
+export type AiSdkFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
 export interface CreateAiSdkProviderContextParams {
   providerKind: AiSdkProviderKind
   provider: LLM_PROVIDER
@@ -43,6 +45,7 @@ export interface CreateAiSdkProviderContextParams {
   modelId: string
   cleanHeaders?: boolean
   wrapThinkReasoning?: boolean
+  fetchAdapter?: (baseFetch: AiSdkFetch) => AiSdkFetch
 }
 
 export interface AiSdkProviderContext {
@@ -69,7 +72,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toOpenAICompatibleProviderOptionsKey(providerName: string): string {
-  // Mirrors the private toCamelCase helper in @ai-sdk/openai-compatible@3.0.14.
+  // Mirrors the package's private toCamelCase helper.
   // Broader camel-case transforms can produce namespaces the adapter does not read.
   return providerName.replace(/[_-]([a-z])/g, (match) => match[1].toUpperCase())
 }
@@ -571,11 +574,12 @@ export function createAiSdkProviderContext(
   params: CreateAiSdkProviderContextParams
 ): AiSdkProviderContext {
   const baseUrl = params.provider.baseUrl || ''
-  const fetch = createFetchMiddleware(
+  const baseFetch = createFetchMiddleware(
     params.provider,
     params.defaultHeaders,
     params.cleanHeaders === true
   )
+  const fetch = params.fetchAdapter ? params.fetchAdapter(baseFetch) : baseFetch
   const maybeWrapModel = (model: any): any =>
     params.wrapThinkReasoning === false
       ? model

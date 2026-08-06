@@ -1,4 +1,4 @@
-import { computed, effectScope, nextTick, ref } from 'vue'
+import { computed, effectScope, nextTick, ref, shallowReactive } from 'vue'
 import type { JSONContent } from '@tiptap/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useComposerSubmit } from '@/features/chat-page/composables/useComposerSubmit'
@@ -83,7 +83,21 @@ function createHarness(options: { composerMounted?: boolean } = {}) {
     applyPersistedMessageRecords: vi.fn(),
     invalidateRecentSessionView: vi.fn()
   }
-  const sessionStore = { activeSession: { providerId: 'openai' } }
+  const searchIntents = shallowReactive(new Map<string, boolean>())
+  const sessionStore = {
+    activeSession: { providerId: 'openai' },
+    getSearchIntent: (targetSessionId: string) => searchIntents.get(targetSessionId) === true,
+    setSearchIntent: (targetSessionId: string, enabled: boolean) => {
+      if (enabled) searchIntents.set(targetSessionId, true)
+      else searchIntents.delete(targetSessionId)
+    },
+    toggleSearchIntent: (targetSessionId: string) => {
+      const enabled = searchIntents.get(targetSessionId) !== true
+      if (enabled) searchIntents.set(targetSessionId, true)
+      else searchIntents.delete(targetSessionId)
+      return enabled
+    }
+  }
   const modelStore = { findChatSelectableModel: vi.fn(() => null) }
   const pendingInputStore = {
     isAtCapacity: false,
@@ -98,8 +112,15 @@ function createHarness(options: { composerMounted?: boolean } = {}) {
     cancelSubmission: vi.fn().mockResolvedValue({ cancelled: true })
   }
   const sessionClient = { compactSession: vi.fn().mockResolvedValue({ compacted: true }) }
+  let providersChangedListener: ((payload: { providerIds?: string[] }) => void) | null = null
   const modelClient = {
     getCapabilities: vi.fn().mockResolvedValue({ supportsAudioInput: true })
+  }
+  const providerClient = {
+    onProvidersChanged: vi.fn((listener: (payload: { providerIds?: string[] }) => void) => {
+      providersChangedListener = listener
+      return vi.fn()
+    })
   }
   const createPendingAssistantPlaceholder = vi.fn(() => 'pending-assistant')
   const clearPendingAssistantPlaceholder = vi.fn()
@@ -123,6 +144,7 @@ function createHarness(options: { composerMounted?: boolean } = {}) {
       chatClient,
       sessionClient,
       modelClient,
+      providerClient,
       chatInputRef,
       isReadOnlySession: computed(() => isReadOnly.value),
       isSessionViewPreparing: computed(() => isPreparingSession.value),
@@ -155,8 +177,12 @@ function createHarness(options: { composerMounted?: boolean } = {}) {
     document,
     messageStore,
     sessionStore,
+    pendingInputStore,
     chatClient,
     modelClient,
+    providerClient,
+    emitProvidersChanged: (payload: { providerIds?: string[] }) =>
+      providersChangedListener?.(payload),
     clearPendingSkills,
     setPendingSkills,
     restoreDocumentSnapshot,
@@ -808,6 +834,183 @@ describe('useComposerSubmit attachment preflight', () => {
 
     expect(harness.beginPlanTurn).toHaveBeenCalledWith('s1')
     expect(harness.actions.message.value).toBe('new draft')
+    harness.stop()
+  })
+
+  it('captures provider search intent before asynchronous attachment preparation', async () => {
+    const harness = createHarness()
+    harness.modelClient.getCapabilities.mockResolvedValue({
+      supportsAudioInput: true,
+      supportsSearch: true,
+      searchExecution: 'provider'
+    })
+    harness.activeModelSelection.value = {
+      providerId: 'deepseek',
+      modelId: 'deepseek-v4-flash'
+    }
+    await vi.waitFor(() => expect(harness.actions.isSearchAvailable.value).toBe(true))
+    harness.actions.toggleSearch()
+
+    const attachmentCapabilities = createDeferred<{
+      supportsAudioInput: boolean
+      supportsSearch: boolean
+      searchExecution: 'provider'
+    }>()
+    harness.modelClient.getCapabilities.mockReturnValueOnce(attachmentCapabilities.promise)
+    harness.actions.message.value = 'search this'
+    harness.actions.attachedFiles.value = [imageFile()]
+
+    const submit = harness.actions.onSubmit()
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(2))
+    harness.actions.toggleSearch()
+    attachmentCapabilities.resolve({
+      supportsAudioInput: true,
+      supportsSearch: true,
+      searchExecution: 'provider'
+    })
+    await submit
+
+    expect(harness.actions.isSearchEnabled.value).toBe(false)
+    expect(harness.chatClient.sendMessage).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ text: 'search this', search: true }),
+      { submissionId: expect.any(String) }
+    )
+    expect(harness.messageStore.addOptimisticUserMessage).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ search: true })
+    )
+    harness.stop()
+  })
+
+  it('observes the new-session search intent and retains it when the composer unmounts', async () => {
+    const harness = createHarness()
+    harness.sessionStore.setSearchIntent('s1', true)
+    harness.modelClient.getCapabilities.mockResolvedValue({
+      supportsAudioInput: true,
+      supportsSearch: true,
+      searchExecution: 'provider'
+    })
+    harness.activeModelSelection.value = {
+      providerId: 'deepseek',
+      modelId: 'deepseek-v4-flash'
+    }
+
+    await vi.waitFor(() => expect(harness.actions.isSearchEnabled.value).toBe(true))
+    harness.actions.dispose()
+
+    expect(harness.sessionStore.getSearchIntent('s1')).toBe(true)
+    harness.stop()
+  })
+
+  it('keeps search intent per session and ignores stale capability responses', async () => {
+    const harness = createHarness()
+    const first = createDeferred<{
+      supportsAudioInput: boolean
+      supportsSearch: boolean
+      searchExecution?: 'provider'
+    }>()
+    const second = createDeferred<{
+      supportsAudioInput: boolean
+      supportsSearch: boolean
+      searchExecution?: 'provider'
+    }>()
+    harness.modelClient.getCapabilities
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValue({
+        supportsAudioInput: true,
+        supportsSearch: true,
+        searchExecution: 'provider'
+      })
+    harness.activeModelSelection.value = {
+      providerId: 'deepseek',
+      modelId: 'deepseek-v4-flash'
+    }
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(1))
+
+    harness.sessionId.value = 's2'
+    harness.actions.switchComposerSession('s1', 's2')
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(2))
+    second.resolve({
+      supportsAudioInput: true,
+      supportsSearch: true,
+      searchExecution: 'provider'
+    })
+    await vi.waitFor(() => expect(harness.actions.isSearchAvailable.value).toBe(true))
+    harness.actions.toggleSearch()
+
+    first.resolve({ supportsAudioInput: true, supportsSearch: false })
+    await nextTick()
+    expect(harness.actions.isSearchAvailable.value).toBe(true)
+    expect(harness.actions.isSearchEnabled.value).toBe(true)
+
+    harness.sessionId.value = 's1'
+    harness.actions.switchComposerSession('s2', 's1')
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(harness.actions.isSearchAvailable.value).toBe(true))
+    expect(harness.actions.isSearchEnabled.value).toBe(false)
+    harness.actions.toggleSearch()
+
+    harness.sessionId.value = 's2'
+    harness.actions.switchComposerSession('s1', 's2')
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(4))
+    await vi.waitFor(() => expect(harness.actions.isSearchAvailable.value).toBe(true))
+    expect(harness.actions.isSearchEnabled.value).toBe(true)
+    harness.stop()
+  })
+
+  it('does not expose catalog-only search support without a provider execution path', async () => {
+    const harness = createHarness()
+    harness.modelClient.getCapabilities.mockResolvedValue({
+      supportsAudioInput: true,
+      supportsSearch: true
+    })
+    harness.activeModelSelection.value = {
+      providerId: 'google',
+      modelId: 'gemini-search-model'
+    }
+
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(1))
+    await nextTick()
+    expect(harness.actions.isSearchAvailable.value).toBe(false)
+    harness.actions.toggleSearch()
+    harness.actions.message.value = 'do not search'
+    await harness.actions.onSubmit()
+
+    const payload = harness.chatClient.sendMessage.mock.calls[0]?.[1]
+    expect(payload).not.toHaveProperty('search')
+    harness.stop()
+  })
+
+  it('refreshes search capability when the active provider configuration changes', async () => {
+    const harness = createHarness()
+    const refreshedCapability = createDeferred<{
+      supportsAudioInput: boolean
+      supportsSearch: boolean
+    }>()
+    harness.modelClient.getCapabilities
+      .mockResolvedValueOnce({
+        supportsAudioInput: true,
+        supportsSearch: true,
+        searchExecution: 'provider'
+      })
+      .mockReturnValueOnce(refreshedCapability.promise)
+    harness.activeModelSelection.value = {
+      providerId: 'deepseek',
+      modelId: 'deepseek-v4-flash'
+    }
+    await vi.waitFor(() => expect(harness.actions.isSearchAvailable.value).toBe(true))
+
+    harness.emitProvidersChanged({ providerIds: ['other-provider'] })
+    expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(1)
+
+    harness.emitProvidersChanged({ providerIds: ['deepseek'] })
+    await vi.waitFor(() => expect(harness.modelClient.getCapabilities).toHaveBeenCalledTimes(2))
+    expect(harness.actions.isSearchAvailable.value).toBe(true)
+
+    refreshedCapability.resolve({ supportsAudioInput: true, supportsSearch: false })
+    await vi.waitFor(() => expect(harness.actions.isSearchAvailable.value).toBe(false))
     harness.stop()
   })
 })

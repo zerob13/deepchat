@@ -164,6 +164,7 @@ export class SessionPendingInputStore {
       payload_json: JSON.stringify({
         text,
         files,
+        search: existing.search === true || next.search === true,
         ...(activeSkills.length > 0 ? { activeSkills } : {}),
         ...(inlineItems.length > 0 ? { inlineItems } : {}),
         ...(attachmentFallbackPolicy ? { attachmentFallbackPolicy } : {})
@@ -529,10 +530,14 @@ export class SessionPendingInputStore {
       return { text: row.payload_json, files: [] }
     }
 
+    const data: SendMessageInput = {
+      ...result.data,
+      search: result.data.search === true
+    }
     const rawFiles = Array.isArray((parsed as { files?: unknown }).files)
       ? ((parsed as { files: unknown[] }).files ?? [])
       : []
-    const files = result.data.files?.map((file, index) => {
+    const files = data.files?.map((file, index) => {
       const rawFile = rawFiles[index]
       const resolved =
         rawFile && typeof rawFile === 'object' && !Array.isArray(rawFile)
@@ -542,7 +547,7 @@ export class SessionPendingInputStore {
           : undefined
       return resolved ? { ...file, resolvedRepresentation: resolved } : file
     })
-    return files ? { ...result.data, files } : result.data
+    return files ? { ...data, files } : data
   }
 
   private decodeBlocking(row: DeepChatPendingInputRow): AttachmentPreparationSummary | null {

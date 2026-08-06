@@ -67,6 +67,10 @@ import {
   resolveCapabilityIdentity as resolveModelCapabilityIdentity
 } from '../capabilityIdentity'
 import type { ResolvedCapabilityIdentity } from '@shared/types/model-capabilities'
+import {
+  resolveDeepSeekResponsesRequestRoute,
+  type DeepSeekResponsesRoute
+} from '../deepseekResponsesAdapter'
 
 const OPENAI_IMAGE_GENERATION_MODELS = ['gpt-4o-all', 'gpt-4o-image']
 const OPENAI_IMAGE_GENERATION_MODEL_PREFIXES = ['dall-e-', 'gpt-image-']
@@ -96,6 +100,10 @@ type RouteDecision = {
   endpointType?: NewApiEndpointType | 'grok-image'
   supportsOfficialAnthropicReasoning?: boolean
   capabilityIdentity?: ResolvedCapabilityIdentity
+}
+
+type RouteDecisionOptions = {
+  deepSeekResponsesRoute?: DeepSeekResponsesRoute
 }
 
 type ProviderRequestOptions = {
@@ -357,9 +365,32 @@ export class AiSdkProvider extends BaseLLMProvider {
     )
   }
 
-  private buildRouteDecision(modelId: string, modelConfig: ModelRouteConfig): RouteDecision {
+  private buildRouteDecision(
+    modelId: string,
+    modelConfig: ModelRouteConfig,
+    options?: RouteDecisionOptions
+  ): RouteDecision {
     const strategy = this.getRouteStrategy()
     const storedModel = this.getStoredModelRouteMetadata(modelId, modelConfig)
+    const deepSeekResponsesRoute = options?.deepSeekResponsesRoute
+
+    if (deepSeekResponsesRoute) {
+      const capabilityIdentity = this.resolveCapabilityIdentity(
+        modelId,
+        undefined,
+        modelConfig,
+        storedModel
+      )
+      return {
+        providerKind: deepSeekResponsesRoute.providerKind,
+        capabilityIdentity,
+        providerPatch: {
+          apiType: 'openai-responses',
+          baseUrl: deepSeekResponsesRoute.baseUrl,
+          capabilityProviderId: capabilityIdentity.providerId
+        }
+      }
+    }
 
     if (strategy === 'grok' && modelId.startsWith('grok-2-image')) {
       return {
@@ -522,9 +553,13 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
   }
 
-  private resolveRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
+  private resolveRouteDecision(
+    modelId: string,
+    modelConfig?: ModelConfig,
+    options?: RouteDecisionOptions
+  ): RouteDecision {
     const routeModelConfig = this.getRouteModelConfig(modelId, modelConfig)
-    const decision = this.buildRouteDecision(modelId, routeModelConfig)
+    const decision = this.buildRouteDecision(modelId, routeModelConfig, options)
     const resolvedModelConfig = {
       ...this.providerSettings.getModelConfig(
         modelId,
@@ -1038,9 +1073,25 @@ export class AiSdkProvider extends BaseLLMProvider {
     }
   }
 
-  private resolveRequestRouteDecision(modelId: string, modelConfig?: ModelConfig): RouteDecision {
+  private resolveRequestRouteDecision(
+    messages: ChatMessage[],
+    modelId: string,
+    modelConfig?: ModelConfig,
+    search = false
+  ): RouteDecision {
     this.assertModelRequestReady(modelId)
-    return this.resolveRouteDecision(modelId, modelConfig)
+    const deepSeekResponsesRoute = resolveDeepSeekResponsesRequestRoute({
+      providerId: this.provider.id,
+      modelId,
+      baseUrl: this.provider.baseUrl,
+      messages,
+      search
+    })
+    return this.resolveRouteDecision(
+      modelId,
+      modelConfig,
+      deepSeekResponsesRoute ? { deepSeekResponsesRoute } : undefined
+    )
   }
 
   private async runTextWithDecision(
@@ -1087,7 +1138,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     modelConfig?: ModelConfig,
     signal?: AbortSignal
   ): Promise<LLMResponse> {
-    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    const decision = this.resolveRequestRouteDecision(messages, modelId, modelConfig)
     return this.runTextWithDecision(
       messages,
       modelId,
@@ -1107,7 +1158,8 @@ export class AiSdkProvider extends BaseLLMProvider {
     temperature: number,
     maxTokens: number,
     tools: MCPToolDefinition[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    search = false
   ): AsyncGenerator<LLMCoreStreamEvent> {
     this.assertModelRequestReady(modelId)
     const { context, resolvedModelConfig } = this.buildRuntimeContext(
@@ -1115,19 +1167,6 @@ export class AiSdkProvider extends BaseLLMProvider {
       decision,
       modelConfig
     )
-    if (signal) {
-      yield* runAiSdkCoreStream(
-        context,
-        messages,
-        modelId,
-        resolvedModelConfig,
-        temperature,
-        maxTokens,
-        tools,
-        signal
-      )
-      return
-    }
     yield* runAiSdkCoreStream(
       context,
       messages,
@@ -1135,7 +1174,9 @@ export class AiSdkProvider extends BaseLLMProvider {
       resolvedModelConfig,
       temperature,
       maxTokens,
-      tools
+      tools,
+      signal,
+      search ? { search: true } : undefined
     )
   }
 
@@ -1146,9 +1187,10 @@ export class AiSdkProvider extends BaseLLMProvider {
     temperature: number,
     maxTokens: number,
     tools: MCPToolDefinition[],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    search = false
   ): AsyncGenerator<LLMCoreStreamEvent> {
-    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    const decision = this.resolveRequestRouteDecision(messages, modelId, modelConfig, search)
     yield* this.streamTextWithDecision(
       messages,
       modelId,
@@ -1157,7 +1199,8 @@ export class AiSdkProvider extends BaseLLMProvider {
       temperature,
       maxTokens,
       tools,
-      signal
+      signal,
+      search
     )
   }
 
@@ -1222,7 +1265,7 @@ export class AiSdkProvider extends BaseLLMProvider {
     modelConfig?: ModelConfig,
     signal?: AbortSignal
   ): Promise<LLMResponse> {
-    const decision = this.resolveRequestRouteDecision(modelId, modelConfig)
+    const decision = this.resolveRequestRouteDecision(messages, modelId, modelConfig)
     return this.collectStreamResponseWithDecision(
       messages,
       modelId,
@@ -2695,7 +2738,8 @@ export class AiSdkProvider extends BaseLLMProvider {
       temperature,
       maxTokens,
       tools,
-      options?.signal
+      options?.signal,
+      options?.search === true
     )
   }
 

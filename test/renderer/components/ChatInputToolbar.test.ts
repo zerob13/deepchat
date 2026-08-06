@@ -41,11 +41,15 @@ vi.mock('@dc-ui/components/button', () => ({
       tooltip: {
         type: String,
         default: ''
+      },
+      label: {
+        type: String,
+        default: ''
       }
     },
     emits: ['click'],
     template:
-      '<button type="button" :disabled="disabled" :data-variant="variant" :title="tooltip || undefined" v-bind="$attrs" @click="$emit(\'click\')"><i v-if="icon" :data-icon="icon" /><slot /><span v-if="tooltip">{{ tooltip }}</span></button>'
+      '<button type="button" :disabled="disabled" :data-variant="variant" :title="tooltip || undefined" :aria-label="label || tooltip || undefined" v-bind="$attrs" @click="$emit(\'click\')"><i v-if="icon" :data-icon="icon" /><slot /><span v-if="tooltip">{{ tooltip }}</span></button>'
   })
 }))
 
@@ -212,5 +216,35 @@ describe('ChatInputToolbar', () => {
 
     await wrapper.setProps({ isVoiceInputListening: true })
     expect(wrapper.find('[data-testid="chat-voice-recording-wave"]').exists()).toBe(true)
+  })
+
+  it('shows a capability-gated search toggle with pressed state', async () => {
+    const ChatInputToolbar = (await import('@/components/chat/ChatInputToolbar.vue')).default
+    const wrapper = mount(ChatInputToolbar, {
+      props: {
+        showSearch: true,
+        searchEnabled: false
+      }
+    })
+
+    const toggle = wrapper.get('[data-testid="chat-search-toggle"]')
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+    expect(toggle.attributes('aria-label')).toBe('chat.features.webSearch')
+    expect(toggle.find('[data-icon="lucide:globe-2"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('chat.features.webSearch')
+
+    await toggle.trigger('click')
+    expect(wrapper.emitted('toggle-search')).toEqual([[]])
+    await wrapper.setProps({ searchEnabled: true })
+    expect(wrapper.get('[data-testid="chat-search-toggle"]').attributes('aria-pressed')).toBe(
+      'true'
+    )
+  })
+
+  it('hides search when the active route has no provider execution path', async () => {
+    const ChatInputToolbar = (await import('@/components/chat/ChatInputToolbar.vue')).default
+    const wrapper = mount(ChatInputToolbar, { props: { showSearch: false } })
+
+    expect(wrapper.find('[data-testid="chat-search-toggle"]').exists()).toBe(false)
   })
 })

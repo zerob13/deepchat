@@ -1,7 +1,10 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
 import logger from '@shared/logger'
 import type { AssistantMessageBlock, MessageMetadata } from '@shared/types/agent-interface'
-import type { ChatMessage } from '@shared/types/core/chat-message'
+import type {
+  ChatMessage,
+  ChatMessageProviderReplayProjector
+} from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type {
@@ -40,8 +43,8 @@ import type { ContextBuildMetadata } from '@/agent/deepchat/runtime/contextBuild
 import type { CompactionService } from '@/agent/deepchat/runtime/compactionService'
 import { resolveInterleavedReasoningConfig } from '@/agent/deepchat/runtime/generationSettings'
 import { isContextWindowErrorLike } from '@/agent/deepchat/runtime/contextWindowError'
-import { cloneBlocksForRenderer } from '@/agent/deepchat/runtime/echo'
 import { buildPersistableMessageTracePayload } from '@/agent/deepchat/runtime/messageTracePayload'
+import { cloneBlocksForRenderer } from '@/session/clientMessageProjection'
 import type { SessionTranscript } from '@/session/data/transcript'
 import { processStream } from '@/agent/deepchat/runtime/process'
 import type { ProviderPermissionCoordinator } from '@/agent/deepchat/runtime/providerPermissionCoordinator'
@@ -139,7 +142,9 @@ export type DeepChatLoopRunInput = {
   contextContributions?: ContextRuntimeContributions
   initialBlocks?: AssistantMessageBlock[]
   initialAccounting?: MessageMetadata
+  providerReplayProjector?: ChatMessageProviderReplayProjector
   promptPreview?: string
+  search?: boolean
   interleavedReasoning?: InterleavedReasoningConfig
   viewContext?: PendingTapeViewContext
   refreshSystemPrompt?: (
@@ -278,7 +283,9 @@ export class DeepChatLoopRunner {
       contextContributions,
       initialBlocks,
       initialAccounting,
+      providerReplayProjector,
       promptPreview,
+      search,
       interleavedReasoning: providedInterleavedReasoning,
       viewContext,
       refreshSystemPrompt,
@@ -451,6 +458,7 @@ export class DeepChatLoopRunner {
           reviewConversationMessages = nextMessages
         },
         maxProviderRounds,
+        providerReplayProjector,
         toolCatalog,
         refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
           if (refreshSystemPrompt) {
@@ -629,7 +637,10 @@ export class DeepChatLoopRunner {
                   temperature,
                   maxTokens,
                   tools,
-                  { signal }
+                  {
+                    signal,
+                    ...(search === true ? { search: true } : {})
+                  }
                 )
               },
               beforeStream: () => {

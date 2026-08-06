@@ -20,6 +20,7 @@ import {
   TOOL_EXECUTION,
   type MCPToolDefinitionBase
 } from '@shared/types/core/mcp'
+import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
 
 vi.mock('tokenx', () => ({
   approximateTokenSize: vi.fn((text: string) => {
@@ -358,6 +359,21 @@ describe('truncateContext', () => {
       { role: 'user', content: 'Thanks' },
       { role: 'assistant', content: 'You are welcome' }
     ])
+  })
+
+  it('drops a replay-bearing turn atomically during emergency truncation', () => {
+    const history = [
+      { role: 'user' as const, content: 'search owner' },
+      { role: 'assistant' as const, content: 'visible before search' },
+      {
+        role: 'assistant' as const,
+        provider_replay: { markerId: 'ws_1', payload: 'replay payload' }
+      },
+      { role: 'assistant' as const, content: 'visible after search' },
+      { role: 'user' as const, content: 'latest' }
+    ]
+
+    expect(truncateContext(history, 2)).toEqual([{ role: 'user', content: 'latest' }])
   })
 
   it('drops orphaned tool messages at the start', () => {
@@ -1984,6 +2000,116 @@ describe('fitMessagesToContextWindow', () => {
       { role: 'user', content: 'Steer instruction' },
       { role: 'user', content: 'Queued target' }
     ])
+  })
+
+  it('drops a replay-bearing history turn atomically under context pressure', () => {
+    const result = fitMessagesToContextWindow(
+      [
+        { role: 'system', content: 'System' },
+        { role: 'user', content: 'old question' },
+        { role: 'assistant', content: 'old answer' },
+        {
+          role: 'assistant',
+          provider_replay: { markerId: 'ws_1', payload: 'R'.repeat(200) }
+        },
+        { role: 'user', content: 'latest question' }
+      ],
+      20,
+      4,
+      1
+    )
+
+    expect(result).toEqual([
+      { role: 'system', content: 'System' },
+      { role: 'user', content: 'latest question' }
+    ])
+  })
+})
+
+describe('provider replay context projection', () => {
+  const providerReplayJson = createDeepSeekReplayJson()
+  const makeReplayRecord = () => ({
+    ...makeAssistantRecord(2, ''),
+    content: JSON.stringify([
+      { type: 'content', content: 'Before search.', status: 'success', timestamp: 1 },
+      {
+        id: 'ws_1',
+        type: 'search',
+        content: 'DeepChat',
+        status: 'success',
+        timestamp: 2,
+        extra: { providerReplayJson }
+      },
+      { type: 'content', content: 'After search.', status: 'success', timestamp: 3 }
+    ])
+  })
+
+  it('preserves the persisted assistant block order around replay items', () => {
+    const projector = vi.fn((payload: string) => ({ markerId: 'ws_1', payload }))
+
+    expect(
+      recordToChatMessages(makeReplayRecord(), false, false, false, false, undefined, projector)
+    ).toEqual([
+      { role: 'assistant', content: 'Before search.' },
+      {
+        role: 'assistant',
+        provider_replay: { markerId: 'ws_1', payload: providerReplayJson }
+      },
+      { role: 'assistant', content: 'After search.' }
+    ])
+    expect(projector).toHaveBeenCalledOnce()
+  })
+
+  it('keeps visible assistant text when the target model rejects replay', () => {
+    expect(
+      recordToChatMessages(
+        makeReplayRecord(),
+        false,
+        false,
+        false,
+        false,
+        undefined,
+        () => null
+      )
+    ).toEqual([{ role: 'assistant', content: 'Before search.After search.' }])
+  })
+
+  it('ignores replay-shaped metadata on non-search blocks', () => {
+    const record = {
+      ...makeAssistantRecord(2, ''),
+      content: JSON.stringify([
+        {
+          type: 'content',
+          content: 'Visible answer.',
+          status: 'success',
+          timestamp: 1,
+          extra: { providerReplayJson: '{"version":1}' }
+        }
+      ])
+    }
+    const projector = vi.fn(() => ({ markerId: 'ws_1', payload: '{"version":1}' }))
+
+    expect(
+      recordToChatMessages(record, false, false, false, false, undefined, projector)
+    ).toEqual([{ role: 'assistant', content: 'Visible answer.' }])
+    expect(projector).not.toHaveBeenCalled()
+  })
+
+  it('counts an opaque replay payload exactly once', () => {
+    vi.mocked(approximateTokenSize).mockClear()
+
+    expect(
+      estimateMessagesTokens([
+        {
+          role: 'assistant',
+          content: 'visible',
+          provider_replay: { markerId: 'ws_1', payload: 'opaque replay' }
+        }
+      ])
+    ).toBe(Math.ceil('visible'.length / 4) + Math.ceil('opaque replay'.length / 4))
+    expect(
+      vi.mocked(approximateTokenSize).mock.calls.filter(([value]) => value === 'opaque replay')
+    ).toHaveLength(1)
   })
 })
 

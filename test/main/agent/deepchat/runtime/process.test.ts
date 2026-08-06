@@ -20,6 +20,8 @@ import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
 import type { DeepChatLoopNotification } from '@/agent/deepchat/loop/ports'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { resolveToolOffloadPath } from '@/agent/shared/storage/sessionPaths'
+import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
+import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 
@@ -340,6 +342,168 @@ describe('processStream', () => {
       })()
     }) as unknown as ProcessParams['coreStream']
   }
+
+  it('persists normalized provider search results with the assistant message', async () => {
+    const providerReplayJson = createDeepSeekReplayJson()
+    const resultRow = {
+      title: 'DeepChat',
+      url: 'https://deepchat.thinkinai.xyz/',
+      snippet: 'A privacy-first AI chat client.',
+      rank: 0,
+      searchId: 'ws_1'
+    }
+    const citationRow = {
+      title: 'DeepChat Docs',
+      url: 'https://deepchat.thinkinai.xyz/docs',
+      rank: 1,
+      searchId: 'ws_1'
+    }
+    const coreStream = vi.fn(async function* () {
+      yield {
+        type: 'provider_search',
+        provider_search: {
+          id: 'ws_1',
+          action: { type: 'search', target: 'DeepChat' },
+          label: 'DeepChat',
+          provider: 'deepseek',
+          results: [resultRow],
+          providerReplayJson
+        }
+      } as LLMCoreStreamEvent
+      yield {
+        type: 'provider_url_source',
+        provider_url_source: citationRow
+      } as LLMCoreStreamEvent
+      yield { type: 'text', content: 'DeepChat is an AI client.' } as LLMCoreStreamEvent
+      yield { type: 'stop', stop_reason: 'complete' } as LLMCoreStreamEvent
+    })
+    const params = createParams({ coreStream })
+
+    await expect(processStream(params)).resolves.toMatchObject({ status: 'completed' })
+
+    expect(messageStore.addSearchResult).toHaveBeenCalledTimes(2)
+    expect(messageStore.addSearchResult).toHaveBeenNthCalledWith(1, {
+      sessionId: params.run.sessionId,
+      messageId: params.run.messageId,
+      searchId: 'ws_1',
+      rank: 0,
+      result: resultRow
+    })
+    expect(messageStore.addSearchResult).toHaveBeenNthCalledWith(2, {
+      sessionId: params.run.sessionId,
+      messageId: params.run.messageId,
+      searchId: 'ws_1',
+      rank: 1,
+      result: citationRow
+    })
+    expect(params.run.streamState.blocks).toEqual([
+      expect.objectContaining({
+        id: 'ws_1',
+        type: 'search',
+        status: 'success',
+        extra: expect.objectContaining({
+          total: 2,
+          pages: [
+            {
+              title: 'DeepChat',
+              url: 'https://deepchat.thinkinai.xyz/',
+              content: 'A privacy-first AI chat client.'
+            },
+            {
+              title: 'DeepChat Docs',
+              url: 'https://deepchat.thinkinai.xyz/docs'
+            }
+          ],
+          providerReplayJson
+        })
+      }),
+      expect.objectContaining({
+        type: 'content',
+        content: 'DeepChat is an AI client.',
+        status: 'success'
+      })
+    ])
+  })
+
+  it('replays provider search output before continuing a local tool round', async () => {
+    const providerReplayJson = createDeepSeekReplayJson()
+    let callCount = 0
+    const coreStream = vi.fn(function () {
+      callCount += 1
+      if (callCount === 1) {
+        return (async function* () {
+          yield { type: 'text', content: 'Before search.' } as LLMCoreStreamEvent
+          yield {
+            type: 'provider_search',
+            provider_search: {
+              id: 'ws_1',
+              action: { type: 'search', target: 'DeepChat' },
+              label: 'DeepChat',
+              provider: 'deepseek',
+              results: [],
+              providerReplayJson
+            }
+          } as LLMCoreStreamEvent
+          yield { type: 'text', content: 'After search.' } as LLMCoreStreamEvent
+          yield {
+            type: 'tool_call_start',
+            tool_call_id: 'tc_1',
+            tool_call_name: 'read_file'
+          } as LLMCoreStreamEvent
+          yield {
+            type: 'tool_call_end',
+            tool_call_id: 'tc_1',
+            tool_call_arguments_complete: '{"path":"README.md"}'
+          } as LLMCoreStreamEvent
+          yield { type: 'stop', stop_reason: 'tool_use' } as LLMCoreStreamEvent
+        })()
+      }
+
+      return (async function* () {
+        yield { type: 'text', content: 'Done' } as LLMCoreStreamEvent
+        yield { type: 'stop', stop_reason: 'complete' } as LLMCoreStreamEvent
+      })()
+    }) as unknown as ProcessParams['coreStream']
+    const providerReplayProjector = createDeepSeekResponsesReplayProjector({
+      providerId: 'deepseek',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com/v1'
+    })
+    if (!providerReplayProjector) {
+      throw new Error('Expected provider replay projector')
+    }
+    const params = createParams({
+      coreStream,
+      tools: [makeTool('read_file')],
+      providerReplayProjector
+    })
+
+    const promise = processStream(params)
+    await vi.runAllTimersAsync()
+    await promise
+
+    expect(coreStream).toHaveBeenCalledTimes(2)
+    expect((coreStream as ReturnType<typeof vi.fn>).mock.calls[1][0]).toEqual([
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Before search.' },
+      {
+        role: 'assistant',
+        provider_replay: { markerId: 'ws_1', payload: providerReplayJson }
+      },
+      {
+        role: 'assistant',
+        content: 'After search.',
+        tool_calls: [
+          {
+            id: 'tc_1',
+            type: 'function',
+            function: { name: 'read_file', arguments: '{"path":"README.md"}' }
+          }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'tc_1', content: 'result for read_file' }
+    ])
+  })
 
   describe('fixed lifecycle commits', () => {
     const TOOL_ROUND_COMMIT_ORDER = [

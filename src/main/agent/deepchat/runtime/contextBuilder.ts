@@ -1,7 +1,11 @@
 import fs from 'fs'
 import path from 'path'
 import { approximateTokenSize } from 'tokenx'
-import type { ChatMessage, ChatMessageProviderOptions } from '@shared/types/core/chat-message'
+import type {
+  ChatMessage,
+  ChatMessageProviderOptions,
+  ChatMessageProviderReplayProjector
+} from '@shared/types/core/chat-message'
 import {
   stripToolExecutionContract,
   type MCPToolDefinition
@@ -29,6 +33,7 @@ import {
   isPdfAttachment
 } from '@shared/utils/attachmentRepresentation'
 import { isRetiredWorkflowResultMessageMetadata } from '@shared/orchestration/retiredWorkflowData'
+import { segmentAssistantBlocksByProviderReplay } from './providerReplaySegments'
 
 export { estimateMessagesTokens } from '@shared/utils/messageTokens'
 
@@ -84,6 +89,7 @@ export type ContextBuildOptions = {
   preserveEmptyInterleavedReasoning?: boolean
   extraReserveTokens?: number
   supportsAudioInput?: boolean
+  providerReplayProjector?: ChatMessageProviderReplayProjector
 }
 
 export type CacheAwareContextBuildOptions = ContextBuildOptions & {
@@ -239,6 +245,7 @@ export function normalizeUserInput(input: string | SendMessageInput): SendMessag
     files: Array.isArray(input.files)
       ? (input.files.filter((file): file is MessageFile => Boolean(file)) as MessageFile[])
       : [],
+    search: input.search === true,
     ...(activeSkills.length > 0 ? { activeSkills } : {}),
     ...(inlineItems.length > 0 ? { inlineItems } : {}),
     ...(input.attachmentFallbackPolicy === 'auto' ||
@@ -778,6 +785,10 @@ export function createUserChatMessage(
 }
 
 function hasPromptMessageContent(message: ChatMessage): boolean {
+  if (message.provider_replay) {
+    return true
+  }
+
   if (typeof message.content === 'string' && message.content.trim().length > 0) {
     return true
   }
@@ -879,7 +890,7 @@ function appendAssistantTextContent(
  * Convert a ChatMessageRecord from the DB into one or more ChatMessages for the LLM.
  * Only settled tool calls (with a non-empty response) are included in history.
  */
-export function recordToChatMessages(
+function recordToChatMessagesWithoutProviderReplay(
   record: ChatMessageRecord,
   supportsVision: boolean,
   preserveInterleavedReasoning: boolean = false,
@@ -1046,6 +1057,70 @@ export function recordToChatMessages(
   return result
 }
 
+export function recordToChatMessages(
+  record: ChatMessageRecord,
+  supportsVision: boolean,
+  preserveInterleavedReasoning: boolean = false,
+  preserveEmptyInterleavedReasoning: boolean = false,
+  supportsAudioInput: boolean = false,
+  userLeadingContext?: string | null,
+  providerReplayProjector?: ChatMessageProviderReplayProjector
+): ChatMessage[] {
+  if (record.role !== 'assistant' || !providerReplayProjector) {
+    return recordToChatMessagesWithoutProviderReplay(
+      record,
+      supportsVision,
+      preserveInterleavedReasoning,
+      preserveEmptyInterleavedReasoning,
+      supportsAudioInput,
+      userLeadingContext
+    )
+  }
+
+  const blocks = JSON.parse(record.content) as AssistantMessageBlock[]
+  const segments = segmentAssistantBlocksByProviderReplay(blocks, (block) => {
+    if (block.type !== 'search') {
+      return null
+    }
+    const providerReplayJson = block.extra?.providerReplayJson
+    return typeof providerReplayJson === 'string'
+      ? providerReplayProjector(providerReplayJson)
+      : null
+  })
+  if (segments.every((segment) => segment.replayAfter === null)) {
+    return recordToChatMessagesWithoutProviderReplay(
+      record,
+      supportsVision,
+      preserveInterleavedReasoning,
+      preserveEmptyInterleavedReasoning,
+      supportsAudioInput,
+      userLeadingContext
+    )
+  }
+
+  const messages: ChatMessage[] = []
+  for (const segment of segments) {
+    messages.push(
+      ...recordToChatMessagesWithoutProviderReplay(
+        {
+          ...record,
+          content: JSON.stringify(segment.blocks),
+          ...(segment.replayAfter ? { status: 'sent' as const } : {})
+        },
+        supportsVision,
+        preserveInterleavedReasoning,
+        preserveEmptyInterleavedReasoning,
+        supportsAudioInput,
+        userLeadingContext
+      )
+    )
+    if (segment.replayAfter) {
+      messages.push({ role: 'assistant', provider_replay: segment.replayAfter })
+    }
+  }
+  return messages
+}
+
 function isRetiredWorkflowResultRecord(record: ChatMessageRecord): boolean {
   return isRetiredWorkflowResultMessageMetadata(record.metadata)
 }
@@ -1056,7 +1131,8 @@ export function buildHistoryTurns(
   preserveInterleavedReasoning: boolean = false,
   preserveEmptyInterleavedReasoning: boolean = false,
   supportsAudioInput: boolean = false,
-  userLeadingContextByRecordId?: ReadonlyMap<string, string>
+  userLeadingContextByRecordId?: ReadonlyMap<string, string>,
+  providerReplayProjector?: ChatMessageProviderReplayProjector
 ): HistoryTurn[] {
   const sortedRecords = [...records].sort((a, b) => a.orderSeq - b.orderSeq)
   const turns: ChatMessageRecord[][] = []
@@ -1090,7 +1166,8 @@ export function buildHistoryTurns(
           preserveInterleavedReasoning,
           preserveEmptyInterleavedReasoning,
           supportsAudioInput,
-          userLeadingContextByRecordId?.get(record.id)
+          userLeadingContextByRecordId?.get(record.id),
+          providerReplayProjector
         )
       )
       return {
@@ -1147,6 +1224,16 @@ export function truncateContext(history: ChatMessage[], availableTokens: number)
 
   const result = [...history]
   while (result.length > 0 && total > availableTokens) {
+    const nextTurnStart = result.findIndex(
+      (message, index) => index > 0 && message.role === 'user'
+    )
+    const firstTurnEnd = nextTurnStart >= 0 ? nextTurnStart : result.length
+    if (result.slice(0, firstTurnEnd).some((message) => message.provider_replay)) {
+      const removedTurn = result.splice(0, firstTurnEnd)
+      total -= estimateMessagesTokens(removedTurn)
+      continue
+    }
+
     const removed = result.shift()!
     total -= estimateMessageTokens(removed)
 
@@ -1508,7 +1595,9 @@ export function buildCacheAwareContextWithMetadata(
     supportsVision,
     options.preserveInterleavedReasoning ?? false,
     options.preserveEmptyInterleavedReasoning ?? false,
-    supportsAudioInput
+    supportsAudioInput,
+    undefined,
+    options.providerReplayProjector
   )
   const leadingMessages = buildCacheAwareLeadingMessages(systemPrompt, context)
   const inputBudget = resolveFiniteInputBudget(
@@ -1648,7 +1737,8 @@ export function buildCacheAwareResumeContextWithMetadata(
     options.preserveInterleavedReasoning ?? false,
     options.preserveEmptyInterleavedReasoning ?? false,
     supportsAudioInput,
-    leadingContextByOwnerId
+    leadingContextByOwnerId,
+    options.providerReplayProjector
   )
   let activeTurnIndex = historyTurns.findIndex((turn) =>
     turn.records.some((record) => record.id === assistantMessageId)
@@ -1801,7 +1891,9 @@ export function buildContextWithMetadata(
     supportsVision,
     options.preserveInterleavedReasoning ?? false,
     options.preserveEmptyInterleavedReasoning ?? false,
-    supportsAudioInput
+    supportsAudioInput,
+    undefined,
+    options.providerReplayProjector
   )
 
   const newUserMessage = createUserChatMessage(newUserContent, supportsVision, supportsAudioInput)
@@ -2059,7 +2151,9 @@ export function buildResumeContextWithMetadata(
     supportsVision,
     options.preserveInterleavedReasoning ?? false,
     options.preserveEmptyInterleavedReasoning ?? false,
-    supportsAudioInput
+    supportsAudioInput,
+    undefined,
+    options.providerReplayProjector
   )
   const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
   const available =

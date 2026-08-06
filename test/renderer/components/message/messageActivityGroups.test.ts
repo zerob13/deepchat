@@ -98,6 +98,51 @@ describe('messageActivityGroups', () => {
     })
   })
 
+  it('groups provider search activity without reporting a tool call', () => {
+    const items = buildAssistantRenderItems({
+      messageId: 'm1',
+      messageUpdatedAt: 70_000,
+      shouldGroup: true,
+      blocks: [
+        createBlock('reasoning_content', { content: 'checking sources', timestamp: 10_000 }),
+        createBlock('search', {
+          id: 'ws_1',
+          content: 'DeepChat',
+          timestamp: 20_000,
+          extra: { actionType: 'search' }
+        }),
+        createBlock('content', { content: 'answer', timestamp: 30_000 })
+      ]
+    })
+
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({
+      kind: 'activity-group',
+      reasoningCount: 1,
+      toolCallCount: 0,
+      blocks: [{ type: 'reasoning_content' }, { type: 'search', id: 'ws_1' }]
+    })
+    expect(items[1]).toMatchObject({ kind: 'block', block: { type: 'content' } })
+  })
+
+  it('does not group legacy MCP search-result blocks as provider activity', () => {
+    const legacySearch = createBlock('search', {
+      id: 'legacy-search',
+      extra: { label: 'mcp_web_search', total: 3 }
+    })
+
+    const items = buildAssistantRenderItems({
+      messageId: 'm1',
+      messageUpdatedAt: 70_000,
+      shouldGroup: true,
+      blocks: [createBlock('reasoning_content', { content: 'thinking' }), legacySearch]
+    })
+
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ kind: 'activity-group', toolCallCount: 0 })
+    expect(items[1]).toMatchObject({ kind: 'block', block: legacySearch })
+  })
+
   it('splits activity groups around visible content blocks', () => {
     const items = buildAssistantRenderItems({
       messageId: 'm1',

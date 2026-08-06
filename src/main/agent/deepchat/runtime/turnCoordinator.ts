@@ -88,6 +88,7 @@ import type {
   ClaimedPendingInputHandle,
   TurnCompletion
 } from './pendingInputContracts'
+import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 
 type TurnRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -411,6 +412,16 @@ export class TurnCoordinator {
       preStreamAbortController,
       preStreamAbortSignal
     } = initializedTurn
+    const providerReplayProjector = createDeepSeekResponsesReplayProjector({
+      providerId: state.providerId,
+      modelId: state.modelId,
+      baseUrl: this.ports.providerSettings.getProviderById(state.providerId)?.baseUrl
+    })
+    const searchIntent = content.search === true
+    const search =
+      searchIntent &&
+      providerModelFacts.capabilitySnapshot.supportsSearch &&
+      providerModelFacts.capabilitySnapshot.searchExecution === 'provider'
     let pendingInputFailedBeforeUserFact = false
     let userMessageId: string | null =
       linkedSteerMessageIds[linkedSteerMessageIds.length - 1] ?? null
@@ -513,7 +524,7 @@ export class TurnCoordinator {
         text: content.text,
         files: content.files || [],
         links: [],
-        search: false,
+        search: searchIntent,
         think: false,
         ...(content.activeSkills?.length ? { activeSkills: content.activeSkills } : {}),
         ...(content.inlineItems?.length ? { inlineItems: content.inlineItems } : {})
@@ -753,7 +764,8 @@ export class TurnCoordinator {
               extraReserveTokens: toolReserveTokens,
               preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
               preserveEmptyInterleavedReasoning:
-                interleavedReasoning.preserveEmptyReasoningContent === true
+                interleavedReasoning.preserveEmptyReasoningContent === true,
+              providerReplayProjector
             }
           })
           logSlowPreStreamStep(sessionId, 'context-build', contextBuildStartedAt)
@@ -807,11 +819,13 @@ export class TurnCoordinator {
           messages,
           projectDir,
           promptPreview: content.text,
+          search,
           tools,
           baseSystemPrompt,
           contextContributions,
           resourceInstance: instance,
           providerModelFacts,
+          providerReplayProjector,
           abortController: preStreamAbortController,
           maxProviderRounds: context?.maxProviderRounds,
           refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
@@ -1125,6 +1139,20 @@ export class TurnCoordinator {
         state.modelId,
         providerModelFacts
       )
+      const providerReplayProjector = createDeepSeekResponsesReplayProjector({
+        providerId: state.providerId,
+        modelId: state.modelId,
+        baseUrl: this.ports.providerSettings.getProviderById(state.providerId)?.baseUrl
+      })
+      const searchIntent = resolveAssistantTurnSearchIntent(
+        this.ports.messageStore,
+        sessionId,
+        messageId
+      )
+      const search =
+        searchIntent &&
+        providerModelFacts.capabilitySnapshot.supportsSearch &&
+        providerModelFacts.capabilitySnapshot.searchExecution === 'provider'
       const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, undefined, instance)
       const {
         generationSettings,
@@ -1271,7 +1299,8 @@ export class TurnCoordinator {
               extraReserveTokens: toolReserveTokens,
               preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
               preserveEmptyInterleavedReasoning:
-                interleavedReasoning.preserveEmptyReasoningContent === true
+                interleavedReasoning.preserveEmptyReasoningContent === true,
+              providerReplayProjector
             }
           })
           logSlowPreStreamStep(sessionId, 'context-build', contextBuildStartedAt)
@@ -1373,7 +1402,9 @@ export class TurnCoordinator {
           contextContributions,
           initialBlocks,
           initialAccounting: resumeAccounting,
+          providerReplayProjector,
           maxProviderRounds: resumeAccounting.maxProviderRounds,
+          search,
           refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
             const refreshedBasePrompt = await basePromptAssembler.assemble({
               sessionId: toAppSessionId(sessionId),
@@ -1566,6 +1597,19 @@ export class TurnCoordinator {
       this.ports.messageStore.deleteFromOrderSeq(sessionId, userMessage.orderSeq)
     }
   }
+}
+
+function resolveAssistantTurnSearchIntent(
+  messageStore: Pick<SessionTranscript, 'getMessage' | 'getLastUserMessageBeforeOrAt'>,
+  sessionId: string,
+  assistantMessageId: string
+): boolean {
+  const assistant = messageStore.getMessage(assistantMessageId)
+  if (!assistant || assistant.sessionId !== sessionId || assistant.role !== 'assistant') {
+    return false
+  }
+  const user = messageStore.getLastUserMessageBeforeOrAt(sessionId, assistant.orderSeq)
+  return user?.role === 'user' && extractUserMessageInput(user.content).search === true
 }
 
 function appendAttachmentTextSafetyRule(prompt: string): string {

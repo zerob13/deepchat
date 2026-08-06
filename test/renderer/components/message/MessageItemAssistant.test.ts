@@ -212,6 +212,10 @@ describe('MessageItemAssistant', () => {
           '<div data-testid="message-block-content" :data-disable-markdown-virtualization="String(disableMarkdownVirtualization)" :data-hidden-image-sources="hiddenMarkdownImageSources?.join(\',\')"><slot /></div>'
       }),
       MessageBlockThink: componentStub('MessageBlockThink'),
+      MessageBlockSearch: defineComponent({
+        name: 'MessageBlockSearch',
+        template: '<div data-testid="search-block" />'
+      }),
       MessageBlockToolCall: componentStub('MessageBlockToolCall'),
       MessageBlockError: componentStub('MessageBlockError'),
       MessageBlockQuestionRequest: componentStub('MessageBlockQuestionRequest'),
@@ -242,6 +246,40 @@ describe('MessageItemAssistant', () => {
       })
     }
   }
+
+  it('renders only normalized provider search blocks with the provider activity UI', () => {
+    const legacyBlock: DisplayAssistantMessageBlock = {
+      id: 'legacy-search',
+      type: 'search',
+      status: 'success',
+      timestamp: 1,
+      extra: { label: 'mcp_web_search', total: 3 }
+    }
+    const providerBlock: DisplayAssistantMessageBlock = {
+      id: 'provider-search',
+      type: 'search',
+      content: 'DeepChat',
+      status: 'success',
+      timestamp: 2,
+      extra: { actionType: 'search', provider: 'deepseek' }
+    }
+
+    const legacy = mount(MessageItemAssistant, {
+      props: { message: createMessage('sent', [legacyBlock]), isCapturingImage: false },
+      global
+    })
+    const provider = mount(MessageItemAssistant, {
+      props: {
+        message: createMessage('sent', [providerBlock]),
+        isCapturingImage: false,
+        isStreamingMessage: true
+      },
+      global
+    })
+
+    expect(legacy.find('[data-testid="search-block"]').exists()).toBe(false)
+    expect(provider.find('[data-testid="search-block"]').exists()).toBe(true)
+  })
 
   it('allows code block hosts to shrink inside the assistant row', () => {
     const wrapper = mount(MessageItemAssistant, {
@@ -502,6 +540,29 @@ describe('MessageItemAssistant', () => {
     expect(wrapper.find('[data-testid="activity-group"]').exists()).toBe(false)
     expect(wrapper.findComponent({ name: 'MessageBlockThink' }).exists()).toBe(true)
     expect(wrapper.findComponent({ name: 'MessageBlockToolCall' }).exists()).toBe(true)
+  })
+
+  it('renders provider search activity while the row is still streaming', () => {
+    const wrapper = mount(MessageItemAssistant, {
+      props: {
+        message: createMessage('pending', [
+          {
+            id: 'ws_1',
+            type: 'search',
+            content: 'DeepChat',
+            status: 'success',
+            timestamp: 2,
+            extra: { actionType: 'search', provider: 'deepseek' }
+          }
+        ]),
+        isCapturingImage: false,
+        isStreamingMessage: true
+      },
+      global
+    })
+
+    expect(wrapper.find('[data-testid="activity-group"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="search-block"]').exists()).toBe(true)
   })
 
   it('does not remount an MCP App when live activity becomes grouped', async () => {

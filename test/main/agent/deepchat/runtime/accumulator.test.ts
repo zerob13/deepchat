@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { accumulate, commitRoundUsage } from '@/agent/deepchat/runtime/accumulator'
 import { createState } from '@/agent/deepchat/runtime/types'
 import type { StreamState } from '@/agent/deepchat/runtime/types'
+import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
 
 describe('accumulate', () => {
   let state: StreamState
@@ -245,6 +246,124 @@ describe('accumulate', () => {
         response: 'provider result'
       }
     })
+  })
+
+  it('creates a replayable search block in stream order', () => {
+    const providerReplayJson = createDeepSeekReplayJson()
+    accumulate(state, { type: 'text', content: 'Before search' })
+    accumulate(state, {
+      type: 'provider_search',
+      provider_search: {
+        id: 'ws_1',
+        action: {
+          type: 'search',
+          target: 'DeepChat'
+        },
+        label: 'DeepChat',
+        provider: 'deepseek',
+        results: [
+          {
+            title: 'DeepChat',
+            url: 'https://deepchat.thinkinai.xyz/',
+            snippet: 'A privacy-first AI chat client.',
+            rank: 0,
+            searchId: 'ws_1'
+          }
+        ],
+        providerReplayJson
+      }
+    })
+
+    expect(state.blocks).toHaveLength(2)
+    expect(state.blocks[0]).toMatchObject({ type: 'content', status: 'success' })
+    expect(state.blocks[1]).toEqual({
+      id: 'ws_1',
+      type: 'search',
+      content: 'DeepChat',
+      status: 'success',
+      timestamp: expect.any(Number),
+      extra: {
+        total: 1,
+        searchId: 'ws_1',
+        label: 'DeepChat',
+        actionType: 'search',
+        name: 'web_search',
+        engine: 'deepseek',
+        provider: 'deepseek',
+        pages: [
+          {
+            title: 'DeepChat',
+            url: 'https://deepchat.thinkinai.xyz/',
+            content: 'A privacy-first AI chat client.'
+          }
+        ],
+        providerReplayJson
+      }
+    })
+    expect(state.dirty).toBe(true)
+  })
+
+  it('adds provider URL citations without interrupting streamed text', () => {
+    const providerReplayJson = createDeepSeekReplayJson()
+    accumulate(state, {
+      type: 'provider_search',
+      provider_search: {
+        id: 'ws_1',
+        action: { type: 'search', target: 'DeepChat' },
+        label: 'DeepChat',
+        provider: 'deepseek',
+        results: [],
+        providerReplayJson
+      }
+    })
+    accumulate(state, { type: 'text', content: 'Answer in progress' })
+    state.dirty = false
+
+    const sourceEvent = {
+      type: 'provider_url_source' as const,
+      provider_url_source: {
+        searchId: 'ws_1',
+        title: 'DeepChat',
+        url: 'https://deepchat.thinkinai.xyz/',
+        rank: 0
+      }
+    }
+    accumulate(state, sourceEvent)
+
+    expect(state.blocks).toHaveLength(2)
+    expect(state.blocks[0]).toMatchObject({
+      id: 'ws_1',
+      type: 'search',
+      extra: {
+        total: 1,
+        pages: [{ title: 'DeepChat', url: 'https://deepchat.thinkinai.xyz/' }]
+      }
+    })
+    expect(state.blocks[1]).toMatchObject({
+      type: 'content',
+      content: 'Answer in progress',
+      status: 'pending'
+    })
+    expect(state.dirty).toBe(true)
+
+    state.dirty = false
+    accumulate(state, sourceEvent)
+    expect(state.blocks[0].extra?.total).toBe(1)
+    expect(state.dirty).toBe(false)
+
+    for (let rank = 1; rank < 7; rank += 1) {
+      accumulate(state, {
+        type: 'provider_url_source',
+        provider_url_source: {
+          searchId: 'ws_1',
+          title: `Source ${rank + 1}`,
+          url: `https://example.com/source-${rank + 1}`,
+          rank
+        }
+      })
+    }
+    expect(state.blocks[0].extra?.total).toBe(7)
+    expect(state.blocks[0].extra?.pages).toHaveLength(6)
   })
 
   it('tool_call_end with complete args overrides accumulated chunks', () => {

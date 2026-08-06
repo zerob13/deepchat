@@ -1,24 +1,15 @@
-import type { DeepchatEventPayload } from '@shared/contracts/events'
-import { AssistantMessageBlockSchema } from '@shared/contracts/common'
-import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import type { StreamState, IoParams } from './types'
 import { createThrottle } from '@shared/utils/throttle'
+import { cloneBlocksForRenderer } from '@/session/clientMessageProjection'
 
 const RENDERER_FLUSH_INTERVAL = 120
 const DB_FLUSH_INTERVAL = 600
-const RenderedAssistantBlocksSchema = AssistantMessageBlockSchema.array()
 
 export interface EchoHandle {
   schedule(): void
   rescheduleRenderer(): void
   flush(): void
   stop(): void
-}
-
-export function cloneBlocksForRenderer(
-  blocks: AssistantMessageBlock[]
-): DeepchatEventPayload<'chat.stream.updated'>['blocks'] {
-  return RenderedAssistantBlocksSchema.parse(JSON.parse(JSON.stringify(blocks)))
 }
 
 export function startEcho(state: StreamState, io: IoParams): EchoHandle {
