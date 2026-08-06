@@ -29,6 +29,9 @@ function createHarness(initialProviders: LLM_PROVIDER[] = []) {
     type: 'chat' as ModelConfig['type']
   }
   const modelConfigs = new Map<string, ModelConfig>()
+  const setModelConfig = vi.fn((modelId: string, providerId: string, config: ModelConfig) => {
+    modelConfigs.set(`${providerId}:${modelId}`, config)
+  })
   const addProviderAtomic = vi.fn((provider: LLM_PROVIDER) => providers.set(provider.id, provider))
   const updateProviderAtomic = vi.fn((providerId: string, updates: Partial<LLM_PROVIDER>) => {
     const provider = providers.get(providerId)
@@ -41,22 +44,22 @@ function createHarness(initialProviders: LLM_PROVIDER[] = []) {
     errorMsg: 'Request failed with Authorization: Bearer super-secret'
   }))
   const recordSettingsActivity = vi.fn()
+  const log = { warn: vi.fn() }
   const routes = createCliProviderModelAdminRoutes({
     providerSettings: {
       getProviderById: (providerId) => providers.get(providerId),
       getModelConfig: (modelId, providerId) =>
         modelConfigs.get(`${providerId}:${modelId}`) ?? defaultModelConfig,
       isKnownModel: (_providerId, modelId) => modelId === 'model-1',
-      setModelConfig: (modelId, providerId, config) => {
-        modelConfigs.set(`${providerId}:${modelId}`, config)
-      }
+      setModelConfig
     },
     providerRuntime: { addProviderAtomic, check, updateProviderAtomic },
     scheduler: {
       timeout: async <T>({ task }: { task: Promise<T> }) => await task
     },
     recordSettingsActivity,
-    createProviderId: () => 'provider-generated'
+    createProviderId: () => 'provider-generated',
+    log
   })
   const invoke = async (method: string, input: unknown, context: RouteContext = { caller }) => {
     const route = routes.get(method as never)
@@ -68,8 +71,10 @@ function createHarness(initialProviders: LLM_PROVIDER[] = []) {
     addProviderAtomic,
     check,
     updateProviderAtomic,
+    setModelConfig,
     recordSettingsActivity,
     modelConfigs,
+    log,
     invoke
   }
 }
@@ -275,5 +280,86 @@ describe('CLI provider administration routes', () => {
     })
     expect(result).toEqual({ config })
     expect(JSON.stringify(result)).not.toContain('private-session')
+  })
+
+  it('normalizes mutation storage failures without exposing their details', async () => {
+    const privateFailure = 'EIO /private/provider.json?token=secret'
+    const provider: LLM_PROVIDER = {
+      id: 'provider-1',
+      name: 'Provider',
+      apiType: 'openai',
+      apiKey: '',
+      baseUrl: 'https://api.example/v1',
+      enable: true,
+      custom: true
+    }
+    const unavailable = {
+      code: 'unavailable',
+      httpStatus: 503,
+      retriable: true
+    }
+
+    const addHarness = createHarness()
+    addHarness.addProviderAtomic.mockImplementationOnce(() => {
+      throw new Error(privateFailure)
+    })
+    await expect(
+      addHarness.invoke(providersAddPublicRoute.name, {
+        name: 'Provider',
+        apiType: 'openai',
+        baseUrl: 'https://api.example/v1'
+      })
+    ).rejects.toMatchObject({ ...unavailable, message: 'Could not add provider' })
+
+    const updateHarness = createHarness([provider])
+    updateHarness.updateProviderAtomic.mockImplementation(() => {
+      throw new Error(privateFailure)
+    })
+    await expect(
+      updateHarness.invoke(providersUpdatePublicRoute.name, {
+        providerId: provider.id,
+        updates: { name: 'Updated' }
+      })
+    ).rejects.toMatchObject({ ...unavailable, message: 'Could not update provider' })
+    await expect(
+      updateHarness.invoke(providersSetCredentialRoute.name, {
+        providerId: provider.id,
+        action: 'clear',
+        kind: 'api-key'
+      })
+    ).rejects.toMatchObject({
+      ...unavailable,
+      message: 'Could not update provider credential'
+    })
+
+    const modelHarness = createHarness([provider])
+    modelHarness.setModelConfig.mockImplementationOnce(() => {
+      throw new Error(privateFailure)
+    })
+    await expect(
+      modelHarness.invoke(modelsSetPublicConfigRoute.name, {
+        providerId: provider.id,
+        modelId: 'model-1',
+        config: {
+          maxTokens: 2048,
+          contextLength: 16384,
+          vision: false,
+          functionCall: false,
+          reasoning: false,
+          type: 'chat'
+        }
+      })
+    ).rejects.toMatchObject({
+      ...unavailable,
+      message: 'Could not update model configuration'
+    })
+
+    expect(
+      JSON.stringify([
+        addHarness.log.warn.mock.calls,
+        updateHarness.log.warn.mock.calls,
+        modelHarness.log.warn.mock.calls
+      ])
+    ).not.toContain(privateFailure)
   })
 })

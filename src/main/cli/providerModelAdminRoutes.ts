@@ -40,6 +40,7 @@ export type CliProviderModelAdminDependencies = Readonly<{
   scheduler: ProviderQueryScheduler
   recordSettingsActivity?(input: SettingsActivityInput): void
   createProviderId?: () => string
+  log?: Pick<Console, 'warn'>
 }>
 
 function requireCliCaller(caller: RouteCaller): void {
@@ -77,6 +78,23 @@ export function createCliProviderModelAdminRoutes(
   dependencies: CliProviderModelAdminDependencies
 ): DeepchatRouteMap {
   const createProviderId = dependencies.createProviderId ?? randomUUID
+  const log = dependencies.log ?? console
+  const executeMutation = async <T>(
+    action: string,
+    operation: () => T | Promise<T>
+  ): Promise<T> => {
+    try {
+      return await operation()
+    } catch (error) {
+      log.warn(`[CLI] Failed to ${action}`, {
+        failure: { name: error instanceof Error ? error.name : typeof error }
+      })
+      throw new CliRequestError('unavailable', `Could not ${action}`, {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+  }
   const requireProvider = (providerId: string): LLM_PROVIDER => {
     const provider = dependencies.providerSettings.getProviderById(providerId)
     if (!provider) {
@@ -138,7 +156,9 @@ export function createCliProviderModelAdminRoutes(
           enable: input.enabled,
           custom: true
         }
-        dependencies.providerRuntime.addProviderAtomic(provider)
+        await executeMutation('add provider', () =>
+          dependencies.providerRuntime.addProviderAtomic(provider)
+        )
         const stored = requireProvider(providerId)
         recordActivity({
           category: 'provider',
@@ -173,9 +193,8 @@ export function createCliProviderModelAdminRoutes(
           ...(input.updates.baseUrl !== undefined ? { baseUrl: input.updates.baseUrl } : {}),
           ...(input.updates.enabled !== undefined ? { enable: input.updates.enabled } : {})
         }
-        const requiresRebuild = dependencies.providerRuntime.updateProviderAtomic(
-          input.providerId,
-          updates
+        const requiresRebuild = await executeMutation('update provider', () =>
+          dependencies.providerRuntime.updateProviderAtomic(input.providerId, updates)
         )
         const stored = requireProvider(input.providerId)
         const action =
@@ -207,9 +226,11 @@ export function createCliProviderModelAdminRoutes(
         requireCliCaller(context.caller)
         const input = providersSetCredentialRoute.input.parse(rawInput)
         const current = requireProvider(input.providerId)
-        dependencies.providerRuntime.updateProviderAtomic(input.providerId, {
-          apiKey: input.action === 'set' ? input.value : ''
-        })
+        await executeMutation('update provider credential', () =>
+          dependencies.providerRuntime.updateProviderAtomic(input.providerId, {
+            apiKey: input.action === 'set' ? input.value : ''
+          })
+        )
         const stored = requireProvider(input.providerId)
         recordActivity({
           category: 'provider',
@@ -249,7 +270,13 @@ export function createCliProviderModelAdminRoutes(
         requireCliCaller(context.caller)
         const input = modelsSetPublicConfigRoute.input.parse(rawInput)
         requireModel(input.providerId, input.modelId)
-        dependencies.providerSettings.setModelConfig(input.modelId, input.providerId, input.config)
+        await executeMutation('update model configuration', () =>
+          dependencies.providerSettings.setModelConfig(
+            input.modelId,
+            input.providerId,
+            input.config
+          )
+        )
         const config = PublicModelConfigSchema.parse(
           dependencies.providerSettings.getModelConfig(input.modelId, input.providerId)
         )

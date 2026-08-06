@@ -331,6 +331,31 @@ describe('CliLauncherService', () => {
     await expect(fixture.service.ensureInstalled()).rejects.toThrow('unowned')
   })
 
+  it('reports an oversized shell profile without classifying it as modified', async () => {
+    const fixture = await createFixture()
+    const profilePath = path.join(fixture.homeDirectory, '.zprofile')
+    const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
+    await writeFile(profilePath, Buffer.alloc(1024 * 1024 + 1, 0x61))
+
+    await expect(fixture.service.getStatus()).resolves.toMatchObject({
+      state: 'unavailable',
+      reason: 'shell-config-too-large',
+      shellConfigPath: profilePath
+    })
+    await expect(fixture.service.ensureInstalled()).rejects.toThrow('exceeds the supported size')
+    await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await lstat(profilePath)).size).toBe(1024 * 1024 + 1)
+  })
+
+  it('ignores an oversized profile that is unrelated to the selected shell', async () => {
+    const fixture = await createFixture()
+    const unrelatedProfilePath = path.join(fixture.homeDirectory, '.bash_profile')
+    await writeFile(unrelatedProfilePath, Buffer.alloc(1024 * 1024 + 1, 0x61))
+
+    await expect(fixture.service.ensureInstalled()).resolves.toMatchObject({ state: 'installed' })
+    expect((await lstat(unrelatedProfilePath)).size).toBe(1024 * 1024 + 1)
+  })
+
   it('uses an owned Windows command shim and refreshes it across app paths', async () => {
     const fixture = await createFixture('win32')
     const commandPath = path.join(
@@ -367,6 +392,21 @@ describe('CliLauncherService', () => {
       state: 'not-installed'
     })
     await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('matches an owned Windows marker path without case sensitivity', async () => {
+    const fixture = await createFixture('win32')
+    const markerPath = path.join(fixture.userDataDirectory, 'local-control', 'launcher.json')
+    await fixture.service.ensureInstalled()
+    const marker = JSON.parse(await readFile(markerPath, 'utf8')) as Record<string, unknown>
+    marker.commandPath = String(marker.commandPath).toUpperCase()
+    await writeFile(markerPath, `${JSON.stringify(marker)}\n`)
+
+    await expect(fixture.service.getStatus()).resolves.toMatchObject({ state: 'installed' })
+    await expect(fixture.service.ensureInstalled()).resolves.toMatchObject({ state: 'installed' })
+    await expect(fixture.service.removeOwnedLauncher()).resolves.toMatchObject({
+      state: 'not-installed'
+    })
   })
 
   it('does not claim Windows installation when its user command directory is off PATH', async () => {

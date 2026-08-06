@@ -30,6 +30,7 @@ export type CliLauncherReason =
   | 'command-modified'
   | 'command-missing'
   | 'shell-config-modified'
+  | 'shell-config-too-large'
   | 'shell-config-missing'
   | 'upgrade-required'
 
@@ -89,7 +90,7 @@ type ProfileInspection = Readonly<{
   path: string
   content: string
   exists: boolean
-  blockState: 'missing' | 'exact' | 'modified'
+  blockState: 'missing' | 'exact' | 'modified' | 'too-large'
 }>
 
 type AppendedManagedBlock = Readonly<{
@@ -118,6 +119,14 @@ function isMissingFileError(error: unknown): boolean {
 function isPathWithin(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate))
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function pathsEqual(left: string, right: string, platform: NodeJS.Platform): boolean {
+  const normalizedLeft = path.resolve(left)
+  const normalizedRight = path.resolve(right)
+  return platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight
 }
 
 function isPosixProfileKind(value: unknown): value is PosixProfileKind {
@@ -386,12 +395,30 @@ export class CliLauncherService {
     }
 
     if (markerResult.state === 'missing') {
-      if ((await this.pathEntryExists(commandPath)) || (await this.hasOrphanedManagedBlock())) {
+      if (await this.pathEntryExists(commandPath)) {
         return {
           state: 'conflict',
           reason: 'unowned-command',
           commandPath,
           shellConfigPath: null
+        }
+      }
+      const profileKind = this.platform === 'win32' ? null : await this.selectProfileKind()
+      const orphanedProfile = await this.findUnownedProfileConflict(profileKind)
+      if (orphanedProfile && orphanedProfile.blockState !== 'too-large') {
+        return {
+          state: 'conflict',
+          reason: 'unowned-command',
+          commandPath,
+          shellConfigPath: null
+        }
+      }
+      if (orphanedProfile?.blockState === 'too-large') {
+        return {
+          state: 'unavailable',
+          reason: 'shell-config-too-large',
+          commandPath,
+          shellConfigPath: orphanedProfile.path
         }
       }
       if (this.platform === 'win32' && !this.isCommandDirectoryOnPath()) {
@@ -413,7 +440,10 @@ export class CliLauncherService {
 
     const { marker } = markerResult
     const expectedPlatform = this.platform === 'win32' ? 'windows' : 'posix'
-    if (marker.platform !== expectedPlatform || path.resolve(marker.commandPath) !== commandPath) {
+    if (
+      marker.platform !== expectedPlatform ||
+      !pathsEqual(marker.commandPath, commandPath, this.platform)
+    ) {
       return {
         state: 'conflict',
         reason: 'ownership-marker-invalid',
@@ -424,6 +454,14 @@ export class CliLauncherService {
 
     const profile =
       marker.platform === 'posix' ? await this.inspectProfile(marker.profileKind) : null
+    if (profile?.blockState === 'too-large') {
+      return {
+        state: 'unavailable',
+        reason: 'shell-config-too-large',
+        commandPath,
+        shellConfigPath: profile.path
+      }
+    }
     if (
       profile?.blockState === 'modified' ||
       (profile?.blockState === 'exact' &&
@@ -527,22 +565,29 @@ export class CliLauncherService {
       const expectedPlatform = this.platform === 'win32' ? 'windows' : 'posix'
       if (
         previousMarker.platform !== expectedPlatform ||
-        path.resolve(previousMarker.commandPath) !== this.commandPath
+        !pathsEqual(previousMarker.commandPath, this.commandPath, this.platform)
       ) {
         throw new Error('The DeepChat CLI ownership marker does not match this installation')
       }
       profileKind = previousMarker.platform === 'posix' ? previousMarker.profileKind : null
     } else {
-      if (
-        (await this.pathEntryExists(this.commandPath)) ||
-        (await this.hasOrphanedManagedBlock())
-      ) {
+      if (await this.pathEntryExists(this.commandPath)) {
         throw new Error('A DeepChat CLI command or shell block exists without an ownership marker')
       }
       profileKind = this.platform === 'win32' ? null : await this.selectProfileKind()
+      const orphanedProfile = await this.findUnownedProfileConflict(profileKind)
+      if (orphanedProfile && orphanedProfile.blockState !== 'too-large') {
+        throw new Error('A DeepChat CLI command or shell block exists without an ownership marker')
+      }
+      if (orphanedProfile?.blockState === 'too-large') {
+        throw new Error('The DeepChat CLI shell configuration exceeds the supported size')
+      }
     }
 
     const profile = this.platform === 'win32' ? null : await this.inspectProfile(profileKind)
+    if (profile?.blockState === 'too-large') {
+      throw new Error('The DeepChat CLI shell configuration exceeds the supported size')
+    }
     if (profile?.blockState === 'modified') {
       throw new Error('The managed DeepChat CLI shell block has been modified')
     }
@@ -618,19 +663,35 @@ export class CliLauncherService {
       throw new Error('The DeepChat CLI ownership marker is invalid')
     }
     if (markerResult.state === 'missing') {
-      if ((await this.pathEntryExists(commandPath)) || (await this.hasOrphanedManagedBlock())) {
+      if (await this.pathEntryExists(commandPath)) {
         throw new Error('Refusing to remove a CLI command without an ownership marker')
+      }
+      const profileKind = this.platform === 'win32' ? null : await this.selectProfileKind()
+      const orphanedProfile = await this.findUnownedProfileConflict(profileKind)
+      if (orphanedProfile && orphanedProfile.blockState !== 'too-large') {
+        throw new Error('Refusing to remove a CLI command without an ownership marker')
+      }
+      if (orphanedProfile?.blockState === 'too-large') {
+        throw new Error(
+          'Cannot inspect the DeepChat CLI shell configuration because it is too large'
+        )
       }
       return
     }
 
     const { marker, raw: markerRaw } = markerResult
     const expectedPlatform = this.platform === 'win32' ? 'windows' : 'posix'
-    if (marker.platform !== expectedPlatform || path.resolve(marker.commandPath) !== commandPath) {
+    if (
+      marker.platform !== expectedPlatform ||
+      !pathsEqual(marker.commandPath, commandPath, this.platform)
+    ) {
       throw new Error('The DeepChat CLI ownership marker does not match this installation')
     }
     const profile =
       marker.platform === 'posix' ? await this.inspectProfile(marker.profileKind) : null
+    if (profile?.blockState === 'too-large') {
+      throw new Error('Cannot inspect the DeepChat CLI shell configuration because it is too large')
+    }
     if (
       profile?.blockState === 'modified' ||
       (profile?.blockState === 'exact' &&
@@ -772,7 +833,7 @@ export class CliLauncherService {
         return { kind, path: profilePath, content, exists: true, blockState: 'modified' }
       }
       if (stats.size > MAX_SHELL_CONFIG_BYTES) {
-        return { kind, path: profilePath, content, exists: true, blockState: 'modified' }
+        return { kind, path: profilePath, content, exists: true, blockState: 'too-large' }
       }
       content = await readFile(profilePath, 'utf8')
       exists = true
@@ -788,13 +849,18 @@ export class CliLauncherService {
     }
   }
 
-  private async hasOrphanedManagedBlock(): Promise<boolean> {
-    if (this.platform === 'win32') return false
+  private async findUnownedProfileConflict(
+    selectedProfileKind: PosixProfileKind | null
+  ): Promise<ProfileInspection | null> {
+    if (this.platform === 'win32') return null
+    let tooLarge: ProfileInspection | null = null
     for (const kind of ['zsh', 'bash', 'bash-login', 'fish', 'profile'] as const) {
       const profile = await this.inspectProfile(kind)
-      if (profile && profile.blockState !== 'missing') return true
+      if (!profile || profile.blockState === 'missing') continue
+      if (profile.blockState !== 'too-large') return profile
+      if (kind === selectedProfileKind) tooLarge = profile
     }
-    return false
+    return tooLarge
   }
 
   private markerForSource(
