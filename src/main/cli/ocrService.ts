@@ -2,6 +2,7 @@ import { open } from 'node:fs/promises'
 import {
   OCR_EXTRACTION_MAX_INPUT_BYTES,
   OcrInputMimeTypeSchema,
+  OcrExtractionOutputSchema,
   ocrClearCacheRoute,
   ocrExtractArtifactRoute,
   ocrExtractUploadRoute,
@@ -93,7 +94,7 @@ export class CliOcrService {
             process.arch
           )
         )
-      case ocrClearCacheRoute.name:
+      case ocrClearCacheRoute.name: {
         ocrClearCacheRoute.input.parse(rawInput)
         if (caller.principal !== 'human') {
           throw new CliRequestError('permission_denied', 'Agent callers cannot clear OCR cache', {
@@ -122,6 +123,7 @@ export class CliOcrService {
           })
         }
         return ocrClearCacheRoute.output.parse({ cache: status.cache })
+      }
       default:
         throw new CliRequestError('not_found', 'OCR method is not implemented', {
           httpStatus: 404
@@ -272,7 +274,7 @@ export class CliOcrService {
     inputBytes: number,
     startedAt: number
   ): OcrExtractionOutput {
-    return ocrExtractUploadRoute.output.parse({
+    return OcrExtractionOutputSchema.parse({
       kind: 'image',
       text: result.text,
       tokenCount: result.tokenCount,
@@ -294,7 +296,7 @@ export class CliOcrService {
     inputBytes: number,
     startedAt: number
   ): OcrExtractionOutput {
-    return ocrExtractUploadRoute.output.parse({
+    return OcrExtractionOutputSchema.parse({
       kind: 'document',
       text: result.text,
       tokenCount: result.tokenCount,

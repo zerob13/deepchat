@@ -124,7 +124,7 @@ describe('CLI argument grammar', () => {
     ).toMatchObject({
       operation: 'stream',
       readStdin: true,
-      timeoutMs: 1_800_000,
+      timeoutMs: DEFAULT_COMPUTE_TIMEOUT_MS,
       params: {
         providerId: 'provider-1',
         modelId: 'model-1',
@@ -406,7 +406,7 @@ describe('CLI argument grammar', () => {
       )
     ).toMatchObject({
       operation: 'stream',
-      timeoutMs: 1_800_000,
+      timeoutMs: DEFAULT_COMPUTE_TIMEOUT_MS,
       params: {
         providerId: 'provider-1',
         modelId: 'image-1',
@@ -647,7 +647,7 @@ describe('CLI argument grammar', () => {
     expect(parseCliArguments(['ocr', 'status'], {}).contract?.name).toBe('ocr.getRuntimeStatus')
     expect(parseCliArguments(['ocr', 'clear-cache'], {})).toMatchObject({
       contract: { name: 'ocr.clearCache' },
-      timeoutMs: 1_800_000
+      timeoutMs: DEFAULT_COMPUTE_TIMEOUT_MS
     })
   })
 

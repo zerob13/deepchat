@@ -6,18 +6,25 @@ import {
   LocalControlEffectSchema,
   LocalControlMethodSchema,
   LocalControlPrincipalSchema,
-  LocalControlScopeSchema
+  LocalControlScopesSchema
 } from '../localControl'
 
 export const LocalControlTransportSchema = z.enum(['rpc', 'stream', 'upload', 'download'])
 export const LocalControlApprovalModeSchema = z.enum(['never', 'policy'])
+const LocalControlCallersSchema = z
+  .array(LocalControlPrincipalSchema)
+  .min(1)
+  .max(2)
+  .refine((callers) => new Set(callers).size === callers.length, {
+    message: 'Duplicate local-control caller'
+  })
 
 export const LocalControlCapabilitySchema = z
   .object({
     method: LocalControlMethodSchema,
     possibleEffects: z.array(LocalControlEffectSchema).min(1),
-    callers: z.array(LocalControlPrincipalSchema).min(1).max(2),
-    scopes: z.array(LocalControlScopeSchema).min(1),
+    callers: LocalControlCallersSchema,
+    scopes: LocalControlScopesSchema.min(1),
     transport: LocalControlTransportSchema,
     approval: LocalControlApprovalModeSchema,
     maxBodyBytes: z.number().int().positive(),

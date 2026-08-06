@@ -273,7 +273,7 @@ describe('CLI surface V1', () => {
       serverName: 'reviewable-server',
       config: {
         type: 'http',
-        description: 'Reviewable remote server',
+        description: 'Reviewable\0remote\u0085server',
         icon: 'cloud',
         baseUrl: 'https://mcp.example/api',
         headers: {}
@@ -284,7 +284,8 @@ describe('CLI surface V1', () => {
     expect(entry.approvalDisplay?.(input, agentApprovalCaller)).toMatchObject({
       serverName: 'reviewable-server',
       config: {
-        description: 'Reviewable remote server',
+        description: 'Reviewableremoteserver',
+        descriptionTruncated: false,
         icon: 'cloud',
         endpointUrl: 'https://mcp.example/api'
       }

@@ -11,7 +11,7 @@ export { CLI_EXIT_CODES } from './errors'
 export { runCli } from './run'
 export { CLI_VERSION, invokeLocalControlRpc, invokeLocalControlStream } from './transport'
 
-function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
+function exitOnStreamError(stream: NodeJS.WriteStream): void {
   stream.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EPIPE') process.exit(0)
     process.exit(8)
@@ -30,8 +30,8 @@ function isDirectExecution(): boolean {
 }
 
 if (isDirectExecution()) {
-  ignoreBrokenPipe(process.stdout)
-  ignoreBrokenPipe(process.stderr)
+  exitOnStreamError(process.stdout)
+  exitOnStreamError(process.stderr)
   void runCli(process.argv.slice(2)).then((exitCode) => {
     process.exitCode = exitCode
   })

@@ -24,6 +24,12 @@ describe('route caller context', () => {
     })
   })
 
+  it('returns renderer identity at renderer boundaries', () => {
+    const context = createRendererRouteContext(42, 7)
+
+    expect(requireRendererCaller(context)).toBe(context.caller)
+  })
+
   it.each<RouteContext>([
     {
       caller: {

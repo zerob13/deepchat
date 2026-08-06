@@ -1074,7 +1074,7 @@ export async function createMainProcessControl(dependencies: {
     agentExists: async (agentId) => (await agentSettings.getAgent(agentId))?.type === 'deepchat',
     recordSettingsActivity: (input) => {
       void settingsDatabase.recordSettingsActivity(input).catch((error) => {
-        console.warn('[SettingsActivity] Failed to record CLI Skill activity:', error)
+        logger.warn('[SettingsActivity] Failed to record CLI Skill activity:', error)
       })
     },
     log: logger

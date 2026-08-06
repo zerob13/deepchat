@@ -1,10 +1,14 @@
 import { approvalsResolveRoute } from '@shared/contracts/routes'
-import { createRouteMap, requireRendererCaller } from '@/routes/routeRegistry'
+import {
+  createRouteMap,
+  requireRendererCaller,
+  type RendererRouteCaller
+} from '@/routes/routeRegistry'
 
 export type ApprovalRoutesDependencies = Readonly<{
   resolve(
     input: { requestId: string; decision: 'approved' | 'denied' },
-    caller: ReturnType<typeof requireRendererCaller>
+    caller: RendererRouteCaller
   ): boolean
 }>
 

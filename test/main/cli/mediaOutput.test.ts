@@ -86,7 +86,7 @@ describe('generated media resolver', () => {
     ).rejects.toMatchObject({ code: 'unavailable' })
   })
 
-  it('rejects symbolic links in the image cache', async () => {
+  it.skipIf(process.platform === 'win32')('rejects symbolic links in the image cache', async () => {
     const root = await createCacheDirectory()
     const directory = path.join(root, 'images')
     await writeFile(path.join(root, 'target.png'), 'cached-image')

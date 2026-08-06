@@ -18,6 +18,11 @@ function formatMcpRuntime(running: boolean | null): string {
   return running === null ? 'unknown' : running ? 'running' : 'stopped'
 }
 
+function unsupportedCliContract(contract: never): never {
+  const name = (contract as { name?: unknown }).name
+  throw new Error(`Unsupported CLI contract: ${typeof name === 'string' ? name : 'unknown'}`)
+}
+
 export function formatHumanResult(
   contract: CliRpcContract,
   value: JsonValue,
@@ -276,6 +281,8 @@ export function formatHumanResult(
         ])
       ].join('\n')
     }
+    default:
+      return unsupportedCliContract(contract)
   }
 }
 

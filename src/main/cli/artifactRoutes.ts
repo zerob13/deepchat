@@ -33,6 +33,7 @@ export function createArtifactRoutes(artifactSpool: ArtifactSpool): DeepchatRout
         })
       }
     ],
+    // The RPC route is a metadata preflight; bytes use the streamed download endpoint.
     [
       artifactsReadRoute.name,
       async (rawInput, context) => {

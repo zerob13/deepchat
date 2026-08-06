@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import { JsonValueSchema, TimestampMsSchema, defineEventContract } from '../common'
-import { LocalControlEffectSchema, LocalControlMethodSchema } from '../localControl'
+import {
+  LocalControlEffectSchema,
+  LocalControlMethodSchema,
+  LocalControlPrincipalSchema
+} from '../localControl'
 import { ApprovalRequestIdSchema } from '../routes/approvals.routes'
 
 export const approvalRequestedEvent = defineEventContract({
@@ -10,7 +14,7 @@ export const approvalRequestedEvent = defineEventContract({
       requestId: ApprovalRequestIdSchema,
       operation: LocalControlMethodSchema,
       effect: LocalControlEffectSchema,
-      principal: z.enum(['human', 'agent']),
+      principal: LocalControlPrincipalSchema,
       expiresAt: TimestampMsSchema,
       displayData: JsonValueSchema.optional()
     })

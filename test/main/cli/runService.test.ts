@@ -203,7 +203,11 @@ describe('CliRunService', () => {
       invokeRoute(service, sessionsRunDetachedRoute.name, {
         prompt: 'x'.repeat(RUN_PROMPT_MAX_CHARACTERS + 1)
       })
-    ).rejects.toBeDefined()
+    ).rejects.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'too_big', path: ['prompt'] })
+      ])
+    })
     expect(lifecycle.createDetachedSession).not.toHaveBeenCalled()
   })
 

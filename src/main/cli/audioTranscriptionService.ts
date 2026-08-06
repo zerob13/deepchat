@@ -3,6 +3,7 @@ import {
   AUDIO_TRANSCRIPTION_MAX_INPUT_BYTES,
   AUDIO_TRANSCRIPTION_MAX_TEXT_CHARACTERS,
   AudioInputMimeTypeSchema,
+  AudioTranscriptionOutputSchema,
   audioTranscribeArtifactRoute,
   audioTranscribeUploadRoute,
   type AudioTranscriptionArtifactInput,
@@ -176,7 +177,7 @@ export class CliAudioTranscriptionService {
       signal.throwIfAborted()
       const normalized = transcript.trim()
       const truncated = normalized.length > AUDIO_TRANSCRIPTION_MAX_TEXT_CHARACTERS
-      return audioTranscribeUploadRoute.output.parse({
+      return AudioTranscriptionOutputSchema.parse({
         providerId: input.providerId,
         modelId: input.modelId,
         text: truncated

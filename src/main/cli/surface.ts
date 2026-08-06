@@ -59,7 +59,7 @@ import {
   type LocalControlPrincipal,
   type LocalControlScope
 } from '@shared/contracts/localControl'
-import { sanitizePublicText } from './publicText'
+import { sanitizePublicText, stripC0AndC1Controls } from './publicText'
 
 export type LocalControlTransport = 'rpc' | 'stream' | 'upload' | 'download'
 export type LocalControlApprovalMode = 'never' | 'policy'
@@ -256,7 +256,7 @@ function mcpConfigProjection(
   if (typeof config.type === 'string') projection.type = config.type
   if (typeof config.description === 'string') {
     if (includeReviewableValues) {
-      projection.description = config.description
+      projection.description = stripC0AndC1Controls(config.description)
       projection.descriptionTruncated = false
     } else {
       const description = sanitizePublicText(config.description, 512)
@@ -264,7 +264,9 @@ function mcpConfigProjection(
       projection.descriptionTruncated = description.truncated
     }
   }
-  if (includeReviewableValues && typeof config.icon === 'string') projection.icon = config.icon
+  if (includeReviewableValues && typeof config.icon === 'string') {
+    projection.icon = stripC0AndC1Controls(config.icon)
+  }
   if (typeof config.command === 'string') {
     const commandName = config.command.split(/[\\/]/).at(-1) ?? ''
     projection.commandName = sanitizePublicText(commandName, 256).value

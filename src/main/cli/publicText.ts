@@ -22,6 +22,14 @@ function isDirectionalControl(codePoint: number): boolean {
   )
 }
 
+export function stripC0AndC1Controls(value: string): string {
+  const output: string[] = []
+  for (const character of value) {
+    if (!isPublicTextControl(character.codePointAt(0)!)) output.push(character)
+  }
+  return output.join('')
+}
+
 export function sanitizePublicText(value: unknown, maxBytes: number): SanitizedPublicText {
   if (typeof value !== 'string') return { value: '', truncated: false }
   const output: string[] = []

@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { CliLauncherService } from '@/cli/launcherService'
 
 const temporaryDirectories: string[] = []
+const supportsPosixFilesystemSemantics = process.platform !== 'win32'
+const posixIt = it.skipIf(!supportsPosixFilesystemSemantics)
 
 async function createFixture(platform: NodeJS.Platform = 'darwin') {
   const root = await mkdtemp(path.join(os.tmpdir(), 'deepchat-cli-launcher-'))
@@ -91,7 +93,7 @@ describe('CliLauncherService', () => {
     const command = await readFile(commandPath, 'utf8')
     expect(commandStats.isFile()).toBe(true)
     expect(commandStats.isSymbolicLink()).toBe(false)
-    expect(commandStats.mode & 0o111).not.toBe(0)
+    if (supportsPosixFilesystemSemantics) expect(commandStats.mode & 0o111).not.toBe(0)
     expect(command).toContain(`runtime_node='${fixture.runtimeNode}'`)
     expect(command).toContain(`cli_module='${path.join(fixture.cliDirectory, 'deepchat.mjs')}'`)
     expect(command).not.toContain('command -v node')
@@ -108,10 +110,11 @@ describe('CliLauncherService', () => {
         ''
       ].join('\n')
     )
-    expect(
-      (await lstat(path.join(fixture.userDataDirectory, 'local-control', 'launcher.json'))).mode &
-        0o777
-    ).toBe(0o600)
+    const markerStats = await lstat(
+      path.join(fixture.userDataDirectory, 'local-control', 'launcher.json')
+    )
+    expect(markerStats.isFile()).toBe(true)
+    if (supportsPosixFilesystemSemantics) expect(markerStats.mode & 0o777).toBe(0o600)
 
     await expect(fixture.service.removeOwnedLauncher()).resolves.toMatchObject({
       state: 'not-installed'
@@ -222,7 +225,7 @@ describe('CliLauncherService', () => {
     await expect(fixture.service.ensureInstalled()).rejects.toThrow('without an ownership marker')
   })
 
-  it('fails closed when an owned command or shell block is modified', async () => {
+  posixIt('fails closed when an owned command or shell block is modified', async () => {
     const fixture = await createFixture()
     const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
     const profilePath = path.join(fixture.homeDirectory, '.zprofile')
@@ -267,7 +270,7 @@ describe('CliLauncherService', () => {
     const repairedCommand = await lstat(commandPath)
     expect(repairedCommand.isFile()).toBe(true)
     expect(repairedCommand.isSymbolicLink()).toBe(false)
-    expect(repairedCommand.mode & 0o111).not.toBe(0)
+    if (supportsPosixFilesystemSemantics) expect(repairedCommand.mode & 0o111).not.toBe(0)
   })
 
   it('refreshes only a stale launcher whose previous content is still owned', async () => {
@@ -293,7 +296,7 @@ describe('CliLauncherService', () => {
     await expect(fixture.service.getStatus()).resolves.toMatchObject({ state: 'installed' })
   })
 
-  it('migrates an owned legacy POSIX symlink to the stable command shim', async () => {
+  posixIt('migrates an owned legacy POSIX symlink to the stable command shim', async () => {
     const fixture = await createFixture()
     const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
     const markerPath = path.join(fixture.userDataDirectory, 'local-control', 'launcher.json')
@@ -318,7 +321,7 @@ describe('CliLauncherService', () => {
     expect(migratedMarker.commandHash).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  it('fails closed when an owned POSIX shim loses its executable mode', async () => {
+  posixIt('fails closed when an owned POSIX shim loses its executable mode', async () => {
     const fixture = await createFixture()
     const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
     await fixture.service.ensureInstalled()
@@ -335,7 +338,8 @@ describe('CliLauncherService', () => {
     const fixture = await createFixture()
     const profilePath = path.join(fixture.homeDirectory, '.zprofile')
     const commandPath = path.join(fixture.homeDirectory, '.local', 'bin', 'deepchat')
-    await writeFile(profilePath, Buffer.alloc(1024 * 1024 + 1, 0x61))
+    const originalProfile = Buffer.alloc(1024 * 1024 + 1, 0x61)
+    await writeFile(profilePath, originalProfile)
 
     await expect(fixture.service.getStatus()).resolves.toMatchObject({
       state: 'unavailable',
@@ -344,7 +348,7 @@ describe('CliLauncherService', () => {
     })
     await expect(fixture.service.ensureInstalled()).rejects.toThrow('exceeds the supported size')
     await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    expect((await lstat(profilePath)).size).toBe(1024 * 1024 + 1)
+    expect(await readFile(profilePath)).toEqual(originalProfile)
   })
 
   it('ignores an oversized profile that is unrelated to the selected shell', async () => {
@@ -397,6 +401,12 @@ describe('CliLauncherService', () => {
   it('matches an owned Windows marker path without case sensitivity', async () => {
     const fixture = await createFixture('win32')
     const markerPath = path.join(fixture.userDataDirectory, 'local-control', 'launcher.json')
+    const commandPath = path.join(
+      fixture.localAppDataDirectory,
+      'Microsoft',
+      'WindowsApps',
+      'deepchat.cmd'
+    )
     await fixture.service.ensureInstalled()
     const marker = JSON.parse(await readFile(markerPath, 'utf8')) as Record<string, unknown>
     marker.commandPath = String(marker.commandPath).toUpperCase()
@@ -407,6 +417,7 @@ describe('CliLauncherService', () => {
     await expect(fixture.service.removeOwnedLauncher()).resolves.toMatchObject({
       state: 'not-installed'
     })
+    await expect(lstat(commandPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('does not claim Windows installation when its user command directory is off PATH', async () => {
