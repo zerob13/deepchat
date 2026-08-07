@@ -58,12 +58,23 @@ function requiresStartupRecoveryAttention(report: ExecutionRecoveryReport): bool
 }
 
 function boundStartupRecoveryDiagnostic(value: string): string {
-  const singleLine = value.replace(/[\u0000-\u001f\u007f]+/g, ' ')
-  if (singleLine.length <= MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS) return singleLine
-  return `${singleLine.slice(
-    0,
+  let sanitized = ''
+  for (
+    let index = 0;
+    index < value.length && index < MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS;
+    index += 1
+  ) {
+    const codeUnit = value.charCodeAt(index)
+    sanitized += codeUnit <= 0x1f || codeUnit === 0x7f ? ' ' : value[index]
+  }
+  if (value.length <= MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS) return sanitized
+
+  const prefixLength =
     MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS - STARTUP_RECOVERY_TRUNCATION_MARKER.length
-  )}${STARTUP_RECOVERY_TRUNCATION_MARKER}`
+  let prefix = sanitized.slice(0, prefixLength)
+  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1)
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) prefix = prefix.slice(0, -1)
+  return `${prefix}${STARTUP_RECOVERY_TRUNCATION_MARKER}`
 }
 
 function buildStartupRecoveryDiagnostic(report: ExecutionRecoveryReport) {
