@@ -2513,19 +2513,24 @@ function stampGenerationTiming(state: StreamState): void {
   }
 }
 
-export function finalizePaused(state: StreamState, io: IoParams): void {
-  for (const block of state.blocks) {
-    if (
+export function assertPausedProjectionReady(state: StreamState): void {
+  const unresolvedIndex = state.blocks.findIndex((block) => {
+    if (block.status !== 'pending' && block.status !== 'loading') return false
+    return !(
       block.type === 'action' &&
-      (block.action_type === 'tool_call_permission' || block.action_type === 'question_request') &&
-      block.status === 'pending'
-    ) {
-      continue
-    }
-    if (block.status === 'pending') {
-      block.status = 'success'
-    }
-  }
+      block.status === 'pending' &&
+      (block.action_type === 'tool_call_permission' || block.action_type === 'question_request')
+    )
+  })
+  if (unresolvedIndex < 0) return
+
+  const block = state.blocks[unresolvedIndex]
+  const blockIdentity = `index=${unresolvedIndex} type=${block.type} status=${block.status}`
+  throw new Error(`Paused stream invariant violated: block ${blockIdentity} is unresolved.`)
+}
+
+export function finalizePaused(state: StreamState, io: IoParams): void {
+  assertPausedProjectionReady(state)
 
   stampGenerationTiming(state)
 

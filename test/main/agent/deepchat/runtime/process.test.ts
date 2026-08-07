@@ -804,6 +804,66 @@ describe('processStream', () => {
       expect(tapeToolFactWriter.appendToolFact).not.toHaveBeenCalled()
     })
 
+    it('fails before a paused terminal commit when an earlier tool block is unresolved', async () => {
+      const order: string[] = []
+      observeCommitOrder(order)
+      const coreStream = vi.fn(async function* () {
+        yield {
+          type: 'tool_call_start',
+          tool_call_id: 'question-1',
+          tool_call_name: 'deepchat_question'
+        } as LLMCoreStreamEvent
+        yield {
+          type: 'tool_call_end',
+          tool_call_id: 'question-1',
+          tool_call_arguments_complete: JSON.stringify({
+            question: 'Continue?',
+            options: [{ label: 'Yes' }, { label: 'No' }]
+          })
+        } as LLMCoreStreamEvent
+        yield { type: 'stop', stop_reason: 'tool_use' } as LLMCoreStreamEvent
+      }) as unknown as ProcessParams['coreStream']
+
+      const result = await processStream(
+        createParams({
+          coreStream,
+          tools: [makeTool('deepchat_question')],
+          initialBlocks: [
+            {
+              type: 'tool_call',
+              content: '',
+              status: 'loading',
+              timestamp: Date.now(),
+              tool_call: {
+                id: 'subagent-running',
+                name: 'agent',
+                params: '{}',
+                response: ''
+              }
+            }
+          ]
+        })
+      )
+
+      expect(result).toMatchObject({
+        status: 'error',
+        stopReason: 'provider_error',
+        errorMessage: expect.stringContaining('Paused stream invariant violated')
+      })
+      expect(commitRunTerminal).toHaveBeenCalledOnce()
+      expect(commitRunTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'error', stopReason: 'provider_error' })
+      )
+      expect(commitRunTerminal).not.toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: 'paused' })
+      )
+      expect(order.indexOf('journal:terminal')).toBeLessThan(order.indexOf('message:error'))
+      expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
+        'chat.stream.completed',
+        expect.anything()
+      )
+    })
+
     it('accounts for executed tools before pausing a mixed tool batch', async () => {
       const coreStream = vi.fn(async function* () {
         yield {

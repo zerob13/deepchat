@@ -47,6 +47,7 @@
 - [x] Classify native v1 journal facts before pending transcript recovery at startup.
 - [x] Keep `indeterminate` and `corruption` parked with no automatic tool retry.
 - [x] Add failpoints and restart/crash tests around T1, T2, and terminal boundaries.
+- [x] Reject a paused terminal projection while any non-interaction block remains unresolved.
 - [ ] Update maintained architecture documentation for the final implemented contract.
 - [ ] Review and commit the recovery slice.
 

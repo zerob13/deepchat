@@ -13,6 +13,7 @@ import type {
 import { accumulate, commitRoundUsage, finalizeTrailingPendingNarrativeBlocks } from './accumulator'
 import { startEcho } from './echo'
 import {
+  assertPausedProjectionReady,
   finalize,
   finalizeError,
   finalizePaused,
@@ -616,6 +617,7 @@ function settleLoopOutcome(
     const result = outcome.result
     if (result.status === 'paused') {
       const stopReason = result.stopReason ?? 'interaction'
+      assertPausedProjectionReady(state)
       stampRunOutcome(state, 'paused', stopReason)
       commitRunTerminal({ outcome: 'paused', stopReason })
       finalizePaused(state, io)

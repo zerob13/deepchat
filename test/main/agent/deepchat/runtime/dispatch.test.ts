@@ -59,6 +59,7 @@ vi.mock('@/events', () => ({
 import {
   finalize,
   finalizeError,
+  finalizePaused,
   persistAbortExceptionPlanState,
   settleToolBatch as settleToolBatchInternal,
   TRUNCATED_TOOL_CALL_ERROR,
@@ -1933,6 +1934,13 @@ describe('dispatch', () => {
           .filter((block) => block.type === 'action' && block.status === 'pending')
           .map((block) => block.tool_call?.id)
       ).toEqual(['tc-question', 'tc-post', 'tc-pre', 'tc-skill'])
+      expect(
+        state.blocks.filter(
+          (block) =>
+            block.type !== 'action' &&
+            (block.status === 'pending' || block.status === 'loading')
+        )
+      ).toEqual([])
       expect(toolService.callTool).toHaveBeenCalledTimes(2)
     })
 
@@ -4703,6 +4711,35 @@ describe('dispatch', () => {
         terminalReason: 'max_steps'
       })
     })
+  })
+
+  describe('finalizePaused', () => {
+    it.each(['pending', 'loading'] as const)(
+      'rejects an unresolved %s non-interaction block without projecting success',
+      (status) => {
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status,
+          timestamp: Date.now(),
+          tool_call: {
+            id: 'subagent-running',
+            name: 'agent',
+            params: '{}',
+            response: ''
+          }
+        })
+
+        expect(() => finalizePaused(state, io)).toThrow(
+          `Paused stream invariant violated: block index=0 type=tool_call status=${status} is unresolved.`
+        )
+        expect(io.messageStore.updateAssistantContent).not.toHaveBeenCalled()
+        expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
+          'chat.stream.completed',
+          expect.anything()
+        )
+      }
+    )
   })
 
   describe('finalizeError', () => {
