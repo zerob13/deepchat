@@ -395,7 +395,8 @@ export class ToolService implements ToolServicePort {
           signal: options?.signal,
           allowExternalFileAccess: allowsExternalFileAccess(permissionMode),
           activeSkillNames: options?.activeSkillNames,
-          liveDelegationAuthorization
+          liveDelegationAuthorization,
+          commitDispatch: options?.commitDispatch
         }
       )
       const resolvedResponse = this.resolveAgentToolResponse(response)
@@ -471,7 +472,9 @@ export class ToolService implements ToolServicePort {
       enabledServerIds,
       runId: options?.runId,
       signal: options?.signal,
-      expectedTarget
+      expectedTarget,
+      commitDispatch: options?.commitDispatch,
+      registerOutcomeProjection: options?.registerOutcomeProjection
     })
   }
 

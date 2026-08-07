@@ -1079,6 +1079,8 @@ describe('ToolService', () => {
     expect((toolService as any).agentToolManager).toBe(runtimeManager)
     expect(runtimeManager.agentWorkspacePath).toBe('C:\\runtime-workspace')
 
+    const commitDispatch = vi.fn()
+    const registerOutcomeProjection = vi.fn()
     await toolService.callTool(
       {
         id: 'tool-1',
@@ -1086,7 +1088,12 @@ describe('ToolService', () => {
         function: { name: 'mcp_only', arguments: '{}' },
         conversationId: 'conv-1'
       },
-      { runId: 'run-1', permissionMode: 'full_access' }
+      {
+        runId: 'run-1',
+        permissionMode: 'full_access',
+        commitDispatch,
+        registerOutcomeProjection
+      }
     )
 
     expect(mcpService.callTool).toHaveBeenCalledWith(
@@ -1095,6 +1102,8 @@ describe('ToolService', () => {
         agentId: 'agent-1',
         enabledServerIds: ['mcp-server'],
         runId: 'run-1',
+        commitDispatch,
+        registerOutcomeProjection,
         expectedTarget: {
           finalName: 'mcp_only',
           serverName: 'mcp-server',
@@ -1344,6 +1353,49 @@ describe('ToolService', () => {
     expect(runtimePort.cronJobs.toggleCronJob).toHaveBeenNthCalledWith(2, 'job-1', true)
     expect(runtimePort.cronJobs.runCronJobNow).toHaveBeenCalledWith('job-1')
     expect(runtimePort.cronJobs.deleteCronJob).toHaveBeenCalledWith('job-1')
+  })
+
+  it('commits cron mutations before invoking the scheduler runtime', async () => {
+    const order: string[] = []
+    const upsertCronJob = vi.fn().mockImplementation(async () => {
+      order.push('target')
+      return cronJobFixture
+    })
+    const deleteCronJob = vi.fn().mockResolvedValue(undefined)
+    const runtimePort = buildAgentToolRuntimeMock({ upsertCronJob, deleteCronJob })
+    const handler = new CronJobToolHandler(runtimePort.cronJobs)
+    const beforeMutation = vi.fn(() => order.push('commit'))
+
+    await handler.call(
+      {
+        action: 'create',
+        job: {
+          name: 'Journaled task',
+          agentId: 'deepchat',
+          taskPrompt: 'Run report'
+        }
+      },
+      { beforeMutation }
+    )
+
+    expect(order).toEqual(['commit', 'target'])
+
+    const readCommit = vi.fn()
+    await handler.call({ action: 'list' }, { beforeMutation: readCommit })
+    expect(readCommit).not.toHaveBeenCalled()
+
+    const journalError = new Error('journal unavailable')
+    await expect(
+      handler.call(
+        { action: 'delete', jobId: 'job-1' },
+        {
+          beforeMutation: () => {
+            throw journalError
+          }
+        }
+      )
+    ).rejects.toBe(journalError)
+    expect(deleteCronJob).not.toHaveBeenCalled()
   })
 
   it('requires approval for cronjob write actions', async () => {

@@ -1128,7 +1128,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
             requestedToolExecutionCount: completedToolCalls.length
           }
         },
-        settleToolBatch: async ({ batch }) => {
+        settleToolBatch: async ({ run, batch }) => {
           const completedToolBatch = batch.toolCalls.map((toolCall) => ({ ...toolCall }))
           const toolBatchMessageStart = conversationMessages.length
           let startedToolCallCount = 0
@@ -1147,6 +1147,11 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               io,
               permissionMode,
               toolResults,
+              executionJournal: params.io.executionJournalWriter,
+              operationScope: {
+                runId: run.runId,
+                requestSeq: run.requestSeq
+              },
               contextLength:
                 providerId === 'acp'
                   ? Number.MAX_SAFE_INTEGER

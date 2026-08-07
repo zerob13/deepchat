@@ -147,14 +147,21 @@ export interface AgentLiveDelegationToolPort {
   spawn(
     parentSessionId: string,
     input: { slotId: string; title: string; prompt: string },
-    authorization?: LiveDelegationStartAuthorization
+    authorization?: LiveDelegationStartAuthorization,
+    beforeMutation?: () => void
   ): Promise<LiveDelegationDetail>
-  send(parentSessionId: string, delegationId: string, message: string): LiveDelegationDetail
+  send(
+    parentSessionId: string,
+    delegationId: string,
+    message: string,
+    beforeMutation?: () => void
+  ): LiveDelegationDetail
   followUp(
     parentSessionId: string,
     delegationId: string,
     task: string,
-    authorization?: LiveDelegationStartAuthorization
+    authorization?: LiveDelegationStartAuthorization,
+    beforeMutation?: () => void
   ): Promise<LiveDelegationDetail>
   list(parentSessionId: string, limit?: number): LiveDelegationSummary[]
   inspect(parentSessionId: string, delegationId: string): LiveDelegationDetail
@@ -172,7 +179,11 @@ export interface AgentLiveDelegationToolPort {
       signal?: AbortSignal
     }
   ): Promise<{ events: LiveDelegationEventSummary[]; cursor: number; timedOut: boolean }>
-  interrupt(parentSessionId: string, delegationId: string): Promise<LiveDelegationDetail>
+  interrupt(
+    parentSessionId: string,
+    delegationId: string,
+    beforeMutation?: () => void
+  ): Promise<LiveDelegationDetail>
 }
 
 export interface AgentBrowserToolPort {
@@ -181,7 +192,8 @@ export interface AgentBrowserToolPort {
     toolName: string,
     args: Record<string, unknown>,
     conversationId?: string,
-    runId?: string
+    runId?: string,
+    beforeInvoke?: (normalizedArguments: Record<string, unknown>) => void
   ): Promise<string>
 }
 

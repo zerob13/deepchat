@@ -106,6 +106,40 @@ describe('Agent memory tools', () => {
     })
   })
 
+  it('commits normalized memory mutations before invoking the runtime port', async () => {
+    const order: string[] = []
+    const rememberMemory = vi.fn().mockImplementation(async () => {
+      order.push('target')
+      return { action: 'created', id: 'mem-1' }
+    })
+    const runtimePort = buildRuntimePort({ rememberMemory })
+    const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
+    const beforeMutation = vi.fn((args) => {
+      order.push('commit')
+      expect(args).toEqual({
+        content: 'repo uses pnpm',
+        kind: 'semantic',
+        importance: 0.7
+      })
+    })
+
+    await handler.call(MEMORY_TOOL_NAMES.remember, { content: '  repo uses pnpm  ' }, 'conv-1', {
+      beforeMutation
+    })
+
+    expect(order).toEqual(['commit', 'target'])
+
+    const journalError = new Error('journal unavailable')
+    await expect(
+      handler.call(MEMORY_TOOL_NAMES.forget, { memoryId: 'mem-1' }, 'conv-1', {
+        beforeMutation: () => {
+          throw journalError
+        }
+      })
+    ).rejects.toBe(journalError)
+    expect(runtimePort.forgetMemory).not.toHaveBeenCalled()
+  })
+
   it('requires an explicit user action when memory_remember matches a tombstone', async () => {
     const runtimePort = buildRuntimePort({
       rememberMemory: vi.fn().mockResolvedValue({ action: 'noop', reason: 'forgotten' })

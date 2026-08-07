@@ -48,6 +48,7 @@ export interface ExecuteCommandOptions {
   stdin?: string
   outputPrefix?: string
   allowExternalCwd?: boolean
+  beforeExecute?: (normalizedArguments: Record<string, unknown>) => void
 }
 
 export interface AgentCommandEnvironmentPort {
@@ -156,6 +157,7 @@ export class AgentBashHandler {
       })
     }
 
+    const spawnCwd = resolveUsableSpawnCwd(cwd)
     let result: ShellProcessResult
 
     const resolvedEnvironment = this.resolveCommandEnvironment(command, options)
@@ -165,9 +167,22 @@ export class AgentBashHandler {
       resolvedEnvironment.preserveCommand
     )
 
+    options.beforeExecute?.({
+      command: prepared.command,
+      cwd: spawnCwd,
+      timeoutMs: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
+      background: false,
+      ...(prepared.rewritten
+        ? {
+            fallbackCommand: prepared.originalCommand,
+            fallbackPolicy: 'rtk_capability_error'
+          }
+        : {}),
+      ...(yieldMs === undefined ? {} : { yieldMs })
+    })
     result = await this.runShellProcess(
       prepared.command,
-      cwd,
+      spawnCwd,
       timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
       {
         ...options,
@@ -205,7 +220,7 @@ export class AgentBashHandler {
 
       result = await this.runShellProcess(
         prepared.originalCommand,
-        cwd,
+        spawnCwd,
         timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
         {
           ...options,
@@ -362,11 +377,10 @@ export class AgentBashHandler {
     const { shell, args } = getUserShell()
     const shellCommand = prepareShellCommandForUtf8Output(shell, command)
     const outputFilePath = this.createOutputFilePath(options.conversationId, options.outputPrefix)
-    const spawnCwd = resolveUsableSpawnCwd(cwd)
 
     return new Promise((resolve, reject) => {
       const child = spawn(shell, [...args, shellCommand], {
-        cwd: spawnCwd,
+        cwd,
         env: options.env ? { ...options.env } : { ...process.env },
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe']
@@ -600,6 +614,7 @@ export class AgentBashHandler {
       )
     }
 
+    const spawnCwd = resolveUsableSpawnCwd(cwd)
     const resolvedEnvironment = this.resolveCommandEnvironment(command, options)
     const prepared = await this.prepareCommand(
       command,
@@ -607,11 +622,22 @@ export class AgentBashHandler {
       resolvedEnvironment.preserveCommand
     )
 
-    const result = await backgroundExecSessionManager.start(conversationId, prepared.command, cwd, {
-      timeout: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
-      env: prepared.env,
-      outputPrefix: options.outputPrefix
+    options.beforeExecute?.({
+      command: prepared.command,
+      cwd: spawnCwd,
+      timeoutMs: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
+      background: true
     })
+    const result = await backgroundExecSessionManager.start(
+      conversationId,
+      prepared.command,
+      spawnCwd,
+      {
+        timeout: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
+        env: prepared.env,
+        outputPrefix: options.outputPrefix
+      }
+    )
 
     if (options.stdin !== undefined) {
       await backgroundExecSessionManager.write(

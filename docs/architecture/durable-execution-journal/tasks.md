@@ -22,8 +22,8 @@
 
 - [x] Replace process-local loop Run IDs with UUIDs.
 - [x] Commit `run_started` before Run registration.
-- [ ] Pass structured operation identity into each tool execution.
-- [ ] Commit T2 before staged result projection for known success and failure outcomes.
+- [x] Pass structured operation identity into each tool execution.
+- [x] Commit T2 before staged result projection for known success and failure outcomes.
 - [x] Commit all terminal outcomes before transcript, status, hooks, and UI projection.
 - [x] Prevent a post-terminal projection failure from attempting a conflicting terminal fact or
   error projection.
@@ -32,13 +32,13 @@
 
 ## 4. Resolved Tool Boundaries
 
-- [ ] Add the per-call dispatch commit callback without introducing a Tape dependency in tools.
-- [ ] Commit MCP T1 after final policy, binding, target, argument, and abort checks.
-- [ ] Commit Agent T1 at each persistent or external side-effect boundary.
-- [ ] Ensure local refusal and permission paths produce no T1.
-- [ ] Ensure duplicate claims and journal failures prevent physical invocation.
-- [ ] Add MCP and representative Agent boundary tests.
-- [ ] Review and commit the tool-boundary slice.
+- [x] Add the per-call dispatch commit callback without introducing a Tape dependency in tools.
+- [x] Commit MCP T1 after final policy, binding, target, argument, and abort checks.
+- [x] Commit Agent T1 at each persistent or external side-effect boundary.
+- [x] Ensure local refusal and permission paths produce no T1.
+- [x] Ensure duplicate claims and journal failures prevent physical invocation.
+- [x] Add MCP and representative Agent boundary tests.
+- [x] Review and commit the tool-boundary slice.
 
 ## 5. Deferred Execution And Recovery
 

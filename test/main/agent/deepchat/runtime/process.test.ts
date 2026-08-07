@@ -168,6 +168,10 @@ function makeStreamEvents(...events: LLMCoreStreamEvent[]): LLMCoreStreamEvent[]
 describe('processStream', () => {
   let messageStore: ReturnType<typeof createMockMessageStore>
   let tapeToolFactWriter: { appendToolFact: ReturnType<typeof vi.fn> }
+  let executionJournalWriter: {
+    commitDispatch: ReturnType<typeof vi.fn>
+    commitToolOutcome: ReturnType<typeof vi.fn>
+  }
   let commitRunTerminal: ReturnType<typeof vi.fn>
   let tempHome: string | null = null
   let homedirSpy: ReturnType<typeof vi.spyOn> | null = null
@@ -182,6 +186,10 @@ describe('processStream', () => {
         sessionId: input.sessionId,
         entryId: 1
       }))
+    }
+    executionJournalWriter = {
+      commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
+      commitToolOutcome: vi.fn(() => ({ sessionId: 's1', entryId: 2, created: true }))
     }
   })
 
@@ -252,6 +260,7 @@ describe('processStream', () => {
       io: {
         messageStore,
         tapeToolFactWriter,
+        executionJournalWriter,
         publishEvent: publishDeepchatEventMock,
         publishSessionUpdate: vi.fn()
       },

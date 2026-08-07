@@ -1,5 +1,5 @@
 import type { ProviderSettingsPort } from '@/provider/settings'
-import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/mcp'
+import { TOOL_EXECUTION, type MCPToolDefinition, type ToolDispatchCommit } from '@shared/types/mcp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { SettingsStore } from '@/config/settingsStore'
 import type { AgentToolProgressUpdate } from '@shared/types/tool'
@@ -39,10 +39,14 @@ import type {
 } from '../runtimePorts'
 import { YO_BROWSER_TOOL_NAMES } from '../browser/definitions'
 import { resolveSessionVisionTarget } from '@/agent/vision/sessionVisionResolver'
-import { AgentImageGenerationTool, IMAGE_GENERATE_TOOL_NAME } from './agentImageGenerationTool'
+import {
+  AgentImageGenerationTool,
+  IMAGE_GENERATE_TOOL_NAME,
+  IMAGE_GENERATION_TOOL_SERVER_NAME
+} from './agentImageGenerationTool'
 import { AgentPlanTool, UPDATE_PLAN_TOOL_NAME } from './agentPlanTool'
 import { AgentTapeToolHandler } from './agentTapeTools'
-import { AgentMemoryToolHandler } from './agentMemoryTools'
+import { AGENT_MEMORY_TOOL_SERVER_NAME, AgentMemoryToolHandler } from './agentMemoryTools'
 import { createAgentToolErrorResult } from '@shared/lib/agentToolResultEnvelope'
 import {
   CRON_JOB_AGENT_TOOL_NAME,
@@ -128,6 +132,7 @@ interface AgentToolExecutionOptions {
   allowExternalFileAccess?: boolean
   activeSkillNames?: string[]
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
+  commitDispatch?: ToolDispatchCommit
 }
 
 interface AgentToolPermissionCheckOptions {
@@ -177,6 +182,25 @@ export class AgentToolManager {
   private readonly cronJobToolHandler: CronJobToolHandler
   private readonly fffSearchService = new FffSearchService()
   private static readonly READ_FILE_AUTO_TRUNCATE_THRESHOLD = 4500
+
+  private createAgentDispatchCommit(
+    toolName: string,
+    serverName: string,
+    normalizedArguments: Record<string, unknown>,
+    options?: AgentToolExecutionOptions
+  ): ((resolvedArguments?: Record<string, unknown>) => void) | undefined {
+    const commitDispatch = options?.commitDispatch
+    if (!commitDispatch) return undefined
+    return (resolvedArguments = normalizedArguments) => {
+      throwIfAbortRequested(options?.signal)
+      commitDispatch({
+        toolName,
+        toolSource: 'agent',
+        normalizedArguments: resolvedArguments,
+        target: { serverName, originalName: toolName }
+      })
+    }
+  }
 
   private readonly fileSystemSchemas = {
     read: z.object({
@@ -599,11 +623,27 @@ export class AgentToolManager {
       if (!this.liveDelegationTool) {
         throw new Error('Live delegation is unavailable.')
       }
-      return await this.liveDelegationTool.call(args, conversationId, options)
+      return await this.liveDelegationTool.call(args, conversationId, {
+        ...options,
+        beforeMutation: this.createAgentDispatchCommit(
+          toolName,
+          LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
+          args,
+          options
+        )
+      })
     }
 
     if (toolName === IMAGE_GENERATE_TOOL_NAME) {
-      return await this.imageGenerationTool.call(args, conversationId, options)
+      return await this.imageGenerationTool.call(args, conversationId, {
+        signal: options?.signal,
+        beforeGenerate: this.createAgentDispatchCommit(
+          toolName,
+          IMAGE_GENERATION_TOOL_SERVER_NAME,
+          args,
+          options
+        )
+      })
     }
 
     if (this.tapeToolHandler.isModelTool(toolName)) {
@@ -615,16 +655,30 @@ export class AgentToolManager {
     }
 
     if (this.memoryToolHandler.isMemoryTool(toolName)) {
-      return await this.memoryToolHandler.call(toolName, args, conversationId)
+      return await this.memoryToolHandler.call(toolName, args, conversationId, {
+        beforeMutation: this.createAgentDispatchCommit(
+          toolName,
+          AGENT_MEMORY_TOOL_SERVER_NAME,
+          args,
+          options
+        )
+      })
     }
 
     if (this.cronJobToolHandler.isCronJobTool(toolName)) {
-      return await this.cronJobToolHandler.call(args)
+      return await this.cronJobToolHandler.call(args, {
+        beforeMutation: this.createAgentDispatchCommit(
+          toolName,
+          CRON_JOB_TOOL_SERVER_NAME,
+          args,
+          options
+        )
+      })
     }
 
     // Route to process tool
     if (this.isProcessTool(toolName)) {
-      return await this.callProcessTool(toolName, args, conversationId)
+      return await this.callProcessTool(toolName, args, conversationId, options)
     }
 
     // Route to FileSystem tools
@@ -656,7 +710,8 @@ export class AgentToolManager {
           toolName,
           args,
           conversationId,
-          options?.runId
+          options?.runId,
+          this.createAgentDispatchCommit(toolName, 'yobrowser', args, options)
         )
         return {
           content: response
@@ -894,9 +949,10 @@ export class AgentToolManager {
   }
 
   private async callProcessTool(
-    _toolName: string,
+    toolName: string,
     args: Record<string, unknown>,
-    conversationId?: string
+    conversationId?: string,
+    options?: AgentToolExecutionOptions
   ): Promise<AgentToolCallResult> {
     if (!conversationId) {
       throw new Error('process tool requires a conversation ID')
@@ -911,6 +967,12 @@ export class AgentToolManager {
     }
 
     const { action, sessionId, offset, limit, data, eof } = validationResult.data
+    const commitMutation = this.createAgentDispatchCommit(
+      toolName,
+      'agent-filesystem',
+      validationResult.data,
+      options
+    )
 
     switch (action) {
       case 'list': {
@@ -949,6 +1011,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for write action')
         }
+        commitMutation?.()
         await backgroundExecSessionManager.write(conversationId, sessionId, data ?? '', eof)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
@@ -959,6 +1022,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for kill action')
         }
+        commitMutation?.()
         await backgroundExecSessionManager.kill(conversationId, sessionId)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
@@ -969,6 +1033,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for clear action')
         }
+        commitMutation?.()
         await backgroundExecSessionManager.clear(conversationId, sessionId)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
@@ -979,6 +1044,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for remove action')
         }
+        commitMutation?.()
         await backgroundExecSessionManager.remove(conversationId, sessionId)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
@@ -1082,7 +1148,13 @@ export class AgentToolManager {
         },
         {
           conversationId,
-          allowExternalCwd: allowExternalFileAccess
+          allowExternalCwd: allowExternalFileAccess,
+          beforeExecute: this.createAgentDispatchCommit(
+            toolName,
+            'agent-filesystem',
+            parsedArgs,
+            options
+          )
         }
       )
       const content =
@@ -1149,7 +1221,8 @@ export class AgentToolManager {
               validPath,
               mimeType,
               conversationId,
-              options?.signal
+              options?.signal,
+              this.createAgentDispatchCommit(toolName, 'agent-filesystem', parsedArgs, options)
             )
             return {
               content: imageResult.content,
@@ -1197,7 +1270,16 @@ export class AgentToolManager {
             'write',
             allowExternalFileAccess
           )
-          return { content: await fileSystemHandler.writeFile(parsedArgs, baseDirectory) }
+          return {
+            content: await fileSystemHandler.writeFile(parsedArgs, baseDirectory, {
+              beforeMutation: this.createAgentDispatchCommit(
+                toolName,
+                'agent-filesystem',
+                parsedArgs,
+                options
+              )
+            })
+          }
         case 'edit': {
           await this.assertFileAccessPermission(
             toolName,
@@ -1223,7 +1305,15 @@ export class AgentToolManager {
                   edits: [{ oldText: editArgs.oldText, newText: editArgs.newText }],
                   dryRun: false
                 },
-                baseDirectory
+                baseDirectory,
+                {
+                  beforeMutation: this.createAgentDispatchCommit(
+                    toolName,
+                    'agent-filesystem',
+                    parsedArgs,
+                    options
+                  )
+                }
               )
             }
           }
@@ -1234,7 +1324,15 @@ export class AgentToolManager {
                 oldText: editArgs.oldText,
                 newText: editArgs.newText
               },
-              baseDirectory
+              baseDirectory,
+              {
+                beforeMutation: this.createAgentDispatchCommit(
+                  toolName,
+                  'agent-filesystem',
+                  parsedArgs,
+                  options
+                )
+              }
             )
           }
         }
@@ -1620,7 +1718,8 @@ export class AgentToolManager {
     filePath: string,
     mimeType: string,
     conversationId?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    beforeAnalyze?: (normalizedArguments: Record<string, unknown>) => void
   ): Promise<{ content: string; imagePreviews: ToolCallImagePreview[] }> {
     throwIfAbortRequested(signal)
     const fileBuffer = await fs.promises.readFile(filePath)
@@ -1628,6 +1727,7 @@ export class AgentToolManager {
     const metadata = this.buildImageMetadataBlock(filePath, mimeType, fileBuffer.length)
     const dataUrl = `data:${mimeType};base64,${fileBuffer.toString('base64')}`
     let previewData: string | undefined
+    let dispatchCommitFailed = false
     try {
       const cachedPreviewData = await this.dependencies.cacheImage(dataUrl)
       if (cachedPreviewData && !cachedPreviewData.startsWith('data:image/')) {
@@ -1694,6 +1794,17 @@ export class AgentToolManager {
         await providerRuntime.executeWithRateLimit(visionTarget.providerId)
       }
       throwIfAbortRequested(signal)
+      try {
+        beforeAnalyze?.({
+          path: filePath,
+          mimeType,
+          providerId: visionTarget.providerId,
+          modelId: visionTarget.modelId
+        })
+      } catch (error) {
+        dispatchCommitFailed = true
+        throw error
+      }
       const response = signal
         ? await providerRuntime.generateCompletionStandalone(
             visionTarget.providerId,
@@ -1720,6 +1831,7 @@ export class AgentToolManager {
       }
       return { content: normalized, imagePreviews }
     } catch (error) {
+      if (dispatchCommitFailed) throw error
       if (isAbortError(error)) {
         throw error
       }
@@ -2401,7 +2513,14 @@ export class AgentToolManager {
       if (!validationResult.success) {
         throw new Error(`Invalid arguments for skill_manage: ${validationResult.error.message}`)
       }
-      const result = await skillTools.handleSkillManage(conversationId, validationResult.data)
+      const result = await skillTools.handleSkillManage(conversationId, validationResult.data, {
+        beforeMutation: this.createAgentDispatchCommit(
+          toolName,
+          'agent-skills',
+          validationResult.data,
+          options
+        )
+      })
       return {
         content: JSON.stringify(result),
         rawData: {
@@ -2455,7 +2574,13 @@ export class AgentToolManager {
 
     const result = await this.getSkillExecutionService().execute(validationResult.data, {
       conversationId,
-      activeSkillNames: options?.activeSkillNames
+      activeSkillNames: options?.activeSkillNames,
+      beforeExecute: this.createAgentDispatchCommit(
+        toolName,
+        'agent-skills',
+        validationResult.data,
+        options
+      )
     })
     const content =
       typeof result.output === 'string' ? result.output : JSON.stringify(result.output, null, 2)
@@ -2478,20 +2603,46 @@ export class AgentToolManager {
     options?: AgentToolExecutionOptions
   ): Promise<AgentToolCallResult> {
     const handler = this.getChatSettingsHandler()
+    const commitMutation = this.createAgentDispatchCommit(
+      toolName,
+      CHAT_SETTINGS_SKILL_NAME,
+      args,
+      options
+    )
     if (toolName === CHAT_SETTINGS_TOOL_NAMES.toggle) {
-      const result = await handler.toggle(args, conversationId, options?.activeSkillNames)
+      const result = await handler.toggle(
+        args,
+        conversationId,
+        options?.activeSkillNames,
+        commitMutation
+      )
       return { content: JSON.stringify(result) }
     }
     if (toolName === CHAT_SETTINGS_TOOL_NAMES.setLanguage) {
-      const result = await handler.setLanguage(args, conversationId, options?.activeSkillNames)
+      const result = await handler.setLanguage(
+        args,
+        conversationId,
+        options?.activeSkillNames,
+        commitMutation
+      )
       return { content: JSON.stringify(result) }
     }
     if (toolName === CHAT_SETTINGS_TOOL_NAMES.setTheme) {
-      const result = await handler.setTheme(args, conversationId, options?.activeSkillNames)
+      const result = await handler.setTheme(
+        args,
+        conversationId,
+        options?.activeSkillNames,
+        commitMutation
+      )
       return { content: JSON.stringify(result) }
     }
     if (toolName === CHAT_SETTINGS_TOOL_NAMES.setFontSize) {
-      const result = await handler.setFontSize(args, conversationId, options?.activeSkillNames)
+      const result = await handler.setFontSize(
+        args,
+        conversationId,
+        options?.activeSkillNames,
+        commitMutation
+      )
       return { content: JSON.stringify(result) }
     }
     if (toolName === CHAT_SETTINGS_TOOL_NAMES.open) {
@@ -2524,7 +2675,12 @@ export class AgentToolManager {
           }
         }
       }
-      const result = await handler.open(args, conversationId, options?.activeSkillNames)
+      const result = await handler.open(
+        args,
+        conversationId,
+        options?.activeSkillNames,
+        commitMutation
+      )
       return { content: JSON.stringify(result) }
     }
     throw new Error(`Unknown DeepChat settings tool: ${toolName}`)

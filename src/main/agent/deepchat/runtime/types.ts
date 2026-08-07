@@ -29,7 +29,7 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
-import type { TapeToolFactWriter } from '@/tape/ports/capabilities'
+import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
 
 export interface InterleavedReasoningConfig {
   preserveReasoningContent: boolean
@@ -100,6 +100,7 @@ export type ProcessIoParams = Pick<
   'messageStore' | 'publishEvent' | 'publishSessionUpdate'
 > & {
   tapeToolFactWriter: TapeToolFactWriter
+  executionJournalWriter: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
 }
 
 export interface ProcessControlCollaborators {

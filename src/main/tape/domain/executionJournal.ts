@@ -146,7 +146,8 @@ export class ExecutionJournalError extends Error {
       | 'invalid_fact'
       | 'persistence_failed'
       | 'conflicting_fact'
-      | 'duplicate_dispatch',
+      | 'duplicate_dispatch'
+      | 'projection_failed',
     options?: ErrorOptions
   ) {
     super(message, options)
@@ -168,6 +169,17 @@ export class ExecutionJournalDuplicateDispatchError extends ExecutionJournalErro
       'duplicate_dispatch'
     )
     this.name = 'ExecutionJournalDuplicateDispatchError'
+  }
+}
+
+export class CommittedToolOutcomeProjectionError extends ExecutionJournalError {
+  constructor(operation: ExecutionOperationIdentity, options?: ErrorOptions) {
+    super(
+      `Tool outcome was committed for operation ${formatExecutionOperationIdentity(operation)}, but its projection failed.`,
+      'projection_failed',
+      options
+    )
+    this.name = 'CommittedToolOutcomeProjectionError'
   }
 }
 

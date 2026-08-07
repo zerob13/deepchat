@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { existsSync } from 'fs'
 import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
@@ -6,6 +7,7 @@ import { AgentToolManager } from '@/tool/agentTools/agentToolManager'
 import * as sessionVisionResolverModule from '@/agent/vision/sessionVisionResolver'
 import { createAgentToolDependencies } from './agentToolDependencies'
 import { CommandPermissionService } from '@/tool/permission'
+import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
 
 vi.mock('fs', async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import('fs')
@@ -139,6 +141,64 @@ describe('AgentToolManager read routing', () => {
       exec: { effect: 'write', mode: 'sequential' },
       process: { effect: 'write', mode: 'sequential' }
     })
+  })
+
+  it('commits process mutations after local validation and before the utility target', async () => {
+    const order: string[] = []
+    const write = vi.spyOn(backgroundExecSessionManager, 'write').mockImplementation(async () => {
+      order.push('target')
+    })
+    const commitDispatch = vi.fn((input) => {
+      order.push('commit')
+      expect(input).toEqual({
+        toolName: 'process',
+        toolSource: 'agent',
+        normalizedArguments: {
+          action: 'write',
+          sessionId: 'bg-session',
+          data: 'continue',
+          eof: true
+        },
+        target: { serverName: 'agent-filesystem', originalName: 'process' }
+      })
+    })
+
+    try {
+      await manager.callTool(
+        'process',
+        { action: 'write', sessionId: 'bg-session', data: 'continue', eof: true },
+        'conv1',
+        { commitDispatch }
+      )
+
+      expect(order).toEqual(['commit', 'target'])
+
+      const invalidCommit = vi.fn()
+      await expect(
+        manager.callTool('process', { action: 'write' }, 'conv1', {
+          commitDispatch: invalidCommit
+        })
+      ).rejects.toThrow('sessionId is required for write action')
+      expect(invalidCommit).not.toHaveBeenCalled()
+
+      write.mockClear()
+      const journalError = new Error('journal unavailable')
+      await expect(
+        manager.callTool(
+          'process',
+          { action: 'write', sessionId: 'bg-session', data: 'blocked' },
+          'conv1',
+          {
+            commitDispatch: () => {
+              throw journalError
+            }
+          }
+        )
+      ).rejects.toBe(journalError)
+      expect(write).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
   })
 
   it('uses raw read for text/code files', async () => {
@@ -285,6 +345,66 @@ describe('AgentToolManager read routing', () => {
     expect(result.content).toContain('Successfully wrote')
   })
 
+  it('commits a resolved write dispatch immediately before filesystem mutation', async () => {
+    const targetPath = path.join(workspaceDir, 'journaled-write.txt')
+    const commitDispatch = vi.fn((input) => {
+      expect(existsSync(targetPath)).toBe(false)
+      expect(input).toEqual({
+        toolName: 'write',
+        toolSource: 'agent',
+        normalizedArguments: {
+          path: 'journaled-write.txt',
+          content: 'journaled content'
+        },
+        target: { serverName: 'agent-filesystem', originalName: 'write' }
+      })
+    })
+
+    await manager.callTool(
+      'write',
+      { path: 'journaled-write.txt', content: 'journaled content' },
+      'conv1',
+      { commitDispatch }
+    )
+
+    expect(commitDispatch).toHaveBeenCalledOnce()
+    await expect(fs.readFile(targetPath, 'utf-8')).resolves.toBe('journaled content')
+  })
+
+  it('prevents filesystem mutation when the dispatch commit fails', async () => {
+    const targetPath = path.join(workspaceDir, 'blocked-write.txt')
+    const journalError = new Error('journal unavailable')
+    const commitDispatch = vi.fn(() => {
+      throw journalError
+    })
+
+    await expect(
+      manager.callTool(
+        'write',
+        { path: 'blocked-write.txt', content: 'must not be written' },
+        'conv1',
+        { commitDispatch }
+      )
+    ).rejects.toBe(journalError)
+
+    expect(commitDispatch).toHaveBeenCalledOnce()
+    expect(existsSync(targetPath)).toBe(false)
+  })
+
+  it('does not claim a dispatch for invalid writes or plain file reads', async () => {
+    const filePath = path.join(workspaceDir, 'plain-read.txt')
+    await fs.writeFile(filePath, 'read only', 'utf-8')
+    fileService.getMimeType.mockResolvedValue('text/plain')
+    const commitDispatch = vi.fn()
+
+    await expect(
+      manager.callTool('write', { path: 'missing-content.txt' }, 'conv1', { commitDispatch })
+    ).rejects.toThrow('Invalid arguments')
+    await manager.callTool('read', { path: 'plain-read.txt' }, 'conv1', { commitDispatch })
+
+    expect(commitDispatch).not.toHaveBeenCalled()
+  })
+
   it('requests permission for new external writes without broadening to the parent directory', async () => {
     const externalFile = path.join(
       path.parse(workspaceDir).root,
@@ -363,6 +483,47 @@ describe('AgentToolManager read routing', () => {
       expect.any(Number)
     )
     expect(providerSettings.resolveDeepChatAgentConfig).not.toHaveBeenCalled()
+  })
+
+  it('propagates vision dispatch commit failure without invoking the provider', async () => {
+    const filePath = path.join(workspaceDir, 'image-journal-failure.png')
+    await fs.writeFile(filePath, Buffer.from([0, 1, 2, 3]))
+    const resolvedFilePath = await fs.realpath(filePath)
+    fileService.getMimeType.mockResolvedValue('image/png')
+    resolveConversationSessionInfo.mockResolvedValue({
+      agentId: 'deepchat',
+      providerId: 'openai',
+      modelId: 'gpt-4o'
+    })
+    providerSettings.getModelConfig.mockImplementation((modelId: string, providerId?: string) => ({
+      temperature: 0.2,
+      maxTokens: 1200,
+      vision: providerId === 'openai' && modelId === 'gpt-4o'
+    }))
+    const journalError = new Error('journal unavailable')
+    const commitDispatch = vi.fn((input) => {
+      expect(input).toEqual({
+        toolName: 'read',
+        toolSource: 'agent',
+        normalizedArguments: {
+          path: resolvedFilePath,
+          mimeType: 'image/png',
+          providerId: 'openai',
+          modelId: 'gpt-4o'
+        },
+        target: { serverName: 'agent-filesystem', originalName: 'read' }
+      })
+      throw journalError
+    })
+
+    await expect(
+      manager.callTool('read', { path: 'image-journal-failure.png' }, 'conv1', {
+        commitDispatch
+      })
+    ).rejects.toBe(journalError)
+
+    expect(commitDispatch).toHaveBeenCalledOnce()
+    expect(providerRuntime.generateCompletionStandalone).not.toHaveBeenCalled()
   })
 
   it('falls back to the agent vision model when the current model has no vision', async () => {

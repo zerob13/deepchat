@@ -851,6 +851,7 @@ export class DeepChatLoopRunner {
         io: {
           messageStore: this.ports.messageStore,
           tapeToolFactWriter: this.ports.tape,
+          executionJournalWriter: this.ports.tape,
           publishEvent: this.ports.publishEvent,
           publishSessionUpdate: this.ports.publishSessionUpdate
         }

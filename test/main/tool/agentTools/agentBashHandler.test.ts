@@ -1,5 +1,6 @@
+import fs from 'fs'
 import path from 'path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
 import { AgentBashHandler } from '@/tool/agentTools/agentBashHandler'
 import { CommandPermissionService } from '@/tool/permission/commandPermissionService'
@@ -17,7 +18,13 @@ const createPermissionService = (): CommandPermissionService => {
 }
 
 describe('AgentBashHandler', () => {
-  const workspaceRoot = path.resolve('/workspace')
+  const workspaceRoot = process.cwd()
+  const externalRoot = path.dirname(workspaceRoot)
+
+  beforeEach(() => {
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as fs.Stats)
+  })
 
   afterEach(() => {
     vi.restoreAllMocks()
@@ -26,7 +33,7 @@ describe('AgentBashHandler', () => {
   it('falls back to the original command after an RTK capability error', async () => {
     const originalCommand = 'find . -type f -name "*.ts" -o -name "*.vue" | grep "^./src"'
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -88,7 +95,7 @@ describe('AgentBashHandler', () => {
 
   it('does not fall back for ordinary rewritten command failures', async () => {
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -136,7 +143,7 @@ describe('AgentBashHandler', () => {
       }))
     }
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       permissionService,
       commandEnvironment
@@ -200,7 +207,7 @@ describe('AgentBashHandler', () => {
       }))
     }
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       new CommandPermissionService(),
       commandEnvironment
@@ -220,7 +227,7 @@ describe('AgentBashHandler', () => {
 
   it('does not fall back when the rewritten command times out', async () => {
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -258,8 +265,9 @@ describe('AgentBashHandler', () => {
 
   it('keeps background execution on the bypass path without foreground retry', async () => {
     const originalCommand = 'find . -type f -name "*.ts" -o -name "*.vue"'
+    const order: string[] = []
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -277,7 +285,11 @@ describe('AgentBashHandler', () => {
     const runShellProcess = vi.spyOn(handler as never, 'runShellProcess' as never)
     const startSpy = vi
       .spyOn(backgroundExecSessionManager, 'start')
-      .mockResolvedValue({ sessionId: 'bg_123', status: 'running' })
+      .mockImplementation(async () => {
+        order.push('spawn')
+        return { sessionId: 'bg_123', status: 'running' }
+      })
+    const beforeExecute = vi.fn(() => order.push('commit'))
 
     const result = await handler.executeCommand(
       {
@@ -286,10 +298,18 @@ describe('AgentBashHandler', () => {
         background: true
       },
       {
-        conversationId: 'conv-1'
+        conversationId: 'conv-1',
+        beforeExecute
       }
     )
 
+    expect(order).toEqual(['commit', 'spawn'])
+    expect(beforeExecute).toHaveBeenCalledWith({
+      command: originalCommand,
+      cwd: workspaceRoot,
+      timeoutMs: 120000,
+      background: true
+    })
     expect(runShellProcess).not.toHaveBeenCalled()
     expect(startSpy).toHaveBeenCalledWith(
       'conv-1',
@@ -309,9 +329,9 @@ describe('AgentBashHandler', () => {
   })
 
   it('allows an external cwd when explicitly enabled', async () => {
-    const externalCwd = path.resolve('/external/project')
+    const externalCwd = externalRoot
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -355,9 +375,9 @@ describe('AgentBashHandler', () => {
   })
 
   it('rejects an external cwd when external access is not enabled', async () => {
-    const externalCwd = path.resolve('/external/project')
+    const externalCwd = externalRoot
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -374,9 +394,79 @@ describe('AgentBashHandler', () => {
     expect(runShellProcess).not.toHaveBeenCalled()
   })
 
+  it('does not commit dispatch when the resolved cwd is unusable', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService()
+    )
+    const beforeExecute = vi.fn()
+    const runShellProcess = vi.spyOn(handler as never, 'runShellProcess' as never)
+
+    await expect(
+      handler.executeCommand(
+        {
+          command: 'pwd',
+          description: 'Print working directory'
+        },
+        { beforeExecute }
+      )
+    ).rejects.toThrow('Working directory does not exist or is not accessible')
+
+    expect(beforeExecute).not.toHaveBeenCalled()
+    expect(runShellProcess).not.toHaveBeenCalled()
+  })
+
+  it('commits the prepared command before starting the shell process', async () => {
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService()
+    )
+    const order: string[] = []
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'find . -name "*.ts"',
+      command: 'rtk find . -name "*.ts"',
+      env: { PATH: '/bin' },
+      rewritten: true,
+      rtkApplied: true,
+      rtkMode: 'rewrite'
+    })
+    vi.spyOn(handler as never, 'runShellProcess' as never).mockImplementation(async () => {
+      order.push('spawn')
+      return {
+        kind: 'completed',
+        output: '',
+        exitCode: 0,
+        timedOut: false,
+        offloaded: false
+      }
+    })
+    const beforeExecute = vi.fn(() => order.push('commit'))
+
+    await handler.executeCommand(
+      {
+        command: 'find . -name "*.ts"',
+        description: 'Find TypeScript files'
+      },
+      { beforeExecute }
+    )
+
+    expect(order).toEqual(['commit', 'spawn'])
+    expect(beforeExecute).toHaveBeenCalledWith({
+      command: 'rtk find . -name "*.ts"',
+      cwd: workspaceRoot,
+      timeoutMs: 120000,
+      background: false,
+      fallbackCommand: 'find . -name "*.ts"',
+      fallbackPolicy: 'rtk_capability_error'
+    })
+  })
+
   it('returns a running session when foreground exec exceeds yieldMs', async () => {
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -427,7 +517,7 @@ describe('AgentBashHandler', () => {
 
   it('cleans up completed foreground sessions that finish inside the yield window', async () => {
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )
@@ -476,7 +566,7 @@ describe('AgentBashHandler', () => {
 
   it('keeps completed foreground sessions when output was offloaded', async () => {
     const handler = new AgentBashHandler(
-      ['/workspace'],
+      [workspaceRoot],
       { get: () => undefined },
       createPermissionService()
     )

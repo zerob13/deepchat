@@ -23,7 +23,8 @@ export class YoBrowserToolHandler {
     toolName: string,
     args: Record<string, unknown>,
     conversationId?: string,
-    runId?: string
+    runId?: string,
+    beforeInvoke?: (normalizedArguments: Record<string, unknown>) => void
   ): Promise<string> {
     try {
       const sessionId = conversationId?.trim()
@@ -39,6 +40,7 @@ export class YoBrowserToolHandler {
           if (!url) {
             throw new Error('url is required')
           }
+          beforeInvoke?.({ url })
           return JSON.stringify(
             runId
               ? await this.presenter.loadUrl(sessionId, url, undefined, undefined, 'agent', runId)
@@ -59,6 +61,7 @@ export class YoBrowserToolHandler {
 
           try {
             const params = this.normalizeCdpParams(args.params)
+            beforeInvoke?.({ method, params })
             const response = runId
               ? await this.presenter.sendCdpCommand(sessionId, method, params, 'agent', runId)
               : await this.presenter.sendCdpCommand(sessionId, method, params, 'agent')

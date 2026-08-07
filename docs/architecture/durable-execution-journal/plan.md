@@ -120,14 +120,29 @@ target, and abort checks, immediately before `targetClient.callTool`.
 Agent handlers invoke the callback after their local schema, permission, path, target, session, and
 availability checks, immediately before a persistent mutation, process spawn, provider call,
 browser call, scheduler mutation, or delegation mutation. Pure reads and local interaction tools do
-not claim a dispatch.
+not claim a dispatch. When a lower service owns the final authorization or availability checks, the
+handler forwards the callback and that service invokes it after those checks instead of claiming at
+the routing layer. For a local target that shares the main SQLite connection with Tape, the callback
+may run inside the target transaction after capacity and state checks but immediately before the
+first write. The dispatch fact and local mutation then commit or roll back together, while no local
+refusal can leave a false dispatch.
+
+Handlers with a bounded internal fallback keep one operation identity in v1, but the dispatch hash
+must cover the complete resolved invocation plan before the first target call. In particular, shell
+execution records both an RTK-rewritten command and its capability-error fallback when that fallback
+is possible. Process handlers validate the final spawn cwd before committing dispatch. A permission
+response after dispatch is a protocol violation: commit it as a known error outcome, then fail the
+Run closed instead of retrying or projecting it as an ordinary permission pause.
 
 After execution, the loop normalizes and prepares the result. If T1 was committed, it commits T2
 before applying the staged result to conversation messages, assistant blocks, transcript, or UI.
 Thrown target errors are known error outcomes and receive T2. Abort or process loss before a known
-result intentionally leaves T1 without T2.
+result intentionally leaves T1 without T2. Permission retries clear prior attempt results before the
+approved attempt begins, while a target result that has already returned is retained if cancellation
+arrives during local result preparation.
 
-Journal errors bypass normal tool-error conversion and fail the Run closed.
+Journal errors bypass normal tool-error conversion and fail the Run closed. They also take
+precedence over concurrent cancellation when parallel tool outcomes are collected.
 
 ## Deferred Execution
 

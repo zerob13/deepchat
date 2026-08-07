@@ -75,7 +75,7 @@ export interface ActiveLiveDelegationTurn extends LiveDelegationWithTurn {}
 export class LiveDelegationRepository {
   constructor(private readonly database: LiveDelegationDatabase) {}
 
-  create(input: CreateLiveDelegationInput): LiveDelegationWithTurn {
+  create(input: CreateLiveDelegationInput, beforeMutation?: () => void): LiveDelegationWithTurn {
     const id = StoredIdSchema.parse(input.id)
     const initialTurnId = StoredIdSchema.parse(input.initialTurnId)
     const parentSessionId = StoredIdSchema.parse(input.parentSessionId)
@@ -88,6 +88,7 @@ export class LiveDelegationRepository {
 
     return db.transaction(() => {
       this.assertParentHasActiveCapacity(parentSessionId)
+      beforeMutation?.()
       db.prepare(
         `INSERT INTO live_delegations (
            delegation_id, parent_session_id, child_session_id, slot_id, target_agent_id, title,
@@ -240,7 +241,8 @@ export class LiveDelegationRepository {
   createMessage(
     parentSessionId: string,
     delegationId: string,
-    content: string
+    content: string,
+    beforeMutation?: () => void
   ): LiveDelegationEvent {
     const delegation = this.requireOwned(parentSessionId, delegationId)
     const message = validateBytes(
@@ -269,6 +271,7 @@ export class LiveDelegationRepository {
             `${LIVE_DELEGATION_MAX_PENDING_MESSAGE_BYTES} UTF-8 bytes.`
         )
       }
+      beforeMutation?.()
       return this.insertEventRow({
         delegationId: delegation.id,
         parentSessionId: delegation.parentSessionId,
@@ -292,7 +295,8 @@ export class LiveDelegationRepository {
     delegationId: string,
     turnId: string,
     task: string,
-    now = Date.now()
+    now = Date.now(),
+    beforeMutation?: () => void
   ): LiveDelegationWithTurn {
     const delegation = this.requireOwned(parentSessionId, delegationId)
     const normalizedTask = validateBytes(task, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Follow-up task')
@@ -327,6 +331,7 @@ export class LiveDelegationRepository {
       )
       validateBytes(prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Follow-up task with messages')
       const nextSeq = delegation.lastTurnSeq + 1
+      beforeMutation?.()
       db.prepare(
         `INSERT INTO live_delegation_turns (
            turn_id, delegation_id, seq, kind, prompt, status, result_summary, error,
@@ -449,6 +454,7 @@ export class LiveDelegationRepository {
     resultRef?: LiveDelegationResultRef | null
     tapeReceipt?: SubagentTapeLinkReceipt | null
     now?: number
+    beforeMutation?: () => void
   }): LiveDelegationWithTurn {
     const turn = this.requireTurn(input.turnId)
     if (!ACTIVE_TURN_STATUSES.includes(turn.status as (typeof ACTIVE_TURN_STATUSES)[number])) {
@@ -498,6 +504,7 @@ export class LiveDelegationRepository {
     const db = this.database.getDatabase()
 
     db.transaction(() => {
+      input.beforeMutation?.()
       const result = db
         .prepare(
           `UPDATE live_delegation_turns

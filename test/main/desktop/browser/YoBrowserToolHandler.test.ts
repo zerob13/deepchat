@@ -60,6 +60,52 @@ describe('YoBrowserToolHandler', () => {
     expect(result).toBe(JSON.stringify({ initialized: true }))
   })
 
+  it('commits resolved navigation before invoking the browser target', async () => {
+    const order: string[] = []
+    const presenter = createPresenter()
+    presenter.loadUrl.mockImplementation(async () => {
+      order.push('target')
+      return { initialized: true }
+    })
+    const handler = new YoBrowserToolHandler(presenter)
+    const beforeInvoke = vi.fn((args) => {
+      order.push('commit')
+      expect(args).toEqual({ url: 'https://example.com' })
+    })
+
+    await handler.callTool(
+      'load_url',
+      { url: 'https://example.com' },
+      'session-a',
+      'run-a',
+      beforeInvoke
+    )
+
+    expect(order).toEqual(['commit', 'target'])
+    expect(presenter.loadUrl).toHaveBeenCalledWith(
+      'session-a',
+      'https://example.com',
+      undefined,
+      undefined,
+      'agent',
+      'run-a'
+    )
+  })
+
+  it('does not invoke the browser target when the dispatch commit fails', async () => {
+    const presenter = createPresenter()
+    const handler = new YoBrowserToolHandler(presenter)
+    const journalError = new Error('journal unavailable')
+
+    await expect(
+      handler.callTool('load_url', { url: 'https://example.com' }, 'session-a', undefined, () => {
+        throw journalError
+      })
+    ).rejects.toBe(journalError)
+
+    expect(presenter.loadUrl).not.toHaveBeenCalled()
+  })
+
   it('marks CDP commands as agent activity', async () => {
     const presenter = createPresenter()
     const handler = new YoBrowserToolHandler(presenter)
@@ -100,9 +146,10 @@ describe('YoBrowserToolHandler', () => {
       loading: false
     })
     const handler = new YoBrowserToolHandler(presenter)
+    const beforeInvoke = vi.fn()
 
     await expect(
-      handler.callTool('cdp_send', { method: 'Page.reload' }, 'session-a')
+      handler.callTool('cdp_send', { method: 'Page.reload' }, 'session-a', undefined, beforeInvoke)
     ).rejects.toMatchObject({
       name: 'YoBrowserUnavailableError',
       payload: {
@@ -115,6 +162,7 @@ describe('YoBrowserToolHandler', () => {
         })
       }
     })
+    expect(beforeInvoke).not.toHaveBeenCalled()
     expect(presenter.sendCdpCommand).not.toHaveBeenCalled()
   })
 
