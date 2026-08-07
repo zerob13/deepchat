@@ -39,8 +39,15 @@ import { TurnCoordinator } from '@/agent/deepchat/runtime/turnCoordinator'
 import { DeepChatAgentHarness } from './deepChatAgentHarness'
 import type { DeepChatHarnessDependencies, DeepChatRuntimeServices } from './runtimeServices'
 import { createPendingInputWakeupBinding } from './pendingInputWakeupBinding'
-import type { ExecutionRecoveryReport } from '@/tape/domain/executionJournal'
+import type {
+  ExecutionRecoveryClassification,
+  ExecutionRecoveryReport
+} from '@/tape/domain/executionJournal'
 import type { ExecutionJournalRecoveryReader } from '@/tape/ports/capabilities'
+
+const MAX_STARTUP_RECOVERY_DETAILS = 100
+const MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS = 2_048
+const STARTUP_RECOVERY_TRUNCATION_MARKER = '...[truncated]'
 
 function requiresStartupRecoveryAttention(report: ExecutionRecoveryReport): boolean {
   return (
@@ -50,19 +57,58 @@ function requiresStartupRecoveryAttention(report: ExecutionRecoveryReport): bool
   )
 }
 
+function boundStartupRecoveryDiagnostic(value: string): string {
+  const singleLine = value.replace(/[\u0000-\u001f\u007f]+/g, ' ')
+  if (singleLine.length <= MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS) return singleLine
+  return `${singleLine.slice(
+    0,
+    MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS - STARTUP_RECOVERY_TRUNCATION_MARKER.length
+  )}${STARTUP_RECOVERY_TRUNCATION_MARKER}`
+}
+
+function buildStartupRecoveryDiagnostic(report: ExecutionRecoveryReport) {
+  return {
+    ...report,
+    sessionId: boundStartupRecoveryDiagnostic(report.sessionId),
+    runId: boundStartupRecoveryDiagnostic(report.runId),
+    messageId: report.messageId === null ? null : boundStartupRecoveryDiagnostic(report.messageId),
+    reasons: report.reasons.map(boundStartupRecoveryDiagnostic),
+    disposition: 'parked' as const,
+    automaticRetry: false as const
+  }
+}
+
 function reportStartupExecutionRecovery(reader: ExecutionJournalRecoveryReader): void {
-  for (const report of reader.classifyRecoveryCandidates()) {
-    if (!requiresStartupRecoveryAttention(report)) continue
-    const diagnostic = {
-      ...report,
-      disposition: 'parked' as const,
-      automaticRetry: false as const
-    }
+  const candidates = reader.classifyRecoveryCandidates().filter(requiresStartupRecoveryAttention)
+  for (const report of candidates.slice(0, MAX_STARTUP_RECOVERY_DETAILS)) {
+    const diagnostic = buildStartupRecoveryDiagnostic(report)
     if (report.classification === 'corruption') {
       logger.error('[DeepChatAgent] Execution Journal recovery candidate parked', diagnostic)
     } else {
       logger.warn('[DeepChatAgent] Execution Journal recovery candidate parked', diagnostic)
     }
+  }
+  if (candidates.length <= MAX_STARTUP_RECOVERY_DETAILS) return
+
+  const classificationCounts: Record<ExecutionRecoveryClassification, number> = {
+    not_dispatched: 0,
+    completed: 0,
+    indeterminate: 0,
+    corruption: 0
+  }
+  for (const report of candidates) classificationCounts[report.classification] += 1
+  const summary = {
+    candidateCount: candidates.length,
+    reportedCount: MAX_STARTUP_RECOVERY_DETAILS,
+    omittedCount: candidates.length - MAX_STARTUP_RECOVERY_DETAILS,
+    classificationCounts,
+    disposition: 'parked' as const,
+    automaticRetry: false as const
+  }
+  if (classificationCounts.corruption > 0) {
+    logger.error('[DeepChatAgent] Execution Journal recovery diagnostics truncated', summary)
+  } else {
+    logger.warn('[DeepChatAgent] Execution Journal recovery diagnostics truncated', summary)
   }
 }
 
@@ -92,6 +138,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   const messageStore = sessionData.transcript
   const tapeService = sessionData.tapeStore
   const pendingInputCoordinator = sessionData.pendingInputs
+
+  reportStartupExecutionRecovery(tapeService)
 
   const runtime = new DeepChatAgentRuntime()
   const identity = new SessionIdentityService({ registry: runtime, database })
@@ -395,8 +443,6 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
       },
       input
     )
-
-  reportStartupExecutionRecovery(tapeService)
 
   const recoveredPendingInputs = pendingInputCoordinator.recoverClaimedInputsAfterRestart()
   if (recoveredPendingInputs > 0) {

@@ -2293,6 +2293,98 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
+    it('bounds recovery detail logging and reports omitted classifications', () => {
+      for (let index = 0; index <= 100; index += 1) {
+        sessionData.tapeStore.commitRunStarted({
+          sessionId: 's1',
+          runId: `${index.toString(16).padStart(8, '0')}-1111-4111-8111-111111111111`,
+          messageId: `m${index}`,
+          runKind: 'loop'
+        })
+      }
+      const loggerWarnMock = vi.mocked(logger.warn)
+      loggerWarnMock.mockClear()
+
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
+        providerRuntime: llmProvider,
+        providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn(),
+          publishMessagesChanged: vi.fn()
+        }),
+        toolService,
+        hookObserver: noopHookObserver
+      })
+
+      const recoveryLogCalls = loggerWarnMock.mock.calls.filter(
+        ([message]) =>
+          message === '[DeepChatAgent] Execution Journal recovery candidate parked' ||
+          message === '[DeepChatAgent] Execution Journal recovery diagnostics truncated'
+      )
+      expect(recoveryLogCalls).toHaveLength(101)
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        '[DeepChatAgent] Execution Journal recovery diagnostics truncated',
+        {
+          candidateCount: 101,
+          reportedCount: 100,
+          omittedCount: 1,
+          classificationCounts: {
+            not_dispatched: 101,
+            completed: 0,
+            indeterminate: 0,
+            corruption: 0
+          },
+          disposition: 'parked',
+          automaticRetry: false
+        }
+      )
+    })
+
+    it('sanitizes malformed recovery identities before structured logging', () => {
+      sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockReturnValue([
+        {
+          session_id: `unsafe\nsession-${'s'.repeat(3_000)}`,
+          entry_id: 1,
+          kind: 'event',
+          name: 'execution/run_started',
+          source_type: 'runtime_event',
+          source_id: `unsafe\rrun-${'r'.repeat(3_000)}`,
+          source_seq: 0,
+          provenance_key: 'malformed',
+          payload_json: '{}',
+          meta_json: '{}',
+          created_at: 1
+        }
+      ])
+      const loggerErrorMock = vi.mocked(logger.error)
+      loggerErrorMock.mockClear()
+
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
+        providerRuntime: llmProvider,
+        providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn(),
+          publishMessagesChanged: vi.fn()
+        }),
+        toolService,
+        hookObserver: noopHookObserver
+      })
+
+      const diagnostic = loggerErrorMock.mock.calls.find(
+        ([message]) => message === '[DeepChatAgent] Execution Journal recovery candidate parked'
+      )?.[1] as { sessionId: string; runId: string }
+      expect(diagnostic.sessionId).not.toMatch(/[\r\n]/)
+      expect(diagnostic.runId).not.toMatch(/[\r\n]/)
+      expect(diagnostic.sessionId.length).toBeLessThanOrEqual(2_048)
+      expect(diagnostic.runId.length).toBeLessThanOrEqual(2_048)
+    })
+
     it('fails startup closed when journal recovery facts cannot be read', () => {
       sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockImplementation(() => {
         throw new Error('journal read failed')
