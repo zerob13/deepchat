@@ -20,7 +20,7 @@ Tool execution
 Startup
   -> ExecutionJournalRecoveryReader
   -> pure classifier
-  -> diagnostic report and parked recovery
+  -> diagnostic report with parked disposition
   -> existing interrupted-message projection
 ```
 
@@ -98,8 +98,8 @@ local Run construction and preflight
 `processStream` receives the narrow writer through its I/O collaborators. Terminal settlement
 commits exactly one of `completed`, `paused`, `aborted`, or `error` before calling the current
 finalizers. If a post-terminal projection throws, the committed terminal fact is retained and no
-conflicting terminal fact or ordinary error projection is attempted; the Run remains parked for
-reconciliation.
+conflicting terminal fact or ordinary error projection is attempted. The downstream projection
+remains unresolved, and v1 does not automatically rewrite or retry it.
 
 ## Tool Dispatch And Outcome Flow
 
@@ -156,8 +156,8 @@ without fabricating T1 or T2. A later approval starts another physical Run.
 
 ## Startup Recovery
 
-Harness construction reads and classifies journal facts before pending transcript messages are
-recovered. Classification is deterministic and never calls a tool:
+Harness construction reads and classifies journal facts before wiring the runtime graph and before
+pending transcript messages are recovered. Classification is deterministic and never calls a tool:
 
 - `not_dispatched`: native Run start with no dispatch;
 - `completed`: every native dispatch has exactly one matching native outcome;
@@ -167,8 +167,14 @@ recovered. Classification is deterministic and never calls a tool:
 Only native v1 journal event names are inputs. Transcript rows, legacy backfill facts, tool block
 facts, provider attempt events, and model text cannot raise the evidence level.
 
-The first version logs structured recovery reports and retains the existing interrupted-message
-projection. `indeterminate` and `corruption` remain parked; no replay or retry path is added.
+The first version logs at most 100 bounded, control-character-sanitized candidate details plus a
+classification summary and retains the existing interrupted-message projection. `indeterminate`
+and `corruption` remain parked; no replay or retry path is added.
+
+The v1 recovery query is an indexed, once-per-harness O(Journal history) read. It intentionally
+avoids mutable recovery state in the first protocol. Outcome text makes memory proportional to the
+bounded persisted Journal payload size during classification; production scale measurements must
+precede any later rebuildable projection or compaction policy.
 
 ## Test Strategy
 

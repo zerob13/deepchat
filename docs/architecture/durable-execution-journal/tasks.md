@@ -48,14 +48,14 @@
 - [x] Keep `indeterminate` and `corruption` parked with no automatic tool retry.
 - [x] Add failpoints and restart/crash tests around T1, T2, and terminal boundaries.
 - [x] Reject a paused terminal projection while any non-interaction block remains unresolved.
-- [ ] Update maintained architecture documentation for the final implemented contract.
-- [ ] Review and commit the recovery slice.
+- [x] Update maintained architecture documentation for the final implemented contract.
+- [x] Review and commit the recovery slice.
 
 ## 6. Final Validation
 
-- [ ] Run formatting and i18n checks.
-- [ ] Run lint and typecheck.
-- [ ] Run relevant unit, integration, native SQLite, and platform-supported crash tests.
-- [ ] Perform a final severity-ordered review of the complete branch diff.
-- [ ] Fix findings and rerun affected validation.
-- [ ] Confirm no remote Git operation was performed.
+- [x] Run formatting and i18n checks.
+- [x] Run lint and typecheck.
+- [x] Run relevant unit, integration, native SQLite, and platform-supported crash tests.
+- [x] Perform a final severity-ordered review of the complete branch diff.
+- [x] Fix findings and rerun affected validation.
+- [x] Confirm no remote Git operation was performed.

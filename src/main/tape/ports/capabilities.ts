@@ -76,8 +76,8 @@ export interface ExecutionJournalRecoveryReader {
   classifyRecoveryCandidates(): ExecutionRecoveryReport[]
 }
 
-// The DeepChat provider loop needs the whole set as one collaborator; splitting it across six
-// fields describes the capability types rather than the dependency.
+// The DeepChat provider loop needs the coordinated Tape contract as one collaborator; splitting it
+// into individual fields describes the capability types rather than the dependency.
 export interface DeepChatLoopTapePort
   extends
     TapeReconciliationPort,

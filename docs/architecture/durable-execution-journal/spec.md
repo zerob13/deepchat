@@ -40,8 +40,8 @@ that may have reached its target.
    and a different payload is corruption.
 4. Place dispatch commits after local validation, permission, policy, binding, target, and abort
    gates and immediately before the resolved side-effect boundary.
-5. Commit known tool outcomes before authoritative result projections and terminal Run facts before
-   terminal transcript, status, and UI projections.
+5. Commit known tool outcomes before downstream transcript, model-context, and UI result
+   projections, and terminal Run facts before terminal transcript, status, and UI projections.
 6. Classify recovery candidates at startup as `not_dispatched`, `completed`, `indeterminate`, or
    `corruption`, without automatically retrying a tool.
 7. Preserve all existing Context Tape behavior and compatibility.
@@ -76,8 +76,10 @@ provider response, never across Runs or providers.
 Dispatch payloads contain the operation identity, message identity, resolved tool/source/target
 metadata, and a canonical argument hash. Raw arguments are not duplicated into the journal.
 Outcome payloads contain the operation identity, success/error state, the prepared bounded response
-text, its hash, and an optional offload path. Raw MCP responses, image base64 data, credentials, and
-unbounded structured results are excluded.
+text, its hash, and an optional offload path. Raw structured MCP envelopes, image base64 data, and
+unbounded results are excluded. Prepared response text can still contain sensitive user or tool
+data; it inherits the Session database's confidentiality and retention requirements and is excluded
+from default Context views, search, and recovery diagnostics.
 
 ## Required Invariants
 
@@ -88,8 +90,8 @@ unbounded structured results are excluded.
   side-effect boundary.
 - A dispatch commit returning an existing claim prevents a second physical invocation.
 - `tool_outcome` is valid only for an operation with a native `dispatch_committed` fact.
-- A known outcome is committed before it mutates authoritative transcript/model context or terminal
-  UI state.
+- A known outcome is committed before it mutates downstream transcript, model-context, or UI
+  projections.
 - `run_terminal` is committed before transcript status, runtime status, terminal hooks, or UI
   completion/failure projection advances.
 - Journal persistence failure propagates through the Run. It is never reduced to a warning.
@@ -110,7 +112,7 @@ The protocol instead preserves a finite evidence state:
 
 | Durable evidence | Recovery meaning |
 | --- | --- |
-| No dispatch for the Run | `not_dispatched`: no journal authorization crossed the side-effect boundary. |
+| No dispatch for the Run | `not_dispatched`: no journaled tool invocation crossed its dispatch boundary. |
 | Every dispatch has a matching outcome | `completed`: all dispatched operation outcomes are known locally. |
 | At least one dispatch has no outcome | `indeterminate`: the remote effect cannot be inferred locally. |
 | Malformed, conflicting, orphaned, or unsupported facts | `corruption`: the journal cannot be trusted for automatic action. |
@@ -173,7 +175,9 @@ from local annotations.
 - Journal writes remain synchronous with the existing SQLite transaction model so no asynchronous
   gap is introduced between a fact commit and its local side-effect boundary.
 - The tool subsystem receives a per-call commit callback, not a global Tape dependency.
-- Fact payloads are canonical, versioned, bounded, and free of raw secrets or binary data.
+- Fact payloads are canonical, versioned, and bounded. Raw invocation arguments, terminal error
+  strings, structured MCP envelopes, and binary data are not duplicated. Prepared outcome text is
+  durable recovery data and must be protected as Session transcript data.
 - Recovery reads are restricted to journal event names and use a dedicated index.
 - Every commit requires an unstaged and staged diff review, severity-ordered findings, relevant
   validation, and correction of identified issues before commit.
