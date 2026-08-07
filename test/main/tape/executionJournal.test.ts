@@ -1,5 +1,6 @@
 import {
   DatabaseCtor,
+  DeepChatExecutionJournalStore,
   DeepChatTapeEntriesTable,
   createTapeService,
   createTapeTableMock,
@@ -189,7 +190,7 @@ describe('Execution Journal domain and strict persistence', () => {
     const failpoint: ExecutionJournalCommitFailpoint = {
       reach: ({ phase }) => timeline.push(`failpoint:${phase}`)
     }
-    const service = new ExecutionJournalService({ getEntryStore: () => table }, failpoint)
+    const service = new ExecutionJournalService(table, failpoint)
 
     service.commitRunStarted({
       sessionId: 'session-1',
@@ -295,7 +296,7 @@ describe('Execution Journal domain and strict persistence', () => {
   itIfSqlite('keeps journal facts out of linked SQL search and context', () => {
     const db = new DatabaseCtor(':memory:')
     try {
-      const table = new DeepChatTapeEntriesTable(db)
+      const table = new DeepChatExecutionJournalStore(db)
       table.createTable()
       table.ensureBootstrapAnchor('linked-session')
       const contextEntry = table.appendEvent({
@@ -607,9 +608,9 @@ describe('Execution Journal domain and strict persistence', () => {
 
 itIfSqlite('queries only journal events through the dedicated SQLite index', () => {
   const db = new DatabaseCtor(':memory:')
-  const table = new DeepChatTapeEntriesTable(db)
+  const table = new DeepChatExecutionJournalStore(db)
   table.createTable()
-  const service = new ExecutionJournalService({ getEntryStore: () => table })
+  const service = new ExecutionJournalService(table)
 
   table.appendEvent({ sessionId: 'session-1', name: 'context/example', data: { value: 1 } })
   service.commitRunStarted({
@@ -661,6 +662,7 @@ itIfSqlite('reserves execution event names for the strict writer', () => {
   try {
     const table = new DeepChatTapeEntriesTable(db)
     table.createTable()
+    expect('appendExecutionJournalEvent' in table).toBe(false)
 
     expect(() =>
       table.appendEvent({
@@ -686,9 +688,9 @@ itIfSqlite('reserves execution event names for the strict writer', () => {
 itIfSqlite('rejects Journal commits owned by an active host transaction', () => {
   const db = new DatabaseCtor(':memory:')
   try {
-    const table = new DeepChatTapeEntriesTable(db)
+    const table = new DeepChatExecutionJournalStore(db)
     table.createTable()
-    const service = new ExecutionJournalService({ getEntryStore: () => table })
+    const service = new ExecutionJournalService(table)
 
     db.transaction(() => {
       expect(() =>

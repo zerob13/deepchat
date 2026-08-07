@@ -55,7 +55,6 @@ export class DeepChatAgentInstance {
   private pendingInteractions: DeepChatPendingInteractionRef[] = []
   private pendingToolBatchState?: PersistedToolBatchState
   private readonly interactionLocks = new Set<string>()
-  private readonly parkedInteractionMessages = new Set<string>()
   private readonly resumingMessages = new Set<string>()
   private readonly deferredToolAbortControllers = new Map<string, AbortController>()
   private readonly activeProviderPermissions = new Map<string, DeepChatActiveProviderPermission>()
@@ -361,14 +360,6 @@ export class DeepChatAgentInstance {
     this.interactionLocks.delete(this.buildInteractionKey(messageId, toolCallId))
   }
 
-  parkInteractionMessage(messageId: string): void {
-    this.parkedInteractionMessages.add(messageId)
-  }
-
-  isInteractionMessageParked(messageId: string): boolean {
-    return this.parkedInteractionMessages.has(messageId)
-  }
-
   tryBeginResume(messageId: string): boolean {
     if (this.resumingMessages.has(messageId)) {
       return false
@@ -500,7 +491,6 @@ export class DeepChatAgentInstance {
     this.pendingInteractions = []
     this.pendingToolBatchState = undefined
     this.interactionLocks.clear()
-    this.parkedInteractionMessages.clear()
     this.resumingMessages.clear()
     this.abortDeferredToolCalls()
     this.activeProviderPermissions.clear()

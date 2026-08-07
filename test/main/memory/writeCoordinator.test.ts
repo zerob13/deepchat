@@ -269,6 +269,31 @@ describe('MemoryService write + two-phase embedding', () => {
     )
   })
 
+  it('does not swallow a commit callback error that resembles a uniqueness race', async () => {
+    const { presenter, repo } = makePresenter(enabledConfig)
+    const content = 'User likes durable writes'
+    repo.insert({
+      id: 'legacy',
+      agentId: 'a',
+      kind: 'semantic',
+      content,
+      provenanceKey: buildLegacyMemoryProvenanceKey('a', 'semantic', content)
+    })
+    const commitError = Object.assign(new Error('journal uniqueness failure'), {
+      code: 'SQLITE_CONSTRAINT_UNIQUE'
+    })
+
+    await expect(
+      presenter.rememberMemory({ kind: 'semantic', content }, { agentId: 'a' }, null, () => {
+        throw commitError
+      })
+    ).rejects.toBe(commitError)
+
+    expect(repo.getById('legacy')?.provenance_key).toBe(
+      buildLegacyMemoryProvenanceKey('a', 'semantic', content)
+    )
+  })
+
   it('treats a legacy FNV collision with different v2-normalized content as a new memory', () => {
     const { presenter, repo } = makePresenter(enabledConfig)
     const legacyContent = 'collision-149599'

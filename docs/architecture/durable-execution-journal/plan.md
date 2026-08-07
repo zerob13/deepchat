@@ -27,7 +27,9 @@ Startup
 The application service owns identity-to-provenance derivation, canonical payload construction,
 strict idempotency comparison, parsing, and classification. Generic Context Tape append methods
 reject the reserved `execution/*` namespace; the strict writer uses a dedicated storage method that
-accepts only the four protocol event names. Fork merge excludes the entire reserved namespace.
+accepts only the four protocol event names. That method is exposed through a dedicated Journal
+persistence port and is absent from the generic `TapeEntryStore` port. Fork merge excludes the
+entire reserved namespace.
 
 ## Domain Model
 
@@ -112,13 +114,17 @@ state because the outer coordinator cannot reconstruct their full output.
 If `run_started` or `run_terminal` persistence itself fails, the coordinator releases queued claims
 and clears transient status without fabricating transcript/UI terminal evidence, then propagates the
 Journal error.
+Steer claims are the exception to release: their user messages are already durable and visible, so a
+Journal failure consumes the claim to prevent duplicate replay. Cancellation classification is based
+on the owned abort signal, never only on an exception name.
 
 Deferred execution distinguishes a committed error terminal from a terminal commit failure. A
 committed error terminal follows the normal error finalizer. If the terminal itself did not commit,
 the interaction coordinator does not write terminal metadata/status or publish terminal events. A
 pre-T1 failure leaves the approval available for an explicit retry. A post-T1 failure parks all
 interactions on the message, projects only a committed T2 result or an indeterminate diagnostic into
-the still-pending message, and keeps an in-memory replay guard until the runtime instance is cleared.
+the still-pending message, and keeps a replay guard across runtime cleanup and rehydration until the
+Session is deleted.
 
 ## Tool Dispatch And Outcome Flow
 
@@ -156,6 +162,8 @@ before the harness applies the finalized result to conversation messages, assist
 transcript, or UI. Live progress, runtime activation, and other events emitted inside an Agent tool
 belong to the target invocation itself and can occur between T1 and T2; a crash in that interval is
 classified from the resulting T1-without-T2 evidence.
+Harness-owned skill activation occurs after T2. Activation failure is a projection/context failure
+and cannot rewrite a successful target response as an error outcome.
 Thrown target errors are known error outcomes and receive T2. Abort or process loss before a known
 result intentionally leaves T1 without T2. Permission retries clear prior attempt results before the
 approved attempt begins, while a target result that has already returned is retained if cancellation
@@ -215,6 +223,11 @@ entry IDs, terminal outcomes, and reason sets, so memory is proportional to Runs
 not persisted outcome text. Production startup measurements must precede any later rebuildable
 projection or compaction policy.
 
+V1 has no durable acknowledgement or retention state. An incomplete terminal can therefore produce
+the same bounded startup diagnostic on later launches. A later acknowledgement, archive, or
+compaction design must preserve detection of older corruption and remain derivable from immutable
+facts; a scan limit alone is not an acceptable fix.
+
 Recovery normalizes inherited non-interaction `pending` or `loading` blocks to errors before a new
 Run begins. Pending permission and question blocks remain resumable. A current Run still fails loudly
 if it attempts to project a paused terminal with unresolved non-interaction work.
@@ -258,6 +271,13 @@ if it attempts to project a paused terminal with unresolved non-interaction work
   terminal metadata/status/events, and startup recovery cannot expose it for replay;
 - cron, process, memory, and delegation no-op/refusal paths produce no T1, while their first actual
   side effect follows T1;
+- completed process sessions retain owner metadata until explicit cleanup or confirmed utility-host
+  expiry, while cross-conversation mutations remain rejected;
+- visible steer claims are consumed when the next Run cannot commit `run_started`;
+- concurrent cancellation cannot turn deferred Journal parking into an aborted terminal projection;
+- projection failure followed by runtime cleanup cannot make a parked deferred tool replayable;
+- target outcomes commit before skill activation, and activation failure cannot change T2;
+- non-user `AbortError` exceptions remain errors unless the owned signal is aborted;
 - inherited unresolved non-interaction blocks are normalized before resume/pause projection.
 
 ### Crash Tests

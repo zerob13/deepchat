@@ -4,7 +4,7 @@ import {
   ExecutionJournalService,
   type ExecutionJournalCommitFailpoint
 } from '@/tape/application/executionJournalService'
-import { DeepChatTapeEntriesTable } from '@/session/data/tables/deepchatTapeEntries'
+import { DeepChatExecutionJournalStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 
 const { closeSync, fsyncSync, openSync, writeSync } =
   await vi.importActual<typeof import('node:fs')>('node:fs')
@@ -47,7 +47,7 @@ describe('Execution Journal crash worker', () => {
       const database = new Database(databasePath)
       database.pragma('journal_mode = WAL')
       database.pragma('synchronous = FULL')
-      const table = new DeepChatTapeEntriesTable(database)
+      const table = new DeepChatExecutionJournalStore(database)
       table.createTable()
       const failpoint: ExecutionJournalCommitFailpoint = {
         reach: ({ eventName, phase }) => {
@@ -55,7 +55,7 @@ describe('Execution Journal crash worker', () => {
           if (point === crashPoint) holdAtCrashPoint(point)
         }
       }
-      const journal = new ExecutionJournalService({ getEntryStore: () => table }, failpoint)
+      const journal = new ExecutionJournalService(table, failpoint)
 
       journal.commitRunStarted({
         sessionId: SESSION_ID,

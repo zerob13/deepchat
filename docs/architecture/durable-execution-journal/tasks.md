@@ -72,3 +72,9 @@
 - [x] Normalize inherited unresolved blocks and correct deferred pre-dispatch terminal semantics.
 - [x] Add focused regression tests and rerun the full required validation.
 - [x] Review unstaged and staged diffs, fix findings, commit, and do not push.
+- [x] Consume visible steer claims when their follow-up Run cannot commit `run_started`.
+- [x] Preserve completed process-session ownership through explicit or host cleanup.
+- [x] Keep T2 authoritative across skill activation failures and causal cancellation races.
+- [x] Remove native Journal append from the generic Context Tape storage capability.
+- [x] Retain deferred parking across runtime cleanup after projection failure.
+- [x] Document complete recovery scanning and defer durable acknowledgement/retention.

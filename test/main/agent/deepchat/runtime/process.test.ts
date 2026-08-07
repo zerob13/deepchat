@@ -24,6 +24,7 @@ import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekRespo
 import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
+const RUN_ID = '11111111-1111-4111-8111-111111111111'
 
 vi.mock('@/events', () => ({
   STREAM_EVENTS: {
@@ -232,13 +233,14 @@ describe('processStream', () => {
       run:
         providedRun ??
         createLoopRun({
-          runId: 'req-1',
+          runId: RUN_ID,
           sessionId: toAppSessionId('s1'),
           messageId: 'm1',
           abortController,
           messages,
           streamState: createState(),
-          resources: { toolDefinitions: tools, activeSkillNames: [] }
+          resources: { toolDefinitions: tools, activeSkillNames: [] },
+          initialRequestSeq: 1
         }),
       toolCatalog: {
         resolve: vi.fn().mockResolvedValue(tools)
@@ -576,7 +578,7 @@ describe('processStream', () => {
       expect(result.status).toBe('completed')
       expect(coreStream).toHaveBeenCalledTimes(1)
       expect(params.run.logicalRound).toBe(1)
-      expect(params.run.requestSeq).toBe(0)
+      expect(params.run.requestSeq).toBe(1)
       expect(order).toEqual([
         'renderer:update',
         'message:update',
@@ -599,7 +601,7 @@ describe('processStream', () => {
       expectDeepchatEvent('chat.stream.completed', {
         sessionId: 's1',
         messageId: 'm1',
-        requestId: 'req-1'
+        requestId: RUN_ID
       })
     })
 
@@ -1016,7 +1018,7 @@ describe('processStream', () => {
       expectDeepchatEvent('chat.stream.failed', {
         sessionId: 's1',
         messageId: 'm1',
-        requestId: 'req-1',
+        requestId: RUN_ID,
         error: 'Connection lost'
       })
     })
@@ -1055,7 +1057,7 @@ describe('processStream', () => {
       expectDeepchatEvent('chat.stream.failed', {
         sessionId: 's1',
         messageId: 'm1',
-        requestId: 'req-1',
+        requestId: RUN_ID,
         error: 'common.error.userCanceledGeneration'
       })
     })
@@ -1854,7 +1856,7 @@ describe('processStream', () => {
     await promise
   })
 
-  it('persists usage and aborted metadata when the provider throws AbortError', async () => {
+  it('records a provider AbortError as an error while the abort signal remains active', async () => {
     const abortError = new Error('Aborted')
     abortError.name = 'AbortError'
     const coreStream = vi.fn(async function* () {
@@ -1877,9 +1879,9 @@ describe('processStream', () => {
     const result = await promise
 
     expect(result).toMatchObject({
-      status: 'aborted',
-      stopReason: 'user_stop',
-      errorMessage: 'common.error.userCanceledGeneration'
+      status: 'error',
+      stopReason: 'provider_error',
+      errorMessage: 'Aborted'
     })
     expect(result.usage).toEqual({
       inputTokens: 11,
@@ -1891,8 +1893,8 @@ describe('processStream', () => {
     expect(messageStore.setMessageError).toHaveBeenCalledOnce()
     const metadata = JSON.parse(messageStore.setMessageError.mock.calls.at(-1)?.[2])
     expect(metadata).toMatchObject({
-      runOutcome: 'aborted',
-      runStopReason: 'user_stop',
+      runOutcome: 'error',
+      runStopReason: 'provider_error',
       inputTokens: 11,
       outputTokens: 7,
       totalTokens: 18,
@@ -1903,10 +1905,15 @@ describe('processStream', () => {
     })
     expect(messageStore.finalizeAssistantMessage).not.toHaveBeenCalled()
     expectDeepchatEvent('chat.stream.failed', {
-      requestId: 'req-1',
+      requestId: RUN_ID,
       sessionId: 's1',
       messageId: 'm1',
-      error: 'common.error.userCanceledGeneration'
+      error: 'Aborted'
+    })
+    expect(commitRunTerminal).toHaveBeenCalledWith({
+      outcome: 'error',
+      stopReason: 'provider_error',
+      errorMessage: 'Aborted'
     })
   })
 
@@ -2922,7 +2929,7 @@ describe('processStream', () => {
     expectDeepchatEvent('chat.stream.completed', {
       sessionId: 's1',
       messageId: 'm1',
-      requestId: 'req-1'
+      requestId: RUN_ID
     })
   })
 
@@ -2979,6 +2986,7 @@ describe('processStream', () => {
   })
 
   it('publishes an aborted terminal marker when AbortError is thrown after a plan event', async () => {
+    const abortController = new AbortController()
     const abortError = new Error('Aborted')
     abortError.name = 'AbortError'
     const coreStream = vi.fn(async function* () {
@@ -2988,10 +2996,11 @@ describe('processStream', () => {
         revision: 1,
         updatedAt: '2026-05-18T00:00:00.000Z'
       } as LLMCoreStreamEvent
+      abortController.abort(abortError)
       throw abortError
     }) as unknown as ProcessParams['coreStream']
 
-    const result = await processStream(createParams({ coreStream }))
+    const result = await processStream(createParams({ coreStream, abortController }))
 
     expect(result).toMatchObject({
       status: 'aborted',
@@ -3025,6 +3034,7 @@ describe('processStream', () => {
   })
 
   it('persists finalized narrative blocks when AbortError is thrown after text and plan events', async () => {
+    const abortController = new AbortController()
     const abortError = new Error('Aborted')
     abortError.name = 'AbortError'
     const coreStream = vi.fn(async function* () {
@@ -3035,10 +3045,11 @@ describe('processStream', () => {
         revision: 1,
         updatedAt: '2026-05-18T00:00:00.000Z'
       } as LLMCoreStreamEvent
+      abortController.abort(abortError)
       throw abortError
     }) as unknown as ProcessParams['coreStream']
 
-    const result = await processStream(createParams({ coreStream }))
+    const result = await processStream(createParams({ coreStream, abortController }))
 
     expect(result).toMatchObject({
       status: 'aborted',

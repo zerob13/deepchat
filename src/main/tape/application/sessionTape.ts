@@ -121,7 +121,7 @@ export class SessionTape
     this.facts = new TapeFactService(this.providers)
     this.lineage = new TapeLineageService(this.providers)
     this.providerAttempts = new TapeProviderAttemptService(this.providers)
-    this.executionJournal = new ExecutionJournalService(this.providers)
+    this.executionJournal = new ExecutionJournalService(database.deepchatExecutionJournalStore)
     this.reconciler = new TapeReconcilerService(this.providers, this.facts)
     this.recall = new TapeRecallService(this.providers, this.lineage)
     this.viewReplay = new TapeViewReplayService(this.providers)

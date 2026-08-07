@@ -258,8 +258,9 @@ export class DeferredToolExecutor {
       if (!terminalCommitted) {
         return {
           ...(committedOutcomeProjection ?? {
-            responseText:
-              'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.',
+            responseText: dispatchCommitted
+              ? 'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.'
+              : 'Tool dispatch was not recorded because Execution Journal persistence failed.',
             isError: true,
             invoked
           }),

@@ -63,6 +63,7 @@ import {
 import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
 import {
   ExecutionJournalCorruptionError,
+  ExecutionJournalError,
   isExecutionJournalError
 } from '@/tape/domain/executionJournal'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
@@ -101,7 +102,7 @@ import {
   resolveProviderModelRuntimeFacts,
   type ProviderModelRuntimeFacts
 } from './providerModelRuntimeFacts'
-import { isAbortError, throwIfAbortRequested } from './abortErrors'
+import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
@@ -869,7 +870,7 @@ export class DeepChatLoopRunner {
           : error
       try {
         if (!terminalCommitAttempted && resourceScope.isCurrent()) {
-          const aborted = abortSignal.aborted || isAbortError(error)
+          const aborted = abortSignal.aborted
           const fallbackTerminal: ProcessTerminalSelection = {
             outcome: aborted ? 'aborted' : 'error',
             stopReason: aborted
@@ -885,7 +886,7 @@ export class DeepChatLoopRunner {
           })
         }
       } catch (terminalCommitError) {
-        if (terminalCommitError instanceof Error && terminalCommitError !== error) {
+        if (isExecutionJournalError(terminalCommitError) && terminalCommitError !== error) {
           const existingCause = terminalCommitError.cause
           const combinedCause =
             existingCause === undefined || existingCause === error
@@ -894,13 +895,14 @@ export class DeepChatLoopRunner {
                   [error, existingCause],
                   'Run execution and terminal commit both failed.'
                 )
-          Object.defineProperty(terminalCommitError, 'cause', {
-            value: combinedCause,
-            configurable: true,
-            writable: true
-          })
+          errorToPropagate = new ExecutionJournalError(
+            terminalCommitError.message,
+            terminalCommitError.code,
+            { cause: combinedCause }
+          )
+        } else {
+          errorToPropagate = terminalCommitError
         }
-        errorToPropagate = terminalCommitError
       } finally {
         this.ports.runLifecycle.clearRun(resourceScope, loopRun.runId)
       }

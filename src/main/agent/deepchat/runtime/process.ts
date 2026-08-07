@@ -54,10 +54,6 @@ type ToolRoundBatch = {
   nextAction: 'continue' | 'terminal'
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
-}
-
 function getLatestErrorMessage(state: StreamState): string | null {
   for (let index = state.blocks.length - 1; index >= 0; index -= 1) {
     const block = state.blocks[index]
@@ -591,7 +587,7 @@ function settleLoopOutcome(
   stampRunAccounting(state, run)
   if (outcome.type === 'thrown') {
     commitRoundUsage(state)
-    if (io.abortSignal.aborted || isAbortError(outcome.error)) {
+    if (io.abortSignal.aborted) {
       logger.info(`[ProcessStream] aborted via exception after ${eventCount} events`)
       stampRunOutcome(state, 'aborted', 'user_stop')
       commitRunTerminal({

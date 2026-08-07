@@ -22,6 +22,7 @@ import {
   type ExecutionJournalEventName
 } from '@/tape/domain/executionJournal'
 import type {
+  ExecutionJournalPersistenceStore,
   TapeBootstrapStore,
   TapeEntryStore,
   TapeMutationProjection,
@@ -451,7 +452,7 @@ export class DeepChatTapeEntriesTable
     return this.appendInternal(input, false)
   }
 
-  private appendInternal(
+  protected appendInternal(
     input: DeepChatTapeAppendInput,
     allowExecutionJournal: boolean
   ): DeepChatTapeEntryRow {
@@ -578,31 +579,6 @@ export class DeepChatTapeEntriesTable
       createdAt: input.createdAt,
       idempotent: input.idempotent
     })
-  }
-
-  appendExecutionJournalEvent(
-    input: TapeEventAppendInput & { name: ExecutionJournalEventName }
-  ): DeepChatTapeEntryRow {
-    if (!EXECUTION_JOURNAL_EVENT_NAMES.includes(input.name)) {
-      throw new Error(`Unsupported Execution Journal event name: ${input.name}.`)
-    }
-    return this.appendInternal(
-      {
-        sessionId: input.sessionId,
-        kind: 'event',
-        name: input.name,
-        source: input.source,
-        provenanceKey: input.provenanceKey,
-        payload: {
-          name: input.name,
-          data: input.data
-        },
-        meta: input.meta,
-        createdAt: input.createdAt,
-        idempotent: input.idempotent
-      },
-      true
-    )
   }
 
   listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow> {
@@ -1155,5 +1131,35 @@ export class DeepChatTapeEntriesTable
         this.db.exec(`ALTER TABLE deepchat_tape_entries ADD COLUMN ${columnName} ${columnType}`)
       }
     }
+  }
+}
+
+export class DeepChatExecutionJournalStore
+  extends DeepChatTapeEntriesTable
+  implements ExecutionJournalPersistenceStore
+{
+  appendExecutionJournalEvent(
+    input: TapeEventAppendInput & { name: ExecutionJournalEventName }
+  ): DeepChatTapeEntryRow {
+    if (!EXECUTION_JOURNAL_EVENT_NAMES.includes(input.name)) {
+      throw new Error(`Unsupported Execution Journal event name: ${input.name}.`)
+    }
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'event',
+        name: input.name,
+        source: input.source,
+        provenanceKey: input.provenanceKey,
+        payload: {
+          name: input.name,
+          data: input.data
+        },
+        meta: input.meta,
+        createdAt: input.createdAt,
+        idempotent: input.idempotent
+      },
+      true
+    )
   }
 }

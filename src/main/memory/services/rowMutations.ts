@@ -101,8 +101,8 @@ export class MemoryRowMutations {
     if (!this.isEquivalentProvenanceOwner(legacyOwner, kind, normalizedContent, normalizedScope))
       return undefined
 
+    beforeMutation?.()
     try {
-      beforeMutation?.()
       let rekeyed = false
       this.ports.repository.runInTransaction(() => {
         rekeyed = this.ports.repository.rekeyProvenance(agentId, legacyOwner.id, legacyKey, v2Key)

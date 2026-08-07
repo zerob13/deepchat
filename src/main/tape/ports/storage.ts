@@ -20,9 +20,6 @@ export interface TapeEntryStore {
   append(input: DeepChatTapeAppendInput): DeepChatTapeEntryRow
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow
   appendEvent(input: TapeEventAppendInput): DeepChatTapeEntryRow
-  appendExecutionJournalEvent(
-    input: TapeEventAppendInput & { name: ExecutionJournalEventName }
-  ): DeepChatTapeEntryRow
   listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow>
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
@@ -73,6 +70,16 @@ export interface TapeTransactionRunner {
 /** Transitional bootstrap capability until bootstrap orchestration lives in application services. */
 export interface TapeBootstrapStore {
   ensureBootstrapAnchor(sessionId: string): void
+}
+
+/** Strict Journal persistence is intentionally absent from the generic Context Tape store port. */
+export interface ExecutionJournalPersistenceStore
+  extends TapeTransactionRunner, TapeBootstrapStore {
+  appendExecutionJournalEvent(
+    input: TapeEventAppendInput & { name: ExecutionJournalEventName }
+  ): DeepChatTapeEntryRow
+  listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow>
+  getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
 }
 
 export interface TapeEntryLifecycleStore {

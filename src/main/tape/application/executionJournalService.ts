@@ -24,9 +24,7 @@ import {
 import type { DeepChatTapeEntryRow, TapeEventAppendInput } from '../domain/entry'
 import { canonicalJsonStringifyData } from '../domain/canonicalJson'
 import type { ExecutionJournalRecoveryReader, ExecutionJournalWriter } from '../ports/capabilities'
-import type { TapeApplicationEntryStore, TapeApplicationProviders } from '../ports/application'
-
-type ExecutionJournalProviders = Pick<TapeApplicationProviders, 'getEntryStore'>
+import type { ExecutionJournalPersistenceStore } from '../ports/storage'
 
 export type ExecutionJournalCommitPhase = 'before' | 'after'
 
@@ -66,7 +64,7 @@ export class ExecutionJournalService
   implements ExecutionJournalWriter, ExecutionJournalRecoveryReader
 {
   constructor(
-    private readonly providers: ExecutionJournalProviders,
+    private readonly store: ExecutionJournalPersistenceStore,
     private readonly commitFailpoint?: ExecutionJournalCommitFailpoint
   ) {}
 
@@ -163,17 +161,15 @@ export class ExecutionJournalService
   }
 
   classifyRecoveryCandidates(): ExecutionRecoveryReport[] {
-    return classifyExecutionJournalRows(
-      this.providers.getEntryStore().listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)
-    )
+    return classifyExecutionJournalRows(this.store.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES))
   }
 
   private commitStrictEvent(
     input: StrictEventInput,
-    requirePrerequisite?: (table: TapeApplicationEntryStore) => void,
-    validateNewFact?: (table: TapeApplicationEntryStore) => void
+    requirePrerequisite?: (table: ExecutionJournalPersistenceStore) => void,
+    validateNewFact?: (table: ExecutionJournalPersistenceStore) => void
   ): ExecutionJournalCommitReceipt {
-    const table = this.providers.getEntryStore()
+    const table = this.store
     this.commitFailpoint?.reach({ eventName: input.name, phase: 'before' })
     let receipt: ExecutionJournalCommitReceipt
     try {
@@ -213,7 +209,7 @@ export class ExecutionJournalService
   }
 
   private requireFact(
-    table: TapeApplicationEntryStore,
+    table: ExecutionJournalPersistenceStore,
     sessionId: string,
     provenanceKey: string,
     expectedType: ExecutionJournalEventName,
@@ -241,7 +237,11 @@ export class ExecutionJournalService
     }
   }
 
-  private requireRunOpen(table: TapeApplicationEntryStore, sessionId: string, runId: string): void {
+  private requireRunOpen(
+    table: ExecutionJournalPersistenceStore,
+    sessionId: string,
+    runId: string
+  ): void {
     const terminal = table.getByProvenanceKey(
       sessionId,
       buildExecutionRunProvenanceKey(runId, 'terminal')

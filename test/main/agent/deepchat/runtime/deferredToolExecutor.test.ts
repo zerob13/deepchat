@@ -213,6 +213,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
 
     await expect(executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL)).resolves.toMatchObject({
       isError: true,
+      responseText: 'Error: Failed to commit deferred tool dispatch_committed.',
       terminalError: 'Failed to commit deferred tool dispatch_committed.'
     })
 
@@ -221,6 +222,27 @@ describe('DeferredToolExecutor Execution Journal', () => {
     expect(executionJournal.commitRunTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'error', stopReason: 'journal_error' })
     )
+  })
+
+  it('does not claim dispatch when both T1 and terminal persistence fail', async () => {
+    const { executionJournal, executor } = createHarness()
+    executionJournal.commitDispatch.mockImplementationOnce(() => {
+      throw new Error('dispatch storage offline')
+    })
+    executionJournal.commitRunTerminal.mockImplementationOnce(() => {
+      throw new Error('terminal storage offline')
+    })
+
+    await expect(executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL)).resolves.toMatchObject({
+      responseText: 'Tool dispatch was not recorded because Execution Journal persistence failed.',
+      isError: true,
+      journalFailure: {
+        dispatchCommitted: false,
+        outcomeCommitted: false
+      }
+    })
+
+    expect(executionJournal.commitToolOutcome).not.toHaveBeenCalled()
   })
 
   it('returns a committed outcome only as a non-terminal parked projection', async () => {

@@ -93,6 +93,8 @@ from default Context views, search, and recovery diagnostics.
 - A known outcome is committed before the harness mutates transcript, model-context, or UI with the
   finalized tool result. Target-owned live/runtime events emitted during an Agent tool invocation
   are part of that claimed invocation and are not T2-gated projections.
+- Skill activation and other harness-owned context mutations occur after T2. Their failure cannot
+  replace or contradict the target outcome already recorded by T2.
 - `run_terminal` is committed before transcript status, runtime status, terminal hooks, or UI
   completion/failure projection advances.
 - Journal persistence failure propagates through the Run. It is never reduced to a warning.
@@ -108,7 +110,8 @@ from default Context views, search, and recovery diagnostics.
 - Journal commits cannot run inside a host transaction whose rollback could erase the committed
   receipt independently of the external effect.
 - Only the strict Journal writer may append names in the reserved `execution/*` namespace. Fork
-  merge and generic Context Tape append paths cannot copy or create those facts.
+  merge and generic Context Tape append paths cannot copy or create those facts. The native append
+  operation is absent from the generic `TapeEntryStore` capability.
 - Legacy reconciliation and transcript backfill never create an `execution/*` v1 event.
 - Recovery never reuses an old `runId` and never automatically retries an indeterminate operation.
 - Context Tape facts, search projection, recall, anchors, and ViewManifest retain their current
@@ -140,14 +143,22 @@ the Run. A committed `error` terminal may still be projected as that same error;
 commit only performs runtime cleanup and cannot be represented as a durable terminal outcome.
 Once an `error` or `aborted` terminal is committed, its outcome controls the matching finalizer even
 if the later projection failure has a different error shape.
+An exception named `AbortError` is not cancellation evidence by itself. A Run records `aborted` and
+`user_stop` only when its owned abort signal is actually aborted; otherwise the exception remains an
+error.
 
 A deferred failure before T1 leaves its approval pending because the Journal proves no invocation
 crossed the side-effect boundary. A failure after T1 parks every interaction on the assistant
-message in memory and, where transcript storage remains available, removes their actionable UI
-state without terminalizing the message. On restart, `completed`, `indeterminate`, and `corruption`
+message for the harness lifetime and, where transcript storage remains available, removes their
+actionable UI state without terminalizing the message. Runtime cleanup and rehydration retain that
+parking; Session deletion releases it. On restart, `completed`, `indeterminate`, and `corruption`
 reports with an incomplete terminal force that pending message through the existing interrupted
 recovery path using its Session and message identity together. `not_dispatched` reports do not
 consume a resumable approval.
+
+A claimed steer already has durable visible user messages. If its next Run cannot commit
+`run_started`, the claim is consumed rather than released: releasing it would either violate the
+pending-input contract or replay a user fact that is already visible.
 
 ## Scope
 
@@ -206,6 +217,9 @@ recovery until they execute through a journal-aware harness boundary.
     never fabricates an uncommitted terminal projection.
 15. A deferred terminal-commit failure after T1 cannot replay the approved interaction in-process
     or after restart, and its parking projection does not publish a Run terminal state.
+16. A completed background process session retains conversation ownership until explicit cleanup or
+    utility-host expiry, so cleanup mutations remain authorized without allowing cross-conversation
+    access.
 
 ## Constraints
 
@@ -218,6 +232,10 @@ recovery until they execute through a journal-aware harness boundary.
   strings, structured MCP envelopes, and binary data are not duplicated. Prepared outcome text is
   durable recovery data and must be protected as Session transcript data.
 - Recovery reads are restricted to journal event names and use a dedicated index.
+- V1 recovery intentionally scans complete Journal history and has no durable acknowledgement or
+  retention policy. Unresolved incomplete terminals can therefore be reported again at each startup;
+  bounded retention or acknowledgement requires a separate durable design that cannot hide older
+  corruption.
 - Every commit requires an unstaged and staged diff review, severity-ordered findings, relevant
   validation, and correction of identified issues before commit.
 

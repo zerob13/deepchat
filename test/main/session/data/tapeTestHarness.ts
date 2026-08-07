@@ -16,6 +16,7 @@ import {
 } from '@/session/data/tapeFacts'
 import { buildRequestRefs } from '@/session/data/tapeViewManifest'
 import { DeepChatTapeEntriesTable } from '@/session/data/tables/deepchatTapeEntries'
+import { DeepChatExecutionJournalStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 import { SqliteTapeLifecycleAdapter } from '@/tape/infrastructure/sqlite/tapeLifecycleAdapter'
 import {
   DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION,
@@ -457,6 +458,7 @@ function createTapeService(
 ) {
   return new SessionTape({
     deepchatTapeEntriesTable: table,
+    deepchatExecutionJournalStore: table,
     tapeLifecycle: table,
     deepchatTapeSearchProjectionTable: {
       deleteBySession: vi.fn(),
@@ -661,6 +663,7 @@ export {
   appendMessageRetractionToTape,
   appendToolFactsToTape,
   buildRequestRefs,
+  DeepChatExecutionJournalStore,
   DeepChatTapeEntriesTable,
   SqliteTapeLifecycleAdapter,
   DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION,

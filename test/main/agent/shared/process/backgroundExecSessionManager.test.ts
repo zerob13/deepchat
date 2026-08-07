@@ -461,6 +461,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
     proxy.hostReady = null
     proxy.shuttingDown = false
     proxy.activeSessions.clear()
+    proxy.completedSessions.clear()
     proxy.crashedSessions.clear()
     proxy.pendingRequests.clear()
   }
@@ -572,4 +573,54 @@ describe('backgroundExecSessionManager utility proxy', () => {
     expect(order).toEqual(['commit', 'target'])
     expect(request).toHaveBeenCalledWith('write', ['conv-1', 'bg_active', 'data', false])
   })
+
+  it.each([
+    ['poll', 'remove'],
+    ['log', 'clear'],
+    ['poll', 'kill']
+  ] as const)(
+    'allows the owning conversation to %s a completed session before %s',
+    async (observation, mutation) => {
+      const proxy = backgroundExecSessionManager as any
+      const sessionId = `bg_${mutation}`
+      proxy.activeSessions.set(sessionId, {
+        conversationId: 'conv-1',
+        sessionId,
+        command: 'pnpm test',
+        createdAt: 1,
+        lastAccessedAt: 1
+      })
+      const beforeMutation = vi.fn()
+      const request = vi.spyOn(proxy, 'request').mockImplementation(async (method: string) => {
+        if (method === 'poll') {
+          return {
+            status: 'completed',
+            output: 'done',
+            exitCode: 0,
+            offloaded: false,
+            timedOut: false
+          }
+        }
+        if (method === 'log') {
+          return {
+            status: 'completed',
+            output: 'done',
+            exitCode: 0,
+            offloaded: false,
+            timedOut: false,
+            totalLength: 4
+          }
+        }
+      })
+
+      await backgroundExecSessionManager[observation]('conv-1', sessionId)
+      await expect(
+        backgroundExecSessionManager[mutation]('conv-other', sessionId, beforeMutation)
+      ).rejects.toThrow(`Session ${sessionId} not found`)
+      await backgroundExecSessionManager[mutation]('conv-1', sessionId, beforeMutation)
+
+      expect(beforeMutation).toHaveBeenCalledOnce()
+      expect(request).toHaveBeenCalledWith(mutation, ['conv-1', sessionId])
+    }
+  )
 })

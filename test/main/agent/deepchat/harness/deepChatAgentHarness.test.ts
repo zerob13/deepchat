@@ -483,6 +483,9 @@ function createMockSqlitePresenter() {
         memoryIngestionProjectionCurrent = false
       })
     }),
+    get deepchatExecutionJournalStore() {
+      return deepchatTapeEntriesTable
+    },
     tapeLifecycle: deepchatTapeEntriesTable,
     deepchatTapeSearchProjectionTable: {
       deleteBySession: vi.fn(),
@@ -2930,16 +2933,24 @@ describe('DeepChatAgentHarness', () => {
       vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementation(() => {
         throw terminalError
       })
+      Object.freeze(terminalError)
       ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(executionError)
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
 
-      await expect(agent.processMessage('s1', 'Hello')).rejects.toBe(terminalError)
+      const propagated = await agent.processMessage('s1', 'Hello').catch((error) => error)
 
-      expect(terminalError.cause).toBeInstanceOf(AggregateError)
-      expect((terminalError.cause as AggregateError).errors).toEqual([
+      expect(propagated).toMatchObject({
+        name: 'ExecutionJournalError',
+        message: terminalError.message,
+        code: terminalError.code,
+        cause: expect.any(AggregateError)
+      })
+      expect(propagated).not.toBe(terminalError)
+      expect((propagated.cause as AggregateError).errors).toEqual([
         executionError,
         persistenceCause
       ])
+      expect(terminalError.cause).toBe(persistenceCause)
       expect(agent.getActiveGeneration('s1')).toBeNull()
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
     })
@@ -3149,6 +3160,46 @@ describe('DeepChatAgentHarness', () => {
       expect(sqlitePresenter.deepchatPendingInputsTable.get('steer-input')).toMatchObject({
         state: 'consumed'
       })
+    })
+
+    it('consumes a visible steer when the next Run start fact cannot commit', async () => {
+      installSessionRows([])
+      vi.mocked(nanoid)
+        .mockReturnValueOnce('journal-source-input')
+        .mockReturnValueOnce('journal-source-user')
+        .mockReturnValueOnce('journal-source-assistant')
+        .mockReturnValueOnce('journal-steer-user')
+        .mockReturnValueOnce('journal-steer-input')
+        .mockReturnValueOnce('journal-steer-assistant')
+      const initialStreamDone = deferred<void>()
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        await initialStreamDone.promise
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const initialProcess = agent.processMessage('s1', 'Initial prompt')
+      await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+
+      await agent.steerActiveTurn('s1', 'Visible steer')
+      const [steer] = await agent.listPendingInputs('s1')
+      expect(steer).toMatchObject({ mode: 'steer', state: 'pending' })
+      const commitRunStarted = vi
+        .spyOn(sessionData.tapeStore, 'commitRunStarted')
+        .mockImplementationOnce(() => {
+          throw new ExecutionJournalError('run start unavailable', 'persistence_failed')
+        })
+
+      initialStreamDone.resolve()
+      await initialProcess
+      await vi.waitFor(() => expect(commitRunStarted).toHaveBeenCalledOnce())
+      await vi.waitFor(async () => expect(await agent.listPendingInputs('s1')).toEqual([]))
+
+      expect(sqlitePresenter.deepchatPendingInputsTable.get(steer.id)).toMatchObject({
+        state: 'consumed'
+      })
+      expect(processStream).toHaveBeenCalledOnce()
+      expect((await agent.getSessionState('s1'))?.status).toBe('idle')
+      expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
     })
 
     it('does not interrupt an active stream when steer attachment preflight needs user action', async () => {
@@ -5261,12 +5312,10 @@ describe('DeepChatAgentHarness', () => {
       }
     )
 
-    it.each([
-      { errorName: 'Error', expectedStatus: 'error' },
-      { errorName: 'AbortError', expectedStatus: 'idle' }
-    ] as const)(
-      'observes a thrown $errorName initial turn exactly once before terminal projection',
-      async ({ errorName, expectedStatus }) => {
+    it.each(['Error', 'AbortError'] as const)(
+      'observes a thrown %s initial turn exactly once before terminal projection',
+      async (errorName) => {
+        const expectedStatus = 'error'
         const failure = new Error(`initial ${errorName}`)
         failure.name = errorName
         ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure)
@@ -5286,9 +5335,7 @@ describe('DeepChatAgentHarness', () => {
         const terminalRow = sqlitePresenter.deepchatTapeEntriesTable
           .getBySession('s1')
           .find((row: any) => row.name === 'execution/run_terminal')
-        expect(JSON.parse(terminalRow.payload_json).data.outcome).toBe(
-          errorName === 'AbortError' ? 'aborted' : 'error'
-        )
+        expect(JSON.parse(terminalRow.payload_json).data.outcome).toBe('error')
         const terminalProjectionOrder = publishDeepchatEvent.mock.calls.reduce(
           (latest, [event, payload], index) =>
             event === 'sessions.status.changed' && payload.status === expectedStatus
@@ -10390,12 +10437,10 @@ describe('DeepChatAgentHarness', () => {
       }
     })
 
-    it.each([
-      { errorName: 'Error', expectedStatus: 'error', expectsCancellationResult: false },
-      { errorName: 'AbortError', expectedStatus: 'idle', expectsCancellationResult: true }
-    ] as const)(
-      'observes a thrown $errorName resume exactly once before terminal projection',
-      async ({ errorName, expectedStatus, expectsCancellationResult }) => {
+    it.each(['Error', 'AbortError'] as const)(
+      'observes a thrown %s resume exactly once before terminal projection',
+      async (errorName) => {
+        const expectedStatus = 'error'
         const failure = new Error(`resume ${errorName}`)
         failure.name = errorName
         ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure)
@@ -10404,12 +10449,7 @@ describe('DeepChatAgentHarness', () => {
         const afterTurnSettled = vi.spyOn(agent.memoryIngestionObserver, 'afterTurnSettled')
         publishDeepchatEvent.mockClear()
 
-        const response = answerPendingQuestion()
-        if (expectsCancellationResult) {
-          await expect(response).resolves.toEqual({ resumed: false })
-        } else {
-          await expect(response).rejects.toBe(failure)
-        }
+        await expect(answerPendingQuestion()).rejects.toBe(failure)
 
         expect(afterTurnSettled).toHaveBeenCalledOnce()
         expect(afterTurnSettled).toHaveBeenCalledWith({
@@ -13239,6 +13279,128 @@ describe('DeepChatAgentHarness', () => {
       expect(toolService.callTool).toHaveBeenCalledOnce()
       expect(JSON.parse(row.content) as AssistantMessageBlock[]).toMatchObject([
         { status: 'success', tool_call: { response: 'done' } },
+        { status: 'granted', extra: { needsUserAction: false } }
+      ])
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalledWith(
+        'm1',
+        expect.any(String),
+        'error'
+      )
+      expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+      expect((await agent.getSessionState('s1'))?.status).toBe('idle')
+    })
+
+    it('retains deferred Journal parking across runtime cleanup after projection failure', async () => {
+      toolService.getAllToolDefinitions.mockResolvedValueOnce([
+        {
+          type: 'function',
+          source: 'agent',
+          function: {
+            name: 'write_file',
+            description: 'Write a file',
+            parameters: { type: 'object', properties: {} }
+          },
+          server: { name: 'agent-filesystem', icons: '', description: '' }
+        }
+      ])
+      toolService.callTool.mockImplementationOnce(async (_request: unknown, options?: any) => {
+        options?.commitDispatch?.({
+          toolName: 'write_file',
+          toolSource: 'agent',
+          normalizedArguments: { path: 'a.txt' },
+          target: { serverName: 'agent-filesystem', originalName: 'write_file' }
+        })
+        return {
+          content: 'done',
+          rawData: { content: 'done', isError: false }
+        }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      installPendingPermission({
+        toolName: 'write_file',
+        params: '{"path":"a.txt"}'
+      })
+      vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementationOnce(() => {
+        throw new ExecutionJournalError('run terminal unavailable', 'persistence_failed')
+      })
+      sqlitePresenter.deepchatMessagesTable.updateContent.mockImplementationOnce(() => {
+        throw new Error('projection unavailable')
+      })
+
+      await expect(approvePendingTool()).rejects.toMatchObject({
+        name: 'ExecutionJournalError',
+        code: 'projection_failed'
+      })
+      await agent.cleanupSession('s1')
+      await expect(approvePendingTool()).rejects.toThrow(
+        'Execution is parked after an Execution Journal failure'
+      )
+
+      expect(toolService.callTool).toHaveBeenCalledOnce()
+    })
+
+    it('preserves deferred Journal parking when cancellation races terminal commit', async () => {
+      toolService.getAllToolDefinitions.mockResolvedValueOnce([
+        {
+          type: 'function',
+          source: 'agent',
+          function: {
+            name: 'write_file',
+            description: 'Write a file',
+            parameters: { type: 'object', properties: {} }
+          },
+          server: { name: 'agent-filesystem', icons: '', description: '' }
+        }
+      ])
+      let deferredSignal: AbortSignal | undefined
+      toolService.callTool.mockImplementationOnce(async (_request: unknown, options?: any) => {
+        deferredSignal = options?.signal
+        options?.commitDispatch?.({
+          toolName: 'write_file',
+          toolSource: 'agent',
+          normalizedArguments: { path: 'a.txt' },
+          target: { serverName: 'agent-filesystem', originalName: 'write_file' }
+        })
+        return await new Promise((_, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('Aborted')
+              error.name = 'AbortError'
+              reject(error)
+            },
+            { once: true }
+          )
+        })
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'write_file',
+        params: '{"path":"a.txt"}'
+      })
+      const journalError = new ExecutionJournalError(
+        'run terminal unavailable',
+        'persistence_failed'
+      )
+      vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementationOnce(() => {
+        throw journalError
+      })
+
+      const approval = approvePendingTool()
+      await vi.waitFor(() => expect(deferredSignal).toBeDefined())
+      await agent.cancelGeneration('s1')
+
+      await expect(approval).rejects.toBe(journalError)
+      expect(JSON.parse(row.content) as AssistantMessageBlock[]).toMatchObject([
+        {
+          status: 'error',
+          tool_call: {
+            response:
+              'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.'
+          }
+        },
         { status: 'granted', extra: { needsUserAction: false } }
       ])
       expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalledWith(

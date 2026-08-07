@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DeepChatTapeEntriesTable } from '@/session/data/tables/deepchatTapeEntries'
+import { DeepChatExecutionJournalStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 import { ExecutionJournalService } from '@/tape/application/executionJournalService'
 import { nativeSqliteItIf, requireDatabase } from '../nativeSqliteHarness'
 
@@ -159,9 +159,9 @@ function classify(databasePath: string) {
   const Database = requireDatabase()
   const database = new Database(databasePath)
   try {
-    const table = new DeepChatTapeEntriesTable(database)
+    const table = new DeepChatExecutionJournalStore(database)
     table.createTable()
-    return new ExecutionJournalService({ getEntryStore: () => table }).classifyRecoveryCandidates()
+    return new ExecutionJournalService(table).classifyRecoveryCandidates()
   } finally {
     database.close()
   }

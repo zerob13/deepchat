@@ -4,6 +4,7 @@ import {
   it,
   vi,
   SessionTape,
+  DeepChatExecutionJournalStore,
   DeepChatTapeEntriesTable,
   SqliteTapeLifecycleAdapter,
   DatabaseCtor,
@@ -401,14 +402,16 @@ describe('SessionTape forks', () => {
     const db = new DatabaseCtor(':memory:')
     try {
       const table = new DeepChatTapeEntriesTable(db)
+      const journalStore = new DeepChatExecutionJournalStore(db)
       table.createTable()
       const service = new SessionTape({
         deepchatTapeEntriesTable: table,
+        deepchatExecutionJournalStore: journalStore,
         deepchatSessionsTable: { getSummaryState: vi.fn().mockReturnValue(null) }
       } as any)
 
       const fork = service.createFork('parent', 'journal-isolation')
-      table.appendExecutionJournalEvent({
+      journalStore.appendExecutionJournalEvent({
         sessionId: fork.forkSessionId,
         name: 'execution/run_started',
         data: { marker: 'must-not-merge' }

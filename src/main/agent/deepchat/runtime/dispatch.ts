@@ -69,6 +69,7 @@ import {
   ExecutionJournalError,
   boundExecutionJournalResponseText,
   isExecutionJournalError,
+  normalizeExecutionOperationIdentity,
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
@@ -241,7 +242,7 @@ async function commitStagedToolResults(
     })
     for (const stagedResult of stagedResults) {
       if (stagedResult.operation && !stagedResult.outcomeCommitted) {
-        throw new Error(
+        throw new ExecutionJournalCorruptionError(
           `Dispatched tool result was not committed for ${stagedResult.toolCallId}.`
         )
       }
@@ -1602,10 +1603,6 @@ async function runToolCall(params: {
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
   let returnedToolResult: MCPToolResponse | null = null
-  const operation: ExecutionOperationIdentity = {
-    ...operationScope,
-    providerToolCallId: completedToolCall.id
-  }
   let dispatchedOperation: ExecutionOperationIdentity | undefined
   let committedOutcome: StagedToolResult | undefined
   const pendingOutcomeProjections: ToolOutcomeProjection[] = []
@@ -1661,6 +1658,10 @@ async function runToolCall(params: {
   }
 
   try {
+    const operation = normalizeExecutionOperationIdentity({
+      ...operationScope,
+      providerToolCallId: completedToolCall.id
+    })
     io.abortSignal.throwIfAborted()
     const applyProgressUpdate = (update: AgentToolProgressUpdate) => {
       if (
@@ -1878,10 +1879,6 @@ async function runToolCall(params: {
     const stagedIsError = preparedResult.kind === 'tool_error' || toolRawData.isError === true
 
     const activatedSkill = extractActivatedSkillAfterCall(completedToolCall.name, toolRawData)
-    if (activatedSkill) {
-      await controls?.activateSkill?.(activatedSkill)
-      io.abortSignal.throwIfAborted()
-    }
     const stagedResult = commitDispatchedToolOutcome(
       {
         toolCallId: completedToolCall.id,
@@ -1917,6 +1914,10 @@ async function runToolCall(params: {
         subagentState.subagentProgress,
         subagentState.subagentFinal
       )
+    }
+    if (activatedSkill) {
+      await controls?.activateSkill?.(activatedSkill)
+      io.abortSignal.throwIfAborted()
     }
 
     return {

@@ -45,10 +45,11 @@ import type { ResumeBudgetToolCall, TurnResumePort } from './turnResumeContract'
 import type { DeepChatEventPublisher, PendingToolInteraction } from './types'
 import { parseMessageMetadata } from '@/session/usageStats'
 import { MAX_TOOL_CALLS } from '@/agent/deepchat/loop/deepChatLoopEngine'
-import { isAbortError, throwIfAbortRequested } from './abortErrors'
+import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookScope, RuntimeHookSink } from './runtimeHookSink'
-import { ExecutionJournalError } from '@/tape/domain/executionJournal'
+import { ExecutionJournalError, isExecutionJournalError } from '@/tape/domain/executionJournal'
+import type { InteractionParkingRegistry } from './interactionParkingRegistry'
 
 const DEFERRED_INTERACTION_PARKED_ERROR =
   'Execution is parked after an Execution Journal failure and will not be retried automatically.'
@@ -84,6 +85,7 @@ export interface InteractionCoordinatorPorts {
   turnCoordinator: TurnResumePort
   continuationAdmission: InteractionContinuationAdmissionPort
   publishEvent: DeepChatEventPublisher
+  interactionParking: Pick<InteractionParkingRegistry, 'isParked' | 'park'>
 }
 
 export interface InteractionContinuationAdmissionPort {
@@ -101,7 +103,7 @@ export class InteractionCoordinator {
     response: ToolInteractionResponse
   ): Promise<ToolInteractionResult> {
     const instance = this.ports.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
-    if (instance.isInteractionMessageParked(messageId)) {
+    if (this.ports.interactionParking.isParked(sessionId, messageId)) {
       throw new ExecutionJournalError(DEFERRED_INTERACTION_PARKED_ERROR, 'persistence_failed')
     }
     const scope = this.ports.runLifecycle.scopeFor(sessionId, instance)
@@ -315,7 +317,7 @@ export class InteractionCoordinator {
               throw execution.journalFailure.error
             }
 
-            instance.parkInteractionMessage(messageId)
+            this.ports.interactionParking.park(sessionId, messageId)
             markPermissionResolved(actionBlock, true, permissionType)
             if (execution.invoked) {
               instance.advancePendingToolBatch({ invokedCallId: toolCall.id })
@@ -530,7 +532,8 @@ export class InteractionCoordinator {
       return { resumed }
     } catch (error) {
       if (resumedWaitingAdmission) this.ports.continuationAdmission.suspend(sessionId)
-      if (isAbortError(error) || interactionAbortSignal?.aborted) {
+      if (isExecutionJournalError(error)) throw error
+      if (interactionAbortSignal?.aborted) {
         if (interactionOwnedByActiveRun) {
           return { resumed: false }
         }

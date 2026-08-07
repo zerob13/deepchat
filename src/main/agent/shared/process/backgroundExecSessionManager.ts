@@ -973,6 +973,7 @@ class BackgroundExecUtilityProxy {
     }
   >()
   private readonly activeSessions = new Map<string, TrackedSessionMeta>()
+  private readonly completedSessions = new Map<string, TrackedSessionMeta>()
   private readonly crashedSessions = new Map<string, TrackedSessionMeta>()
 
   async start(
@@ -998,6 +999,8 @@ class BackgroundExecUtilityProxy {
       createdAt: Date.now(),
       lastAccessedAt: Date.now()
     })
+    this.completedSessions.delete(result.sessionId)
+    this.crashedSessions.delete(result.sessionId)
     return result
   }
 
@@ -1005,12 +1008,24 @@ class BackgroundExecUtilityProxy {
     const active = Array.from(this.activeSessions.values())
       .filter((session) => session.conversationId === conversationId)
       .map((session) => this.toActiveSessionMeta(session))
-    const hostSessions = this.host
-      ? await this.request<SessionMeta[]>('list', [conversationId]).catch((error) => {
-          logger.warn('[BackgroundExecProxy] Failed to list utility sessions:', error)
-          return active
-        })
-      : active
+    let hostListSucceeded = false
+    let hostSessions = active
+    if (this.host) {
+      try {
+        hostSessions = await this.request<SessionMeta[]>('list', [conversationId])
+        hostListSucceeded = true
+      } catch (error) {
+        logger.warn('[BackgroundExecProxy] Failed to list utility sessions:', error)
+      }
+    }
+    if (hostListSucceeded) {
+      const hostSessionIds = new Set(hostSessions.map((session) => session.sessionId))
+      for (const [sessionId, session] of this.completedSessions) {
+        if (session.conversationId === conversationId && !hostSessionIds.has(sessionId)) {
+          this.completedSessions.delete(sessionId)
+        }
+      }
+    }
     const crashed = Array.from(this.crashedSessions.values())
       .filter((session) => session.conversationId === conversationId)
       .map((session) => this.toCrashedSessionMeta(session))
@@ -1072,7 +1087,7 @@ class BackgroundExecUtilityProxy {
       yieldMs
     ])
     if (result.kind === 'completed') {
-      this.activeSessions.delete(sessionId)
+      this.markSessionCompleted(conversationId, sessionId)
     }
     return result
   }
@@ -1092,7 +1107,7 @@ class BackgroundExecUtilityProxy {
       sessionId,
       previewChars
     ])
-    this.activeSessions.delete(sessionId)
+    this.markSessionCompleted(conversationId, sessionId)
     return result
   }
 
@@ -1104,7 +1119,10 @@ class BackgroundExecUtilityProxy {
     beforeMutation?: () => void
   ): Promise<void> {
     this.assertTrackedSessionOwner(conversationId, sessionId)
-    if (this.getCrashedSession(conversationId, sessionId)) {
+    if (
+      this.getCrashedSession(conversationId, sessionId) ||
+      this.getCompletedSession(conversationId, sessionId)
+    ) {
       throw new Error(`Session ${sessionId} is not running`)
     }
     beforeMutation?.()
@@ -1145,8 +1163,9 @@ class BackgroundExecUtilityProxy {
       return
     }
     beforeMutation?.()
-    this.activeSessions.delete(sessionId)
     await this.request('remove', [conversationId, sessionId])
+    this.activeSessions.delete(sessionId)
+    this.completedSessions.delete(sessionId)
   }
 
   async cleanupConversation(conversationId: string): Promise<void> {
@@ -1158,6 +1177,11 @@ class BackgroundExecUtilityProxy {
     for (const [sessionId, session] of this.crashedSessions) {
       if (session.conversationId === conversationId) {
         this.crashedSessions.delete(sessionId)
+      }
+    }
+    for (const [sessionId, session] of this.completedSessions) {
+      if (session.conversationId === conversationId) {
+        this.completedSessions.delete(sessionId)
       }
     }
     await this.request('cleanupConversation', [conversationId])
@@ -1175,6 +1199,8 @@ class BackgroundExecUtilityProxy {
       this.hostReady = null
       this.rejectPendingRequests(new Error('Background exec utility process shut down.'))
       this.activeSessions.clear()
+      this.completedSessions.clear()
+      this.crashedSessions.clear()
     }
   }
 
@@ -1320,6 +1346,7 @@ class BackgroundExecUtilityProxy {
     this.host = null
     this.hostReady = null
     this.activeSessions.clear()
+    this.completedSessions.clear()
     this.rejectPendingRequests(error)
   }
 
@@ -1331,7 +1358,10 @@ class BackgroundExecUtilityProxy {
   }
 
   private assertTrackedSessionOwner(conversationId: string, sessionId: string): void {
-    const tracked = this.activeSessions.get(sessionId) ?? this.crashedSessions.get(sessionId)
+    const tracked =
+      this.activeSessions.get(sessionId) ??
+      this.completedSessions.get(sessionId) ??
+      this.crashedSessions.get(sessionId)
     if (!tracked || tracked.conversationId !== conversationId) {
       throw new Error(`Session ${sessionId} not found`)
     }
@@ -1339,6 +1369,14 @@ class BackgroundExecUtilityProxy {
 
   private getCrashedSession(conversationId: string, sessionId: string): TrackedSessionMeta | null {
     const session = this.crashedSessions.get(sessionId)
+    return session?.conversationId === conversationId ? session : null
+  }
+
+  private getCompletedSession(
+    conversationId: string,
+    sessionId: string
+  ): TrackedSessionMeta | null {
+    const session = this.completedSessions.get(sessionId)
     return session?.conversationId === conversationId ? session : null
   }
 
@@ -1351,7 +1389,6 @@ class BackgroundExecUtilityProxy {
       return null
     }
     session.lastAccessedAt = Date.now()
-    this.activeSessions.delete(sessionId)
     return this.toCrashedCompletionResult(session)
   }
 
@@ -1368,7 +1405,16 @@ class BackgroundExecUtilityProxy {
       session.lastAccessedAt = Date.now()
       return
     }
+    this.markSessionCompleted(conversationId, sessionId)
+  }
+
+  private markSessionCompleted(conversationId: string, sessionId: string): void {
+    const session = this.activeSessions.get(sessionId)
+    if (!session || session.conversationId !== conversationId) {
+      return
+    }
     this.activeSessions.delete(sessionId)
+    this.completedSessions.set(sessionId, { ...session, lastAccessedAt: Date.now() })
   }
 
   private toCrashedSessionMeta(session: TrackedSessionMeta): SessionMeta {

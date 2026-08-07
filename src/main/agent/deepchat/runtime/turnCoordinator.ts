@@ -79,11 +79,7 @@ import {
   resolveProviderModelRuntimeFacts,
   type ProviderModelRuntimeFacts
 } from './providerModelRuntimeFacts'
-import {
-  isAbortError,
-  PENDING_INPUT_ABORT_REASON,
-  throwIfAbortRequested
-} from './abortErrors'
+import { PENDING_INPUT_ABORT_REASON, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookSink } from './runtimeHookSink'
 import type {
@@ -933,7 +929,9 @@ export class TurnCoordinator {
           try {
             if (streamRunId) {
               claimedInput.settle({ kind: 'consume' })
-            } else if (isSteerClaim || !userMessageId) {
+            } else if (isSteerClaim) {
+              claimedInput.settle({ kind: 'consume' })
+            } else if (!userMessageId) {
               claimedInput.settle({ kind: 'release-before-user-fact' })
             } else {
               this.rollbackPendingInputTurn(sessionId, userMessageId, instance)
@@ -966,7 +964,7 @@ export class TurnCoordinator {
         ? true
         : committedErrorTerminal
           ? false
-          : isAbortError(errorToProject) || preStreamAbortSignal.aborted
+          : preStreamAbortSignal.aborted
       const pendingInputHandoff =
         preStreamAbortSignal.reason === PENDING_INPUT_ABORT_REASON
       const staleInstance = isStaleDeepChatInstanceError(errorToProject)
@@ -1578,7 +1576,7 @@ export class TurnCoordinator {
         ? true
         : committedErrorTerminal
           ? false
-          : isAbortError(errorToProject) || preStreamAbortSignal?.aborted
+          : (preStreamAbortSignal?.aborted ?? false)
       if (aborted) {
         this.ports.runLifecycle.clearOperationController(
           scope,

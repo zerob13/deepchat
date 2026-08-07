@@ -3076,7 +3076,7 @@ describe('dispatch', () => {
       expect(result.toolsChanged).toBe(true)
     })
 
-    it('records skill activation preparation failures as the tool outcome', async () => {
+    it('keeps a committed tool outcome authoritative when skill activation fails', async () => {
       const tools = [makeTool('skill_view')]
       const toolService = createMockToolService()
       const commitToolOutcome = vi.fn(() => ({ sessionId: 's1', entryId: 2, created: true }))
@@ -3116,6 +3116,55 @@ describe('dispatch', () => {
         { id: 'tc1', name: 'skill_view', arguments: '{"name":"deepchat-settings"}' }
       ]
 
+      await expect(
+        settleToolBatch(
+          state,
+          [],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024,
+          {
+            activateSkill: vi.fn().mockRejectedValue(new Error('activation failed')),
+            executionJournal: {
+              commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
+              commitToolOutcome
+            }
+          }
+        )
+      ).rejects.toMatchObject({
+        name: 'CommittedToolOutcomeProjectionError',
+        code: 'projection_failed',
+        cause: expect.objectContaining({ message: 'activation failed' })
+      })
+
+      expect(commitToolOutcome).toHaveBeenCalledOnce()
+      expect(commitToolOutcome).toHaveBeenCalledWith(
+        expect.objectContaining({ responseText: 'activated', isError: false })
+      )
+      expect(state.blocks[0]).toMatchObject({
+        status: 'pending',
+        tool_call: { response: '' }
+      })
+    })
+
+    it('rejects an empty provider tool call id before invoking its target', async () => {
+      const tools = [makeTool('mutate')]
+      const toolService = createMockToolService()
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: { id: '', name: 'mutate', params: '{}', response: '' }
+      })
+      state.completedToolCalls = [{ id: '', name: 'mutate', arguments: '{}' }]
+
       await settleToolBatch(
         state,
         [],
@@ -3127,23 +3176,13 @@ describe('dispatch', () => {
         'full_access',
         new ToolOutputGuard(),
         32000,
-        1024,
-        {
-          activateSkill: vi.fn().mockRejectedValue(new Error('activation failed')),
-          executionJournal: {
-            commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
-            commitToolOutcome
-          }
-        }
+        1024
       )
 
-      expect(commitToolOutcome).toHaveBeenCalledOnce()
-      expect(commitToolOutcome).toHaveBeenCalledWith(
-        expect.objectContaining({ responseText: 'Error: activation failed', isError: true })
-      )
+      expect(toolService.callTool).not.toHaveBeenCalled()
       expect(state.blocks[0]).toMatchObject({
         status: 'error',
-        tool_call: { response: 'Error: activation failed' }
+        tool_call: { response: expect.stringContaining('providerToolCallId') }
       })
     })
 

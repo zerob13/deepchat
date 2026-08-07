@@ -11,6 +11,7 @@ import { CompactionService } from '@/agent/deepchat/runtime/compactionService'
 import { DeepChatLoopRunner } from '@/agent/deepchat/runtime/deepChatLoopRunner'
 import { DeferredToolExecutor } from '@/agent/deepchat/runtime/deferredToolExecutor'
 import { InteractionCoordinator } from '@/agent/deepchat/runtime/interactionCoordinator'
+import { InteractionParkingRegistry } from '@/agent/deepchat/runtime/interactionParkingRegistry'
 import { MessageProjectionService } from '@/agent/deepchat/runtime/messageProjectionService'
 import { PendingInputAdmissionCoordinator } from '@/agent/deepchat/runtime/pendingInputAdmissionCoordinator'
 import { PendingInputPump } from '@/agent/deepchat/runtime/pendingInputPump'
@@ -287,6 +288,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     promptAssembly,
     messageProjection
   })
+  const interactionParking = new InteractionParkingRegistry()
   const sessionLifecycle = new SessionLifecycleCoordinator({
     registry: runtime,
     providerSettings,
@@ -299,7 +301,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     sessionSettings,
     compaction,
     memory,
-    runLifecycle
+    runLifecycle,
+    interactionParking
   })
   const toolRuntimeBindings: ToolRuntimeBindingDependencies = {
     providerSettings,
@@ -419,7 +422,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     messageProjection,
     hookSink,
     turnCoordinator,
-    continuationAdmission: deps.interactionContinuationAdmission
+    continuationAdmission: deps.interactionContinuationAdmission,
+    interactionParking
   })
   const transcriptMutation = new TranscriptMutationCoordinator({
     registry: runtime,
