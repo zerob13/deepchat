@@ -223,17 +223,25 @@ describe('DeferredToolExecutor Execution Journal', () => {
     )
   })
 
-  it('does not expose an ordinary result when the terminal commit fails', async () => {
+  it('returns a committed outcome only as a non-terminal parked projection', async () => {
     const { executionJournal, executor, order } = createHarness()
     executionJournal.commitRunTerminal.mockImplementationOnce(() => {
       order.push('journal.terminal.failed')
       throw new Error('storage offline')
     })
 
-    await expect(executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL)).resolves.toMatchObject({
-      isError: true,
-      terminalError: 'Failed to commit deferred tool run_terminal.'
+    const result = await executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL)
+
+    expect(result).toMatchObject({
+      responseText: 'done',
+      isError: false,
+      journalFailure: {
+        error: expect.objectContaining({ message: 'Failed to commit deferred tool run_terminal.' }),
+        dispatchCommitted: true,
+        outcomeCommitted: true
+      }
     })
+    expect(result).not.toHaveProperty('terminalError')
 
     expect(order).toEqual([
       'journal.run_started',
@@ -268,6 +276,27 @@ describe('DeferredToolExecutor Execution Journal', () => {
     expect(executionJournal.commitToolOutcome).not.toHaveBeenCalled()
     expect(executionJournal.commitRunTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'paused', stopReason: 'interaction' })
+    )
+  })
+
+  it('records an ordinary pre-dispatch failure as an error terminal without T1 or T2', async () => {
+    const { executionJournal, executor } = createHarness(async () => {
+      throw new Error('local preflight failed')
+    })
+
+    await expect(executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL)).resolves.toMatchObject({
+      responseText: 'Error: local preflight failed',
+      isError: true
+    })
+
+    expect(executionJournal.commitDispatch).not.toHaveBeenCalled()
+    expect(executionJournal.commitToolOutcome).not.toHaveBeenCalled()
+    expect(executionJournal.commitRunTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'error',
+        stopReason: 'pre_dispatch_error',
+        errorMessage: 'local preflight failed'
+      })
     )
   })
 

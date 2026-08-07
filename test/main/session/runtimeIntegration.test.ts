@@ -54,6 +54,7 @@ function createMockSqlitePresenter() {
 
   const tapeTable = {
     runInTransaction: vi.fn((operation: () => unknown) => operation()),
+    isInTransaction: vi.fn(() => false),
     ensureBootstrapAnchor: vi.fn(),
     append: vi.fn((input: any) => {
       const row = {
@@ -78,6 +79,17 @@ function createMockSqlitePresenter() {
     appendEvent: vi.fn((input: any) =>
       tapeTable.append({ ...input, kind: 'event', payload: { data: input.data } })
     ),
+    appendExecutionJournalEvent: vi.fn((input: any) =>
+      tapeTable.append({
+        ...input,
+        kind: 'event',
+        payload: { name: input.name, data: input.data }
+      })
+    ),
+    listEventsByNames: vi.fn((names: readonly string[]) => {
+      const nameSet = new Set(names)
+      return tapeEntries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
+    }),
     getBySession: vi.fn((sessionId: string) =>
       tapeEntries.filter((entry) => entry.session_id === sessionId)
     ),
@@ -105,7 +117,11 @@ function createMockSqlitePresenter() {
     getLatestSummaryAnchor: vi.fn().mockReturnValue(undefined),
     getLatestReconstructionAnchor: vi.fn().mockReturnValue(undefined),
     getAnchors: vi.fn().mockReturnValue([]),
-    getByProvenanceKey: vi.fn().mockReturnValue(undefined),
+    getByProvenanceKey: vi.fn((sessionId: string, provenanceKey: string) =>
+      tapeEntries.find(
+        (entry) => entry.session_id === sessionId && entry.provenance_key === provenanceKey
+      )
+    ),
     countBySession: vi.fn(
       (sessionId: string) => tapeEntries.filter((entry) => entry.session_id === sessionId).length
     ),

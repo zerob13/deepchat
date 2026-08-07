@@ -22,7 +22,7 @@ import {
   type ExecutionRecoveryReport
 } from '../domain/executionJournal'
 import type { DeepChatTapeEntryRow, TapeEventAppendInput } from '../domain/entry'
-import { stableJsonStringify } from '../domain/canonicalJson'
+import { canonicalJsonStringifyData } from '../domain/canonicalJson'
 import type { ExecutionJournalRecoveryReader, ExecutionJournalWriter } from '../ports/capabilities'
 import type { TapeApplicationEntryStore, TapeApplicationProviders } from '../ports/application'
 
@@ -42,7 +42,7 @@ type StrictEventInput = Omit<TapeEventAppendInput, 'name'> & {
 
 function canonicalJsonEquals(raw: string, expected: unknown): boolean {
   try {
-    return stableJsonStringify(JSON.parse(raw)) === stableJsonStringify(expected)
+    return canonicalJsonStringifyData(JSON.parse(raw)) === canonicalJsonStringifyData(expected)
   } catch {
     return false
   }
@@ -177,6 +177,12 @@ export class ExecutionJournalService
     this.commitFailpoint?.reach({ eventName: input.name, phase: 'before' })
     let receipt: ExecutionJournalCommitReceipt
     try {
+      if (table.isInTransaction()) {
+        throw new ExecutionJournalError(
+          `Cannot persist ${input.name} inside an active host transaction.`,
+          'persistence_failed'
+        )
+      }
       receipt = table.runInTransaction(() => {
         table.ensureBootstrapAnchor(input.sessionId)
         requirePrerequisite?.(table)
@@ -186,7 +192,7 @@ export class ExecutionJournalService
         }
         validateNewFact?.(table)
 
-        const row = table.appendEvent({ ...input, idempotent: false })
+        const row = table.appendExecutionJournalEvent({ ...input, idempotent: false })
         if (!rowMatchesStrictEvent(row, input)) {
           throw new ExecutionJournalCorruptionError(
             `Execution Journal append returned a conflicting ${input.name} row.`

@@ -61,6 +61,7 @@ const itIfSqlite = sqliteAvailable
 function createTapeTableMock() {
   const entries: any[] = []
   let tapeIncarnationSequence = 0
+  let inTransaction = false
   const table = {
     ensureBootstrapAnchor: vi.fn((sessionId: string) => {
       if (
@@ -136,19 +137,31 @@ function createTapeTableMock() {
         payload: { name: input.name, data: input.data }
       })
     ),
+    appendExecutionJournalEvent: vi.fn((input: any) =>
+      table.append({
+        ...input,
+        kind: 'event',
+        payload: { name: input.name, data: input.data }
+      })
+    ),
     listEventsByNames: vi.fn((names: readonly string[]) => {
       const nameSet = new Set(names)
       return entries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
     }),
     runInTransaction: vi.fn((operation: () => unknown) => {
       const snapshot = entries.map((entry) => ({ ...entry }))
+      const previousTransactionState = inTransaction
+      inTransaction = true
       try {
         return operation()
       } catch (error) {
         entries.splice(0, entries.length, ...snapshot)
         throw error
+      } finally {
+        inTransaction = previousTransactionState
       }
     }),
+    isInTransaction: vi.fn(() => inTransaction),
     getBySession: vi.fn((sessionId: string) =>
       entries.filter((entry) => entry.session_id === sessionId)
     ),

@@ -7,6 +7,7 @@ import type {
   TapeAnchorAppendInput,
   TapeEventAppendInput
 } from '../domain/entry'
+import type { ExecutionJournalEventName } from '../domain/executionJournal'
 
 export interface TapeMutationProjection {
   applyAppendedEntry(row: DeepChatTapeEntryRow, previousSessionMaxEntryId: number): boolean
@@ -19,7 +20,10 @@ export interface TapeEntryStore {
   append(input: DeepChatTapeAppendInput): DeepChatTapeEntryRow
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow
   appendEvent(input: TapeEventAppendInput): DeepChatTapeEntryRow
-  listEventsByNames(names: readonly string[]): DeepChatTapeEntryRow[]
+  appendExecutionJournalEvent(
+    input: TapeEventAppendInput & { name: ExecutionJournalEventName }
+  ): DeepChatTapeEntryRow
+  listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow>
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
     sessionId: string,
@@ -63,6 +67,7 @@ export interface TapeEntryStore {
 
 export interface TapeTransactionRunner {
   runInTransaction<T>(operation: () => T): T
+  isInTransaction(): boolean
 }
 
 /** Transitional bootstrap capability until bootstrap orchestration lives in application services. */

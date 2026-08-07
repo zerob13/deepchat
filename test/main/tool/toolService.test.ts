@@ -1349,19 +1349,23 @@ describe('ToolService', () => {
     })
     expect(runtimePort.cronJobs.listCronJobRuns).toHaveBeenCalledWith('job-1', 2)
     expect(runtimePort.cronJobs.upsertCronJob).toHaveBeenCalledTimes(2)
-    expect(runtimePort.cronJobs.toggleCronJob).toHaveBeenNthCalledWith(1, 'job-1', false)
-    expect(runtimePort.cronJobs.toggleCronJob).toHaveBeenNthCalledWith(2, 'job-1', true)
-    expect(runtimePort.cronJobs.runCronJobNow).toHaveBeenCalledWith('job-1')
-    expect(runtimePort.cronJobs.deleteCronJob).toHaveBeenCalledWith('job-1')
+    expect(runtimePort.cronJobs.toggleCronJob).toHaveBeenNthCalledWith(1, 'job-1', false, undefined)
+    expect(runtimePort.cronJobs.toggleCronJob).toHaveBeenNthCalledWith(2, 'job-1', true, undefined)
+    expect(runtimePort.cronJobs.runCronJobNow).toHaveBeenCalledWith('job-1', undefined)
+    expect(runtimePort.cronJobs.deleteCronJob).toHaveBeenCalledWith('job-1', undefined)
   })
 
   it('commits cron mutations before invoking the scheduler runtime', async () => {
     const order: string[] = []
-    const upsertCronJob = vi.fn().mockImplementation(async () => {
+    const upsertCronJob = vi.fn().mockImplementation(async (_input, beforeMutation) => {
+      beforeMutation?.()
       order.push('target')
       return cronJobFixture
     })
-    const deleteCronJob = vi.fn().mockResolvedValue(undefined)
+    const deleteCronJob = vi.fn().mockImplementation(async (_jobId, beforeMutation) => {
+      beforeMutation?.()
+      order.push('delete')
+    })
     const runtimePort = buildAgentToolRuntimeMock({ upsertCronJob, deleteCronJob })
     const handler = new CronJobToolHandler(runtimePort.cronJobs)
     const beforeMutation = vi.fn(() => order.push('commit'))
@@ -1384,6 +1388,12 @@ describe('ToolService', () => {
     await handler.call({ action: 'list' }, { beforeMutation: readCommit })
     expect(readCommit).not.toHaveBeenCalled()
 
+    const invalidCommit = vi.fn()
+    await expect(
+      handler.call({ action: 'create' }, { beforeMutation: invalidCommit })
+    ).rejects.toThrow('job is required for create.')
+    expect(invalidCommit).not.toHaveBeenCalled()
+
     const journalError = new Error('journal unavailable')
     await expect(
       handler.call(
@@ -1395,7 +1405,7 @@ describe('ToolService', () => {
         }
       )
     ).rejects.toBe(journalError)
-    expect(deleteCronJob).not.toHaveBeenCalled()
+    expect(order).not.toContain('delete')
   })
 
   it('requires approval for cronjob write actions', async () => {

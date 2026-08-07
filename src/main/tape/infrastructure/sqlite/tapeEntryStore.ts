@@ -16,6 +16,11 @@ import {
   type TapeEventAppendInput
 } from '@/tape/domain/entry'
 import { DEFAULT_EXCLUDED_TAPE_EVENT_NAMES } from '@/tape/domain/effectiveView'
+import {
+  EXECUTION_JOURNAL_EVENT_NAMES,
+  isExecutionJournalReservedName,
+  type ExecutionJournalEventName
+} from '@/tape/domain/executionJournal'
 import type {
   TapeBootstrapStore,
   TapeEntryStore,
@@ -438,7 +443,23 @@ export class DeepChatTapeEntriesTable
     return this.db.transaction(operation)()
   }
 
+  isInTransaction(): boolean {
+    return this.db.inTransaction
+  }
+
   append(input: DeepChatTapeAppendInput): DeepChatTapeEntryRow {
+    return this.appendInternal(input, false)
+  }
+
+  private appendInternal(
+    input: DeepChatTapeAppendInput,
+    allowExecutionJournal: boolean
+  ): DeepChatTapeEntryRow {
+    if (!allowExecutionJournal && isExecutionJournalReservedName(input.name)) {
+      throw new Error(
+        'The execution/* namespace is reserved for the strict Execution Journal writer.'
+      )
+    }
     const append = this.db.transaction(() => {
       const provenanceKey = buildProvenanceKey(input)
       if (input.idempotent && provenanceKey) {
@@ -559,7 +580,32 @@ export class DeepChatTapeEntriesTable
     })
   }
 
-  listEventsByNames(names: readonly string[]): DeepChatTapeEntryRow[] {
+  appendExecutionJournalEvent(
+    input: TapeEventAppendInput & { name: ExecutionJournalEventName }
+  ): DeepChatTapeEntryRow {
+    if (!EXECUTION_JOURNAL_EVENT_NAMES.includes(input.name)) {
+      throw new Error(`Unsupported Execution Journal event name: ${input.name}.`)
+    }
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'event',
+        name: input.name,
+        source: input.source,
+        provenanceKey: input.provenanceKey,
+        payload: {
+          name: input.name,
+          data: input.data
+        },
+        meta: input.meta,
+        createdAt: input.createdAt,
+        idempotent: input.idempotent
+      },
+      true
+    )
+  }
+
+  listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow> {
     const normalizedNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))]
     if (normalizedNames.length === 0) return []
     const placeholders = normalizedNames.map(() => '?').join(', ')
@@ -570,7 +616,7 @@ export class DeepChatTapeEntriesTable
          WHERE kind = 'event' AND name IN (${placeholders})
          ORDER BY session_id ASC, entry_id ASC`
       )
-      .all(...normalizedNames) as DeepChatTapeEntryRow[]
+      .iterate(...normalizedNames) as IterableIterator<DeepChatTapeEntryRow>
   }
 
   ensureBootstrapAnchor(sessionId: string): void {

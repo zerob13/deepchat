@@ -25,9 +25,9 @@ Startup
 ```
 
 The application service owns identity-to-provenance derivation, canonical payload construction,
-strict idempotency comparison, parsing, and classification. The generic `TapeEntryStore.append`
-contract is not changed because existing Context Tape producers intentionally have different
-idempotency and failure behavior.
+strict idempotency comparison, parsing, and classification. Generic Context Tape append methods
+reject the reserved `execution/*` namespace; the strict writer uses a dedicated storage method that
+accepts only the four protocol event names. Fork merge excludes the entire reserved namespace.
 
 ## Domain Model
 
@@ -60,7 +60,14 @@ Create an Execution Journal application service over the existing Tape providers
 7. otherwise appends a non-idempotent event and returns `{ created: true }`.
 
 An append/storage failure is wrapped with fact identity context and propagated. The service does not
-log-and-continue.
+log-and-continue. Canonical hashing and strict row equality use the same null-prototype JSON
+implementation, including rejection of non-finite numbers, sparse arrays, accessors, `undefined`,
+and symbol keys.
+
+The writer verifies that no host transaction is active before beginning its own transaction. This
+prevents an outer rollback from erasing a receipt after the execution path has treated it as durable.
+Callers perform local read/validation preflight, commit T1, then enter their synchronous mutation
+transaction without an intervening asynchronous boundary.
 
 Extend the Tape capability ports with:
 
@@ -98,8 +105,20 @@ local Run construction and preflight
 `processStream` receives the narrow writer through its I/O collaborators. Terminal settlement
 commits exactly one of `completed`, `paused`, `aborted`, or `error` before calling the current
 finalizers. If a post-terminal projection throws, the committed terminal fact is retained and no
-conflicting terminal fact or ordinary error projection is attempted. The downstream projection
-remains unresolved, and v1 does not automatically rewrite or retry it.
+conflicting terminal fact is attempted. Committed error and aborted fallback terminals are projected
+through their matching finalizers, and the committed outcome takes precedence over the shape of the
+projection error. Completed or paused terminal projection failures only clear transient runtime
+state because the outer coordinator cannot reconstruct their full output.
+If `run_started` or `run_terminal` persistence itself fails, the coordinator releases queued claims
+and clears transient status without fabricating transcript/UI terminal evidence, then propagates the
+Journal error.
+
+Deferred execution distinguishes a committed error terminal from a terminal commit failure. A
+committed error terminal follows the normal error finalizer. If the terminal itself did not commit,
+the interaction coordinator does not write terminal metadata/status or publish terminal events. A
+pre-T1 failure leaves the approval available for an explicit retry. A post-T1 failure parks all
+interactions on the message, projects only a committed T2 result or an indeterminate diagnostic into
+the still-pending message, and keeps an in-memory replay guard until the runtime instance is cleared.
 
 ## Tool Dispatch And Outcome Flow
 
@@ -117,15 +136,13 @@ invocation so an in-process retry cannot repeat the effect.
 MCP invokes the callback after argument preparation and the final policy, server, binding, client,
 target, and abort checks, immediately before `targetClient.callTool`.
 
-Agent handlers invoke the callback after their local schema, permission, path, target, session, and
-availability checks, immediately before a persistent mutation, process spawn, provider call,
-browser call, scheduler mutation, or delegation mutation. Pure reads and local interaction tools do
-not claim a dispatch. When a lower service owns the final authorization or availability checks, the
-handler forwards the callback and that service invokes it after those checks instead of claiming at
-the routing layer. For a local target that shares the main SQLite connection with Tape, the callback
-may run inside the target transaction after capacity and state checks but immediately before the
-first write. The dispatch fact and local mutation then commit or roll back together, while no local
-refusal can leave a false dispatch.
+Agent handlers invoke the callback after their local schema, permission, path, target, session,
+availability, duplicate, tombstone, and no-op checks, immediately before a persistent mutation,
+process spawn, provider call, browser call, scheduler mutation, or delegation mutation. Pure reads
+and local interaction tools do not claim a dispatch. When a lower service owns the final decision,
+the handler forwards a once-only boundary and that service invokes it at the first actual effect.
+For a local target sharing the Tape SQLite connection, T1 is committed outside the host transaction
+after read preflight and immediately before the synchronous mutation transaction begins.
 
 Handlers with a bounded internal fallback keep one operation identity in v1, but the dispatch hash
 must cover the complete resolved invocation plan before the first target call. In particular, shell
@@ -135,14 +152,26 @@ response after dispatch is a protocol violation: commit it as a known error outc
 Run closed instead of retrying or projecting it as an ordinary permission pause.
 
 After execution, the loop normalizes and prepares the result. If T1 was committed, it commits T2
-before applying the staged result to conversation messages, assistant blocks, transcript, or UI.
+before the harness applies the finalized result to conversation messages, assistant blocks,
+transcript, or UI. Live progress, runtime activation, and other events emitted inside an Agent tool
+belong to the target invocation itself and can occur between T1 and T2; a crash in that interval is
+classified from the resulting T1-without-T2 evidence.
 Thrown target errors are known error outcomes and receive T2. Abort or process loss before a known
 result intentionally leaves T1 without T2. Permission retries clear prior attempt results before the
 approved attempt begins, while a target result that has already returned is retained if cancellation
 arrives during local result preparation.
 
-Journal errors bypass normal tool-error conversion and fail the Run closed. They also take
-precedence over concurrent cancellation when parallel tool outcomes are collected.
+Pre-dispatch `invalid_fact` errors caused by one model-controlled call are converted into that call's
+refusal and do not prevent unrelated calls in the same batch. Journal persistence, corruption,
+duplicate dispatch, and any post-dispatch Journal error bypass normal tool-error conversion and fail
+the Run closed. They also take precedence over concurrent cancellation when parallel tool outcomes
+are collected. A committed outcome receipt must be newly created; an existing receipt is treated as
+a protocol violation before projection.
+
+Parallel batches do not gain atomic result delivery in v1. If one sibling fails closed after other
+siblings committed T2, their staged results can remain undelivered. The journal preserves those
+known outcomes, but replaying them or exposing a durable delivered/not-delivered state requires a
+separate batch-delivery contract.
 
 ## Deferred Execution
 
@@ -152,7 +181,8 @@ commits a prepared T2 when dispatched, and commits a terminal fact before return
 the interaction coordinator for transcript projection.
 
 Permission responses that occur before dispatch terminate the physical deferred Run as `paused`
-without fabricating T1 or T2. A later approval starts another physical Run.
+without fabricating T1 or T2. An ordinary pre-dispatch execution failure terminates it as `error`.
+A later approval starts another physical Run.
 
 ## Startup Recovery
 
@@ -168,13 +198,26 @@ Only native v1 journal event names are inputs. Transcript rows, legacy backfill 
 facts, provider attempt events, and model text cannot raise the evidence level.
 
 The first version logs at most 100 bounded, control-character-sanitized candidate details plus a
-classification summary and retains the existing interrupted-message projection. `indeterminate`
-and `corruption` remain parked; no replay or retry path is added.
+classification summary and retains the existing interrupted-message projection. Corruption details
+are ordered before indeterminate and other incomplete Runs so the display cap cannot hide the most
+severe evidence. `indeterminate` and `corruption` remain parked; no replay or retry path is added.
+
+Startup classification also returns Session-scoped message identities whose incomplete Runs are
+`completed`, `indeterminate`, or `corruption`. Pending transcript recovery force-recovers those
+messages even when they still contain an actionable interaction, closing the restart replay path
+after a deferred parking projection could not be persisted. `not_dispatched` messages retain their
+resumable interaction because no T1 exists.
 
 The v1 recovery query is an indexed, once-per-harness O(Journal history) read. It intentionally
-avoids mutable recovery state in the first protocol. Outcome text makes memory proportional to the
-bounded persisted Journal payload size during classification; production scale measurements must
-precede any later rebuildable projection or compaction policy.
+performs a complete scan because a row limit could hide old unresolved or corrupt evidence, but uses
+SQLite iteration rather than materializing all rows. Classification retains only identities,
+entry IDs, terminal outcomes, and reason sets, so memory is proportional to Runs and operations,
+not persisted outcome text. Production startup measurements must precede any later rebuildable
+projection or compaction policy.
+
+Recovery normalizes inherited non-interaction `pending` or `loading` blocks to errors before a new
+Run begins. Pending permission and question blocks remain resumable. A current Run still fails loudly
+if it attempts to project a paused terminal with unresolved non-interaction work.
 
 ## Test Strategy
 
@@ -185,6 +228,7 @@ precede any later rebuildable projection or compaction policy.
 - all four recovery classifications;
 - outcomes without dispatch, facts without Run start, duplicate terminals, and session mismatch;
 - response/argument payload hashing and bounded data rules.
+- strict canonical JSON rejection and `__proto__` preservation in both write and equality paths.
 
 ### Native SQLite Tests
 
@@ -193,6 +237,7 @@ precede any later rebuildable projection or compaction policy.
 - dispatch commit failure propagates and prevents the supplied target callback from running;
 - journal name query uses the intended index and ignores Context Tape events;
 - restart-style reconstruction from persisted rows.
+- reserved namespace guards, fork exclusion, and rejection of commits inside host transactions.
 
 ### Runtime Tests
 
@@ -200,11 +245,20 @@ precede any later rebuildable projection or compaction policy.
 - MCP validation/policy/target failures produce no T1;
 - MCP T1 precedes the target call and duplicate T1 prevents a second call;
 - representative Agent mutation boundaries produce the same ordering;
-- T2 precedes staged result projection for success and known failure;
+- T2 precedes harness-owned finalized result projection for success and known failure;
 - T2 failure prevents projection;
+- committed error and aborted outcomes select their matching finalizers even when projection throws;
+- a parallel sibling failure leaves earlier T2 facts intact without claiming atomic batch delivery;
 - terminal commit precedes every terminal projection and failure prevents projection;
 - deferred approval uses a new Run and obeys the same ordering;
 - startup classification runs before interrupted transcript recovery and never executes tools.
+- Run-start and terminal persistence failures release claims and clear transient status without
+  fabricating terminal projections;
+- deferred terminal-commit failure after T1 consumes and guards the approval without writing Run
+  terminal metadata/status/events, and startup recovery cannot expose it for replay;
+- cron, process, memory, and delegation no-op/refusal paths produce no T1, while their first actual
+  side effect follows T1;
+- inherited unresolved non-interaction blocks are normalized before resume/pause projection.
 
 ### Crash Tests
 

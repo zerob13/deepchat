@@ -85,10 +85,12 @@ export class LiveDelegationRepository {
     const prompt = validateBytes(input.prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Delegated task')
     const now = validateTimestamp(input.now ?? Date.now())
     const db = this.database.getDatabase()
+    const parentExists = db.prepare('SELECT 1 FROM new_sessions WHERE id = ?').get(parentSessionId)
+    if (!parentExists) throw new Error('live delegation parent session does not exist')
+    this.assertParentHasActiveCapacity(parentSessionId)
+    beforeMutation?.()
 
     return db.transaction(() => {
-      this.assertParentHasActiveCapacity(parentSessionId)
-      beforeMutation?.()
       db.prepare(
         `INSERT INTO live_delegations (
            delegation_id, parent_session_id, child_session_id, slot_id, target_agent_id, title,
@@ -252,26 +254,26 @@ export class LiveDelegationRepository {
     )
     const db = this.database.getDatabase()
     const messageBytes = Buffer.byteLength(message, 'utf8')
+    const pending = db
+      .prepare(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS bytes
+         FROM live_delegation_events
+         WHERE delegation_id = ? AND direction = 'parent_to_child'
+           AND kind = 'message' AND consumed_by_turn_id IS NULL`
+      )
+      .get(delegation.id) as { count: number; bytes: number }
+    if (pending.count >= MAX_PENDING_MESSAGES) {
+      throw new Error(`Live delegation ${delegation.id} has too many pending messages.`)
+    }
+    if (pending.bytes + messageBytes > LIVE_DELEGATION_MAX_PENDING_MESSAGE_BYTES) {
+      throw new Error(
+        `Live delegation ${delegation.id} pending mailbox would exceed ` +
+          `${LIVE_DELEGATION_MAX_PENDING_MESSAGE_BYTES} UTF-8 bytes.`
+      )
+    }
+    beforeMutation?.()
     const eventId = db.transaction(() => {
-      const pending = db
-        .prepare(
-          `SELECT COUNT(*) AS count,
-                  COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS bytes
-           FROM live_delegation_events
-           WHERE delegation_id = ? AND direction = 'parent_to_child'
-             AND kind = 'message' AND consumed_by_turn_id IS NULL`
-        )
-        .get(delegation.id) as { count: number; bytes: number }
-      if (pending.count >= MAX_PENDING_MESSAGES) {
-        throw new Error(`Live delegation ${delegation.id} has too many pending messages.`)
-      }
-      if (pending.bytes + messageBytes > LIVE_DELEGATION_MAX_PENDING_MESSAGE_BYTES) {
-        throw new Error(
-          `Live delegation ${delegation.id} pending mailbox would exceed ` +
-            `${LIVE_DELEGATION_MAX_PENDING_MESSAGE_BYTES} UTF-8 bytes.`
-        )
-      }
-      beforeMutation?.()
       return this.insertEventRow({
         delegationId: delegation.id,
         parentSessionId: delegation.parentSessionId,
@@ -304,34 +306,34 @@ export class LiveDelegationRepository {
     const timestamp = validateTimestamp(now)
     const db = this.database.getDatabase()
 
-    return db.transaction(() => {
-      const active = db
-        .prepare(
-          `SELECT 1 FROM live_delegation_turns
-           WHERE delegation_id = ?
-             AND status IN ('queued', 'running', 'waiting_permission', 'waiting_question')`
-        )
-        .get(delegation.id)
-      if (active) {
-        throw new Error(`Live delegation ${delegation.id} already has an active turn.`)
-      }
-      this.assertParentHasActiveCapacity(delegation.parentSessionId)
-
-      const messageRows = db
-        .prepare(
-          `SELECT event_id, content FROM live_delegation_events
-           WHERE delegation_id = ? AND direction = 'parent_to_child'
-             AND consumed_by_turn_id IS NULL
-           ORDER BY event_id ASC`
-        )
-        .all(delegation.id) as Array<{ event_id: number; content: string }>
-      const prompt = buildBoundedFollowUpPrompt(
-        normalizedTask,
-        messageRows.map((row) => row.content)
+    const active = db
+      .prepare(
+        `SELECT 1 FROM live_delegation_turns
+         WHERE delegation_id = ?
+           AND status IN ('queued', 'running', 'waiting_permission', 'waiting_question')`
       )
-      validateBytes(prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Follow-up task with messages')
-      const nextSeq = delegation.lastTurnSeq + 1
-      beforeMutation?.()
+      .get(delegation.id)
+    if (active) {
+      throw new Error(`Live delegation ${delegation.id} already has an active turn.`)
+    }
+    this.assertParentHasActiveCapacity(delegation.parentSessionId)
+
+    const messageRows = db
+      .prepare(
+        `SELECT event_id, content FROM live_delegation_events
+         WHERE delegation_id = ? AND direction = 'parent_to_child'
+           AND consumed_by_turn_id IS NULL
+         ORDER BY event_id ASC`
+      )
+      .all(delegation.id) as Array<{ event_id: number; content: string }>
+    const prompt = buildBoundedFollowUpPrompt(
+      normalizedTask,
+      messageRows.map((row) => row.content)
+    )
+    validateBytes(prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Follow-up task with messages')
+    const nextSeq = delegation.lastTurnSeq + 1
+    beforeMutation?.()
+    return db.transaction(() => {
       db.prepare(
         `INSERT INTO live_delegation_turns (
            turn_id, delegation_id, seq, kind, prompt, status, result_summary, error,
@@ -502,9 +504,9 @@ export class LiveDelegationRepository {
       throw new Error('Live delegation result reference exceeds its storage limit.')
     }
     const db = this.database.getDatabase()
+    input.beforeMutation?.()
 
     db.transaction(() => {
-      input.beforeMutation?.()
       const result = db
         .prepare(
           `UPDATE live_delegation_turns

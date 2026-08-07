@@ -89,8 +89,31 @@ function buildStartupRecoveryDiagnostic(report: ExecutionRecoveryReport) {
   }
 }
 
-function reportStartupExecutionRecovery(reader: ExecutionJournalRecoveryReader): void {
-  const candidates = reader.classifyRecoveryCandidates().filter(requiresStartupRecoveryAttention)
+function reportStartupExecutionRecovery(
+  reader: ExecutionJournalRecoveryReader
+): Map<string, Set<string>> {
+  const buckets: Record<ExecutionRecoveryClassification, ExecutionRecoveryReport[]> = {
+    corruption: [],
+    indeterminate: [],
+    completed: [],
+    not_dispatched: []
+  }
+  const forceRecoverMessagesBySession = new Map<string, Set<string>>()
+  for (const report of reader.classifyRecoveryCandidates()) {
+    if (!requiresStartupRecoveryAttention(report)) continue
+    buckets[report.classification].push(report)
+    if (report.classification !== 'not_dispatched' && report.messageId !== null) {
+      const messageIds = forceRecoverMessagesBySession.get(report.sessionId) ?? new Set<string>()
+      messageIds.add(report.messageId)
+      forceRecoverMessagesBySession.set(report.sessionId, messageIds)
+    }
+  }
+  const candidates = [
+    ...buckets.corruption,
+    ...buckets.indeterminate,
+    ...buckets.completed,
+    ...buckets.not_dispatched
+  ]
   for (const report of candidates.slice(0, MAX_STARTUP_RECOVERY_DETAILS)) {
     const diagnostic = buildStartupRecoveryDiagnostic(report)
     if (report.classification === 'corruption') {
@@ -99,7 +122,7 @@ function reportStartupExecutionRecovery(reader: ExecutionJournalRecoveryReader):
       logger.warn('[DeepChatAgent] Execution Journal recovery candidate parked', diagnostic)
     }
   }
-  if (candidates.length <= MAX_STARTUP_RECOVERY_DETAILS) return
+  if (candidates.length <= MAX_STARTUP_RECOVERY_DETAILS) return forceRecoverMessagesBySession
 
   const classificationCounts: Record<ExecutionRecoveryClassification, number> = {
     not_dispatched: 0,
@@ -121,6 +144,7 @@ function reportStartupExecutionRecovery(reader: ExecutionJournalRecoveryReader):
   } else {
     logger.warn('[DeepChatAgent] Execution Journal recovery diagnostics truncated', summary)
   }
+  return forceRecoverMessagesBySession
 }
 
 /**
@@ -150,7 +174,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   const tapeService = sessionData.tapeStore
   const pendingInputCoordinator = sessionData.pendingInputs
 
-  reportStartupExecutionRecovery(tapeService)
+  const forceRecoverMessagesBySession = reportStartupExecutionRecovery(tapeService)
 
   const runtime = new DeepChatAgentRuntime()
   const identity = new SessionIdentityService({ registry: runtime, database })
@@ -462,7 +486,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     )
   }
 
-  const recovered = messageStore.recoverPendingMessages()
+  const recovered = messageStore.recoverPendingMessages({ forceRecoverMessagesBySession })
   if (recovered > 0) {
     logger.info(`DeepChatAgent: recovered ${recovered} pending messages to error status`)
   }

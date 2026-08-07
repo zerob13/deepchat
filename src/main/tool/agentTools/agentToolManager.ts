@@ -1011,8 +1011,13 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for write action')
         }
-        commitMutation?.()
-        await backgroundExecSessionManager.write(conversationId, sessionId, data ?? '', eof)
+        await backgroundExecSessionManager.write(
+          conversationId,
+          sessionId,
+          data ?? '',
+          eof,
+          commitMutation
+        )
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
         }
@@ -1022,8 +1027,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for kill action')
         }
-        commitMutation?.()
-        await backgroundExecSessionManager.kill(conversationId, sessionId)
+        await backgroundExecSessionManager.kill(conversationId, sessionId, commitMutation)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
         }
@@ -1033,8 +1037,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for clear action')
         }
-        commitMutation?.()
-        await backgroundExecSessionManager.clear(conversationId, sessionId)
+        await backgroundExecSessionManager.clear(conversationId, sessionId, commitMutation)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
         }
@@ -1044,8 +1047,7 @@ export class AgentToolManager {
         if (!sessionId) {
           throw new Error('sessionId is required for remove action')
         }
-        commitMutation?.()
-        await backgroundExecSessionManager.remove(conversationId, sessionId)
+        await backgroundExecSessionManager.remove(conversationId, sessionId, commitMutation)
         return {
           content: JSON.stringify({ status: 'ok', sessionId })
         }
@@ -1068,7 +1070,7 @@ export class AgentToolManager {
   ): Promise<AgentToolCallResult> {
     // Handle process tool separately
     if (this.isProcessTool(toolName)) {
-      return this.callProcessTool(toolName, args, conversationId)
+      return this.callProcessTool(toolName, args, conversationId, options)
     }
 
     const schema = this.fileSystemSchemas[toolName as keyof typeof this.fileSystemSchemas]

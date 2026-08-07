@@ -1,7 +1,7 @@
 import type { ProcessTerminalSelection } from './types'
 
 export class CommittedRunProjectionError extends Error {
-  readonly terminal: Pick<ProcessTerminalSelection, 'outcome' | 'stopReason'>
+  readonly terminal: Pick<ProcessTerminalSelection, 'outcome' | 'stopReason' | 'errorMessage'>
 
   constructor(
     readonly runId: string,
@@ -14,7 +14,11 @@ export class CommittedRunProjectionError extends Error {
       options
     )
     this.name = 'CommittedRunProjectionError'
-    this.terminal = { outcome: terminal.outcome, stopReason: terminal.stopReason }
+    this.terminal = {
+      outcome: terminal.outcome,
+      stopReason: terminal.stopReason,
+      ...(terminal.errorMessage === undefined ? {} : { errorMessage: terminal.errorMessage })
+    }
   }
 }
 

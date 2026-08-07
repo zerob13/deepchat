@@ -378,7 +378,13 @@ export class BackgroundExecSessionManager {
     return this.buildCompletionResult(session, previewChars)
   }
 
-  write(conversationId: string, sessionId: string, data: string, eof = false): void {
+  write(
+    conversationId: string,
+    sessionId: string,
+    data: string,
+    eof = false,
+    beforeMutation?: () => void
+  ): void {
     const session = this.getSession(conversationId, sessionId)
 
     if (session.status !== 'running') {
@@ -389,6 +395,7 @@ export class BackgroundExecSessionManager {
       throw new Error(`Session ${sessionId} stdin is not available`)
     }
 
+    beforeMutation?.()
     session.child.stdin.write(data)
     if (eof) {
       session.child.stdin.end()
@@ -397,14 +404,21 @@ export class BackgroundExecSessionManager {
     session.lastAccessedAt = Date.now()
   }
 
-  async kill(conversationId: string, sessionId: string): Promise<void> {
+  async kill(
+    conversationId: string,
+    sessionId: string,
+    beforeMutation?: () => void
+  ): Promise<void> {
     const session = this.getSession(conversationId, sessionId)
+    if (session.status !== 'running') return
+    beforeMutation?.()
     await this.killInternal(session, 'user')
   }
 
-  clear(conversationId: string, sessionId: string): void {
+  clear(conversationId: string, sessionId: string, beforeMutation?: () => void): void {
     const session = this.getSession(conversationId, sessionId)
 
+    beforeMutation?.()
     session.outputBuffer = ''
     session.totalOutputLength = 0
 
@@ -415,7 +429,11 @@ export class BackgroundExecSessionManager {
     session.lastAccessedAt = Date.now()
   }
 
-  async remove(conversationId: string, sessionId: string): Promise<void> {
+  async remove(
+    conversationId: string,
+    sessionId: string,
+    beforeMutation?: () => void
+  ): Promise<void> {
     const conversationSessions = this.sessions.get(conversationId)
     if (!conversationSessions) {
       throw new Error(`No sessions found for conversation ${conversationId}`)
@@ -426,6 +444,7 @@ export class BackgroundExecSessionManager {
       throw new Error(`Session ${sessionId} not found`)
     }
 
+    beforeMutation?.()
     if (session.status === 'running') {
       await this.killInternal(session, 'remove')
     } else {
@@ -1077,24 +1096,56 @@ class BackgroundExecUtilityProxy {
     return result
   }
 
-  async write(conversationId: string, sessionId: string, data: string, eof = false): Promise<void> {
+  async write(
+    conversationId: string,
+    sessionId: string,
+    data: string,
+    eof = false,
+    beforeMutation?: () => void
+  ): Promise<void> {
+    this.assertTrackedSessionOwner(conversationId, sessionId)
+    if (this.getCrashedSession(conversationId, sessionId)) {
+      throw new Error(`Session ${sessionId} is not running`)
+    }
+    beforeMutation?.()
     await this.request('write', [conversationId, sessionId, data, eof])
   }
 
-  async kill(conversationId: string, sessionId: string): Promise<void> {
+  async kill(
+    conversationId: string,
+    sessionId: string,
+    beforeMutation?: () => void
+  ): Promise<void> {
+    this.assertTrackedSessionOwner(conversationId, sessionId)
+    if (this.getCrashedSession(conversationId, sessionId)) return
+    beforeMutation?.()
     await this.request('kill', [conversationId, sessionId])
   }
 
-  async clear(conversationId: string, sessionId: string): Promise<void> {
+  async clear(
+    conversationId: string,
+    sessionId: string,
+    beforeMutation?: () => void
+  ): Promise<void> {
+    this.assertTrackedSessionOwner(conversationId, sessionId)
+    if (this.getCrashedSession(conversationId, sessionId)) return
+    beforeMutation?.()
     await this.request('clear', [conversationId, sessionId])
   }
 
-  async remove(conversationId: string, sessionId: string): Promise<void> {
-    this.activeSessions.delete(sessionId)
+  async remove(
+    conversationId: string,
+    sessionId: string,
+    beforeMutation?: () => void
+  ): Promise<void> {
+    this.assertTrackedSessionOwner(conversationId, sessionId)
     if (this.getCrashedSession(conversationId, sessionId)) {
+      beforeMutation?.()
       this.crashedSessions.delete(sessionId)
       return
     }
+    beforeMutation?.()
+    this.activeSessions.delete(sessionId)
     await this.request('remove', [conversationId, sessionId])
   }
 
@@ -1277,6 +1328,13 @@ class BackgroundExecUtilityProxy {
       pending.reject(error)
     }
     this.pendingRequests.clear()
+  }
+
+  private assertTrackedSessionOwner(conversationId: string, sessionId: string): void {
+    const tracked = this.activeSessions.get(sessionId) ?? this.crashedSessions.get(sessionId)
+    if (!tracked || tracked.conversationId !== conversationId) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
   }
 
   private getCrashedSession(conversationId: string, sessionId: string): TrackedSessionMeta | null {

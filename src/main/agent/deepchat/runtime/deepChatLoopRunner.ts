@@ -101,7 +101,7 @@ import {
   resolveProviderModelRuntimeFacts,
   type ProviderModelRuntimeFacts
 } from './providerModelRuntimeFacts'
-import { throwIfAbortRequested } from './abortErrors'
+import { isAbortError, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
@@ -863,14 +863,14 @@ export class DeepChatLoopRunner {
         result
       }
     } catch (error) {
-      const errorToPropagate =
+      let errorToPropagate: unknown =
         committedTerminal && !isExecutionJournalError(error)
           ? new CommittedRunProjectionError(loopRun.runId, committedTerminal, { cause: error })
           : error
       try {
         if (!terminalCommitAttempted && resourceScope.isCurrent()) {
-          const aborted = abortSignal.aborted
-          commitRunTerminal({
+          const aborted = abortSignal.aborted || isAbortError(error)
+          const fallbackTerminal: ProcessTerminalSelection = {
             outcome: aborted ? 'aborted' : 'error',
             stopReason: aborted
               ? 'user_stop'
@@ -878,8 +878,29 @@ export class DeepChatLoopRunner {
                 ? 'context_window'
                 : 'pre_stream_error',
             errorMessage: error instanceof Error ? error.message : String(error)
+          }
+          commitRunTerminal(fallbackTerminal)
+          errorToPropagate = new CommittedRunProjectionError(loopRun.runId, fallbackTerminal, {
+            cause: error
           })
         }
+      } catch (terminalCommitError) {
+        if (terminalCommitError instanceof Error && terminalCommitError !== error) {
+          const existingCause = terminalCommitError.cause
+          const combinedCause =
+            existingCause === undefined || existingCause === error
+              ? error
+              : new AggregateError(
+                  [error, existingCause],
+                  'Run execution and terminal commit both failed.'
+                )
+          Object.defineProperty(terminalCommitError, 'cause', {
+            value: combinedCause,
+            configurable: true,
+            writable: true
+          })
+        }
+        errorToPropagate = terminalCommitError
       } finally {
         this.ports.runLifecycle.clearRun(resourceScope, loopRun.runId)
       }

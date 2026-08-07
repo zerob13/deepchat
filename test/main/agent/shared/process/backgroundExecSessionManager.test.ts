@@ -283,6 +283,35 @@ describe('BackgroundExecSessionManager', () => {
     expect(log.output).toBe('timeout tail')
   })
 
+  it('commits a process write after session preflight and before stdin mutation', () => {
+    const order: string[] = []
+    const child = new MockChildProcess()
+    child.stdin.write.mockImplementation(() => {
+      order.push('target')
+      return true
+    })
+    setSession(createSession({ status: 'running', child }))
+
+    manager.write('conv-1', 'bg_123', 'continue', false, () => order.push('commit'))
+
+    expect(order).toEqual(['commit', 'target'])
+  })
+
+  it('does not commit process mutations rejected by local session preflight', async () => {
+    const beforeMutation = vi.fn()
+    setSession(createSession({ status: 'done' }))
+
+    expect(() => manager.write('conv-1', 'missing', 'data', false, beforeMutation)).toThrow(
+      'Session missing not found'
+    )
+    await expect(manager.kill('conv-1', 'missing', beforeMutation)).rejects.toThrow(
+      'Session missing not found'
+    )
+    await manager.kill('conv-1', 'bg_123', beforeMutation)
+
+    expect(beforeMutation).not.toHaveBeenCalled()
+  })
+
   it('merges the prepared env on top of process env when starting a session', async () => {
     const child = new MockChildProcess()
     vi.mocked(spawn).mockReturnValue(child as never)
@@ -509,5 +538,38 @@ describe('backgroundExecSessionManager utility proxy', () => {
 
     expect(proxy.crashedSessions.has('bg_crashed')).toBe(false)
     expect(mockUtilityProcessFork).not.toHaveBeenCalled()
+  })
+
+  it('rejects unknown proxy mutations before committing dispatch', async () => {
+    const beforeMutation = vi.fn()
+
+    await expect(
+      backgroundExecSessionManager.write('conv-1', 'missing', 'data', false, beforeMutation)
+    ).rejects.toThrow('Session missing not found')
+
+    expect(beforeMutation).not.toHaveBeenCalled()
+    expect(mockUtilityProcessFork).not.toHaveBeenCalled()
+  })
+
+  it('commits tracked proxy writes before the utility-host request', async () => {
+    const proxy = backgroundExecSessionManager as any
+    const order: string[] = []
+    proxy.activeSessions.set('bg_active', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_active',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1
+    })
+    const request = vi.spyOn(proxy, 'request').mockImplementation(async () => {
+      order.push('target')
+    })
+
+    await backgroundExecSessionManager.write('conv-1', 'bg_active', 'data', false, () => {
+      order.push('commit')
+    })
+
+    expect(order).toEqual(['commit', 'target'])
+    expect(request).toHaveBeenCalledWith('write', ['conv-1', 'bg_active', 'data', false])
   })
 })

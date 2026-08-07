@@ -59,3 +59,16 @@
 - [x] Perform a final severity-ordered review of the complete branch diff.
 - [x] Fix findings and rerun affected validation.
 - [x] Confirm no remote Git operation was performed.
+
+## 7. Review Hardening
+
+- [x] Settle claimed inputs and transient runtime state after Journal lifecycle failures without
+  fabricating an uncommitted terminal projection.
+- [x] Reject one pre-dispatch invalid model call without terminating its sibling batch.
+- [x] Move cron, process, memory, and delegation T1 callbacks after every refusal/no-op check and
+  outside rollback-capable host transactions.
+- [x] Unify strict canonical hashing/equality and reject duplicate T2 projection.
+- [x] Reserve `execution/*` for the strict writer and exclude it from fork merge.
+- [x] Normalize inherited unresolved blocks and correct deferred pre-dispatch terminal semantics.
+- [x] Add focused regression tests and rerun the full required validation.
+- [x] Review unstaged and staged diffs, fix findings, commit, and do not push.

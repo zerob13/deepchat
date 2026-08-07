@@ -24,14 +24,14 @@ function normalizeForStableJson(value: unknown, preservePrototypeKeys: boolean):
     )
 }
 
-function assertJsonDataValue(value: unknown, ancestors: Set<object>): void {
+function normalizeJsonData(value: unknown, ancestors: Set<object>): unknown {
   if (
     value === null ||
     typeof value === 'string' ||
     typeof value === 'boolean' ||
     (typeof value === 'number' && Number.isFinite(value))
   ) {
-    return
+    return value
   }
 
   if (!value || typeof value !== 'object') {
@@ -44,18 +44,22 @@ function assertJsonDataValue(value: unknown, ancestors: Set<object>): void {
   ancestors.add(value)
   try {
     if (Array.isArray(value)) {
-      const keys = Object.keys(value)
-      if (keys.length !== value.length || keys.some((key, index) => key !== String(index))) {
+      if (Object.getOwnPropertySymbols(value).length > 0) {
+        throw new TypeError('Value contains a symbol property.')
+      }
+      const keys = Object.getOwnPropertyNames(value).filter((key) => key !== 'length')
+      if (keys.length !== value.length) {
         throw new TypeError('Value contains a sparse array or non-index property.')
       }
-      for (const key of keys) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      const normalized: unknown[] = []
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
         if (!descriptor?.enumerable || !('value' in descriptor)) {
           throw new TypeError('Value contains a non-data array item.')
         }
-        assertJsonDataValue(descriptor.value, ancestors)
+        normalized.push(normalizeJsonData(descriptor.value, ancestors))
       }
-      return
+      return normalized
     }
 
     const prototype = Object.getPrototypeOf(value)
@@ -65,19 +69,18 @@ function assertJsonDataValue(value: unknown, ancestors: Set<object>): void {
     if (Object.getOwnPropertySymbols(value).length > 0) {
       throw new TypeError('Value contains a symbol property.')
     }
-    for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
-      if (!descriptor.enumerable || !('value' in descriptor)) {
+    const normalized = Object.create(null) as Record<string, unknown>
+    for (const key of Object.getOwnPropertyNames(value).sort()) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError('Value contains a non-data property.')
       }
-      assertJsonDataValue(descriptor.value, ancestors)
+      normalized[key] = normalizeJsonData(descriptor.value, ancestors)
     }
+    return normalized
   } finally {
     ancestors.delete(value)
   }
-}
-
-function assertJsonData(value: unknown): void {
-  assertJsonDataValue(value, new Set())
 }
 
 export function stableJsonStringify(value: unknown): string {
@@ -90,9 +93,10 @@ export function hashJson(value: unknown): string {
 
 // ViewManifest hashes keep the legacy object accumulator; journal identities need a
 // null-prototype accumulator so JSON keys such as "__proto__" remain identity-bearing.
+export function canonicalJsonStringifyData(value: unknown): string {
+  return JSON.stringify(normalizeJsonData(value, new Set()))
+}
+
 export function hashJsonData(value: unknown): string {
-  assertJsonData(value)
-  return createHash('sha256')
-    .update(JSON.stringify(normalizeForStableJson(value, true)))
-    .digest('hex')
+  return createHash('sha256').update(canonicalJsonStringifyData(value)).digest('hex')
 }

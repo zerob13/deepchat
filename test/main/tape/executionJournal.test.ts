@@ -150,7 +150,7 @@ describe('Execution Journal domain and strict persistence', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     commitStarted(service, RUN_IDS.completed)
-    table.appendEvent.mockImplementationOnce(() => {
+    table.appendExecutionJournalEvent.mockImplementationOnce(() => {
       throw new Error('disk write failed')
     })
 
@@ -158,6 +158,23 @@ describe('Execution Journal domain and strict persistence', () => {
       /Failed to persist execution\/dispatch_committed/
     )
     expect(entries.some((entry) => entry.name === 'execution/dispatch_committed')).toBe(false)
+  })
+
+  it('rejects journal commits owned by an active host transaction', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+
+    expect(() =>
+      table.runInTransaction(() =>
+        service.commitRunStarted({
+          sessionId: 'session-1',
+          runId: RUN_IDS.completed,
+          messageId: 'assistant-1',
+          runKind: 'loop'
+        })
+      )
+    ).toThrow(/inside an active host transaction/)
+    expect(entries.some((entry) => entry.name === 'execution/run_started')).toBe(false)
   })
 
   it('reaches commit failpoints outside the storage transaction', () => {
@@ -287,7 +304,7 @@ describe('Execution Journal domain and strict persistence', () => {
         data: { marker: 'linked-context-marker' }
       })
       for (const name of EXECUTION_JOURNAL_EVENT_NAMES) {
-        table.appendEvent({
+        table.appendExecutionJournalEvent({
           sessionId: 'linked-session',
           name,
           data: { marker: 'linked-journal-marker' }
@@ -445,7 +462,7 @@ describe('Execution Journal domain and strict persistence', () => {
       responseText: 'orphan',
       isError: true
     })
-    table.appendEvent({
+    table.appendExecutionJournalEvent({
       sessionId: 'session-1',
       name: 'execution/tool_outcome',
       source: { type: 'runtime_event', id: RUN_IDS.corruption, seq: 1 },
@@ -528,7 +545,7 @@ describe('Execution Journal domain and strict persistence', () => {
       operation(RUN_IDS.completed),
       'dispatch'
     )
-    table.appendEvent({
+    table.appendExecutionJournalEvent({
       sessionId: 'session-1',
       name: 'execution/dispatch_committed',
       source: { type: 'runtime_event', id: RUN_IDS.completed, seq: 1 },
@@ -618,7 +635,7 @@ itIfSqlite('queries only journal events through the dedicated SQLite index', () 
     })
   ).toThrow(ExecutionJournalCorruptionError)
 
-  expect(table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)).toHaveLength(1)
+  expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toHaveLength(1)
   const indexes = db.prepare("PRAGMA index_list('deepchat_tape_entries')").all() as Array<{
     name: string
   }>
@@ -637,4 +654,55 @@ itIfSqlite('queries only journal events through the dedicated SQLite index', () 
     'idx_deepchat_tape_entries_event_name'
   )
   db.close()
+})
+
+itIfSqlite('reserves execution event names for the strict writer', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const table = new DeepChatTapeEntriesTable(db)
+    table.createTable()
+
+    expect(() =>
+      table.appendEvent({
+        sessionId: 'session-1',
+        name: 'execution/run_started',
+        data: { reconstructed: true }
+      })
+    ).toThrow('reserved for the strict Execution Journal writer')
+    expect(() =>
+      table.append({
+        sessionId: 'session-1',
+        kind: 'event',
+        name: 'execution/tool_outcome',
+        payload: { name: 'execution/tool_outcome', data: { reconstructed: true } }
+      })
+    ).toThrow('reserved for the strict Execution Journal writer')
+    expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toEqual([])
+  } finally {
+    db.close()
+  }
+})
+
+itIfSqlite('rejects Journal commits owned by an active host transaction', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const table = new DeepChatTapeEntriesTable(db)
+    table.createTable()
+    const service = new ExecutionJournalService({ getEntryStore: () => table })
+
+    db.transaction(() => {
+      expect(() =>
+        service.commitRunStarted({
+          sessionId: 'session-1',
+          runId: RUN_IDS.completed,
+          messageId: 'assistant-1',
+          runKind: 'loop'
+        })
+      ).toThrow('inside an active host transaction')
+    })()
+
+    expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toEqual([])
+  } finally {
+    db.close()
+  }
 })

@@ -145,9 +145,12 @@ describe('AgentToolManager read routing', () => {
 
   it('commits process mutations after local validation and before the utility target', async () => {
     const order: string[] = []
-    const write = vi.spyOn(backgroundExecSessionManager, 'write').mockImplementation(async () => {
-      order.push('target')
-    })
+    const write = vi
+      .spyOn(backgroundExecSessionManager, 'write')
+      .mockImplementation(async (_conversationId, _sessionId, _data, _eof, beforeMutation) => {
+        beforeMutation?.()
+        order.push('target')
+      })
     const commitDispatch = vi.fn((input) => {
       order.push('commit')
       expect(input).toEqual({
@@ -182,6 +185,7 @@ describe('AgentToolManager read routing', () => {
       expect(invalidCommit).not.toHaveBeenCalled()
 
       write.mockClear()
+      order.splice(0)
       const journalError = new Error('journal unavailable')
       await expect(
         manager.callTool(
@@ -195,7 +199,8 @@ describe('AgentToolManager read routing', () => {
           }
         )
       ).rejects.toBe(journalError)
-      expect(write).not.toHaveBeenCalled()
+      expect(write).toHaveBeenCalledOnce()
+      expect(order).toEqual([])
     } finally {
       write.mockRestore()
     }

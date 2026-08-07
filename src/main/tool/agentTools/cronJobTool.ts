@@ -261,6 +261,9 @@ export class CronJobToolHandler {
   ): Promise<AgentToolCallResult> {
     const input = cronJobToolSchema.parse(args)
     const listCronJobs = () => this.cronJobs.listCronJobs()
+    const beforeMutation = options.beforeMutation
+      ? () => options.beforeMutation?.(input)
+      : undefined
 
     if (input.action === 'list') {
       const result = await listCronJobs()
@@ -301,8 +304,7 @@ export class CronJobToolHandler {
 
     if (input.action === 'create') {
       const createInput = toCreateInput(input)
-      options.beforeMutation?.(input)
-      const job = await this.cronJobs.upsertCronJob(createInput)
+      const job = await this.cronJobs.upsertCronJob(createInput, beforeMutation)
       return createResult({ job }, `Created scheduled task "${job.name}".`, false, {
         job: toModelJob(job)
       })
@@ -316,8 +318,7 @@ export class CronJobToolHandler {
         throw new Error(`Cron job not found: ${jobId}`)
       }
       const updateInput = toUpdateInput(existing, input.patch)
-      options.beforeMutation?.(input)
-      const job = await this.cronJobs.upsertCronJob(updateInput)
+      const job = await this.cronJobs.upsertCronJob(updateInput, beforeMutation)
       return createResult({ job }, `Updated scheduled task "${job.name}".`, false, {
         job: toModelJob(job)
       })
@@ -325,8 +326,11 @@ export class CronJobToolHandler {
 
     if (input.action === 'pause' || input.action === 'resume') {
       const jobId = requireJobId(input)
-      options.beforeMutation?.(input)
-      const job = await this.cronJobs.toggleCronJob(jobId, input.action === 'resume')
+      const job = await this.cronJobs.toggleCronJob(
+        jobId,
+        input.action === 'resume',
+        beforeMutation
+      )
       return createResult(
         { job },
         `${input.action === 'resume' ? 'Resumed' : 'Paused'} scheduled task "${job.name}".`,
@@ -337,14 +341,12 @@ export class CronJobToolHandler {
 
     if (input.action === 'delete') {
       const jobId = requireJobId(input)
-      options.beforeMutation?.(input)
-      await this.cronJobs.deleteCronJob(jobId)
+      await this.cronJobs.deleteCronJob(jobId, beforeMutation)
       return createResult({ deleted: true, jobId: input.jobId }, 'Deleted scheduled task.')
     }
 
     const jobId = requireJobId(input)
-    options.beforeMutation?.(input)
-    const run = await this.cronJobs.runCronJobNow(jobId)
+    const run = await this.cronJobs.runCronJobNow(jobId, beforeMutation)
     return createResult({ run }, `Started scheduled task run ${run.id}.`)
   }
 }

@@ -698,14 +698,17 @@ export class SessionTranscript {
     return sourceRecords.length
   }
 
-  recoverPendingMessages(): number {
+  recoverPendingMessages(options?: {
+    forceRecoverMessagesBySession?: ReadonlyMap<string, ReadonlySet<string>>
+  }): number {
     const pendingRows = this.database.deepchatMessagesTable.getByStatus('pending')
     const recoveredRecords = new Map(
       this.toRecords(pendingRows).map((record) => [record.id, record])
     )
     let recoveredCount = 0
     for (const row of pendingRows) {
-      if (this.shouldKeepPending(row)) {
+      const forceRecovery = options?.forceRecoverMessagesBySession?.get(row.session_id)?.has(row.id)
+      if (!forceRecovery && this.shouldKeepPending(row)) {
         continue
       }
       if (row.role === 'assistant') {

@@ -26,8 +26,8 @@ Two contracts are missing from the current execution path:
    Execution Journal facts.
 2. **Commit contract:** a potentially side-effecting call needs a durable dispatch fact after every
    local refusal gate and immediately before the resolved invocation. A known outcome needs a
-   durable outcome fact before it is projected to transcript, model context, status, or UI. A Run
-   terminal fact needs to precede terminal projections.
+   durable outcome fact before the harness delivers its finalized result to transcript, model
+   context, or UI. A Run terminal fact needs to precede terminal projections.
 
 Without these contracts, a restart cannot distinguish a call that was never authorized from a call
 that may have reached its target.
@@ -40,8 +40,8 @@ that may have reached its target.
    and a different payload is corruption.
 4. Place dispatch commits after local validation, permission, policy, binding, target, and abort
    gates and immediately before the resolved side-effect boundary.
-5. Commit known tool outcomes before downstream transcript, model-context, and UI result
-   projections, and terminal Run facts before terminal transcript, status, and UI projections.
+5. Commit known tool outcomes before harness-owned transcript, model-context, and UI result
+   delivery, and terminal Run facts before terminal transcript, status, and UI projections.
 6. Classify recovery candidates at startup as `not_dispatched`, `completed`, `indeterminate`, or
    `corruption`, without automatically retrying a tool.
 7. Preserve all existing Context Tape behavior and compatibility.
@@ -90,13 +90,25 @@ from default Context views, search, and recovery diagnostics.
   side-effect boundary.
 - A dispatch commit returning an existing claim prevents a second physical invocation.
 - `tool_outcome` is valid only for an operation with a native `dispatch_committed` fact.
-- A known outcome is committed before it mutates downstream transcript, model-context, or UI
-  projections.
+- A known outcome is committed before the harness mutates transcript, model-context, or UI with the
+  finalized tool result. Target-owned live/runtime events emitted during an Agent tool invocation
+  are part of that claimed invocation and are not T2-gated projections.
 - `run_terminal` is committed before transcript status, runtime status, terminal hooks, or UI
   completion/failure projection advances.
 - Journal persistence failure propagates through the Run. It is never reduced to a warning.
+- A Journal failure still releases claimed inputs and exits transient runtime states. If no matching
+  terminal fact was committed, cleanup must not manufacture a terminal transcript or UI projection.
+- If a deferred Run cannot commit its terminal after T1, the originating interaction is parked. The
+  harness may persist a non-terminal projection of its T2 result, or an explicit indeterminate
+  diagnostic when T2 is absent, solely to consume the approval and prevent replay. The assistant
+  message remains pending: no Run outcome metadata, terminal hook, stream terminal event, or
+  terminal message status is produced.
 - Same identity plus the same canonical fact is idempotent. Same identity plus a different canonical
   fact throws a typed corruption error.
+- Journal commits cannot run inside a host transaction whose rollback could erase the committed
+  receipt independently of the external effect.
+- Only the strict Journal writer may append names in the reserved `execution/*` namespace. Fork
+  merge and generic Context Tape append paths cannot copy or create those facts.
 - Legacy reconciliation and transcript backfill never create an `execution/*` v1 event.
 - Recovery never reuses an old `runId` and never automatically retries an indeterminate operation.
 - Context Tape facts, search projection, recall, anchors, and ViewManifest retain their current
@@ -122,6 +134,21 @@ message projection to users, but it must not turn that projection into evidence 
 tool. Reconciliation can later be completed only from external evidence or an explicit user action
 that starts a new Run.
 
+Invalid model-controlled operation identity or argument data before T1 rejects only that tool call.
+Persistence failures, conflicting facts, duplicate dispatches, and failures after T1 remain fatal to
+the Run. A committed `error` terminal may still be projected as that same error; a failed terminal
+commit only performs runtime cleanup and cannot be represented as a durable terminal outcome.
+Once an `error` or `aborted` terminal is committed, its outcome controls the matching finalizer even
+if the later projection failure has a different error shape.
+
+A deferred failure before T1 leaves its approval pending because the Journal proves no invocation
+crossed the side-effect boundary. A failure after T1 parks every interaction on the assistant
+message in memory and, where transcript storage remains available, removes their actionable UI
+state without terminalizing the message. On restart, `completed`, `indeterminate`, and `corruption`
+reports with an incomplete terminal force that pending message through the existing interrupted
+recovery path using its Session and message identity together. `not_dispatched` reports do not
+consume a resumable approval.
+
 ## Scope
 
 The first version covers:
@@ -138,6 +165,10 @@ Pure validation, permission prompts, question tools, context reads, ViewManifest
 operations that never cross a persistent or external side-effect boundary do not create a dispatch
 fact. Unknown MCP tools are treated conservatively because their remote behavior cannot be inferred
 from local annotations.
+
+Host-initiated MCP calls outside the DeepChat loop and deferred execution paths are outside v1 scope.
+This includes host capability probes and auxiliary UI/runtime reads; they do not participate in Run
+recovery until they execute through a journal-aware harness boundary.
 
 ## Compatibility
 
@@ -159,7 +190,7 @@ from local annotations.
    prevents a second target invocation.
 4. MCP and side-effecting Agent tool tests prove that all local rejection paths occur before T1 and
    that the target call occurs after T1.
-5. A failed outcome commit prevents transcript/model-context result projection.
+5. A failed outcome commit prevents harness-owned transcript/model-context result delivery.
 6. A failed terminal commit prevents terminal transcript/status/UI projection.
 7. Deferred approval execution uses a new UUID Run and follows the same T1, T2, and terminal order.
 8. Startup recovery classifies native v1 facts into the four required states and never invokes a
@@ -169,11 +200,19 @@ from local annotations.
 10. Relevant unit, native SQLite, failpoint, and real process restart tests pass.
 11. Existing Context Tape, loop, permission, and deferred execution regression suites remain green.
 12. No remote Git operation is performed.
+13. Generic append and fork merge cannot create native `execution/*` facts, and a Journal commit
+    attempted inside a host transaction fails before writing.
+14. Journal failures cannot leave the Session generating or claimed inputs unsettled, while cleanup
+    never fabricates an uncommitted terminal projection.
+15. A deferred terminal-commit failure after T1 cannot replay the approved interaction in-process
+    or after restart, and its parking projection does not publish a Run terminal state.
 
 ## Constraints
 
 - Journal writes remain synchronous with the existing SQLite transaction model so no asynchronous
   gap is introduced between a fact commit and its local side-effect boundary.
+- The strict writer requires transaction ownership. A caller must commit T1 after local preflight
+  and before opening its mutation transaction; the writer rejects an already-active host transaction.
 - The tool subsystem receives a per-call commit callback, not a global Tape dependency.
 - Fact payloads are canonical, versioned, and bounded. Raw invocation arguments, terminal error
   strings, structured MCP envelopes, and binary data are not duplicated. Prepared outcome text is
@@ -190,6 +229,9 @@ from local annotations.
 - Invocation-attempt identities inside one provider tool call.
 - Multi-writer continuation fencing or cross-process Run ownership.
 - A TaskRun envelope, graph scheduler, or replacement of the current harness.
+- Atomic delivery or automatic redelivery of sibling results after a parallel tool batch fails. That
+  requires a separate durable batch-delivery contract; v1 may retain committed sibling outcomes
+  without projecting them when another sibling fails closed.
 - Redesigning Context Tape, effective views, anchors, recall, ViewManifest, transcript storage, or
   provider attempt journaling.
 - GitHub issue creation, pull request creation, branch push, or release work.

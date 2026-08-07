@@ -64,6 +64,7 @@ import { resolveToolPermissionMode } from '@/tool/permission/permissionMode'
 import { segmentAssistantBlocksByProviderReplay } from './providerReplaySegments'
 import {
   CommittedToolOutcomeProjectionError,
+  ExecutionJournalCorruptionError,
   ExecutionJournalDuplicateDispatchError,
   ExecutionJournalError,
   boundExecutionJournalResponseText,
@@ -931,7 +932,7 @@ function commitDispatchedToolOutcome(
   if (!stagedResult.operation) {
     return stagedResult
   }
-  executionJournal.commitToolOutcome({
+  const receipt = executionJournal.commitToolOutcome({
     sessionId: io.sessionId,
     messageId: io.messageId,
     operation: stagedResult.operation,
@@ -941,6 +942,11 @@ function commitDispatchedToolOutcome(
       ? {}
       : { offloadPath: stagedResult.offloadPath })
   })
+  if (!receipt.created) {
+    throw new ExecutionJournalCorruptionError(
+      `Execution Journal outcome already existed for tool operation ${stagedResult.toolCallId}.`
+    )
+  }
   return { ...stagedResult, outcomeCommitted: true }
 }
 
@@ -1023,12 +1029,15 @@ function applyFinalizedToolResults(params: {
   } = params
   const interactions: ToolBatchInteraction[] = []
 
+  if (stagedResults.length !== fittedResults.length) {
+    throw new Error(
+      `Tool result fitting returned ${fittedResults.length} results for ${stagedResults.length} staged calls.`
+    )
+  }
+
   for (let index = 0; index < stagedResults.length; index += 1) {
     const stagedResult = stagedResults[index]
     const fittedResult = fittedResults[index]
-    if (!fittedResult) {
-      continue
-    }
 
     if (appendToConversation) {
       conversation.push({
@@ -1823,6 +1832,7 @@ async function runToolCall(params: {
     }
 
     const subagentState = extractSubagentToolState(toolRawData)
+    const rawResponseText = toolResponseToText(toolRawData.content)
 
     const imagePreviews =
       toolRawData.imagePreviews ??
@@ -1868,6 +1878,10 @@ async function runToolCall(params: {
     const stagedIsError = preparedResult.kind === 'tool_error' || toolRawData.isError === true
 
     const activatedSkill = extractActivatedSkillAfterCall(completedToolCall.name, toolRawData)
+    if (activatedSkill) {
+      await controls?.activateSkill?.(activatedSkill)
+      io.abortSignal.throwIfAborted()
+    }
     const stagedResult = commitDispatchedToolOutcome(
       {
         toolCallId: completedToolCall.id,
@@ -1899,14 +1913,10 @@ async function runToolCall(params: {
       updateSubagentToolCallBlock(
         batchToolCallBlocks,
         completedToolCall.id,
-        responseText,
+        rawResponseText,
         subagentState.subagentProgress,
         subagentState.subagentFinal
       )
-    }
-    if (activatedSkill) {
-      await controls?.activateSkill?.(activatedSkill)
-      io.abortSignal.throwIfAborted()
     }
 
     return {
@@ -1915,7 +1925,12 @@ async function runToolCall(params: {
       toolsChanged: Boolean(activatedSkill)
     }
   } catch (err) {
-    if (isExecutionJournalError(err)) throw err
+    if (isExecutionJournalError(err)) {
+      if (err.code === 'invalid_fact' && !dispatchedOperation) {
+        return buildToolErrorOutcome(execution, err)
+      }
+      throw err
+    }
     if (committedOutcome?.operation) {
       throw new CommittedToolOutcomeProjectionError(committedOutcome.operation, { cause: err })
     }

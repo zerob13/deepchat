@@ -80,7 +80,8 @@ export class MemoryRowMutations {
     agentId: string,
     kind: string,
     content: string,
-    scope: MemoryScope
+    scope: MemoryScope,
+    beforeMutation?: () => void
   ): AgentMemoryRow | undefined {
     const normalizedScope = normalizeMemoryScope(scope)
     const normalizedContent = normalizeForProvenanceV2(content)
@@ -101,6 +102,7 @@ export class MemoryRowMutations {
       return undefined
 
     try {
+      beforeMutation?.()
       let rekeyed = false
       this.ports.repository.runInTransaction(() => {
         rekeyed = this.ports.repository.rekeyProvenance(agentId, legacyOwner.id, legacyKey, v2Key)
@@ -262,11 +264,13 @@ export class MemoryRowMutations {
   enrichEquivalentClaimTemporalMetadata(
     agentId: string,
     existing: AgentMemoryRow,
-    incoming: MemoryTemporalMetadata
+    incoming: MemoryTemporalMetadata,
+    beforeMutation?: () => void
   ): boolean {
     const current = temporalMetadataFromRow(existing)
     const next = reconcileEquivalentClaimTemporalMetadata(current, incoming)
     if (memoryTemporalMetadataEquals(current, next)) return false
+    beforeMutation?.()
     return this.ports.repository.updateUserMetadataIfRevision({
       agentId,
       id: existing.id,

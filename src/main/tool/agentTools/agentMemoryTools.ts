@@ -172,7 +172,6 @@ export class AgentMemoryToolHandler {
     if (toolName === MEMORY_TOOL_NAMES.remember) {
       const args = memoryToolSchemas[toolName].parse(rawArgs)
       const session = await this.sessions.resolveConversationSessionInfo(conversationId)
-      options.beforeMutation?.(args)
       const outcome = await this.memory.rememberMemory(
         agentId,
         {
@@ -182,7 +181,8 @@ export class AgentMemoryToolHandler {
           importance: args.importance
         },
         conversationId,
-        session ? { providerId: session.providerId, modelId: session.modelId } : null
+        session ? { providerId: session.providerId, modelId: session.modelId } : null,
+        options.beforeMutation ? () => options.beforeMutation?.(args) : undefined
       )
       if (outcome.action === 'noop' && outcome.reason === 'forgotten') {
         return createMemoryResult(
@@ -208,8 +208,11 @@ export class AgentMemoryToolHandler {
     }
 
     const args = memoryToolSchemas[MEMORY_TOOL_NAMES.forget].parse(rawArgs)
-    options.beforeMutation?.(args)
-    const result = await this.memory.forgetMemory(agentId, args.memoryId)
+    const result = await this.memory.forgetMemory(
+      agentId,
+      args.memoryId,
+      options.beforeMutation ? () => options.beforeMutation?.(args) : undefined
+    )
     const ok = result.action === 'applied'
     return createMemoryResult(
       toolName,

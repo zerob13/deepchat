@@ -156,6 +156,7 @@ describe('DeepChat tool adapters', () => {
     const permissionMode: PermissionMode = 'auto_approve'
     const abortController = new AbortController()
     const onProgress = vi.fn()
+    const commitDispatch = vi.fn()
 
     await port.preCheck(call, { permissionMode })
     await port.execute(call, {
@@ -164,7 +165,8 @@ describe('DeepChat tool adapters', () => {
       permissionMode,
       activeSkillNames: ['skill-a'],
       agentId: 'agent-1',
-      enabledMcpServerIds: ['mcp-1']
+      enabledMcpServerIds: ['mcp-1'],
+      commitDispatch
     })
 
     expect(preCheckToolPermission).toHaveBeenCalledWith(call, { permissionMode })
@@ -174,8 +176,25 @@ describe('DeepChat tool adapters', () => {
       permissionMode,
       activeSkillNames: ['skill-a'],
       agentId: 'agent-1',
-      enabledMcpServerIds: ['mcp-1']
+      enabledMcpServerIds: ['mcp-1'],
+      commitDispatch
     })
+  })
+
+  it('fails closed before execution when the dispatch capability is missing', async () => {
+    const callTool = vi.fn()
+    const port = createToolExecutionPort(createToolService({ callTool }))
+    const call: MCPToolCall = {
+      id: 'call-1',
+      type: 'function',
+      function: { name: 'write', arguments: '{}' },
+      conversationId: 'session-1'
+    }
+
+    await expect(port.execute(call, {})).rejects.toMatchObject({
+      code: 'persistence_failed'
+    })
+    expect(callTool).not.toHaveBeenCalled()
   })
 
   it('delegates success, error, screenshot fallback, preparation and batch fitting', async () => {

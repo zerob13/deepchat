@@ -45,6 +45,11 @@ export type DeferredToolExecutionResult = {
   requiresPermission?: boolean
   permissionRequest?: PendingToolInteraction['permission']
   terminalError?: string
+  journalFailure?: {
+    error: ExecutionJournalError
+    dispatchCommitted: boolean
+    outcomeCommitted: boolean
+  }
 }
 
 export interface DeferredToolExecutorDependencies {
@@ -120,9 +125,11 @@ export class DeferredToolExecutor {
     let runId: string | null = null
     let runStartedCommitted = false
     let terminalCommitAttempted = false
+    let terminalCommitted = false
     let dispatchCommitted = false
     let outcomeCommitted = false
     let returnedToolResponse: MCPToolResponse | null = null
+    let committedOutcomeProjection: DeferredToolExecutionResult | null = null
     const pendingOutcomeProjections: ToolOutcomeProjection[] = []
 
     const operation = (): ExecutionOperationIdentity => {
@@ -165,6 +172,7 @@ export class DeferredToolExecutor {
           `Execution Journal terminal for deferred tool Run ${committedRunId} already existed.`
         )
       }
+      terminalCommitted = true
     }
     const releaseOutcomeProjections = (): void => {
       if (pendingOutcomeProjections.length === 0) return
@@ -211,30 +219,62 @@ export class DeferredToolExecutor {
         )
       }
       outcomeCommitted = true
+      committedOutcomeProjection = {
+        responseText: input.responseText,
+        isError: input.isError,
+        invoked,
+        ...(input.offloadPath === undefined ? {} : { offloadPath: input.offloadPath })
+      }
       releaseOutcomeProjections()
     }
     const settleFailClosed = (error: unknown): DeferredToolExecutionResult => {
-      let terminalError = error instanceof Error ? error.message : String(error)
+      const journalError = isExecutionJournalError(error)
+        ? error
+        : new ExecutionJournalError(
+            error instanceof Error ? error.message : String(error),
+            'persistence_failed',
+            { cause: error }
+          )
+      let failure = journalError
       if (runStartedCommitted && !terminalCommitAttempted) {
         try {
           commitRunTerminal({
             outcome: 'error',
             stopReason: 'journal_error',
-            errorMessage: terminalError
+            errorMessage: journalError.message
           })
         } catch (terminalCommitError) {
-          terminalError = `${terminalError} Terminal journal commit also failed: ${
-            terminalCommitError instanceof Error
-              ? terminalCommitError.message
-              : String(terminalCommitError)
-          }`
+          failure = new ExecutionJournalError(
+            `${journalError.message} Terminal journal commit also failed: ${
+              terminalCommitError instanceof Error
+                ? terminalCommitError.message
+                : String(terminalCommitError)
+            }`,
+            'persistence_failed',
+            { cause: new AggregateError([journalError, terminalCommitError]) }
+          )
+        }
+      }
+      if (!terminalCommitted) {
+        return {
+          ...(committedOutcomeProjection ?? {
+            responseText:
+              'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.',
+            isError: true,
+            invoked
+          }),
+          journalFailure: {
+            error: failure,
+            dispatchCommitted,
+            outcomeCommitted
+          }
         }
       }
       return {
-        responseText: `Error: ${terminalError}`,
+        responseText: `Error: ${journalError.message}`,
         isError: true,
         invoked,
-        terminalError
+        terminalError: journalError.message
       }
     }
 
@@ -361,6 +401,11 @@ export class DeferredToolExecutor {
       if (rawData.requiresPermission && dispatchCommitted) {
         const terminalError = `Tool ${toolName} requested permission after dispatch.`
         commitToolOutcome({ responseText: `Error: ${terminalError}`, isError: true })
+        committedOutcomeProjection = {
+          responseText: `Error: ${terminalError}`,
+          isError: true,
+          invoked
+        }
         commitRunTerminal({
           outcome: 'error',
           stopReason: 'post_dispatch_permission',
@@ -452,12 +497,13 @@ export class DeferredToolExecutor {
       throwIfAbortRequested(deferredAbortSignal)
       if (prepared.kind === 'tool_error') {
         commitToolOutcome({ responseText: prepared.message, isError: true })
-        commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
-        return {
+        committedOutcomeProjection = {
           responseText: prepared.message,
           isError: true,
           invoked
         }
+        commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
+        return committedOutcomeProjection
       }
       const isError = Boolean(rawData.isError)
       commitToolOutcome({
@@ -465,8 +511,7 @@ export class DeferredToolExecutor {
         isError,
         ...(prepared.offloadPath === undefined ? {} : { offloadPath: prepared.offloadPath })
       })
-      commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
-      return {
+      committedOutcomeProjection = {
         responseText: prepared.content,
         isError,
         invoked,
@@ -478,6 +523,8 @@ export class DeferredToolExecutor {
         rtkFallbackReason: rawData.rtkFallbackReason,
         imagePreviews
       }
+      commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
+      return committedOutcomeProjection
     } catch (error) {
       if (isExecutionJournalError(error)) {
         return settleFailClosed(error)
@@ -509,9 +556,22 @@ export class DeferredToolExecutor {
       try {
         if (dispatchCommitted && !outcomeCommitted) {
           commitToolOutcome({ responseText: `Error: ${errorText}`, isError: true })
+          committedOutcomeProjection = {
+            responseText: `Error: ${errorText}`,
+            isError: true,
+            invoked
+          }
         }
         if (runStartedCommitted && !terminalCommitAttempted) {
-          commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
+          commitRunTerminal(
+            dispatchCommitted
+              ? { outcome: 'completed', stopReason: 'tool_result' }
+              : {
+                  outcome: 'error',
+                  stopReason: 'pre_dispatch_error',
+                  errorMessage: errorText
+                }
+          )
         }
       } catch (journalError) {
         if (isExecutionJournalError(journalError)) {

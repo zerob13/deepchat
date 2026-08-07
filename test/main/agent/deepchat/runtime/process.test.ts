@@ -804,7 +804,7 @@ describe('processStream', () => {
       expect(tapeToolFactWriter.appendToolFact).not.toHaveBeenCalled()
     })
 
-    it('fails before a paused terminal commit when an earlier tool block is unresolved', async () => {
+    it('normalizes an inherited unresolved block before a later interaction pause', async () => {
       const order: string[] = []
       observeCommitOrder(order)
       const coreStream = vi.fn(async function* () {
@@ -845,23 +845,16 @@ describe('processStream', () => {
         })
       )
 
-      expect(result).toMatchObject({
-        status: 'error',
-        stopReason: 'provider_error',
-        errorMessage: expect.stringContaining('Paused stream invariant violated')
-      })
+      expect(result.status).toBe('paused')
       expect(commitRunTerminal).toHaveBeenCalledOnce()
       expect(commitRunTerminal).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'error', stopReason: 'provider_error' })
+        expect.objectContaining({ outcome: 'paused', stopReason: 'interaction' })
       )
-      expect(commitRunTerminal).not.toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'paused' })
+      const finalPauseCall = messageStore.updateAssistantContent.mock.calls.findLast(
+        (call) => typeof call[2] === 'string'
       )
-      expect(order.indexOf('journal:terminal')).toBeLessThan(order.indexOf('message:error'))
-      expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
-        'chat.stream.completed',
-        expect.anything()
-      )
+      expect(finalPauseCall?.[1][0]).toMatchObject({ type: 'tool_call', status: 'error' })
+      expect(order.indexOf('journal:terminal')).toBeLessThan(order.lastIndexOf('message:update'))
     })
 
     it('accounts for executed tools before pausing a mixed tool batch', async () => {

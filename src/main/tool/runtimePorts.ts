@@ -109,22 +109,27 @@ export interface AgentMemoryToolPort {
       importance?: number
     },
     sourceSession?: string | null,
-    model?: { providerId: string; modelId: string } | null
+    model?: { providerId: string; modelId: string } | null,
+    beforeMutation?: () => void
   ): Promise<MemoryWriteOutcome>
   recallMemory(
     agentId: string,
     query: string,
     scopeContext?: MemoryScopeContext
   ): Promise<Array<{ id: string; kind: string; content: string }>>
-  forgetMemory(agentId: string, memoryId: string): Promise<MemoryCommandResult>
+  forgetMemory(
+    agentId: string,
+    memoryId: string,
+    beforeMutation?: () => void
+  ): Promise<MemoryCommandResult>
 }
 
 export interface AgentCronJobToolPort {
   listCronJobs(): Promise<{ jobs: CronJob[]; schedulerStatus: CronJobsSchedulerStatus }>
-  upsertCronJob(input: AgentToolCronJobUpsertInput): Promise<CronJob>
-  deleteCronJob(id: string): Promise<void>
-  toggleCronJob(id: string, enabled: boolean): Promise<CronJob>
-  runCronJobNow(id: string): Promise<CronJobRun>
+  upsertCronJob(input: AgentToolCronJobUpsertInput, beforeMutation?: () => void): Promise<CronJob>
+  deleteCronJob(id: string, beforeMutation?: () => void): Promise<void>
+  toggleCronJob(id: string, enabled: boolean, beforeMutation?: () => void): Promise<CronJob>
+  runCronJobNow(id: string, beforeMutation?: () => void): Promise<CronJobRun>
   listCronJobRuns(jobId: string, limit?: number): Promise<CronJobRun[]>
   previewCronSchedule(input: {
     cronExpr: string

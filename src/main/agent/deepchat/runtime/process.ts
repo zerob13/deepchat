@@ -315,6 +315,23 @@ function isTerminalPendingStatus(status: AssistantMessageBlock['status']): boole
   return status === 'pending' || status === 'loading'
 }
 
+function normalizeInheritedUnresolvedBlocks(blocks: AssistantMessageBlock[]): boolean {
+  let changed = false
+  for (const block of blocks) {
+    if (!isTerminalPendingStatus(block.status)) continue
+    if (
+      block.type === 'action' &&
+      block.status === 'pending' &&
+      (block.action_type === 'tool_call_permission' || block.action_type === 'question_request')
+    ) {
+      continue
+    }
+    block.status = 'error'
+    changed = true
+  }
+  return changed
+}
+
 function isUserCanceledAlreadyFinalized(io: IoParams): boolean {
   const message = io.messageStore.getMessage(io.messageId)
   if (!message || message.role !== 'assistant' || message.status !== 'error') {
@@ -820,6 +837,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
   }
   if (Array.isArray(initialBlocks) && initialBlocks.length > 0) {
     state.blocks = JSON.parse(JSON.stringify(initialBlocks)) as typeof state.blocks
+    state.dirty = normalizeInheritedUnresolvedBlocks(state.blocks) || state.dirty
   }
   state.metadata.runId = run.runId
   const echo = startEcho(state, io)

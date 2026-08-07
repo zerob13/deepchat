@@ -397,6 +397,32 @@ describe('SessionTape forks', () => {
     }
   })
 
+  itIfSqlite('does not copy Execution Journal facts from a fork', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      const service = new SessionTape({
+        deepchatTapeEntriesTable: table,
+        deepchatSessionsTable: { getSummaryState: vi.fn().mockReturnValue(null) }
+      } as any)
+
+      const fork = service.createFork('parent', 'journal-isolation')
+      table.appendExecutionJournalEvent({
+        sessionId: fork.forkSessionId,
+        name: 'execution/run_started',
+        data: { marker: 'must-not-merge' }
+      })
+
+      expect(service.mergeFork('parent', 'journal-isolation')).toBe(0)
+      expect(
+        table.getBySession('parent').filter((entry) => entry.name?.startsWith('execution/'))
+      ).toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
   it('keeps a failed fork cleanup isolated and makes its discard receipt fail closed', () => {
     const { table, entries } = createTapeTableMock()
     const projectionTable = {

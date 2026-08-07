@@ -528,6 +528,90 @@ describe('dispatch', () => {
       expect(conversation).toHaveLength(4)
     })
 
+    it('rejects one invalid pre-dispatch fact without cancelling parallel siblings', async () => {
+      const tools = [
+        makeTool('invalid', TOOL_EXECUTION.read.parallel),
+        makeTool('valid', TOOL_EXECUTION.read.parallel)
+      ]
+      const toolService = createMockToolService()
+      const validTarget = vi.fn()
+      const invalidTarget = vi.fn()
+      const conversation: any[] = [{ role: 'user', content: 'Run both' }]
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        options?.commitDispatch?.({
+          toolName: request.function.name,
+          toolSource: 'mcp',
+          normalizedArguments:
+            request.function.name === 'invalid' ? { value: Number.POSITIVE_INFINITY } : {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        if (request.function.name === 'invalid') invalidTarget()
+        else validTarget()
+        return {
+          content: `${request.function.name}-result`,
+          rawData: {
+            toolCallId: request.id,
+            content: `${request.function.name}-result`,
+            isError: false
+          }
+        }
+      })
+      state.blocks.push(
+        ...['invalid', 'valid'].map((name) => ({
+          type: 'tool_call' as const,
+          content: '',
+          status: 'pending' as const,
+          timestamp: Date.now(),
+          tool_call: { id: `tc-${name}`, name, params: '{}', response: '' }
+        }))
+      )
+      state.completedToolCalls = ['invalid', 'valid'].map((name) => ({
+        id: `tc-${name}`,
+        name,
+        arguments: '{}'
+      }))
+      const commitDispatch = vi.fn((input) => {
+        if (input.toolName === 'invalid') {
+          throw new ExecutionJournalError('normalizedArguments must be JSON serializable.', 'invalid_fact')
+        }
+        return { sessionId: 's1', entryId: 1, created: true }
+      })
+
+      await expect(
+        settleToolBatch(
+          state,
+          conversation,
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024,
+          {
+            executionJournal: {
+              commitDispatch,
+              commitToolOutcome: vi.fn(() => ({ sessionId: 's1', entryId: 2, created: true }))
+            }
+          },
+          'openai'
+        )
+      ).resolves.toMatchObject({ executed: 2 })
+
+      expect(invalidTarget).not.toHaveBeenCalled()
+      expect(validTarget).toHaveBeenCalledOnce()
+      expect(conversation.at(-2)).toMatchObject({
+        tool_call_id: 'tc-invalid',
+        content: expect.stringContaining('must be JSON serializable')
+      })
+      expect(conversation.at(-1)).toMatchObject({
+        tool_call_id: 'tc-valid',
+        content: 'valid-result'
+      })
+    })
+
     it('keeps a dispatched result unprojected when its outcome commit fails', async () => {
       const tools = [makeTool('mutate')]
       const toolService = createMockToolService()
@@ -582,6 +666,58 @@ describe('dispatch', () => {
       expect(conversation).toHaveLength(2)
       expect(state.blocks[0].tool_call?.response).toBe('')
       expect(state.blocks[0].status).toBe('pending')
+    })
+
+    it('treats an existing outcome receipt as corruption before projection', async () => {
+      const tools = [makeTool('mutate')]
+      const toolService = createMockToolService()
+      const conversation: any[] = [{ role: 'user', content: 'Change it' }]
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        options?.commitDispatch?.({
+          toolName: request.function.name,
+          toolSource: 'mcp',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: 'mutate' }
+        })
+        return {
+          content: 'changed',
+          rawData: { toolCallId: request.id, content: 'changed', isError: false }
+        }
+      })
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: { id: 'tc1', name: 'mutate', params: '{}', response: '' }
+      })
+      state.completedToolCalls = [{ id: 'tc1', name: 'mutate', arguments: '{}' }]
+
+      await expect(
+        settleToolBatch(
+          state,
+          conversation,
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024,
+          {
+            executionJournal: {
+              commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
+              commitToolOutcome: vi.fn(() => ({ sessionId: 's1', entryId: 2, created: false }))
+            }
+          },
+          'openai'
+        )
+      ).rejects.toMatchObject({ code: 'conflicting_fact' })
+
+      expect(conversation).toHaveLength(2)
+      expect(state.blocks[0].tool_call?.response).toBe('')
     })
 
     it('commits a known target failure before projecting the tool error', async () => {
@@ -2940,7 +3076,7 @@ describe('dispatch', () => {
       expect(result.toolsChanged).toBe(true)
     })
 
-    it('does not replace a committed outcome when skill activation projection fails', async () => {
+    it('records skill activation preparation failures as the tool outcome', async () => {
       const tools = [makeTool('skill_view')]
       const toolService = createMockToolService()
       const commitToolOutcome = vi.fn(() => ({ sessionId: 's1', entryId: 2, created: true }))
@@ -2980,34 +3116,35 @@ describe('dispatch', () => {
         { id: 'tc1', name: 'skill_view', arguments: '{"name":"deepchat-settings"}' }
       ]
 
-      await expect(
-        settleToolBatch(
-          state,
-          [],
-          0,
-          tools,
-          toolService,
-          'gpt-4',
-          io,
-          'full_access',
-          new ToolOutputGuard(),
-          32000,
-          1024,
-          {
-            activateSkill: vi.fn().mockRejectedValue(new Error('activation failed')),
-            executionJournal: {
-              commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
-              commitToolOutcome
-            }
+      await settleToolBatch(
+        state,
+        [],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        {
+          activateSkill: vi.fn().mockRejectedValue(new Error('activation failed')),
+          executionJournal: {
+            commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
+            commitToolOutcome
           }
-        )
-      ).rejects.toMatchObject({
-        name: 'CommittedToolOutcomeProjectionError',
-        code: 'projection_failed'
-      })
+        }
+      )
 
       expect(commitToolOutcome).toHaveBeenCalledOnce()
-      expect(state.blocks[0].tool_call?.response).toBe('')
+      expect(commitToolOutcome).toHaveBeenCalledWith(
+        expect.objectContaining({ responseText: 'Error: activation failed', isError: true })
+      )
+      expect(state.blocks[0]).toMatchObject({
+        status: 'error',
+        tool_call: { response: 'Error: activation failed' }
+      })
     })
 
     it('includes reasoning_content when interleaved compatibility is enabled', async () => {

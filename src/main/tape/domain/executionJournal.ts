@@ -184,14 +184,21 @@ export class CommittedToolOutcomeProjectionError extends ExecutionJournalError {
   }
 }
 
+export function isExecutionJournalReservedName(name: unknown): name is string {
+  return typeof name === 'string' && name.startsWith('execution/')
+}
+
 export function boundExecutionJournalResponseText(responseText: string): string {
   if (responseText.length <= MAX_EXECUTION_JOURNAL_RESPONSE_CHARS) {
     return responseText
   }
-  return `${responseText.slice(
-    0,
+  let sliceEnd =
     MAX_EXECUTION_JOURNAL_RESPONSE_CHARS - EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER.length
-  )}${EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER}`
+  const lastCodeUnit = responseText.charCodeAt(sliceEnd - 1)
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
+    sliceEnd -= 1
+  }
+  return `${responseText.slice(0, sliceEnd)}${EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER}`
 }
 
 export function isExecutionJournalError(error: unknown): error is ExecutionJournalError {
@@ -696,10 +703,10 @@ type MutableRecoveryRun = {
   sessionId: string
   runId: string
   messageId: string | null
-  starts: ExecutionRunStartedFact[]
-  dispatches: Map<string, ExecutionDispatchFact>
-  outcomes: Map<string, ExecutionToolOutcomeFact>
-  terminals: ExecutionRunTerminalFact[]
+  starts: Array<Pick<ExecutionRunStartedFact, 'entryId'>>
+  dispatches: Map<string, Pick<ExecutionDispatchFact, 'entryId'>>
+  outcomes: Map<string, Pick<ExecutionToolOutcomeFact, 'entryId'>>
+  terminals: Array<Pick<ExecutionRunTerminalFact, 'entryId' | 'outcome'>>
   reasons: Set<string>
 }
 
@@ -721,7 +728,7 @@ function createMutableRecoveryRun(sessionId: string, runId: string): MutableReco
 }
 
 export function classifyExecutionJournalRows(
-  rows: readonly DeepChatTapeEntryRow[]
+  rows: Iterable<DeepChatTapeEntryRow>
 ): ExecutionRecoveryReport[] {
   const runs = new Map<string, MutableRecoveryRun>()
   const getRun = (sessionId: string, runId: string) => {
@@ -744,23 +751,23 @@ export function classifyExecutionJournalRows(
         run.reasons.add('message_identity_mismatch')
       }
       if (fact.type === 'execution/run_started') {
-        run.starts.push(fact)
+        run.starts.push({ entryId: fact.entryId })
       } else if (fact.type === 'execution/dispatch_committed') {
         const operationKey = buildExecutionOperationKey(fact.operation)
         if (run.dispatches.has(operationKey)) {
           run.reasons.add('duplicate_dispatch')
         } else {
-          run.dispatches.set(operationKey, fact)
+          run.dispatches.set(operationKey, { entryId: fact.entryId })
         }
       } else if (fact.type === 'execution/tool_outcome') {
         const operationKey = buildExecutionOperationKey(fact.operation)
         if (run.outcomes.has(operationKey)) {
           run.reasons.add('duplicate_outcome')
         } else {
-          run.outcomes.set(operationKey, fact)
+          run.outcomes.set(operationKey, { entryId: fact.entryId })
         }
       } else {
-        run.terminals.push(fact)
+        run.terminals.push({ entryId: fact.entryId, outcome: fact.outcome })
       }
     } catch (error) {
       const sessionId = row.session_id || '<invalid-session>'

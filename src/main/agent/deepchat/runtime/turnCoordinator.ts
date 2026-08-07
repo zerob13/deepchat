@@ -904,11 +904,72 @@ export class TurnCoordinator {
         ...(attachmentPreparation ? { attachmentPreparation } : {})
       })
     } catch (err) {
-      if (isExecutionJournalError(err) || isCommittedRunProjectionError(err)) throw err
-      const aborted = isAbortError(err) || preStreamAbortSignal.aborted
+      const committedProjectionError = isCommittedRunProjectionError(err) ? err : null
+      const committedErrorTerminal =
+        committedProjectionError?.terminal.outcome === 'error'
+          ? committedProjectionError.terminal
+          : null
+      const committedAbortTerminal =
+        committedProjectionError?.terminal.outcome === 'aborted'
+          ? committedProjectionError.terminal
+          : null
+      const errorToProject = committedProjectionError?.cause ?? err
+      const observeRejectedTurn = (error: unknown): void => {
+        try {
+          this.ports.memoryIngestionObserver.afterTurnSettled({
+            session: instance.getMemorySessionHandle(),
+            origin: 'initial',
+            outcome: { kind: 'thrown', error }
+          })
+        } catch (observerError) {
+          console.warn('[DeepChatAgent] failed to observe rejected turn:', observerError)
+        }
+      }
+      if (
+        isExecutionJournalError(err) ||
+        (committedProjectionError && !committedErrorTerminal && !committedAbortTerminal)
+      ) {
+        if (claimedInput && !claimedInput.disposition) {
+          try {
+            if (streamRunId) {
+              claimedInput.settle({ kind: 'consume' })
+            } else if (isSteerClaim || !userMessageId) {
+              claimedInput.settle({ kind: 'release-before-user-fact' })
+            } else {
+              this.rollbackPendingInputTurn(sessionId, userMessageId, instance)
+              userMessageId = null
+              assistantMessageId = null
+              claimedInput.settle({ kind: 'release-after-rollback' })
+            }
+          } catch (releaseError) {
+            console.warn('[DeepChatAgent] failed to settle Journal-failed input:', releaseError)
+          }
+        }
+        if (
+          !streamRunId &&
+          assistantMessageId &&
+          (!claimedInput || claimedInput.source === 'send')
+        ) {
+          try {
+            this.ports.messageStore.deleteMessage(assistantMessageId)
+            this.ports.messageProjection.refresh(sessionId, assistantMessageId)
+            assistantMessageId = null
+          } catch (cleanupError) {
+            console.warn('[DeepChatAgent] failed to remove provisional assistant:', cleanupError)
+          }
+        }
+        observeRejectedTurn(err)
+        this.ports.runLifecycle.transitionCurrentStatus(sessionId, 'idle')
+        throw err
+      }
+      const aborted = committedAbortTerminal
+        ? true
+        : committedErrorTerminal
+          ? false
+          : isAbortError(errorToProject) || preStreamAbortSignal.aborted
       const pendingInputHandoff =
         preStreamAbortSignal.reason === PENDING_INPUT_ABORT_REASON
-      const staleInstance = isStaleDeepChatInstanceError(err)
+      const staleInstance = isStaleDeepChatInstanceError(errorToProject)
       if (!userMessageId && pendingInputHandoff && claimedInput?.source !== 'steer') {
         userMessageId = claimedInput?.messageIds.at(-1) ?? null
       }
@@ -920,7 +981,7 @@ export class TurnCoordinator {
         }
       }
       if (claimedInput && !claimedInput.disposition) {
-        if (isSteerClaim) {
+        if (committedErrorTerminal || isSteerClaim) {
           try {
             claimedInput.settle({ kind: 'consume' })
           } catch (releaseError) {
@@ -950,15 +1011,7 @@ export class TurnCoordinator {
           }
         }
       }
-      try {
-        this.ports.memoryIngestionObserver.afterTurnSettled({
-          session: instance.getMemorySessionHandle(),
-          origin: 'initial',
-          outcome: { kind: 'thrown', error: err }
-        })
-      } catch (observerError) {
-        console.warn('[DeepChatAgent] failed to observe rejected turn:', observerError)
-      }
+      observeRejectedTurn(errorToProject)
       if (staleInstance) {
         if (isSteerClaim && assistantMessageId) {
           this.ports.messageStore.setMessageError(
@@ -991,7 +1044,7 @@ export class TurnCoordinator {
         }
         return complete({ requestId: null, messageId: null })
       }
-      console.error('[DeepChatAgent] processMessage error:', err)
+      console.error('[DeepChatAgent] processMessage error:', errorToProject)
       if (aborted) {
         if (userMessageId && !isSteerClaim) {
           this.ports.messageProjection.refresh(sessionId, userMessageId)
@@ -1024,8 +1077,12 @@ export class TurnCoordinator {
           messageId: assistantMessageId
         })
       }
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      const stopReason = isContextWindowErrorLike(err) ? 'context_window' : 'pre_stream_error'
+      const errorMessage =
+        committedErrorTerminal?.errorMessage ??
+        (errorToProject instanceof Error ? errorToProject.message : String(errorToProject))
+      const stopReason =
+        committedErrorTerminal?.stopReason ??
+        (isContextWindowErrorLike(errorToProject) ? 'context_window' : 'pre_stream_error')
       if (
         !assistantMessageId &&
         !assistantCreationAttempted &&
@@ -1459,13 +1516,33 @@ export class TurnCoordinator {
       }
       return true
     } catch (error) {
-      if (isExecutionJournalError(error) || isCommittedRunProjectionError(error)) throw error
-      this.ports.memoryIngestionObserver.afterTurnSettled({
-        session: instance.getMemorySessionHandle(),
-        origin: 'resume',
-        outcome: { kind: 'thrown', error }
-      })
-      if (isStaleDeepChatInstanceError(error)) {
+      const committedProjectionError = isCommittedRunProjectionError(error) ? error : null
+      const committedErrorTerminal =
+        committedProjectionError?.terminal.outcome === 'error'
+          ? committedProjectionError.terminal
+          : null
+      const committedAbortTerminal =
+        committedProjectionError?.terminal.outcome === 'aborted'
+          ? committedProjectionError.terminal
+          : null
+      const errorToProject = committedProjectionError?.cause ?? error
+      try {
+        this.ports.memoryIngestionObserver.afterTurnSettled({
+          session: instance.getMemorySessionHandle(),
+          origin: 'resume',
+          outcome: { kind: 'thrown', error: errorToProject }
+        })
+      } catch (observerError) {
+        console.warn('[DeepChatAgent] failed to observe rejected turn:', observerError)
+      }
+      if (
+        isExecutionJournalError(error) ||
+        (committedProjectionError && !committedErrorTerminal && !committedAbortTerminal)
+      ) {
+        this.ports.runLifecycle.transitionCurrentStatus(sessionId, 'idle')
+        throw error
+      }
+      if (isStaleDeepChatInstanceError(errorToProject)) {
         return false
       }
       if (preStreamAbortSignal?.reason === PENDING_INPUT_ABORT_REASON) {
@@ -1496,8 +1573,13 @@ export class TurnCoordinator {
         this.ports.runLifecycle.schedulePendingInputDrain(sessionId, 'completed')
         return false
       }
-      console.error('[DeepChatAgent] resumeAssistantMessage error:', error)
-      if (isAbortError(error) || preStreamAbortSignal?.aborted) {
+      console.error('[DeepChatAgent] resumeAssistantMessage error:', errorToProject)
+      const aborted = committedAbortTerminal
+        ? true
+        : committedErrorTerminal
+          ? false
+          : isAbortError(errorToProject) || preStreamAbortSignal?.aborted
+      if (aborted) {
         this.ports.runLifecycle.clearOperationController(
           scope,
           preStreamAbortController ?? undefined
@@ -1514,8 +1596,12 @@ export class TurnCoordinator {
         this.ports.runLifecycle.schedulePendingInputDrain(sessionId, 'completed')
         return false
       }
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      const stopReason = isContextWindowErrorLike(error) ? 'context_window' : 'pre_stream_error'
+      const errorMessage =
+        committedErrorTerminal?.errorMessage ??
+        (errorToProject instanceof Error ? errorToProject.message : String(errorToProject))
+      const stopReason =
+        committedErrorTerminal?.stopReason ??
+        (isContextWindowErrorLike(errorToProject) ? 'context_window' : 'pre_stream_error')
       const terminalMetadata = stampTerminalMetadata(
         resumeAccounting,
         'error',
@@ -1539,7 +1625,7 @@ export class TurnCoordinator {
         usage: buildUsageFromMetadata(terminalMetadata)
       })
       this.ports.runLifecycle.transitionCurrentStatus(sessionId, 'error')
-      throw error
+      throw errorToProject
     } finally {
       this.ports.runLifecycle.clearOperationController(
         scope,
