@@ -18,7 +18,10 @@ import {
   classifyExecutionJournalRows,
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
-import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+import {
+  ExecutionJournalService,
+  type ExecutionJournalCommitFailpoint
+} from '@/tape/application/executionJournalService'
 import { buildEffectiveTapeView, searchEffectiveTapeRows } from '@/tape/domain/effectiveView'
 
 const RUN_IDS = {
@@ -155,6 +158,35 @@ describe('Execution Journal domain and strict persistence', () => {
       /Failed to persist execution\/dispatch_committed/
     )
     expect(entries.some((entry) => entry.name === 'execution/dispatch_committed')).toBe(false)
+  })
+
+  it('reaches commit failpoints outside the storage transaction', () => {
+    const { table } = createTapeTableMock()
+    const timeline: string[] = []
+    table.runInTransaction.mockImplementation((operation: () => unknown) => {
+      timeline.push('transaction:begin')
+      const result = operation()
+      timeline.push('transaction:committed')
+      return result
+    })
+    const failpoint: ExecutionJournalCommitFailpoint = {
+      reach: ({ phase }) => timeline.push(`failpoint:${phase}`)
+    }
+    const service = new ExecutionJournalService({ getEntryStore: () => table }, failpoint)
+
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      runKind: 'loop'
+    })
+
+    expect(timeline).toEqual([
+      'failpoint:before',
+      'transaction:begin',
+      'transaction:committed',
+      'failpoint:after'
+    ])
   })
 
   it('rejects non-JSON arguments and invalid timestamps before append', () => {

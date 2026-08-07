@@ -28,7 +28,14 @@ import type { TapeApplicationEntryStore, TapeApplicationProviders } from '../por
 
 type ExecutionJournalProviders = Pick<TapeApplicationProviders, 'getEntryStore'>
 
-type StrictEventInput = TapeEventAppendInput & {
+export type ExecutionJournalCommitPhase = 'before' | 'after'
+
+export interface ExecutionJournalCommitFailpoint {
+  reach(input: { eventName: ExecutionJournalEventName; phase: ExecutionJournalCommitPhase }): void
+}
+
+type StrictEventInput = Omit<TapeEventAppendInput, 'name'> & {
+  name: ExecutionJournalEventName
   source: NonNullable<TapeEventAppendInput['source']>
   provenanceKey: string
 }
@@ -58,7 +65,10 @@ function rowMatchesStrictEvent(row: DeepChatTapeEntryRow, input: StrictEventInpu
 export class ExecutionJournalService
   implements ExecutionJournalWriter, ExecutionJournalRecoveryReader
 {
-  constructor(private readonly providers: ExecutionJournalProviders) {}
+  constructor(
+    private readonly providers: ExecutionJournalProviders,
+    private readonly commitFailpoint?: ExecutionJournalCommitFailpoint
+  ) {}
 
   commitRunStarted(input: CommitExecutionRunStartedInput): ExecutionJournalCommitReceipt {
     const data = buildRunStartedData(input)
@@ -164,8 +174,10 @@ export class ExecutionJournalService
     validateNewFact?: (table: TapeApplicationEntryStore) => void
   ): ExecutionJournalCommitReceipt {
     const table = this.providers.getEntryStore()
+    this.commitFailpoint?.reach({ eventName: input.name, phase: 'before' })
+    let receipt: ExecutionJournalCommitReceipt
     try {
-      return table.runInTransaction(() => {
+      receipt = table.runInTransaction(() => {
         table.ensureBootstrapAnchor(input.sessionId)
         requirePrerequisite?.(table)
         const existing = table.getByProvenanceKey(input.sessionId, input.provenanceKey)
@@ -190,6 +202,8 @@ export class ExecutionJournalService
         { cause: error }
       )
     }
+    this.commitFailpoint?.reach({ eventName: input.name, phase: 'after' })
+    return receipt
   }
 
   private requireFact(

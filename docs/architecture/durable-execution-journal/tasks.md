@@ -46,7 +46,7 @@
 - [x] Apply run start, T1, T2, and terminal ordering to deferred execution.
 - [x] Classify native v1 journal facts before pending transcript recovery at startup.
 - [x] Keep `indeterminate` and `corruption` parked with no automatic tool retry.
-- [ ] Add failpoints and restart/crash tests around T1, T2, and terminal boundaries.
+- [x] Add failpoints and restart/crash tests around T1, T2, and terminal boundaries.
 - [ ] Update maintained architecture documentation for the final implemented contract.
 - [ ] Review and commit the recovery slice.
 
